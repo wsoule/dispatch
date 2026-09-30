@@ -1064,7 +1064,9 @@ function seedCrashedWake(root: string, taskId: string): void {
     id: 'm-answer00000000000000001',
     thread: question.thread,
     replyTo: question.id,
-    from: 'human:wyat',
+    // The owner (from initGitRepo); a replay carries no app token, so the
+    // woken run acts for no one.
+    from: 'human:test',
     to: [SYSTEM_ADDRESS],
     kind: 'answer',
     choice: 'approve',
@@ -1162,6 +1164,7 @@ describe('boot ordering', () => {
         .list()
         .filter((r) => r.taskId === task.meta.id);
       expect(runs.map((r) => r.memoryMode)).toEqual(['prompt']);
+      expect(runs[0]?.operator).toBeNull();
       expect(executor.started.map((s) => s.memory)).toEqual([
         { mode: 'prompt' },
       ]);

@@ -1864,7 +1864,8 @@ function deleteChatMessage(
 // Sends the review back to the agent wherever the agent is. A run is
 // reviewed AFTER it finishes, so the normal case is terminal — and only
 // `{ resume: true }` re-dispatches one; without it sendMessage refuses with
-// "run is not live". A still-live run keeps the mid-run message path.
+// "run is not live". A still-live run keeps the mid-run message path. A
+// resumed run acts for the reviewer's own credential, never the shared token.
 function sendReviewToAgent(
   ctx: ApiContext,
   runId: string,
@@ -1875,7 +1876,7 @@ function sendReviewToAgent(
   return ctx.orchestrator.sendMessage(
     runId,
     message,
-    resume ? { resume: true } : {}
+    resume ? { resume: true, operator: humanCredentialRef(ctx) } : {}
   );
 }
 
@@ -5345,7 +5346,12 @@ export async function handleApi(
         segments[2] === 'resume' &&
         method === 'POST'
       ) {
-        return jsonResponse(ctx.orchestrator.resumeRun(segments[1]), 201);
+        return jsonResponse(
+          ctx.orchestrator.resumeRun(segments[1], {
+            operator: humanCredentialRef(ctx),
+          }),
+          201
+        );
       }
       if (
         segments.length === 3 &&

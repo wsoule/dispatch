@@ -20,6 +20,7 @@ import {
   OrchestratorClientError,
   OrchestratorNotFoundError,
   runKind,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './types.js';
 import { WorktreeManager } from './worktree.js';
@@ -710,10 +711,12 @@ export class FixLoop {
       this.canResume(previous, step.modelTier, models.execute)
     ) {
       // The fix loop's own escalation moved to the next round — no human
-      // typed this feedback, it's the loop's automated fix prompt.
+      // typed this feedback, it's the loop's automated fix prompt. It acts for
+      // the run's operator, as the loop's fresh implementer (dispatchAuxRun) does.
       this.ctx.orchestrator.sendMessage(previous.id, prompt, {
         resume: true,
         actor: 'none',
+        operator: runOperator(previous),
       });
       return;
     }

@@ -12,8 +12,8 @@ export const SYSTEM_SENDER: Sender = {
   canDecide: true,
 };
 
-// Whether the human answering a gate in this request used the owner's app
-// token; gate handlers read it, and a replay or system answer reads false.
+// Whether the human sending or answering in this request used the owner's app
+// token; gate handlers and wakes read it, and a replay or system answer reads false.
 const answering = new AsyncLocalStorage<boolean>();
 
 export function answeringWith<T>(

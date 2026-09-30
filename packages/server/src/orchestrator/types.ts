@@ -490,6 +490,17 @@ export function runOperator(
     : (meta.dispatchedBy ?? null);
 }
 
+// Who a run started, continued or woken by `actor` acts for: a human actor,
+// the owner only on the owner's app token; no one for an agent, run or system.
+export function actingOperator(
+  actor: string,
+  ownerCredential: boolean,
+  ownerRef: string
+): string | null {
+  if (!actor.startsWith('human:')) return null;
+  return actor !== ownerRef || ownerCredential ? actor : null;
+}
+
 // The first run of a continuing resume chain: the key of its Claude memory export.
 export function runLineage(
   meta: Pick<RunMeta, 'id' | 'memoryLineage'>

@@ -13,7 +13,7 @@ import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
-import { TERMINAL_RUN_STATES } from './types.js';
+import { actingOperator, TERMINAL_RUN_STATES } from './types.js';
 
 /**
  * The overseer's private tool surface: read-only status tools over everything
@@ -530,9 +530,11 @@ function confirmedOperator(
   ctx: OverseerToolContext,
   meta: ConfirmedBy
 ): string | null {
-  if (!meta.actor.startsWith('human:')) return null;
-  if (meta.actor !== ctx.ownerRef) return meta.actor;
-  return meta.ownerCredential === true ? meta.actor : null;
+  return actingOperator(
+    meta.actor,
+    meta.ownerCredential === true,
+    ctx.ownerRef
+  );
 }
 
 const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
@@ -556,7 +558,7 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     // the daemon's human, and a human confirming the action is precisely who
     // caused it. The explicit 'none' actor is for callers with no human behind
     // them at all (EpicEngine's auto-fill), which the overseer never is.
-    // The run acts for whoever confirmed it (confirmedOperator).
+    // The run, fresh or resumed, acts for whoever confirmed it.
     // dispatchOrResume, not dispatch: a task whose last run a daemon restart
     // left recoverable is picked back up rather than started over. `executor`
     // and `model` carry what the overseer's caller actually NAMED — the daemon's

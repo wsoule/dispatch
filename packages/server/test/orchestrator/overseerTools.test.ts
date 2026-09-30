@@ -827,6 +827,39 @@ describe('applyAction performs the real effect', () => {
     }
   );
 
+  it.each([
+    [{ actor: 'human:ada' }, 'human:ada'],
+    [{ actor: 'human:test' }, null],
+    [{ actor: 'human:test', ownerCredential: true }, 'human:test'],
+  ] as const)(
+    "dispatch_task resuming the owner's failed run as %p runs for %p",
+    async (meta, operator) => {
+      const h = makeHarness();
+      h.orchestrator.registerExecutor(
+        'failing',
+        new FakeExecutor({
+          finish: { state: 'failed', sessionId: 'sess-f', error: 'limit' },
+        })
+      );
+      const task = h.store.create({ title: 'Resumable' });
+      h.cache.rebuild(h.store);
+      const failed = await h.orchestrator.dispatch(task.meta.id, 'failing', {
+        operator: 'human:test',
+      });
+      await waitFor(
+        () => h.orchestrator.getRun(failed.id)?.meta.state === 'failed'
+      );
+      const action = h.registry.callMutatingTool('dispatch_task', {
+        taskId: task.meta.id,
+      });
+      await h.registry.applyAction(action.id, meta);
+      const resumed = h.orchestrator
+        .list()
+        .find((r) => r.resumedFrom === failed.id);
+      expect(resumed?.operator).toBe(operator);
+    }
+  );
+
   it("approve_run answers the run's tool-approval gate as the confirming human", async () => {
     const h = makeHarness();
     const messaging = await withBus(h);

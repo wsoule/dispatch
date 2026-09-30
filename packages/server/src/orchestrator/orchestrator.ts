@@ -429,6 +429,9 @@ export class Orchestrator {
   // see needsQuietProof, which is what stops a re-dispatch from resuming into
   // a checkout an orphaned agent may still own.
   private readonly observedQuiet = new Set<string>();
+  // Who a re-armed boot sweep resumes a run for: the caller whose dispatch
+  // re-armed it. Absent keeps the run's own operator.
+  private readonly autoResumeOperators = new Map<string, string | null>();
   // Set by shutdown(); see it for what this is protecting against.
   private stopped = false;
 
@@ -1400,11 +1403,12 @@ export class Orchestrator {
   // `actor` (resume path only) credits who asked for the redispatch: omitted
   // (the API's chat composer) defaults to the daemon's human; FixLoop's own
   // automatic escalation passes 'none' explicitly — no one typed anything,
-  // the loop just moved to its next round.
+  // the loop just moved to its next round. `operator` is who the follow-up
+  // acts for; absent means no one.
   sendMessage(
     runId: string,
     text: string,
-    opts: { resume?: boolean; actor?: string } = {}
+    opts: { resume?: boolean; actor?: string; operator?: string | null } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
 
@@ -1453,7 +1457,8 @@ export class Orchestrator {
       return this.requestChanges(
         meta,
         text,
-        opts.actor ?? this.ctx.actorContext?.humanRef
+        opts.actor ?? this.ctx.actorContext?.humanRef,
+        opts.operator ?? null
       );
     }
 
@@ -2102,7 +2107,7 @@ export class Orchestrator {
       effort?: EffortLevel;
       fresh?: boolean;
       actor?: string;
-      // Who a fresh run acts for; a resume keeps its predecessor's.
+      // Who the run acts for, fresh or resumed; absent means no one.
       operator?: string | null;
       defaults?: { executor?: string; model?: string };
     } = {}
@@ -2110,7 +2115,11 @@ export class Orchestrator {
     if (request.fresh !== true) {
       const resumable = this.resumableRunForTask(taskId);
       if (resumable !== null && this.resumeHonoursRequest(resumable, request)) {
-        return this.resumeForRedispatch(resumable, request.actor);
+        return this.resumeForRedispatch(
+          resumable,
+          request.actor,
+          request.operator ?? null
+        );
       }
     }
     const executorName =
@@ -2140,11 +2149,11 @@ export class Orchestrator {
     return meta;
   }
 
-  // A wake's next run. Only a human's wake may continue a finished run's session
-  // (request changes); anything else dispatches or resumes.
+  // A wake's next run, acting for `operator`. Only a human's wake may continue
+  // a finished run's session (request changes); anything else dispatches or resumes.
   async wakeTask(
     taskId: string,
-    opts: { actor: string; continueFinished: boolean }
+    opts: { actor: string; continueFinished: boolean; operator: string | null }
   ): Promise<RunMeta> {
     const latest = this.registry
       .list()
@@ -2159,11 +2168,16 @@ export class Orchestrator {
       this.registry.liveRunForTask(taskId) === undefined &&
       this.resumeBlockReason(latest) !== null
     ) {
-      return this.requestChanges(latest, WAKE_PROMPT, opts.actor);
+      return this.requestChanges(
+        latest,
+        WAKE_PROMPT,
+        opts.actor,
+        opts.operator
+      );
     }
     return this.dispatchOrResume(taskId, {
       actor: opts.actor,
-      operator: this.operatorForTask(taskId),
+      operator: opts.operator,
     });
   }
 
@@ -2186,12 +2200,15 @@ export class Orchestrator {
     return latest === undefined ? null : runOperator(latest);
   }
 
-  // A human's wake of one ended execute run continues exactly that run.
-  wakeRun(runId: string, opts: { actor: string }): RunMeta {
+  // A human's wake of one ended execute run continues exactly that run, for `operator`.
+  wakeRun(
+    runId: string,
+    opts: { actor: string; operator: string | null }
+  ): RunMeta {
     const meta = this.requireRun(runId);
     const reason = this.continueBlockReason(meta);
     if (reason !== null) throw new OrchestratorConflictError(reason);
-    return this.requestChanges(meta, WAKE_PROMPT, opts.actor);
+    return this.requestChanges(meta, WAKE_PROMPT, opts.actor, opts.operator);
   }
 
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
@@ -2265,14 +2282,20 @@ export class Orchestrator {
   // into that is the two-agents-in-one-checkout hazard the sweep exists to
   // avoid — so rather than racing it, this re-arms the sweep and refuses,
   // saying so in terms the caller can act on.
-  private resumeForRedispatch(run: RunMeta, actor?: string): RunMeta {
+  private resumeForRedispatch(
+    run: RunMeta,
+    actor: string | undefined,
+    operator: string | null
+  ): RunMeta {
     if (this.needsQuietProof(run)) {
+      // The sweep's resume then acts for this caller, not the run's operator.
+      this.autoResumeOperators.set(run.id, operator);
       this.scheduleAutoResume(run.id);
       throw new OrchestratorConflictError(
         `run ${run.id} is still being recovered after a daemon restart — waiting for the agent it orphaned to stop writing to ${run.branch}. It will resume on its own; dispatch with fresh=true to start over instead.`
       );
     }
-    return this.resumeRun(run.id, { actor });
+    return this.resumeRun(run.id, { actor, operator });
   }
 
   // True when this run could still have the agent a restart orphaned writing
@@ -2318,6 +2341,7 @@ export class Orchestrator {
       .finally(() => {
         if (this.scheduledAutoResumes.get(runId) === done) {
           this.scheduledAutoResumes.delete(runId);
+          this.autoResumeOperators.delete(runId);
         }
       });
     this.scheduledAutoResumes.set(runId, done);
@@ -2394,7 +2418,12 @@ export class Orchestrator {
     // hazard the quiet window upstream of here exists to prevent.
     if (meta === undefined || this.resumeBlockReason(meta) !== null) return;
     try {
-      this.resumeRun(runId, { auto: true });
+      this.resumeRun(runId, {
+        auto: true,
+        ...(this.autoResumeOperators.has(runId)
+          ? { operator: this.autoResumeOperators.get(runId) ?? null }
+          : {}),
+      });
     } catch (err) {
       console.error(
         `dispatchd: could not auto-resume run ${runId}: ${(err as Error).message}`
@@ -4787,7 +4816,8 @@ export class Orchestrator {
   private requestChanges(
     oldMeta: RunMeta,
     text: string,
-    actor: string | undefined
+    actor: string | undefined,
+    operator: string | null
   ): RunMeta {
     const {
       executor,
@@ -4818,8 +4848,8 @@ export class Orchestrator {
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
       resumedFrom: oldMeta.id,
-      // The session already holds its operator's memory, whoever typed this.
-      operator: this.a2a(oldMeta.taskId) ? null : runOperator(oldMeta),
+      // Acts for whoever asked for it, never the predecessor's operator as such.
+      operator: this.a2a(oldMeta.taskId) ? null : operator,
       memoryLineage: runLineage(oldMeta),
       // The resumed run inherits the same worktree and the same BRANCH, so it
       // inherits the branch's stacking facts too. Dropping them here was how a
@@ -4917,10 +4947,12 @@ export class Orchestrator {
   // run back rather than crediting the human whose daemon happened to reboot.
   // `actor` is the same override dispatch() takes, for the callers that resume
   // on someone else's behalf (dispatchOrResume, reached from the epic
-  // auto-fill, credits 'none' exactly as its dispatch does).
+  // auto-fill, credits 'none' exactly as its dispatch does). `operator` is who
+  // the successor acts for, absent meaning no one; only the boot sweep (`auto`)
+  // with none named keeps the run's own, as no new principal is acting.
   resumeRun(
     runId: string,
-    opts: { auto?: boolean; actor?: string } = {}
+    opts: { auto?: boolean; actor?: string; operator?: string | null } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
@@ -4974,8 +5006,14 @@ export class Orchestrator {
       // its predecessor had already claimed.
       claims: meta.claims,
       resumedFrom: meta.id,
-      // A fresh session starts its own lineage; the operator carries either way.
-      operator: this.a2a(meta.taskId) ? null : runOperator(meta),
+      // A fresh session starts its own lineage.
+      operator: this.a2a(meta.taskId)
+        ? null
+        : opts.operator !== undefined
+          ? opts.operator
+          : opts.auto === true
+            ? runOperator(meta)
+            : null,
       memoryLineage: continuing ? runLineage(meta) : newRunId,
       ...(meta.stackParents !== undefined
         ? { stackParents: meta.stackParents }

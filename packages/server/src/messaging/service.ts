@@ -34,7 +34,7 @@ import {
   openToolApprovalGate,
   SYSTEM_SENDER,
 } from './gates.js';
-import type { ExternalPolicy } from './host.js';
+import type { ExternalPolicy, WakeActor } from './host.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
@@ -62,6 +62,12 @@ const DISPATCH_GATE_TYPES = [
 ] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.
+// A wake a live run blocked, kept with who caused it for the retry.
+interface BlockedWake {
+  message: Message;
+  acting: WakeActor;
+}
+
 interface OverseerGateTarget {
   confirmAction(
     conversationId: string,
@@ -147,7 +153,7 @@ export function openMessaging(deps: {
       .some((r) => r.taskId === taskId && !TERMINAL_RUN_STATES.has(r.state));
   // Wake messages, by task, whose wake failed while the task still had a run
   // (one winding down, say); retried when a run of that task ends.
-  const blockedWakes = new Map<string, Message[]>();
+  const blockedWakes = new Map<string, BlockedWake[]>();
 
   const gates = new GateHandlers();
   const host = new DaemonMessagingHost({
@@ -160,11 +166,12 @@ export function openMessaging(deps: {
       // message.new already reaches the desktop over the EventBus; no OS
       // notification is raised for a human's message yet.
     },
-    onWakeFailed: (target, message) => {
+    onWakeFailed: (target, message, acting) => {
       const taskId = target.slice('task:'.length);
       if (!hasActiveRun(taskId)) return;
       const waiting = blockedWakes.get(taskId) ?? [];
-      if (!waiting.some((m) => m.id === message.id)) waiting.push(message);
+      if (!waiting.some((w) => w.message.id === message.id))
+        waiting.push({ message, acting });
       blockedWakes.set(taskId, waiting);
     },
   });
@@ -262,7 +269,11 @@ export function openMessaging(deps: {
         return;
       }
     }
-    const result = await host.wake(gate.target, original);
+    // The approver caused this wake, so the run acts for them.
+    const result = await host.wake(gate.target, original, {
+      actor: answer.from,
+      ownerCredential: answeredWithOwnerCredential(),
+    });
     if (!result.ok) {
       await noticeWakeSender(
         original,
@@ -276,9 +287,9 @@ export function openMessaging(deps: {
   const retryBlockedWakes = async (taskId: string): Promise<void> => {
     const target = `task:${taskId}`;
     const held = (blockedWakes.get(taskId) ?? []).filter(
-      (m) =>
+      (w) =>
         store.deliveries({
-          messageId: m.id,
+          messageId: w.message.id,
           recipient: target,
           states: ['held'],
         }).length > 0
@@ -287,23 +298,30 @@ export function openMessaging(deps: {
     if (held.length === 0) return;
     const denial = wakeDenial(taskId);
     if (denial !== null) {
-      for (const m of held)
-        await noticeWakeSender(m, `Not woken: task ${taskId} ${denial}.`);
+      for (const w of held)
+        await noticeWakeSender(
+          w.message,
+          `Not woken: task ${taskId} ${denial}.`
+        );
       return;
     }
-    const first = held.find((m) => m.from.startsWith('human:')) ?? held[0];
-    const result = await host.wake(target, first);
+    const first =
+      held.find((w) => w.message.from.startsWith('human:')) ?? held[0];
+    // Retried as whoever caused the first wake, on the credential they used.
+    const result = await host.wake(target, first.message, first.acting);
     if (result.ok) return;
     if (hasActiveRun(taskId)) {
       // Kept beside, never over, wakes that blocked during the await.
       const waiting = blockedWakes.get(taskId) ?? [];
-      const newer = waiting.filter((m) => !held.some((h) => h.id === m.id));
+      const newer = waiting.filter(
+        (w) => !held.some((h) => h.message.id === w.message.id)
+      );
       blockedWakes.set(taskId, [...held, ...newer]);
       return;
     }
-    for (const m of held)
+    for (const w of held)
       await noticeWakeSender(
-        m,
+        w.message,
         `Could not wake ${target}: ${result.reason}. Your message is waiting for it.`
       );
   };

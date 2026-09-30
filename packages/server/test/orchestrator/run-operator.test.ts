@@ -93,7 +93,7 @@ describe('who a run acts for', () => {
     await finished(unowned);
   });
 
-  it('a follow-up keeps the predecessor’s operator and lineage, whoever typed it', async () => {
+  it('a follow-up acts for whoever asked for it, in the same lineage', async () => {
     const task = store.create({ title: 'd' });
     const first = await finished(
       await orch.dispatch(task.meta.id, 'claude', {
@@ -104,18 +104,43 @@ describe('who a run acts for', () => {
     const next = orch.sendMessage(first.id, 'please also fix the docs', {
       resume: true,
       actor: 'human:ada',
+      operator: 'human:ada',
     });
-    expect(runOperator(next)).toBe('human:wyat');
+    expect(runOperator(next)).toBe('human:ada');
     expect(runLineage(next)).toBe(first.id);
     const after = orch.sendMessage((await finished(next)).id, 'and the tests', {
       resume: true,
       actor: 'human:ada',
+      operator: 'human:ada',
     });
+    expect(runOperator(after)).toBe('human:ada');
     expect(runLineage(after)).toBe(first.id);
     await finished(after);
   });
 
-  it('a wake by an agent acts for the task’s latest run’s operator', async () => {
+  it('a follow-up by its own operator keeps them; one naming no operator acts for no one', async () => {
+    const task = store.create({ title: 'd2' });
+    const first = await finished(
+      await orch.dispatch(task.meta.id, 'claude', {
+        actor: 'human:wyat',
+        operator: 'human:wyat',
+      })
+    );
+    const same = orch.sendMessage(first.id, 'more', {
+      resume: true,
+      actor: 'human:wyat',
+      operator: 'human:wyat',
+    });
+    expect(runOperator(same)).toBe('human:wyat');
+    const unnamed = orch.sendMessage((await finished(same)).id, 'more', {
+      resume: true,
+      actor: 'none',
+    });
+    expect(runOperator(unnamed)).toBeNull();
+    await finished(unnamed);
+  });
+
+  it('a wake acts for the operator it names, never the task’s last one', async () => {
     const task = store.create({ title: 'e' });
     await finished(
       await orch.dispatch(task.meta.id, 'claude', {
@@ -123,12 +148,51 @@ describe('who a run acts for', () => {
         operator: 'human:wyat',
       })
     );
-    const woken = await orch.wakeTask(task.meta.id, {
+    const byAgent = await orch.wakeTask(task.meta.id, {
       actor: 'agent:dispatch',
       continueFinished: false,
+      operator: null,
     });
-    expect(runOperator(woken)).toBe('human:wyat');
-    await finished(woken);
+    expect(runOperator(byAgent)).toBeNull();
+    const byAda = await orch.wakeTask(task.meta.id, {
+      actor: 'human:ada',
+      continueFinished: true,
+      operator: 'human:ada',
+    });
+    expect(byAda.resumedFrom).toBe((await finished(byAgent)).id);
+    expect(runOperator(byAda)).toBe('human:ada');
+    const named = orch.wakeRun((await finished(byAda)).id, {
+      actor: 'human:bea',
+      operator: 'human:bea',
+    });
+    expect(runOperator(named)).toBe('human:bea');
+    await finished(named);
+  });
+
+  it('dispatchOrResume resumes a failed run for the operator it was asked for', async () => {
+    orch.registerExecutor(
+      'claude',
+      new FakeExecutor({
+        session: 'sess-3',
+        finish: { state: 'failed', sessionId: 'sess-3', error: 'limit' },
+      })
+    );
+    const task = store.create({ title: 'e2' });
+    const failed = await settled(
+      orch,
+      await orch.dispatch(task.meta.id, 'claude', {
+        actor: 'human:wyat',
+        operator: 'human:wyat',
+      }),
+      'failed'
+    );
+    const resumed = await orch.dispatchOrResume(task.meta.id, {
+      actor: 'human:ada',
+      operator: 'human:ada',
+    });
+    expect(resumed.resumedFrom).toBe(failed.id);
+    expect(runOperator(resumed)).toBe('human:ada');
+    await settled(orch, resumed, 'failed');
   });
 
   it.each(['review', 'verify', 'execute'] as const)(
@@ -197,6 +261,7 @@ describe('who a run acts for', () => {
     const next = a2a.orchestrator.sendMessage(first.id, 'more', {
       resume: true,
       actor: 'human:wyat',
+      operator: 'human:wyat',
     });
     expect(runOperator(next)).toBeNull();
     await settled(a2a.orchestrator, next);
@@ -216,7 +281,7 @@ describe('who a run acts for', () => {
       }),
       'failed'
     );
-    const resumed = orch.resumeRun(failed.id);
+    const resumed = orch.resumeRun(failed.id, { operator: 'human:wyat' });
     expect(runOperator(resumed)).toBe('human:wyat');
     expect(runLineage(resumed)).toBe(resumed.id);
     await settled(orch, resumed, 'failed');
@@ -239,9 +304,36 @@ describe('who a run acts for', () => {
       }),
       'failed'
     );
-    const resumed = orch.resumeRun(failed.id, { actor: 'human:ada' });
-    expect(runOperator(resumed)).toBe('human:wyat');
+    const resumed = orch.resumeRun(failed.id, {
+      actor: 'human:ada',
+      operator: 'human:ada',
+    });
+    expect(runOperator(resumed)).toBe('human:ada');
     expect(runLineage(resumed)).toBe(failed.id);
-    await settled(orch, resumed, 'failed');
+    const unnamed = orch.resumeRun((await settled(orch, resumed, 'failed')).id);
+    expect(runOperator(unnamed)).toBeNull();
+    await settled(orch, unnamed, 'failed');
+  });
+
+  it('the boot recovery sweep keeps the run’s own operator', async () => {
+    orch.registerExecutor(
+      'claude',
+      new FakeExecutor({
+        session: 'sess-4',
+        finish: { state: 'failed', sessionId: 'sess-4', error: 'limit' },
+      })
+    );
+    const task = store.create({ title: 'j' });
+    const failed = await settled(
+      orch,
+      await orch.dispatch(task.meta.id, 'claude', {
+        actor: 'human:wyat',
+        operator: 'human:wyat',
+      }),
+      'failed'
+    );
+    const recovered = orch.resumeRun(failed.id, { auto: true });
+    expect(runOperator(recovered)).toBe('human:wyat');
+    await settled(orch, recovered, 'failed');
   });
 });
