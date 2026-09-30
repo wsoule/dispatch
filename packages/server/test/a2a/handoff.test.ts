@@ -444,6 +444,19 @@ describe('a handoff', () => {
     expect(await state(one.id)).toBe('CANCELED');
   });
 
+  it('finishes a cancel whose row lost its gate and draft links', async () => {
+    const one = await open();
+    f.store.updateTask(one.id, {
+      gate: null,
+      dispatchTask: null,
+      canceledAt: new Date().toISOString(),
+    });
+    await reconcileA2A(f.deps, f.watch).settled;
+    expect(f.messaging.engine.answerOf(one.row.gate!)).not.toBeNull();
+    expect(f.tasks.get(one.draft.meta.id)?.meta.status).toBe('dropped');
+    expect(f.messaging.engine.answerOf(one.id)?.choice).toBe('decline');
+  });
+
   it('cancels with the gate open (CANCELED, draft dropped) but not after approval', async () => {
     const one = await open();
     await f.port.cancel(f.caller, one.id);

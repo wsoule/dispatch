@@ -12,6 +12,7 @@ import {
   unwrapExternalData,
   wrapExternalData,
 } from '@dispatch/a2a';
+import type { TaskDoc } from '@dispatch/core';
 import { untrustedInline } from '@dispatch/core';
 import type { Address, Message } from '@dispatch/protocol';
 import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
@@ -167,17 +168,34 @@ async function answerRoot(
   }
 }
 
-// Completes a client's cancel: closes a gate still open, drops the draft and
-// declines the root; idempotent, so a crash mid-cancel can run it again.
+// The A2A draft whose provenance line names `rootId`, for a row that never linked it.
+export function orphanDraft(deps: BridgeDeps, rootId: string): TaskDoc | null {
+  const marker = `(message ${rootId})`;
+  return (
+    deps.tasks
+      .list()
+      .find((t) => t.meta.labels.includes('a2a') && t.body.includes(marker)) ??
+    null
+  );
+}
+
+// Completes a client's cancel: closes the gate, drops the draft (found by key and
+// marker when unlinked), declines the root; idempotent, so a crash can rerun it.
 export async function finishCancel(
   deps: BridgeDeps,
   hub: BridgeWatch,
   row: TaskRow
 ): Promise<void> {
-  if (row.gate !== null && deps.engine.answerOf(row.gate) === null)
-    closeGate(deps.engine, row.gate, 'canceled by the client');
+  const gate =
+    row.gate ??
+    deps.messages.byIdemKey(SYSTEM_ADDRESS, proposalKey(row.id))?.id ??
+    null;
+  if (gate !== null && deps.engine.answerOf(gate) === null)
+    closeGate(deps.engine, gate, 'canceled by the client');
   const task =
-    row.dispatchTask === null ? null : deps.tasks.get(row.dispatchTask);
+    row.dispatchTask === null
+      ? orphanDraft(deps, row.id)
+      : deps.tasks.get(row.dispatchTask);
   const { dropped, phase } = deps.statuses();
   if (
     task !== null &&

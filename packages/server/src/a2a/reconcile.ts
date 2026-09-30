@@ -15,6 +15,7 @@ import {
 import {
   finishCancel,
   handleProposal,
+  orphanDraft,
   proposalKey,
   sendProposalGate,
 } from './handoff.js';
@@ -81,12 +82,7 @@ export function reconcileHandoff(
       : null;
   let task = row.dispatchTask;
   if (task === null) {
-    const marker = `(message ${row.id})`;
-    task =
-      deps.tasks
-        .list()
-        .find((t) => t.meta.labels.includes('a2a') && t.body.includes(marker))
-        ?.meta.id ?? createDraft(deps, row, root);
+    task = orphanDraft(deps, row.id)?.meta.id ?? createDraft(deps, row, root);
     if (task === null) return null;
     deps.store.updateTask(row.id, { dispatchTask: task });
   }
