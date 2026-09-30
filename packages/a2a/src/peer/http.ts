@@ -146,7 +146,7 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
         o.box.status = res.status;
         o.box.retryAfterSec = retryAfterOf(res);
       }
-      if (res.status >= 300 && res.status < 400) {
+      if (res.status >= 300 && res.status < 400 && res.status !== 304) {
         await res.body?.cancel().catch(() => undefined);
         throw new PeerHttpError(
           res.status,

@@ -7,3 +7,19 @@ export {
   readCapped,
 } from './http.js';
 export type { PeerFetchOptions, StatusBox } from './http.js';
+export {
+  authHeaders,
+  CARD_MAX_BYTES,
+  checkPeerCard,
+  fetchPeerCard,
+  peerAuthFor,
+  pickInterface,
+  summarizeCard,
+} from './card.js';
+export type {
+  FetchedCard,
+  PeerAuth,
+  PeerCardSummary,
+  PeerInterface,
+  PeerSecret,
+} from './card.js';

@@ -40,6 +40,7 @@ beforeAll(() => {
         return new Response('late');
       }
       if (path === '/big') return new Response('x'.repeat(2048));
+      if (path === '/not-modified') return new Response(null, { status: 304 });
       return new Response('ok');
     },
   });
@@ -66,6 +67,13 @@ describe('peerFetch', () => {
     await expect(
       peerFetch({ headers: {}, timeoutMs: 1000 })(`${base}/redirect`)
     ).rejects.toMatchObject({ status: 302 });
+  });
+
+  it('hands a 304 back as a response, not a redirect', async () => {
+    const res = await peerFetch({ headers: {}, timeoutMs: 1000 })(
+      `${base}/not-modified`
+    );
+    expect(res.status).toBe(304);
   });
 
   it('records the status and Retry-After', async () => {
