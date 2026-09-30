@@ -50,8 +50,28 @@ describe('MemoryActivityList', () => {
     expect(
       await screen.findByText('only the entry’s own human may undo')
     ).toBeTruthy();
-    const retry = screen.getByRole('button', { name: 'Undo' });
+    const retry = screen.getByRole('button', {
+      name: 'Undo',
+      description:
+        'run:r-9f2c01 saved to your memory: pnpm builds only the entry’s own human may undo',
+    });
     expect(retry.hasAttribute('disabled')).toBe(false);
+  });
+
+  // A screen reader hears which change each Undo reverts.
+  it('describes each Undo by its row', () => {
+    render(
+      <MemoryActivityList
+        items={[item()]}
+        client={{ undoMemory: () => Promise.resolve(entry()) }}
+      />
+    );
+    expect(
+      screen.getByRole('button', {
+        name: 'Undo',
+        description: 'run:r-9f2c01 saved to your memory: pnpm builds',
+      })
+    ).toBeTruthy();
   });
 
   it('offers no Undo on a notice', () => {
