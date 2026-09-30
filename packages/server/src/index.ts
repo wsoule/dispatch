@@ -109,7 +109,7 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { boardSyncDir } from './orchestrator/paths.js';
+import { boardSyncDir, taskAuthorshipPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -125,6 +125,7 @@ import {
   RepoDigestCache,
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
+import { TaskAuthorship } from './orchestrator/taskAuthorship.js';
 import { runKind, TERMINAL_RUN_STATES } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import {
@@ -1385,6 +1386,7 @@ async function bootServer(
   } else {
     planManager.registerPlanner('claude', new ClaudePlanner(rootDir));
   }
+  const taskAuthorship = new TaskAuthorship(taskAuthorshipPath(rootDir));
   const epicEngine = new EpicEngine({
     rootDir,
     store,
@@ -1393,6 +1395,7 @@ async function bootServer(
     orchestrator,
     findingStore,
     actorContext,
+    authorship: taskAuthorship,
   });
 
   // Same one-time-at-boot treatment as prCapability below: whether the task
@@ -1792,6 +1795,7 @@ async function bootServer(
     planManager,
     overseerManager,
     epicEngine,
+    taskAuthorship,
     messaging,
     memory,
     a2a,

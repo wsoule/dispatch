@@ -134,6 +134,11 @@ export function epicSessionsPath(rootDir: string): string {
   return join(runsDir(rootDir), 'epic-sessions.json');
 }
 
+// Who created and last wrote each task (see TaskAuthorship), for epic auto-fill.
+export function taskAuthorshipPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'task-authorship.json');
+}
+
 // Where PrManager's epic-PR ledger lives: the PRs opened to land whole epic
 // branches on the default base (epicId -> PR url), persisted so a daemon
 // restart keeps polling them to merged instead of forgetting an epic mid-land.

@@ -501,6 +501,18 @@ export function actingOperator(
   return actor !== ownerRef || ownerCredential ? actor : null;
 }
 
+/** Why `sender` may not message a live run acting for another human; null
+ *  when it may (decide tier, the run's own operator, or a run for no one). */
+export function runMessageRefusal(
+  run: Pick<RunMeta, 'id' | 'taskId' | 'operator'>,
+  sender: string | null,
+  canDecide: boolean
+): string | null {
+  const operator = run.operator ?? null;
+  if (canDecide || operator === null || sender === operator) return null;
+  return `run ${run.id} acts for ${operator}: message its task (task:${run.taskId}) or ${operator} instead`;
+}
+
 // The first run of a continuing resume chain: the key of its Claude memory export.
 export function runLineage(
   meta: Pick<RunMeta, 'id' | 'memoryLineage'>

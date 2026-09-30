@@ -521,9 +521,11 @@ export class OverseerManager {
     // guard: two confirmations racing each other must not both reach apply.
     this.dropPendingAction(conversationId, actionId);
     try {
+      // Only a decide-tier human (or the system) can answer the action's gate.
       const applied = await this.ctx.registry.applyAction(actionId, {
         actor,
         ownerCredential,
+        canDecide: true,
       });
       this.settleAction(conversationId, applied, 'applied');
     } catch (err) {

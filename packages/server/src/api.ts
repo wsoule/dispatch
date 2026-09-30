@@ -218,10 +218,12 @@ import {
 import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import { toLandingWorktree } from './orchestrator/prWorktree.js';
 import type { ReviewRunner } from './orchestrator/review.js';
+import type { TaskAuthorship } from './orchestrator/taskAuthorship.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  runMessageRefusal,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -282,6 +284,8 @@ export interface ApiContext {
   // alongside PlanManager in index.ts against the same shared peers.
   overseerManager: OverseerManager;
   epicEngine: EpicEngine;
+  /** Who created and last wrote each task; absent in hand-built test contexts. */
+  taskAuthorship?: TaskAuthorship;
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
@@ -588,6 +592,7 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   if (fieldsError) return errorResponse(400, fieldsError);
 
   const doc = ctx.store.create(input);
+  ctx.taskAuthorship?.created(doc, humanOperator(ctx));
   ctx.cache.rebuild(ctx.store);
   ctx.events.broadcast({ type: 'task.changed' });
   return jsonResponse(doc, 201);
@@ -660,7 +665,8 @@ async function updateTask(
   ctx: ApiContext,
   id: string
 ): Promise<Response> {
-  if (ctx.store.get(id) === null) {
+  const before = ctx.store.get(id);
+  if (before === null) {
     return errorResponse(404, `task not found: ${id}`);
   }
 
@@ -684,6 +690,7 @@ async function updateTask(
   }
 
   const doc = ctx.store.update(id, patch);
+  ctx.taskAuthorship?.edited(before, doc, humanOperator(ctx));
   ctx.cache.rebuild(ctx.store);
   ctx.events.broadcast({ type: 'task.changed' });
   return jsonResponse(doc);
@@ -1880,6 +1887,18 @@ function sendReviewToAgent(
   );
 }
 
+// MEM-R8(c): a request-tier reviewer may not send into a live run that acts
+// for another human; resuming a finished one acts for the reviewer instead.
+function reviewSendRefusal(ctx: ApiContext, runId: string): string | null {
+  const meta = runMetaFor(ctx, runId);
+  if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return null;
+  return runMessageRefusal(
+    meta,
+    humanOperator(ctx),
+    tierAllows(ctx.caller?.tier ?? 'request', 'decide')
+  );
+}
+
 // Which comment store a run's review verbs use. A run whose work lives on a
 // GitHub PR keeps its comments with the PR, so a note reaches the reviewer
 // there and still travels back to the agent. Anything written before the PR
@@ -2192,6 +2211,11 @@ async function submitReview(
     );
   }
 
+  if (verdict === 'request-changes') {
+    const refusal = reviewSendRefusal(ctx, runId);
+    if (refusal !== null) return errorResponse(403, refusal);
+  }
+
   // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
   // run. The other two verdicts are meaningful on their own.
   const pendingBefore = ctx.reviewComments.pendingCount(target);
@@ -2289,6 +2313,8 @@ async function sendBackRun(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { note?: unknown };
   const note = typeof body.note === 'string' ? body.note.trim() : '';
+  const refusal = reviewSendRefusal(ctx, runId);
+  if (refusal !== null) return errorResponse(403, refusal);
   const threads = formatCommentsForAgent(
     ctx.reviewComments.list(commentTargetForRun(ctx, runId))
   );
@@ -3422,6 +3448,11 @@ async function confirmPlan(
   // promote a note whose task already exists.
   const sourceNoteId = ctx.planManager.get(planId).sourceNoteId;
   const result = ctx.planManager.confirm(planId, body.proposal);
+  // The confirm body is the human's own text, so they wrote these tasks.
+  for (const id of [result.epicId, ...result.taskIds]) {
+    const doc = id === undefined ? null : ctx.store.get(id);
+    if (doc !== null) ctx.taskAuthorship?.created(doc, humanOperator(ctx));
+  }
   if (sourceNoteId !== undefined && result.taskIds.length > 0) {
     linkNoteToTask(ctx, sourceNoteId, result.taskIds[0]);
   }
@@ -3584,7 +3615,7 @@ async function startEpic(
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
   // Only a human credential starts a session its auto-fill runs act for.
-  const startedBy = humanCredentialRef(ctx);
+  const startedBy = humanOperator(ctx);
   const session = await ctx.epicEngine.start(epicId, {
     ...checked.body,
     ...(startedBy === null ? {} : { startedBy }),
@@ -3600,7 +3631,7 @@ function pauseEpic(ctx: ApiContext, epicId: string): Response {
 
 // POST /api/epics/:id/resume — optionally re-ceilings the session on the way
 // back to `active`; `executor` is fixed for the session's life so it is
-// dropped here even when sent.
+// dropped here even when sent. The session now acts for whoever resumed it.
 async function resumeEpic(
   req: Request,
   ctx: ApiContext,
@@ -3615,6 +3646,7 @@ async function resumeEpic(
     concurrency,
     maxSpendUsd,
     maxRuns,
+    startedBy: humanOperator(ctx),
   });
   return jsonResponse(session);
 }

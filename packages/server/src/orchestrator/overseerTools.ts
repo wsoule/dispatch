@@ -13,7 +13,11 @@ import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
-import { actingOperator, TERMINAL_RUN_STATES } from './types.js';
+import {
+  actingOperator,
+  runMessageRefusal,
+  TERMINAL_RUN_STATES,
+} from './types.js';
 
 /**
  * The overseer's private tool surface: read-only status tools over everything
@@ -119,6 +123,8 @@ export interface OverseerStatusTool<Input = unknown, Output = unknown> {
 export interface ConfirmedBy {
   actor: string;
   ownerCredential?: boolean;
+  /** Whether whoever confirmed holds decide tier; absent means they do not. */
+  canDecide?: boolean;
 }
 
 /**
@@ -755,6 +761,12 @@ const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {
     return `Message run ${meta.id} ("${safeTitle(meta.taskTitle)}"): ${safeTitle(input.text)}`;
   },
   async apply(ctx, input, meta) {
+    const refusal = runMessageRefusal(
+      requireRun(ctx, input.runId),
+      meta.actor,
+      meta.canDecide === true
+    );
+    if (refusal !== null) throw new OverseerToolError(refusal);
     await ctx.messaging.sendAsHuman(
       `run:${input.runId}`,
       input.text,

@@ -1016,6 +1016,40 @@ describe('applyAction performs the real effect', () => {
       )
     ).toBe(true);
   });
+
+  it('message_run refuses a request-tier confirmation on a run acting for another human', async () => {
+    const h = makeHarness();
+    const messaging = await withBus(h);
+    const task = h.store.create({ title: 'Owned' });
+    h.cache.rebuild(h.store);
+    const meta = await h.orchestrator.dispatch(task.meta.id, 'slow', {
+      operator: 'human:owner',
+    });
+    await waitFor(
+      () => h.orchestrator.getRun(meta.id)?.meta.state === 'running'
+    );
+    const inbox = () =>
+      messaging.engine.inbox(`run:${meta.id}`).map((i) => i.message.body);
+
+    const refused = h.registry.callMutatingTool('message_run', {
+      runId: meta.id,
+      text: 'from ada',
+    });
+    await expect(
+      h.registry.applyAction(refused.id, { actor: 'human:ada' })
+    ).rejects.toThrow(`task:${task.meta.id}`);
+    expect(inbox()).not.toContain('from ada');
+
+    const decided = h.registry.callMutatingTool('message_run', {
+      runId: meta.id,
+      text: 'from bob',
+    });
+    await h.registry.applyAction(decided.id, {
+      actor: 'human:bob',
+      canDecide: true,
+    });
+    expect(inbox()).toContain('from bob');
+  });
 });
 
 // ---------------------------------------------------------------------------

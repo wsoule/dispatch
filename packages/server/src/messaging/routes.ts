@@ -29,6 +29,7 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
+import { runMessageRefusal } from '../orchestrator/types.js';
 import { answeringWith, openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
@@ -315,6 +316,28 @@ function parseReplyInput(raw: unknown):
   return { ok: true, value };
 }
 
+// MEM-R8(c): a request-tier human may not message a live run that acts for
+// another human; the task or that human is the way in.
+function liveRunRefusal(
+  ctx: ApiContext,
+  principal: Principal,
+  to: readonly string[]
+): string | null {
+  if (principal.kind !== 'human') return null;
+  for (const address of to) {
+    if (!address.startsWith('run:')) continue;
+    const runId = address.slice('run:'.length);
+    if (!ctx.orchestrator.isRunLive(runId)) continue;
+    const meta = ctx.orchestrator.list().find((r) => r.id === runId);
+    const refusal =
+      meta === undefined
+        ? null
+        : runMessageRefusal(meta, principal.address, principal.canDecide);
+    if (refusal !== null) return refusal;
+  }
+  return null;
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -326,6 +349,8 @@ export async function sendMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
+  const refusal = liveRunRefusal(ctx, principal, parsedInput.value.to);
+  if (refusal !== null) return errorResponse(403, refusal);
 
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
   // a restart still replays the first send.

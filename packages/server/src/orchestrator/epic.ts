@@ -21,6 +21,7 @@ import type { EpicProgressChild, EpicSpend, EpicWave } from './epicPhase.js';
 import type { FixLoopState } from './fixLoop.js';
 import type { Orchestrator } from './orchestrator.js';
 import { epicSessionsPath, runsDir } from './paths.js';
+import type { TaskAuthorship } from './taskAuthorship.js';
 import type { RunMeta } from './types.js';
 import {
   OrchestratorClientError,
@@ -136,6 +137,8 @@ export interface EpicEngineContext {
   // field — appendEpicActivity() below falls back to an unattributed
   // Activity line when it's absent.
   actorContext?: ActorContext;
+  // Who wrote each task; absent, every auto-fill run acts for no one.
+  authorship?: TaskAuthorship;
 }
 
 // How long a fill that failed outright waits before retrying itself, and how
@@ -356,10 +359,10 @@ export class EpicEngine {
   // POST /api/epics/:id/resume. The mid-session throttle and "raise the
   // ceiling" verb: overrides are validated like start()'s, then the session
   // fills again. `startedAt` is untouched, so spend keeps counting the runs
-  // already made.
+  // already made. A given `startedBy` re-keys who the fills act for (null: no one).
   async resume(
     epicId: string,
-    opts: EpicSessionOptions = {}
+    opts: EpicSessionOptions & { startedBy?: string | null } = {}
   ): Promise<EpicSession> {
     this.requireEpic(epicId);
     const session = this.sessions.get(epicId);
@@ -386,6 +389,8 @@ export class EpicEngine {
     session.concurrency = concurrency;
     session.maxSpendUsd = maxSpendUsd;
     session.maxRuns = maxRuns;
+    if (opts.startedBy === null) delete session.startedBy;
+    else if (opts.startedBy !== undefined) session.startedBy = opts.startedBy;
     session.state = 'active';
     delete session.pausedReason;
     delete session.pausedDetail;
@@ -841,6 +846,13 @@ export class EpicEngine {
       slots
     );
     for (const taskId of batch) {
+      const task = clearOfLiveRuns.find((t) => t.meta.id === taskId);
+      // MEM-R8(b): the run acts for the session's operator only on a task
+      // that operator created and last wrote.
+      const operator =
+        task === undefined || this.ctx.authorship === undefined
+          ? null
+          : this.ctx.authorship.actsFor(task, session.startedBy ?? null);
       try {
         // The epic scheduler's own auto-fill decided this task was next —
         // no human pressed dispatch for it specifically. Through
@@ -850,7 +862,7 @@ export class EpicEngine {
         await this.ctx.orchestrator.dispatchOrResume(taskId, {
           executor: session.executor,
           actor: 'none',
-          operator: session.startedBy ?? null,
+          operator,
         });
       } catch (err) {
         // A task that already picked up a live run outside this session
