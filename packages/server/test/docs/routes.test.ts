@@ -287,6 +287,48 @@ describe('docs routes', () => {
     ]);
   });
 
+  it("answers 404 to a teammate asking for a run's proposal, its diff or its text", async () => {
+    await post('/docs', { title: 'Spec', body: 'v1\n' });
+    expect(
+      (await post('/docs/spec/status', { status: 'accepted' })).status
+    ).toBe(200);
+    const task = await json<{ meta: { id: string } }>(
+      await post('/tasks', { title: 'Proposing task' })
+    );
+    const run = await json<{ id: string }>(
+      await post(`/tasks/${task.meta.id}/runs`, { executor: 'claude' })
+    );
+    await waitFor(
+      async () =>
+        (
+          await json<{ meta: { state: string } }>(
+            await fetch(`${base}/runs/${run.id}`)
+          )
+        ).meta.state === 'running'
+    );
+    const edited = await rawFetch(`${base}/docs/spec/edit`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${executor.lastRunToken ?? ''}`,
+      },
+      body: JSON.stringify({ ops: [{ op: 'append', text: 'secret' }] }),
+    });
+    const { proposal } = await json<{ proposal: string }>(edited);
+    expect((await fetch(`${base}/docs/proposals/${proposal}`)).status).toBe(
+      200
+    );
+    const teammate = { authorization: `Bearer ${await teammateToken()}` };
+    for (const path of [
+      `/docs/proposals/${proposal}`,
+      `/docs/spec/diff?from=1&to=${proposal}`,
+      `/docs/spec?rev=${proposal}`,
+    ]) {
+      const res = await rawFetch(`${base}${path}`, { headers: teammate });
+      expect([path, res.status]).toEqual([path, 404]);
+    }
+  });
+
   it("answers a task's index lines, and a dispatched run's prompt carries them", async () => {
     const task = await json<{ meta: { id: string } }>(
       await post('/tasks', { title: 'Indexed task' })
