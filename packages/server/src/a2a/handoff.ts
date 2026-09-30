@@ -137,7 +137,7 @@ export async function sendProposalGate(
 }
 
 // The system's answer to the client's root; an answer already there is a replay.
-export async function answerRoot(
+async function answerRoot(
   deps: BridgeDeps,
   row: TaskRow,
   choice: 'accept' | 'decline',
