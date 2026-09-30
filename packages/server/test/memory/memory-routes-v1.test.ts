@@ -545,6 +545,33 @@ describe('owner-attributed agents', () => {
     expect(await personalIds(token)).toContain(secret);
   });
 
+  it('only an approving answer to the registration gate records an owner approval', async () => {
+    const decided: [string, boolean][] = [];
+    const host = handle.memory.host;
+    const original = host.agentDecided.bind(host);
+    host.agentDecided = (address, ownerCredential) => {
+      decided.push([address, ownerCredential]);
+      original(address, ownerCredential);
+    };
+    const denied = await setup('denied');
+    const approved = await setup('approved');
+    for (const [agent, choice] of [
+      [denied, 'deny'],
+      [approved, 'approve'],
+    ] as const) {
+      const reply = await fetch(
+        `${base}/api/messages/${registrationGate(agent.address)}/reply`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ body: '', choice }),
+        }
+      );
+      expect(reply.status).toBe(201);
+    }
+    expect(decided).toEqual([[approved.address, true]]);
+  });
+
   it("a teammate's re-approval after a revoke drops the owner's approval", async () => {
     const { secret, address, token } = await setup('again');
     await approveAs(address, handle.tokens.appToken);

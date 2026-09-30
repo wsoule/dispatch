@@ -371,8 +371,13 @@ export async function replyToMessage(
       canDecide: principal.canDecide,
     })
   );
+  // Only a reply that approves the registration can record an owner approval.
   const gate = target === null ? null : gateOf(target);
-  if (gate?.type === 'agent-registration')
+  if (
+    gate?.type === 'agent-registration' &&
+    result.message.kind === 'answer' &&
+    result.message.choice === 'approve'
+  )
     ctx.memory.host.agentDecided(
       gate.agent,
       principal.ownerCredential === true
