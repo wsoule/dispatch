@@ -71,6 +71,23 @@ export function toolApprovalOf(message: Message): ToolApprovalGate | null {
   return gate?.type === 'tool-approval' ? gate : null;
 }
 
+/** A task-proposal gate's draft, its A2A proposer and the client's root
+ *  message; null for any other message, or a look-alike not from the system. */
+export function taskProposalOf(
+  message: Message
+): { task: string; proposedBy: string; message: string } | null {
+  const gate = gateOf(message);
+  if (gate?.type !== 'task-proposal' || message.from !== 'agent:dispatch') {
+    return null;
+  }
+  const { task, proposedBy, message: root } = gate;
+  return typeof task === 'string' &&
+    typeof proposedBy === 'string' &&
+    typeof root === 'string'
+    ? { task, proposedBy, message: root }
+    : null;
+}
+
 function isBlockingQuestion(message: Message): boolean {
   return message.kind === 'question' && message.blocking;
 }

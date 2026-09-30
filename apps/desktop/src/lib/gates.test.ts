@@ -14,6 +14,7 @@ import {
   questionsByRun,
   runIdOf,
   scopeRequestsByRun,
+  taskProposalOf,
   toRunQuestion,
   toScopeRequest,
 } from './gates';
@@ -352,6 +353,40 @@ describe('gateOf', () => {
     };
     expect(gateOf(proposal)?.type).toBe('task-proposal');
     expect(toRunQuestion(proposal)).toBeNull();
+  });
+});
+
+describe('taskProposalOf', () => {
+  const proposal = msg('m-p', {
+    choices: ['approve', 'decline'],
+    data: {
+      type: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      message: 'm-root',
+    },
+  });
+
+  it('reads the draft, its proposer and the root from the system gate', () => {
+    expect(taskProposalOf(proposal)).toEqual({
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      message: 'm-root',
+    });
+  });
+
+  it('is null for other gates, plain questions and a look-alike from anyone but the system', () => {
+    expect(taskProposalOf(approval)).toBeNull();
+    expect(taskProposalOf(question)).toBeNull();
+    expect(
+      taskProposalOf({ ...proposal, from: 'agent:wyat/a2a.acme' })
+    ).toBeNull();
+    expect(
+      taskProposalOf({
+        ...proposal,
+        data: { type: 'task-proposal', task: 't-a1b2c3' },
+      })
+    ).toBeNull();
   });
 });
 

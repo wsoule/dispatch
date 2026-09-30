@@ -2,6 +2,7 @@ import type { AgentSummary, MailboxItem, Message } from '@dispatch/client';
 import { describe, expect, it } from 'bun:test';
 
 import type { MessageAccess } from './daemonAuth';
+import { taskDoc } from './taskDoc.test-helper';
 import {
   addressAction,
   hasAnswerButtons,
@@ -95,7 +96,7 @@ const scopeGate = msg('m-s', {
   data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
 });
 const lookups = threadLookups(
-  [{ meta: { id: 't-000001', title: 'Checkout' } }],
+  [taskDoc({ id: 't-000001', title: 'Checkout' })],
   [{ id: 'r-000001', taskId: 't-000001' }],
   [
     agent('agent:wyat/old', { status: 'revoked' }),
@@ -259,6 +260,55 @@ describe('rowControl', () => {
     expect(
       rowControl(memoryGate, { me: ME, open: true, access: TEAMMATE })
     ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+  });
+
+  it('gives everyone who sees a task proposal its card, with answers only for a decider', () => {
+    const proposal = msg('m-p', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'decline'],
+      data: {
+        type: 'task-proposal',
+        task: 't-a1b2c3',
+        proposedBy: 'agent:wyat/a2a.acme',
+        message: 'm-root',
+      },
+    });
+    const decider = rowControl(proposal, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({
+      kind: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      canDecide: true,
+    });
+    expect(offersAnswer(decider)).toBe(true);
+    const teammate = rowControl(proposal, {
+      me: ME,
+      open: true,
+      access: TEAMMATE,
+    });
+    expect(teammate).toEqual({
+      kind: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      canDecide: false,
+    });
+    expect(offersAnswer(teammate)).toBe(false);
+    expect(
+      hasAnswerButtons([proposal], {
+        me: ME,
+        openIds: new Set(['m-p']),
+        access: TEAMMATE,
+      })
+    ).toBe(false);
+    expect(
+      rowControl(proposal, { me: ME, open: false, access: DECIDER })
+    ).toEqual({ kind: 'none' });
   });
 
   it('shows a system gate of an unknown type as a decision card to a decider, and read-only to a teammate', () => {
@@ -807,6 +857,8 @@ describe('refs and labels', () => {
     expect(lookups.agentStatus('agent:wyat/old')).toBe('revoked');
     expect(lookups.agentStatus('agent:wyat/quiet')).toBe('muted');
     expect(lookups.agentStatus('agent:wyat/other')).toBeNull();
+    expect(lookups.taskDoc('t-000001')?.meta.title).toBe('Checkout');
+    expect(lookups.taskDoc('t-000404')).toBeNull();
     expect(
       threadTitle(msg('m-01', { body: `${'x'.repeat(90)}\nsecond line` }))
     ).toBe(`${'x'.repeat(79)}…`);
@@ -822,9 +874,8 @@ describe('refs and labels', () => {
   });
 
   it('keys the lookups by what they read, so an event that changes no label keeps them', () => {
-    const task = (status: string) => ({
-      meta: { id: 't-000001', title: 'Checkout', status },
-    });
+    const task = (status: string, updated = '2026-09-25T10:00:00.000Z') =>
+      taskDoc({ id: 't-000001', title: 'Checkout', status, updated });
     const run = (state: string) => ({
       id: 'r-000001',
       taskId: 't-000001',
@@ -839,8 +890,20 @@ describe('refs and labels', () => {
       key
     );
     expect(
-      lookupsKey([{ meta: { id: 't-000001', title: 'Cart' } }], runs, agents)
+      lookupsKey(
+        [taskDoc({ id: 't-000001', title: 'Cart', status: 'working' })],
+        runs,
+        agents
+      )
     ).not.toBe(key);
+    // A proposal card shows its draft, so a draft's edit counts; another task's does not.
+    expect(
+      lookupsKey([task('working', '2026-09-25T11:00:00.000Z')], runs, agents)
+    ).toBe(key);
+    const draftKey = lookupsKey([task('draft')], runs, agents);
+    expect(
+      lookupsKey([task('draft', '2026-09-25T11:00:00.000Z')], runs, agents)
+    ).not.toBe(draftKey);
     expect(
       lookupsKey(
         tasks,
