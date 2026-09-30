@@ -110,7 +110,13 @@ export function MemorySection({ data, config, onSave }: MemorySectionProps) {
         )}
       {client !== null && <SkippedFilesGroup client={client} port={port} />}
       {client !== null && <IdentityGroup client={client} port={port} />}
-      {config !== null && <RunSettingsGroup config={config} onSave={onSave} />}
+      {config !== null && (
+        <RunSettingsGroup
+          config={config}
+          exportBlocked={model?.exportBlocked ?? null}
+          onSave={onSave}
+        />
+      )}
     </>
   );
 }
@@ -512,9 +518,11 @@ function IdentityGroup({
 
 function RunSettingsGroup({
   config,
+  exportBlocked,
   onSave,
 }: {
   config: DispatchConfig;
+  exportBlocked: string | null;
   onSave: (patch: ConfigPatch) => Promise<unknown>;
 }) {
   const memory = config.memory ?? DEFAULT_MEMORY;
@@ -527,7 +535,7 @@ function RunSettingsGroup({
       <ChoiceSetting
         id="memory-claude-auto"
         title="Claude’s memory in runs"
-        subtitle="Export hands Claude your memory as its own and reads back what it saves. Off keeps Claude's own memory out of runs."
+        subtitle="Export hands Claude your memory as its own and reads back what it saves. Off keeps Claude's own memory out of runs once your Claude notes are imported."
         keywords="claudeAutoMemory export"
         value={memory.claudeAutoMemory}
         choices={[
@@ -538,6 +546,12 @@ function RunSettingsGroup({
           void onSave({ memory: { claudeAutoMemory } })
         }
       />
+      {memory.claudeAutoMemory === 'export' && exportBlocked !== null && (
+        <SettingsRow
+          title="Export unavailable"
+          subtitle={`Runs carry memory in their prompt instead: ${exportBlocked}`}
+        />
+      )}
       <NumberSetting
         id="memory-index-tokens"
         title="Index budget"

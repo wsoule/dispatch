@@ -88,6 +88,8 @@ interface MemoryHealth {
   personal: { available: boolean; reason: string | null } | null;
   // The caller's pinned entries alone exceed indexTokens.
   pinnedOverflow: boolean;
+  // Why runs cannot use the Claude export (the preflight failed), or null.
+  exportBlocked: string | null;
   // The owner's Claude-notes import; null for anyone but the daemon's own human.
   claudeImport: {
     state: ImportState | null;
@@ -816,6 +818,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       lastDecayAt: shared?.meta('last_decay_at') ?? null,
       personal: principal === null ? null : personalHealth(principal),
       pinnedOverflow: principal === null ? false : pinnedOverflow(principal),
+      exportBlocked: preflight.ok ? null : preflight.reason,
       claudeImport:
         principal !== null &&
         principal.kind === 'human' &&

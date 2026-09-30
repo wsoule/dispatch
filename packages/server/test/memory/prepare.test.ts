@@ -286,6 +286,7 @@ describe('MemoryService.prepare', () => {
     });
     await waitFor(() => checks > 0);
     expect(prepare(run('human:ada')).memory.mode).toBe('prompt');
+    expect(memory.health(null).exportBlocked).toBe('no Claude Code CLI');
     passing = true;
     const before = checks;
     // Two more starts mean the first one that saw `passing` has settled.

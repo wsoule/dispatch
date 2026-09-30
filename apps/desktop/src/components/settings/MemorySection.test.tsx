@@ -335,6 +335,18 @@ describe('MemorySection', () => {
     );
   });
 
+  // With Export chosen, a failing preflight quietly runs everything in prompt mode.
+  it('says why runs cannot use the Claude export', async () => {
+    renderSection(
+      memoryClient({ health: health({ exportBlocked: 'no Claude Code CLI' }) })
+    );
+    expect(
+      await screen.findByText(
+        'Runs carry memory in their prompt instead: no Claude Code CLI'
+      )
+    ).toBeTruthy();
+  });
+
   it('writes claudeAutoMemory and indexTokens through the config patch', async () => {
     const saved = renderSection(memoryClient());
     await screen.findByText('15 entries · 2 open proposals · full-text search');

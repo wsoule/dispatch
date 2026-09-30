@@ -131,6 +131,7 @@ export function health(over: Partial<MemoryHealth> = {}): MemoryHealth {
     lastDecayAt: null,
     personal: { available: true, reason: null },
     pinnedOverflow: false,
+    exportBlocked: null,
     claudeImport: {
       state: 'complete',
       source: '/Users/x/.claude/projects/-a/memory',

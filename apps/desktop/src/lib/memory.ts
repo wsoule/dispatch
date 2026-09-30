@@ -189,6 +189,8 @@ export interface MemorySettingsModel {
   personalUnavailable: string | null;
   /** The caller's pinned entries alone exceed the index budget. */
   pinnedOverflow: boolean;
+  /** Why runs cannot use the Claude export, when they cannot. */
+  exportBlocked: string | null;
 }
 
 // The import's own orders, so the report reads the same as the CLI's.
@@ -259,6 +261,7 @@ export function memorySettingsModel(health: MemoryHealth): MemorySettingsModel {
         ? (health.personal.reason ?? 'personal memory is unavailable')
         : null,
     pinnedOverflow: health.pinnedOverflow,
+    exportBlocked: health.exportBlocked,
   };
 }
 

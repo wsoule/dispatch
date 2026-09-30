@@ -900,6 +900,8 @@ export interface MemoryHealth {
   personal: { available: boolean; reason: string | null } | null;
   /** The caller's pinned entries alone exceed the index budget. */
   pinnedOverflow: boolean;
+  /** Why runs cannot use the Claude export (its preflight failed), or null. */
+  exportBlocked: string | null;
   /** The owner's Claude-notes import; null for anyone but the daemon's own human. */
   claudeImport: {
     state: 'complete' | 'failed' | 'unconfirmed' | 'running' | null;
