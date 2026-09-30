@@ -1,6 +1,7 @@
 import type { DocFileMeta } from '@dispatch/core';
 import {
   docBodyProblem,
+  DOCS_LIMITS,
   docSlugProblem,
   docTitleProblem,
   normalizeDocText,
@@ -10,6 +11,7 @@ import {
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -27,6 +29,12 @@ import type { DocsService } from './service.js';
 
 const DOCS_REL = join('.dispatch', 'docs');
 const UNAVAILABLE = 'docs store unavailable; .dispatch/docs left as it was';
+
+// How to clear a kept staging directory, named in the step's problem and the
+// health route's restore report.
+function clearHint(restoreDir: string): string {
+  return `staged files are in ${restoreDir}; fix them and restart dispatchd to retry, or delete that directory once handled`;
+}
 
 // The staged restore's files, or none when nothing is staged.
 function stagedFiles(restoreDir: string): string[] {
@@ -78,7 +86,7 @@ export function docsReceiptsStep(
         changed,
         removed: 0,
         problems: [
-          `a staged restore is pending (${pending.join(', ')}); nothing removed`,
+          `a staged restore is pending (${pending.join(', ')}); nothing removed. ${clearHint(restoreDir)}`,
         ],
       };
     }
@@ -105,6 +113,8 @@ export interface RestoreReport {
   restored: number;
   skipped: number;
   problems: { file: string; detail: string }[];
+  // Where the kept staging directory is and how to clear it; null once removed.
+  pending: string | null;
   at: string;
 }
 
@@ -122,6 +132,8 @@ function isId(id: string, prefix: 'doc' | 'rev'): boolean {
 function restoreProblem(meta: DocFileMeta, body: string): string | null {
   if (!isId(meta.id, 'doc')) return `id ${meta.id} is not a doc- id`;
   if (!isId(meta.rev, 'rev')) return `rev ${meta.rev} is not a rev- id`;
+  if (meta.parents.length > DOCS_LIMITS.revisionParents)
+    return `parents must be at most ${DOCS_LIMITS.revisionParents}`;
   const badParent = meta.parents.find((p) => !isId(p, 'rev'));
   if (badParent !== undefined) return `parent ${badParent} is not a rev- id`;
   if (!ADDRESS.test(meta.author))
@@ -152,10 +164,24 @@ export function applyStagedRestore(
     restored: 0,
     skipped: 0,
     problems: [],
+    pending: null,
     at: new Date().toISOString(),
   };
   for (const file of stagedFiles(restoreDir).filter((f) => f.endsWith('.md'))) {
-    const parsed = parseDocFile(readFileSync(join(restoreDir, file), 'utf8'));
+    const path = join(restoreDir, file);
+    const stat = lstatSync(path);
+    if (!stat.isFile()) {
+      report.problems.push({ file, detail: 'not a regular file' });
+      continue;
+    }
+    if (stat.size > DOCS_LIMITS.receiptFileBytes) {
+      report.problems.push({
+        file,
+        detail: `over ${DOCS_LIMITS.receiptFileBytes} bytes`,
+      });
+      continue;
+    }
+    const parsed = parseDocFile(readFileSync(path, 'utf8'));
     if ('error' in parsed) {
       report.problems.push({ file, detail: parsed.error });
       continue;
@@ -181,6 +207,7 @@ export function applyStagedRestore(
   }
   if (report.problems.length === 0)
     rmSync(restoreDir, { recursive: true, force: true });
+  else report.pending = clearHint(restoreDir);
   service.recordRestore(report);
   return report;
 }

@@ -1,4 +1,4 @@
-import { parseDocFile, renderDocFile } from '@dispatch/core';
+import { DOCS_LIMITS, parseDocFile, renderDocFile } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
@@ -9,6 +9,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -217,6 +218,9 @@ describe('the docs receipts step', () => {
     expect(files()).toEqual(['a.md']);
     expect(out.removed).toBe(0);
     expect(out.problems[0]).toContain('pending');
+    // Says where the staged files are and how to clear them.
+    expect(out.problems[0]).toContain(restoreDir);
+    expect(out.problems[0]).toContain('delete');
   });
 });
 
@@ -315,6 +319,46 @@ describe('the boot restore', () => {
     const report = applyStagedRestore(service, restoreDir);
     expect(report?.problems[0].detail).toContain('hash');
     expect(existsSync(restoreDir)).toBe(true);
+    // The kept directory is named, with how to clear it, for the health route.
+    expect(report?.pending).toContain(restoreDir);
+    expect(report?.pending).toContain('delete');
+    expect(
+      (service.health(service.actorFor(OWNER)).restore as { pending: string })
+        .pending
+    ).toContain(restoreDir);
+  });
+
+  it('names no pending directory once every file applied', () => {
+    const { service } = makeService();
+    stage('restored.md', 'body\n');
+    expect(applyStagedRestore(service, restoreDir)?.pending).toBeNull();
+  });
+
+  it('refuses a file over the receipt file limit, a symlink, and too many parents', () => {
+    const { service } = makeService();
+    mkdirSync(restoreDir, { recursive: true });
+    writeFileSync(
+      join(restoreDir, 'huge.md'),
+      'x'.repeat(DOCS_LIMITS.receiptFileBytes + 1)
+    );
+    const target = join(dir, 'elsewhere.md');
+    writeFileSync(target, 'x');
+    symlinkSync(target, join(restoreDir, 'link.md'));
+    stage('many.md', 'fine\n', {
+      slug: 'many',
+      parents: Array.from(
+        { length: DOCS_LIMITS.revisionParents + 1 },
+        (_, i) => `rev-01K3Z9R00000000000000000${String(i).padStart(2, '0')}`
+      ),
+    });
+    const report = applyStagedRestore(service, restoreDir);
+    const byFile = Object.fromEntries(
+      (report?.problems ?? []).map((p) => [p.file, p.detail])
+    );
+    expect(report?.restored).toBe(0);
+    expect(byFile['huge.md']).toContain('over');
+    expect(byFile['link.md']).toContain('regular file');
+    expect(byFile['many.md']).toContain('parents');
   });
 
   it('skips an id this project still holds, and one it deleted', () => {
