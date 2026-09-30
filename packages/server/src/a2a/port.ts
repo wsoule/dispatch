@@ -528,16 +528,34 @@ export class DaemonBridgePort implements BridgePort {
       );
     }
     if (row.skill === 'handoff') return this.cancelHandoff(caller, row);
-    if (!closeGate(this.deps.engine, row.id, `canceled by ${caller.address}`)) {
+    if (
+      !this.canceledThenClosed(row.id, row.id, `canceled by ${caller.address}`)
+    ) {
       throw new A2AError(
         'TASK_NOT_CANCELABLE',
         'this question was just answered'
       );
     }
-    this.deps.store.updateTask(row.id, {
+    this.hub.recompute(row.id);
+  }
+
+  // Records canceledAt before closing the gate, so a crash between the two
+  // still reads CANCELED; an answer that won the race takes it back.
+  private canceledThenClosed(
+    taskId: string,
+    gate: string,
+    reason: string
+  ): boolean {
+    this.deps.store.updateTask(taskId, {
       canceledAt: this.now().toISOString(),
     });
-    this.hub.recompute(row.id);
+    let closed = false;
+    try {
+      closed = closeGate(this.deps.engine, gate, reason);
+    } finally {
+      if (!closed) this.deps.store.updateTask(taskId, { canceledAt: null });
+    }
+    return closed;
   }
 
   // A proposal still open is closed and its draft dropped; once the owner has
@@ -561,18 +579,18 @@ export class DaemonBridgePort implements BridgePort {
         'the task is approved; the project owner was notified'
       );
     }
-    if (
-      row.gate !== null &&
-      !closeGate(engine, row.gate, 'canceled by the client')
+    if (row.gate === null) {
+      this.deps.store.updateTask(row.id, {
+        canceledAt: this.now().toISOString(),
+      });
+    } else if (
+      !this.canceledThenClosed(row.id, row.gate, 'canceled by the client')
     ) {
       throw new A2AError(
         'TASK_NOT_CANCELABLE',
         'the project owner just answered this proposal'
       );
     }
-    this.deps.store.updateTask(row.id, {
-      canceledAt: this.now().toISOString(),
-    });
     const task =
       row.dispatchTask === null ? null : this.deps.tasks.get(row.dispatchTask);
     const { dropped, phase } = this.deps.statuses();

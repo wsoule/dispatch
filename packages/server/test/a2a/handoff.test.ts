@@ -13,7 +13,7 @@ import {
   projectPolicy,
 } from '@dispatch/core';
 import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   appendFileSync,
   existsSync,
@@ -373,6 +373,24 @@ describe('a handoff', () => {
       `task:${draft.meta.id}`,
     ]);
     expect((await f.port.open(f.caller, ask)).kind).toBe('task');
+  });
+
+  it('records a handoff cancel before closing its gate', async () => {
+    const one = await open();
+    const engine = f.messaging.engine;
+    const close = engine.close.bind(engine);
+    let atClose: string | null | undefined;
+    const spy = spyOn(engine, 'close').mockImplementation((qid, reason) => {
+      atClose = f.store.getTask(one.id)?.canceledAt;
+      return close(qid, reason);
+    });
+    try {
+      await f.port.cancel(f.caller, one.id);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(atClose).toEqual(expect.any(String));
+    expect(await state(one.id)).toBe('CANCELED');
   });
 
   it('cancels with the gate open (CANCELED, draft dropped) but not after approval', async () => {

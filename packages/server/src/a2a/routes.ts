@@ -247,9 +247,15 @@ async function declineTask(
     reason === undefined || reason.trim() === ''
       ? 'declined by the owner'
       : `declined by the owner: ${reason.trim()}`;
-  if (!closeGate(ctx.messaging.engine, id, text))
-    return errorResponse(409, 'this question was just answered');
+  // declinedAt first, so a crash before the close still reads REJECTED.
   b.store.updateTask(id, { declinedAt: new Date().toISOString() });
+  let closed = false;
+  try {
+    closed = closeGate(ctx.messaging.engine, id, text);
+  } finally {
+    if (!closed) b.store.updateTask(id, { declinedAt: null });
+  }
+  if (!closed) return errorResponse(409, 'this question was just answered');
   b.a2a.watch?.recompute(id);
   changed(ctx);
   return jsonResponse(b.store.getTask(id));

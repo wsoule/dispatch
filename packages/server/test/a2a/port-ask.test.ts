@@ -1,6 +1,6 @@
 import type { OpenInput } from '@dispatch/a2a';
 import { decideState } from '@dispatch/a2a';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { reconcileA2A } from '../../src/a2a/reconcile.js';
@@ -351,6 +351,31 @@ describe('cancel', () => {
     await expect(f.port.cancel(f.caller, done)).rejects.toMatchObject({
       reason: 'TASK_NOT_CANCELABLE',
     });
+  });
+
+  it('records the cancel before closing the gate, and undoes it when an answer wins', async () => {
+    const id = await open();
+    const engine = f.messaging.engine;
+    const close = engine.close.bind(engine);
+    const atClose: (string | null | undefined)[] = [];
+    const spy = spyOn(engine, 'close').mockImplementation((qid, reason) => {
+      atClose.push(f.store.getTask(id)?.canceledAt);
+      return close(qid, reason);
+    });
+    try {
+      await f.port.cancel(f.caller, id);
+      expect(atClose[0]).toEqual(expect.any(String));
+      const raced = await open({ clientMessageId: 'c-2' });
+      spy.mockImplementation(() => {
+        throw new MessagingError('conflict', 'already answered');
+      });
+      await expect(f.port.cancel(f.caller, raced)).rejects.toMatchObject({
+        reason: 'TASK_NOT_CANCELABLE',
+      });
+      expect(f.store.getTask(raced)?.canceledAt).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
