@@ -304,25 +304,26 @@ test('team memory in the log is staged for the daemon to propose again', async (
   );
 });
 
-test('symlinked or oversized memory files are not staged, and are reported', async () => {
+test('symlinked, oversized or oddly named memory files are not staged, and are reported', async () => {
   const secret = join(temp('dispatch-secret-'), 'secret.md');
   writeFileSync(secret, 'not a lesson\n');
+  const leak = 'mem-01K5Z6G0000000000000000001.md';
+  const huge = 'mem-01K5Z6G0000000000000000002.md';
   const { remote } = pushedLog((log) => {
     const dir = join(log, '.dispatch', 'memory');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, MEMORY_FILE), 'a lesson\n');
-    symlinkSync(secret, join(dir, 'leak.md'));
-    writeFileSync(
-      join(dir, 'huge.md'),
-      'x'.repeat(MEMORY_RECEIPT_FILE_BYTES + 1)
-    );
+    symlinkSync(secret, join(dir, leak));
+    writeFileSync(join(dir, huge), 'x'.repeat(MEMORY_RECEIPT_FILE_BYTES + 1));
+    writeFileSync(join(dir, 'notes.md'), 'not an entry\n');
   });
   const { fresh, lines } = await restoreFresh(remote);
   expect(readdirSync(memoryStagingFor(fresh))).toEqual([MEMORY_FILE]);
-  expect(lines.some((l) => l.includes('leak.md'))).toBe(true);
-  expect(lines.some((l) => l.includes('huge.md') && l.includes('over'))).toBe(
-    true
-  );
+  expect(lines.some((l) => l.includes(leak))).toBe(true);
+  expect(lines.some((l) => l.includes(huge) && l.includes('over'))).toBe(true);
+  expect(
+    lines.some((l) => l.includes('notes.md') && l.includes('not named'))
+  ).toBe(true);
 });
 
 test('a symlinked .dispatch/memory stages nothing', async () => {

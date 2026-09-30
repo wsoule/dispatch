@@ -69,8 +69,17 @@ function writeExported(store: MemoryStore, ids: ReadonlySet<string>): void {
   if (store.meta(EXPORTED_KEY) !== value) store.setMeta(EXPORTED_KEY, value);
 }
 
+// Whether a restore already took `<id>.md` in: an entry holds its origin, or
+// a proposal holding it was decided; an open one is not yet settled.
+function restoredFrom(store: MemoryStore, id: string): boolean {
+  const origin = `receipts:${id}`;
+  if (store.entryByOrigin(origin) !== null) return true;
+  const proposal = store.proposalByOrigin(origin);
+  return proposal !== null && proposal.state !== 'open';
+}
+
 // Writes every team entry of `shared()`, in any state; a file is removed only
-// when this store exported it, and none while a staged restore waits.
+// when this store exported it or restored from it, even while a restore waits.
 export function memoryReceiptsStep(
   shared: () => MemoryStore | null,
   restoreDir: string
@@ -95,30 +104,24 @@ export function memoryReceiptsStep(
       }
     }
     const pending = stagedFiles(restoreDir);
-    if (pending.length > 0) {
-      writeExported(store, new Set([...exported, ...wanted]));
-      return {
-        changed,
-        removed: 0,
-        problems: [
-          `a staged memory restore is pending (${pending.join(', ')}); nothing removed. ${clearHint(restoreDir)}`,
-        ],
-      };
-    }
     const problems: string[] = [];
     let removed = 0;
     for (const file of readdirSync(out).sort()) {
       const id = receiptId(file);
       if (!file.endsWith('.md') || (id !== null && wanted.has(id))) continue;
-      if (id !== null && exported.has(id)) {
+      if (id !== null && (exported.has(id) || restoredFrom(store, id))) {
         rmSync(join(out, file));
         removed++;
-      } else {
+      } else if (pending.length === 0) {
         problems.push(
-          `receipt file for unknown memory entry ${file}; run dispatch receipts restore, or delete the file`
+          `receipt file ${file} was not written from this memory.db; kept. Delete it once no longer needed`
         );
       }
     }
+    if (pending.length > 0)
+      problems.push(
+        `a staged memory restore is pending (${pending.join(', ')}); files this memory.db did not write are kept until it is applied`
+      );
     writeExported(store, wanted);
     return { changed, removed, problems };
   };

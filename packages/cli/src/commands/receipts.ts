@@ -43,13 +43,17 @@ function remoteUrl(root: string, cwd: string, from: string): string {
   return absoluteGitLocation(cwd, from);
 }
 
+// `<id>.md` with an id shaped like @dispatch/memory's MEMORY_ID_PATTERN.
+const MEMORY_RECEIPT_NAME = /^mem-[0-9A-HJKMNP-TV-Z]{26}\.md$/;
+
 // Copies the clone's regular `.dispatch/<kind>/*.md` files, each within
 // `limit`, to the daemon's run-state `<kind>-restore/` (0700); a symlink is refused.
 function stageReceiptFiles(
   clone: string,
   root: string,
   kind: 'docs' | 'memory',
-  limit: number
+  limit: number,
+  name: RegExp = /\.md$/
 ): { staged: number; problems: string[] } {
   const rel = `.dispatch/${kind}`;
   const from = join(clone, '.dispatch', kind);
@@ -64,6 +68,10 @@ function stageReceiptFiles(
   const files = readdirSync(from)
     .filter((f) => f.endsWith('.md'))
     .filter((f) => {
+      if (!name.test(f)) {
+        problems.push(`${rel}/${f}: not named like a receipt file; skipped`);
+        return false;
+      }
       const stat = lstatSync(join(from, f));
       if (!stat.isFile()) {
         problems.push(`${rel}/${f}: not a regular file; skipped`);
@@ -157,7 +165,8 @@ export function registerReceiptsCommands(
             dir,
             root,
             'memory',
-            MEMORY_RECEIPT_FILE_BYTES
+            MEMORY_RECEIPT_FILE_BYTES,
+            MEMORY_RECEIPT_NAME
           );
           if (memory.staged > 0)
             ctx.log(

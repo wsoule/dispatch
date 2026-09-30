@@ -121,26 +121,75 @@ describe('the memory receipts step', () => {
     const out = step(dir);
     expect(out.removed).toBe(1);
     expect(out.problems).toEqual([
-      `receipt file for unknown memory entry ${stranger}; run dispatch receipts restore, or delete the file`,
+      `receipt file ${stranger} was not written from this memory.db; kept. Delete it once no longer needed`,
     ]);
     expect(files()).toEqual([`${kept.id}.md`, stranger].sort());
   });
 
-  it('removes nothing while a staged restore is pending', () => {
+  it('owns a file whose id a restored entry or a decided restore proposal names', async () => {
     const t = testEngine();
-    const gone = seed(t, 'team', 'hard deleted');
+    t.host.raise = () => Promise.resolve('m-gate');
+    const approved = 'mem-01K00000000000000000000001';
+    const rejected = 'mem-01K00000000000000000000002';
+    const waiting = 'mem-01K00000000000000000000003';
+    const restoredEntry = seed(t, 'team', 'restored', {
+      origin: `receipts:${approved}`,
+    });
+    const propose = (id: string, title: string) =>
+      t.engine.submitProposal(
+        { address: 'agent:dispatch', canDecide: false, kind: 'agent' },
+        {
+          action: 'add',
+          scope: 'team',
+          content: {
+            scope: 'team',
+            kind: 'fact',
+            title,
+            body: title,
+            refs: [],
+            epic: null,
+            appliesTo: [],
+            projectKey: null,
+          },
+          origin: `receipts:${id}`,
+        }
+      );
+    const no = (await propose(rejected, 'rejected')) as { proposal: string };
+    t.engine.applyGateAnswer({
+      proposalId: no.proposal,
+      gateId: 'm-gate',
+      choice: 'reject',
+      by: 'human:wyat',
+      reason: '',
+      expired: false,
+    });
+    await propose(waiting, 'waiting');
+    mkdirSync(memoryDir(), { recursive: true });
+    for (const id of [approved, rejected, waiting])
+      writeFileSync(join(memoryDir(), `${id}.md`), 'from the old log\n');
+    const out = memoryReceiptsStep(() => t.shared, restoreDir)(dir);
+    expect(out.removed).toBe(2);
+    expect(out.problems).toHaveLength(1);
+    expect(out.problems[0]).toContain(`${waiting}.md`);
+    expect(files()).toEqual([`${restoredEntry.id}.md`, `${waiting}.md`].sort());
+  });
+
+  it('keeps unknown files while a restore is staged, but still prunes its own', () => {
+    const t = testEngine();
+    const gone = seed(t, 'team', 'hard deleted secret');
     const step = memoryReceiptsStep(() => t.shared, restoreDir);
     step(dir);
     t.shared.deleteEntry(gone.id, 'human:wyat', new Date().toISOString());
+    const stranger = 'mem-01K00000000000000000000000.md';
+    writeFileSync(join(memoryDir(), stranger), 'from the old log\n');
     mkdirSync(restoreDir);
-    writeFileSync(join(restoreDir, `${gone.id}.md`), 'staged\n');
+    writeFileSync(join(restoreDir, stranger), 'staged\n');
     const out = step(dir);
-    expect(out.removed).toBe(0);
-    expect(out.problems[0]).toStartWith('a staged memory restore is pending');
-    expect(files()).toEqual([`${gone.id}.md`]);
-    // Still exported by this store, so it goes once the restore is handled.
-    rmSync(restoreDir, { recursive: true });
-    expect(step(dir).removed).toBe(1);
+    expect(out.removed).toBe(1);
+    expect(out.problems).toEqual([
+      `a staged memory restore is pending (${stranger}); files this memory.db did not write are kept until it is applied`,
+    ]);
+    expect(files()).toEqual([stranger]);
   });
 
   it('leaves the log as it was while memory.db is unavailable', () => {
