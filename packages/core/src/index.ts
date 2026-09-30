@@ -69,6 +69,7 @@ export {
   untrustedFenced,
   untrustedInline,
 } from './untrusted.js';
+export { memoryReadView } from './memoryRead.js';
 export {
   parseTaskFile,
   serializeTaskFile,

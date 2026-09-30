@@ -1,4 +1,4 @@
-import { readMemoryConfig } from '@dispatch/core';
+import { memoryReadView, readMemoryConfig } from '@dispatch/core';
 import type { MemoryConfigWarning, TaskStorePort } from '@dispatch/core';
 import {
   createMemoryIds,
@@ -862,6 +862,6 @@ export function overseerMemory(
         search: engine.searchMode(),
       };
     },
-    read: (ref) => memory.requireEngine().read(principal, ref),
+    read: (ref) => memoryReadView(memory.requireEngine().read(principal, ref)),
   };
 }

@@ -1,4 +1,4 @@
-import { untrustedFenced } from '@dispatch/core';
+import { memoryReadView } from '@dispatch/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -112,19 +112,6 @@ const saveOutput = {
   gate: z.string().nullable().optional(),
 };
 
-// The GET /api/memory/:id fields memory_read reshapes; the rest pass through.
-interface ReadBody {
-  entry: Record<string, unknown> & {
-    body: string;
-    handle: string;
-    author: unknown;
-    trust: unknown;
-    decidedBy: unknown;
-    decidedByPolicy: unknown;
-  };
-  revisions: { rev: number; by: string; cause: string; at: string }[];
-}
-
 export function registerMemoryTools(server: McpServer, rootDir: string): void {
   server.registerTool(
     'memory_search',
@@ -183,31 +170,14 @@ export function registerMemoryTools(server: McpServer, rootDir: string): void {
       annotations: { readOnlyHint: true },
     },
     async ({ id }) => {
-      const out = await getJson<ReadBody>(
+      const out = await getJson<Parameters<typeof memoryReadView>[0]>(
         rootDir,
         server,
         `/api/memory/${encodeURIComponent(memoryRef(id))}`,
         'memory_read'
       );
       if (!out.ok) return out.result;
-      const { entry, revisions } = out.body;
-      const { body, ...rest } = entry;
-      return toolResult({
-        entry: rest,
-        body: untrustedFenced(`memory ${entry.handle}`, body),
-        provenance: {
-          author: entry.author,
-          trust: entry.trust,
-          decidedBy: entry.decidedBy,
-          decidedByPolicy: entry.decidedByPolicy,
-        },
-        revisions: revisions.map(({ rev, by, cause, at }) => ({
-          rev,
-          by,
-          cause,
-          at,
-        })),
-      });
+      return toolResult(memoryReadView(out.body));
     }
   );
 

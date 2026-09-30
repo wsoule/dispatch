@@ -226,4 +226,38 @@ describe('overseerMemory', () => {
       expect(() => port.read(ref)).toThrow(/you can see/);
     t.memory.close();
   });
+
+  // The same shape the MCP's memory_read returns: no revision snapshots, and
+  // the body fenced as untrusted text.
+  it('reads an entry without revision snapshots, its body fenced', async () => {
+    const t = setup();
+    const owner: Principal = {
+      address: 'human:wyat',
+      canDecide: true,
+      kind: 'human',
+      ownerCredential: true,
+    };
+    const saved = await t.memory.requireEngine().save(owner, {
+      scope: 'team',
+      kind: 'hazard',
+      title: 'watch the lockfile',
+      body: 'RAW-BODY-text',
+    });
+    if (saved.status !== 'active') throw new Error('expected an entry');
+    const read = overseerMemory(t.memory).read(saved.handle) as {
+      entry: Record<string, unknown>;
+      body: string;
+      revisions: Record<string, unknown>[];
+    };
+    expect(read.entry.body).toBeUndefined();
+    expect(read.body).toContain('RAW-BODY-text');
+    expect(read.body).not.toBe('RAW-BODY-text');
+    expect(Object.keys(read.revisions[0]).sort()).toEqual([
+      'at',
+      'by',
+      'cause',
+      'rev',
+    ]);
+    t.memory.close();
+  });
 });
