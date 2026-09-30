@@ -25,6 +25,7 @@ import {
   runKind,
   TERMINAL_RUN_STATES,
 } from '../orchestrator/types.js';
+import { statusModelFor } from '../statuses.js';
 import { tierAllows } from '../tiers.js';
 import {
   closeGate,
@@ -232,7 +233,7 @@ export function openMessaging(deps: {
     try {
       const task = deps.store.get(taskId);
       if (task === null) return 'is missing';
-      const state = wakeRefusal(task);
+      const state = wakeRefusal(task, statusModelFor(deps.rootDir));
       return state === null ? null : `is ${state}`;
     } catch (err) {
       return `could not be read: ${err instanceof Error ? err.message : String(err)}`;

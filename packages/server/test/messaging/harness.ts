@@ -22,6 +22,19 @@ import type {
 } from '../../src/orchestrator/types.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 
+// A status model shaped like a Linear team's workflow, with custom names.
+export const LINEAR_STATUSES = [
+  'statuses:',
+  '  - { name: Backlog, type: backlog }',
+  '  - { name: Todo, type: unstarted }',
+  '  - { name: In Progress, type: started }',
+  '  - { name: In Review, type: started }',
+  '  - { name: Done, type: completed }',
+  '  - { name: Canceled, type: canceled }',
+  'statusRoles: { ready: Todo, dispatched: In Progress, review: In Review, landing: null, landed: Done, dropped: Canceled }',
+  '',
+].join('\n');
+
 export const HUMAN: Sender = { address: 'human:wyat', canDecide: true };
 
 // Every policy Activity line openRecovered's messaging appended in this test.

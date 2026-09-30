@@ -9,6 +9,7 @@ import { GateHandlers } from '../../src/messaging/gates.js';
 import { DaemonMessagingHost } from '../../src/messaging/host.js';
 import type { DaemonHostDeps } from '../../src/messaging/host.js';
 import type { RunMeta } from '../../src/orchestrator/types.js';
+import { LINEAR_STATUSES } from './harness.js';
 
 // A message the tests don't care about the content of; only `id`/`from` vary.
 function stubMessage(overrides: Partial<Message> = {}): Message {
@@ -174,6 +175,24 @@ describe('DaemonMessagingHost.decide', () => {
       })
     ).toBe('deny');
   });
+
+  // Linear-linked projects mirror the team's workflow names (see regenerateStatuses).
+  it.each(['Done', 'Canceled'])(
+    'denies even a human waking a task in a %s status of a Linear-style model',
+    (status) => {
+      writeFileSync(join(root, '.dispatch', 'config.yml'), LINEAR_STATUSES);
+      const task = store.create({ title: 'Closed in Linear' });
+      store.update(task.meta.id, { status });
+      const { host } = makeHost();
+      expect(
+        host.decide({
+          type: 'wake',
+          target: `task:${task.meta.id}`,
+          message: stubMessage({ from: 'human:ada' }),
+        })
+      ).toBe('deny');
+    }
+  );
 
   it('asks at the default rung (1)', () => {
     const task = store.create({ title: 'Some work' });

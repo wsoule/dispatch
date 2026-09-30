@@ -2306,11 +2306,15 @@ export class Orchestrator {
   }
 
   // A wake's next run. Only a human's wake may continue a finished run's session
-  // (request changes); anything else dispatches or resumes.
+  // (request changes); anything else dispatches or resumes. A done task never wakes.
   async wakeTask(
     taskId: string,
     opts: { actor: string; continueFinished: boolean }
   ): Promise<RunMeta> {
+    const task = this.ctx.store.get(taskId);
+    if (task !== null && isDoneStatus(task.meta.status, this.statuses())) {
+      throw new OrchestratorConflictError(`task is ${task.meta.status}`);
+    }
     const latest = this.registry
       .list()
       .find((r) => r.taskId === taskId && runKind(r) === 'execute');

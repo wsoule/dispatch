@@ -1,6 +1,7 @@
-import { isContainerKind } from '@dispatch/core';
+import { isContainerKind, isDoneStatus } from '@dispatch/core';
 import type {
   PolicyRuling as CorePolicyRuling,
+  StatusModel,
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
@@ -19,6 +20,7 @@ import type {
 
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { consultProjectPolicy } from '../policyEngine.js';
+import { statusModelFor } from '../statuses.js';
 import type { GateHandlers } from './gates.js';
 
 export interface DaemonHostDeps {
@@ -65,13 +67,11 @@ export function settle<T>(call: () => T): Promise<T> {
   }
 }
 
-// Why `task` can never be woken ('an epic' for any container, 'landed', 'dropped'),
-// or null when a wake may dispatch it. Checked when a wake gate is raised and again
-// when it runs.
-export function wakeRefusal(task: TaskDoc): string | null {
+// Why `task` can never be woken ('an epic', or its done status's name under the
+// project's `model`), or null. Checked when a wake gate is raised and when it runs.
+export function wakeRefusal(task: TaskDoc, model: StatusModel): string | null {
   if (isContainerKind(task.meta.kind)) return 'an epic';
-  if (task.meta.status === 'landed' || task.meta.status === 'dropped')
-    return task.meta.status;
+  if (isDoneStatus(task.meta.status, model)) return task.meta.status;
   return null;
 }
 
@@ -193,7 +193,11 @@ export class DaemonMessagingHost implements MessagingHost {
     if (target.startsWith('run:')) return human ? 'allow' : 'deny';
     if (!target.startsWith('task:')) return 'deny';
     const task = this.deps.store.get(target.slice('task:'.length));
-    if (task === null || wakeRefusal(task) !== null) return 'deny';
+    if (
+      task === null ||
+      wakeRefusal(task, statusModelFor(this.deps.rootDir)) !== null
+    )
+      return 'deny';
     // A local human's wake is their own call, so policy never gates it.
     if (human) return 'allow';
     const ruling: CorePolicyRuling = consultProjectPolicy(
