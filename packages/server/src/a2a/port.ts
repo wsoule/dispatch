@@ -52,7 +52,7 @@ import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
-import { answerRoot, approvedTasksOf, openHandoff } from './handoff.js';
+import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
 import type { BridgeWatch } from './watch.js';
 
@@ -591,17 +591,7 @@ export class DaemonBridgePort implements BridgePort {
         'the project owner just answered this proposal'
       );
     }
-    const task =
-      row.dispatchTask === null ? null : this.deps.tasks.get(row.dispatchTask);
-    const { dropped, phase } = this.deps.statuses();
-    if (
-      task !== null &&
-      dropped !== null &&
-      phase(task.meta.status) !== 'dropped'
-    )
-      this.deps.updateTask(task.meta.id, { status: dropped });
-    await answerRoot(this.deps, row, 'decline', 'Canceled by the client.');
-    this.hub.recompute(row.id);
+    await finishCancel(this.deps, this.hub, row);
   }
 
   watch(caller: Caller, taskId: string, onChange: () => void): () => void {

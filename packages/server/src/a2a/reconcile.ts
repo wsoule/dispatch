@@ -12,7 +12,12 @@ import {
   SYSTEM_ADDRESS,
 } from '@dispatch/protocol';
 
-import { handleProposal, proposalKey, sendProposalGate } from './handoff.js';
+import {
+  finishCancel,
+  handleProposal,
+  proposalKey,
+  sendProposalGate,
+} from './handoff.js';
 import type { BridgeDeps } from './port.js';
 import type { BridgeWatch } from './watch.js';
 
@@ -62,7 +67,12 @@ export function reconcileHandoff(
   row: TaskRow
 ): Promise<void> | null {
   const root = deps.engine.getMessage(row.id);
-  if (root === null || row.canceledAt !== null) return null;
+  if (root === null) return null;
+  // A crash between recording a cancel and closing its gate: finish the cancel.
+  if (row.canceledAt !== null)
+    return deps.engine.answerOf(row.id) === null
+      ? finishCancel(deps, hub, row)
+      : null;
   let task = row.dispatchTask;
   if (task === null) {
     const marker = `(message ${row.id})`;

@@ -393,6 +393,30 @@ describe('a handoff', () => {
     expect(await state(one.id)).toBe('CANCELED');
   });
 
+  // A crash between recording the cancel and closing the gate leaves the gate open.
+  it('refuses an owner approval of a handoff the client canceled before a crash', async () => {
+    const one = await open();
+    f.store.updateTask(one.id, { canceledAt: new Date().toISOString() });
+    await f.messaging.engine.reply(
+      one.row.gate!,
+      { body: '', choice: 'approve' },
+      HUMAN
+    );
+    expect(f.tasks.get(one.draft.meta.id)?.meta.status).toBe('dropped');
+    expect(f.messaging.engine.answerOf(one.id)?.choice).toBe('decline');
+    expect(await state(one.id)).toBe('CANCELED');
+  });
+
+  it('finishes a cancel a crash cut short at boot: gate closed, draft dropped', async () => {
+    const one = await open();
+    f.store.updateTask(one.id, { canceledAt: new Date().toISOString() });
+    await reconcileA2A(f.deps, f.watch).settled;
+    expect(f.messaging.engine.answerOf(one.row.gate!)).not.toBeNull();
+    expect(f.tasks.get(one.draft.meta.id)?.meta.status).toBe('dropped');
+    expect(f.messaging.engine.answerOf(one.id)?.choice).toBe('decline');
+    expect(await state(one.id)).toBe('CANCELED');
+  });
+
   it('cancels with the gate open (CANCELED, draft dropped) but not after approval', async () => {
     const one = await open();
     await f.port.cancel(f.caller, one.id);

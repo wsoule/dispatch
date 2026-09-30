@@ -16,7 +16,7 @@ import { untrustedInline } from '@dispatch/core';
 import type { Address, Message } from '@dispatch/protocol';
 import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
-import { SYSTEM_SENDER } from '../messaging/gates.js';
+import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import type { BridgeDeps } from './port.js';
 import { rowFor } from './reconcile.js';
 import type { BridgeWatch } from './watch.js';
@@ -167,6 +167,28 @@ export async function answerRoot(
   }
 }
 
+// Completes a client's cancel: closes a gate still open, drops the draft and
+// declines the root; idempotent, so a crash mid-cancel can run it again.
+export async function finishCancel(
+  deps: BridgeDeps,
+  hub: BridgeWatch,
+  row: TaskRow
+): Promise<void> {
+  if (row.gate !== null && deps.engine.answerOf(row.gate) === null)
+    closeGate(deps.engine, row.gate, 'canceled by the client');
+  const task =
+    row.dispatchTask === null ? null : deps.tasks.get(row.dispatchTask);
+  const { dropped, phase } = deps.statuses();
+  if (
+    task !== null &&
+    dropped !== null &&
+    phase(task.meta.status) !== 'dropped'
+  )
+    deps.updateTask(task.meta.id, { status: dropped });
+  await answerRoot(deps, row, 'decline', 'Canceled by the client.');
+  hub.recompute(row.id);
+}
+
 // The proposal's effect, for the gate a2a.db links to this root and draft;
 // idempotent, because a replay or boot reconciliation can run it again.
 export async function handleProposal(
@@ -185,6 +207,8 @@ export async function handleProposal(
     row.dispatchTask !== gate.task
   )
     return;
+  // A cancel recorded before a crash kept the gate open; the owner's answer cannot revive it.
+  if (row.canceledAt !== null) return finishCancel(deps, hub, row);
   const task = deps.tasks.get(gate.task);
   const statuses = deps.statuses();
   const phase = task === null ? null : statuses.phase(task.meta.status);
