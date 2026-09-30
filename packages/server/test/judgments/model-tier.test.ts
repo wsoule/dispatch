@@ -1,4 +1,5 @@
 import type { ModelConfig, TaskDoc } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { describe, expect, test } from 'bun:test';
 
 import type { JudgmentClient } from '../../src/judgments/client';
@@ -42,6 +43,7 @@ function task(
       writes: ['src/flags.ts'],
       external: null,
       exercised: false,
+      ...defaultTaskFields(),
       created: '2026-09-01T00:00:00.000Z',
       updated: '2026-09-01T00:00:00.000Z',
       ...over,

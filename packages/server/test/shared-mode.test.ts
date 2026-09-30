@@ -207,6 +207,61 @@ describe('team-local mode', () => {
   );
 
   it.skipIf(LAN_ADDRESS === undefined)(
+    'gzips a large list for a teammate, never for this machine',
+    async () => {
+      const store = new TaskStore(root);
+      for (let i = 0; i < 120; i++) store.create({ title: `Task ${i}` });
+      await boot('0.0.0.0');
+      const read = (host: string) =>
+        rawFetch(`http://${host}:${handle.port}/api/tasks?fields=meta`, {
+          headers: {
+            'accept-encoding': 'gzip',
+            authorization: `Bearer ${handle.tokens.agentToken}`,
+          },
+          decompress: false,
+        });
+
+      const local = await read('127.0.0.1');
+      expect(local.headers.get('content-encoding')).toBeNull();
+      const plain = await local.text();
+      expect(plain.length).toBeGreaterThan(32 * 1024);
+
+      const remote = await read(LAN_ADDRESS ?? '');
+      expect(remote.headers.get('content-encoding')).toBe('gzip');
+      const bytes = new Uint8Array(await remote.arrayBuffer());
+      expect(bytes.byteLength).toBeLessThan(plain.length / 4);
+      expect(new TextDecoder().decode(Bun.gunzipSync(bytes))).toBe(plain);
+    }
+  );
+
+  it.skipIf(LAN_ADDRESS === undefined)(
+    'keeps both Vary keys on a gzipped reply to a trusted origin',
+    async () => {
+      const store = new TaskStore(root);
+      for (let i = 0; i < 120; i++) store.create({ title: `Task ${i}` });
+      await boot('0.0.0.0');
+      const own = `http://${LAN_ADDRESS ?? ''}:${handle.port}`;
+      const res = await rawFetch(`${own}/api/tasks?fields=meta`, {
+        headers: {
+          origin: own,
+          'accept-encoding': 'gzip',
+          authorization: `Bearer ${handle.tokens.agentToken}`,
+        },
+        decompress: false,
+      });
+      await res.arrayBuffer();
+
+      expect(res.headers.get('content-encoding')).toBe('gzip');
+      expect(res.headers.get('access-control-allow-origin')).toBe(own);
+      const vary = (res.headers.get('vary') ?? '')
+        .split(',')
+        .map((key) => key.trim().toLowerCase());
+      expect(vary).toContain('accept-encoding');
+      expect(vary).toContain('origin');
+    }
+  );
+
+  it.skipIf(LAN_ADDRESS === undefined)(
     'a teammate’s session cookie opens the event socket from the daemon’s own page',
     async () => {
       await boot('0.0.0.0');

@@ -13,9 +13,21 @@ export {
   cardEtag,
   cardJson,
   DEFAULT_CARD_DESCRIPTION,
-  handoffSupported,
   offeredSkills,
 } from './card.js';
+export {
+  DEFAULT_HANDOFF_STATUSES,
+  handoffStatuses,
+  handoffSupported,
+  namedStatusVocabulary,
+} from './statuses.js';
+export type {
+  HandoffPhase,
+  HandoffStatuses,
+  StatusKind,
+  StatusVocabulary,
+  SupportedHandoffStatuses,
+} from './statuses.js';
 export {
   decodeInbound,
   decodeMessage,

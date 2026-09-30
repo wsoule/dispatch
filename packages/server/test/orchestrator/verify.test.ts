@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,6 +71,7 @@ function taskDoc(): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '## Description\n\nMake first-run sync non-destructive.\n\n## Acceptance Criteria\n\n- syncing twice never overwrites local edits\n',
   };
@@ -265,6 +267,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -296,6 +299,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -334,7 +338,11 @@ describe('VerificationRunner', () => {
     const task = store.create({ title: 'harden sync' });
     const head = commitHead();
 
-    await runner.startVerification({ taskId: task.meta.id, head });
+    await runner.startVerification({
+      operator: null,
+      taskId: task.meta.id,
+      head,
+    });
 
     await waitFor(() => runner.getLatestResult(task.meta.id) !== null);
     expect(runner.getLatestResult(task.meta.id)?.pass).toBe(false);
@@ -352,7 +360,11 @@ describe('VerificationRunner', () => {
     const task = store.create({ title: 'harden sync' });
     const head = commitHead();
 
-    await runner.startVerification({ taskId: task.meta.id, head });
+    await runner.startVerification({
+      operator: null,
+      taskId: task.meta.id,
+      head,
+    });
 
     await waitFor(() => runner.getLatestResult(task.meta.id) !== null);
     const latest = runner.getLatestResult(task.meta.id);
@@ -373,6 +385,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -401,6 +414,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -437,6 +451,7 @@ describe('VerificationRunner executor inheritance', () => {
     );
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });

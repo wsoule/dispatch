@@ -1,4 +1,5 @@
 import {
+  isDoneStatus,
   notificationKindForMessage,
   untrustedInline,
   untrustedVerbatim,
@@ -15,10 +16,15 @@ import type { TaskCache } from '../cache.js';
 import type { DocsService } from '../docs/service.js';
 import type { LedgerStorePort } from '../ledger.js';
 import { classifyLedgerEntry } from '../memory/ledgerImport.js';
+import { statusModelFor } from '../statuses.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
-import { TERMINAL_RUN_STATES } from './types.js';
+import {
+  actingOperator,
+  runMessageRefusal,
+  TERMINAL_RUN_STATES,
+} from './types.js';
 
 /**
  * The overseer's private tool surface: read-only status tools over everything
@@ -125,6 +131,14 @@ export interface OverseerStatusTool<Input = unknown, Output = unknown> {
   read(ctx: OverseerToolContext, input: Input): Output;
 }
 
+/** Who confirmed an action, and whether with the owner's app token. */
+export interface ConfirmedBy {
+  actor: string;
+  ownerCredential?: boolean;
+  /** Whether whoever confirmed holds decide tier; absent means they do not. */
+  canDecide?: boolean;
+}
+
 /**
  * A tool whose call produces a *proposal*, not an effect.
  *
@@ -144,7 +158,7 @@ export interface OverseerMutatingTool<Input = unknown> {
   apply(
     ctx: OverseerToolContext,
     input: Input,
-    meta: { actor: string }
+    meta: ConfirmedBy
   ): Promise<void> | void;
 }
 
@@ -276,7 +290,7 @@ const readyTasksTool: OverseerStatusTool<NoInput> = {
     'Tasks that are safe to dispatch right now: unblocked, in priority order.',
   inputSchema: noInput,
   read(ctx) {
-    const ready = ctx.cache.ready();
+    const ready = ctx.cache.ready(statusModelFor(ctx.store.rootDir));
     return { tasks: ready.map(toSummary), total: ready.length };
   },
 };
@@ -289,6 +303,7 @@ const blockedTasksTool: OverseerStatusTool<NoInput> = {
   inputSchema: noInput,
   read(ctx) {
     const all = ctx.cache.query();
+    const statuses = statusModelFor(ctx.store.rootDir);
     const byId = new Map(all.map((t) => [t.meta.id, t]));
     // Same rule as the desktop board's computeBlockedIds: a blocker id with no
     // matching task is dangling, not blocking. Duplicated rather than imported
@@ -301,8 +316,7 @@ const blockedTasksTool: OverseerStatusTool<NoInput> = {
           const blocker = byId.get(id);
           return (
             blocker !== undefined &&
-            blocker.meta.status !== 'landed' &&
-            blocker.meta.status !== 'dropped'
+            !isDoneStatus(blocker.meta.status, statuses)
           );
         }),
       }))
@@ -613,6 +627,19 @@ const dispatchInput = z.object({
     ),
 });
 
+// The human a confirmed dispatch runs for: whoever confirmed it, the owner
+// only with the owner's app token, no one for the system or a stand-in.
+function confirmedOperator(
+  ctx: OverseerToolContext,
+  meta: ConfirmedBy
+): string | null {
+  return actingOperator(
+    meta.actor,
+    meta.ownerCredential === true,
+    ctx.ownerRef
+  );
+}
+
 const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   name: 'dispatch_task',
   description:
@@ -629,11 +656,12 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     const model = input.model === undefined ? '' : ` on model ${input.model}`;
     return `Dispatch ${doc.meta.id} "${safeTitle(doc.meta.title)}" with the ${executorFor(ctx, input.executor)} executor${model}`;
   },
-  async apply(ctx, input) {
+  async apply(ctx, input, meta) {
     // `actor` is deliberately omitted here: the orchestrator's default credits
     // the daemon's human, and a human confirming the action is precisely who
     // caused it. The explicit 'none' actor is for callers with no human behind
     // them at all (EpicEngine's auto-fill), which the overseer never is.
+    // The run, fresh or resumed, acts for whoever confirmed it.
     // dispatchOrResume, not dispatch: a task whose last run a daemon restart
     // left recoverable is picked back up rather than started over. `executor`
     // and `model` carry what the overseer's caller actually NAMED — the daemon's
@@ -642,7 +670,7 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     await ctx.orchestrator.dispatchOrResume(input.taskId, {
       executor: input.executor,
       model: input.model,
-      operator: ctx.ownerRef,
+      operator: confirmedOperator(ctx, meta),
       defaults: { executor: executorFor(ctx) },
     });
   },
@@ -830,6 +858,12 @@ const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {
     return `Message run ${meta.id} ("${safeTitle(meta.taskTitle)}"): ${safeTitle(input.text)}`;
   },
   async apply(ctx, input, meta) {
+    const refusal = runMessageRefusal(
+      requireRun(ctx, input.runId),
+      meta.actor,
+      meta.canDecide === true
+    );
+    if (refusal !== null) throw new OverseerToolError(refusal);
     await ctx.messaging.sendAsHuman(
       `run:${input.runId}`,
       input.text,
@@ -967,10 +1001,7 @@ export class OverseerToolRegistry {
    * `pending` and refuses, so a double-confirm (two clicks, a retried request)
    * can't dispatch two runs or cancel a run twice.
    */
-  async applyAction(
-    id: string,
-    meta: { actor: string }
-  ): Promise<OverseerAction> {
+  async applyAction(id: string, meta: ConfirmedBy): Promise<OverseerAction> {
     const action = this.requirePending(id, 'apply');
     const tool = this.mutatingByName.get(action.tool);
     // Only reachable if the tool list changed under a still-pending action.

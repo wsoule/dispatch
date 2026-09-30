@@ -2,6 +2,7 @@ import { describeValue } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
 import type { ReviewScope } from '../orchestrator/review.js';
+import { humanOperator } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 import { refusePrHeadRef } from './prHead.js';
 
@@ -69,6 +70,7 @@ export async function startTaskReview(
     openFindings: ctx.findingStore.openFor(taskId),
     extraRisks: body.extraRisks,
     runId: body.runId,
+    operator: humanOperator(ctx),
   });
   return jsonResponse(meta, 202);
 }

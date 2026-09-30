@@ -20,12 +20,14 @@ function amendmentConstraint(
     .docs.filter((t) => t.meta.blockedBy.includes(id))
     .map((t) => t.meta.id)
     .slice(0, MEMORY_LIMITS.appliesTo);
-  const detail = `${body.overrides} — ${body.reason}`;
+  const detail = `${task.meta.title}: ${body.overrides} — ${body.reason}`;
+  // An index shows titles alone, so the title states the override itself.
+  const override = body.overrides.trim().split(/\r?\n/)[0] ?? '';
   return {
     scope: 'team',
     kind: 'constraint',
     title: cutUtf8(
-      untrustedInline(`Amendment to ${id}: ${task.meta.title}`),
+      untrustedInline(`Amended ${id}: ${override}`),
       MEMORY_LIMITS.titleBytes
     ),
     body: cutUtf8(
@@ -74,7 +76,7 @@ export async function amendTask(
     reason: body.reason,
     source,
   });
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [id]);
 
   // Through the memory write policy: a deciding human writes it, anyone else
   // (the shared agentToken included) proposes it.
@@ -93,6 +95,6 @@ export async function amendTask(
     console.error(`dispatchd: amendment ${id} could not reach memory`, err);
   }
 
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse({ ...updated, memory });
 }

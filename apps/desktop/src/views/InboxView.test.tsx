@@ -1,5 +1,14 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
+import type { ApiClient, MemoryEntryView } from '@dispatch/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { beforeEach, expect, mock, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
 
 import {
@@ -117,6 +126,10 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
     openShortcuts: noop,
     copyTaskId: noop,
   } as unknown as ShellActions;
+  // The task spec pane fetches its body through react-query; no retries in a stub.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   // Stateful like the real seam: mark-all flips every entry's own read flag, `markRead` one.
   return function Providers({ children }: { children: ReactNode }) {
     const [current, setCurrent] = useState(entries);
@@ -136,11 +149,13 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
       navigate: (target) => log.navigated.push(target.kind),
     };
     return (
-      <ShellActionsProvider value={shell}>
-        <NotificationInboxProvider value={inbox}>
-          {children}
-        </NotificationInboxProvider>
-      </ShellActionsProvider>
+      <QueryClientProvider client={queryClient}>
+        <ShellActionsProvider value={shell}>
+          <NotificationInboxProvider value={inbox}>
+            {children}
+          </NotificationInboxProvider>
+        </ShellActionsProvider>
+      </QueryClientProvider>
     );
   };
 }
@@ -755,4 +770,84 @@ test('a review row whose latest queue attempt failed carries a Failed to land pi
   expect(
     pills[0]?.closest('[data-slot="label-pill"]')?.getAttribute('title')
   ).toBe('verify failed: tests exited 1');
+});
+
+// Personal memory writes are listed only here, from the caller's own activity.
+test('lists your memory activity under Your memory, each with its Undo', async () => {
+  const undoMemory = mock((_ref: string) =>
+    Promise.resolve({} as MemoryEntryView)
+  );
+  const project = projectWith({
+    port: 4321,
+    client: {
+      memoryActivity: () =>
+        Promise.resolve({
+          activity: [
+            {
+              id: 'ma-1',
+              at: '2026-09-25T10:00:00.000Z',
+              kind: 'saved',
+              memoryId: 'mem-1',
+              runId: 'r-9f2c01',
+              summary: 'run:r-9f2c01 saved to your memory: pnpm builds',
+            },
+          ],
+        }),
+      undoMemory,
+    } as unknown as ApiClient,
+  });
+  renderInbox(dataWith([]), { project });
+  const section = await screen.findByRole('region', { name: 'Your memory' });
+  expect(
+    within(section).getByText('run:r-9f2c01 saved to your memory: pnpm builds')
+  ).toBeTruthy();
+  fireEvent.click(within(section).getByRole('button', { name: 'Undo' }));
+  await waitFor(() => expect(undoMemory).toHaveBeenCalledWith('mem-1'));
+});
+
+// The list covers the last day; the CLI reverts an older entry's latest change.
+test('says the list covers the last day and how to undo an entry changed earlier', async () => {
+  const project = projectWith({
+    port: 4321,
+    client: {
+      memoryActivity: () =>
+        Promise.resolve({
+          activity: [
+            {
+              id: 'ma-1',
+              at: '2026-09-25T10:00:00.000Z',
+              kind: 'saved',
+              memoryId: 'mem-1',
+              runId: 'r-9f2c01',
+              summary: 'run:r-9f2c01 saved to your memory: pnpm builds',
+            },
+          ],
+        }),
+    } as unknown as ApiClient,
+  });
+  renderInbox(dataWith([]), { project });
+  const section = await screen.findByRole('region', { name: 'Your memory' });
+  expect(within(section).getByText(/last day/).textContent).toContain(
+    'Undo reverts an entry’s latest change'
+  );
+  expect(
+    within(section).getByText('dispatch memory undo <handle>')
+  ).toBeTruthy();
+  expect(
+    within(section).getByText(
+      'dispatch memory list --scope personal --state all'
+    )
+  ).toBeTruthy();
+});
+
+test('has no memory section while nothing was written to your memory', async () => {
+  const memoryActivity = mock(() => Promise.resolve({ activity: [] }));
+  renderInbox(dataWith([]), {
+    project: projectWith({
+      port: 4321,
+      client: { memoryActivity } as unknown as ApiClient,
+    }),
+  });
+  await waitFor(() => expect(memoryActivity).toHaveBeenCalled());
+  expect(screen.queryByRole('region', { name: 'Your memory' })).toBeNull();
 });

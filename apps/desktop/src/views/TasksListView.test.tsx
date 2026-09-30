@@ -1,15 +1,22 @@
 import type { TaskDoc } from '@dispatch/core/browser';
+import { statusModelOf } from '@dispatch/core/browser';
 import {
+  act,
+  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { type ReactNode, useEffect } from 'react';
 
-import { testConfig } from '../components/settings/fixtures.test-helper';
+import { PeopleProvider } from '../components/people/PeopleContext';
+import {
+  linearWorkflowConfig,
+  testConfig,
+} from '../components/settings/fixtures.test-helper';
 import {
   type DeepLinkActions,
   DeepLinkProvider,
@@ -20,16 +27,23 @@ import {
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { setActiveStatusModel } from '../lib/statusModel';
 import { DEFAULT_TASKS_DISPLAY } from '../lib/tasksPrefs';
 import { TasksListView } from './TasksListView';
 
 // Collapse state is session-scoped; start every test with nothing folded.
 beforeEach(() => window.sessionStorage.clear());
+// Unmount before resetting, so the reset does not redraw a mounted list outside act.
+afterEach(() => {
+  cleanup();
+  setActiveStatusModel(null);
+});
 
 /** Every dispatch the bulk bar made, in order. */
 interface DispatchCall {
   taskId: string;
   batch: boolean | undefined;
+  optimistic?: boolean;
 }
 
 function task(
@@ -82,9 +96,13 @@ function dataWith(
       taskId: string,
       _executor?: string,
       _model?: string,
-      opts?: { batch?: boolean }
+      opts?: { batch?: boolean; optimistic?: boolean }
     ) => {
-      calls.push({ taskId, batch: opts?.batch });
+      calls.push({
+        taskId,
+        batch: opts?.batch,
+        ...(opts?.optimistic !== undefined && { optimistic: opts.optimistic }),
+      });
       return Promise.resolve();
     },
   } as unknown as DispatchProjectData;
@@ -203,6 +221,61 @@ test('a bulk dispatch of one task still follows it', async () => {
   expect(calls[0]?.batch).toBe(false);
 });
 
+// `d` goes through the optimistic path, like the Cockpit's: the row shows as started at
+// once and the list stays where it is.
+test('d dispatches the focused ready row in place', async () => {
+  const calls: DispatchCall[] = [];
+  const data = dataWith(
+    [task('t-1', 'First task'), task('t-2', 'Second task')],
+    calls
+  );
+  renderList({ ...data, readyIds: new Set(['t-2']) });
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+
+  fireEvent.keyDown(grid, { key: 'd' });
+  fireEvent.keyDown(grid, { key: 'j' });
+  fireEvent.keyDown(grid, { key: 'd' });
+
+  await waitFor(() => expect(calls.length).toBe(1));
+  expect(calls).toEqual([
+    { taskId: 't-2', batch: undefined, optimistic: true },
+  ]);
+});
+
+// Dispatching regroups the row under its new status; the cursor stays where it was, on the
+// row that took its place, so `d` `d` walks down the Ready group.
+test('after d moves the row to another group, the cursor stays in place', () => {
+  const calls: DispatchCall[] = [];
+  const tasks = [
+    task('t-1', 'First task', { status: 'todo' }),
+    task('t-2', 'Second task', { status: 'todo' }),
+    task('t-3', 'Third task', { status: 'todo' }),
+  ];
+  const view = (list: typeof tasks) => (
+    <TasksListView
+      data={{ ...dataWith(list, calls), readyIds: new Set(['t-1', 't-2']) }}
+      onSelectTask={() => {}}
+    />
+  );
+  const Shell = shellWith(shellLog());
+  const { rerender } = render(<Shell>{view(tasks)}</Shell>);
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+  expect(rowOf('First task').getAttribute('data-focused')).toBe('true');
+
+  fireEvent.keyDown(grid, { key: 'd' });
+  // The optimistic status lands: t-1 now sorts into In progress, below the Todo rows.
+  rerender(
+    <Shell>
+      {view([
+        task('t-1', 'First task', { status: 'in-progress' }),
+        tasks[1],
+        tasks[2],
+      ])}
+    </Shell>
+  );
+  expect(rowOf('Second task').getAttribute('data-focused')).toBe('true');
+});
+
 // §4: rows are 36px ListRows straight on the panel — no table, no header row, no divider,
 // no filter input; the id is sans, the date absolute, labels are pills.
 test('renders each task as a 36px ListRow with pickers, label pills, a sans id and an absolute date', () => {
@@ -269,7 +342,7 @@ test('groups by status in config order by default, with a tinted header and a + 
 });
 
 test('a task under an epic in the same group nests 24px under it with a dimmer tree row', () => {
-  const epic = task('e-1', 'Payments epic', { kind: 'epic' });
+  const epic = task('e-1', 'Payments epic', { kind: 'milestone' });
   const { container } = renderList(
     dataWith([epic, task('t-1', 'Charge card', { parent: 'e-1' })], [], [epic])
   );
@@ -443,6 +516,48 @@ test('the context menu offers the property submenus, open/peek/dispatch/copy, ar
   expect(linked).toEqual(['t-1']);
 });
 
+test('the Assignee submenu never offers the unknown-Linear-user placeholder', async () => {
+  const people = [
+    { ref: 'human:wyat', name: 'Wyat Soule' },
+    {
+      ref: 'human:linear-user',
+      name: 'Unknown Linear user',
+      placeholder: true,
+    },
+  ];
+  const Shell = shellWith(shellLog());
+  render(
+    <Shell>
+      <PeopleProvider people={people} me="human:wyat">
+        <TasksListView
+          data={dataWith([task('t-1', 'First task')])}
+          onSelectTask={() => {}}
+        />
+      </PeopleProvider>
+    </Shell>
+  );
+
+  fireEvent.contextMenu(rowOf('First task'), { clientX: 10, clientY: 10 });
+  const menu = await screen.findByRole('menu');
+  await act(async () => {
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Assignee/ }));
+    await Promise.resolve();
+  });
+
+  const [, submenu] = await screen.findAllByRole('menu');
+  if (submenu === undefined) throw new Error('no Assignee submenu');
+  // Each label follows its avatar's initials.
+  expect(
+    within(submenu)
+      .getAllByRole('menuitem')
+      .map((item) => item.textContent)
+  ).toEqual([
+    expect.stringMatching(/Wyat Soule$/),
+    expect.stringMatching(/Agent$/),
+    expect.stringMatching(/Unassigned$/),
+  ]);
+});
+
 // Outside App's `DeepLinkProvider` (the harness, most view tests) there is nothing to
 // copy a link with, so the row menu shows no `Copy link`.
 test('the context menu has no Copy link without a deep-link provider', async () => {
@@ -480,7 +595,7 @@ test('collapsing a group hides its rows and takes them out of the keyboard order
 });
 
 test('display prefs drive grouping and which properties a row shows', () => {
-  const epic = task('e-1', 'Payments epic', { kind: 'epic' });
+  const epic = task('e-1', 'Payments epic', { kind: 'milestone' });
   const Shell = shellWith(shellLog());
   const { container } = render(
     <Shell>
@@ -511,6 +626,64 @@ test('display prefs drive grouping and which properties a row shows', () => {
   expect(screen.queryByRole('button', { name: 'Change priority' })).toBeNull();
 });
 
+test('grouped by milestone, a mirrored workflow sinks and tints finished work on its first load', () => {
+  const shipped = task('e-2', 'Shipped', { kind: 'milestone' });
+  const payments = task('e-1', 'Payments', { kind: 'milestone' });
+  const tasks = [
+    shipped,
+    task('t-9', 'Old work', { parent: 'e-2', status: 'Done' }),
+    task('t-8', 'Dropped work', { parent: 'e-2', status: 'Canceled' }),
+    payments,
+    task('t-3', 'Receipts', { parent: 'e-1', status: 'Done' }),
+    task('t-1', 'Charge card', { parent: 'e-1', status: 'QA' }),
+    task('t-2', 'Refund flow', { parent: 'e-1', status: 'Todo' }),
+  ];
+  const Shell = shellWith(shellLog());
+  // As in useDispatchProject: config lands after the tasks, and the open project's model
+  // is set in an effect after the render that carries it.
+  function App({ config }: { config: DispatchProjectData['config'] }) {
+    useEffect(() => {
+      setActiveStatusModel(config === null ? null : statusModelOf(config));
+    }, [config]);
+    const data = {
+      ...dataWith(tasks, [], [shipped, payments]),
+      config,
+    } as DispatchProjectData;
+    return (
+      <Shell>
+        <TasksListView
+          data={data}
+          onSelectTask={() => {}}
+          display={{ ...DEFAULT_TASKS_DISPLAY, grouping: 'milestone' }}
+        />
+      </Shell>
+    );
+  }
+  const { container, rerender } = render(<App config={null} />);
+  act(() => rerender(<App config={linearWorkflowConfig} />));
+
+  const headers = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="group-header"]')
+  );
+  expect(
+    headers.map(
+      (h) => h.querySelector('[data-slot="group-header-name"]')?.textContent
+    )
+  ).toEqual(['Payments', 'Shipped']);
+  expect(headers[0]?.querySelector('[aria-label="Status: QA"]')).not.toBeNull();
+  expect(headers[0]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-progress)'
+  );
+  expect(headers[1]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-done)'
+  );
+  // Done sinks below the open rows in its group.
+  const rows = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="list-row"]')
+  ).map((r) => r.dataset.rowId);
+  expect(rows.slice(0, 3)).toEqual(['t-1', 't-2', 't-3']);
+});
+
 test('an empty filter result shows the no-match empty state', () => {
   const Shell = shellWith(shellLog());
   render(
@@ -524,4 +697,69 @@ test('an empty filter result shows the no-match empty state', () => {
   );
 
   expect(screen.getByText('No tasks match')).not.toBeNull();
+});
+
+// 2000 tasks under status headers: the grid mounts a screenful, and j/k walk it by
+// scrolling the focused row in rather than rendering everything.
+const MANY = Array.from({ length: 2000 }, (_, i) =>
+  task(`t-${String(i).padStart(4, '0')}`, `Task ${i}`)
+);
+
+function mountedRowIds(): string[] {
+  return Array.from(document.querySelectorAll('[data-row-id]')).map(
+    (row) => row.getAttribute('data-row-id') ?? ''
+  );
+}
+
+test('2000 tasks mount a screenful of rows, headers included', () => {
+  renderList(dataWith(MANY));
+  const ids = mountedRowIds();
+  expect(ids.length).toBeGreaterThan(10);
+  expect(ids.length).toBeLessThan(60);
+  expect(
+    document.querySelectorAll('[data-slot="group-header"]').length
+  ).toBeGreaterThan(0);
+});
+
+test('j moves the cursor onto a mounted row', () => {
+  renderList(dataWith(MANY));
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+  fireEvent.keyDown(grid, { key: 'j' });
+  expect(grid.getAttribute('aria-activedescendant')).toBe('task-row-t-0001');
+  // The cursor's row is always mounted — `aria-activedescendant` points at a real node.
+  expect(document.getElementById('task-row-t-0001')).not.toBeNull();
+});
+
+test('the focused row stays mounted after the list scrolls away from it', () => {
+  renderList(dataWith(MANY));
+  const grid = screen.getByRole('grid', { name: 'Tasks' });
+  fireEvent.keyDown(grid, { key: 'j' });
+  act(() => {
+    grid.scrollTop = 36 * 1500;
+    fireEvent.scroll(grid);
+  });
+  const ids = mountedRowIds();
+  expect(ids).toContain('t-1499');
+  expect(ids).toContain('t-0001');
+  expect(ids).not.toContain('t-0100');
+});
+
+test('collapsing a group drops its rows but keeps its header row', () => {
+  renderList(
+    dataWith([
+      task('t-1', 'Ready one'),
+      task('t-2', 'Done one', { status: 'done' }),
+    ])
+  );
+  const readyHeader = document.querySelector('[data-group-key="status:ready"]');
+  const toggle = readyHeader?.querySelector<HTMLElement>(
+    'button[aria-label="Collapse group"]'
+  );
+  if (toggle === null || toggle === undefined) throw new Error('no toggle');
+  fireEvent.click(toggle);
+  expect(screen.queryByText('Ready one') === null).toBe(true);
+  expect(screen.queryByText('Done one') === null).toBe(false);
+  expect(document.querySelectorAll('[data-slot="group-header"]').length).toBe(
+    2
+  );
 });

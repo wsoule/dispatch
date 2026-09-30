@@ -33,6 +33,7 @@ import {
   readJsonBodyOptional,
 } from '../api/http.js';
 import { rosterEmailOf } from './host.js';
+import { PLACEHOLDER_EMAIL } from './identities.js';
 import type { MemoryIdentities } from './identities.js';
 import { renderImportReport } from './ledgerImport.js';
 import type { MemoryService } from './service.js';
@@ -44,7 +45,6 @@ const ORIGIN_SOURCES = ['ledger', 'claude', 'amendment'] as const;
 const TRUST_LEVELS: readonly MemoryTrust[] = ['human', 'confirmed', 'agent'];
 const INGEST_PROBLEMS_SHOWN = 200;
 // The roster email `dispatch init` writes, which tells no two people apart.
-const PLACEHOLDER_EMAIL = 'local@localhost';
 const PROPOSAL_STATES: readonly ProposalState[] = [
   'open',
   'approved',
@@ -481,6 +481,41 @@ export function importLedgerRoute(ctx: ApiContext, url: URL): Response {
   return jsonResponse({ report, text: renderImportReport(report) });
 }
 
+// POST /api/memory/import/claude[?dryRun=1][&from=<abs dir> | &none=1] — the
+// daemon's own human only, since it reads that human's Claude notes.
+export async function importClaudeRoute(
+  ctx: ApiContext,
+  url: URL
+): Promise<Response> {
+  const principal = requireMemoryPrincipal(ctx);
+  if (
+    !(
+      principal.kind === 'human' &&
+      principal.address === ctx.actorContext.humanRef &&
+      principal.ownerCredential === true
+    )
+  )
+    throw new MemoryError(
+      'forbidden',
+      "only the daemon's own human imports its Claude notes",
+      'principal'
+    );
+  const from = url.searchParams.get('from');
+  const none = flag(url, 'none') === true;
+  if (from !== null && none)
+    throw new MemoryError(
+      'invalid',
+      'from: give from or none, not both',
+      'from'
+    );
+  const report = await ctx.memory.importClaude({
+    ...(from === null ? {} : { from }),
+    none,
+    dryRun: flag(url, 'dryRun') === true,
+  });
+  return jsonResponse({ report });
+}
+
 // POST /api/memory — 201 with the result; a repeated Idempotency-Key gets
 // the first result back with 200.
 export async function saveMemoryRoute(
@@ -665,6 +700,9 @@ export async function acceptIngestProblemRoute(
         address: `agent:${handle}/claude-code`,
         canDecide: false,
         kind: 'agent',
+        ...(principal.ownerCredential === true
+          ? { ownerCredential: true }
+          : {}),
       },
       {
         scope: 'personal',

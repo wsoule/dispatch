@@ -321,6 +321,42 @@ describe('the A2A listener', () => {
     });
   });
 
+  it('proposes a free port while the settings name none, and none once they do', async () => {
+    const h = await boot();
+    const suggested = h.a2a.status().suggestedPort;
+    expect(suggested).toBeGreaterThan(0);
+    expect(suggested).not.toBe(h.port);
+    const probe = Bun.serve({
+      port: suggested ?? 0,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(''),
+    });
+    await probe.stop(true);
+    const port = await freePort();
+    await h.a2a.applySettings({ ...DEFAULT_LISTENER, port });
+    expect(h.a2a.status().suggestedPort).toBeNull();
+  });
+
+  it('proposes a port nothing holds, not a fixed one', async () => {
+    const first = await boot();
+    const taken = first.a2a.status().suggestedPort;
+    expect(taken).not.toBeNull();
+    await first.stop();
+    handle = null;
+    const holder = Bun.serve({
+      port: taken!,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(''),
+    });
+    try {
+      const next = (await boot()).a2a.status().suggestedPort;
+      expect(next).not.toBeNull();
+      expect(next).not.toBe(taken);
+    } finally {
+      await holder.stop(true);
+    }
+  });
+
   it('names the daemon’s team-local TLS files, and none without them', async () => {
     const plain = await boot();
     expect(plain.a2a.status().teamTls).toBeNull();

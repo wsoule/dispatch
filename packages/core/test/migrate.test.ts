@@ -262,6 +262,40 @@ describe('importLegacyProject', () => {
     expect(second.rowsBefore).toEqual(second.rowsAfter);
   });
 
+  // Every sqlite boot re-runs the import, and a project migrated in place
+  // keeps its task files: re-reading all of them was most of a cold boot.
+  it('tallies an imported board from its rows without reading the files', () => {
+    writeTaskFile('t-abc123-a.md', legacyTask('t-abc123', 'A task'));
+    writeTaskFile('e-def456-b.md', legacyTask('e-def456', 'An epic'));
+    const stores = sqliteStores();
+    importLegacyProject(stores);
+    // Unparseable now, which only a read of the file could notice.
+    writeTaskFile('t-abc123-a.md', 'not: [valid');
+
+    const again = importLegacyProject(stores);
+    expect(again.problems).toEqual([]);
+    expect(again.tasks).toEqual({
+      found: 1,
+      imported: 0,
+      skipped: 1,
+      damaged: 0,
+    });
+    expect(again.epics.skipped).toBe(1);
+    expect(stores.tasks.get('t-abc123')?.meta.title).toBe('A task');
+  });
+
+  it('reads the files again as soon as one is not yet a row', () => {
+    writeTaskFile('t-abc123-a.md', legacyTask('t-abc123', 'A task'));
+    const stores = sqliteStores();
+    importLegacyProject(stores);
+    writeTaskFile('t-fed321-new.md', legacyTask('t-fed321', 'Pulled in'));
+
+    const again = importLegacyProject(stores);
+    expect(again.tasks.found).toBe(2);
+    expect(again.tasks.imported).toBe(1);
+    expect(stores.tasks.get('t-fed321')?.meta.title).toBe('Pulled in');
+  });
+
   // The point of insert-if-absent. Once the daemon owns a task, a stale
   // markdown file left on disk must not be able to reinstate the old status.
   it('never overwrites a record the daemon has already moved on from', () => {

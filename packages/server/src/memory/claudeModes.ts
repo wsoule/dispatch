@@ -1,3 +1,4 @@
+import { resolveSettings } from '@anthropic-ai/claude-agent-sdk';
 import { isAbsolute } from 'node:path';
 
 import type { RunKind } from '../orchestrator/types.js';
@@ -10,7 +11,7 @@ export type PreflightResult =
 
 export interface ModeInput {
   isClaude: boolean;
-  runKind: RunKind | 'overseer';
+  runKind: RunKind;
   hasOperator: boolean;
   // False when the operator's personal store will not open, a reused handle included.
   personalAvailable: boolean;
@@ -21,6 +22,10 @@ export interface ModeInput {
   // Writes the export; called only once every other step says export.
   exportWritten: () => boolean;
 }
+
+// The oldest Claude Code version the live export-mode probe passed on; boot
+// records it, and null would keep export mode off.
+export const PROBED_CLAUDE_CODE_VERSION: string | null = '2.1.207';
 
 // The line an export-mode prompt carries in place of the memory index.
 export const EXPORT_PROMPT_LINE =
@@ -37,7 +42,7 @@ export function chooseMemoryMode(i: ModeInput): {
 } {
   if (!i.isClaude)
     return { mode: 'prompt', index: true, reason: 'not a Claude executor' };
-  if (i.runKind !== 'execute' && i.runKind !== 'overseer')
+  if (i.runKind !== 'execute')
     return {
       mode: 'prompt',
       index: false,
@@ -150,6 +155,25 @@ function managedOverride(managed: Record<string, unknown>): string | null {
   if (envOf(managed).CLAUDE_CODE_DISABLE_AUTO_MEMORY !== undefined)
     return 'managed settings set CLAUDE_CODE_DISABLE_AUTO_MEMORY';
   return null;
+}
+
+// The managed tier's settings, merged in precedence order, as the CLI would
+// resolve them in `cwd`; null when no managed source sets anything.
+export async function resolveManagedSettings(
+  cwd: string,
+  resolve: typeof resolveSettings = resolveSettings
+): Promise<Record<string, unknown> | null> {
+  const resolved = await resolve({
+    cwd,
+    settingSources: ['user', 'project', 'local'],
+  });
+  let managed: Record<string, unknown> | null = null;
+  for (const { source, settings } of resolved.sources) {
+    if (source !== 'managed') continue;
+    const layer = settings as Record<string, unknown>;
+    managed = managed === null ? layer : mergeFlagSettings(managed, layer);
+  }
+  return managed;
 }
 
 // Checks export mode can work: a probed CLI at least as new as the probe, no

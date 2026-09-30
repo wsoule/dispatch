@@ -43,10 +43,13 @@ describe('the ## Docs section in dispatch prompts', () => {
 
   it('appears after the memory section', async () => {
     const prompt = await promptWith(DOCS, {
-      promptSection: () => ({
-        source: 'memory',
+      prepare: () => ({
         text: '## Memory\n- hazard: x (#AAAAAAAA)',
+        indexSection: null,
+        memory: { mode: 'prompt' },
       }),
+      recall: () => {},
+      runEnded: () => {},
     });
     const memoryAt = prompt.indexOf('## Memory\n- hazard: x');
     expect(memoryAt).toBeGreaterThan(-1);

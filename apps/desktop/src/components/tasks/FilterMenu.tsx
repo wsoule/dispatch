@@ -1,5 +1,5 @@
 import { ApiError, type RunState } from '@dispatch/client';
-import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
+import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
 import {
   Activity,
   Calendar,
@@ -87,7 +87,7 @@ const ROW_CLASS =
 export interface FilterMenuContext {
   /** The project's statuses in config order. */
   statuses: readonly string[];
-  epics: readonly TaskDoc[];
+  epics: readonly TaskListItem[];
   /** Every label in use, sorted. */
   labels: readonly string[];
   /** Every milestone name in use, sorted. */

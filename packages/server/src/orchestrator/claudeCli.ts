@@ -72,7 +72,7 @@ export function withAutoMemoryOff(options: Options): Options {
 // actionable instead of opaque.
 //
 // Auto memory is off unless the caller passes `memory: 'managed'`, which only
-// runs and the overseer do.
+// runs do.
 export function openClaudeQuery(
   queryFn: typeof query,
   prompt: Parameters<typeof query>[0]['prompt'],

@@ -11,6 +11,12 @@ import {
 import type { MemoryIds, MemoryStore } from '@dispatch/memory';
 import { LINE_BREAK, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
+import {
+  DEP_MAP_DEGRADED_TITLE,
+  scopeExtensionTitle,
+  UNDECLARED_WRITES_TITLE,
+} from '../ledger.js';
+
 type AuditReason =
   | 'handoff'
   | 'policy'
@@ -22,7 +28,6 @@ export type LedgerClass =
   | { to: 'memory' }
   | { to: 'audit'; reason: AuditReason };
 
-const UNDECLARED_WRITES = /^changed .+ outside its declared writes$/;
 const ACTOR_REF = /^(human|agent):/;
 const AUDIT_REASONS: readonly AuditReason[] = [
   'policy',
@@ -47,10 +52,10 @@ export function classifyLedgerEntry(entry: LedgerEntry): LedgerClass {
   if (entry.detail.includes('auto-decided by ')) return audit('policy');
   if (entry.detail.includes('held by the irreversibility floor ('))
     return audit('floor');
-  if (entry.title.startsWith('Scope extended for run ')) return audit('scope');
-  if (entry.authoredBy === 'none' && UNDECLARED_WRITES.test(entry.title))
+  if (entry.title.startsWith(scopeExtensionTitle(''))) return audit('scope');
+  if (entry.authoredBy === 'none' && UNDECLARED_WRITES_TITLE.test(entry.title))
     return audit('undeclared-writes');
-  if (entry.authoredBy === 'none' && entry.title === 'dependency map degraded')
+  if (entry.authoredBy === 'none' && entry.title === DEP_MAP_DEGRADED_TITLE)
     return audit('dep-map');
   return { to: 'memory' };
 }
@@ -136,6 +141,9 @@ export interface LedgerImportInput {
   ids: MemoryIds;
   now: Date;
   cutoverAt: string | null;
+  // An import has run since the cutover, so every unseen row came from
+  // elsewhere, whatever createdAt it claims.
+  cutoverSwept: boolean;
   dryRun?: boolean;
 }
 
@@ -144,7 +152,7 @@ export interface LedgerImportInput {
  * Call it outside any transaction: nested, its rollback would leave its writes to the outer commit.
  */
 export function importLedger(input: LedgerImportInput): LedgerImportReport {
-  const { store, ids, cutoverAt } = input;
+  const { store, ids, cutoverAt, cutoverSwept } = input;
   const at = input.now.toISOString();
   const nowMs = input.now.getTime();
   const byKind: Record<LedgerKind, number> = {
@@ -222,11 +230,16 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
         const appliesTo = targets.slice(0, MEMORY_LIMITS.appliesTo);
         if (content.truncated || targets.length > appliesTo.length)
           memory.truncated += 1;
-        if (cutoverAt !== null && row.createdAt > cutoverAt) {
+        if (
+          cutoverAt !== null &&
+          (cutoverSwept ||
+            row.createdAt > cutoverAt ||
+            Number.isNaN(Date.parse(row.createdAt)))
+        ) {
           // The row's claimed author rides in `reason` as untrusted text; the
           // proposal itself is the system's.
           const claim = oneLine(row.authoredBy);
-          const reason = `ledger row written after the cutover; it claims author ${claim === '' ? '(none)' : claim}`;
+          const reason = `ledger row arrived after the cutover; it claims author ${claim === '' ? '(none)' : claim}`;
           store.insertProposal(
             newProposal(
               {

@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, test } from 'bun:test';
 
 import {
   DAG_NODE_HEIGHT,
   DAG_NODE_WIDTH,
   dagLayout,
   type DagTask,
+  dagWaves,
 } from './dagLayout';
 
 // dagLayout takes its own minimal `DagTask` shape rather than a full TaskDoc, so the fixture
@@ -168,5 +169,30 @@ describe('dagLayout', () => {
     const result = dagLayout([newer, older]);
     // Older task sorts first within the shared layer-0 row.
     expect(xOf(result.nodes, 'z')).toBeLessThan(xOf(result.nodes, 'a') ?? 0);
+  });
+});
+
+describe('dagWaves', () => {
+  const t = (id: string, blockedBy: string[] = []) => ({
+    id,
+    title: id,
+    status: 'ready',
+    created: '2026-01-01',
+    blockedBy,
+  });
+
+  test('a task’s wave is one past its deepest blocker', () => {
+    const waves = dagWaves([t('a'), t('b', ['a']), t('c', ['a', 'b']), t('d')]);
+    expect(Object.fromEntries(waves)).toEqual({ a: 0, b: 1, c: 2, d: 0 });
+  });
+
+  test('a set with no edges is a single wave, not a wrapped grid', () => {
+    const waves = dagWaves(Array.from({ length: 12 }, (_, i) => t(`t${i}`)));
+    expect(new Set(waves.values())).toEqual(new Set([0]));
+  });
+
+  test('blockers outside the set and self-references are ignored', () => {
+    const waves = dagWaves([t('a', ['a', 'outside'])]);
+    expect(waves.get('a')).toBe(0);
   });
 });

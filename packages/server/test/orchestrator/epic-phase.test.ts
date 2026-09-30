@@ -7,7 +7,6 @@ import {
   deriveSpend,
   deriveWaves,
   summarizeWaves,
-  unsatisfiedBlockersOf,
 } from '../../src/orchestrator/epicPhase.js';
 import type { FixLoopState } from '../../src/orchestrator/fixLoop.js';
 import type { RunMeta, RunState } from '../../src/orchestrator/types.js';
@@ -424,22 +423,6 @@ describe('summarizeWaves', () => {
     expect(waves).toEqual([
       { index: 1, total: 1, byPhase: { landed: 1 } },
       { index: 2, total: 2, byPhase: { queued: 1, waiting: 1 } },
-    ]);
-  });
-});
-
-describe('unsatisfiedBlockersOf', () => {
-  it('keeps blockers that are not dispatch-satisfying and ignores dangling ids', () => {
-    const docs = new Map([
-      ['done', task('done', { status: 'landed' })],
-      ['reviewing', task('reviewing', { status: 'review' })],
-      ['open', task('open', { status: 'working' })],
-    ]);
-    const child = task('c', {
-      blockedBy: ['done', 'reviewing', 'open', 'gone'],
-    });
-    expect(unsatisfiedBlockersOf(child, (id) => docs.get(id) ?? null)).toEqual([
-      'open',
     ]);
   });
 });

@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { statusModelFor } from '../statuses.js';
 import { JjManager } from './jj.js';
 import type { Orchestrator } from './orchestrator.js';
 import { mergeQueuePath, runsDir } from './paths.js';
@@ -660,11 +661,19 @@ export class MergeQueue {
     try {
       const task = this.ctx.store.get(taskId);
       if (task === null) return;
-      const from = to === 'landing' ? 'review' : 'landing';
+      // Roles, not names: a project with no landing status (a Linear
+      // mirror) never moves a task on queue entry or exit.
+      const { roles } = statusModelFor(this.ctx.rootDir);
+      if (roles.landing === null) return;
+      const target = to === 'landing' ? roles.landing : roles.review;
+      const from = to === 'landing' ? roles.review : roles.landing;
       if (task.meta.status !== from) return;
-      this.ctx.store.update(taskId, { status: to, appendActivity: activity });
-      this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.store.update(taskId, {
+        status: target,
+        appendActivity: activity,
+      });
+      this.ctx.cache.refresh(this.ctx.store, [taskId]);
+      this.ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
     } catch {
       // A status write must never take the queue down with it.
     }
@@ -702,10 +711,11 @@ export class MergeQueue {
     const order = stack !== null ? stack.order : [taskId];
 
     const runs = this.ctx.orchestrator.list();
+    const statuses = statusModelFor(this.ctx.rootDir);
     const enqueued: MergeQueueEntry[] = [];
     for (const id of order) {
       const task = byId.get(id);
-      if (task !== undefined && isDone(task)) continue;
+      if (task !== undefined && isDone(task, statuses)) continue;
       const meta = runs.find((r) => r.taskId === id);
       if (meta === undefined) continue;
       if (!this.isEnqueueable(meta)) continue;
@@ -739,10 +749,11 @@ export class MergeQueue {
     // Same guard enqueueStack applies: skip only a CONFIRMED done/cancelled
     // task; an unresolved id falls through as eligible, same as there.
     const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+    const statuses = statusModelFor(this.ctx.rootDir);
     const eligible = this.ctx.orchestrator.list().filter((m) => {
       if (!this.isEnqueueable(m)) return false;
       const task = byId.get(m.taskId);
-      return task === undefined || !isDone(task);
+      return task === undefined || !isDone(task, statuses);
     });
     // list() is most-recent-first, so the first eligible run seen per taskId
     // is that task's latest — same convention enqueueStack relies on.
@@ -928,6 +939,7 @@ export class MergeQueue {
         .query({ includeArchived: true })
         .map((task) => [task.meta.id, task])
     );
+    const statuses = statusModelFor(this.ctx.rootDir);
     // Looked up once per pass, same rationale as the task map above: a
     // per-entry registry scan would be O(entries * runs) every pump tick.
     const runsById = new Map(
@@ -940,7 +952,7 @@ export class MergeQueue {
       const blockedBy = task?.meta.blockedBy ?? [];
       const unmet = blockedBy.some((id) => {
         const blocker = byId.get(id);
-        return blocker !== undefined && !isDone(blocker);
+        return blocker !== undefined && !isDone(blocker, statuses);
       });
       // Two independent reasons this isn't a plain `unmet ? … : 'queued'`.
       //

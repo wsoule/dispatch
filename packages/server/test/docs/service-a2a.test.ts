@@ -222,10 +222,27 @@ describe('a2aOrigin fails closed', () => {
       } as never,
       events,
     });
-    expect(
-      ['t-lab', 't-line', 't-bad', 't-plain', 't-missing'].map((id) =>
-        daemon.a2aOrigin(id)
-      )
-    ).toEqual([true, true, true, false, false]);
+    const ids = ['t-lab', 't-line', 't-bad', 't-plain', 't-missing'];
+    expect(ids.map((id) => daemon.a2aOrigin(id))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // Once bound, the bridge's evidence replaces the text; an unreadable file still fails closed.
+    const asked: string[] = [];
+    daemon.bindA2AOrigin((id) => {
+      asked.push(id);
+      return id === 't-plain';
+    });
+    expect(ids.map((id) => daemon.a2aOrigin(id))).toEqual([
+      false,
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(asked).toEqual(['t-lab', 't-line', 't-plain']);
   });
 });

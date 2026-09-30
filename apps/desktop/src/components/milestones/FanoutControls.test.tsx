@@ -6,6 +6,7 @@ import type {
   EpicWave,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
@@ -44,6 +45,8 @@ function sessionWith(
     maxSpendUsd: 60,
     maxRuns: 20,
     startedAt: '2026-09-20T00:00:00.000Z',
+    startedBy: null,
+    scope: 'plan',
     updatedAt: '2026-09-20T00:00:00.000Z',
     active: state === 'active',
     ...overrides,
@@ -89,6 +92,7 @@ function mount(
   const { unmount } = render(
     <FanoutControls
       epic={payments}
+      model={DEFAULT_STATUS_MODEL}
       progress={progress}
       count={
         progress === undefined
@@ -155,6 +159,7 @@ test('the concurrency picker only shows before a session exists', () => {
   const { unmount } = render(
     <FanoutControls
       epic={payments}
+      model={DEFAULT_STATUS_MODEL}
       progress={noSession}
       count={{ done: 1, total: 2 }}
       landable={false}
@@ -169,6 +174,7 @@ test('the concurrency picker only shows before a session exists', () => {
   render(
     <FanoutControls
       epic={payments}
+      model={DEFAULT_STATUS_MODEL}
       progress={progressWith([child('t-1', 'working')], {
         session: sessionWith('active'),
       })}
@@ -461,4 +467,32 @@ test('a verb disables the row while it runs and shows a rejected handler’s mes
   const alert = screen.getByRole('alert');
   expect(alert.textContent).toBe('session is not active');
   expect(alert.getAttribute('title')).toBe('session is not active');
+});
+
+test('phases={false} drops the chips and keeps the verbs', () => {
+  mount(
+    progressWith([child('t-1', 'working'), child('t-2', 'queued')], {
+      session: sessionWith('active'),
+    }),
+    { phases: false }
+  );
+  expect(document.querySelector('[data-slot=phase-chip]')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
+});
+
+test('waves={false} drops the wave strip and keeps the verbs', () => {
+  const waves = [
+    { index: 1, total: 2, byPhase: { landed: 2 } },
+    { index: 2, total: 1, byPhase: { working: 1 } },
+  ];
+  const active = progressWith([child('t-1', 'working')], {
+    session: sessionWith('active'),
+    waves,
+  });
+  const { unmount } = mount(active);
+  expect(document.querySelector('ol')).not.toBeNull();
+  unmount();
+  mount(active, { waves: false });
+  expect(document.querySelector('ol')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Pause' })).not.toBeNull();
 });

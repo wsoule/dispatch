@@ -1,4 +1,11 @@
 import { TaskStore } from '@dispatch/core';
+import {
+  createMemoryIds,
+  insertFresh,
+  newMemoryEntry,
+  openMemoryDb,
+  SqliteMemoryStore,
+} from '@dispatch/memory';
 import type { Delivery, Message, Sender } from '@dispatch/protocol';
 import {
   openMessagesDb,
@@ -19,7 +26,7 @@ import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
 import type { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { BOOT_FORCE_FAIL_ERROR } from '../../src/orchestrator/orchestrator.js';
-import { runsDir } from '../../src/orchestrator/paths.js';
+import { memoryDbPath, runsDir } from '../../src/orchestrator/paths.js';
 import type { ExecutorProfile } from '../../src/orchestrator/types.js';
 import {
   DEFAULT_EXECUTOR_PROFILE,
@@ -27,6 +34,7 @@ import {
 } from '../../src/orchestrator/types.js';
 import { StallingExecutor } from '../orchestrator/helpers.js';
 import {
+  LINEAR_STATUSES,
   makeOrchestrator,
   openRecovered,
   useTempProject,
@@ -282,6 +290,7 @@ describe('openMessaging', () => {
       human
     );
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -325,6 +334,7 @@ describe('openMessaging', () => {
     const human = { address: 'human:wyat', canDecide: true };
 
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -415,8 +425,20 @@ describe('openMessaging', () => {
         message: 'm-x',
       },
     });
+    const sent = await messaging.engine.send(
+      gate('task-proposal'),
+      SYSTEM_SENDER
+    );
+    expect(sent.message.kind).toBe('question');
+    // Only the system raises a task proposal.
     await expect(
-      messaging.engine.send(gate('task-proposal'), SYSTEM_SENDER)
+      messaging.engine.send(gate('task-proposal'), {
+        address: 'human:wyat',
+        canDecide: true,
+      })
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
+    await expect(
+      messaging.engine.send(gate('handoff-review'), SYSTEM_SENDER)
     ).rejects.toMatchObject({ code: 'invalid', field: 'data.type' });
     messaging.close();
   });
@@ -548,6 +570,7 @@ describe('wake gate handler', () => {
     const task = store.create({ title: 'Under review' });
     const messaging = await openRecovered(project.root(), orchestrator, store);
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -625,6 +648,7 @@ describe('wake gate handler', () => {
     // human's wake sent now blocks as well.
     let duringRetry: (() => Promise<void>) | null = async () => {
       review = await orchestrator.dispatchAuxRun({
+        operator: null,
         taskId: task.meta.id,
         kind: 'review',
         head: 'main',
@@ -772,9 +796,16 @@ describe('wake gate handler', () => {
     messaging.close();
   });
 
-  for (const status of ['dropped', 'landed'] as const) {
+  // Canceled: a Linear-linked project's mirrored name for a dropped status.
+  for (const status of ['dropped', 'landed', 'Canceled'] as const) {
     it(`does not wake a task that became ${status} before the approval`, async () => {
       const { orchestrator, store } = makeOrchestrator(project.root());
+      if (status === 'Canceled') {
+        writeFileSync(
+          join(project.root(), '.dispatch', 'config.yml'),
+          LINEAR_STATUSES
+        );
+      }
       const executor = new StallingExecutor();
       orchestrator.registerExecutor('claude', executor);
       const task = store.create({ title: 'Closed out later' });
@@ -1031,52 +1062,60 @@ describe('agent-registration gate handler', () => {
   });
 });
 
+// Stores an approved wake for `taskId` with no gate_effects row, as if the
+// daemon crashed between the answer landing and the wake running.
+function seedCrashedWake(root: string, taskId: string): void {
+  const seedDb = openMessagesDb(join(runsDir(root), 'messages.db'));
+  const seedStore = new SqliteMessageStore(seedDb);
+  const original = stubMessage({
+    id: 'm-original0000000000000001',
+    thread: 'm-original0000000000000001',
+    from: 'human:asker',
+    to: [`task:${taskId}`],
+    wake: 'request',
+  });
+  const question = stubMessage({
+    id: 'm-question0000000000000001',
+    thread: 'm-question0000000000000001',
+    from: SYSTEM_ADDRESS,
+    to: ['human:wyat'],
+    kind: 'question',
+    blocking: true,
+    choices: ['approve', 'deny'],
+    data: { type: 'wake', target: `task:${taskId}`, message: original.id },
+  });
+  const answer = stubMessage({
+    id: 'm-answer00000000000000001',
+    thread: question.thread,
+    replyTo: question.id,
+    // The owner (from initGitRepo); a replay carries no app token, so the
+    // woken run acts for no one.
+    from: 'human:test',
+    to: [SYSTEM_ADDRESS],
+    kind: 'answer',
+    choice: 'approve',
+  });
+  seedStore.insertMessage(original);
+  seedStore.insertMessage(question);
+  seedStore.insertMessage(answer);
+  seedDb.close();
+}
+
+// A stalling executor that honours Claude auto memory, as ClaudeExecutor does.
+class AutoMemoryExecutor extends StallingExecutor {
+  readonly profile: ExecutorProfile = {
+    ...DEFAULT_EXECUTOR_PROFILE,
+    autoMemory: true,
+  };
+}
+
 describe('boot ordering', () => {
   // recover() must run after reconcileOnBoot(), or a replayed wake's run is
   // force-failed as an orphan of the previous process.
   it('a wake approved before a crash dispatches cleanly on the next boot, without being force-failed', async () => {
     const store = TaskStore.init(project.root());
     const task = store.create({ title: 'Wake me on reboot' });
-
-    const dbPath = join(runsDir(project.root()), 'messages.db');
-    const seedDb = openMessagesDb(dbPath);
-    const seedStore = new SqliteMessageStore(seedDb);
-    const original = stubMessage({
-      id: 'm-original0000000000000001',
-      thread: 'm-original0000000000000001',
-      from: 'human:asker',
-      to: [`task:${task.meta.id}`],
-      wake: 'request',
-    });
-    const question = stubMessage({
-      id: 'm-question0000000000000001',
-      thread: 'm-question0000000000000001',
-      from: SYSTEM_ADDRESS,
-      to: ['human:wyat'],
-      kind: 'question',
-      blocking: true,
-      choices: ['approve', 'deny'],
-      data: {
-        type: 'wake',
-        target: `task:${task.meta.id}`,
-        message: original.id,
-      },
-    });
-    const answer = stubMessage({
-      id: 'm-answer00000000000000001',
-      thread: question.thread,
-      replyTo: question.id,
-      from: 'human:wyat',
-      to: [SYSTEM_ADDRESS],
-      kind: 'answer',
-      choice: 'approve',
-    });
-    seedStore.insertMessage(original);
-    seedStore.insertMessage(question);
-    // No gate_effects row: this answer's effect was never recorded, as if
-    // the daemon crashed between the answer landing and the wake running.
-    seedStore.insertMessage(answer);
-    seedDb.close();
+    seedCrashedWake(project.root(), task.meta.id);
 
     const executor = new StallingExecutor();
     let handle: ServerHandle | undefined;
@@ -1095,6 +1134,67 @@ describe('boot ordering', () => {
       expect(runs).toHaveLength(1);
       expect(runs[0]?.state).not.toBe('failed');
       expect(runs[0]?.error).not.toBe(BOOT_FORCE_FAIL_ERROR);
+    } finally {
+      await handle?.stop();
+    }
+  });
+
+  // Memory is installed before recovery, so a replayed wake's run never
+  // starts on the host owner's native Claude memory.
+  it('a run a replayed wake starts at boot gets a memory mode and the index', async () => {
+    const store = TaskStore.init(project.root());
+    const task = store.create({
+      title: 'Bump pnpm',
+      writes: ['pnpm-workspace.yaml'],
+    });
+    seedCrashedWake(project.root(), task.meta.id);
+    const shared = new SqliteMemoryStore(
+      openMemoryDb(memoryDbPath(project.root()))
+    );
+    insertFresh(
+      shared,
+      createMemoryIds(),
+      Date.now(),
+      (id) =>
+        newMemoryEntry(
+          {
+            scope: 'team',
+            kind: 'hazard',
+            title: 'pnpm 11 ignores onlyBuiltDependencies',
+            body: 'use allowBuilds',
+            author: 'run:r-000000',
+            trust: 'agent',
+          },
+          id,
+          new Date().toISOString()
+        ),
+      'run:r-000000',
+      'save'
+    );
+    shared.close();
+
+    const executor = new AutoMemoryExecutor();
+    let handle: ServerHandle | undefined;
+    try {
+      handle = await startServer({
+        rootDir: project.root(),
+        port: 0,
+        writeDaemonFile: false,
+        registerExecutors: (orchestrator) => {
+          orchestrator.registerExecutor('claude', executor);
+        },
+      });
+      const runs = handle.orchestrator
+        .list()
+        .filter((r) => r.taskId === task.meta.id);
+      expect(runs.map((r) => r.memoryMode)).toEqual(['prompt']);
+      expect(runs[0]?.operator).toBeNull();
+      expect(executor.started.map((s) => s.memory)).toEqual([
+        { mode: 'prompt' },
+      ]);
+      expect(executor.started[0]?.prompt).toContain(
+        'pnpm 11 ignores onlyBuiltDependencies'
+      );
     } finally {
       await handle?.stop();
     }

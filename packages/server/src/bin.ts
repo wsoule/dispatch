@@ -21,6 +21,7 @@ import {
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
 import type { FakeExecutorScript } from './orchestrator/executors/fake.js';
 import { FakeExecutor } from './orchestrator/executors/fake.js';
+import { FakeRememberExecutor } from './orchestrator/executors/fakeRemember.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import type {
   FakeOverseerScript,
@@ -39,7 +40,8 @@ import { FakePlanner } from './orchestrator/planners/fake.js';
 // CodexExecutor when the codex CLI is installed, ClaudePlanner, and
 // ClaudeOverseer — see index.ts's own defaults. Setting `DISPATCH_ENABLE_FAKES=1` in this process's environment
 // additionally registers a FakeExecutor, FakePlanner, and FakeOverseer, all
-// under the name 'fake' (plus a 'fake-ask' executor that waits for a message),
+// under the name 'fake' (plus a 'fake-ask' executor that waits for a message,
+// and a 'fake-remember' one that proposes a team memory),
 // alongside the real ones — never replacing 'claude'.
 // This exists purely so the CLI's headless integration tests (and any other e2e script)
 // can drive a REAL spawned daemon through a full run/plan lifecycle without
@@ -541,6 +543,10 @@ const handle = await startServer({
         orchestrator.registerExecutor(
           'fake-ask',
           new FakeExecutor(buildAskFakeScript())
+        );
+        orchestrator.registerExecutor(
+          'fake-remember',
+          new FakeRememberExecutor()
         );
       }
     : undefined,

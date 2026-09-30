@@ -406,19 +406,19 @@ describe('waveSteps', () => {
 describe('drillTargetFor', () => {
   test('a failed child opens its run transcript', () => {
     expect(drillTargetFor(child('failed', { runId: 'r-9' }))).toEqual({
-      tab: 'chat',
+      tab: 'run',
       runId: 'r-9',
     });
-    expect(drillTargetFor(child('failed'))).toEqual({ tab: 'chat' });
+    expect(drillTargetFor(child('failed'))).toEqual({ tab: 'run' });
   });
 
-  test('everything else opens details', () => {
+  test('everything else opens the page on its state', () => {
     expect(drillTargetFor(child('capped', { runId: 'r-1' }))).toEqual({
-      tab: 'details',
+      tab: 'auto',
     });
-    expect(drillTargetFor(child('held'))).toEqual({ tab: 'details' });
+    expect(drillTargetFor(child('held'))).toEqual({ tab: 'auto' });
     expect(drillTargetFor(child('working', { runId: 'r-2' }))).toEqual({
-      tab: 'details',
+      tab: 'auto',
     });
   });
 });

@@ -1,3 +1,4 @@
+import { hasA2AProvenance } from '@dispatch/a2a';
 import type {
   DocProposal,
   DocScope,
@@ -93,9 +94,6 @@ export interface DocsHost extends DocsGatePort {
 // doc.changed events for amends of one doc coalesce within this window.
 export const AMEND_DEBOUNCE_MS = 2_000;
 
-// How the line the A2A bridge writes into each task a client asks for begins.
-const A2A_PROVENANCE_PREFIX = 'Requested over A2A by ';
-
 type DocsRuns = Pick<
   Orchestrator,
   'list' | 'notifyRun' | 'onRunTerminal' | 'taskIdOfRun'
@@ -144,6 +142,7 @@ export function docsMemoryPort(memory: {
 export class DaemonDocsHost implements DocsHost {
   private runs: DocsRuns | null = null;
   private messages: DocsMessages | null = null;
+  private a2aEvidence: ((taskId: string) => boolean) | null = null;
   private memory: DocsMemoryPort | null = null;
   private gates: DocsGatePort | null = null;
   private readonly listeners = new Set<(change: DocChange) => void>();
@@ -167,6 +166,11 @@ export class DaemonDocsHost implements DocsHost {
 
   bindMessaging(store: DocsMessages): void {
     this.messages = store;
+  }
+
+  // The A2A bridge's evidence (a2a.db row or messages.db handoff), once it has opened.
+  bindA2AOrigin(evidence: (taskId: string) => boolean): void {
+    this.a2aEvidence = evidence;
   }
 
   bindMemory(port: DocsMemoryPort): void {
@@ -270,8 +274,8 @@ export class DaemonDocsHost implements DocsHost {
     };
   }
 
-  // The a2a label or the bridge's provenance line marks a task an A2A client asked
-  // for, and so does a task file that does not parse; none needs a bound bridge.
+  // An unreadable task file fails closed; otherwise the bridge's evidence decides,
+  // and until it binds (boot), the label or provenance line does.
   a2aOrigin(taskId: string): boolean {
     let doc;
     try {
@@ -280,11 +284,10 @@ export class DaemonDocsHost implements DocsHost {
       if (err instanceof TaskParseError) return true;
       throw err;
     }
-    return (
-      doc !== null &&
-      (doc.meta.labels.includes('a2a') ||
-        doc.body.includes(A2A_PROVENANCE_PREFIX))
-    );
+    if (doc === null) return false;
+    return this.a2aEvidence === null
+      ? hasA2AProvenance(doc)
+      : this.a2aEvidence(taskId);
   }
 
   exists(target: LinkTarget): boolean {

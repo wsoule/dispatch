@@ -7,7 +7,7 @@ onto A2A. This package holds the specification text under `spec/`, one file per
 top-level section, and will also hold its conformance kit: the registries, JSON
 Schemas, test vectors and the `dmp-conformance` runner. The text and the kit are
 licensed under Apache-2.0 (see `LICENSE`) so anyone may implement the protocol;
-the reference implementation in `@dispatch/protocol` stays MIT.
+the reference implementation in `@dispatch-foo/protocol` stays MIT.
 
 ## The conformance kit
 
@@ -58,3 +58,18 @@ when the adapter declares its capability. The A2A binding claim needs
 
 **Exit codes.** `0` when every requested claim passes (or is `vectors-only`),
 `1` when a claim fails or the run cannot complete, `2` on a usage error.
+
+## Known implementations
+
+The editor tells every implementation listed here about a protocol security fix
+7 days before it is released, through the security contact listed with it.
+
+- **Dispatch**, the reference implementation (`@dispatch-foo/protocol`, with
+  `@dispatch-foo/a2a` for the A2A binding): implements DMP 1.0.0-draft.1 (Core,
+  Dispatch profile), with declared deviations. Its reports:
+  [Core and Dispatch profile](https://github.com/wsoule/dispatch/blob/main/packages/protocol-spec/reports/dispatch-1.0.0-draft.1.json)
+  and
+  [A2A binding](https://github.com/wsoule/dispatch/blob/main/packages/protocol-spec/reports/dispatch-a2a-1.0.0-draft.1.json).
+  The A2A binding passes every `a2a-binding` vector and is reported as
+  `vectors-only` until an A2A TCK run is attested (§12.3). Security contact:
+  [SECURITY.md](https://github.com/wsoule/dispatch/blob/main/.github/SECURITY.md).

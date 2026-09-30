@@ -303,6 +303,14 @@ describe('dispatch a2a clients', () => {
     });
   });
 
+  it('revokes by the name as typed, normalized the way add normalizes it', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'clients', 'revoke', ' ACME');
+    expect(a2aCalls().at(-1)).toMatchObject({
+      path: `/api/agents/${encodeURIComponent('agent:wyat/a2a.acme')}/revoke`,
+    });
+  });
+
   it('refuses to revoke a name no client has', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     await expect(run('a2a', 'clients', 'revoke', 'nobody')).rejects.toThrow(

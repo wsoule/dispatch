@@ -1,6 +1,6 @@
 {
   "name": "@dispatch/desktop",
-  "version": "0.35.2",
+  "version": "0.36.1",
   "private": true,
   "license": "FSL-1.1-ALv2",
   "type": "module",
@@ -27,6 +27,7 @@
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "catalog:",
     "@tanstack/react-query": "catalog:",
+    "@tanstack/react-virtual": "catalog:",
     "@tauri-apps/api": "catalog:",
     "@tauri-apps/plugin-deep-link": "catalog:",
     "@tauri-apps/plugin-dialog": "catalog:",

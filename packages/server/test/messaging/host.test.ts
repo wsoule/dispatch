@@ -1,14 +1,16 @@
 import { TaskStore } from '@dispatch/core';
 import type { Message } from '@dispatch/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { GateHandlers } from '../../src/messaging/gates.js';
+import { answeringWith, GateHandlers } from '../../src/messaging/gates.js';
 import { DaemonMessagingHost } from '../../src/messaging/host.js';
 import type { DaemonHostDeps } from '../../src/messaging/host.js';
 import type { RunMeta } from '../../src/orchestrator/types.js';
+import { LINEAR_STATUSES } from './harness.js';
 
 // A message the tests don't care about the content of; only `id`/`from` vary.
 function stubMessage(overrides: Partial<Message> = {}): Message {
@@ -175,6 +177,24 @@ describe('DaemonMessagingHost.decide', () => {
     ).toBe('deny');
   });
 
+  // Linear-linked projects mirror the team's workflow names (see regenerateStatuses).
+  it.each(['Done', 'Canceled'])(
+    'denies even a human waking a task in a %s status of a Linear-style model',
+    (status) => {
+      writeFileSync(join(root, '.dispatch', 'config.yml'), LINEAR_STATUSES);
+      const task = store.create({ title: 'Closed in Linear' });
+      store.update(task.meta.id, { status });
+      const { host } = makeHost();
+      expect(
+        host.decide({
+          type: 'wake',
+          target: `task:${task.meta.id}`,
+          message: stubMessage({ from: 'human:ada' }),
+        })
+      ).toBe('deny');
+    }
+  );
+
   it('asks at the default rung (1)', () => {
     const task = store.create({ title: 'Some work' });
     const { host } = makeHost();
@@ -329,7 +349,9 @@ describe('DaemonMessagingHost.wake', () => {
       (await host.wake('run:r-000001', stubMessage({ from: 'run:r-000002' })))
         .ok
     ).toBe(false);
-    expect(calls.wakeRun).toEqual([['r-000001', { actor: 'human:ada' }]]);
+    expect(calls.wakeRun).toEqual([
+      ['r-000001', { actor: 'human:ada', operator: 'human:ada' }],
+    ]);
   });
 
   it('reports why a named run cannot be continued', async () => {
@@ -350,7 +372,10 @@ describe('DaemonMessagingHost.wake', () => {
       stubMessage({ from: 'human:ada', origin: 'ada-0000000a' })
     );
     expect(calls.wakeTask).toEqual([
-      ['t-abc123', { actor: 'agent:dispatch', continueFinished: false }],
+      [
+        't-abc123',
+        { actor: 'agent:dispatch', continueFinished: false, operator: null },
+      ],
     ]);
     expect(
       (
@@ -363,15 +388,62 @@ describe('DaemonMessagingHost.wake', () => {
     expect(calls.wakeRun).toEqual([]);
   });
 
-  it('credits a human sender, who may continue a finished run; anyone else wakes as the system', async () => {
+  it('credits a human sender, who may continue a finished run and acts for it; anyone else wakes as the system, for no one', async () => {
     const { host, calls } = makeHost();
     await host.wake('task:t-abc123', stubMessage({ from: 'human:ada' }));
     await host.wake('task:t-abc123', stubMessage({ from: 'run:r-000002' }));
     await host.wake('task:t-abc123', stubMessage({ from: 'agent:reviewer' }));
     expect(calls.wakeTask).toEqual([
-      ['t-abc123', { actor: 'human:ada', continueFinished: true }],
-      ['t-abc123', { actor: 'agent:dispatch', continueFinished: false }],
-      ['t-abc123', { actor: 'agent:dispatch', continueFinished: false }],
+      [
+        't-abc123',
+        { actor: 'human:ada', continueFinished: true, operator: 'human:ada' },
+      ],
+      [
+        't-abc123',
+        { actor: 'agent:dispatch', continueFinished: false, operator: null },
+      ],
+      [
+        't-abc123',
+        { actor: 'agent:dispatch', continueFinished: false, operator: null },
+      ],
+    ]);
+  });
+
+  it("acts for the owner only when the owner's wake carried the app token", async () => {
+    const { host, calls } = makeHost();
+    const owner = stubMessage({ from: 'human:wyat' });
+    await host.wake('task:t-abc123', owner);
+    await answeringWith(true, () => host.wake('task:t-abc123', owner));
+    await host.wake('run:r-000001', owner);
+    await answeringWith(true, () => host.wake('run:r-000001', owner));
+    expect(calls.wakeTask.map(([, opts]) => opts)).toEqual([
+      { actor: 'human:wyat', continueFinished: true, operator: null },
+      { actor: 'human:wyat', continueFinished: true, operator: 'human:wyat' },
+    ]);
+    expect(calls.wakeRun.map(([, opts]) => opts)).toEqual([
+      { actor: 'human:wyat', operator: null },
+      { actor: 'human:wyat', operator: 'human:wyat' },
+    ]);
+  });
+
+  it('acts for the human who approved a gated wake, not its sender', async () => {
+    const { host, calls } = makeHost();
+    const agent = stubMessage({ from: 'run:r-000002' });
+    await host.wake('task:t-abc123', agent, {
+      actor: 'human:ada',
+      ownerCredential: false,
+    });
+    await host.wake('task:t-abc123', agent, {
+      actor: SYSTEM_ADDRESS,
+      ownerCredential: false,
+    });
+    expect(calls.wakeTask.map(([, opts]) => opts)).toEqual([
+      {
+        actor: 'agent:dispatch',
+        continueFinished: false,
+        operator: 'human:ada',
+      },
+      { actor: 'agent:dispatch', continueFinished: false, operator: null },
     ]);
   });
 });

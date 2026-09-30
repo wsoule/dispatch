@@ -77,6 +77,16 @@ describe('personal writes', () => {
     ).toMatchObject({ trust: 'human', projectKey: 'aaaaaaaaaaaa' });
   });
 
+  // The desktop Inbox reverses this order and offers Undo on each entry's last row.
+  it('lists the operator’s activity oldest first', async () => {
+    const t = setup();
+    const e = (await t.engine.save(RUN, hazard)) as { id: string };
+    await t.engine.edit(RUN, e.id, { body: 'v2', cause: 'ingest' });
+    expect(
+      t.engine.activity(OWNER, '1970-01-01T00:00:00.000Z').map((a) => a.kind)
+    ).toEqual(['saved', 'ingested']);
+  });
+
   it('refuses a run with no operator', async () => {
     const t = setup();
     expect(await code(t.engine.save(NO_OP_RUN, hazard))).toBe('forbidden');
@@ -102,6 +112,21 @@ describe('personal writes', () => {
         t.engine.save(OWNER, { ...hazard, title: 'humans are not limited' })
       )
     ).toBe('ok');
+  });
+
+  it('counts a run’s forgets against personalWritesPerHour', async () => {
+    const t = setup({ personalWritesPerHour: 2 });
+    const [a, b] = (await Promise.all(
+      ['a', 'b'].map((title) => t.engine.save(OWNER, { ...hazard, title }))
+    )) as { id: string }[];
+    await t.engine.save(RUN, { ...hazard, title: 'one' });
+    expect(await code(t.engine.forget(RUN, a.id, 'stale'))).toBe('ok');
+    expect(await code(t.engine.forget(RUN, b.id, 'stale'))).toBe('limited');
+    expect(
+      t.engine
+        .activity(OWNER, '1970-01-01T00:00:00.000Z')
+        .filter((x) => x.kind === 'throttled')
+    ).toHaveLength(1);
   });
 
   it('supersedes within personal scope only', async () => {
@@ -229,6 +254,33 @@ describe('shared writes', () => {
     });
     expect([fromRun.status, fromAda.status]).toEqual(['proposed', 'proposed']);
     expect(t.shared.countEntries()).toBe(0);
+  });
+
+  it('a run’s shared save defaults its epic to the task’s parent epic', async () => {
+    const t = setup();
+    t.host.tasks.set('t-1a2b3c', {
+      taskId: 't-1a2b3c',
+      title: 'x',
+      body: '',
+      writes: [],
+      epic: 'e-000001',
+      risk: 'routine',
+      a2a: false,
+    });
+    const lesson = { scope: 'team', kind: 'hazard', body: 'b' } as const;
+    const unnamed = (await t.engine.save(RUN, { ...lesson, title: 'a' })) as {
+      proposal: string;
+    };
+    const named = (await t.engine.save(RUN, {
+      ...lesson,
+      title: 'b',
+      epic: null,
+    })) as { proposal: string };
+    expect(
+      [unnamed, named].map(
+        (p) => t.shared.getProposal(p.proposal)?.content?.epic
+      )
+    ).toEqual(['e-000001', null]);
   });
 
   it('promotes a personal entry by copying it; the source stays', async () => {

@@ -1,5 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 import { deriveFeedState, isInFlightState, isUrgentState } from './feedState';
 
@@ -32,7 +32,7 @@ function plural(n: number, one: string, many: string): string {
 }
 
 export function deriveMilestoneStatus(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   latestRunByTaskId: ReadonlyMap<string, RunMeta>,
   allClosed: boolean
 ): MilestoneStatus {

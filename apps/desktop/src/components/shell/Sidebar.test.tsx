@@ -61,13 +61,17 @@ function navRows(): string[] {
 }
 
 test('the exported view order is the ⌘N order App.tsx indexes into', () => {
-  // Rail order, which is also ⌘N order: Inbox and Threads, then Work, then the
-  // merge queue that leads Runs, then Code — the sections as they render.
+  // Rail order, which is also ⌘N order: Home, Inbox and Threads, then Work,
+  // then the merge queue that leads Runs, then Code — the sections as they
+  // render.
   expect(PROJECT_VIEW_ORDER).toEqual([
+    'cockpit',
     'inbox',
     'threads',
     'overview',
     'board',
+    'projects',
+    'live',
     'plans',
     'brain-dump',
     'landing',
@@ -79,10 +83,13 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'impact',
   ]);
   expect(PROJECT_NAV_VIEWS.map((v) => v.label)).toEqual([
+    'Home',
     'Inbox',
     'Threads',
     'Overview',
     'Tasks',
+    'Projects',
+    'Live',
     'Plans',
     'Notes',
     'Merge queue',
@@ -98,12 +105,15 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
 test('sections come in Linear order: fixed top group, then Work, Runs, Code, Live agents, Try', () => {
   mount(true);
   expect(navRows()).toEqual([
+    'cockpit',
     'inbox',
     'threads',
     'drafts',
     'overseer',
     'overview',
     'board',
+    'projects',
+    'live',
     'plans',
     'brain-dump',
     'landing',
@@ -289,7 +299,7 @@ test('saved views nest under Tasks as indented rows and select through onSelectS
     'board',
     'view-v-1',
     'view-v-2',
-    'plans',
+    'projects',
   ]);
   const row = screen.getByRole('button', { name: 'Blocked urgent' });
   expect(row.className).toContain('pl-6');
@@ -344,7 +354,8 @@ test('Favorites lists starred views and tasks above Work and opens them', () => 
     },
   });
   const rows = navRows();
-  expect(rows.slice(0, 7)).toEqual([
+  expect(rows.slice(0, 8)).toEqual([
+    'cockpit',
     'inbox',
     'threads',
     'drafts',

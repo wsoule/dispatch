@@ -1,9 +1,16 @@
 import type { TaskFacts, TaskRow } from '@dispatch/a2a';
-import { decideState, projectionKey, statusAt } from '@dispatch/a2a';
-import type { EngineEvent } from '@dispatch/protocol';
+import {
+  decideState,
+  gateInScope,
+  projectionKey,
+  statusAt,
+} from '@dispatch/a2a';
+import type { EngineEvent, Message } from '@dispatch/protocol';
+import { hasGateData } from '@dispatch/protocol';
 
 import type { EventBus } from '../events.js';
 import { gatherFacts } from './facts.js';
+import { linkOf } from './handoff.js';
 import type { BridgeDeps } from './port.js';
 
 type WatchDeps = BridgeDeps & {
@@ -50,6 +57,8 @@ export class BridgeWatch {
     return [...this.listeners.values()].reduce((n, s) => n + s.size, 0);
   }
 
+  // Schedules every open task in the event's thread, and every approved
+  // handoff whose task, runs or their gates the event touches.
   private onEngine(e: EngineEvent): void {
     if (e.type === 'membership') return;
     const message =
@@ -59,8 +68,50 @@ export class BridgeWatch {
             e.type === 'remote' ? e.messageId : e.delivery.messageId
           );
     if (message === null) return;
-    for (const row of this.deps.store.openTasks())
-      if (row.contextId === message.thread) this.schedule(row.id);
+    // Read once, and only when an open handoff might be linked to the message.
+    let linked: { tasks: Set<string>; gate: Message | null } | null = null;
+    for (const row of this.deps.store.openTasks()) {
+      if (row.contextId === message.thread) {
+        this.schedule(row.id);
+        continue;
+      }
+      if (row.skill !== 'handoff' || row.dispatchTask === null) continue;
+      linked ??= {
+        tasks: this.tasksTouched(message),
+        gate: this.gateBehind(message),
+      };
+      if (!linked.tasks.has(row.dispatchTask) && linked.gate === null) continue;
+      const link = linkOf(this.deps, row);
+      if (link?.approved !== true) continue;
+      if (
+        linked.tasks.has(link.taskId) ||
+        (linked.gate !== null && gateInScope(linked.gate, row.gate, link))
+      )
+        this.schedule(row.id);
+    }
+  }
+
+  // The Dispatch tasks a message is from or to: task:<id> directly, run:<id>
+  // through the task its execute run works.
+  private tasksTouched(m: Message): Set<string> {
+    const out = new Set<string>();
+    for (const address of [m.from, ...m.to]) {
+      if (address.startsWith('task:')) out.add(address.slice('task:'.length));
+      else if (address.startsWith('run:')) {
+        const task = this.deps.runs.taskIdOfRun(address.slice('run:'.length));
+        if (task !== null) out.add(task);
+      }
+    }
+    return out;
+  }
+
+  // The gate a message is, or the gate it answers; null for anything else.
+  // Gate data of a type this build does not know still counts.
+  private gateBehind(m: Message): Message | null {
+    if (hasGateData(m)) return m;
+    const target =
+      m.replyTo === null ? null : this.deps.engine.getMessage(m.replyTo);
+    return target !== null && hasGateData(target) ? target : null;
   }
 
   // Recomputes `taskId` (null: every open task) once the burst settles; a

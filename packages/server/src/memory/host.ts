@@ -33,6 +33,8 @@ import { notifyLiveRuns } from './liveNotify.js';
 // The identity a human resolves to when their handle's roster email changed
 // since it was bound; every personal store call refuses it with 409.
 export const REUSED_HANDLE_IDENTITY = '!reused-handle';
+// The identity of a human named as the owner without the owner's credential.
+export const NOT_OWNER_IDENTITY = '!not-owner';
 // The identity every human resolves to while identities.db will not open.
 export const IDENTITIES_DOWN_IDENTITY = '!identities-down';
 
@@ -48,7 +50,9 @@ export interface DaemonMemoryHostDeps {
     'taskIdOfRun' | 'list' | 'notifyRun' | 'isRunLive' | 'isA2ATask'
   >;
   events: Pick<EventBus, 'broadcast'>;
-  messaging: Pick<Messaging, 'engine'>;
+  messaging: Pick<Messaging, 'engine'> & {
+    store: Pick<Messaging['store'], 'getAgent'>;
+  };
   ledgerStore: Pick<LedgerStorePort, 'add'>;
   appendPolicyActivity: (taskId: string, text: string) => void;
   /** Null while identities.db will not open. */
@@ -73,6 +77,12 @@ export function rosterEmailOf(rootDir: string, handle: string): string | null {
   }
 }
 
+// The human an agent:<handle>/<name> address is attributed to, or null.
+function agentHuman(address: string): string | null {
+  const match = /^agent:([^/]+)\//.exec(address);
+  return match === null ? null : `human:${match[1]}`;
+}
+
 // A corrupt task file reads as "no task", never as a failed memory call.
 function safeTask(store: TaskStorePort, taskId: string): TaskDoc | null {
   try {
@@ -88,17 +98,50 @@ export class DaemonMemoryHost implements MemoryHost {
   constructor(private readonly deps: DaemonMemoryHostDeps) {}
 
   // A human acts for itself; a run for its RunMeta.operator; an
-  // agent:<op>/<name> for human:<op>; agent:dispatch and A2A clients for no one.
+  // agent:<op>/<name> for human:<op>, the owner only on the owner's credential
+  // or the owner's app-token approval; agent:dispatch and A2A clients for no one.
   operatorOf(principal: Principal): Operator | null {
     if (isA2AAgent(principal.address)) return null;
-    if (principal.kind === 'human') return this.bind(principal.address);
+    if (principal.kind === 'human')
+      return this.bind(principal.address, principal.ownerCredential === true);
     if (principal.kind === 'run') {
       const run = this.runOf(principal);
       const op = run === undefined ? null : runOperator(run);
-      return op === null ? null : this.bind(op);
+      return op === null ? null : this.bind(op, true);
     }
-    const match = /^agent:([^/]+)\//.exec(principal.address);
-    return match === null ? null : this.bind(`human:${match[1]}`);
+    const human = agentHuman(principal.address);
+    if (human === null) return null;
+    return this.bind(
+      human,
+      human !== this.deps.ownerRef ||
+        principal.ownerCredential === true ||
+        this.ownerApproved(principal.address)
+    );
+  }
+
+  // Called after any approve or revoke of `address`: an owner-attributed agent
+  // keeps an owner approval only while the owner approved it with the app token.
+  agentDecided(address: string, ownerCredential: boolean): void {
+    const identities = this.deps.identities;
+    if (identities === null || agentHuman(address) !== this.deps.ownerRef)
+      return;
+    const agent = this.deps.messaging.store.getAgent(address);
+    try {
+      if (
+        ownerCredential &&
+        agent?.status === 'approved' &&
+        agent.approvedBy === this.deps.ownerRef
+      )
+        identities.recordOwnerApproval({
+          projectKey: this.deps.projectKey,
+          agent: address,
+          tokenHash: agent.tokenHash,
+          approvedBy: agent.approvedBy,
+        });
+      else identities.dropOwnerApproval(this.deps.projectKey, address);
+    } catch (err) {
+      console.error(`memory: could not record who approved ${address}`, err);
+    }
   }
 
   projectKey(): string {
@@ -156,8 +199,10 @@ export class DaemonMemoryHost implements MemoryHost {
   }
 
   // Policy for the memory gate; a proposal with no task reads as elevated,
-  // which caps it below the gate's rung.
+  // which caps it below the gate's rung, and an A2A task's always waits.
   rule(p: MemoryProposal): PolicyRuling {
+    if (p.taskId !== null && this.deps.orchestrator.isA2ATask(p.taskId))
+      return { mode: 'block' };
     const task = p.taskId === null ? null : safeTask(this.deps.store, p.taskId);
     return consultProjectPolicy(
       this.deps.rootDir,
@@ -235,9 +280,35 @@ export class DaemonMemoryHost implements MemoryHost {
     }
   }
 
+  // Whether the owner approved this owner-attributed agent, at its current
+  // token, with the app token; false whenever that cannot be read.
+  private ownerApproved(address: string): boolean {
+    const identities = this.deps.identities;
+    const agent = this.deps.messaging.store.getAgent(address);
+    if (
+      identities === null ||
+      agent?.status !== 'approved' ||
+      agent.approvedBy !== this.deps.ownerRef
+    )
+      return false;
+    try {
+      return identities.ownerApproved(
+        this.deps.projectKey,
+        address,
+        agent.tokenHash
+      );
+    } catch (err) {
+      console.error(`memory: could not read who approved ${address}`, err);
+      return false;
+    }
+  }
+
   // The identity behind `human`; the owner is always `self`. A handle bound
-  // to someone else, or identities.db down, resolves to a refusing sentinel.
-  private bind(human: string): Operator {
+  // to someone else, the owner's handle without the owner's credential, or
+  // identities.db down, resolves to a refusing sentinel.
+  private bind(human: string, ownerCredential: boolean): Operator {
+    if (human === this.deps.ownerRef && !ownerCredential)
+      return { human, identity: NOT_OWNER_IDENTITY };
     const identities = this.deps.identities;
     if (identities === null)
       return { human, identity: IDENTITIES_DOWN_IDENTITY };

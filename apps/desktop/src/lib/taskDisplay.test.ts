@@ -88,8 +88,8 @@ describe('assigneeLabel', () => {
 });
 
 describe('kindLabel', () => {
-  test('labels both kinds', () => {
+  test('labels the kinds', () => {
     expect(kindLabel('task')).toBe('Task');
-    expect(kindLabel('epic')).toBe('Epic');
+    expect(kindLabel('milestone')).toBe('Milestone');
   });
 });

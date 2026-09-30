@@ -2,6 +2,10 @@
 // `node:*` import — so the desktop webview can import it in dev and in a build.
 
 export * from './status.js';
+export * from './kinds.js';
+export * from './comments.js';
+export * from './people.js';
+export * from './labels.js';
 export * from './types.js';
 export {
   ATTACHMENT_MAX_BYTES,
@@ -14,6 +18,8 @@ export * from './policy.js';
 export * from './linearMap.js';
 export * from './subagents.js';
 export * from './docs.js';
+export { runStepFromEntry } from './runStep.js';
+export type { RunStep, RunStepEntry } from './runStep.js';
 export type {
   Finding,
   FindingRecommendation,
@@ -38,13 +44,15 @@ export type { ActorKind, ActorRef } from './actor.js';
 export {
   computeStack,
   dispatchableTasks,
+  fanoutWaitingOn,
   findDependencyCycles,
   isDone,
   isSatisfiedForDispatch,
   PRIORITY_ORDER,
   readyTasks,
+  releasesFanoutDependents,
 } from './graph.js';
-export type { TaskStack } from './graph.js';
+export type { FanoutBlocker, TaskStack } from './graph.js';
 export {
   AGE_HORIZON_DAYS,
   DEFAULT_QUEUE_WEIGHTS,
@@ -83,3 +91,4 @@ export {
   upsertMember,
 } from './team.js';
 export type { DroppedEntry, TeamMember } from './team.js';
+export { untrustedFenced } from './untrusted.js';

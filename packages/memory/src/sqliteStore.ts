@@ -488,6 +488,10 @@ export class SqliteMemoryStore implements MemoryStore {
       .run(key, value);
   }
 
+  deleteMeta(key: string): void {
+    this.db.prepare('DELETE FROM meta WHERE key = ?').run(key);
+  }
+
   countEntries(): number {
     return (
       queryOne<{ n: number }>(this.db, 'SELECT COUNT(*) AS n FROM entries')

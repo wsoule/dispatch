@@ -1,8 +1,8 @@
-import { queryAll, queryOne } from '@dispatch/core';
+import { openSqliteDb, queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 import { MemoryError, openMemoryDb, SqliteMemoryStore } from '@dispatch/memory';
 import type { MemoryStore } from '@dispatch/memory';
-import { chmodSync, mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { IDENTITY_PATTERN } from './identities.js';
@@ -86,16 +86,34 @@ export class PersonalStores {
   /** The first of `identities` whose store holds `id`; a store that will not open is skipped. */
   locate(id: string, identities: readonly string[]): string | null {
     for (const identity of identities) {
-      let store: MemoryStore;
-      try {
-        store = this.personal(identity);
-      } catch (err) {
-        if (err instanceof MemoryError) continue;
-        throw err;
-      }
-      if (store.getEntry(id) !== null) return identity;
+      const open = this.stores.get(identity);
+      const held =
+        open === undefined
+          ? this.peek(identity, id)
+          : open.store.getEntry(id) !== null;
+      if (held) return identity;
     }
     return null;
+  }
+
+  // Whether a store not yet open holds `id`, through a connection closed
+  // straight after: no file is created, kept open or swept for it.
+  private peek(identity: string, id: string): boolean {
+    if (!IDENTITY_PATTERN.test(identity)) return false;
+    const path = this.pathOf(identity);
+    if (!existsSync(path)) return false;
+    let db: SqliteDatabase | null = null;
+    try {
+      db = openSqliteDb(path);
+      return (
+        queryOne(db, 'SELECT 1 AS one FROM entries WHERE id = ?', [id]) !==
+        undefined
+      );
+    } catch {
+      return false;
+    } finally {
+      db?.close();
+    }
   }
 
   opened(): string[] {

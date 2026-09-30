@@ -1,102 +1,99 @@
 import type {
-  ApiClient,
-  ExecutorsResponse,
-  LinearIssueLink,
-  LinearSyncSummary,
-  PlanRecord,
-  RunMeta,
-} from '@dispatch/client';
-import type {
   EffortLevel,
-  EscalationStep,
-  TaskDoc,
+  TaskListItem,
   UpdatePatch,
 } from '@dispatch/core/browser';
-import { parseExternal } from '@dispatch/core/browser';
+import {
+  isCanceledStatus,
+  isContainer,
+  isDoneStatus,
+  parseLinearExternal,
+  statusLabel,
+  statusType,
+} from '@dispatch/core/browser';
 import {
   Archive,
+  ArchiveRestore,
   Ban,
-  Check,
   Copy,
   Ellipsis,
   Link2,
   Maximize2,
+  MessagesSquare,
+  MonitorPlay,
   Play,
-  Sparkles,
   Star,
-  Waypoints,
   X,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import {
-  useAdjudicateFinding,
-  useEpicLedger,
-  useFixLoop,
-  useProjectLedger,
-  useStartFixLoop,
-  useStopFixLoop,
-  useTaskFindings,
-  useTaskVerification,
-} from '../../../hooks/useOrchestration';
+import { useTaskComments } from '../../../hooks/useTaskComments';
+import { useTaskDoc } from '../../../hooks/useTaskDoc';
 import { parseActivity } from '../../../lib/activityFeed';
-import { filesFromDataTransfer } from '../../../lib/attachments';
-import { isFakeExecutorDevToolEnabled } from '../../../lib/devTools';
-import { fixLoopNeedsRuling } from '../../../lib/fixLoopStatus';
+import type { TaskTab } from '../../../lib/appNav';
+import { liveClaimsFrom } from '../../../lib/dispatchPreview';
+import {
+  dispatchesOnKey,
+  dispatchReadiness,
+  unmetBlockers,
+} from '../../../lib/dispatchReadiness';
 import {
   isTypingTagName,
   type ListKeyCommand,
   resolveListKeyCommand,
 } from '../../../lib/keyboard';
-import { taskLedgerEntries } from '../../../lib/ledgerScope';
+import { colorForLabel } from '../../../lib/labelColor';
 import {
+  isLinearConfigured,
   pushToLinearError,
-  resolveLinearLink,
 } from '../../../lib/linearSettings';
-import {
-  DEFAULT_EFFORT_ID,
-  effortFromId,
-  effortOptions,
-  modelLabel,
-  MODELS,
-  readDefaultModel,
-} from '../../../lib/models';
-import { notePatch } from '../../../lib/noteDraft';
+import { criteriaItems } from '../../../lib/reviewCriteria';
 import { isTerminalRunState } from '../../../lib/runState';
+import { useStatusModelOf } from '../../../lib/statusModel';
+import { dueDateInfo } from '../../../lib/taskDates';
 import { parseTaskSections } from '../../../lib/taskDisplay';
+import { ancestorsOf } from '../../../lib/taskHierarchy';
+import { childrenIn, taskIndexOf } from '../../../lib/taskIndex';
 import {
-  enrichDraftFromPlan,
-  enrichPatch,
-  enrichPlanError,
-} from '../../../lib/taskEnrich';
-import { ImpactPanel } from '../../impact/ImpactPanel';
-import { PlanQuestionsForm } from '../../plans/PlanQuestionsForm';
+  defaultTaskPageMode,
+  executeRuns,
+  lifecycleStages,
+  runsNewestFirst,
+  type TaskPageMode,
+  taskPageModes,
+} from '../../../lib/taskPageMode';
 import { useDeepLinkActions } from '../../shell/DeepLinkContext';
+import { ErrorBoundary } from '../../shell/ErrorBoundary';
+import { AlsoViewing } from '../../shell/PresenceStack';
 import { useSavedViewsContext } from '../../shell/SavedViewsContext';
 import { useShellActions } from '../../shell/ShellActionsContext';
 import { useToasts } from '../../shell/Toasts';
-import { FindingsPanel } from '../detail/FindingsPanel';
-import { FixLoopSection } from '../detail/FixLoopSection';
-import { LedgerSection } from '../detail/LedgerSection';
-import { MainSection } from '../detail/MainSection';
-import { VerificationSection } from '../detail/VerificationSection';
-import { EnrichReview } from '../EnrichReview';
-import { EpicDagModal } from '../EpicDagModal';
-import { getStackByTaskId } from '../StackRail';
-import { ActivitySection } from './ActivitySection';
-import { AttachmentsRow, useAttachmentUpload } from './AttachmentsRow';
-import { PropertiesRail, type RailPicker } from './PropertiesRail';
-import { SessionsBlock } from './SessionsBlock';
-import { SubtasksBlock } from './SubtasksBlock';
-import { TaskDescription } from './TaskDescription';
-import { TaskDocsBlock } from './TaskDocsBlock';
+import {
+  AssigneeControl,
+  cycleLabel,
+  estimateLabel,
+  PriorityControl,
+  StatusControl,
+} from '../PropertyControls';
+import { statusColor } from '../StatusIcon';
+import { TaskPreviewTab } from '../TaskPreviewTab';
+import { LifecycleTrack } from './LifecycleTrack';
+import type { TaskPageLayout, TaskPageModel } from './pageModel';
+import { PlanMode } from './PlanMode';
+import { ReviewMode } from './ReviewMode';
+import { RunMode } from './RunMode';
+import { SpecMode } from './SpecMode';
+import { SummaryMode } from './SummaryMode';
+import type { TaskPageHost } from './TaskPageHost';
+import { useTaskPageHost } from './TaskPageHost';
+import { type RailPicker, TaskRail } from './TaskRail';
 import { TaskTitle } from './TaskTitle';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
 import { PageHeader, SidePanelIconButton } from '@/ui/ai/page-header';
-import { PillButton, SelectPill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
+import { LabelPill, Pill } from '@/ui/ai/pill';
+import { EmptyState } from '@/ui/chrome';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -104,100 +101,24 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
+import { Skeleton } from '@/ui/skeleton';
 
-export interface TaskDetailPanelProps {
-  doc: TaskDoc;
-  /** The model a dispatch runs on when the picker is untouched — the project
-   * config's `models.execute` resolved with the per-device override (see
-   * resolveExecuteModel). Absent, the picker falls back to the device default,
-   * which ignores the project config. */
-  defaultModel?: string;
-  /** The project's configured `effort.execute`, shown on the effort picker's
-   *  Default entry. The daemon applies it; the page never sends it itself. */
-  defaultEffort?: EffortLevel;
-  /** What the daemon can dispatch on. Absent (or a single real executor) hides the picker. */
-  executors?: ExecutorsResponse;
-  statuses: string[];
-  ready: boolean;
-  run: RunMeta | undefined;
-  /** Every run (agent session) this task has had — newest first — so the page can list
-   * them and let you jump into any session's log/review, not just the latest one. */
-  runs: RunMeta[];
-  /** All epics in the project, for the editable Epic (parent) picker. */
-  epics: TaskDoc[];
-  /** All tasks in the project, for the editable Blocked-by picker (self is filtered out),
-   * the sub-tasks block, and `StackRail`. */
-  tasks: TaskDoc[];
-  /** Every task's latest run, for the sub-task and stack rows' run marks. */
-  latestRunByTaskId: Map<string, RunMeta>;
-  onUpdate: (id: string, patch: UpdatePatch) => Promise<void>;
-  /** Optimistic status change (see `useDispatchProject.moveTaskStatus`) — the same one the
-   * board's drag-and-drop uses, so moving a task's status from the rail feels as immediate
-   * as dragging its card, rather than waiting on a round-trip like every other field here
-   * (`onUpdate`) does. */
-  onMoveStatus: (id: string, status: string) => Promise<void>;
-  onDispatch: (
-    id: string,
-    executor?: string,
-    model?: string,
-    opts?: { effort?: EffortLevel }
-  ) => Promise<void>;
-  /** Jumps to a run's session/log — the "View run"/"Review run" button and every Sessions
-   * row call this with the run's id. */
-  onOpenSession: (runId: string) => void;
-  /** Starts an AI draft that adds the context an under-specified task is missing. Optional
-   * so the older call sites that never had it keep compiling with the button hidden. */
-  onEnrich?: (id: string) => Promise<void>;
-  /** The plan carrying that draft, passed only while it belongs to *this* task. The caller
-   * owns the slot, so a draft survives the page being closed and reopened. */
-  enrichPlan?: PlanRecord;
-  /** Drops the draft without applying it (Discard, and the cleanup after Apply). */
-  onDismissEnrich?: () => void;
-  /** Answers the enrich planner's clarifying questions on the same plan. Optional, like the
-   * other enrich props, so older call sites keep compiling. */
-  onAnswerEnrich?: (message: string) => Promise<void>;
-  /** Re-points this page at a different task — a sub-task row, a blocker pill, the stack.
-   * Omitted renders those as plain text. */
-  onOpenTask?: (taskId: string) => void;
-  /** Issue UUID -> display identifier/URL, for turning `doc.meta.external` into a real chip. */
-  linearLinks: Record<string, LinearIssueLink>;
-  /** Whether Linear is connected with a team chosen — gates the "Push to Linear" action. */
-  linearConfigured: boolean;
-  /** Pushes this task to Linear now (creating the issue if unlinked). Optional so a caller
-   * without Linear plumbing gets no push affordance. */
-  onPushToLinear?: (id: string) => Promise<LinearSyncSummary>;
-  /** The dispatchd client — this page fetches its own findings/fix-loop/
-   * verification/ledger data rather than going through the app-level hook. */
-  client: ApiClient | null;
-  /** The active project's daemon port, for namespacing this page's own
-   * query keys — see useOrchestration.ts. */
-  port: number | undefined;
-  /** The project's escalation ladder, for the "fresh implementer" hint. */
-  fixLoopEscalation: EscalationStep[];
-  /** Extra header actions, rendered before the side-panel toggle. */
-  headerTrailing?: ReactNode;
-  /** Opens a linked doc in the Docs view; omitted hides the Docs block, for a
-   * caller who cannot read docs. */
-  onOpenDoc?: (docId: string, anchor: string | null) => void;
-  /** Whether the Docs block offers New spec and Link doc. */
-  canLinkDocs?: boolean;
-}
-
-interface TaskPageProps extends TaskDetailPanelProps {
-  /** `page` draws the two-row `PageHeader`; `peek` draws a 40px dialog chrome row instead. */
-  mode: 'page' | 'peek';
-  /** The active project's display name, the first crumb (`null` when none is active). */
-  projectName: string | null;
-  /** Page mode: the Details / Chat / Diff `ViewTabs` for the header's second row. */
-  tabs?: ReactNode;
-  /** Page mode: the header's second-row controls (the session select). */
-  controls?: ReactNode;
-  /** Page mode: replaces the details body — the Chat or Diff tab's content. */
-  children?: ReactNode;
-  /** Peek mode: grows the peek into the full task view (`⌘⏎`). */
-  onExpand?: () => void;
-  /** Peek mode: closes the dialog. */
+export interface TaskPageProps {
+  taskId: string;
+  layout: TaskPageLayout;
+  /** The mode, when the caller keeps it (the full page keeps it in history); omitted, the
+   * page holds it and starts on `auto`. */
+  mode?: TaskTab;
+  onModeChange?: (mode: TaskTab) => void;
+  /** The run the Run and Review modes show, when the caller keeps it. */
+  runId?: string | null;
+  onSelectRun?: (runId: string) => void;
+  /** Closes a peek or split pane. */
   onClose?: () => void;
+  /** Grows a peek or split pane into the full page. */
+  onExpand?: () => void;
+  /** Leaves the full page once its task has gone. */
+  onBack?: () => void;
 }
 
 function errorMessage(err: unknown): string {
@@ -205,18 +126,78 @@ function errorMessage(err: unknown): string {
   return typeof err === 'string' ? err : 'Something went wrong.';
 }
 
-// Which rail picker each single-key list command opens on this page.
+// Which rail picker each single-key command opens.
 const PICKER_FOR_KEY: Partial<Record<ListKeyCommand, RailPicker>> = {
   'list-set-status': 'status',
   'list-set-priority': 'priority',
   'list-set-assignee': 'assignee',
   'list-set-labels': 'labels',
-  'list-set-epic': 'epic',
-  'list-set-milestone': 'milestone',
+  'list-set-epic': 'parent',
+  'list-set-milestone': 'parent',
 };
 
-/** `t-8f2a Apply to …` — the task's own crumb segment: a muted sans id at Linear's -0.26px
- * tracking beside the title. */
+/**
+ * One task, state-adaptive: the main pane follows where the task is — Spec before it is
+ * dispatched, Run while an agent works it, Review once a run finishes, Summary when it is
+ * done (a container shows its Plan) — and the lifecycle track above it switches modes by
+ * hand; the header's Thread toggle shows the task's message threads instead. The rail
+ * beside it holds every property, relations, sub-issues, comments and
+ * activity. One component for every mount: `split` beside a list (the rail opens over
+ * the pane), `peek` in a dialog, `full` as the window. Metadata renders from the cached
+ * list at once; the body, comments and run data stream in behind skeletons.
+ */
+export function TaskPage(props: TaskPageProps) {
+  const host = useTaskPageHost();
+  if (host === null) return null;
+  return <TaskPageResolver host={host} {...props} />;
+}
+
+function TaskPageResolver({
+  host,
+  ...props
+}: TaskPageProps & { host: TaskPageHost }) {
+  const tasks = host.project.tasksIncludingArchived;
+  const item = useMemo(
+    () => tasks.find((t) => t.meta.id === props.taskId),
+    [tasks, props.taskId]
+  );
+  if (item === undefined) {
+    if (!host.project.tasksReady) return <PageSkeleton />;
+    const leave = props.layout === 'full' ? props.onBack : props.onClose;
+    return (
+      <EmptyState
+        className="h-full"
+        heading="That task is no longer available."
+        description="It was archived or deleted while it was open."
+        secondary={
+          leave === undefined
+            ? undefined
+            : {
+                label: props.layout === 'full' ? 'Back' : 'Close',
+                onClick: leave,
+              }
+        }
+      />
+    );
+  }
+  return (
+    <ErrorBoundary label="this task">
+      <TaskPageLoaded key={props.taskId} host={host} item={item} {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function PageSkeleton() {
+  return (
+    <div aria-label="Loading the task" className="flex flex-col gap-3 p-6">
+      <Skeleton className="h-8 w-2/3" />
+      <Skeleton className="h-12 w-full max-w-[720px]" />
+      <Skeleton className="h-4 w-1/2" />
+    </div>
+  );
+}
+
+/** The task's id beside its title: the crumb's last segment. */
 function TaskCrumb({ id, title }: { id: string; title: string }) {
   return (
     <span data-slot="task-crumb" className="flex min-w-0 items-center gap-1.5">
@@ -228,317 +209,318 @@ function TaskCrumb({ id, title }: { id: string; title: string }) {
   );
 }
 
-/**
- * One task, on Linear's issue-page anatomy: a header crumb (`Project › Tasks › t-xxxx
- * Title`) with copy-id / `···` / side-panel icons, a ~800px content column — the 24px
- * in-place title, the dispatch actions, the rendered description and acceptance criteria,
- * sub-tasks, the orchestration sections, sessions, and the activity feed with its comment
- * composer — beside a 280px properties rail of 32px ghost rows. Renders both the full task
- * view (`mode: 'page'`, where the Chat/Diff tabs replace the body through `children`) and
- * the peek dialog (`mode: 'peek'`, a 40px chrome row instead of the page header), from the
- * same `TaskDetailPanelProps` bundle App.tsx builds once for both. Every field is editable
- * in place: frontmatter through `onUpdate`/`onMoveStatus`, body sections through
- * `onUpdate`'s `description`/`acceptanceCriteria`; failures surface as error toasts.
- */
-export function TaskPage({
-  mode,
-  projectName,
-  tabs,
-  controls,
-  children,
-  onExpand,
+/** The narrow pane's stand-in for the rail: the properties you scan most, inline. */
+function PropertyChips({
+  page,
+  onOpenRail,
+}: {
+  page: TaskPageModel;
+  onOpenRail: () => void;
+}) {
+  const { meta } = page.item;
+  const due =
+    meta.dueDate === null
+      ? null
+      : dueDateInfo(
+          meta.dueDate,
+          new Date(),
+          isDoneStatus(meta.status, page.statusModel)
+        );
+  return (
+    <div
+      data-slot="property-chips"
+      className="flex flex-wrap items-center gap-1.5"
+    >
+      <PriorityControl
+        value={meta.priority}
+        onChange={(priority) => void page.patch({ priority })}
+      />
+      <AssigneeControl
+        value={meta.assignee}
+        onChange={(assignee) => void page.patch({ assignee })}
+      />
+      {meta.estimate !== null && <Pill>{estimateLabel(meta.estimate)}</Pill>}
+      {due !== null && (
+        <Pill title="Due" className={cn(due.overdue && 'text-red')}>
+          {due.date}
+        </Pill>
+      )}
+      {meta.cycle !== null && <Pill>{cycleLabel(meta.cycle)}</Pill>}
+      {meta.labels.map((label) => (
+        <LabelPill key={label} color={colorForLabel(label)}>
+          {label}
+        </LabelPill>
+      ))}
+      <button
+        type="button"
+        onClick={onOpenRail}
+        className="text-muted-foreground rounded-control focus-visible:ring-ring h-6 px-1.5 text-[12px] font-medium outline-none hover:text-(--text-secondary) focus-visible:ring-2"
+      >
+        All details
+      </button>
+    </div>
+  );
+}
+
+function TaskPageLoaded({
+  host,
+  item,
+  taskId,
+  layout,
+  mode: controlledMode,
+  onModeChange,
+  runId: controlledRunId,
+  onSelectRun,
   onClose,
-  doc,
-  defaultModel,
-  defaultEffort,
-  executors,
-  statuses,
-  ready,
-  run,
-  runs,
-  epics,
-  tasks,
-  latestRunByTaskId,
-  onUpdate,
-  onMoveStatus,
-  onDispatch,
-  onEnrich,
-  enrichPlan,
-  onDismissEnrich,
-  onAnswerEnrich,
-  onOpenSession,
-  onOpenTask,
-  linearLinks,
-  linearConfigured,
-  onPushToLinear,
-  client,
-  port,
-  fixLoopEscalation,
-  headerTrailing,
-  onOpenDoc,
-  canLinkDocs = false,
-}: TaskPageProps) {
+  onExpand,
+}: TaskPageProps & { host: TaskPageHost; item: TaskListItem }) {
+  const { project } = host;
+  const meta = item.meta;
   const shell = useShellActions();
   const toasts = useToasts();
-  // Both null until App mounts their providers (P7); the page then shows no
-  // Copy link and no star, which is also the browser-harness and test state.
+  // Null until App mounts their providers; the page then shows no Copy link and no star.
   const deepLink = useDeepLinkActions();
   const savedViews = useSavedViewsContext();
   const rootRef = useRef<HTMLDivElement>(null);
-  const attachmentUpload = useAttachmentUpload(client, doc.meta.id);
-  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
-  const [sidePanelOpen, setSidePanelOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(layout !== 'split');
   const [picker, setPicker] = useState<RailPicker | null>(null);
-  const [dispatching, setDispatching] = useState(false);
-  const [pushingLinear, setPushingLinear] = useState(false);
-  // Brief confirmation shown until the tasks cache refetches and `linearLinked` flips the
-  // button into the real chip — the push itself gives no other positive signal.
-  const [pushedLinear, setPushedLinear] = useState(false);
-  // "Add detail" was clicked. Not cleared when the POST resolves — that 202 only means the
-  // plan started; it clears when a draft or an error actually arrives.
-  const [enrichStarted, setEnrichStarted] = useState(false);
-  const [applyingEnrich, setApplyingEnrich] = useState(false);
-  // The model this dispatch will use — seeded from the project's resolved default (config
-  // models.execute layered under the device override), overridable per-dispatch.
-  const [model, setModel] = useState(() => defaultModel ?? readDefaultModel());
-  // The effort picker's id; the Default sentinel sends nothing.
-  const [effortId, setEffortId] = useState(DEFAULT_EFFORT_ID);
-  const efforts = effortOptions(defaultEffort);
-  // The executor this dispatch will use; undefined means "the daemon's default", which is
-  // sent as no executor at all so a resumable run is never refused for naming one.
-  const [executor, setExecutor] = useState<string | undefined>(undefined);
-  // The daemon's test-only executors (`fake`, `fake-ask`, …) are never a real choice.
-  const executorChoices = useMemo(
-    () =>
-      (executors?.executors ?? []).filter(
-        (e) => e.name !== 'fake' && !e.name.startsWith('fake-')
-      ),
-    [executors]
+  const [localMode, setLocalMode] = useState<TaskTab>('auto');
+  const [localRunId, setLocalRunId] = useState<string | null>(null);
+  // Set from a dispatch until its run shows up: the ids of the runs that already existed.
+  const [awaitingRun, setAwaitingRun] = useState<ReadonlySet<string> | null>(
+    null
   );
-  const effectiveExecutor = executor ?? executors?.default ?? 'claude';
-  // The epic's dependency-graph dialog — only ever meaningful when `doc.meta.kind ===
-  // 'epic'`; not lifted to nav state since nothing outside this page needs to know.
-  const [showGraph, setShowGraph] = useState(false);
 
-  // If the link never arrives, drop back to the button rather than claiming "Pushed" forever.
+  const doc = useTaskDoc(project.client, project.port, taskId);
+  const body = doc?.body ?? null;
+  const sections = useMemo(
+    () => (body === null ? null : parseTaskSections(body)),
+    [body]
+  );
+  const description = sections?.get('Description') ?? '';
+  const acceptance = sections?.get('Acceptance Criteria') ?? '';
+  const activitySection = sections?.get('Activity') ?? '';
+  const criteria = useMemo(() => criteriaItems(acceptance), [acceptance]);
+  const activity = useMemo(
+    () => parseActivity(activitySection),
+    [activitySection]
+  );
+  const comments = useTaskComments(
+    project.client,
+    project.port,
+    taskId,
+    project.me
+  );
+
+  const index = taskIndexOf(project.tasksIncludingArchived);
+  const tasksById = index.byId;
+  const container = isContainer(meta, index.parentIds);
+  const children = childrenIn(index, taskId);
+  const allRuns = useMemo(
+    () => runsNewestFirst(project.runs.filter((r) => r.taskId === taskId)),
+    [project.runs, taskId]
+  );
+  const runs = useMemo(() => executeRuns(allRuns), [allRuns]);
+  const latestRun = runs[0];
+  const model = useStatusModelOf(project.config);
+  const unmet = useMemo(
+    () => unmetBlockers(item, tasksById, model),
+    [item, tasksById, model]
+  );
+  const stateInput = {
+    statusType: statusType(meta.status, model),
+    isContainer: container,
+    latestRun,
+  };
+  const autoMode = defaultTaskPageMode(stateInput);
+  const modes = taskPageModes(container);
+  const requested = controlledMode ?? localMode;
+  const { threadView } = host;
+  const mode: TaskPageMode | 'thread' | 'preview' =
+    requested === 'auto'
+      ? autoMode
+      : requested === 'preview'
+        ? layout === 'full' && latestRun !== undefined
+          ? 'preview'
+          : autoMode
+        : requested === 'thread'
+          ? threadView !== undefined
+            ? 'thread'
+            : autoMode
+          : modes.includes(requested)
+            ? requested
+            : autoMode;
+  const selectedRunId = controlledRunId ?? localRunId;
+  // Any kind: a review or verify run opened by id (the live rail, the inbox) shows itself.
+  const selectedRun = allRuns.find((r) => r.id === selectedRunId) ?? latestRun;
+
+  // A dispatch counts as landed once a run it did not already know about appears.
   useEffect(() => {
-    if (!pushedLinear) return;
-    const timer = setTimeout(() => setPushedLinear(false), 15_000);
+    if (awaitingRun === null) return;
+    if (runs.some((r) => !awaitingRun.has(r.id))) setAwaitingRun(null);
+  }, [runs, awaitingRun]);
+  useEffect(() => {
+    if (awaitingRun === null) return;
+    const timer = setTimeout(() => setAwaitingRun(null), 15_000);
     return () => clearTimeout(timer);
-  }, [pushedLinear]);
+  }, [awaitingRun]);
 
-  // Failures land as error toasts rather than a tinted banner in the column.
   const fail = useCallback(
     (title: string, err: unknown) => {
       toasts.push({ title, description: errorMessage(err), tone: 'error' });
     },
     [toasts]
   );
-
-  // Derived from the run's own state, not the task's status string: a run that isn't in a
-  // terminal state *is* an "open run" whatever the project calls its in-flight statuses.
-  const hasOpenRun = run !== undefined && !isTerminalRunState(run.state);
-
-  const linearLink = resolveLinearLink(doc.meta.external, linearLinks);
-  const linearLinked = parseExternal(doc.meta.external) !== null;
-
-  const { findings, error: findingsError } = useTaskFindings(
-    client,
-    port,
-    doc.meta.id
-  );
-  const { fixLoop, error: fixLoopError } = useFixLoop(
-    client,
-    port,
-    doc.meta.id
-  );
-  const { result: verification, error: verificationError } =
-    useTaskVerification(client, port, doc.meta.id);
-  const isEpic = doc.meta.kind === 'epic';
-  // Only ever meaningful for an epic — `useEpicLedger` no-ops (empty, disabled) when
-  // `epicId` is undefined, so this is safe on a plain task.
-  const { entries: epicLedgerEntries, error: epicLedgerError } = useEpicLedger(
-    client,
-    port,
-    isEpic ? doc.meta.id : undefined
-  );
-  // A plain task's own entries live in the project-wide bucket instead, which is the only
-  // place a scope grant on an epic-less task is ever recorded.
-  const { entries: projectLedger, error: projectLedgerError } =
-    useProjectLedger(client, port, !isEpic);
-  const ledgerEntries = isEpic
-    ? epicLedgerEntries
-    : taskLedgerEntries(projectLedger, doc.meta.id);
-  const ledgerError = isEpic ? epicLedgerError : projectLedgerError;
-  const adjudicateFinding = useAdjudicateFinding(client, port);
-  const startFixLoop = useStartFixLoop(client, port);
-  const stopFixLoop = useStopFixLoop(client, port);
-  const [startingFixLoop, setStartingFixLoop] = useState(false);
-  const [startFixLoopError, setStartFixLoopError] = useState<string | null>(
-    null
-  );
-
-  // The failure this reports is the useful half of the button: the server declines when
-  // there is nothing to review yet, and that reason belongs on screen.
-  async function handleStartFixLoop() {
-    setStartingFixLoop(true);
-    setStartFixLoopError(null);
-    try {
-      await startFixLoop(doc.meta.id);
-    } catch (err) {
-      setStartFixLoopError(
-        err instanceof Error ? err.message : 'Could not start the fix loop.'
-      );
-    } finally {
-      setStartingFixLoop(false);
-    }
-  }
-
-  async function pushToLinear() {
-    if (onPushToLinear === undefined) return;
-    setPushingLinear(true);
-    try {
-      const failure = pushToLinearError(await onPushToLinear(doc.meta.id));
-      if (failure !== null) {
-        toasts.push({
-          title: 'Push to Linear failed',
-          description: failure,
-          tone: 'error',
-        });
-      } else {
-        setPushedLinear(true);
-      }
-    } catch (err) {
-      fail('Push to Linear failed', err);
-    } finally {
-      setPushingLinear(false);
-    }
-  }
-
-  // Whether this task belongs to a stack (a connected chain of blockedBy edges) — gates
-  // the rail's Stack section so a lone task never shows an empty heading. Read from the
-  // same per-`tasks` cache StackRail draws from, so the adjacency is built once.
-  const hasStack = getStackByTaskId(tasks).has(doc.meta.id);
-
-  // This epic's children (the sub-tasks block and the graph dialog), and — for a plain
-  // task — the tasks it blocks, which get the same block titled `Blocks`.
-  const epicChildren = useMemo(
-    () => tasks.filter((t) => t.meta.parent === doc.meta.id),
-    [tasks, doc.meta.id]
-  );
-  const dependents = useMemo(
-    () =>
-      isEpic ? [] : tasks.filter((t) => t.meta.blockedBy.includes(doc.meta.id)),
-    [tasks, doc.meta.id, isEpic]
-  );
-
-  // The caller only passes `enrichPlan` when it belongs to this task, so no id check here.
-  const enrichDraft = enrichDraftFromPlan(enrichPlan);
-  const enrichError = enrichPlanError(enrichPlan);
-  // The `running` arm covers reopening this (per-task keyed, so remounted) page mid-pass,
-  // where `enrichStarted` is back to false but the app-level plan is still going. Open
-  // questions mean the planner is waiting on the user, not still reading.
-  const awaitingEnrichAnswer = (enrichPlan?.questions.length ?? 0) > 0;
-  const enriching =
-    enrichPlan?.state === 'running' ||
-    (enrichStarted &&
-      !awaitingEnrichAnswer &&
-      enrichDraft === null &&
-      enrichError === null);
-
-  async function enrich() {
-    if (onEnrich === undefined) return;
-    setEnrichStarted(true);
-    try {
-      await onEnrich(doc.meta.id);
-    } catch (err) {
-      setEnrichStarted(false);
-      fail('Could not start the draft', err);
-    }
-  }
-
-  function dismissEnrich() {
-    setEnrichStarted(false);
-    onDismissEnrich?.();
-  }
-
-  // Writes the draft through the ordinary update path. Only dropped once that write lands,
-  // so a failed save leaves the proposal on screen to retry.
-  async function applyEnrich() {
-    if (enrichDraft === null) return;
-    setApplyingEnrich(true);
-    try {
-      await onUpdate(doc.meta.id, enrichPatch(enrichDraft));
-      dismissEnrich();
-    } catch (err) {
-      fail('Could not apply the draft', err);
-    } finally {
-      setApplyingEnrich(false);
-    }
-  }
-
-  const dispatch = useCallback(
-    async (explicit?: string) => {
-      setDispatching(true);
-      try {
-        const chosen = explicit ?? executor;
-        const runsOn = chosen ?? executors?.default ?? 'claude';
-        // The model and effort pickers are Claude's; any other executor picks its own.
-        await onDispatch(
-          doc.meta.id,
-          chosen,
-          runsOn === 'claude' ? model : undefined,
-          runsOn === 'claude' ? { effort: effortFromId(effortId) } : undefined
-        );
-      } catch (err) {
-        fail('Dispatch failed', err);
-      } finally {
-        setDispatching(false);
-      }
-    },
-    [doc.meta.id, executor, executors, model, effortId, onDispatch, fail]
-  );
-
+  const { handleUpdate, moveTaskStatus } = project;
   const patch = useCallback(
     async (next: UpdatePatch) => {
       try {
-        await onUpdate(doc.meta.id, next);
+        await handleUpdate(taskId, next);
       } catch (err) {
         fail('Could not save the task', err);
       }
     },
-    [doc.meta.id, onUpdate, fail]
+    [handleUpdate, taskId, fail]
   );
-
   const changeStatus = useCallback(
-    async (status: string) => {
+    (status: string) => {
+      moveTaskStatus(taskId, status).catch((err: unknown) =>
+        fail('Could not change the status', err)
+      );
+    },
+    [moveTaskStatus, taskId, fail]
+  );
+  const selectMode = useCallback(
+    (next: TaskPageMode | 'thread' | 'preview') => {
+      // Picking the state's own mode returns the page to following the state.
+      const tab: TaskTab = next === autoMode ? 'auto' : next;
+      if (onModeChange !== undefined) onModeChange(tab);
+      else setLocalMode(tab);
+    },
+    [autoMode, onModeChange]
+  );
+  const selectRun = useCallback(
+    (runId: string) => {
+      if (onSelectRun !== undefined) onSelectRun(runId);
+      else setLocalRunId(runId);
+    },
+    [onSelectRun]
+  );
+  const { dispatchTask } = host;
+  const dispatching = awaitingRun !== null;
+  const dispatch = useCallback(
+    async (executor?: string, runModel?: string, effort?: EffortLevel) => {
+      const known = new Set(runs.map((r) => r.id));
+      setAwaitingRun(known);
       try {
-        await onMoveStatus(doc.meta.id, status);
+        await dispatchTask(
+          taskId,
+          executor,
+          runModel,
+          layout !== 'full',
+          effort
+        );
       } catch (err) {
-        fail('Could not change the status', err);
+        setAwaitingRun(null);
+        fail('Dispatch failed', err);
       }
     },
-    [doc.meta.id, onMoveStatus, fail]
+    [dispatchTask, taskId, layout, runs, fail]
   );
+  // One verdict for the card, the header menu and `d`.
+  const liveClaims = useMemo(
+    () => liveClaimsFrom(project.runs),
+    [project.runs]
+  );
+  const readiness = dispatchReadiness({
+    task: item,
+    body: sections === null ? null : { description, criteria },
+    tasksById,
+    model,
+    liveRun: runs.find((r) => !isTerminalRunState(r.state)),
+    reading: project.readinessById.get(taskId),
+    liveClaims,
+  });
+  // A container goes out from its plan, never as one run.
+  const canDispatch = !container && readiness.canDispatch;
+  const keyDispatches = !container && dispatchesOnKey(readiness);
+  const openTask =
+    layout === 'full'
+      ? host.peekTask
+      : (id: string) => (id === taskId ? undefined : host.peekTask(id));
 
-  // Linear's single-key property shortcuts (`s p a l e m`) and `d` to dispatch, for a
-  // keystroke that lands on this page's body or on nothing at all. A key typed into a field,
-  // or into a dialog stacked above this page, is left alone.
+  const page: TaskPageModel = {
+    host,
+    project,
+    layout,
+    item,
+    bodyLoaded: sections !== null,
+    description,
+    acceptance,
+    criteria,
+    amendments: sections?.get('Amendments') ?? '',
+    activity,
+    runs,
+    allRuns,
+    selectedRun,
+    selectRun,
+    isContainer: container,
+    children,
+    tasksById,
+    unmetBlockers: unmet,
+    readiness,
+    statusModel: model,
+    patch,
+    changeStatus,
+    fail,
+    openTask,
+    selectMode,
+    dispatch,
+    dispatching,
+  };
+
+  const stages = lifecycleStages({
+    ...stateInput,
+    runs,
+    criteriaCount: sections === null ? null : criteria.length,
+    writesCount: meta.writes.length,
+    unmetBlockers: unmet.length,
+    statusLabel: statusLabel(meta.status),
+    children: {
+      total: children.length,
+      done: children.filter((c) => isDoneStatus(c.meta.status, model)).length,
+      running: children.filter((c) => {
+        const run = project.latestRunByTaskId.get(c.meta.id);
+        return run !== undefined && !isTerminalRunState(run.state);
+      }).length,
+    },
+  });
+
+  // Linear's single-key property shortcuts and `d` to dispatch, for a key that lands on
+  // this page or on nothing at all. A key typed into a field, a menu, a dialog stacked
+  // above the page, a task page nested in this one (the Flight Plan's pane), or already
+  // handled (the Flight Plan's own h/j/k/l and `d`) is left alone.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const root = rootRef.current;
       const target = event.target;
       if (root === null || !(target instanceof HTMLElement)) return;
-      // On this page's body, on nothing at all, or on the dialog popup around the peek.
+      if (event.defaultPrevented) return;
+      // An unfocused key goes to the innermost page.
+      if (
+        target === document.body &&
+        root.querySelector('[data-slot="task-page"]') !== null
+      ) {
+        return;
+      }
       if (
         target !== document.body &&
-        !root.contains(target) &&
+        target.closest('[data-slot="task-page"]') !== root &&
         !target.contains(root)
       ) {
         return;
       }
       if (isTypingTagName(target.tagName, target.isContentEditable)) return;
-      // A key inside an open menu or picker belongs to it.
       if (
         target.closest('[role="menu"], [data-slot="popover-content"]') !== null
       )
@@ -550,48 +532,79 @@ export function TaskPage({
       const next = command === null ? undefined : PICKER_FOR_KEY[command];
       if (next !== undefined) {
         event.preventDefault();
-        setSidePanelOpen(true);
+        setRailOpen(true);
         setPicker(next);
         return;
       }
-      if (command === 'list-dispatch' && ready && !hasOpenRun && !dispatching) {
+      if (command === 'list-dispatch' && keyDispatches && !dispatching) {
         event.preventDefault();
         void dispatch();
       }
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [ready, hasOpenRun, dispatching, dispatch]);
+  }, [keyDispatches, dispatching, dispatch]);
 
-  const sections = parseTaskSections(doc.body);
-  const description = sections.get('Description') ?? '';
-  const acceptance = sections.get('Acceptance Criteria') ?? '';
-  const amendments = sections.get('Amendments') ?? '';
-  const activitySection = sections.get('Activity') ?? '';
-  const activity = useMemo(
-    () => parseActivity(activitySection),
-    [activitySection]
+  const ancestors = useMemo(
+    () => ancestorsOf(item, tasksById),
+    [item, tasksById]
   );
-
+  const openCrumb = layout === 'full' ? host.openTaskPage : host.peekTask;
   const crumb: ReactNode[] = [
-    ...(projectName !== null ? [projectName] : []),
-    'Tasks',
-    <TaskCrumb key="task" id={doc.meta.id} title={doc.meta.title} />,
+    ...(host.projectName !== null ? [host.projectName] : []),
+    ...ancestors.map((a) => (
+      <button
+        key={a.meta.id}
+        type="button"
+        onClick={() => openCrumb(a.meta.id)}
+        className="hover:text-foreground min-w-0 truncate outline-none focus-visible:underline"
+      >
+        {a.meta.title}
+      </button>
+    )),
+    <TaskCrumb key="task" id={meta.id} title={meta.title} />,
   ];
+
+  // Any Linear record counts: an issue, or a project, milestone or initiative.
+  const linked = parseLinearExternal(meta.external) !== null;
+  const archived = meta.archivedAt !== undefined;
+  async function pushToLinear() {
+    const failure = pushToLinearError(await project.handleSyncLinear([taskId]));
+    if (failure !== null) fail('Push to Linear failed', failure);
+  }
 
   const headerActions = (
     <>
-      {headerTrailing}
-      <IconButton
-        label="Copy task id"
-        onClick={() => shell.copyTaskId(doc.meta.id)}
-      >
+      <AlsoViewing
+        viewers={project.presence.filter(
+          (p) => p.viewing === taskId && p.ref !== project.me
+        )}
+      />
+      {threadView !== undefined && (
+        <IconButton
+          label="Thread"
+          active={mode === 'thread'}
+          onClick={() => selectMode(mode === 'thread' ? autoMode : 'thread')}
+        >
+          <MessagesSquare />
+        </IconButton>
+      )}
+      {layout === 'full' && latestRun !== undefined && (
+        <IconButton
+          label="Preview the run's app"
+          active={mode === 'preview'}
+          onClick={() => selectMode(mode === 'preview' ? autoMode : 'preview')}
+        >
+          <MonitorPlay />
+        </IconButton>
+      )}
+      <IconButton label="Copy task id" onClick={() => shell.copyTaskId(taskId)}>
         <Copy />
       </IconButton>
       {deepLink !== null && (
         <IconButton
           label="Copy link"
-          onClick={() => deepLink.copyTaskLink(doc.meta.id)}
+          onClick={() => deepLink.copyTaskLink(taskId)}
         >
           <Link2 />
         </IconButton>
@@ -602,35 +615,33 @@ export function TaskPage({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuItem
-            disabled={!ready || dispatching}
+            disabled={!canDispatch || dispatching}
             onClick={() => void dispatch()}
           >
             <Play />
-            Dispatch
+            {readiness.blocked ? 'Dispatch anyway' : 'Dispatch'}
           </DropdownMenuItem>
-          {!linearLinked &&
-            linearConfigured &&
-            onPushToLinear !== undefined && (
-              <DropdownMenuItem
-                disabled={pushingLinear}
-                onClick={() => void pushToLinear()}
-              >
-                <Link2 />
-                Push to Linear
-              </DropdownMenuItem>
-            )}
+          {!linked && isLinearConfigured(project.linearStatus) && (
+            <DropdownMenuItem onClick={() => void pushToLinear()}>
+              <Link2 />
+              Push to Linear
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            disabled={doc.meta.archivedAt !== undefined}
-            onClick={() => void patch({ archivedAt: new Date().toISOString() })}
+            onClick={() =>
+              void patch({
+                archivedAt: archived ? null : new Date().toISOString(),
+              })
+            }
           >
-            <Archive />
-            Archive
+            {archived ? <ArchiveRestore /> : <Archive />}
+            {archived ? 'Unarchive' : 'Archive'}
           </DropdownMenuItem>
           <DropdownMenuItem
             variant="destructive"
-            disabled={doc.meta.status === 'dropped'}
-            onClick={() => void changeStatus('dropped')}
+            disabled={isCanceledStatus(meta.status, model)}
+            onClick={() => changeStatus(model.roles.dropped)}
           >
             <Ban />
             Drop
@@ -638,15 +649,15 @@ export function TaskPage({
         </DropdownMenuContent>
       </DropdownMenu>
       <SidePanelIconButton
-        active={sidePanelOpen}
-        onClick={() => setSidePanelOpen((open) => !open)}
+        active={railOpen}
+        onClick={() => setRailOpen((open) => !open)}
       />
-      {mode === 'peek' && onExpand !== undefined && (
-        <IconButton label="Expand to full view" onClick={onExpand}>
+      {layout !== 'full' && onExpand !== undefined && (
+        <IconButton label="Open the full page" onClick={onExpand}>
           <Maximize2 />
         </IconButton>
       )}
-      {mode === 'peek' && onClose !== undefined && (
+      {layout !== 'full' && onClose !== undefined && (
         <IconButton label="Close" onClick={onClose}>
           <X />
         </IconButton>
@@ -654,7 +665,7 @@ export function TaskPage({
     </>
   );
 
-  const favoriteRef = { kind: 'task' as const, id: doc.meta.id };
+  const favoriteRef = { kind: 'task' as const, id: taskId };
   const favorite = savedViews?.isFavorite(favoriteRef) ?? false;
   const star =
     savedViews === null ? undefined : (
@@ -667,317 +678,106 @@ export function TaskPage({
       </IconButton>
     );
 
-  // A drop or a paste carrying files anywhere on the content column attaches
-  // them; a text paste is left to whatever field has focus.
-  const archived = doc.meta.archivedAt !== undefined;
-  const attachable = !archived && client !== null;
-  function attachFromTransfer(dt: DataTransfer | null): boolean {
-    if (!attachable) return false;
-    const files = filesFromDataTransfer(dt);
-    if (files.length === 0) return false;
-    void attachmentUpload.upload(files);
-    return true;
+  // Spec and Summary read as a column that scrolls; Run, Review, Plan and the thread fill
+  // the pane and scroll inside (the transcript, the diff, the Flight Plan's canvas).
+  const fills =
+    mode === 'run' ||
+    mode === 'review' ||
+    mode === 'plan' ||
+    mode === 'thread' ||
+    mode === 'preview';
+  let modeView: ReactNode;
+  switch (mode) {
+    case 'spec':
+      modeView = <SpecMode page={page} />;
+      break;
+    case 'run':
+      modeView = <RunMode page={page} />;
+      break;
+    case 'review':
+      modeView = <ReviewMode page={page} />;
+      break;
+    case 'summary':
+      modeView = <SummaryMode page={page} />;
+      break;
+    case 'plan':
+      modeView = <PlanMode page={page} />;
+      break;
+    case 'thread':
+      // Its own boundary, so a crashing thread view never strands the other modes.
+      modeView = threadView && (
+        <ErrorBoundary label="this tab">{threadView(taskId)}</ErrorBoundary>
+      );
+      break;
+    case 'preview':
+      modeView = <TaskPreviewTab data={project} selectedRun={selectedRun} />;
+      break;
   }
 
-  const detailsBody = (
-    <div
-      className="flex flex-col gap-6"
-      onDragOver={(e) => {
-        if (attachable) e.preventDefault();
-      }}
-      onDrop={(e) => {
-        if (attachFromTransfer(e.dataTransfer)) e.preventDefault();
-      }}
-      onPaste={(e) => {
-        if (attachFromTransfer(e.clipboardData)) e.preventDefault();
-      }}
-    >
-      <TaskTitle
-        value={doc.meta.title}
-        onCommit={(title) => void patch({ title })}
-      />
-
-      {/* Dispatch and the other verbs, as Linear's control row: the primary indigo button
-          with the model select beside it, then pill buttons and a ghost. */}
-      <div
-        data-slot="task-actions"
-        className="-mt-2 flex flex-wrap items-center gap-2"
-      >
-        {ready && (
-          <>
-            <Button disabled={dispatching} onClick={() => void dispatch()}>
-              Dispatch
-            </Button>
-            {executorChoices.length > 1 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<SelectPill aria-label="Executor" />}
-                >
-                  {effectiveExecutor}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {executorChoices.map((e) => (
-                    <DropdownMenuItem
-                      key={e.name}
-                      onClick={() =>
-                        setExecutor(
-                          e.name === executors?.default ? undefined : e.name
-                        )
-                      }
-                    >
-                      <span className="flex-1">{e.name}</span>
-                      {e.name === effectiveExecutor && (
-                        <Check className="ml-auto size-3" />
-                      )}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            {effectiveExecutor === 'claude' && (
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<SelectPill aria-label="Model" />}>
-                  {modelLabel(model)}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {MODELS.map((m) => (
-                    <DropdownMenuItem key={m.id} onClick={() => setModel(m.id)}>
-                      <span className="flex-1">{m.label}</span>
-                      {m.id === model && <Check className="ml-auto size-3" />}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            {effectiveExecutor === 'claude' && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<SelectPill aria-label="Effort" />}
-                >
-                  {efforts.find((e) => e.id === effortId)?.label}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {efforts.map((e) => (
-                    <DropdownMenuItem
-                      key={e.id}
-                      onClick={() => setEffortId(e.id)}
-                    >
-                      <span className="flex-1">{e.label}</span>
-                      {e.id === effortId && (
-                        <Check className="ml-auto size-3" />
-                      )}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </>
-        )}
-        {ready && isFakeExecutorDevToolEnabled() && (
-          <PillButton
-            disabled={dispatching}
-            onClick={() => void dispatch('fake')}
-          >
-            Dispatch (fake)
-          </PillButton>
-        )}
-        {hasOpenRun && run !== undefined && (
-          <PillButton onClick={() => onOpenSession(run.id)}>
-            {doc.meta.status === 'review' ? 'Review run' : 'View run'}
-          </PillButton>
-        )}
-        {isEpic && (
-          <PillButton onClick={() => setShowGraph(true)}>
-            <Waypoints />
-            View graph
-          </PillButton>
-        )}
-        {onEnrich !== undefined && (
-          // Deliberately outside the ready/hasOpenRun gate: a blocked or not-yet-ready
-          // task is precisely the one worth specifying properly before an agent gets to it.
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={enriching}
-            onClick={() => void enrich()}
-          >
-            <Sparkles />
-            {enriching ? 'Reading the repo…' : 'Add detail'}
-          </Button>
-        )}
-        {enrichError !== null && (
-          <span className="text-red font-book text-[12px]">{enrichError}</span>
-        )}
-      </div>
-
-      {enrichPlan !== undefined &&
-        enrichPlan.questions.length > 0 &&
-        onAnswerEnrich !== undefined && (
-          <PlanQuestionsForm
-            questions={enrichPlan.questions}
-            disabled={enrichPlan.state === 'running'}
-            onSend={onAnswerEnrich}
-          />
-        )}
-      {enrichDraft !== null && (
-        <EnrichReview
-          draft={enrichDraft}
-          applying={applyingEnrich}
-          onApply={() => void applyEnrich()}
-          onDiscard={dismissEnrich}
-        />
+  const rail = railOpen && (
+    <TaskRail
+      page={page}
+      comments={comments}
+      picker={picker}
+      onPickerChange={setPicker}
+      showRelations={mode !== 'spec'}
+      showActivity={mode !== 'summary'}
+      showSubIssues={mode !== 'plan' && mode !== 'spec'}
+      className={cn(
+        layout === 'split'
+          ? 'bg-surface-panel shadow-overlay absolute inset-y-0 right-0 z-20 w-[300px]'
+          : cn(
+              'shadow-hairline-left',
+              layout === 'peek' ? 'w-[280px]' : 'w-[320px]'
+            )
       )}
-
-      <TaskDescription
-        description={description}
-        acceptance={acceptance}
-        onSaveDescription={(next) => void patch({ description: next })}
-        onSaveAcceptance={(next) => void patch({ acceptanceCriteria: next })}
-      />
-
-      <AttachmentsRow
-        taskId={doc.meta.id}
-        attachments={doc.meta.attachments ?? []}
-        client={client}
-        port={port}
-        editable={!archived}
-        upload={attachmentUpload.upload}
-        uploading={attachmentUpload.uploading}
-        inputRef={attachmentInputRef}
-      />
-
-      {client !== null && onOpenDoc !== undefined && (
-        <TaskDocsBlock
-          client={client}
-          port={port}
-          taskId={doc.meta.id}
-          canLink={canLinkDocs}
-          onOpenDoc={(id) => onOpenDoc(id, null)}
-        />
-      )}
-
-      {amendments !== '' && (
-        <MainSection title="Amendments">
-          <p className="text-muted-foreground font-book text-[13px] whitespace-pre-wrap">
-            {amendments}
-          </p>
-        </MainSection>
-      )}
-
-      {isEpic && (
-        <SubtasksBlock
-          parent={doc}
-          tasks={epicChildren}
-          latestRunByTaskId={latestRunByTaskId}
-          onOpenTask={onOpenTask}
-          createPreset={{ epic: doc.meta.id }}
-        />
-      )}
-      {dependents.length > 0 && (
-        <SubtasksBlock
-          title="Blocks"
-          parent={doc}
-          tasks={dependents}
-          latestRunByTaskId={latestRunByTaskId}
-          onOpenTask={onOpenTask}
-        />
-      )}
-
-      {ledgerError !== null && (
-        <LoadError>Couldn&rsquo;t load the ledger: {ledgerError}</LoadError>
-      )}
-      <LedgerSection entries={ledgerEntries} />
-
-      {fixLoopError !== null && (
-        <LoadError>Couldn&rsquo;t load the fix loop: {fixLoopError}</LoadError>
-      )}
-      <FixLoopSection
-        fixLoop={fixLoop}
-        escalation={fixLoopEscalation}
-        onStart={() => void handleStartFixLoop()}
-        onStop={() => void stopFixLoop(doc.meta.id)}
-        starting={startingFixLoop}
-        startError={startFixLoopError}
-      />
-
-      {findingsError !== null && (
-        <LoadError>
-          Couldn&rsquo;t load findings: {findingsError}
-          {fixLoopNeedsRuling(fixLoop) &&
-            ' Open findings can’t be ruled on right now.'}
-        </LoadError>
-      )}
-      <FindingsPanel
-        findings={findings}
-        needsRuling={fixLoopNeedsRuling(fixLoop)}
-        onAdjudicate={async (findingId, input) => {
-          await adjudicateFinding(doc.meta.id, findingId, input);
-        }}
-      />
-
-      <SessionsBlock runs={runs} onOpenSession={onOpenSession} />
-
-      <VerificationSection
-        exercised={doc.meta.exercised}
-        result={verification}
-        error={verificationError}
-      />
-
-      <MainSection title="Impact">
-        <div className="flex flex-col items-start gap-2">
-          <ImpactPanel client={client} subject="task" id={doc.meta.id} />
-        </div>
-      </MainSection>
-
-      <ActivitySection
-        entries={activity}
-        onSubmitNote={(text) => {
-          const note = notePatch(text);
-          if (note !== null) void patch(note);
-        }}
-        onAttach={
-          !archived && client !== null
-            ? () => attachmentInputRef.current?.click()
-            : undefined
-        }
-      />
-    </div>
+    />
   );
 
   return (
     <div
       ref={rootRef}
       data-slot="task-page"
+      data-layout={layout}
       data-mode={mode}
       className="@container/task-page flex h-full min-h-0 flex-col"
     >
-      {mode === 'page' ? (
-        <PageHeader
-          crumb={crumb}
-          star={star}
-          actions={headerActions}
-          tabs={tabs}
-          controls={controls}
-        />
+      {layout === 'full' ? (
+        <PageHeader crumb={crumb} star={star} actions={headerActions} />
       ) : (
         <div
-          data-slot="task-peek-chrome"
+          data-slot="task-pane-chrome"
           className="shadow-hairline-bottom text-muted-foreground flex h-10 shrink-0 items-center gap-1.5 pr-2 pl-4 text-[12px] font-medium"
         >
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            {crumb.map((segment, index) => (
-              <span key={index} className="flex min-w-0 items-center gap-1.5">
-                {index > 0 && <span aria-hidden>›</span>}
+            {/* A pane too narrow for the trail keeps only the task's own segment. */}
+            {crumb.map((segment, index) => {
+              const last = index === crumb.length - 1;
+              return (
                 <span
+                  key={index}
                   className={cn(
-                    'flex min-w-0 items-center truncate',
-                    index === crumb.length - 1 && 'text-foreground'
+                    'flex min-w-0 items-center gap-1.5',
+                    // The trail gives way before the task's own title does.
+                    !last && 'shrink-[4] @max-[520px]/task-page:hidden'
                   )}
                 >
-                  {segment}
+                  {index > 0 && (
+                    <span aria-hidden className="@max-[520px]/task-page:hidden">
+                      ›
+                    </span>
+                  )}
+                  <span
+                    className={cn(
+                      'flex min-w-0 items-center truncate',
+                      last && 'text-foreground'
+                    )}
+                  >
+                    {segment}
+                  </span>
                 </span>
-              </span>
-            ))}
+              );
+            })}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {headerActions}
@@ -985,62 +785,62 @@ export function TaskPage({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        <div data-slot="task-main" className="min-w-0 flex-1 overflow-y-auto">
-          {children !== undefined ? (
-            <div className="flex h-full min-h-0 flex-col">{children}</div>
-          ) : (
-            // The 120px inset is measured against the whole panel (page or peek), not
-            // the column left over beside the rail, so a 1440px laptop still gets it.
-            <div className="px-6 py-6 @min-[1100px]/task-page:pl-[120px]">
-              <div className="max-w-[800px]">{detailsBody}</div>
-            </div>
+      <div className="relative flex min-h-0 flex-1">
+        <main
+          data-slot="task-main"
+          className={cn(
+            'flex min-w-0 flex-1 flex-col',
+            !fills && 'overflow-y-auto'
           )}
-        </div>
-        {sidePanelOpen && children === undefined && (
-          <PropertiesRail
-            doc={doc}
-            statuses={statuses}
-            epics={epics}
-            tasks={tasks}
-            run={run}
-            latestRunByTaskId={latestRunByTaskId}
-            hasStack={hasStack}
-            onChangeStatus={(status) => void changeStatus(status)}
-            onPatch={(next) => void patch(next)}
-            onOpenTask={onOpenTask}
-            picker={picker}
-            onPickerChange={setPicker}
-            linearLink={linearLink}
-            linearLinked={linearLinked}
-            onPushToLinear={
-              linearConfigured && onPushToLinear !== undefined
-                ? () => void pushToLinear()
-                : undefined
-            }
-            pushingLinear={pushingLinear}
-            pushedLinear={pushedLinear}
-          />
-        )}
+        >
+          <div
+            data-slot="task-head"
+            className={cn(
+              'flex shrink-0 flex-col gap-3 px-6 pt-5 pb-3',
+              !fills && 'max-w-[920px]'
+            )}
+          >
+            <div className="flex items-start gap-2">
+              <span className="mt-1.5">
+                <StatusControl
+                  value={meta.status}
+                  statuses={project.config?.statuses ?? [meta.status]}
+                  onChange={changeStatus}
+                />
+              </span>
+              <div className="min-w-0 flex-1">
+                <TaskTitle
+                  value={meta.title}
+                  onCommit={(title) => void patch({ title })}
+                />
+              </div>
+            </div>
+            {layout === 'split' && !railOpen && (
+              <PropertyChips page={page} onOpenRail={() => setRailOpen(true)} />
+            )}
+            <LifecycleTrack
+              stages={stages}
+              active={mode === 'preview' || mode === 'thread' ? autoMode : mode}
+              onSelect={selectMode}
+              statusColor={statusColor(meta.status, model)}
+              className="max-w-[720px]"
+            />
+          </div>
+          <div
+            data-slot="task-mode"
+            className={cn(
+              mode === 'plan'
+                ? 'flex min-h-0 flex-1 flex-col'
+                : fills
+                  ? 'flex min-h-0 flex-1 flex-col px-6 pb-4'
+                  : 'max-w-[920px] px-2'
+            )}
+          >
+            <ErrorBoundary label="this view">{modeView}</ErrorBoundary>
+          </div>
+        </main>
+        {rail}
       </div>
-
-      {isEpic && (
-        <EpicDagModal
-          epic={showGraph ? doc : null}
-          tasks={epicChildren}
-          onOpenTask={onOpenTask}
-          onClose={() => setShowGraph(false)}
-        />
-      )}
     </div>
-  );
-}
-
-// A quiet one-liner for a section whose data failed to load — not a banner.
-function LoadError({ children }: { children: ReactNode }) {
-  return (
-    <p data-slot="load-error" className="text-red font-book text-[12px]">
-      {children}
-    </p>
   );
 }

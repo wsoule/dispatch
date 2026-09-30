@@ -9,6 +9,7 @@ import type {
 
 import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
 import type { TaskStateName } from './states.js';
+import type { HandoffPhase } from './statuses.js';
 import type { ArtifactJson } from './wire.js';
 
 // The one seam between the A2A handler and a host: the host gathers facts and
@@ -83,8 +84,16 @@ export interface TaskFacts {
   answer: Message | null;
   openQuestions: Message[];
   openGates: OpenGateFact[];
+  // `status` is the project's name for it; `phase` is what the host's status
+  // model says it means, which is all the projection reads.
   task:
-    | { id: string; title: string; status: string; approved: boolean }
+    | {
+        id: string;
+        title: string;
+        status: string;
+        phase: HandoffPhase;
+        approved: boolean;
+      }
     | 'deleted'
     | null;
   dropped: 'client' | 'other' | null;

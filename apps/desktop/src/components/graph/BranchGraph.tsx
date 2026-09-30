@@ -1,13 +1,16 @@
-import { canonicalStatus, isDoneStatus } from '@dispatch/core/browser';
+import type { StatusModel } from '@dispatch/core/browser';
+import { isDoneStatus, isStartedStatus } from '@dispatch/core/browser';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import {
   type BranchEdge,
+  type BranchLayout,
   branchLayout,
   type BranchRow,
 } from '../../lib/branchLayout';
 import type { DagTask } from '../../lib/dagLayout';
+import { useActiveStatusModel } from '../../lib/statusModel';
 import { statusColor, StatusIcon } from '../tasks/StatusIcon';
 import { cn } from '@/lib/utils';
 
@@ -29,14 +32,12 @@ const BACK_EDGE_OFFSET = 2;
 
 type DotKind = 'done' | 'open' | 'live';
 
-// The machine-set statuses a run is currently advancing. The dot reads liveness from the
-// task's own status rather than a run-state prop, so the gutter never disagrees with the
-// status glyph beside it; the live-run mark itself arrives through `accessoryFor`.
-const LIVE_STATUSES = new Set(['working', 'review', 'landing']);
-
-function dotKind(status: string): DotKind {
-  if (isDoneStatus(status)) return 'done';
-  if (LIVE_STATUSES.has(canonicalStatus(status))) return 'live';
+// Liveness is the status's type (started), read from the task's own status rather than a
+// run-state prop so the gutter never disagrees with the status glyph beside it; the live-run
+// mark itself arrives through `accessoryFor`.
+function dotKind(status: string, model: StatusModel): DotKind {
+  if (isDoneStatus(status, model)) return 'done';
+  if (isStartedStatus(status, model)) return 'live';
   return 'open';
 }
 
@@ -56,6 +57,7 @@ function rowY(row: number): number {
 interface BranchDotProps {
   row: BranchRow;
   status: string;
+  model: StatusModel;
   onOpen?: () => void;
 }
 
@@ -63,9 +65,9 @@ interface BranchDotProps {
  * ring for a live one — all in the status's own colour from `StatusIcon`'s map, so the
  * gutter and the glyph beside it always agree. On-path dots are the full radius, off-path
  * a size down. */
-function BranchDot({ row, status, onOpen }: BranchDotProps) {
-  const kind = dotKind(status);
-  const color = statusColor(status);
+function BranchDot({ row, status, model, onOpen }: BranchDotProps) {
+  const kind = dotKind(status, model);
+  const color = statusColor(status, model);
   const cx = laneX(row.lane);
   const cy = rowY(row.row);
   const r = row.onPath ? DOT_RADIUS : MUTED_DOT_RADIUS;
@@ -298,8 +300,15 @@ export interface BranchGraphProps {
   onOpenNode?: (id: string) => void;
   /** The roving keyboard cursor; that line is marked with the active surface. */
   focusedId?: string | null;
+  /** The project's statuses, which type each dot; defaults to the open project's. */
+  model?: StatusModel;
   ariaLabel?: string;
   className?: string;
+  /** `branchLayout(tasks)` when the caller already has it. */
+  layout?: BranchLayout;
+  /** Draw only lines `start`..`end - 1`, with the gutter clipped to the same band — one
+   * slice of a long graph drawn in virtualized bands. Omitted draws every line. */
+  band?: { start: number; end: number };
 }
 
 /**
@@ -319,8 +328,16 @@ export function BranchGraph({
   focusedId = null,
   ariaLabel = 'Branch graph',
   className,
+  layout: givenLayout,
+  band,
+  model: modelProp,
 }: BranchGraphProps) {
-  const layout = useMemo(() => branchLayout(tasks), [tasks]);
+  const activeModel = useActiveStatusModel();
+  const model = modelProp ?? activeModel;
+  const layout = useMemo(
+    () => givenLayout ?? branchLayout(tasks, model),
+    [givenLayout, tasks, model]
+  );
   const tasksById = useMemo(
     () => new Map(tasks.map((t) => [t.id, t])),
     [tasks]
@@ -342,7 +359,12 @@ export function BranchGraph({
   }
 
   const gutter = gutterWidth(layout.laneCount);
-  const height = layout.rows.length * BRANCH_LINE_HEIGHT;
+  const first = band?.start ?? 0;
+  const last = band?.end ?? layout.rows.length;
+  const inBand = (row: number) => row >= first && row < last;
+  const crosses = (from: number, to: number) =>
+    Math.max(from, to) >= first && Math.min(from, to) < last;
+  const height = (last - first) * BRANCH_LINE_HEIGHT;
   const onPathIds = new Set(layout.path);
   const trunk = trunkSegments(layout.rows, layout.edges);
   const dotRows = dotRowsByLane(layout.rows);
@@ -356,7 +378,7 @@ export function BranchGraph({
     >
       {layout.rows.map((row) => {
         const task = tasksById.get(row.id);
-        if (task === undefined) return null;
+        if (task === undefined || !inBand(row.row)) return null;
         return (
           <BranchLine
             key={row.id}
@@ -376,22 +398,25 @@ export function BranchGraph({
         data-slot="branch-gutter"
         width={gutter}
         height={height}
-        viewBox={`0 0 ${gutter} ${height}`}
+        viewBox={`0 ${first * BRANCH_LINE_HEIGHT} ${gutter} ${height}`}
         aria-hidden
         className="pointer-events-none absolute top-0 left-0"
       >
-        {trunk.map((segment) => (
-          <path
-            key={`trunk:${segment.fromRow}->${segment.toRow}`}
-            data-slot="branch-lane"
-            data-path={segment.onPath || undefined}
-            d={`M ${laneX(0)} ${rowY(segment.fromRow) + DOT_RADIUS} L ${laneX(0)} ${rowY(segment.toRow) - DOT_RADIUS}`}
-            fill="none"
-            stroke={segment.onPath ? STRONG : MUTED}
-            strokeWidth={segment.onPath ? PATH_STROKE : MUTED_STROKE}
-          />
-        ))}
+        {trunk.map((segment) =>
+          crosses(segment.fromRow, segment.toRow) ? (
+            <path
+              key={`trunk:${segment.fromRow}->${segment.toRow}`}
+              data-slot="branch-lane"
+              data-path={segment.onPath || undefined}
+              d={`M ${laneX(0)} ${rowY(segment.fromRow) + DOT_RADIUS} L ${laneX(0)} ${rowY(segment.toRow) - DOT_RADIUS}`}
+              fill="none"
+              stroke={segment.onPath ? STRONG : MUTED}
+              strokeWidth={segment.onPath ? PATH_STROKE : MUTED_STROKE}
+            />
+          ) : null
+        )}
         {layout.edges.map((edge) => {
+          if (!crosses(edge.fromRow, edge.toRow)) return null;
           const onPath = onPathIds.has(edge.from) && onPathIds.has(edge.to);
           return (
             <path
@@ -407,12 +432,13 @@ export function BranchGraph({
         })}
         {layout.rows.map((row) => {
           const task = tasksById.get(row.id);
-          if (task === undefined) return null;
+          if (task === undefined || !inBand(row.row)) return null;
           return (
             <BranchDot
               key={row.id}
               row={row}
               status={task.status}
+              model={model}
               onOpen={
                 onOpenNode === undefined ? undefined : () => onOpenNode(row.id)
               }

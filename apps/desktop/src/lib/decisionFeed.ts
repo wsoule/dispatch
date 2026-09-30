@@ -90,13 +90,13 @@ export type DecisionTarget =
  * notification is a door and not just a fact. Pinning matters: the chat tab
  * renders the approval/scope/question cards only for the run it is pinned to.
  *
- * - approval / scope-request / question → the run's chat transcript,
- *   where the answer/approve cards render inline.
+ * - approval / scope-request / question → the run's transcript, where the
+ *   answer/approve cards render inline.
  * - memory → the gate message in Threads, whose card shows the proposal. The
  *   item's id is `memory:<gate message id>`.
- * - fix-loop-capped → the task's details tab, where FixLoopSection takes the
+ * - fix-loop-capped → the task's review, where FixLoopSection takes the
  *   ruling.
- * - run-stalled → the run's diff: the stranded work is the thing to look at.
+ * - run-stalled → the run's review: the stranded work is the thing to look at.
  *
  * `null` only when the item names neither a task, a run nor a gate.
  */
@@ -105,11 +105,9 @@ export function decisionTarget(item: DecisionItem): DecisionTarget | null {
     return { kind: 'thread', messageId: item.id.slice('memory:'.length) };
   }
   const tab: TaskTab =
-    item.kind === 'fix-loop-capped'
-      ? 'details'
-      : item.kind === 'run-stalled'
-        ? 'diff'
-        : 'chat';
+    item.kind === 'fix-loop-capped' || item.kind === 'run-stalled'
+      ? 'review'
+      : 'run';
   if (item.taskId !== undefined) {
     return {
       kind: 'task',

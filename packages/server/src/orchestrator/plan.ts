@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
+import { statusModelFor } from '../statuses.js';
 import type {
   PlannedTask,
   Planner,
@@ -128,6 +129,8 @@ export interface DraftRecord {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** The container a "+" on it started this draft in; the saved task's parent. */
+  parent?: string;
 }
 
 // Cap on how many drafts stay in memory at once; eviction only drops
@@ -362,7 +365,11 @@ export class PlanManager {
 
   // Starts a single-task draft's planner turn in the background and returns
   // the DraftRecord immediately at `running`; no busy-guard between drafts.
-  startDraft(prompt: string, plannerName = 'claude'): DraftRecord {
+  startDraft(
+    prompt: string,
+    plannerName = 'claude',
+    parent: string | null = null
+  ): DraftRecord {
     const planner = this.planners.get(plannerName);
     if (planner === undefined) {
       throw new OrchestratorClientError(`unknown planner: ${plannerName}`);
@@ -379,6 +386,7 @@ export class PlanManager {
       error: null,
       createdAt: now,
       updatedAt: now,
+      ...(parent === null ? {} : { parent }),
     };
     this.drafts.set(record.id, record);
     this.evictOldDrafts();
@@ -633,13 +641,15 @@ export class PlanManager {
       );
     }
     const proposal = validatePlanProposal(rawProposal);
+    // The status a plan's work starts in: the ready role, whatever its name.
+    const readyStatus = statusModelFor(this.ctx.rootDir).roles.ready;
 
     let epicId: string | undefined;
     if (proposal.epic !== undefined) {
       const epicDoc = this.ctx.store.create({
         title: proposal.epic.title,
-        kind: 'epic',
-        status: 'ready',
+        kind: 'milestone',
+        status: readyStatus,
         description: proposal.epic.description,
       });
       epicId = epicDoc.meta.id;
@@ -653,7 +663,7 @@ export class PlanManager {
         this.ctx.store.create({
           title: task.title,
           kind: 'task',
-          status: 'ready',
+          status: readyStatus,
           description: buildTaskDescription(task),
           parent: epicId ?? null,
           priority: task.priority,
@@ -697,8 +707,9 @@ export class PlanManager {
       confirmedAt: now,
       ...(epicId !== undefined ? { epicId } : {}),
     });
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    const ids = epicId === undefined ? taskIds : [epicId, ...taskIds];
+    this.ctx.cache.refresh(this.ctx.store, ids);
+    this.ctx.events.broadcast({ type: 'task.changed', ids });
 
     return { epicId, taskIds };
   }

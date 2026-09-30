@@ -16,6 +16,7 @@
   "scripts": {
     "build": "tsdown --clean",
     "registries": "bun scripts/registries.ts",
+    "snapshot": "bun scripts/snapshot.ts",
     "test": "bun test",
     "tsc": "tsgo --noEmit --pretty",
     "prepublishOnly": "moon run protocol-spec:prepublish"

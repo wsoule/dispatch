@@ -18,6 +18,7 @@ import './styles/markdown.css';
 import './styles/global.css';
 import { TeamLocalGate } from './components/shell/TeamLocalGate';
 import { ToastProvider } from './components/shell/Toasts';
+import { warmBoot } from './lib/bootWarm';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +27,9 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Before the first render, so the project and the task list are on their way meanwhile.
+void warmBoot(queryClient);
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
