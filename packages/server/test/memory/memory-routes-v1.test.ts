@@ -730,6 +730,61 @@ describe('identities over HTTP', () => {
     expect(fresh.status).toBe(200);
     expect((await personal('again')).status).toBe(201);
   });
+
+  // Ada's identity also serves another project, so linking this one away
+  // must leave its entries where that project still reads them.
+  it('moves entries on a link only off an identity no project uses', async () => {
+    const email = 'ada@x.com';
+    writeFileSync(
+      join(root, '.dispatch', 'team.yml'),
+      `members:\n  - handle: ada\n    email: ${email}\n    displayName: Ada\n    emails: []\n`
+    );
+    const ada = handle.team.teammates.issue('ada', 'request');
+    const saved = await rawFetch(`${base}/api/memory`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+      body: JSON.stringify({
+        scope: 'personal',
+        kind: 'fact',
+        title: 'mine',
+        body: '',
+      }),
+    });
+    expect(saved.status).toBe(201);
+    const identities = handle.memory.identities!;
+    const here = handle.memory.host.projectKey();
+    const alias = (projectKey: string) => ({
+      projectKey,
+      handle: 'ada',
+      rosterEmail: email,
+    });
+    const shared = identities.completeLink({
+      ...alias('bbbbbbbbbbbb'),
+      code: identities.startLink(alias(here)).code,
+    }).identity;
+    identities.resolve({ ...alias('cccccccccccc'), isOwner: false });
+    const { code } = identities.startLink(alias('cccccccccccc'));
+    const linked = await rawFetch(`${base}/api/memory/link/${code}`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+    });
+    expect(linked.status).toBe(200);
+    expect(
+      handle.memory.personal
+        .personal(shared)
+        .listEntries()
+        .map((e) => e.title)
+    ).toEqual(['mine']);
+  });
+
+  it('refuses a fresh start for the owner', async () => {
+    const fresh = await fetch(`${base}/api/memory/link`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fresh: true }),
+    });
+    expect(fresh.status).toBe(400);
+  });
 });
 
 describe('Settings → Memory routes', () => {
