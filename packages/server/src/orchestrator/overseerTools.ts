@@ -524,8 +524,8 @@ const dispatchInput = z.object({
     ),
 });
 
-// The human a confirmed dispatch runs for: the confirmer, the owner only when
-// confirmed with the owner's app token, no one for the system or a stand-in.
+// The human a confirmed dispatch runs for: whoever confirmed it, the owner
+// only with the owner's app token, no one for the system or a stand-in.
 function confirmedOperator(
   ctx: OverseerToolContext,
   meta: ConfirmedBy
