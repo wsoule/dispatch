@@ -1,3 +1,4 @@
+import { gateOf } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,7 @@ import type { ApiContext } from '../../src/api.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { importClaudeRoute } from '../../src/memory/routes.js';
+import { SYSTEM_SENDER } from '../../src/messaging/gates.js';
 import { FakeOverseer } from '../../src/orchestrator/overseers/fake.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth, wsUrl } from '../testAuth.js';
@@ -526,7 +528,13 @@ describe('the memory gate', () => {
       'auto-decided by policy rung 4 (memory gate)'
     );
     expect(JSON.stringify(ledger)).not.toContain('SECRET-AUTO-title');
-    expect(run.taskId).toBeTruthy();
+    const task = await json<{ body: string }>(
+      await fetch(`${base}/api/tasks/${run.taskId}`)
+    );
+    expect(task.body).toContain(
+      `[policy] Memory approved: team hazard ${out.handle}`
+    );
+    expect(task.body).not.toContain('SECRET-AUTO-title');
   });
 
   it('a proposal with no task behind it always waits for a human, even at rung 4', async () => {
@@ -618,6 +626,90 @@ describe('the memory gate', () => {
   // A crash between an answer and its effect: messaging replays the answer at
   // the next boot, and only a handler registered before messaging.recover()
   // sees the replay.
+  // Approval tells every other live run the entry reaches; a rejection
+  // tells the author's run why.
+  it('tells live runs of an approved entry, and the author of a rejection', async () => {
+    await liveRun('listener');
+    await liveRun('author');
+    const propose = (title: string) =>
+      rawFetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: authHeaders(runToken()),
+        body: JSON.stringify({
+          scope: 'team',
+          kind: 'hazard',
+          title,
+          body: 'd',
+        }),
+      }).then((res) => json<{ proposal: string; gate: string }>(res));
+    const reply = (gate: string, choice: string, body: string) =>
+      fetch(`${base}/api/messages/${gate}/reply`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body, choice }),
+      });
+    const approved = await propose('watch the lockfile');
+    await reply(approved.gate, 'approve', '');
+    const entry = handle.memory
+      .shared!.listEntries()
+      .find((e) => e.title === 'watch the lockfile')!;
+    await waitFor(() =>
+      executor.notified.some((n) => n.includes(`(${entry.handle})`))
+    );
+    // The author's own run is skipped, so one of the two live runs hears it.
+    expect(
+      executor.notified.filter((n) => n.includes(`(${entry.handle})`))
+    ).toHaveLength(1);
+    const rejected = await propose('not this one');
+    await reply(rejected.gate, 'reject', 'wrong lockfile');
+    await waitFor(() =>
+      executor.notified.some((n) =>
+        n.includes(`proposal ${rejected.proposal} was rejected by`)
+      )
+    );
+    expect(executor.notified.at(-1)).toMatch(/: wrong lockfile$/);
+  });
+
+  it('closes a second open gate for one proposal at the next boot', async () => {
+    await liveRun('two gates');
+    const p = await json<{ proposal: string; gate: string }>(
+      await rawFetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: authHeaders(runToken()),
+        body: JSON.stringify({
+          scope: 'team',
+          kind: 'hazard',
+          title: 'one gate only',
+          body: 'd',
+        }),
+      })
+    );
+    const stray = await handle.messaging.engine.send(
+      {
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        choices: ['approve', 'reject'],
+        body: 'a duplicate gate',
+        data: {
+          type: 'memory',
+          proposalId: p.proposal,
+          action: 'add',
+          scope: 'team',
+          kind: 'hazard',
+        },
+      },
+      SYSTEM_SENDER
+    );
+    await restart();
+    const open = handle.messaging.engine
+      .openBlocking()
+      .filter((m) => gateOf(m)?.type === 'memory')
+      .map((m) => m.id);
+    expect(open).toEqual([p.gate]);
+    expect(open).not.toContain(stray.message.id);
+  });
+
   it('decides a proposal whose answered gate had not taken effect before a restart', async () => {
     await liveRun('crash before the effect');
     const p = await json<{ proposal: string; gate: string }>(
