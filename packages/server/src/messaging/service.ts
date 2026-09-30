@@ -27,6 +27,7 @@ import {
 } from '../orchestrator/types.js';
 import { tierAllows } from '../tiers.js';
 import {
+  answeredWithOwnerCredential,
   closeGate,
   closeRunGates,
   GateHandlers,
@@ -66,7 +67,8 @@ interface OverseerGateTarget {
     conversationId: string,
     actionId: string,
     approve: boolean,
-    actor: string
+    actor: string,
+    ownerCredential: boolean
   ): Promise<unknown>;
   decideApproval(
     conversationId: string,
@@ -416,7 +418,8 @@ export function openMessaging(deps: {
         gate.conversation,
         gate.actionId,
         answer.choice === 'confirm',
-        answer.from
+        answer.from,
+        answeredWithOwnerCredential()
       )
     );
   });

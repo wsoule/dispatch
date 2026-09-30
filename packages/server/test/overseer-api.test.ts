@@ -365,9 +365,26 @@ describe('overseer action gates', () => {
     );
     const runs = await listRuns();
     expect(runs).toHaveLength(1);
-    // The overseer acts for the daemon's owner.
+    // Confirmed with the app token, the run acts for the owner.
     expect(runs[0].operator).toBe('human:test');
     expect(await openGates()).toEqual([]);
+  });
+
+  it("a teammate's confirm dispatches a run that acts for the teammate", async () => {
+    const { gate } = await startWithQueuedDispatch();
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const res = await fetch(`${baseUrl}/api/messages/${gate.id}/reply`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${ada}`,
+      },
+      body: JSON.stringify({ body: '', choice: 'confirm' }),
+    });
+    expect(res.status).toBe(201);
+    const runs = await listRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].operator).toBe('human:ada');
   });
 
   it('cancel records the refusal and dispatches nothing', async () => {

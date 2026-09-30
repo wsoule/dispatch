@@ -115,6 +115,12 @@ export interface OverseerStatusTool<Input = unknown, Output = unknown> {
   read(ctx: OverseerToolContext, input: Input): Output;
 }
 
+/** Who confirmed an action, and whether with the owner's app token. */
+export interface ConfirmedBy {
+  actor: string;
+  ownerCredential?: boolean;
+}
+
 /**
  * A tool whose call produces a *proposal*, not an effect.
  *
@@ -134,7 +140,7 @@ export interface OverseerMutatingTool<Input = unknown> {
   apply(
     ctx: OverseerToolContext,
     input: Input,
-    meta: { actor: string }
+    meta: ConfirmedBy
   ): Promise<void> | void;
 }
 
@@ -518,6 +524,17 @@ const dispatchInput = z.object({
     ),
 });
 
+// The human a confirmed dispatch runs for: the confirmer, the owner only when
+// confirmed with the owner's app token, no one for the system or a stand-in.
+function confirmedOperator(
+  ctx: OverseerToolContext,
+  meta: ConfirmedBy
+): string | null {
+  if (!meta.actor.startsWith('human:')) return null;
+  if (meta.actor !== ctx.ownerRef) return meta.actor;
+  return meta.ownerCredential === true ? meta.actor : null;
+}
+
 const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   name: 'dispatch_task',
   description:
@@ -534,11 +551,12 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     const model = input.model === undefined ? '' : ` on model ${input.model}`;
     return `Dispatch ${doc.meta.id} "${safeTitle(doc.meta.title)}" with the ${executorFor(ctx, input.executor)} executor${model}`;
   },
-  async apply(ctx, input) {
+  async apply(ctx, input, meta) {
     // `actor` is deliberately omitted here: the orchestrator's default credits
     // the daemon's human, and a human confirming the action is precisely who
     // caused it. The explicit 'none' actor is for callers with no human behind
     // them at all (EpicEngine's auto-fill), which the overseer never is.
+    // The run acts for whoever confirmed it (confirmedOperator).
     // dispatchOrResume, not dispatch: a task whose last run a daemon restart
     // left recoverable is picked back up rather than started over. `executor`
     // and `model` carry what the overseer's caller actually NAMED — the daemon's
@@ -547,7 +565,7 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     await ctx.orchestrator.dispatchOrResume(input.taskId, {
       executor: input.executor,
       model: input.model,
-      operator: ctx.ownerRef,
+      operator: confirmedOperator(ctx, meta),
       defaults: { executor: executorFor(ctx) },
     });
   },
@@ -872,10 +890,7 @@ export class OverseerToolRegistry {
    * `pending` and refuses, so a double-confirm (two clicks, a retried request)
    * can't dispatch two runs or cancel a run twice.
    */
-  async applyAction(
-    id: string,
-    meta: { actor: string }
-  ): Promise<OverseerAction> {
+  async applyAction(id: string, meta: ConfirmedBy): Promise<OverseerAction> {
     const action = this.requirePending(id, 'apply');
     const tool = this.mutatingByName.get(action.tool);
     // Only reachable if the tool list changed under a still-pending action.

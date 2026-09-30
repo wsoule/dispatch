@@ -29,7 +29,7 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
-import { openHumanDecisions } from './gates.js';
+import { answeringWith, openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
@@ -330,11 +330,13 @@ export async function sendMessage(
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
   // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
-  const result = await ctx.messaging.engine.send(
-    idemKey === null
-      ? parsedInput.value
-      : { ...parsedInput.value, idempotencyKey: idemKey },
-    { address: principal.address, canDecide: principal.canDecide }
+  const result = await answeringWith(principal.ownerCredential === true, () =>
+    ctx.messaging.engine.send(
+      idemKey === null
+        ? parsedInput.value
+        : { ...parsedInput.value, idempotencyKey: idemKey },
+      { address: principal.address, canDecide: principal.canDecide }
+    )
   );
   return jsonResponse(result, result.replayed === true ? 200 : 201);
 }
@@ -363,10 +365,12 @@ export async function replyToMessage(
   const parsedInput = parseReplyInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
   const target = ctx.messaging.engine.getMessage(id);
-  const result = await ctx.messaging.engine.reply(id, parsedInput.value, {
-    address: principal.address,
-    canDecide: principal.canDecide,
-  });
+  const result = await answeringWith(principal.ownerCredential === true, () =>
+    ctx.messaging.engine.reply(id, parsedInput.value, {
+      address: principal.address,
+      canDecide: principal.canDecide,
+    })
+  );
   const gate = target === null ? null : gateOf(target);
   if (gate?.type === 'agent-registration')
     ctx.memory.host.agentDecided(

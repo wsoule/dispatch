@@ -802,9 +802,30 @@ describe('applyAction performs the real effect', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0].taskId).toBe(task.meta.id);
     expect(runs[0].executor).toBe('fake');
-    // The overseer acts for the daemon's owner.
-    expect(runs[0].operator).toBe('human:test');
+    // The run acts for the human who confirmed it.
+    expect(runs[0].operator).toBe('human:wyat');
   });
+
+  it.each([
+    [{ actor: 'human:test', ownerCredential: true }, 'human:test'],
+    [{ actor: 'human:test' }, null],
+    [{ actor: 'human:test', ownerCredential: false }, null],
+    [{ actor: 'human:ada', ownerCredential: true }, 'human:ada'],
+    [{ actor: 'agent:dispatch' }, null],
+  ] as const)(
+    'dispatch_task confirmed as %p runs for %p',
+    async (meta, operator) => {
+      const h = makeHarness();
+      const task = h.store.create({ title: 'Operator' });
+      h.cache.rebuild(h.store);
+      const action = h.registry.callMutatingTool('dispatch_task', {
+        taskId: task.meta.id,
+        executor: 'fake',
+      });
+      await h.registry.applyAction(action.id, meta);
+      expect(h.orchestrator.list()[0].operator).toBe(operator);
+    }
+  );
 
   it("approve_run answers the run's tool-approval gate as the confirming human", async () => {
     const h = makeHarness();
