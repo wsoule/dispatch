@@ -263,20 +263,24 @@ interface MemoryHost {
 ### Who a run acts for
 
 `operatorOf` reads a new `RunMeta.operator` field: a human ref, or absent for
-none. It is fixed when a session lineage starts, and every successor inherits
-it. It is separate from `dispatchedBy`, which keeps its meaning: who pressed
-dispatch, used for claims and decision ownership
-(`orchestrator/types.ts:322-327`).
+none. Every new run, a successor in a session lineage included, acts for the
+principal that caused it: a human acts for itself, and the owner only on the
+owner's app token; an agent, a run or the system (the auto wake policy among
+them) acts for no one. A successor keeps its predecessor's operator only when
+that operator is who caused it. (Amended by ruling MEM-R6: a successor used to
+inherit its predecessor's operator whoever caused it.) It is separate from
+`dispatchedBy`, which keeps its meaning: who pressed dispatch, used for claims
+and decision ownership (`orchestrator/types.ts:322-327`).
 
-| How the run starts                                                                                                                    | `operator`                                                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `dispatch()` credited to a human (`orchestrator.ts:884-886`, stamped at `:903`)                                                       | `dispatchedBy`                                                                                                      |
-| `dispatch()` by the epic auto-fill, `actor: 'none'` (`orchestrator/epic.ts:846-848`)                                                  | the epic session's new `startedBy` (`EpicSession`, `epic.ts:72-86`) when a human started it; otherwise none         |
-| resume (`resumeRun`, `orchestrator.ts:4955-5016`) and request-changes (`requestChanges`, `:4826-4860`)                                | the predecessor's `operator`, whoever typed the follow-up. A continuing session already holds its operator's memory |
-| wake (`messaging/host.ts:111-119`, which passes `agent:dispatch` when an agent's message wakes it)                                    | the operator of the task's latest run                                                                               |
-| aux runs (`dispatchAuxRun`, `:956-1006`): review (`review.ts:836`), verify (`verify.ts:250`), fix-loop implementer (`fixLoop.ts:722`) | the operator of the run they review, verify or replace, passed as a new `operator` option                           |
-| any run of a task with A2A provenance (a row in `a2a.db` `tasks.dispatch_task`, a2a-bridge-design.md "Tables")                        | none, whoever dispatched it                                                                                         |
-| runs recorded before this field                                                                                                       | `dispatchedBy` if set, otherwise none                                                                               |
+| How the run starts                                                                                                                                   | `operator`                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dispatch()` credited to a human (`orchestrator.ts:884-886`, stamped at `:903`)                                                                      | `dispatchedBy`                                                                                                                                                         |
+| `dispatch()` by the epic auto-fill, `actor: 'none'` (`orchestrator/epic.ts:846-848`)                                                                 | the epic session's new `startedBy` (`EpicSession`, `epic.ts:72-86`) when a human started it; otherwise none                                                            |
+| resume (`resumeRun`, `orchestrator.ts:4955-5016`), request-changes (`requestChanges`, `:4826-4860`), `dispatchOrResume` and overseer `dispatch_task` | whoever asked for it, by the rule above; a teammate continuing the owner's run acts for the teammate. The boot recovery sweep, with no one asking, keeps the run's own |
+| wake (`messaging/host.ts`): a task or `run:` wake, or a gated wake a human approved                                                                  | the human sender, or the human who approved the gate, by the rule above; an agent or run wake under the auto policy has none                                           |
+| aux runs (`dispatchAuxRun`, `:956-1006`): review (`review.ts:836`), verify (`verify.ts:250`), fix-loop implementer (`fixLoop.ts:722`)                | the operator of the run they review, verify or replace, passed as a new `operator` option                                                                              |
+| any run of a task with A2A provenance (a row in `a2a.db` `tasks.dispatch_task`, a2a-bridge-design.md "Tables")                                       | none, whoever dispatched it                                                                                                                                            |
+| runs recorded before this field                                                                                                                      | `dispatchedBy` if set, otherwise none                                                                                                                                  |
 
 Today none of the successor `RunMeta`s carries attribution: the resume
 (`:4989-5016`), the follow-up (`:4838-4860`) and the aux run (`:990-1006`) copy
@@ -1968,7 +1972,8 @@ interface MemoryOp {
     gets 409;
   - run operators, table-driven over the "Who a run acts for" rows: dispatch,
     auto-fill with and without `startedBy`, resume, request-changes by a
-    different human, agent wake, fix loop, review, verify, A2A provenance;
+    different human (who becomes the operator), agent wake (none), fix loop,
+    review, verify, A2A provenance;
   - the mode procedure, table-driven over every combination of executor, run
     kind, operator, import state, `claudeAutoMemory`, preflight and export
     write;

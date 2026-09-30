@@ -449,7 +449,11 @@ An entry has one of three scopes:
 
 - **Personal** belongs to one human and follows them across projects unless it
   is saved for one project only. A run writes its operator's personal memory
-  directly, and the Inbox can undo it. Nobody else sees it.
+  directly, and the Inbox can undo it. Nobody else sees it. A run's operator is
+  whoever started, continued or woke it; the owner only on the app token, and no
+  one when an agent, a run or policy did. An agent registered in your name reads
+  your personal memory only once you approve it with the app token, so one
+  approved before that rule must be approved again.
 - **Team** is the default for a code lesson: the constraints, hazards and
   decisions every run of this project should know. The ledger's old lessons were
   imported here; the ledger keeps the audit receipts. Replicating team memory to
