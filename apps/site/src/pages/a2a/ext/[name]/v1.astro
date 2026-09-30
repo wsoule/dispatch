@@ -1,45 +1,50 @@
 ---
-import Base from '../../../../layouts/Base.astro';
-import {
-  EXTENSION_NAMES,
-  extensionSection,
-} from '../../../../lib/extensionDoc';
-import type { ExtensionName } from '../../../../lib/extensionDoc';
+import { getEntry, render } from 'astro:content';
 
+import Protocol from '../../../../layouts/Protocol.astro';
+import { EXTENSIONS } from '../../../../lib/protocolSource';
+import type { ExtensionName } from '../../../../lib/protocolSource';
+
+// Each extension URI serves §8.3 and its own §8 subsection from the frozen
+// version the manifest names for it, with a link to that whole document.
 export function getStaticPaths() {
-  return EXTENSION_NAMES.map((name) => ({ params: { name } }));
+  return (Object.keys(EXTENSIONS) as ExtensionName[]).map((name) => ({
+    params: { name },
+  }));
 }
+
 const name = Astro.params.name as ExtensionName;
+const entry = await getEntry('protocolExtensions', name);
+if (entry === undefined)
+  throw new Error(`the versions manifest names no version for ${name}/v1`);
+const { version } = entry.data as { version: string };
+const { Content } = await render(entry);
 const uri = `https://dispatch.foo/a2a/ext/${name}/v1`;
 ---
 
-<Base title={`Dispatch A2A extension: ${name} v1`}>
-  <main class="container ext">
-    <h1 class="mono">{uri}</h1>
-    <pre>{extensionSection(name)}</pre>
-    <p class="caption">Licensed MIT; source: packages/a2a/docs/extensions.md</p>
-  </main>
-</Base>
+<Protocol
+  version={version}
+  source="spec/08-a2a-binding.md"
+  title={`Dispatch A2A extension: ${name} v1`}
+  description={`The ${name}/v1 A2A extension of the Dispatch Messaging Protocol ${version}.`}
+>
+  <h1 class="mono ext-uri">{uri}</h1>
+  <p class="ext-source">
+    From §8 of the <a href={`/protocol/${version}/#s8`}>Dispatch Messaging Protocol {version}</a>.
+  </p>
+  <section class="spec-text">
+    <Content />
+  </section>
+</Protocol>
 
 <style>
-  .ext {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-6);
-    padding-top: var(--space-10);
-    padding-bottom: var(--space-10);
-  }
-  h1 {
+  .ext-uri {
     font-size: var(--site-text-lg);
     letter-spacing: 0;
     overflow-wrap: anywhere;
   }
-  pre {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: var(--site-text-sm);
-    line-height: 1.6;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+  .ext-source {
+    margin-top: var(--space-3);
+    color: var(--text-secondary);
   }
 </style>

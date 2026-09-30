@@ -319,10 +319,12 @@ describe('the DMP text and the kit', () => {
       expect(section(n)).not.toContain('has no `taskId` and opens a task');
   });
 
-  // The reference codec reads work/v1's skill before the envelope's kind.
+  // The reference codec reads work/v1's skill before the envelope's kind; the
+  // kind is still checked (an x- kind is refused), it only stops deciding.
   it('lets a work/v1 skill decide what a message starts before its kind', () => {
     expect(section('8.4')).toContain(
-      "When `work/v1` names a `skill` ([§8.6](08-a2a-binding.md#s8.6)), the skill decides what the message starts and the envelope's `kind` is not read"
+      "When `work/v1` names a `skill` ([§8.6](08-a2a-binding.md#s8.6)), the skill decides what the message starts: the envelope's `kind` still passes the rules above, but does not decide it"
     );
+    expect(section('8.4')).not.toContain('is not read');
   });
 });

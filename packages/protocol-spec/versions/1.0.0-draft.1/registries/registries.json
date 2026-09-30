@@ -1,0 +1,748 @@
+{
+  "address-schemes": [
+    {
+      "value": "human",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.refuses-an-operator-on-a-human"
+      ]
+    },
+    {
+      "value": "agent",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.parses-an-agent-without-an-operator"
+      ]
+    },
+    {
+      "value": "task",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.refuses-an-id-outside-the-identifier-grammar"
+      ]
+    },
+    {
+      "value": "run",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": ["env.address.parses-each-scheme"]
+    },
+    {
+      "value": "channel",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.refuses-an-empty-channel-segment"
+      ]
+    },
+    {
+      "value": "a2a",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.9",
+      "reference": "spec/08-a2a-binding.md#s8.9",
+      "vectors": []
+    }
+  ],
+  "address-characters": [
+    {
+      "value": "@",
+      "scope": "federation",
+      "status": "reserved",
+      "since": "1.0.0-draft.1",
+      "section": "3.3",
+      "reference": "spec/03-addresses.md#s3.3",
+      "note": "held for a federation authority qualifier",
+      "vectors": ["env.address.refuses-the-reserved-at-sign"]
+    }
+  ],
+  "envelope-fields": [
+    {
+      "value": "id",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "core.render.body-lines-never-pass-for-a-header",
+        "core.render.dispatch-push-format"
+      ]
+    },
+    {
+      "value": "thread",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": ["core.render.body-lines-never-pass-for-a-header"]
+    },
+    {
+      "value": "replyTo",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "env.envelope.an-answer-needs-reply-to",
+        "env.envelope.a-reply-to-no-message-is-not-found"
+      ]
+    },
+    {
+      "value": "from",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "core.render.body-lines-never-pass-for-a-header",
+        "env.envelope.only-sessions-raise-scope-gates"
+      ]
+    },
+    {
+      "value": "session",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": ["env.envelope.a-session-is-at-most-200-bytes"]
+    },
+    {
+      "value": "to",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "env.envelope.to-is-a-non-empty-list",
+        "env.envelope.names-the-bad-recipient-index"
+      ]
+    },
+    {
+      "value": "kind",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": ["env.envelope.unknown-kind-refused-x-kind-accepted"]
+    },
+    {
+      "value": "body",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "env.envelope.body-is-required-unless-an-answer-chooses",
+        "env.envelope.body-is-at-most-64-kib"
+      ]
+    },
+    {
+      "value": "refs",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "env.envelope.a-local-ref-type-must-be-registered",
+        "env.envelope.refs-hold-at-most-50-entries"
+      ]
+    },
+    {
+      "value": "data",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": ["env.envelope.data-is-at-most-64-kib-as-jcs"]
+    },
+    {
+      "value": "urgent",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "core.render.body-lines-never-pass-for-a-header",
+        "core.render.dispatch-push-format"
+      ]
+    },
+    {
+      "value": "blocking",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": ["env.envelope.blocking-only-on-questions-and-handoffs"]
+    },
+    {
+      "value": "choices",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "env.envelope.choices-only-on-questions-and-handoffs",
+        "env.envelope.choices-are-distinct"
+      ]
+    },
+    {
+      "value": "choice",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": [
+        "env.envelope.a-choice-must-be-one-of-the-questions",
+        "env.envelope.a-gate-answer-must-choose"
+      ]
+    },
+    {
+      "value": "wake",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": ["core.render.body-lines-never-pass-for-a-header"]
+    },
+    {
+      "value": "createdAt",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": ["core.render.body-lines-never-pass-for-a-header"]
+    },
+    {
+      "value": "idempotencyKey",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.9",
+      "vectors": [
+        "core.idempotency.replays-the-first-message",
+        "core.idempotency.a-key-is-one-line-of-at-most-200-bytes"
+      ]
+    },
+    {
+      "value": "origin",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
+      "vectors": []
+    },
+    {
+      "value": "hlc",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
+      "vectors": []
+    }
+  ],
+  "kinds": [
+    {
+      "value": "message",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": ["env.envelope.accepts-a-plain-message"]
+    },
+    {
+      "value": "question",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": ["env.envelope.blocking-only-on-questions-and-handoffs"]
+    },
+    {
+      "value": "answer",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": ["env.envelope.an-answer-needs-reply-to"]
+    },
+    {
+      "value": "handoff",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": [
+        "env.envelope.blocking-only-on-questions-and-handoffs",
+        "env.envelope.a-handoff-answer-must-choose"
+      ]
+    },
+    {
+      "value": "notice",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": ["env.envelope.choices-only-on-questions-and-handoffs"]
+    }
+  ],
+  "ref-types": [
+    {
+      "value": "task",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
+    },
+    {
+      "value": "run",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
+    },
+    {
+      "value": "file",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
+    },
+    {
+      "value": "commit",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
+    },
+    {
+      "value": "message",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
+    },
+    {
+      "value": "doc",
+      "scope": "docs",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "reference": "spec/04-messages.md#s4.3",
+      "note": "`at` names a section anchor",
+      "vectors": []
+    }
+  ],
+  "gate-types": [
+    {
+      "value": "wake",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "5.9",
+      "raisedBy": "system",
+      "choices": ["approve", "deny"],
+      "data": {
+        "target": "address",
+        "message": "message id"
+      },
+      "effect": "wake the target unless it no longer qualifies (5.9)",
+      "vectors": [
+        "core.wake.approve-applies-before-publishing",
+        "core.wake.ask-raises-a-wake-gate-to-the-owner"
+      ]
+    },
+    {
+      "value": "tool-approval",
+      "scope": "dispatch",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["approve", "approve-session", "deny"],
+      "data": {
+        "requestId": "string",
+        "runId": "session id, optional",
+        "conversation": "string, optional",
+        "tool": "string",
+        "input": "JSON preview, at most 8 KiB",
+        "truncated": "true, optional",
+        "floor": "boolean"
+      },
+      "effect": "release or refuse the parked tool call (C.3)",
+      "vectors": [
+        "env.envelope.agents-may-not-forge-tool-approval-gates",
+        "core.answers.a-gate-effect-runs-before-the-answer-is-published"
+      ]
+    },
+    {
+      "value": "scope",
+      "scope": "dispatch",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "session",
+      "choices": ["grant", "deny"],
+      "data": {
+        "paths": "string[]",
+        "reason": "string"
+      },
+      "effect": "widen the session's writes (C.3)",
+      "vectors": [
+        "env.envelope.only-sessions-raise-scope-gates",
+        "env.envelope.scope-gates-have-a-fixed-shape"
+      ]
+    },
+    {
+      "value": "agent-registration",
+      "scope": "dispatch",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["approve", "deny"],
+      "data": {
+        "agent": "address",
+        "client": "string",
+        "requestedBy": "address, optional"
+      },
+      "effect": "approve or refuse the agent (C.3)",
+      "vectors": ["core.answers.a-human-decides-an-agent-registration-gate"]
+    },
+    {
+      "value": "overseer-action",
+      "scope": "dispatch",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["confirm", "cancel"],
+      "data": {
+        "conversation": "string",
+        "actionId": "string",
+        "summary": "string"
+      },
+      "effect": "run or drop the overseer's action (C.3)",
+      "vectors": ["core.answers.a-human-decides-an-overseer-action-gate"]
+    },
+    {
+      "value": "memory",
+      "scope": "memory",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system-or-decider",
+      "choices": ["approve", "reject"],
+      "data": {
+        "proposalId": "string",
+        "action": "add | supersede | retire",
+        "scope": "project | team",
+        "kind": "memory kind"
+      },
+      "effect": "apply or reject the memory proposal (C.3)",
+      "vectors": []
+    },
+    {
+      "value": "task-proposal",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.6",
+      "reference": "spec/08-a2a-binding.md#s8.6",
+      "raisedBy": "system",
+      "choices": ["approve", "decline"],
+      "data": {
+        "task": "work item id",
+        "proposedBy": "address",
+        "message": "message id"
+      },
+      "effect": "promote or drop the drafted work item (8.6)",
+      "vectors": []
+    },
+    {
+      "value": "doc",
+      "scope": "docs",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["approve", "reject"],
+      "data": {
+        "doc": "doc id",
+        "proposal": "proposal revision id",
+        "taskId": "work item id, optional",
+        "runId": "run id, optional"
+      },
+      "effect": "apply or reject the document change (C.3)",
+      "vectors": []
+    }
+  ],
+  "system-markers": [
+    {
+      "value": "x-closed",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "4.8",
+      "vectors": [
+        "core.close.answers-without-effect-or-deliveries",
+        "core.close.moves-the-question-to-answered",
+        "core.markers.close-is-honored-only-from-the-system"
+      ]
+    },
+    {
+      "value": "x-breaker",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "6.6",
+      "vectors": ["core.guardrails.breaker-tells-the-owner-once-per-window"]
+    }
+  ],
+  "delivery-states": [
+    {
+      "value": "held",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": [
+        "core.send.task-held-without-live-session",
+        "core.recover.returns-sending-rows-to-held"
+      ]
+    },
+    {
+      "value": "sending",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": true,
+      "vectors": [
+        "core.recover.dispatches-sending-rows-whose-session-is-live",
+        "core.recover.returns-sending-rows-to-held"
+      ]
+    },
+    {
+      "value": "pushed",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": [
+        "core.send.direct-mail-pushes-to-the-live-session",
+        "core.session-start.claims-held-mail-for-the-work-item"
+      ]
+    },
+    {
+      "value": "notified",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": [
+        "core.send.human-mail-is-notified",
+        "core.send.channel-mail-notifies-the-live-session"
+      ]
+    },
+    {
+      "value": "read",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": [
+        "core.mailbox.inbox-lists-and-mark-read-reads",
+        "core.mailbox.marking-read-leaves-answered-alone"
+      ]
+    },
+    {
+      "value": "answered",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": [
+        "core.answers.a-reply-answers-and-closes-the-question",
+        "core.close.moves-the-question-to-answered"
+      ]
+    },
+    {
+      "value": "forwarded",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
+      "internal": false,
+      "note": "a remote row handed to the transport, no report yet",
+      "vectors": []
+    },
+    {
+      "value": "refused",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
+      "internal": false,
+      "note": "every home of a remote recipient refused the message",
+      "vectors": []
+    }
+  ],
+  "error-codes": [
+    {
+      "value": "invalid",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 400,
+      "vectors": ["env.envelope.unknown-kind-refused-x-kind-accepted"]
+    },
+    {
+      "value": "forbidden",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 403,
+      "vectors": ["env.envelope.a-gate-answer-needs-a-deciding-principal"]
+    },
+    {
+      "value": "not-found",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 404,
+      "vectors": [
+        "env.envelope.a-reply-to-no-message-is-not-found",
+        "core.participation.absent-and-foreign-look-alike"
+      ]
+    },
+    {
+      "value": "conflict",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 409,
+      "vectors": [
+        "core.answers.a-question-takes-one-answer",
+        "core.close.an-answered-question-conflicts"
+      ]
+    },
+    {
+      "value": "limited",
+      "scope": "core",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 429,
+      "vectors": ["core.guardrails.breaker-refuses-the-next-agent-turn"]
+    },
+    {
+      "value": "unavailable",
+      "scope": "memory",
+      "status": "informative",
+      "since": "1.0.0-draft.1",
+      "section": "10.3",
+      "reference": "spec/10-errors.md#s10.3",
+      "httpStatus": 503,
+      "note": "raised by hosts and bindings, never by the engine",
+      "vectors": []
+    }
+  ],
+  "extension-uris": [
+    {
+      "value": "https://dispatch.foo/a2a/ext/envelope/v1",
+      "scope": "a2a",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "8.4",
+      "reference": "spec/08-a2a-binding.md#s8.4",
+      "vectors": [
+        "a2a.envelope-ext.accepts-recipients-choices-and-message-refs",
+        "a2a.envelope-ext.accepts-no-envelope",
+        "a2a.envelope-ext.refuses-urgent",
+        "a2a.envelope-ext.refuses-a-wake-request",
+        "a2a.envelope-ext.refuses-a-private-use-kind",
+        "a2a.envelope-ext.refuses-an-unknown-kind",
+        "a2a.envelope-ext.refuses-a-bad-recipient",
+        "a2a.envelope-ext.refuses-a-ref-type-other-than-task-or-message",
+        "a2a.envelope-ext.refuses-a-ref-anchor",
+        "a2a.envelope-ext.refuses-more-than-20-choices",
+        "a2a.envelope-ext.refuses-a-choice-over-200-bytes",
+        "a2a.envelope-ext.refuses-blocking-that-is-not-a-boolean",
+        "a2a.envelope-ext.refuses-metadata-over-64-kib",
+        "a2a.external.the-host-sets-id-thread-and-from",
+        "a2a.external.defaults-to-a-blocking-question-to-the-owner",
+        "a2a.external.a-client-reaches-only-the-owner",
+        "a2a.external.an-opening-answer-or-handoff-is-refused",
+        "a2a.external.never-speaks-as-the-system",
+        "a2a.external.gate-shaped-data-is-wrapped",
+        "a2a.external.several-data-parts-become-one-array"
+      ]
+    },
+    {
+      "value": "https://dispatch.foo/a2a/ext/gate/v1",
+      "scope": "a2a",
+      "status": "permanent",
+      "since": "1.0.0-draft.1",
+      "section": "8.5",
+      "reference": "spec/08-a2a-binding.md#s8.5",
+      "vectors": [
+        "a2a.projection.row-8-an-open-gate-needs-authorization",
+        "a2a.projection.row-8-gate-v1-lists-id-type-and-time",
+        "a2a.egress.gate-data-never-reaches-a-client",
+        "a2a.egress.a-gate-with-a-local-recipient-is-refused-whole",
+        "a2a.egress.a-reply-to-a-gate-never-reaches-a-client"
+      ]
+    },
+    {
+      "value": "https://dispatch.foo/a2a/ext/work/v1",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.6",
+      "reference": "spec/08-a2a-binding.md#s8.6",
+      "vectors": []
+    }
+  ]
+}

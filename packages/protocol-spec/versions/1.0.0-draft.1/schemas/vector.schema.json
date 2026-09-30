@@ -1,0 +1,607 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatch.foo/protocol/1.0.0-draft.1/schemas/vector.schema.json",
+  "title": "DMP vector file",
+  "description": "A file of the conformance kit, `vectors/<class>/<area>.json` (section 12.4.1). Informative: the runner also checks that a file's class is its directory, that ids are unique across the kit and never retired, that each `$sN` names an earlier step that created a message, and that a render row names a render step.",
+  "type": "object",
+  "properties": {
+    "kit": {
+      "description": "The kit version the file was written for.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "class": { "$ref": "#/$defs/class" },
+    "area": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "vectors": { "type": "array", "items": { "$ref": "#/$defs/vector" } }
+  },
+  "required": ["kit", "class", "area", "vectors"],
+  "additionalProperties": false,
+  "$defs": {
+    "class": { "enum": ["envelope", "host-core", "a2a-binding", "federation"] },
+    "vector": {
+      "description": "One vector (section 12.4.1).",
+      "type": "object",
+      "$ref": "#/$defs/fields",
+      "properties": { "then": { "$ref": "#/$defs/then" } },
+      "required": ["then"],
+      "unevaluatedProperties": false
+    },
+    "runnable": {
+      "description": "A vector without `then`, as the runner sends it to an adapter (section 12.4.7).",
+      "type": "object",
+      "$ref": "#/$defs/fields",
+      "unevaluatedProperties": false
+    },
+    "fields": {
+      "description": "Every member of a vector but `then`.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "`<prefix>.<topic>.<case>`; the prefix names the class.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+){2}$"
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "class": { "$ref": "#/$defs/class" },
+        "level": { "enum": ["MUST", "SHOULD", "MAY"] },
+        "profile": { "enum": ["core", "dispatch"] },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^([0-9]+(\\.[0-9]+)*|[A-F](\\.[0-9]+)+)$"
+          },
+          "minItems": 1
+        },
+        "capability": { "type": "string", "minLength": 1 },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "given": { "$ref": "#/$defs/given" },
+        "when": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/step" },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "class",
+        "level",
+        "profile",
+        "sections",
+        "given",
+        "when"
+      ],
+      "allOf": [
+        {
+          "description": "Only a MAY vector names a capability, and every MAY vector does.",
+          "if": {
+            "properties": { "level": { "const": "MAY" } },
+            "required": ["level"]
+          },
+          "then": {
+            "properties": { "capability": true },
+            "required": ["capability"]
+          },
+          "else": {
+            "not": {
+              "properties": { "capability": true },
+              "required": ["capability"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "class": { "const": "envelope" } },
+            "required": ["class"]
+          },
+          "then": {
+            "properties": { "id": { "type": "string", "pattern": "^env\\." } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "class": { "const": "host-core" } },
+            "required": ["class"]
+          },
+          "then": {
+            "properties": { "id": { "type": "string", "pattern": "^core\\." } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "class": { "const": "a2a-binding" } },
+            "required": ["class"]
+          },
+          "then": {
+            "properties": { "id": { "type": "string", "pattern": "^a2a\\." } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "class": { "const": "federation" } },
+            "required": ["class"]
+          },
+          "then": {
+            "properties": { "id": { "type": "string", "pattern": "^fed\\." } }
+          }
+        }
+      ]
+    },
+    "sender": {
+      "description": "Who a step acts as.",
+      "type": "object",
+      "properties": {
+        "address": { "type": "string" },
+        "canDecide": { "type": "boolean" }
+      },
+      "required": ["address", "canDecide"],
+      "additionalProperties": false
+    },
+    "stringList": { "type": "array", "items": { "type": "string" } },
+    "given": {
+      "description": "The world at the start of a vector (section 12.4.2).",
+      "type": "object",
+      "properties": {
+        "clock": { "type": "string" },
+        "seed": { "type": "number" },
+        "workItems": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "liveSession": { "type": "string" },
+              "sessions": { "$ref": "#/$defs/stringList" }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+          }
+        },
+        "auxSessions": { "$ref": "#/$defs/stringList" },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "address": { "type": "string" },
+              "status": { "enum": ["pending", "approved", "revoked"] },
+              "muted": { "type": "boolean" }
+            },
+            "required": ["address", "status"],
+            "additionalProperties": false
+          }
+        },
+        "channels": { "type": "array", "items": { "$ref": "#/$defs/channel" } },
+        "implicit": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/stringList" }
+        },
+        "owner": { "type": "string" },
+        "rulings": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ruling" }
+        },
+        "wakeResults": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/wakeResult" }
+        },
+        "failPush": { "$ref": "#/$defs/stringList" },
+        "failOnAnswered": { "type": "boolean" },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "urgentPerHour": { "type": "integer", "minimum": 0 },
+            "agentTurnsPerThreadPerHour": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": { "enum": ["client", "peer"] }
+        },
+        "store": {
+          "description": "Rows seeded before the first step, with literal ids.",
+          "type": "object",
+          "properties": {
+            "messages": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/seededRow" }
+            },
+            "deliveries": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/seededRow" }
+            },
+            "appliedGates": { "$ref": "#/$defs/stringList" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "seededRow": {
+      "type": "object",
+      "properties": { "id": { "type": "string", "minLength": 1 } },
+      "required": ["id"]
+    },
+    "channel": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "members": { "$ref": "#/$defs/stringList" }
+      },
+      "required": ["name", "members"],
+      "additionalProperties": false
+    },
+    "ruling": { "enum": ["allow", "ask", "deny"] },
+    "wakeResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ok": { "const": true },
+            "session": { "type": "string" }
+          },
+          "required": ["ok", "session"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok": { "const": false },
+            "reason": { "type": "string" }
+          },
+          "required": ["ok", "reason"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "step": {
+      "description": "One entry of `when` (section 12.4.3): an op and that op's members.",
+      "type": "object",
+      "properties": {
+        "op": {
+          "enum": [
+            "send",
+            "reply",
+            "close",
+            "markRead",
+            "inbox",
+            "thread",
+            "canRead",
+            "openBlocking",
+            "join",
+            "leave",
+            "deliverHeld",
+            "recover",
+            "parseAddress",
+            "validate",
+            "render",
+            "a2a.validate",
+            "a2a.project",
+            "a2a.inbound",
+            "world"
+          ]
+        },
+        "as": {
+          "description": "The sender; for a2a.inbound, the client's address alone.",
+          "anyOf": [
+            { "$ref": "#/$defs/sender" },
+            { "type": "string", "minLength": 1 }
+          ]
+        },
+        "input": {
+          "description": "A send input, a reply's members, or the string an address parse reads."
+        },
+        "origin": { "enum": ["local", "received"] },
+        "replyTarget": { "type": "string" },
+        "message": { "type": "string" },
+        "question": { "type": "string" },
+        "reason": { "type": "string" },
+        "recipient": { "type": "string" },
+        "states": { "$ref": "#/$defs/stringList" },
+        "thread": { "type": "string" },
+        "channel": { "type": "string" },
+        "member": { "type": "string" },
+        "session": { "type": "string" },
+        "workItem": { "type": "string" },
+        "form": { "enum": ["push", "digest"] },
+        "external": { "type": "boolean" },
+        "extension": { "enum": ["envelope", "work"] },
+        "raw": {
+          "description": "The extension's metadata as a client sent it."
+        },
+        "facts": { "type": "object" },
+        "envelope": {
+          "description": "The envelope/v1 metadata as a client sent it."
+        },
+        "body": { "type": "string" },
+        "parts": { "type": "array" },
+        "answers": {
+          "description": "For a2a.inbound, the open question the message answers, standing for its task's taskId.",
+          "type": "string"
+        },
+        "change": { "$ref": "#/$defs/change" }
+      },
+      "required": ["op"],
+      "allOf": [
+        {
+          "if": { "properties": { "op": { "const": "send" } } },
+          "then": {
+            "properties": { "as": { "$ref": "#/$defs/sender" }, "input": true },
+            "required": ["as", "input"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "reply" } } },
+          "then": {
+            "properties": {
+              "as": { "$ref": "#/$defs/sender" },
+              "message": true,
+              "input": true
+            },
+            "required": ["as", "message", "input"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "close" } } },
+          "then": {
+            "properties": { "question": true, "reason": true },
+            "required": ["question", "reason"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "markRead" } } },
+          "then": {
+            "properties": { "message": true, "recipient": true },
+            "required": ["message", "recipient"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "inbox" } } },
+          "then": {
+            "properties": { "recipient": true },
+            "required": ["recipient"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "thread" } } },
+          "then": { "properties": { "thread": true }, "required": ["thread"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "canRead" } } },
+          "then": {
+            "properties": {
+              "message": true,
+              "as": { "$ref": "#/$defs/sender" }
+            },
+            "required": ["message", "as"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "join" } } },
+          "then": {
+            "properties": { "channel": true, "member": true },
+            "required": ["channel", "member"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "leave" } } },
+          "then": {
+            "properties": { "channel": true, "member": true },
+            "required": ["channel", "member"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "deliverHeld" } } },
+          "then": {
+            "properties": { "session": true, "workItem": true },
+            "required": ["session", "workItem"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "parseAddress" } } },
+          "then": { "properties": { "input": true }, "required": ["input"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "validate" } } },
+          "then": {
+            "properties": { "as": { "$ref": "#/$defs/sender" }, "input": true },
+            "required": ["as", "input"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "render" } } },
+          "then": {
+            "properties": { "message": true },
+            "required": ["message"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "a2a.validate" } } },
+          "then": {
+            "properties": { "extension": true, "raw": true },
+            "required": ["extension", "raw"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "a2a.project" } } },
+          "then": { "properties": { "facts": true }, "required": ["facts"] }
+        },
+        {
+          "if": { "properties": { "op": { "const": "a2a.inbound" } } },
+          "then": {
+            "properties": {
+              "as": { "type": "string", "minLength": 1 },
+              "envelope": true,
+              "body": true
+            },
+            "required": ["as", "envelope", "body"]
+          }
+        },
+        {
+          "if": { "properties": { "op": { "const": "world" } } },
+          "then": { "properties": { "change": true }, "required": ["change"] }
+        }
+      ]
+    },
+    "change": {
+      "description": "Exactly one change to the world between steps (section 12.4.3).",
+      "type": "object",
+      "properties": {
+        "startSession": {
+          "type": "object",
+          "properties": {
+            "workItem": { "type": "string" },
+            "session": { "type": "string" }
+          },
+          "required": ["workItem", "session"],
+          "additionalProperties": false
+        },
+        "endSession": {
+          "type": "object",
+          "properties": { "workItem": { "type": "string" } },
+          "required": ["workItem"],
+          "additionalProperties": false
+        },
+        "ruling": {
+          "type": "object",
+          "properties": {
+            "target": { "type": "string" },
+            "ruling": { "$ref": "#/$defs/ruling" }
+          },
+          "required": ["target", "ruling"],
+          "additionalProperties": false
+        },
+        "wakeResult": {
+          "type": "object",
+          "properties": {
+            "target": { "type": "string" },
+            "result": { "$ref": "#/$defs/wakeResult" }
+          },
+          "required": ["target", "result"],
+          "additionalProperties": false
+        },
+        "failPush": { "$ref": "#/$defs/stringList" },
+        "failOnAnswered": { "type": "boolean" },
+        "advanceMs": { "type": "integer", "minimum": 0 },
+        "agentStatus": {
+          "type": "object",
+          "properties": {
+            "address": { "type": "string" },
+            "status": { "enum": ["pending", "approved", "revoked"] }
+          },
+          "required": ["address", "status"],
+          "additionalProperties": false
+        }
+      },
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false
+    },
+    "stepResult": {
+      "description": "An expected step outcome, or null for a step not checked.",
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/outcome" }]
+    },
+    "call": {
+      "description": "A hook call the host made (section 12.4.5).",
+      "type": "object",
+      "properties": {
+        "hook": {
+          "enum": [
+            "push",
+            "notify",
+            "notifyHuman",
+            "wake",
+            "decide",
+            "onAnswered",
+            "published",
+            "admitExternal"
+          ]
+        }
+      },
+      "required": ["hook"],
+      "additionalProperties": {
+        "anyOf": [{ "type": "string" }, { "type": "null" }]
+      }
+    },
+    "then": {
+      "description": "What the runner expects (section 12.4.5); never sent to the adapter.",
+      "type": "object",
+      "properties": {
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/stepResult" } },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/seededRow" }
+        },
+        "noOtherMessages": { "type": "boolean" },
+        "deliveries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "message": { "type": "string", "minLength": 1 },
+              "recipient": { "type": "string", "minLength": 1 },
+              "via": { "type": "string" },
+              "state": { "type": "string" },
+              "session": {
+                "anyOf": [{ "type": "string" }, { "type": "null" }]
+              }
+            },
+            "required": ["message", "recipient"],
+            "additionalProperties": false
+          }
+        },
+        "noDeliveries": { "$ref": "#/$defs/stringList" },
+        "calls": { "type": "array", "items": { "$ref": "#/$defs/call" } },
+        "callsInclude": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/call" }
+        },
+        "gateEffects": { "$ref": "#/$defs/stringList" },
+        "voided": { "$ref": "#/$defs/stringList" },
+        "channels": { "type": "array", "items": { "$ref": "#/$defs/channel" } },
+        "render": { "type": "array", "items": { "$ref": "#/$defs/renderRow" } }
+      },
+      "additionalProperties": false
+    },
+    "outcome": {
+      "description": "A step outcome (section 12.4.3): success with an optional result, or an error with its code and field.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": { "ok": { "const": true }, "result": {} },
+          "required": ["ok"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok": { "const": false },
+            "error": {
+              "type": "object",
+              "properties": {
+                "code": { "type": "string", "minLength": 1 },
+                "field": { "type": "string" }
+              },
+              "required": ["code"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["ok", "error"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "renderRow": {
+      "description": "The text a render step produced.",
+      "type": "object",
+      "properties": {
+        "step": { "type": "integer", "minimum": 1 },
+        "text": { "type": "string" }
+      },
+      "required": ["step", "text"],
+      "additionalProperties": false
+    }
+  }
+}

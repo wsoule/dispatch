@@ -12,6 +12,9 @@ catalogs:
     '@anthropic-ai/claude-agent-sdk':
       specifier: 0.3.207
       version: 0.3.207
+    '@astrojs/markdown-satteri':
+      specifier: 0.4.0
+      version: 0.4.0
     '@base-ui/react':
       specifier: 1.8.0
       version: 1.8.0
@@ -397,6 +400,9 @@ importers:
 
   apps/site:
     devDependencies:
+      '@astrojs/markdown-satteri':
+        specifier: 'catalog:'
+        version: 0.4.0
       '@dispatch/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens

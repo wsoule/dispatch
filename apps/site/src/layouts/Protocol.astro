@@ -1,0 +1,144 @@
+---
+import ProtocolFooter from '../components/ProtocolFooter.astro';
+import ThemeToggle from '../components/ThemeToggle.astro';
+import Base from './Base.astro';
+
+// The frame of every protocol and extension page: a slim header, the rendered
+// DMP text as prose, and the license footer naming the frozen version.
+interface Props {
+  version: string;
+  // The source path inside packages/protocol-spec/ that the footer names.
+  source: string;
+  canonical?: string;
+  title?: string;
+  description?: string;
+}
+const {
+  version,
+  source,
+  canonical,
+  title = `Dispatch Messaging Protocol ${version}`,
+  description = `The Dispatch Messaging Protocol (DMP) ${version}: an addressable, persistent message bus for humans and agents.`,
+} = Astro.props;
+---
+
+<Base title={title} description={description} canonical={canonical}>
+  <header class="protocol-header">
+    <div class="container protocol-bar">
+      <a class="wordmark" href="/">Dispatch</a>
+      <nav aria-label="Protocol">
+        <a class="bar-link" href="/protocol/">Protocol</a>
+        <span class="bar-version mono">{version}</span>
+        <ThemeToggle />
+      </nav>
+    </div>
+  </header>
+  <main class="container protocol">
+    <slot />
+  </main>
+  <ProtocolFooter version={version} path={source} />
+</Base>
+
+<style>
+  .protocol-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface-page);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .protocol-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: var(--site-nav-height);
+  }
+  .wordmark {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    font-size: var(--site-text-sm);
+    color: var(--text-secondary);
+  }
+  .bar-link {
+    text-decoration: none;
+  }
+  .bar-link:hover {
+    color: var(--text-primary);
+  }
+  .bar-version {
+    font-size: var(--site-text-xs);
+  }
+  .protocol {
+    max-width: 52rem;
+    padding-top: var(--space-10);
+    padding-bottom: var(--space-10);
+  }
+</style>
+
+<style is:global>
+  /* The DMP text arrives as rendered markdown, so its prose rules are global,
+     scoped by the .spec-text wrapper. */
+  .spec-text h1 {
+    margin: var(--space-10) 0 var(--space-4);
+    font-size: var(--site-h2);
+    overflow-wrap: anywhere;
+  }
+  .spec-text h2 {
+    margin: var(--space-8) 0 var(--space-3);
+    font-size: var(--site-text-lg);
+    letter-spacing: -0.015em;
+  }
+  .spec-text h3,
+  .spec-text h4 {
+    margin: var(--space-6) 0 var(--space-2);
+    font-size: var(--site-text);
+  }
+  .spec-text p,
+  .spec-text ul,
+  .spec-text ol,
+  .spec-text pre,
+  .spec-text table,
+  .spec-text blockquote {
+    margin: 0 0 var(--space-4);
+  }
+  .spec-text li + li {
+    margin-top: var(--space-1);
+  }
+  .spec-text pre {
+    padding: var(--space-4);
+    overflow-x: auto;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    font-size: var(--site-text-xs);
+    line-height: 1.6;
+  }
+  .spec-text table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: var(--site-text-sm);
+  }
+  .spec-text th,
+  .spec-text td {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-default);
+    text-align: left;
+    vertical-align: top;
+  }
+  .spec-text th {
+    background: var(--surface-muted);
+    font-weight: 500;
+  }
+  .spec-text blockquote {
+    padding-left: var(--space-4);
+    border-left: 2px solid var(--border-strong);
+    color: var(--text-secondary);
+  }
+</style>
