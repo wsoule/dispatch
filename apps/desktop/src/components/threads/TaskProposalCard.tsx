@@ -34,7 +34,7 @@ export function TaskProposalCard({
   const proposal = taskProposalOf(gate);
   if (proposal === null) return null;
 
-  // One answer at a time, so a double click answers once.
+  // One answer at a time; a successful one stays held so no second click conflicts.
   async function answer(choice: Choice) {
     if (pending !== null) return;
     setPending(choice);
@@ -43,7 +43,6 @@ export function TaskProposalCard({
       await onAnswer(choice);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
       setPending(null);
     }
   }
@@ -71,7 +70,11 @@ export function TaskProposalCard({
       ) : (
         <>
           {/* The client wrote it, so it shows as typed, never as markdown. */}
-          <pre className="rounded-control border-border-chip text-foreground max-h-60 overflow-y-auto border-[0.5px] px-2.5 py-2 font-mono text-[11px] break-words whitespace-pre-wrap">
+          <pre
+            tabIndex={0}
+            aria-label="Draft description"
+            className="rounded-control border-border-chip text-foreground max-h-60 overflow-y-auto border-[0.5px] px-2.5 py-2 font-mono text-[11px] break-words whitespace-pre-wrap"
+          >
             {task.body}
           </pre>
           <Writes writes={task.meta.writes} />
@@ -122,9 +125,9 @@ function Writes({ writes }: { writes: readonly string[] }) {
     <div className="flex flex-col gap-0.5">
       <span className="text-muted-foreground">Writes</span>
       <ul className="flex min-w-0 flex-col gap-0.5">
-        {writes.map((path) => (
+        {writes.map((path, i) => (
           <li
-            key={path}
+            key={`${path}:${i}`}
             className="text-foreground max-w-full min-w-0 font-mono text-[11px] break-all"
           >
             {path}

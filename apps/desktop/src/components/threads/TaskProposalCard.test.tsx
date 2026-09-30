@@ -165,3 +165,44 @@ test('offers no Approve until the draft is on the board, but Decline still answe
   fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
   await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('decline'));
 });
+
+test('keeps both answers held after one succeeds, so a second click cannot conflict', async () => {
+  const onAnswer = mock((_choice: 'approve' | 'decline') => Promise.resolve());
+  render(
+    <TaskProposalCard
+      gate={GATE}
+      task={DRAFT}
+      onAnswer={onAnswer}
+      onOpenTask={() => {}}
+      canDecide
+    />
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+  await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Approving…' })
+        .disabled
+    ).toBe(true)
+  );
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Decline' }).disabled
+  ).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
+  expect(onAnswer).toHaveBeenCalledTimes(1);
+});
+
+test('names the description’s scroll area and lists duplicate writes', () => {
+  render(
+    <TaskProposalCard
+      gate={GATE}
+      task={{ ...DRAFT, meta: { ...DRAFT.meta, writes: ['a.ts', 'a.ts'] } }}
+      onAnswer={async () => {}}
+      onOpenTask={() => {}}
+      canDecide
+    />
+  );
+  const region = screen.getByLabelText('Draft description');
+  expect(region.tabIndex).toBe(0);
+  expect(screen.getAllByText('a.ts')).toHaveLength(2);
+});
