@@ -896,6 +896,47 @@ describe('overflow into docs (docs Task 18)', () => {
     expect(row.rev).toBe(entry.rev);
   });
 
+  it("writes a run's growth of a human's own note as the run's text, not the human's", async () => {
+    const now = new Date().toISOString();
+    const mine = insertFresh(
+      personal('self'),
+      ids,
+      Date.parse(now),
+      (id) =>
+        newMemoryEntry(
+          {
+            scope: 'personal',
+            kind: 'fact',
+            title: 'my short note',
+            body: 'short',
+            projectKey,
+            author: 'human:wyat',
+            trust: 'human',
+          },
+          id,
+          now
+        ),
+      'human:wyat',
+      'save'
+    );
+    const { dir } = overflowMgr.prepare(target);
+    const file = readdirSync(dir).find(
+      (f) => f !== 'MEMORY.md' && f.endsWith('.md')
+    );
+    if (file === undefined) throw new Error('no exported file');
+    const path = join(dir, file);
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8').replace(
+        /\nshort\n?$/,
+        `\n${'line of text\n'.repeat(1000)}`
+      )
+    );
+    await overflowMgr.ingest(target);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ entryId: mine.id, author: RUN.address });
+  });
+
   it('truncates a cross-project personal note plainly and never calls docs', async () => {
     const { dir } = overflowMgr.prepare(target);
     writeFileSync(join(dir, 'long.md'), longNote('feedback'));

@@ -9,14 +9,18 @@ const entry = {
   id: 'mem-01',
   scope: 'personal',
   projectKey: 'aaaaaaaaaaaa',
-  author: 'agent:wyat/claude-code',
+  trust: 'agent',
   title: 'Long note',
   refs: [{ type: 'task', id: 't-1' }],
 };
-const ctx = (port: DocsOverflowPort | null) => ({
+const ctx = (
+  port: DocsOverflowPort | null,
+  author = 'agent:wyat/claude-code'
+) => ({
   projectKey: 'aaaaaaaaaaaa',
   human: 'human:wyat',
   identity: 'self',
+  author,
   port,
 });
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -51,6 +55,24 @@ describe('overflowBody', () => {
         body: FULL,
       },
     ]);
+  });
+
+  it('never writes agent text as a human, even when a human acts on it', () => {
+    const authors: string[] = [];
+    const port = {
+      overflow: (i: { author: string }) => {
+        authors.push(i.author);
+        return DOC;
+      },
+    };
+    overflowBody(entry, { fullBody: FULL }, ctx(port, 'run:r-1'));
+    overflowBody(entry, { fullBody: FULL }, ctx(port, 'human:wyat'));
+    overflowBody(
+      { ...entry, trust: 'human' },
+      { fullBody: FULL },
+      ctx(port, 'human:wyat')
+    );
+    expect(authors).toEqual(['run:r-1', 'agent:wyat/memory', 'human:wyat']);
   });
 
   it('leaves everything else plain and never asks docs', () => {

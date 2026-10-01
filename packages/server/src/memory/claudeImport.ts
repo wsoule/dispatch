@@ -419,6 +419,7 @@ function overflowAfterCommit(
         projectKey: input.projectKey,
         human: input.ownerRef,
         identity,
+        author,
         port: { overflow },
       }
     );

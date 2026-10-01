@@ -925,6 +925,7 @@ export class ClaudeExportManager {
       projectKey,
       human: operator.human,
       identity: operator.identity,
+      author: principal.address,
       port: docsOverflow,
     });
     if (out === null) return;

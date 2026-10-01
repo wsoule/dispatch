@@ -26,6 +26,14 @@ interface RefLike {
   id: string;
 }
 
+// The doc's author: whoever writes the text now. Text an agent wrote (trust
+// other than human) never reads as a human's, whoever is acting.
+function overflowAuthor(acting: string, trust: string): string {
+  return acting.startsWith('human:') && trust !== 'human'
+    ? `agent:${acting.slice('human:'.length)}/memory`
+    : acting;
+}
+
 /** `full` cut to the memory limit with the marker naming its doc. */
 export function overflowedText(
   full: string,
@@ -55,7 +63,7 @@ export function overflowBody<R extends RefLike>(
     id: string;
     scope: string;
     projectKey: string | null;
-    author: string;
+    trust: string;
     title: string;
     refs: readonly R[];
   },
@@ -64,6 +72,8 @@ export function overflowBody<R extends RefLike>(
     projectKey: string;
     human: string;
     identity: string;
+    // Who is writing this text now: the ingesting run, or the import's agent.
+    author: string;
     port: DocsOverflowPort | null;
   }
 ): { body: string; refs: (R | { type: 'doc'; id: string })[] } | null {
@@ -82,7 +92,7 @@ export function overflowBody<R extends RefLike>(
       entryId: entry.id,
       human: ctx.human,
       identity: ctx.identity,
-      author: entry.author,
+      author: overflowAuthor(ctx.author, entry.trust),
       title: entry.title,
       body: full,
     });
