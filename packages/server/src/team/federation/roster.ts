@@ -56,8 +56,6 @@ export interface RosterDeps {
   /** Attestations of the v1 logs on the branch (Task 9b); [] until then. */
   legacy: () => LegacyAttestation[];
   ownV1Attestation: () => { throughSeq: number; digest: string } | null;
-  /** Writes the v1 outbox to the branch once a founder is pinned. */
-  flushV1?: () => Promise<void>;
   relayUrl?: () => string | null;
 }
 
@@ -701,16 +699,10 @@ export class RosterService {
     this.refresh();
   }
 
-  // Once a founder is pinned, the v1 outbox goes out and this machine announces
-  // its key, unless an invite or a recovery already did.
+  // Once a founder is pinned, this machine announces its key, unless an
+  // invite or a recovery already did. The pass writes the v1 outbox in its
+  // own publish step (B3), never a write running beside it.
   private onFounderPinned(): void {
-    if (this.fed.head() !== null) return;
-    const flush = this.deps.flushV1 ?? (async () => {});
-    flush().catch((err: unknown) => {
-      console.warn(
-        `dispatchd: could not write the v1 outbox: ${(err as Error).message}`
-      );
-    });
     this.publishKey();
   }
 

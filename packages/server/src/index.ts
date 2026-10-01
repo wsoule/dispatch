@@ -2104,7 +2104,8 @@ async function bootServer(
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather
       // than let it finish. A no-op on the file backend.
-      boardSync?.stop();
+      // The pass in flight finishes before its ledger closes (B2).
+      await boardSync?.stop();
       syncLedger?.close();
       messaging.close();
       stores.close();

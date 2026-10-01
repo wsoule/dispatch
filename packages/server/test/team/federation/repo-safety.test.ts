@@ -221,6 +221,22 @@ describe('a hostile sync branch and the filesystem', () => {
     );
     expect(repo.readAcks().has(B)).toBe(false);
   });
+
+  // B3: a flush that ran twice writes each v1 line once.
+  it('writes each v1 seq into its log once', async () => {
+    const repo = await clone();
+    const op: BoardOp = {
+      v: 1,
+      replica: A,
+      seq: 1,
+      hlc: `0000000001000.0000.${A}`,
+      task: 't-00000a01',
+      kind: 'put',
+    };
+    await repo.write([op]);
+    await repo.write([op, { ...op, seq: 2 }]);
+    expect(repo.readV1(A).map((o) => o.seq)).toEqual([1, 2]);
+  });
 });
 
 // Commits and pushes a raw clone's work, as any branch writer could.

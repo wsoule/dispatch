@@ -72,14 +72,6 @@ export function buildFederation(deps: FederationDeps): Federation {
     licensePublicKey: LICENSE_PUBLIC_KEY,
     legacy: () => legacyRef.current?.attestAll() ?? [],
     ownV1Attestation: () => legacyRef.current?.ownAttestation() ?? null,
-    // The v1 outbox flush at founding and joining (spec staging row 9).
-    flushV1: async () => {
-      const out = ledger.outbox();
-      const last = out.at(-1);
-      if (last === undefined) return;
-      await repo.write(out);
-      ledger.sent(last.seq);
-    },
   });
   const legacy = new LegacyWindow({
     ledger,

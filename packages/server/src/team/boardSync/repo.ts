@@ -152,6 +152,9 @@ export class SyncRepo {
 
   /** Appends this replica's changes to its log and commits them. */
   async write(ops: BoardOp[]): Promise<void> {
+    // B3: a flush that ran twice writes each seq once.
+    const written = new Set(this.readV1(this.replica).map((o) => o.seq));
+    ops = ops.filter((o) => !written.has(o.seq));
     if (ops.length === 0) return;
     const file = ownFile(this.dir, `${OPS_DIR}/${this.replica}.jsonl`);
     appendFileSync(file, ops.map((op) => `${JSON.stringify(op)}\n`).join(''));

@@ -105,13 +105,6 @@ export function serviceReplica(
     licensePublicKey: opts.licensePublicKey ?? null,
     legacy: () => legacyRef.current?.attestAll() ?? [],
     ownV1Attestation: () => legacyRef.current?.ownAttestation() ?? null,
-    flushV1: async () => {
-      const out = ledger.outbox();
-      const last = out.at(-1);
-      if (last === undefined) return;
-      await branch.write(out);
-      ledger.sent(last.seq);
-    },
   });
   const legacy = new LegacyWindow({
     ledger,
@@ -170,7 +163,7 @@ export function serviceReplica(
     service,
     clock,
     close: () => {
-      service.stop();
+      void service.stop();
       ledger.close();
       rmSync(dir, { recursive: true, force: true });
     },

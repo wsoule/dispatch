@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS fed_outbox (seq INTEGER PRIMARY KEY, op_json TEXT NOT
 -- This replica's own log, kept after publishing, so a merge that removes its
 -- segments from the branch loses nothing (FW-R22 M6).
 CREATE TABLE IF NOT EXISTS fed_log (seq INTEGER PRIMARY KEY, op_json TEXT NOT NULL);
+-- The hash of every op this machine applied, per replica and seq: a cut or a
+-- rival is checked against it once the cursor has moved on (FW-R23).
+CREATE TABLE IF NOT EXISTS fed_seen_ops (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (replica, seq));
 CREATE TABLE IF NOT EXISTS fed_keys (
   replica TEXT PRIMARY KEY, handle TEXT NOT NULL, device TEXT NOT NULL, build TEXT NOT NULL,
   sign_pub TEXT NOT NULL, seal_pub TEXT NOT NULL, fingerprint TEXT NOT NULL, key_seq INTEGER NOT NULL,

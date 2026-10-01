@@ -2,6 +2,7 @@ import {
   buildOp,
   fingerprint,
   MAX_CLOCK_LEAD_MS,
+  opHash,
   sealPayload,
   stubOf,
 } from '@dispatch/protocol/federation';
@@ -165,6 +166,121 @@ describe('FederationService', () => {
     expect(title(ada, first)).toBe('before the junk');
     expect(title(ada, later)).toBe('after the junk');
     expect(ada.fed.cursor(bob.fed.replica).halted).toBeNull();
+  });
+
+  // B1: a cut names one history, checked against what this machine read
+  // even after its cursor has moved past the cut.
+  it("halts a log whose history differs from a revocation's afterHash after the cursor passed it", async () => {
+    const {
+      rs: [ada, bob, cy],
+    } = team('ada', 'bob', 'cy');
+    ada.roster.found('acme');
+    await settle(ada, bob, cy);
+    for (const o of [bob, cy])
+      ada.roster.admit(o.fed.replica, { fingerprint: fp(o) });
+    await settle(ada, bob, cy);
+    bob.store.create({ title: 'one' });
+    bob.store.create({ title: 'two' });
+    await settle(bob, cy);
+    const at = cy.fed.cursor(bob.fed.replica).head?.seq ?? 0;
+    const cut = ada.fed.append({
+      type: 'roster',
+      body: {
+        rv: 1,
+        action: 'revoke',
+        replica: bob.fed.replica,
+        afterSeq: at - 1,
+        afterHash: 'f'.repeat(64),
+        reason: 'another history',
+      },
+    });
+    ada.roster.applyVerified(cut, opHash(cut));
+    await ada.service.syncNow();
+    await cy.service.syncNow();
+    expect(cy.fed.cursor(bob.fed.replica).halted).toContain('revocation');
+  });
+
+  // FW-R23: a validly signed different op at a seq already verified is a fork.
+  it('halts on a signed rival of an op it already verified', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    bob.store.create({ title: 'one history' });
+    await settle(bob, ada);
+    const log = remote.logs.get(bob.fed.replica) ?? [];
+    const last = log.at(-1) as FederatedOp;
+    const rival = buildOp(
+      {
+        replica: last.replica,
+        seq: last.seq,
+        prev: last.prev,
+        hlc: last.hlc,
+        type: 'task',
+        body: { task: 't-00000f0d', kind: 'put', fields: { title: 'other' } },
+      },
+      bob.fed.keys.signPriv
+    );
+    remote.logs.set(bob.fed.replica, [...log, rival]);
+    await ada.service.syncNow();
+    expect(ada.fed.cursor(bob.fed.replica).halted).toContain(
+      'two ops share this seq'
+    );
+    expect(auditKinds(ada)).toContain('fork');
+  });
+
+  // B2: stop() waits for the pass in flight, so the ledger closes after it.
+  it('waits for the pass in flight when stopped', async () => {
+    const {
+      rs: [ada],
+    } = team('ada');
+    let done = false;
+    const pass = ada.service.syncNow().then(() => {
+      done = true;
+    });
+    await ada.service.stop();
+    expect(done).toBe(true);
+    await pass;
+  });
+
+  // B4: before a key op, the record of minted v1 ops keeps nothing sent.
+  it('keeps no minted v1 row the outbox has sent while there is no key op', async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.store.create({ title: 'plain v1' });
+    await settle(ada, bob);
+    expect(
+      ada.fed.db
+        .query<{ n: number }, []>('SELECT COUNT(*) AS n FROM fed_v1_minted')
+        .get()
+    ).toEqual({ n: 0 });
+  });
+
+  // B7: a branch this machine cannot read for a founding is a problem row.
+  it('names a failed read of the branch for a founding as a problem', async () => {
+    const {
+      remote,
+      rs: [ada],
+    } = team('ada');
+    remote.offline = true;
+    await ada.service.syncNow();
+    expect(
+      ada.fed
+        .problems()
+        .some((p) => p.message.includes('the remote is unreachable'))
+    ).toBe(true);
+    remote.offline = false;
+    await ada.service.syncNow();
+    expect(
+      ada.fed
+        .problems()
+        .some((p) => p.message.includes('the remote is unreachable'))
+    ).toBe(false);
   });
 
   it('audits a fork as a fork and halts the log there', async () => {

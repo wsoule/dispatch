@@ -175,10 +175,13 @@ export class FederationService {
     void this.syncNow();
   }
 
-  stop(): void {
+  /** Stops scheduling passes and waits for the one in flight (B2), so the
+   *  ledger can close after it. */
+  async stop(): Promise<void> {
     this.stopped = true;
     if (this.interval !== null) clearInterval(this.interval);
     if (this.debounce !== null) clearTimeout(this.debounce);
+    await this.running;
   }
 
   /** A local change happened: sync shortly, once the burst is over. */
@@ -299,7 +302,8 @@ export class FederationService {
       } catch (err) {
         if (!(err instanceof TransportOffline)) throw err;
       }
-      const entries = await transport.pull(this.watermarks());
+      // From one below each cursor, so a rival of the head op is seen (FW-R23).
+      const entries = await transport.pull(this.watermarks(1));
       this.lastError = null;
       const v1Ops = v1.readOthers((r) => this.opts.ledger.cursor(r));
       const before = roster.view();
@@ -330,7 +334,13 @@ export class FederationService {
     this.paused = null;
     if (outbox.length > 0) {
       await v1.write(outbox);
-      ledger.sent(outbox.at(-1)?.seq ?? 0);
+      const sent = outbox.at(-1)?.seq ?? 0;
+      ledger.sent(sent);
+      // B4: before a key op, nothing sent is ever re-issued; keep no record of it.
+      if (this.opts.fed.head() === null)
+        this.opts.fed.db
+          .query('DELETE FROM fed_v1_minted WHERE seq <= ?')
+          .run(sent);
     }
     const exchanged = await v1.exchange();
     this.lastError = exchanged.offline ?? null;
@@ -353,7 +363,13 @@ export class FederationService {
     let entries: LogEntry[];
     try {
       entries = await this.opts.transport.pull(new Map());
-    } catch {
+      this.opts.fed.clearProblem('team:founding');
+    } catch (err) {
+      // B7: say why no founding can be seen, instead of waiting silently.
+      this.opts.fed.problem(
+        'team:founding',
+        `this machine could not read the sync branch for a founding: ${(err as Error).message}`
+      );
       return;
     }
     for (const [replica, list] of byReplica(entries)) {
@@ -417,15 +433,60 @@ export class FederationService {
     }
   }
 
-  private watermarks(): Watermarks {
+  private watermarks(back = 0): Watermarks {
     const out = new Map<string, number>();
     for (const row of this.opts.fed.db
       .query<{ replica: string; seq: number | null }, []>(
         'SELECT replica, seq FROM fed_cursors'
       )
       .all())
-      if (row.seq !== null) out.set(row.replica, row.seq);
+      if (row.seq !== null) out.set(row.replica, Math.max(0, row.seq - back));
     return out;
+  }
+
+  // The hash of the op this machine applied at (replica, seq), if any.
+  private seenHash(replica: string, seq: number): string | null {
+    return (
+      this.opts.fed.db
+        .query<{ hash: string }, [string, number]>(
+          'SELECT hash FROM fed_seen_ops WHERE replica = ? AND seq = ?'
+        )
+        .get(replica, seq)?.hash ?? null
+    );
+  }
+
+  // A validly signed op at a seq this machine already verified, other than
+  // the one it verified: a fork (FW-R23), halting that log.
+  private rivalOf(
+    replica: string,
+    list: readonly LogEntry[],
+    cursor: LogCursor,
+    signPub: string | null
+  ): number | null {
+    const head = cursor.head;
+    if (head === null || signPub === null) return null;
+    for (const e of list) {
+      if (e.seq > head.seq) continue;
+      const known =
+        e.seq === head.seq ? head.hash : this.seenHash(replica, e.seq);
+      let hash: string;
+      try {
+        hash = opHash(e);
+      } catch {
+        continue;
+      }
+      if (known === null || hash === known) continue;
+      const before =
+        e.type === 'key'
+          ? null
+          : {
+              seq: e.seq - 1,
+              hash: e.prev,
+              hlc: `0000000000000.0000.${replica}`,
+            };
+      if (verifyEntry(before, e, signPub).ok) return e.seq;
+    }
+    return null;
   }
 
   // Verifies each replica's log from its cursor and hands key and roster ops
@@ -438,6 +499,18 @@ export class FederationService {
       const cursor = fed.cursor(replica);
       if (cursor.halted !== null) continue;
       const pinned = fed.pinned(replica);
+      const rival = this.rivalOf(
+        replica,
+        list,
+        cursor,
+        pinned?.signPub ?? null
+      );
+      if (rival !== null) {
+        const reason = `${replica}'s log fails verification at seq ${rival}: two ops share this seq; revoke it, or have it push again`;
+        this.recordHalt(replica, reason);
+        out.set(replica, { entries: [], halted: reason });
+        continue;
+      }
       const { chain, stalled } = chainFrom(
         list,
         cursor.head,
@@ -476,7 +549,10 @@ export class FederationService {
       const at = v.entries.find(({ entry }) => entry.seq === cut.afterSeq);
       const read = this.opts.fed.cursor(replica).head;
       const hash =
-        at?.hash ?? (read?.seq === cut.afterSeq ? read.hash : undefined);
+        at?.hash ??
+        (read?.seq === cut.afterSeq
+          ? read.hash
+          : (this.seenHash(replica, cut.afterSeq) ?? undefined));
       if (hash === undefined || hash === cut.afterHash) continue;
       const reason = `${replica}'s log fails verification at seq ${cut.afterSeq}: it shows another history than the one its revocation names; revoke it, or have it push again`;
       v.entries = v.entries.filter(({ entry }) => entry.seq < cut.afterSeq);
@@ -567,6 +643,11 @@ export class FederationService {
         }
         if (outcome === 'changed') changed = true;
         heads.set(r, { seq: entry.seq, hash, hlc: entry.hlc });
+        fed.db
+          .query(
+            'INSERT OR IGNORE INTO fed_seen_ops (replica, seq, hash) VALUES (?, ?, ?)'
+          )
+          .run(r, entry.seq, hash);
       }
       for (const [replica, v] of verified) {
         const head = heads.get(replica) ?? fed.cursor(replica).head;
