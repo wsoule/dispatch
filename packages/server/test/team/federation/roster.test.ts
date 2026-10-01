@@ -1,4 +1,4 @@
-import { fingerprint, opHash } from '@dispatch/protocol/federation';
+import { fingerprint, hlcWallMs, opHash } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import {
@@ -345,6 +345,31 @@ describe('seats once founded', () => {
     expect(before.seats()).toBe(5);
     expect(before.seatMessage(5)).toContain('the license for Acme covers 5');
     expect(syncSeats(team).seats()).toBe(8);
+  });
+});
+
+describe('an op stamped far ahead of this clock (FW-R21)', () => {
+  it('is held, not applied or observed, until the clock catches up', () => {
+    const ada = make('ada');
+    const bob = make('bob');
+    ada.roster.found('acme');
+    bob.clock.now = new Date(ada.clock.now.getTime() + 60 * 60 * 1000);
+    feed(ada, bob);
+    const key = bob.fed.outbox()[0];
+    feed(bob, ada);
+    const subject = `op:${bob.fed.replica}:${key?.seq ?? 0}`;
+    expect(ada.fed.pinned(bob.fed.replica)).toBeNull();
+    expect(ada.fed.cursor(bob.fed.replica).head).toBeNull();
+    expect(ada.roster.view()?.pending).not.toContain(bob.fed.replica);
+    expect(ada.fed.problems().map((p) => p.subject)).toContain(subject);
+    // Ada's clock did not jump: her next op is stamped at her own time.
+    ada.roster.invite('cy');
+    const invite = ada.fed.outbox().at(-1);
+    expect(hlcWallMs(invite?.hlc ?? '')).toBe(ada.clock.now.getTime());
+    ada.clock.now = bob.clock.now;
+    feed(bob, ada);
+    expect(ada.roster.view()?.pending).toContain(bob.fed.replica);
+    expect(ada.fed.problems().map((p) => p.subject)).not.toContain(subject);
   });
 });
 

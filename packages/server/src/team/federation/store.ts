@@ -175,6 +175,11 @@ export class FedStore {
     this.ledger.observe(hlc);
   }
 
+  /** Whether an op is stamped too far ahead of this clock to apply yet (FW-R21). */
+  ahead(hlc: string): boolean {
+    return this.ledger.ahead(hlc);
+  }
+
   /** Signed ops not yet published, oldest first. */
   outbox(): FederatedOp[] {
     return this.db

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  aheadOfClock,
   compareHlc,
   hlcWallMs,
+  MAX_CLOCK_LEAD_MS,
   MAX_HLC_COUNTER,
   OpClock,
   parseOpHlc,
@@ -95,6 +97,27 @@ describe('OpClock', () => {
     expect(observer.tick()).toBe(at(WALL + 1, 0));
     const restarted = new OpClock(R, at(WALL, '9'.repeat(400)), () => WALL);
     expect(restarted.tick()).toBe(at(WALL + 1, 0));
+  });
+
+  // FW-R21: a signed far-future reading would win every later write and drag
+  // every honest clock with it.
+  it('never adopts a reading more than MAX_CLOCK_LEAD_MS ahead of its wall clock', () => {
+    let wall = WALL;
+    const clock = new OpClock(R, null, () => wall);
+    const far = at(WALL + MAX_CLOCK_LEAD_MS + 1, 0, B);
+    expect(clock.observe(far)).toBe(false);
+    expect(clock.tick()).toBe(at(WALL, 0));
+    const edge = at(WALL + MAX_CLOCK_LEAD_MS, 3, B);
+    expect(clock.observe(edge)).toBe(true);
+    expect(clock.tick()).toBe(at(WALL + MAX_CLOCK_LEAD_MS, 4));
+    wall += 2;
+    expect(clock.observe(far)).toBe(true);
+  });
+
+  it('says whether a reading is past the bound for a wall time', () => {
+    expect(aheadOfClock(at(WALL + MAX_CLOCK_LEAD_MS + 1, 0), WALL)).toBe(true);
+    expect(aheadOfClock(at(WALL + MAX_CLOCK_LEAD_MS, 0), WALL)).toBe(false);
+    expect(aheadOfClock('x', WALL)).toBe(false);
   });
 
   it('never moves back for an earlier or unreadable reading', () => {

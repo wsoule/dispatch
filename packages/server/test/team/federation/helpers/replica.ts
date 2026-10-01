@@ -57,7 +57,8 @@ export function testReplica(
   };
 }
 
-// Hands `from`'s published key and roster ops to `to`, verified as the pass would.
+// Hands `from`'s published key and roster ops to `to`, verified and applied
+// as the pass would; applying a key op pins it.
 export function feed(from: TestReplica, to: TestReplica): void {
   const entries: FederatedOp[] = from.fed.outbox();
   const replica = from.fed.replica;
@@ -67,12 +68,17 @@ export function feed(from: TestReplica, to: TestReplica): void {
     to.fed.cursor(replica),
     to.fed.pinned(replica)
   );
-  if (r.pinned !== null) to.fed.pin(r.pinned);
+  // A held op (FW-R21) stops the read there: its cursor and pin wait for it.
+  let cursor = to.fed.cursor(replica);
   for (const { entry, hash } of r.accepted) {
-    if (entry.type === 'key' || entry.type === 'roster')
-      to.roster.applyVerified(entry as FederatedOp, hash);
+    if (entry.type === 'key' || entry.type === 'roster') {
+      const applied = to.roster.applyVerified(entry as FederatedOp, hash);
+      if (applied === 'held') break;
+    }
+    cursor = { head: { seq: entry.seq, hash, hlc: entry.hlc }, halted: null };
   }
-  to.fed.setCursor(replica, r.cursor);
+  if (cursor.head?.seq === r.cursor.head?.seq) cursor = r.cursor;
+  to.fed.setCursor(replica, cursor);
 }
 
 // Everyone sees everyone's ops, twice, so admissions that follow pins land.

@@ -289,6 +289,8 @@ export interface ApplyResult {
   doc: TaskDoc | null;
   /** Set when the change could not be applied and a person needs to know. */
   problem?: string;
+  /** Stamped too far ahead of this machine's clock: not applied yet (FW-R21). */
+  held?: true;
 }
 
 // The base a task is rebuilt on when this replica has never held it: the

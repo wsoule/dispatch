@@ -513,14 +513,24 @@ export class RosterService {
 
   // ---- applying verified ops ----
 
-  /** Records a verified key or roster op, then re-folds, records and audits it. */
-  applyVerified(entry: FederatedOp, hash: string): void {
+  /** Records a verified key or roster op, then re-folds, records and audits it.
+   *  One stamped too far ahead is held (FW-R21): the caller stops there. */
+  applyVerified(entry: FederatedOp, hash: string): 'applied' | 'held' {
+    const subject = `op:${entry.replica}:${entry.seq}`;
+    if (this.fed.ahead(entry.hlc)) {
+      this.fed.problem(
+        subject,
+        `${entry.replica}'s op at seq ${entry.seq} is stamped ${entry.hlc}, more than 10 minutes ahead of this machine's clock; it waits until the clock catches up`
+      );
+      return 'held';
+    }
+    this.fed.clearProblem(subject);
     this.fed.observe(entry.hlc);
     if (entry.type === 'key') {
       this.pinKey(entry);
-      return;
+      return 'applied';
     }
-    if (entry.type !== 'roster') return;
+    if (entry.type !== 'roster') return 'applied';
     const inserted = this.fed.db
       .query(
         'INSERT OR IGNORE INTO fed_roster (replica, seq, hlc, hash, body_json) VALUES (?, ?, ?, ?, ?)'
@@ -532,10 +542,11 @@ export class RosterService {
         hash,
         JSON.stringify(entry.body)
       );
-    if (inserted.changes === 0) return;
+    if (inserted.changes === 0) return 'applied';
     if (isFound(entry.body)) this.onFoundSeen(entry, hash);
     this.refresh();
     this.auditOp(entry, hash);
+    return 'applied';
   }
 
   // ---- internals ----

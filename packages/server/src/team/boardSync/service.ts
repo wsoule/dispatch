@@ -216,7 +216,10 @@ export class BoardSyncService {
     let changed = false;
     ledger.atomically(() => {
       const reached = new Map<string, number>();
+      // A held change stops its replica here; its cursor waits for it (FW-R21).
+      const held = new Set<string>();
       for (const op of ops) {
+        if (held.has(op.replica)) continue;
         const result = store.applyRemote(op);
         if (result.problem !== undefined) {
           ledger.recordProblem(
@@ -224,6 +227,10 @@ export class BoardSyncService {
             result.problem,
             new Date().toISOString()
           );
+        }
+        if (result.held === true) {
+          held.add(op.replica);
+          continue;
         }
         if (result.changed) {
           changed = true;

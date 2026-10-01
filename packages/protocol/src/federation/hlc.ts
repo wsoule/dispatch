@@ -24,6 +24,16 @@ export function compareHlc(a: ParsedHlc, b: ParsedHlc): number {
   return 0;
 }
 
+// FW-R21: how far ahead of the local wall clock a reading may be and still be
+// adopted; an op stamped further ahead waits until the clock catches up.
+export const MAX_CLOCK_LEAD_MS = 10 * 60 * 1000;
+
+/** Whether a reading's wall time is past the bound for the wall time `nowMs`. */
+export function aheadOfClock(hlc: string, nowMs: number): boolean {
+  const clock = readClamped(hlc);
+  return clock !== null && clock.ms > nowMs + MAX_CLOCK_LEAD_MS;
+}
+
 export function hlcWallMs(hlc: string): number | null {
   return parseOpHlc(hlc)?.ms ?? null;
 }
@@ -70,10 +80,12 @@ export class OpClock {
     return this.last;
   }
 
-  /** Moves past a reading from elsewhere, so the next tick sorts after it. */
-  observe(remote: string): void {
+  /** Moves past a reading from elsewhere, so the next tick sorts after it,
+   *  unless it is past the bound (FW-R21); false when it refused. */
+  observe(remote: string): boolean {
     const clock = readClamped(remote);
-    if (clock === null) return;
+    if (clock === null) return true;
+    if (clock.ms > this.now() + MAX_CLOCK_LEAD_MS) return false;
     if (
       clock.ms > this.ms ||
       (clock.ms === this.ms && clock.counter > this.counter)
@@ -81,6 +93,7 @@ export class OpClock {
       this.ms = clock.ms;
       this.counter = clock.counter;
     }
+    return true;
   }
 
   /** The latest reading, for persisting across restarts. */

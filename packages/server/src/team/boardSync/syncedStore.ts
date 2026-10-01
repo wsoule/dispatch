@@ -112,6 +112,13 @@ export class SyncedTaskStore implements TaskStorePort {
 
   /** Folds a change from another replica into this board. */
   applyRemote(op: BoardOp): ApplyResult {
+    if (this.ledger.ahead(op.hlc))
+      return {
+        changed: false,
+        doc: null,
+        held: true,
+        problem: `a change from ${op.replica} (seq ${op.seq}) is stamped ${op.hlc}, more than 10 minutes ahead of this machine's clock; it waits until the clock catches up`,
+      };
     this.ledger.observe(op.hlc);
     const result = applyOp(op, this.inner.get(op.task), this.ledger.state);
     if (result.changed) {

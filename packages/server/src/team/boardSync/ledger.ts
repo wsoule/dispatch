@@ -1,4 +1,4 @@
-import { OpClock } from '@dispatch/protocol/federation';
+import { aheadOfClock, OpClock } from '@dispatch/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
@@ -58,7 +58,11 @@ export class SyncLedger {
   readonly state: MergeState;
   private readonly db: Database;
 
-  constructor(path: string, handle: string, now: () => number = Date.now) {
+  constructor(
+    path: string,
+    handle: string,
+    private readonly now: () => number = Date.now
+  ) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path, { create: true });
     this.db.exec('PRAGMA journal_mode = WAL');
@@ -169,8 +173,13 @@ export class SyncLedger {
 
   /** Moves the clock past a remote change and remembers where it got to. */
   observe(hlc: string): void {
-    this.clock.observe(hlc);
-    this.setMeta('hlc', this.clock.last);
+    if (this.clock.observe(hlc)) this.setMeta('hlc', this.clock.last);
+  }
+
+  /** Whether a reading is too far ahead of this machine's clock to apply yet
+   *  (FW-R21): such a change waits, unapplied and unobserved. */
+  ahead(hlc: string): boolean {
+    return aheadOfClock(hlc, this.now());
   }
 
   isBootstrapped(): boolean {
