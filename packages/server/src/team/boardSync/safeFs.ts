@@ -1,6 +1,10 @@
 import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -23,11 +27,26 @@ export function realDir(path: string): boolean {
   return lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
 }
 
-/** A regular file's text when it is at most `cap` bytes, else null. */
+/** A regular file's text when it is at most `cap` bytes, else null. Opened
+ *  without following a link or blocking on a FIFO, and checked by its fd, so
+ *  nothing swapped in after a check is read (FW-R22 M-a). */
 export function readCapped(path: string, cap: number): string | null {
-  const stat = lstatSync(path, { throwIfNoEntry: false });
-  if (stat?.isFile() !== true || stat.size > cap) return null;
-  return readFileSync(path, 'utf8');
+  let fd: number;
+  try {
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    );
+  } catch {
+    return null;
+  }
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > cap) return null;
+    return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** A real directory's entries, or [] for anything else. */

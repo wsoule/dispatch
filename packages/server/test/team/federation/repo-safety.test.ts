@@ -200,6 +200,17 @@ describe('a hostile sync branch and the filesystem', () => {
     expect(fresh.readV2(new Map()).map((e) => e.seq)).toEqual([1]);
   });
 
+  // M-a: a FIFO never blocks a read; the fd itself is checked.
+  it('never blocks on a FIFO named as a segment', async () => {
+    const repo = await clone();
+    mkdirSync(join(dir, 'clone', 'fed', B), { recursive: true });
+    Bun.spawnSync([
+      'mkfifo',
+      join(dir, 'clone', 'fed', B, '000000000001.jsonl'),
+    ]);
+    expect(repo.readV2(new Map())).toEqual([]);
+  });
+
   // M4: reads are size-capped.
   it('never reads an acks.json over its size cap', async () => {
     const repo = await clone();
