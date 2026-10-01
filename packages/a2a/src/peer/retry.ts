@@ -8,7 +8,7 @@ export type RetryDecision =
   | { kind: 'give-up'; reason: string };
 
 // When to try a failed relay again, or why to stop (spec:1467-1472). 408 and
-// 429 are retried like 5xx, honouring Retry-After (Decision D14).
+// 429 are retried like 5xx; Retry-After can lengthen the backoff, never shorten it.
 export function retrySchedule(
   attempts: number,
   firstAttemptAt: string,
@@ -20,7 +20,13 @@ export function retrySchedule(
     status === null || status >= 500 || status === 408 || status === 429;
   if (!transient)
     return { kind: 'give-up', reason: `the peer answered HTTP ${status}` };
-  if (now.getTime() - Date.parse(firstAttemptAt) >= GIVE_UP_MS)
+  const first = Date.parse(firstAttemptAt);
+  if (Number.isNaN(first))
+    return {
+      kind: 'give-up',
+      reason: 'the first attempt time is not a valid time',
+    };
+  if (now.getTime() - first >= GIVE_UP_MS)
     return { kind: 'give-up', reason: 'unreachable for 24 h' };
   const backoff = Math.min(
     RETRY_FIRST_MS * 2 ** Math.min(Math.max(0, attempts - 1), 20),
@@ -30,7 +36,7 @@ export function retrySchedule(
   const delay =
     hinted === null || hinted === undefined
       ? backoff
-      : Math.min(Math.max(hinted * 1000, 1000), RETRY_MAX_MS);
+      : Math.min(Math.max(hinted * 1000, backoff), RETRY_MAX_MS);
   return { kind: 'retry', at: new Date(now.getTime() + delay).toISOString() };
 }
 

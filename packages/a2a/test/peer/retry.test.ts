@@ -33,14 +33,27 @@ describe('retrySchedule', () => {
     ).toBe(3_600_000);
   });
 
-  it('never retries sooner than a second, whatever Retry-After says', () => {
+  it('never retries sooner than the backoff, whatever Retry-After says', () => {
     const now = at(0);
     expect(
       delayOf(
         retrySchedule(1, FIRST, now, { status: 503, retryAfterSec: 0 }),
         now
       )
-    ).toBe(1000);
+    ).toBe(30_000);
+    expect(
+      delayOf(
+        retrySchedule(4, FIRST, now, { status: 429, retryAfterSec: 5 }),
+        now
+      )
+    ).toBe(240_000);
+  });
+
+  it('gives up when the first attempt time cannot be read', () => {
+    expect(retrySchedule(1, 'not a time', at(0), { status: null })).toEqual({
+      kind: 'give-up',
+      reason: 'the first attempt time is not a valid time',
+    });
   });
 
   it('gives up at once on any other 4xx and after 24 h of failures', () => {
