@@ -222,6 +222,7 @@ import {
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { BoardSyncService } from './team/boardSync/service.js';
+import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
   getLicense,
@@ -6109,6 +6110,12 @@ export async function handleApi(
     }
     if (err instanceof OrchestratorClientError) {
       return errorResponse(400, err.message);
+    }
+    if (err instanceof TaskTooLargeError) {
+      return jsonResponse(
+        { error: err.message, code: 'too_large', field: err.field },
+        413
+      );
     }
     // Messaging routes let @dispatch/protocol's MessagingError surface
     // rather than pre-validating; `code` maps to the same statuses below.

@@ -200,7 +200,7 @@ interface BodyParts {
 // The same split taskfile.ts uses: a section runs from its `## ` line to the
 // next. Content keeps its own surrounding newlines, so joining the parts back
 // gives the body byte for byte.
-function splitBody(body: string): BodyParts {
+export function splitBody(body: string): BodyParts {
   const parts = body.split(/^(## .+)$/m);
   const sections: BodyParts['sections'] = [];
   for (let i = 1; i < parts.length; i += 2) {
