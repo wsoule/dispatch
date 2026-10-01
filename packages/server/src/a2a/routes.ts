@@ -93,6 +93,9 @@ async function putListener(
   const parsed = parseSettings(body.value);
   if (!parsed.ok)
     return invalid(parsed.key, `${parsed.key} has the wrong type`);
+  // A write that leaves `standalone` out keeps the current switch.
+  if ((body.value as { standalone?: unknown }).standalone === undefined)
+    parsed.settings.standalone = b.a2a.standalone();
   const checked = b.a2a.check(parsed.settings);
   if (!checked.ok) return invalid(checked.key, checked.error);
   const status = await b.a2a.applySettings(parsed.settings);

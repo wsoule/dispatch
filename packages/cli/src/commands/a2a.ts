@@ -146,6 +146,10 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       'behind a tunnel on loopback: key per-IP limits on X-Forwarded-For'
     )
     .option('--standalone', 'enable /api/a2a/port/* for `dispatch a2a serve`')
+    .option(
+      '--no-standalone',
+      'close /api/a2a/port/* (left out, the current setting stays)'
+    )
     .option('--off', 'close the listener')
     .option('--status', 'show whether and where it listens')
     .option('--token <token>', TOKEN_HELP)
@@ -185,7 +189,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
                 keyPath: resolve(ctx.cwd, o.tlsKey),
               },
         trustForwardedFor: o.trustForwardedFor === true,
-        standalone: o.standalone === true,
+        ...(o.standalone === undefined ? {} : { standalone: o.standalone }),
       });
       printStatus(status);
       // Saved but closed (port in use, bad certificate): exit non-zero for scripts.

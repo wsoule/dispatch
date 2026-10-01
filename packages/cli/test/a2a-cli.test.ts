@@ -240,11 +240,20 @@ describe('dispatch a2a listen', () => {
           publicUrl: 'https://acme-agent.example.com',
           tls: null,
           trustForwardedFor: true,
-          standalone: false,
         },
       },
     ]);
     expect(lines.join('\n')).toContain('http://127.0.0.1:7450');
+  });
+
+  it('leaves standalone hosts as they are unless --standalone or --no-standalone says', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'listen', '--port', '7450');
+    await run('a2a', 'listen', '--port', '7450', '--standalone');
+    await run('a2a', 'listen', '--port', '7450', '--no-standalone');
+    expect(
+      a2aCalls().map((c) => (c.body as { standalone?: boolean }).standalone)
+    ).toEqual([undefined, true, false]);
   });
 
   it('fails when the daemon saved the settings but the listener did not open', async () => {

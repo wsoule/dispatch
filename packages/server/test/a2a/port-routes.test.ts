@@ -213,6 +213,26 @@ describe('the /api/a2a/port routes (daemon)', () => {
     ).toBe(true);
   });
 
+  it('keeps standalone hosts allowed when a listener write leaves the flag out', async () => {
+    await allowStandalone();
+    const put = (body: unknown) =>
+      fetch(`${base}/api/a2a/listener`, {
+        method: 'PUT',
+        headers: json,
+        body: JSON.stringify(body),
+      });
+    const standalone = async () =>
+      (
+        (await (await fetch(`${base}/api/a2a/hosts`)).json()) as {
+          standalone: boolean;
+        }
+      ).standalone;
+    expect((await put({ enabled: false })).status).toBe(200);
+    expect(await standalone()).toBe(true);
+    expect((await put({ enabled: false, standalone: false })).status).toBe(200);
+    expect(await standalone()).toBe(false);
+  });
+
   it('needs the operator tier for hosts and the standalone switch', async () => {
     const lead = handle.team.teammates.issue('ada', 'decide');
     const as = (init: RequestInit) => ({

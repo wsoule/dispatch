@@ -1098,7 +1098,8 @@ interface A2AListenerSettings {
   publicUrl: string | null;
   tls: { certPath: string; keyPath: string } | null;
   trustForwardedFor: boolean;
-  standalone: boolean;
+  // Left out, the daemon keeps its current switch.
+  standalone?: boolean;
 }
 
 export interface A2AListenerStatus {
