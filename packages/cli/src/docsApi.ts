@@ -129,6 +129,8 @@ export interface DocsApi {
   ): Promise<DocPublishResult>;
   reviewed(ref: string): Promise<DocRecord>;
   remove(ref: string): Promise<void>;
+  // A doc's stored image as bytes; null when the daemon has none of that name.
+  asset(ref: string, name: string): Promise<Uint8Array | null>;
   // Proposals to accepted docs the caller may see.
   proposals(params?: {
     doc?: string;
@@ -251,6 +253,17 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
     reviewed: (ref) => json('POST', `${docPath(ref)}/reviewed`, {}),
     remove: async (ref) => {
       await call('DELETE', docPath(ref));
+    },
+    asset: async (ref, name) => {
+      const res = await call(
+        'GET',
+        `${docPath(ref)}/assets/${encodeURIComponent(name)}`,
+        undefined,
+        [404]
+      );
+      return res.status === 404
+        ? null
+        : new Uint8Array(await res.arrayBuffer());
     },
     proposals: (p = {}) => {
       const q = new URLSearchParams();

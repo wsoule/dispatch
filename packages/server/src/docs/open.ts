@@ -1,5 +1,5 @@
 import { openSqliteDb, queryOne, readDocsConfig } from '@dispatch/core';
-import { chmodSync, existsSync, readdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { runsDir } from '../orchestrator/paths.js';
@@ -14,6 +14,16 @@ const DOCS_SWEEP_MS = 60_000;
 // Where `dispatch receipts restore` stages a log's team docs for the next boot.
 export function docsRestoreDir(rootDir: string): string {
   return join(runsDir(rootDir), 'docs-restore');
+}
+
+// docs-assets/ exists 0700, re-applied at every open.
+function prepareAssetsDir(dir: string): void {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+  } catch (err) {
+    console.error(`dispatchd: docs images: ${String(err)}`);
+  }
 }
 
 interface OpenDocs {
@@ -66,6 +76,7 @@ export function openDocs(deps: {
   host: DaemonDocsHost;
   ownerRef: string;
   dbPath?: string;
+  assetsDir?: string;
   sweepMs?: number;
 }): OpenDocs {
   const path = deps.dbPath ?? join(runsDir(deps.rootDir), 'docs.db');
@@ -73,7 +84,16 @@ export function openDocs(deps: {
     readDocsConfig(deps.rootDir);
   const orphans = (): string[] =>
     findOrphanDocsDbs(dirname(dirname(path)), path);
-  const common = { host: deps.host, ownerRef: deps.ownerRef, config, orphans };
+  // Pasted images, one 0700 directory per doc beside docs.db (v1).
+  const assetsDir = deps.assetsDir ?? join(dirname(path), 'docs-assets');
+  prepareAssetsDir(assetsDir);
+  const common = {
+    host: deps.host,
+    ownerRef: deps.ownerRef,
+    config,
+    orphans,
+    assetsDir,
+  };
   let service: DocsService;
   let store: SqliteDocStore | null = null;
   try {

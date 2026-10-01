@@ -36,6 +36,7 @@ import {
 import { relativeTime } from '../../lib/landingView';
 import { parseMarked } from '../../lib/mergeLayout';
 import { DiffSurface } from '../code/DiffSurface';
+import { AssetImage } from './AssetImage';
 import { DocEditor } from './DocEditor';
 import { DocHistory } from './DocHistory';
 import { DocLinksRail } from './DocLinksRail';
@@ -270,6 +271,21 @@ export function DocPage({
       );
     }
     void flush();
+  };
+
+  // Stores each pasted or dropped image, answering the links to insert; a
+  // refused one (not an image, too large) is reported and skipped.
+  const uploadImages = async (files: File[]): Promise<string[]> => {
+    const links: string[] = [];
+    for (const file of files) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        links.push((await client.uploadDocAsset(refId, bytes)).markdown);
+      } catch (err) {
+        setActionError(`${file.name}: ${describeError(err)}`);
+      }
+    }
+    return links;
   };
 
   // Why Accept may not run now: unsaved or marked text, or a conflicted doc.
@@ -622,6 +638,15 @@ export function DocPage({
               readOnly={archived}
               onChange={(next) => update((b) => editDocBuffer(b, next))}
               placeAt={placeAt}
+              renderImage={({ src, alt }) => (
+                <AssetImage
+                  client={client}
+                  docId={doc.id}
+                  src={src}
+                  alt={alt}
+                />
+              )}
+              onImages={uploadImages}
             />
           </div>
         </main>

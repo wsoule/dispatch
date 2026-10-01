@@ -192,3 +192,40 @@ test('lists open proposals with how long ago each was made', async () => {
   });
   expect(await screen.findByText(/rev-p · run:r-1 · 3h ago/)).toBeDefined();
 });
+
+test('uploads a pasted image and inserts its link at the caret', async () => {
+  const name = `${'a'.repeat(64)}.png`;
+  const uploads: unknown[] = [];
+  const uploadDocAsset = (ref: string, bytes: Uint8Array) => {
+    uploads.push([ref, Array.from(bytes)]);
+    return Promise.resolve({ name, markdown: `![](asset:${name})` });
+  };
+  renderPage({
+    text: 'ab',
+    client: { uploadDocAsset } as unknown as Partial<ApiClient>,
+  });
+  const editor =
+    await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
+  editor.setSelectionRange(1, 1);
+  const file = new File([new Uint8Array([0x89, 0x50])], 'shot.png', {
+    type: 'image/png',
+  });
+  fireEvent.paste(editor, { clipboardData: { files: [file] } });
+  await waitFor(() => expect(editor.value).toBe(`a![](asset:${name})b`));
+  expect(uploads).toEqual([['doc-1', [0x89, 0x50]]]);
+});
+
+test("the preview shows a doc's asset: image through the docs API", async () => {
+  const name = `${'a'.repeat(64)}.png`;
+  const fetchDocAsset = mock((_doc: string, _name: string) =>
+    Promise.resolve(new Blob([new Uint8Array([1])], { type: 'image/png' }))
+  );
+  renderPage({
+    text: `![shot](asset:${name})\n`,
+    client: { fetchDocAsset } as unknown as Partial<ApiClient>,
+  });
+  await screen.findByLabelText('Editing auth');
+  fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+  expect(await screen.findByRole('img', { name: 'shot' })).toBeDefined();
+  expect(fetchDocAsset).toHaveBeenCalledWith('doc-1', name);
+});

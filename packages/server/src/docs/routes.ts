@@ -17,6 +17,7 @@ import {
 import type { ApiContext } from '../api.js';
 import { humanActor, humanOperator } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
+import { MAX_ASSET_BYTES } from './assets.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
 import { readBoundedBytes, readBoundedJson } from './http.js';
 import { parseOps } from './ops.js';
@@ -526,6 +527,17 @@ export async function handleDocsRoute(
             });
             return jsonResponse({ links: linked });
           });
+        case 'assets': {
+          // A cross-origin page cannot send this content type without a preflight.
+          if (req.headers.get('content-type') !== 'application/octet-stream')
+            return errorResponse(
+              415,
+              'expected content-type: application/octet-stream'
+            );
+          const bytes = await readBoundedBytes(req, MAX_ASSET_BYTES);
+          if (bytes instanceof Response) return bytes;
+          return jsonResponse(docs.putAsset(actor, ref, bytes), 201);
+        }
         case 'promote':
           return await write(async () => {
             await body();
@@ -548,6 +560,20 @@ export async function handleDocsRoute(
         const to = revRef(url.searchParams.get('to'), 'to');
         return jsonResponse(docs.diff(actor, ref, from, to));
       }
+    }
+    if (rest.length === 3 && method === 'GET' && action === 'assets') {
+      const name = decode(rest[2], 'name');
+      const { path, mime } = docs.asset(actor, ref, name);
+      // Served as an inert image: typed by its bytes, never sniffed, sandboxed.
+      return new Response(Bun.file(path), {
+        headers: {
+          'content-type': mime,
+          'x-content-type-options': 'nosniff',
+          'content-disposition': `inline; filename="${name}"`,
+          'content-security-policy': "default-src 'none'; sandbox",
+          'cache-control': 'private, max-age=3600',
+        },
+      });
     }
     if (rest.length === 3 && method === 'GET' && action === 'revisions') {
       const rev = revRef(decode(rest[2], 'rev'), 'rev');

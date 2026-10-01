@@ -492,6 +492,42 @@ describe('dispatch docs export', () => {
   });
 });
 
+describe('exporting images', () => {
+  it('copies each referenced image under assets/<doc id>/ and points the links there', async () => {
+    const name = `${'a'.repeat(64)}.png`;
+    const gone = `${'b'.repeat(64)}.png`;
+    const id = 'doc-01K5ZZZZZZZZZZZZZZZZZZZZZZ';
+    const summary = (scope: string) => ({
+      id,
+      handle: 'spec',
+      title: 'Spec',
+      status: 'draft',
+      scope,
+      updatedAt: '2026-09-26T11:00:00.000Z',
+    });
+    const api = {
+      list: () => Promise.resolve({ docs: [summary('personal')], total: 1 }),
+      get: () =>
+        Promise.resolve({
+          rev: rev(1, [], 'human:wyat'),
+          links: [],
+          text: `# Spec\n![shot](asset:${name})\n![](asset:${gone})\n`,
+        }),
+      history: () => Promise.resolve({ revisions: [rev(1, [], 'human:wyat')] }),
+      asset: (_doc: string, n: string) =>
+        Promise.resolve(n === name ? new Uint8Array([7, 8]) : null),
+    } as unknown as DocsApi;
+    const out = join(tmpDir, 'export-images');
+    expect(await exportDocs(api, out, false)).toBe(1);
+    expect(new Uint8Array(readFileSync(join(out, 'assets', id, name)))).toEqual(
+      new Uint8Array([7, 8])
+    );
+    const written = readFileSync(join(out, 'personal', 'spec.md'), 'utf8');
+    expect(written).toContain(`![shot](../assets/${id}/${name})`);
+    expect(written).toContain(`![](asset:${gone})`);
+  });
+});
+
 describe('dispatch docs handles', () => {
   const personal = {
     id: 'doc-p',

@@ -24,6 +24,8 @@ import type {
   RevisionCause,
 } from '@dispatch/core';
 import {
+  ASSET_NAME,
+  assetNames,
   DOC_STATUSES,
   docBodyProblem,
   DOCS_LIMITS,
@@ -33,14 +35,23 @@ import {
   LINK_RELS,
   LINK_TARGET_TYPES,
   normalizeDocText,
+  rewriteAssetLinks,
   untrustedInline,
 } from '@dispatch/core';
 import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
 import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import type { Principal } from '../messaging/principal.js';
+import {
+  assetFilePath,
+  MAX_ASSET_BYTES,
+  removeAssetDir,
+  sniffImage,
+  storeAssetFile,
+} from './assets.js';
 import { DocConflictError, DocsError } from './errors.js';
 import type { DocChange, DocsHost } from './host.js';
 import type { DiffChunk } from './merge.js';
@@ -48,7 +59,12 @@ import { diffChunks, merge3 } from './merge.js';
 import { applyOps } from './ops.js';
 import type { IndexLine, InlineSpec } from './prompt.js';
 import { renderDocsSection } from './prompt.js';
-import { seedFile, validatePublishPath } from './publish.js';
+import {
+  publishAssetsDir,
+  seedAsset,
+  seedFile,
+  validatePublishPath,
+} from './publish.js';
 import type { RestoreReport } from './receipts.js';
 import { carriesUnreviewed, unreviewedAtCreation } from './review.js';
 import {
@@ -160,6 +176,8 @@ export interface DocsServiceDeps {
   config: () => { config: DocsConfig; warnings: DocsConfigWarning[] };
   // Other checkouts' docs.db files whose root is gone; they name other projects' paths, so decide tier only.
   orphans?: () => string[];
+  // docs-assets/: where images live (v1); without it uploads answer unavailable.
+  assetsDir?: string;
 }
 
 // A team doc as the receipt log writes it: its newest sealed head, the
@@ -203,6 +221,8 @@ const OPEN_CAUSES: ReadonlySet<RevisionCause> = new Set([
 
 const sha256 = (text: string): string =>
   createHash('sha256').update(text).digest('hex');
+const sha256Bytes = (bytes: Uint8Array): string =>
+  createHash('sha256').update(bytes).digest('hex');
 const ulid = createUlidFactory();
 
 function forbidden(message: string, field?: string): DocsError {
@@ -2135,6 +2155,14 @@ export class DocsService {
         summary: 'deleted',
       });
     });
+    // Its images go once the rows are gone; a failure leaves files no row reaches.
+    if (this.deps.assetsDir !== undefined) {
+      try {
+        removeAssetDir(this.deps.assetsDir, doc.id);
+      } catch (err) {
+        console.error(`docs: removing ${doc.id}'s images failed`, err);
+      }
+    }
   }
 
   // A personal doc's head copied into a new team draft, with no history; the
@@ -2161,6 +2189,77 @@ export class DocsService {
       origin,
       head
     );
+  }
+
+  // ---- images (v1) -----------------------------------------------------------
+
+  private assetsRoot(): string {
+    const dir = this.deps.assetsDir;
+    if (dir === undefined)
+      throw new DocsError('unavailable', 'images are not set up for docs');
+    return dir;
+  }
+
+  // Stores an image a writer of the doc pasted, named by its hash and typed by
+  // its bytes; the same bytes are the same asset.
+  putAsset(
+    actor: DocsActor,
+    ref: string,
+    bytes: Uint8Array
+  ): { name: string; markdown: string } {
+    const doc = this.resolve(actor, ref);
+    this.requireWritable(actor, doc);
+    if (bytes.byteLength === 0)
+      throw new DocsError('invalid', 'the image is empty', 'body');
+    if (bytes.byteLength > MAX_ASSET_BYTES)
+      throw new DocsError('invalid', 'images are at most 25 MiB', 'body');
+    const kind = sniffImage(bytes);
+    if (kind === null)
+      throw new DocsError(
+        'invalid',
+        'only png, jpeg, gif or webp images are stored (SVG is refused)',
+        'body'
+      );
+    const name = `${sha256Bytes(bytes)}.${kind.ext}`;
+    const root = this.assetsRoot();
+    storeAssetFile(root, doc.id, name, bytes);
+    this.write(() =>
+      this.store().putAsset({
+        doc: doc.id,
+        name,
+        bytes: bytes.byteLength,
+        mime: kind.mime,
+        createdBy: actor.address,
+        createdAt: this.nowIso(),
+      })
+    );
+    return { name, markdown: `![](asset:${name})` };
+  }
+
+  // An image of a doc the caller can see: the name is checked before any
+  // lookup, then the doc, then its row; only then is the path built.
+  asset(
+    actor: DocsActor,
+    ref: string,
+    name: string
+  ): { path: string; mime: string } {
+    if (!ASSET_NAME.test(name))
+      throw new DocsError('invalid', 'not an asset name', 'name');
+    const doc = this.resolve(actor, ref);
+    const row = this.store().assetRow(doc.id, name);
+    if (row === null)
+      throw new DocsError('not-found', `asset ${name} not found`, 'name');
+    return {
+      path: assetFilePath(this.assetsRoot(), doc.id, name),
+      mime: row.mime,
+    };
+  }
+
+  // The images `body` references that are stored for `doc`; none without an asset store.
+  private storedAssets(doc: DocRow, body: string): string[] {
+    if (this.deps.assetsDir === undefined) return [];
+    const store = this.store();
+    return assetNames(body).filter((n) => store.assetRow(doc.id, n) !== null);
   }
 
   // ---- publish to the repo (v1) --------------------------------------------
@@ -2195,10 +2294,11 @@ export class DocsService {
     this.write(() => this.sealInTx(doc, this.headOf(doc)));
     const head = this.headOf(doc);
     const n = head.n ?? 0;
+    const images = this.storedAssets(doc, head.body).length > 0;
     const task = this.host.createPublishTask({
       title: `Publish doc ${doc.handle} (rev ${n}) to ${path}`,
-      body: `Dispatch has written revision ${n} of doc ${doc.handle} to ${path} in this worktree. Format and lint it with the repository's own tools, fix only formatting, and commit it as "docs: publish ${doc.handle} rev ${n}". Do not rewrite its content.`,
-      writes: [path],
+      body: `Dispatch has written revision ${n} of doc ${doc.handle} to ${path} in this worktree${images ? `, with its images under ${publishAssetsDir(path)}/` : ''}. Format and lint it with the repository's own tools, fix only formatting, and commit it as "docs: publish ${doc.handle} rev ${n}". Do not rewrite its content.`,
+      writes: images ? [path, `${publishAssetsDir(path)}/**`] : [path],
       risk: 'elevated',
     });
     const at = this.nowIso();
@@ -2253,7 +2353,21 @@ export class DocsService {
       const rev = store.revision(row.rev);
       if (rev === null)
         throw new Error(`publish ${taskId}: revision ${row.rev} is gone`);
-      seedFile(worktree, row.path, rev.body);
+      const doc = store.doc(row.doc);
+      const copied = doc === null ? [] : this.storedAssets(doc, rev.body);
+      for (const name of copied) {
+        const file = assetFilePath(this.assetsRoot(), row.doc, name);
+        seedAsset(worktree, row.path, name, new Uint8Array(readFileSync(file)));
+      }
+      const stem = publishAssetsDir(row.path).split('/').at(-1) ?? '';
+      const linked = new Set(copied);
+      seedFile(
+        worktree,
+        row.path,
+        rewriteAssetLinks(rev.body, (n) =>
+          linked.has(n) ? `${stem}/${n}` : `asset:${n}`
+        )
+      );
     } catch (err) {
       this.write(() => store.putPublish({ ...row, state: 'failed' }));
       throw err;

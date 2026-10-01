@@ -277,7 +277,12 @@ export const DEFAULT_TEST_CONFIG: DocsConfig = {
 };
 
 export function makeService(
-  opts: { fts?: boolean; coalesceMinutes?: number; orphans?: string[] } = {}
+  opts: {
+    fts?: boolean;
+    coalesceMinutes?: number;
+    orphans?: string[];
+    assetsDir?: string;
+  } = {}
 ): {
   service: DocsService;
   host: FakeDocsHost;
@@ -301,6 +306,7 @@ export function makeService(
     ...(opts.orphans === undefined
       ? {}
       : { orphans: () => opts.orphans ?? [] }),
+    ...(opts.assetsDir === undefined ? {} : { assetsDir: opts.assetsDir }),
   });
   return { service, host, store };
 }

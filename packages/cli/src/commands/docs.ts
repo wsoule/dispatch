@@ -5,7 +5,12 @@ import type {
   DocStatus,
   LinkRel,
 } from '@dispatch/core';
-import { LINK_RELS, renderDocFile } from '@dispatch/core';
+import {
+  assetNames,
+  LINK_RELS,
+  renderDocFile,
+  rewriteAssetLinks,
+} from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -18,7 +23,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
@@ -300,6 +305,35 @@ function ancestryAuthors(
 
 // Writes every doc the caller can see to `dir` (personal ones under `personal/`)
 // in the receipt file format; `revHistory` adds sealed revisions in `.history/<handle>/`.
+// Doc ids are `doc-` and a ULID; one names a directory only once it matches.
+const EXPORT_DOC_ID = /^doc-[0-9A-Z]{26}$/;
+
+// Copies each image `text` references to <dir>/assets/<doc id>/ and points its
+// link there, relative to the doc's own folder; one the daemon lacks keeps its link.
+async function exportImages(
+  api: DocsApi,
+  dir: string,
+  sub: string,
+  docId: string,
+  text: string
+): Promise<string> {
+  const names = assetNames(text);
+  if (names.length === 0 || !EXPORT_DOC_ID.test(docId)) return text;
+  const assetsDir = join(dir, 'assets', docId);
+  const copied = new Set<string>();
+  for (const name of names) {
+    const bytes = await api.asset(docId, name);
+    if (bytes === null) continue;
+    mkdirSync(assetsDir, { recursive: true });
+    writeFileSync(join(assetsDir, name), bytes);
+    copied.add(name);
+  }
+  const rel = relative(sub, assetsDir).split(sep).join('/');
+  return rewriteAssetLinks(text, (n) =>
+    copied.has(n) ? `${rel}/${n}` : `asset:${n}`
+  );
+}
+
 export async function exportDocs(
   api: DocsApi,
   dir: string,
@@ -333,7 +367,8 @@ export async function exportDocs(
       };
       const sub = d.scope === 'personal' ? join(dir, 'personal') : dir;
       mkdirSync(sub, { recursive: true });
-      writeFileSync(join(sub, `${d.handle}.md`), renderDocFile(meta, r.text));
+      const text = await exportImages(api, dir, sub, d.id, r.text);
+      writeFileSync(join(sub, `${d.handle}.md`), renderDocFile(meta, text));
       if (revHistory) {
         const historyDir = join(sub, '.history', d.handle);
         mkdirSync(historyDir, { recursive: true });

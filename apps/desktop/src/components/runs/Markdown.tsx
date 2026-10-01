@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -101,10 +102,16 @@ export function Markdown({
   content,
   className,
   variant = 'inline',
+  urlTransform,
+  img,
 }: {
   content: string;
   className?: string;
   variant?: 'inline' | 'prose';
+  /** Replaces react-markdown's URL filter (the docs preview keeps `asset:`). */
+  urlTransform?: (url: string) => string;
+  /** Renders images; the docs preview resolves `asset:` through the API. */
+  img?: (props: { src?: string; alt?: string }) => ReactNode;
 }) {
   return (
     <div
@@ -118,7 +125,17 @@ export function Markdown({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        {...(urlTransform === undefined ? {} : { urlTransform })}
         components={{
+          ...(img === undefined
+            ? {}
+            : {
+                img: ({ src, alt }) =>
+                  img({
+                    src: typeof src === 'string' ? src : undefined,
+                    alt,
+                  }),
+              }),
           a: ({ children, href }) => (
             <a href={href} target="_blank" rel="noreferrer">
               {children}

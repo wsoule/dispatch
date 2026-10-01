@@ -210,6 +210,30 @@ describe('docs bindings', () => {
     }
   });
 
+  it('uploads an image as raw octet-stream bytes and fetches one as a blob', async () => {
+    const s = stub(201, { name: 'n.png', markdown: '![](asset:n.png)' });
+    try {
+      const client = createApiClient(BASE, 't');
+      const bytes = new Uint8Array([1, 2, 3]);
+      expect(await client.uploadDocAsset('spec', bytes)).toEqual({
+        name: 'n.png',
+        markdown: '![](asset:n.png)',
+      });
+      expect(s.calls[0].url).toBe(`${BASE}/api/docs/spec/assets`);
+      expect(s.calls[0].init?.method).toBe('POST');
+      expect(s.calls[0].init?.body).toEqual(bytes);
+      expect(new Headers(s.calls[0].init?.headers).get('content-type')).toBe(
+        'application/octet-stream'
+      );
+      await client.fetchDocAsset('~notes', `${'a'.repeat(64)}.png`);
+      expect(s.calls[1].url).toBe(
+        `${BASE}/api/docs/~notes/assets/${'a'.repeat(64)}.png`
+      );
+    } finally {
+      s.restore();
+    }
+  });
+
   it('deletes through a 204 that has no body', async () => {
     const s = stub(204, null);
     try {

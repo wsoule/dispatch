@@ -419,12 +419,16 @@ describe('docs routes', () => {
     for (const file of files) expect(statSync(file).mode & 0o777).toBe(0o600);
     await handle.stop();
     for (const file of files) if (existsSync(file)) chmodSync(file, 0o644);
+    const assets = join(runsDir(root), 'docs-assets');
+    expect(statSync(assets).mode & 0o777).toBe(0o700);
+    chmodSync(assets, 0o755);
     handle = await boot(root, executor);
     base = `http://127.0.0.1:${handle.port}/api`;
     await post('/docs', { title: 'Mode two', body: 'y\n' });
     for (const file of files) {
       if (existsSync(file)) expect(statSync(file).mode & 0o777).toBe(0o600);
     }
+    expect(statSync(assets).mode & 0o777).toBe(0o700);
   });
 
   it('serves health to humans only', async () => {
@@ -528,5 +532,77 @@ describe('publish route', () => {
     expect(
       (await post('/docs/spec/publish', { path: 'docs/again.md' })).status
     ).toBe(409);
+  });
+});
+
+describe('image routes', () => {
+  const octet = { 'content-type': 'application/octet-stream' };
+  const png = (tail: number) =>
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, tail]);
+  const upload = (
+    doc: string,
+    body: Uint8Array | string,
+    headers: Record<string, string> = octet
+  ) => fetch(`${base}/docs/${doc}/assets`, { method: 'POST', headers, body });
+
+  it('stores an image by its sniffed type, serves it sandboxed, and refuses SVG and oversize bodies', async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    const up = await upload('img', png(1));
+    expect(up.status).toBe(201);
+    const { name, markdown } = await json<{ name: string; markdown: string }>(
+      up
+    );
+    expect(name).toMatch(/^[0-9a-f]{64}\.png$/);
+    expect(markdown).toBe(`![](asset:${name})`);
+    const got = await fetch(`${base}/docs/img/assets/${name}`);
+    expect(got.status).toBe(200);
+    expect(got.headers.get('content-type')).toBe('image/png');
+    expect(got.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(got.headers.get('content-security-policy')).toBe(
+      "default-src 'none'; sandbox"
+    );
+    expect(got.headers.get('content-disposition')).toBe(
+      `inline; filename="${name}"`
+    );
+    expect(got.headers.get('cache-control')).toBe('private, max-age=3600');
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(png(1));
+    expect((await upload('img', '<svg/>')).status).toBe(400);
+    expect((await upload('img', new Uint8Array(0))).status).toBe(400);
+    const huge = new Uint8Array(25 * 1024 * 1024 + 1);
+    huge.set(png(2));
+    expect((await upload('img', huge)).status).toBe(413);
+  });
+
+  it('refuses an image upload that is not application/octet-stream', async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    for (const headers of [
+      { 'content-type': 'text/plain' },
+      { 'content-type': 'image/png' },
+      { 'content-type': 'image/svg+xml' },
+    ]) {
+      expect((await upload('img', png(3), headers)).status).toBe(415);
+    }
+  });
+
+  it('reads an asset only by a well-formed name with a row for that doc, never a path', async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    await post('/docs', { title: 'Other', body: 'y\n' });
+    const { name } = await json<{ name: string }>(await upload('img', png(7)));
+    for (const bad of [
+      encodeURIComponent('../../docs.db'),
+      encodeURIComponent('../docs.db'),
+      `${name.slice(0, 60)}.svg`,
+      `${name}%00.png`,
+      'docs.db',
+    ]) {
+      expect([
+        bad,
+        (await fetch(`${base}/docs/img/assets/${bad}`)).status,
+      ]).toEqual([bad, 400]);
+    }
+    expect(
+      (await fetch(`${base}/docs/img/assets/${'b'.repeat(64)}.png`)).status
+    ).toBe(404);
+    expect((await fetch(`${base}/docs/other/assets/${name}`)).status).toBe(404);
   });
 });

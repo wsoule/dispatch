@@ -1,3 +1,4 @@
+import { ASSET_NAME } from '@dispatch/core';
 import { randomUUID } from 'node:crypto';
 import {
   lstatSync,
@@ -113,26 +114,54 @@ function makeParents(root: string, rel: string): void {
   }
 }
 
-/** Writes `body` at `relPath` inside `worktree` through an exclusive temp file
- *  and a rename, re-checking the path against the worktree first. */
+// Writes `data` at `rel` inside `worktree` through an exclusive temp file and
+// a rename, creating parents one level at a time and re-checking every component.
+function writeChecked(
+  worktree: string,
+  rel: string,
+  data: string | Uint8Array
+): void {
+  makeParents(worktree, rel);
+  checkComponents(worktree, rel);
+  const target = join(worktree, rel);
+  const name = rel.split('/').at(-1) ?? 'file';
+  const temp = join(target, '..', `.${name}.${randomUUID()}.dispatch-tmp`);
+  // `wx` refuses an existing file or symlink at the temp name.
+  writeFileSync(temp, data, { flag: 'wx', mode: 0o644 });
+  try {
+    checkComponents(worktree, rel);
+    renameSync(temp, target);
+  } catch (err) {
+    rmSync(temp, { force: true });
+    throw err;
+  }
+}
+
+/** Writes `body` at `relPath` inside `worktree`, re-checking the path against
+ *  the worktree first. */
 export function seedFile(
   worktree: string,
   relPath: string,
   body: string
 ): void {
   validatePublishPath(worktree, relPath);
-  makeParents(worktree, relPath);
-  checkComponents(worktree, relPath);
-  const target = join(worktree, relPath);
-  const name = relPath.split('/').at(-1) ?? 'doc.md';
-  const temp = join(target, '..', `.${name}.${randomUUID()}.dispatch-tmp`);
-  // `wx` refuses an existing file or symlink at the temp name.
-  writeFileSync(temp, body, { flag: 'wx', mode: 0o644 });
-  try {
-    checkComponents(worktree, relPath);
-    renameSync(temp, target);
-  } catch (err) {
-    rmSync(temp, { force: true });
-    throw err;
-  }
+  writeChecked(worktree, relPath, body);
+}
+
+/** Where a published doc's images go: `<path without .md>.assets`. */
+export function publishAssetsDir(mdPath: string): string {
+  return `${mdPath.slice(0, -'.md'.length)}.assets`;
+}
+
+/** Copies one image of a doc published at `mdPath` into the worktree, under
+ *  publishAssetsDir; the doc path meets the publish rules and the name is an asset's. */
+export function seedAsset(
+  worktree: string,
+  mdPath: string,
+  name: string,
+  bytes: Uint8Array
+): void {
+  validatePublishPath(worktree, mdPath);
+  if (!ASSET_NAME.test(name)) throw bad('not an asset name');
+  writeChecked(worktree, `${publishAssetsDir(mdPath)}/${name}`, bytes);
 }

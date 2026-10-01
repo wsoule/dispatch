@@ -12,7 +12,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { seedFile, validatePublishPath } from '../../src/docs/publish.js';
+import {
+  publishAssetsDir,
+  seedAsset,
+  seedFile,
+  validatePublishPath,
+} from '../../src/docs/publish.js';
 import type { DocsService } from '../../src/docs/service.js';
 import type { SqliteDocStore } from '../../src/docs/store.js';
 import type { FakeDocsHost } from './fakeHost.js';
@@ -115,6 +120,34 @@ describe('seedFile', () => {
   it('refuses a path the publish rules refuse', () => {
     expect(() => seedFile(root, '../x.md', 'x')).toThrow();
     expect(() => seedFile(root, '.github/x.md', 'x')).toThrow();
+  });
+});
+
+describe('seedAsset', () => {
+  const name = `${'c'.repeat(64)}.png`;
+  it('writes an image beside the doc, under <stem>.assets/', () => {
+    expect(publishAssetsDir('docs/spec.md')).toBe('docs/spec.assets');
+    expect(publishAssetsDir('spec.md')).toBe('spec.assets');
+    seedAsset(root, 'docs/spec.md', name, new Uint8Array([1, 2]));
+    expect(
+      new Uint8Array(readFileSync(join(root, 'docs/spec.assets', name)))
+    ).toEqual(new Uint8Array([1, 2]));
+  });
+
+  it('refuses a bad name, a refused doc path and a symlinked assets directory', () => {
+    expect(() =>
+      seedAsset(root, 'docs/spec.md', '../x.png', new Uint8Array([1]))
+    ).toThrow('asset name');
+    expect(() =>
+      seedAsset(root, '.github/spec.md', name, new Uint8Array([1]))
+    ).toThrow();
+    const outside = tempDir('docs-outside-');
+    mkdirSync(join(root, 'docs'));
+    symlinkSync(outside, join(root, 'docs', 'spec.assets'));
+    expect(() =>
+      seedAsset(root, 'docs/spec.md', name, new Uint8Array([1]))
+    ).toThrow('symlink');
+    expect(existsSync(join(outside, name))).toBe(false);
   });
 });
 
@@ -236,6 +269,37 @@ describe('publish', () => {
     host.outcomes.set(task, 'landed');
     expect(service.syncPublishes()).toBe(0);
     expect(service.read(as(OWNER), 'spec').doc.published).toBeNull();
+  });
+
+  it('copies the images the revision references beside it, rewriting their links', () => {
+    const assets = tempDir('docs-assets-');
+    const withImages = makeService({ assetsDir: assets });
+    withImages.host.rootDir = root;
+    const svc = withImages.service;
+    const owner = svc.actorFor(OWNER);
+    svc.create(owner, { title: 'Spec', body: '# Spec\n' });
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9,
+    ]);
+    const { name, markdown } = svc.putAsset(owner, 'spec', png);
+    const ghost = `${'d'.repeat(64)}.png`;
+    svc.saveBody(owner, 'spec', {
+      baseRev: svc.read(owner, 'spec').rev.id,
+      body: `# Spec\n${markdown}\n![gone](asset:${ghost})\n`,
+    });
+    const { task } = svc.publish(owner, 'spec', { path: 'docs/spec.md' });
+    expect(withImages.host.createdTasks[0].writes).toEqual([
+      'docs/spec.md',
+      'docs/spec.assets/**',
+    ]);
+    const wt = tempDir('docs-wt-');
+    svc.seedFor(task, wt);
+    expect(readFileSync(join(wt, 'docs/spec.md'), 'utf8')).toBe(
+      `# Spec\n![](spec.assets/${name})\n![gone](asset:${ghost})\n`
+    );
+    expect(
+      new Uint8Array(readFileSync(join(wt, 'docs/spec.assets', name)))
+    ).toEqual(png);
   });
 
   it('remembers the last path asked for, before the task lands', () => {

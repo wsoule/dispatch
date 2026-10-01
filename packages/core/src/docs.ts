@@ -483,3 +483,29 @@ export function parseDocFile(
   meta.links = meta.links.map(({ target, rel }) => ({ target, rel }));
   return { meta, body: text.slice(end + 5) };
 }
+
+// ---- images (v1) -------------------------------------------------------------
+
+/** A stored image's name: the hex sha256 of its bytes and its sniffed extension. */
+export const ASSET_NAME = /^[0-9a-f]{64}\.(?:png|jpg|gif|webp)$/;
+const ASSET_REF_SOURCE =
+  '!\\[([^\\]]*)\\]\\(asset:([0-9a-f]{64}\\.(?:png|jpg|gif|webp))\\)';
+
+/** Each asset name the body's `![…](asset:…)` images reference, once, in order. */
+export function assetNames(body: string): string[] {
+  const names = new Set<string>();
+  for (const m of body.matchAll(new RegExp(ASSET_REF_SOURCE, 'g')))
+    names.add(m[2]);
+  return [...names];
+}
+
+/** `body` with each `asset:` image link pointed at `to(name)`. */
+export function rewriteAssetLinks(
+  body: string,
+  to: (name: string) => string
+): string {
+  return body.replace(
+    new RegExp(ASSET_REF_SOURCE, 'g'),
+    (_m, alt: string, name: string) => `![${alt}](${to(name)})`
+  );
+}

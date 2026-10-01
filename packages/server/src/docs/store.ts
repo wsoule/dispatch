@@ -164,6 +164,16 @@ export interface DocRow {
   indexedHash: string | null;
 }
 
+// One image stored for a doc; its file is docs-assets/<doc>/<name>.
+export interface AssetRow {
+  doc: string;
+  name: string;
+  bytes: number;
+  mime: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 // One publish of a doc to the repo: the task it runs as and how it ended.
 export interface PublishRow {
   task: string;
@@ -947,6 +957,35 @@ export class SqliteDocStore {
         p.decidedAt,
       ]
     );
+  }
+
+  // INSERT OR IGNORE: a name is the hash of its bytes, so a second upload is the same asset.
+  putAsset(a: AssetRow): void {
+    this.run(
+      'INSERT OR IGNORE INTO assets (doc_id, name, bytes, mime, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [a.doc, a.name, a.bytes, a.mime, a.createdBy, a.createdAt]
+    );
+  }
+
+  assetRow(docId: string, name: string): AssetRow | null {
+    const r = this.one<{
+      doc_id: string;
+      name: string;
+      bytes: number;
+      mime: string;
+      created_by: string;
+      created_at: string;
+    }>('SELECT * FROM assets WHERE doc_id = ? AND name = ?', [docId, name]);
+    return r === undefined
+      ? null
+      : {
+          doc: r.doc_id,
+          name: r.name,
+          bytes: r.bytes,
+          mime: r.mime,
+          createdBy: r.created_by,
+          createdAt: r.created_at,
+        };
   }
 
   putPublish(p: PublishRow): void {
