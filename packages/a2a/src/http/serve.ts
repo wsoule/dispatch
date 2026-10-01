@@ -133,7 +133,9 @@ async function toRequest(
   return new Request(new URL(req.url ?? '/', origin).href, init);
 }
 
-async function writeResponse(
+// Copies a fetch Response onto node's response, waiting for 'drain' whenever
+// the socket buffer is full, and stopping once the client goes away.
+export async function writeResponse(
   res: ServerResponse,
   response: Response
 ): Promise<void> {
@@ -143,17 +145,29 @@ async function writeResponse(
     res.end();
     return;
   }
-  res.on('close', () => {
+  let gone = false;
+  res.once('close', () => {
+    gone = true;
     reader.cancel().catch(() => undefined);
   });
-  for (;;) {
+  const drained = () =>
+    new Promise<void>((resolve) => {
+      const done = () => {
+        res.off('drain', done);
+        res.off('close', done);
+        resolve();
+      };
+      res.once('drain', done);
+      res.once('close', done);
+    });
+  while (!gone) {
     const next = (await reader.read()) as
       | { done: true; value?: undefined }
       | { done: false; value: Uint8Array };
     if (next.done) break;
-    res.write(next.value);
+    if (!res.write(next.value)) await drained();
   }
-  res.end();
+  if (!gone) res.end();
 }
 
 // What `dispatch a2a serve` runs: handleA2A over HttpBridgePort on

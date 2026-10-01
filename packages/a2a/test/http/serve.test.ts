@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, expect, it } from 'bun:test';
+import { EventEmitter } from 'node:events';
+import type { ServerResponse } from 'node:http';
 
-import { checkStandalone, startStandalone } from '../../src/http/serve.js';
+import {
+  checkStandalone,
+  startStandalone,
+  writeResponse,
+} from '../../src/http/serve.js';
 
 const base = {
   host: '127.0.0.1',
@@ -121,4 +127,66 @@ it('serves the card for its own URL on loopback, and nothing outside the A2A pat
   } finally {
     await relay.stop();
   }
+});
+
+// A ServerResponse whose buffer is full after each write until 'drain'.
+class SlowResponse extends EventEmitter {
+  headersSent = false;
+  chunks: string[] = [];
+  ended = false;
+  writeHead() {
+    this.headersSent = true;
+    return this;
+  }
+  write(chunk: Uint8Array) {
+    this.chunks.push(new TextDecoder().decode(chunk));
+    return false;
+  }
+  end() {
+    this.ended = true;
+  }
+}
+
+it('waits for drain before writing the next chunk', async () => {
+  const res = new SlowResponse();
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const part of ['a', 'b', 'c'])
+        controller.enqueue(encoder.encode(part));
+      controller.close();
+    },
+  });
+  const done = writeResponse(
+    res as unknown as ServerResponse,
+    new Response(body)
+  );
+  await Bun.sleep(20);
+  expect(res.chunks).toEqual(['a']);
+  res.emit('drain');
+  await Bun.sleep(20);
+  expect(res.chunks).toEqual(['a', 'b']);
+  res.emit('drain');
+  await Bun.sleep(20);
+  res.emit('drain');
+  await done;
+  expect(res.chunks).toEqual(['a', 'b', 'c']);
+  expect(res.ended).toBe(true);
+});
+
+it('stops waiting when the client goes away mid-drain', async () => {
+  const res = new SlowResponse();
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new TextEncoder().encode('x'));
+    },
+  });
+  const done = writeResponse(
+    res as unknown as ServerResponse,
+    new Response(body)
+  );
+  await Bun.sleep(20);
+  res.emit('close');
+  await done;
+  expect(res.chunks).toEqual(['x']);
 });
