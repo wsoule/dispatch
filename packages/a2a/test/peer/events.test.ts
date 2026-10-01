@@ -312,6 +312,15 @@ describe('mapPeerEvent (spec:1498-1506)', () => {
     expect(input.body.endsWith('[… truncated by Dispatch]')).toBe(true);
   });
 
+  it('says an answer once when the status and an artifact both carry it', () => {
+    const t = task('TASK_STATE_COMPLETED', 'Blue', {
+      artifacts: [{ artifactId: 'answer', parts: [{ text: 'Blue' }] }],
+    });
+    expect(mapPeerEvent(event(t), ctx())).toMatchObject([
+      { kind: 'send', input: { kind: 'answer', body: 'Blue', choice: 'blue' } },
+    ]);
+  });
+
   it('keeps an AUTH_REQUIRED notice within 64 KiB, prefix included', () => {
     const [act] = mapPeerEvent(
       event(task('TASK_STATE_AUTH_REQUIRED', 'a'.repeat(70_000))),

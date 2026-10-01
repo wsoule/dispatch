@@ -151,8 +151,8 @@ export function peerEventKey(alias: string, event: PeerEvent): string {
   return `a2a:${alias}:${digest}`;
 }
 
-// Status text, then artifact text, then links, each trimmed; data wrapped
-// (spec:1501). A prefix goes on before the size rules, so it counts too.
+// Status text, then artifact text, then links, each trimmed and said once (a
+// peer may put its answer in both); data wrapped (spec:1501). A prefix goes on before the size rules, so it counts too.
 export function peerContent(
   texts: readonly PeerText[],
   choices?: readonly string[],
@@ -160,7 +160,7 @@ export function peerContent(
 ): SanitizedContent {
   const joined = [...texts.map((t) => t.body), ...texts.flatMap((t) => t.links)]
     .map((s) => s.trim())
-    .filter((s) => s !== '')
+    .filter((s, i, all) => s !== '' && all.indexOf(s) === i)
     .join('\n\n');
   const body =
     prefix === undefined
