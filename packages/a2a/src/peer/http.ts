@@ -24,9 +24,11 @@ export interface StatusBox {
   network: boolean;
 }
 
+// Exactly `localhost`, ::1 or a 127/8 IPv4 literal; `127.0.0.1.example` is a name.
 export function isLoopbackHost(hostname: string): boolean {
   const h = hostname.replace(/^\[(.*)\]$/, '$1');
-  return h === 'localhost' || h === '::1' || /^127\./.test(h);
+  if (h === 'localhost' || h === '::1') return true;
+  return isIP(h) === 4 && h.startsWith('127.');
 }
 
 function retryAfterOf(res: Response): number | null {

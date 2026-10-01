@@ -433,5 +433,14 @@ describe('readCapped and isLoopbackHost', () => {
       ['localhost', '127.0.0.1', '[::1]', '::1'].map(isLoopbackHost)
     ).toEqual([true, true, true, true]);
     expect(isLoopbackHost('agent.example.com')).toBe(false);
+    expect(isLoopbackHost('127.255.0.9')).toBe(true);
+    for (const host of [
+      '127.0.0.1.attacker.example',
+      '127.attacker.example',
+      'localhost.attacker.example',
+      'my-localhost',
+      '[::2]',
+    ])
+      expect(isLoopbackHost(host)).toBe(false);
   });
 });
