@@ -87,6 +87,8 @@ interface PendingInvite {
   id: string;
   sig: string;
   teamId: string;
+  /** When this machine joined with it; it binds for INVITE_TTL_MS after. */
+  at?: string;
 }
 
 // The daemon's side of the signed roster: it publishes this machine's roster
@@ -112,8 +114,11 @@ export class RosterService {
     return this.cached;
   }
 
-  /** Re-folds, since the fold reads the clock: a license expires, a deadline passes. */
+  /** Re-folds, since the fold reads the clock: a license expires, a deadline
+   *  passes, an invite stops binding. */
   reload(): void {
+    // An invite that stopped binding may leave one founding to follow.
+    if (!this.founded()) this.onFoundSeen();
     this.refresh();
   }
 
@@ -179,11 +184,11 @@ export class RosterService {
     );
     if (chosen === undefined)
       throw new RosterError('invalid', `no founding with fingerprint ${fp}`);
-    const invite = this.pendingInvite();
+    const invite = this.bindingInvite();
     if (invite !== null && chosen.hash.slice(0, 32) !== invite.teamId)
       throw new RosterError(
         'conflict',
-        `this machine joined with an invite to team ${invite.teamId}; trust that team's founding, or join again with a new invite`
+        `this machine joined with an invite to team ${invite.teamId}; trust that team's founding, or run \`dispatch team abandon-invite\` and then trust this one`
       );
     const founder = this.fed.meta('founder');
     if (founder === chosen.replica) return;
@@ -255,10 +260,22 @@ export class RosterService {
       id: sha256Hex(inviteKey.signPub).slice(0, 16),
       sig,
       teamId,
+      at: this.deps.now().toISOString(),
     };
     this.atomically(() => {
       this.fed.setMeta('pending_invite', JSON.stringify(pending));
       this.publishKey();
+    });
+  }
+
+  /** Lets go of the invite this machine joined with, so trust or another
+   *  founding may decide; its key op already published stays as it is. */
+  abandonInvite(): void {
+    if (this.pendingInvite() === null)
+      throw new RosterError('conflict', 'this machine holds no invite');
+    this.atomically(() => {
+      this.fed.setMeta('pending_invite', null);
+      this.onFoundSeen();
     });
   }
 
@@ -609,7 +626,7 @@ export class RosterService {
     this.recorded = now;
     // An automatic pin firms up once this machine is admitted under it, never
     // against an invite this machine holds for another team.
-    const invite = this.pendingInvite();
+    const invite = this.bindingInvite();
     if (
       view !== null &&
       this.fed.meta('founder_pin') === 'auto' &&
@@ -648,7 +665,7 @@ export class RosterService {
   private onFoundSeen(): void {
     const pin = this.fed.meta('founder_pin');
     if (this.founded() && pin === 'firm') return;
-    const invite = this.pendingInvite();
+    const invite = this.bindingInvite();
     const seen = this.foundings().filter(
       (f) => invite === null || f.hash.slice(0, 32) === invite.teamId
     );
@@ -738,6 +755,15 @@ export class RosterService {
   private pendingInvite(): PendingInvite | null {
     const raw = this.fed.meta('pending_invite');
     return raw === null ? null : (JSON.parse(raw) as PendingInvite);
+  }
+
+  // The held invite while it still binds which founding this machine follows:
+  // for INVITE_TTL_MS after joining, the longest an invite lives.
+  private bindingInvite(): PendingInvite | null {
+    const invite = this.pendingInvite();
+    if (invite?.at === undefined) return invite;
+    const until = Date.parse(invite.at) + INVITE_TTL_MS;
+    return this.deps.now().getTime() < until ? invite : null;
   }
 
   // One state.db transaction; a rollback also drops the view folded inside it.

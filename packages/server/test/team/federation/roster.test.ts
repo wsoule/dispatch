@@ -211,6 +211,40 @@ describe('an invite binds which founding a joiner follows (FW-R22 I3)', () => {
   });
 });
 
+describe('leaving an invite behind (FW-R22 M-e)', () => {
+  it('names the way out, and abandoning the invite lets trust pick another founding', () => {
+    const ada = make('ada');
+    const hal = make('hal');
+    const bob = make('bob');
+    ada.roster.found('acme');
+    hal.roster.found('acme');
+    bob.roster.join(ada.roster.invite('bob').code);
+    feed(hal, bob);
+    expect(() => bob.roster.trust(fp(hal))).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining('dispatch team abandon-invite'),
+      })
+    );
+    bob.roster.abandonInvite();
+    expect(bob.fed.meta('pending_invite')).toBeNull();
+    bob.roster.trust(fp(hal));
+    expect(bob.roster.view()?.founder).toBe(hal.fed.replica);
+  });
+
+  it('stops binding once the invite is past its seven days', () => {
+    const ada = make('ada');
+    const hal = make('hal');
+    const bob = make('bob');
+    ada.roster.found('acme');
+    hal.roster.found('acme');
+    bob.roster.join(ada.roster.invite('bob').code);
+    bob.clock.now = new Date(bob.clock.now.getTime() + 8 * 24 * 60 * 60 * 1000);
+    hal.clock.now = bob.clock.now;
+    feed(hal, bob);
+    expect(bob.roster.view()?.founder).toBe(hal.fed.replica);
+  });
+});
+
 describe('revocation, roles and recovery', () => {
   it('revokes with the cut taken from the cursor, and protects the last admin', () => {
     const ada = make('ada');
