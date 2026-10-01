@@ -10,12 +10,15 @@ let f: Awaited<ReturnType<typeof bridgeFixture>>;
 let posts: { url: string; headers: Headers; body: StreamResponseJson }[];
 let hang = false;
 let failWith: number | null = null;
+// Runs after each recorded post, before its answer.
+let onPost: (() => void) | null = null;
 let addresses: () => Promise<string[]>;
 
 beforeEach(async () => {
   posts = [];
   hang = false;
   failWith = null;
+  onPost = null;
   addresses = () => Promise.resolve(['93.184.216.34']);
   // Cast, not annotated: bun-types' `typeof fetch` also carries `preconnect`.
   const fetchImpl = ((input: string | URL, init?: RequestInit) => {
@@ -27,6 +30,7 @@ beforeEach(async () => {
         typeof init?.body === 'string' ? init.body : 'null'
       ) as StreamResponseJson,
     });
+    onPost?.();
     return Promise.resolve(new Response(null, { status: failWith ?? 204 }));
   }) as typeof fetch;
   f = await bridgeFixture(
@@ -290,6 +294,22 @@ describe('push configs', () => {
     await Bun.sleep(100);
     await f.push.idle();
     expect(posts).toEqual([]);
+  });
+
+  it('checks the client again at each retry, so one revoked during backoff gets nothing more', async () => {
+    const id = await ask();
+    await configs().create(f.caller, id, { id: 'hook', url: HOOK });
+    failWith = 500;
+    // Revoked as the first attempt fails, so during its retry's delay.
+    onPost = () => {
+      const agent = f.messaging.store.getAgent(f.caller.address)!;
+      f.messaging.store.putAgent({ ...agent, status: 'revoked' });
+    };
+    await nudge(id);
+    await waitFor(() => posts.length === 1);
+    await f.push.idle();
+    expect(posts).toHaveLength(1);
+    expect(f.store.getPushConfig(id, 'hook')?.failures).toBe(1);
   });
 
   // Review Focus 5.

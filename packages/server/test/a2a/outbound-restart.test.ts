@@ -2,10 +2,16 @@ import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import type {
+  Executor,
+  ExecutorEvents,
+  ExecutorRun,
+  ExecutorStartOptions,
+} from '../../src/orchestrator/types.js';
 import { ParkingExecutor, waitFor } from '../messaging/harness.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { useTestAuth } from '../testAuth.js';
@@ -127,4 +133,137 @@ it('relays a delivery the first boot held but never sent', async () => {
   // The row's next attempt is 30 s out; the restarted worker honours it.
   expect(h.a2a.store?.getOutbound(q.id, 'fixture')?.state).toBe('queued');
   expect(peer.opened).toHaveLength(0);
+});
+
+// A parked run that keeps what reaches its session and the token file the
+// daemon wrote for its MCP tools.
+class SessionExecutor implements Executor {
+  readonly received: string[] = [];
+  tokenFile: string | null = null;
+  start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+    this.tokenFile = opts.runTokenFile ?? null;
+    events.onSession?.('session-recording');
+    return {
+      interrupt: () => Promise.resolve(),
+      requestStop: () => {},
+      send: (text) => {
+        this.received.push(text);
+      },
+      notify: (text) => {
+        this.received.push(text);
+      },
+      approve: () => {},
+    };
+  }
+}
+
+const MCP_BIN = resolve(import.meta.dir, '../../../mcp/dist/bin.js');
+
+// One MCP tools/call through the real dispatch-mcp bin, as a run's agent makes it.
+async function mcpCall(
+  rootDir: string,
+  env: Record<string, string>,
+  name: string,
+  args: Record<string, unknown>
+): Promise<{ structuredContent?: Record<string, unknown>; isError?: boolean }> {
+  const proc = Bun.spawn(['node', MCP_BIN, '--root', rootDir], {
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'inherit',
+    env: { ...process.env, ...env },
+  });
+  const write = (msg: object) => {
+    void proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
+  };
+  try {
+    write({
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2026-11-25',
+        capabilities: {},
+        clientInfo: { name: 'outbound-test', version: '0' },
+      },
+    });
+    write({ method: 'notifications/initialized' });
+    write({ id: 2, method: 'tools/call', params: { name, arguments: args } });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('dispatch-mcp exited before answering');
+      buf += decoder.decode(value);
+      for (let i = buf.indexOf('\n'); i !== -1; i = buf.indexOf('\n')) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        const msg = JSON.parse(line) as { id?: number; result?: unknown };
+        if (msg.id === 2)
+          return msg.result as {
+            structuredContent?: Record<string, unknown>;
+          };
+      }
+    }
+  } finally {
+    proc.kill();
+  }
+}
+
+it('a run’s MCP msg_send question to a peer returns the answer and reaches the run’s session', async () => {
+  const executor = new SessionExecutor();
+  const h = await startServer({
+    rootDir: root,
+    port: 0,
+    writeDaemonFile: true,
+    webDistDir: null,
+    registerExecutors: (o) => o.registerExecutor('session', executor),
+  });
+  handle = h;
+  useTestAuth(h);
+  const base = `http://127.0.0.1:${h.port}`;
+  await fetch(`${base}/api/a2a/peers`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({
+      alias: 'fixture',
+      cardUrl: peer.cardUrl(),
+      token: 'peer-token',
+    }),
+  });
+  const created = (await (
+    await fetch(`${base}/api/tasks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ title: 'ask the peer over MCP' }),
+    })
+  ).json()) as { meta: { id: string } };
+  const run = await h.orchestrator.dispatch(created.meta.id, 'session');
+  await waitFor(() => executor.tokenFile !== null, 5000);
+  const call = mcpCall(
+    root,
+    {
+      DISPATCH_HOME: home,
+      DISPATCH_RUN_TOKEN_FILE: executor.tokenFile ?? '',
+      DISPATCH_RUN_ID: run.id,
+    },
+    'msg_send',
+    {
+      to: ['a2a:fixture'],
+      kind: 'question',
+      blocking: true,
+      body: 'Which colour?',
+    }
+  );
+  await waitFor(() => peer.opened.length === 1, 10_000);
+  peer.answer(peer.latest(), 'Blue.');
+  const result = await call;
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    message: { from: `run:${run.id}`, to: ['a2a:fixture'] },
+    answer: { from: 'a2a:fixture', body: 'Blue.' },
+  });
+  await waitFor(
+    () => executor.received.some((text) => text.includes('Blue.')),
+    5000
+  );
 });
