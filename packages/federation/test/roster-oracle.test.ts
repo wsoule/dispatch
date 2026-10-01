@@ -163,6 +163,17 @@ describe('a component too large to search', () => {
     );
   });
 
+  // A stranger, unpinned and never admitted, holds no right in any fold.
+  it("ignores a stranger's admits, however many", () => {
+    const S = 'stranger-00000999';
+    const ghosts = Array.from({ length: 500 }, (_, i) =>
+      admit(S, i + 2, 40 + i, `ghost${i}-00000001`, 'admin')
+    );
+    const v = w.fold([...ops, ...ghosts]);
+    expect(v.resolution).toEqual(w.fold(ops).resolution);
+    expect(v.members.has(S)).toBe(false);
+  });
+
   it('decides the same on the relay', () => {
     const relay = w.fold(ops, { relay: true });
     expect(relay.unknown).toBeNull();

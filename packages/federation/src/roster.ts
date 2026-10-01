@@ -187,6 +187,8 @@ interface Context {
   items: readonly Item[];
   /** The items that can grant a right, all a fold of rights alone walks. */
   granting: readonly Item[];
+  /** The replicas some fold may admit; every other publisher's op is void. */
+  righted: ReadonlySet<string>;
   found: { op: RosterOpRef; body: Action<'found'> };
   teamId: string;
   deadlineMs: number;
@@ -401,7 +403,7 @@ function resolve(ctx: Context): Resolved {
   const all = ctx.items.map(removalOf).filter((r): r is Removal => r !== null);
   // Only Known(1) removals fight; a later one never changes a right, so it is
   // decided on the result.
-  const known = all.filter((r) => !r.later);
+  const known = all.filter((r) => !r.later && ctx.righted.has(r.op.replica));
   const fold = foldsOf(ctx, known);
   // A result with no admin (only after a rank pick) voids its latest-ranked
   // accepted removal, and the fight is fought again with it held void.
@@ -1019,7 +1021,7 @@ function foundingOf(input: FoldInput, items: readonly Item[]): Founding {
 // What every fold of one op set shares: the founding, first seqs and the order.
 interface Shared extends Omit<
   Context,
-  'items' | 'granting' | 'reach' | 'exposes'
+  'items' | 'granting' | 'righted' | 'reach' | 'exposes'
 > {
   all: readonly Item[];
 }
@@ -1073,16 +1075,45 @@ function provesOf(input: FoldInput, teamId: string): Context['proves'] {
 function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
   const { all, ...rest } = shared;
   const items = all.filter((i) => !without.has(i));
-  const granting = items.filter(({ body }) =>
-    GRANTING.some((a) => isAction(body, a))
+  const righted = rightedOf(items, shared.found.op, shared.input.keys);
+  // Filtered once here, so no fold of rights walks a void publisher's ops.
+  const granting = items.filter(
+    ({ op, body }) =>
+      righted.has(op.replica) &&
+      rest.order(op, shared.found.op) >= 0 &&
+      GRANTING.some((a) => isAction(body, a))
   );
   const ctx: Context = {
     ...rest,
     items,
     granting,
+    righted,
     ...reachOf(items, rest.order),
   };
   return { ctx, without, ...resolve(ctx) };
+}
+
+// The replicas some fold may admit: the founder, a pinned replica that
+// publishes a recover, and one such replica's admit names with its key.
+function rightedOf(
+  items: readonly Item[],
+  founding: RosterOpRef,
+  keys: FoldInput['keys']
+): Set<string> {
+  const out = new Set([founding.replica]);
+  for (const { op, body } of items)
+    if (isAction(body, 'recover') && keys.has(op.replica)) out.add(op.replica);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const { op, body } of items) {
+      if (!isAction(body, 'admit') || !out.has(op.replica)) continue;
+      if (out.has(body.replica)) continue;
+      if (keys.get(body.replica)?.fingerprint !== body.fingerprint) continue;
+      out.add(body.replica);
+      grew = true;
+    }
+  }
+  return out;
 }
 
 // Admissions and promotions link a publisher to its targets; a recover or a
