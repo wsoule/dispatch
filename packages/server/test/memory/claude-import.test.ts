@@ -514,6 +514,36 @@ describe('importClaudeNotes', () => {
     }
   });
 
+  it('never overflows an existing plainly cut note on a dry run', async () => {
+    writeFileSync(
+      join(memoryDir, 'long.md'),
+      `---\nname: long\ndescription: dry long note\nmetadata:\n  type: project\n---\n${'line of text\n'.repeat(1000)}`
+    );
+    const base = {
+      source: { explicit: memoryDir },
+      store,
+      projectKey: 'aaaaaaaaaaaa',
+      ownerRef: 'human:wyat',
+      ids,
+      now: NOW,
+      home,
+    };
+    await importClaudeNotes(base);
+    const cut = store.listEntries().find((e) => e.title === 'dry long note');
+    const asked: string[] = [];
+    await importClaudeNotes({
+      ...base,
+      dryRun: true,
+      identity: 'self',
+      overflow: (i) => {
+        asked.push(i.entryId);
+        return 'doc-01K3Z9R0000000000000000005';
+      },
+    });
+    expect(asked).toEqual([]);
+    expect(store.getEntry(cut?.id ?? '')?.body).toBe(cut?.body);
+  });
+
   it('overflows a long project note on its first import when docs are there', async () => {
     const DOC_ID = 'doc-01K3Z9R0000000000000000001';
     writeFileSync(
