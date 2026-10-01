@@ -2,6 +2,7 @@ import {
   DOCS_LIMITS,
   initProjectStores,
   materializeReceipts,
+  MEMORY_RECEIPT_FILE_BYTES,
   openProjectStores,
   readProjectBackend,
 } from '@dispatch/core';
@@ -10,6 +11,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -272,4 +274,68 @@ test('a doc file over the receipt file limit is not staged, and is reported', as
   expect(lines.some((l) => l.includes('huge.md') && l.includes('over'))).toBe(
     true
   );
+});
+
+// The staging directory `receipts restore` copies team memory into for `fresh`.
+function memoryStagingFor(fresh: string): string {
+  return join(
+    process.env.DISPATCH_HOME ?? '',
+    '.dispatch',
+    'runs',
+    daemonFileKey(projectRoot(fresh)),
+    'memory-restore'
+  );
+}
+
+const MEMORY_FILE = 'mem-01K5Z6G0000000000000000000.md';
+
+test('team memory in the log is staged for the daemon to propose again', async () => {
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch', 'memory'), { recursive: true });
+    writeFileSync(join(log, '.dispatch', 'memory', MEMORY_FILE), 'a lesson\n');
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  const staging = memoryStagingFor(fresh);
+  expect(readFileSync(join(staging, MEMORY_FILE), 'utf8')).toBe('a lesson\n');
+  expect(statSync(staging).mode & 0o777).toBe(0o700);
+  expect(existsSync(stagingFor(fresh))).toBe(false);
+  expect(lines).toContain(
+    'staged 1 memory entr(ies) for the daemon to propose again'
+  );
+});
+
+test('symlinked, oversized or oddly named memory files are not staged, and are reported', async () => {
+  const secret = join(temp('dispatch-secret-'), 'secret.md');
+  writeFileSync(secret, 'not a lesson\n');
+  const leak = 'mem-01K5Z6G0000000000000000001.md';
+  const huge = 'mem-01K5Z6G0000000000000000002.md';
+  const { remote } = pushedLog((log) => {
+    const dir = join(log, '.dispatch', 'memory');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, MEMORY_FILE), 'a lesson\n');
+    symlinkSync(secret, join(dir, leak));
+    writeFileSync(join(dir, huge), 'x'.repeat(MEMORY_RECEIPT_FILE_BYTES + 1));
+    writeFileSync(join(dir, 'notes.md'), 'not an entry\n');
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  expect(readdirSync(memoryStagingFor(fresh))).toEqual([MEMORY_FILE]);
+  expect(lines.some((l) => l.includes(leak))).toBe(true);
+  expect(lines.some((l) => l.includes(huge) && l.includes('over'))).toBe(true);
+  expect(
+    lines.some((l) => l.includes('notes.md') && l.includes('not named'))
+  ).toBe(true);
+});
+
+test('a symlinked .dispatch/memory stages nothing', async () => {
+  const outside = temp('dispatch-outside-');
+  writeFileSync(join(outside, MEMORY_FILE), 'not from the log\n');
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch'), { recursive: true });
+    symlinkSync(outside, join(log, '.dispatch', 'memory'));
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  expect(existsSync(memoryStagingFor(fresh))).toBe(false);
+  expect(
+    lines.some((l) => l.includes('.dispatch/memory') && l.includes('symlink'))
+  ).toBe(true);
 });

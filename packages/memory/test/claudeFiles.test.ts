@@ -6,8 +6,10 @@ import {
   newIndexLines,
   parsedHash,
   parseMemoryFile,
+  parseReceiptFile,
   projectOnlyForClaudeType,
   renderClaudeIndex,
+  renderReceiptFile,
   renderTopicFile,
   topicFileName,
 } from '../src/claudeFiles.js';
@@ -387,5 +389,70 @@ describe('diffExport', () => {
       ['renamed', 'one.md'],
       ['new', ''],
     ]);
+  });
+});
+
+describe('receipt files', () => {
+  it('are topic files that also carry the entry state', () => {
+    const retired = {
+      ...entry,
+      status: 'retired' as const,
+      statusReason: 'superseded' as const,
+    };
+    const text = renderReceiptFile(retired);
+    expect(text).toContain(`    rev: 3\n    status: retired (superseded)\n---`);
+    expect(renderReceiptFile(entry)).toContain('    status: active\n');
+    expect(renderReceiptFile({ ...entry, decay: 'expired' })).toContain(
+      '    status: retired (expired)\n'
+    );
+    expect(renderTopicFile(entry)).not.toContain('status:');
+  });
+
+  it('parse back to title, body and a known kind', () => {
+    const parsed = parseReceiptFile(renderReceiptFile(entry), `${entry.id}.md`);
+    expect(parsed.title).toBe(entry.title);
+    expect(parsed.body).toBe(entry.body);
+    expect(parsed.kind).toBe('hazard');
+    expect(parsed.status).toBe('active');
+    expect(
+      parseReceiptFile(
+        renderReceiptFile({
+          ...entry,
+          status: 'retired',
+          statusReason: 'superseded',
+        }),
+        'x.md'
+      ).status
+    ).toBe('retired (superseded)');
+    expect(parseReceiptFile('just a body', 'x.md').status).toBeUndefined();
+  });
+
+  it('normalize the status and refuse one that is not a single string', () => {
+    const text = renderReceiptFile(entry);
+    const withStatus = (line: string) =>
+      text.replace('    status: active', line);
+    expect(
+      parseReceiptFile(withStatus('    status: Retired'), 'x.md').status
+    ).toBe('retired');
+    expect(
+      parseReceiptFile(withStatus('    status: " retired"'), 'x.md').status
+    ).toBe('retired');
+    expect(parseReceiptFile(text, 'x.md').problem).toBeNull();
+    expect(
+      parseReceiptFile(withStatus('    status: [retired]'), 'x.md').problem
+    ).toBe('status: expected a string');
+    expect(
+      parseReceiptFile(
+        withStatus('    status: active\n    status: retired'),
+        'x.md'
+      ).problem
+    ).toStartWith('frontmatter: ');
+  });
+
+  it('read an unknown or missing kind as a fact', () => {
+    const text = renderReceiptFile(entry);
+    const forged = text.replace('    kind: hazard', '    kind: root');
+    expect(parseReceiptFile(forged, 'x.md').kind).toBe('fact');
+    expect(parseReceiptFile('just a body', 'x.md').kind).toBe('fact');
   });
 });

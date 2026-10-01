@@ -75,8 +75,9 @@ const RECEIPT_EVENTS: ReadonlySet<ServerEvent['type']> = new Set([
   'ledger.changed',
 ]);
 
-/** Whether this event should schedule an export. */
+/** Whether this event should schedule an export; of memory, only team entries reach the log. */
 export function isReceiptEvent(event: ServerEvent): boolean {
+  if (event.type === 'memory.changed') return event.scope === 'team';
   return RECEIPT_EVENTS.has(event.type);
 }
 

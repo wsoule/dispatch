@@ -4,6 +4,7 @@ import {
   DOCS_LIMITS,
   formatMigrationReport,
   initProjectStores,
+  MEMORY_RECEIPT_FILE_BYTES,
   restoreReceipts,
   writeProjectBackend,
 } from '@dispatch/core';
@@ -42,35 +43,42 @@ function remoteUrl(root: string, cwd: string, from: string): string {
   return absoluteGitLocation(cwd, from);
 }
 
-// Copies the clone's regular `.md` team docs, each within the receipt file
-// limit, to the daemon's run-state `docs-restore/` (0700); a symlink is refused.
-function stageDocs(
+// `<id>.md` with an id shaped like @dispatch/memory's MEMORY_ID_PATTERN.
+const MEMORY_RECEIPT_NAME = /^mem-[0-9A-HJKMNP-TV-Z]{26}\.md$/;
+
+// Copies the clone's regular `.dispatch/<kind>/*.md` files, each within
+// `limit`, to the daemon's run-state `<kind>-restore/` (0700); a symlink is refused.
+function stageReceiptFiles(
   clone: string,
-  root: string
+  root: string,
+  kind: 'docs' | 'memory',
+  limit: number,
+  name: RegExp = /\.md$/
 ): { staged: number; problems: string[] } {
-  const from = join(clone, '.dispatch', 'docs');
+  const rel = `.dispatch/${kind}`;
+  const from = join(clone, '.dispatch', kind);
   if (!existsSync(from)) return { staged: 0, problems: [] };
   if (!lstatSync(from).isDirectory()) {
     return {
       staged: 0,
-      problems: [
-        '.dispatch/docs is a symlink or not a directory; no docs staged',
-      ],
+      problems: [`${rel} is a symlink or not a directory; nothing staged`],
     };
   }
   const problems: string[] = [];
   const files = readdirSync(from)
     .filter((f) => f.endsWith('.md'))
     .filter((f) => {
-      const stat = lstatSync(join(from, f));
-      if (!stat.isFile()) {
-        problems.push(`.dispatch/docs/${f}: not a regular file; skipped`);
+      if (!name.test(f)) {
+        problems.push(`${rel}/${f}: not named like a receipt file; skipped`);
         return false;
       }
-      if (stat.size > DOCS_LIMITS.receiptFileBytes) {
-        problems.push(
-          `.dispatch/docs/${f}: over ${DOCS_LIMITS.receiptFileBytes} bytes; skipped`
-        );
+      const stat = lstatSync(join(from, f));
+      if (!stat.isFile()) {
+        problems.push(`${rel}/${f}: not a regular file; skipped`);
+        return false;
+      }
+      if (stat.size > limit) {
+        problems.push(`${rel}/${f}: over ${limit} bytes; skipped`);
         return false;
       }
       return true;
@@ -81,7 +89,7 @@ function stageDocs(
     '.dispatch',
     'runs',
     daemonFileKey(root),
-    'docs-restore'
+    `${kind}-restore`
   );
   mkdirSync(to, { recursive: true, mode: 0o700 });
   chmodSync(to, 0o700);
@@ -143,10 +151,28 @@ export function registerReceiptsCommands(
           ctx.log(
             `evidence: ${result.runs} run(s), ${result.commands} command(s), ${result.mutations} mutation(s)`
           );
-          const docs = stageDocs(dir, root);
+          const docs = stageReceiptFiles(
+            dir,
+            root,
+            'docs',
+            DOCS_LIMITS.receiptFileBytes
+          );
           if (docs.staged > 0)
             ctx.log(`staged ${docs.staged} doc(s) for the daemon to restore`);
           for (const problem of docs.problems) ctx.log(`problem: ${problem}`);
+          // Team memory returns as proposals for a human, never as entries.
+          const memory = stageReceiptFiles(
+            dir,
+            root,
+            'memory',
+            MEMORY_RECEIPT_FILE_BYTES,
+            MEMORY_RECEIPT_NAME
+          );
+          if (memory.staged > 0)
+            ctx.log(
+              `staged ${memory.staged} memory entr(ies) for the daemon to propose again`
+            );
+          for (const problem of memory.problems) ctx.log(`problem: ${problem}`);
           for (const problem of result.problems) {
             ctx.log(`problem: ${problem.source}: ${problem.detail}`);
           }

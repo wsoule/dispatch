@@ -245,10 +245,17 @@ const trustOf = (principal: Principal): MemoryTrust =>
 const runIdOf = (principal: Principal): string | null =>
   principal.kind === 'run' ? principal.address.slice('run:'.length) : null;
 
-// Ledger-import and sync proposals are bounded by what arrives, not by what an agent asks.
+// A lesson `dispatch receipts restore` brought back from the receipt log.
+export const isRestoredOrigin = (origin: string | null): boolean =>
+  origin !== null && origin.startsWith('receipts:');
+
+// Ledger-import, sync and receipt-restore proposals are bounded by what
+// arrives, not by what an agent asks.
 const isExemptOrigin = (origin: string | null): boolean =>
   origin !== null &&
-  (origin.startsWith('ledger:') || origin.startsWith('sync:'));
+  (origin.startsWith('ledger:') ||
+    origin.startsWith('sync:') ||
+    isRestoredOrigin(origin));
 
 const toProposalContent = (valid: ValidMemoryInput): ProposalContent => ({
   kind: valid.kind,
@@ -1173,7 +1180,12 @@ export class MemoryEngine {
     };
     store.transaction(() => store.insertProposal(stored));
     const ruling = this.ruleOn(stored);
-    if (ruling.mode === 'auto' && !stored.matchedPersonal) {
+    // A receipt-log restore is untrusted input: a human always decides it.
+    if (
+      ruling.mode === 'auto' &&
+      !stored.matchedPersonal &&
+      !isRestoredOrigin(origin)
+    ) {
       const applied = store.transaction(() =>
         this.applyProposal(store, stored, null, {
           decidedBy: null,

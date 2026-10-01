@@ -172,6 +172,7 @@ export {
 export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
 export {
   materializeReceipts,
+  MEMORY_RECEIPT_FILE_BYTES,
   receiptSteps,
   restoreReceipts,
 } from './receipts.js';

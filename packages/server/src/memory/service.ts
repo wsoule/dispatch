@@ -74,6 +74,8 @@ import {
 } from './ledgerImport.js';
 import type { LedgerImportReport } from './ledgerImport.js';
 import { PersonalStores } from './personalStores.js';
+import { applyStagedMemoryRestore, memoryRestoreDir } from './receipts.js';
+import type { MemoryRestoreReport } from './receipts.js';
 
 interface MemoryHealth {
   available: boolean;
@@ -92,6 +94,8 @@ interface MemoryHealth {
   pinnedOverflow: boolean;
   // Why runs cannot use the Claude export (the preflight failed), or null.
   exportBlocked: string | null;
+  // The last receipt-log restore this daemon applied, or null.
+  restore: MemoryRestoreReport | null;
   // The owner's Claude-notes import; null for anyone but the daemon's own human.
   claudeImport: {
     state: ImportState | null;
@@ -127,6 +131,8 @@ export interface MemoryService extends MemoryPromptPort {
     none?: boolean;
     dryRun?: boolean;
   }): Promise<ClaudeImportReport>;
+  /** Boot, after messaging.recover(): proposes the team memory `dispatch receipts restore` staged. */
+  restoreStaged(): Promise<MemoryRestoreReport | null>;
   /** Boot, after messaging.recover(): raises unsent gates, closes strays, sweeps Claude exports, then starts decay. */
   recover(): Promise<{ raised: number; closed: number }>;
   health(principal: Principal | null): MemoryHealth;
@@ -745,6 +751,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     };
   };
 
+  let lastRestore: MemoryRestoreReport | null = null;
   const unsubscribe = deps.events.subscribe((event) => {
     if (event.type === 'ledger.changed') importQuietly();
   });
@@ -796,6 +803,15 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       }
     },
     importClaude,
+    restoreStaged: async () => {
+      const report = await applyStagedMemoryRestore(
+        engine,
+        shared,
+        memoryRestoreDir(deps.rootDir)
+      );
+      if (report !== null) lastRestore = report;
+      return report;
+    },
     recover: async () => {
       try {
         if (engine === null || shared === null) return { raised: 0, closed: 0 };
@@ -824,6 +840,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       personal: principal === null ? null : personalHealth(principal),
       pinnedOverflow: principal === null ? false : pinnedOverflow(principal),
       exportBlocked: preflight.ok ? null : preflight.reason,
+      restore: lastRestore,
       claudeImport:
         principal !== null &&
         principal.kind === 'human' &&

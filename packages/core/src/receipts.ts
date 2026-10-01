@@ -231,6 +231,9 @@ function evidenceJsonl(
   ]);
 }
 
+/** The largest `.dispatch/memory/<id>.md` a restore stages or reads. */
+export const MEMORY_RECEIPT_FILE_BYTES = 32 * 1024;
+
 const README = `# Dispatch receipts
 
 This is the audit trail for a Dispatch project: every task, finding, ledger
@@ -249,6 +252,7 @@ directory is enough to rebuild it.
     .dispatch/ledger.jsonl           decisions and hazards
     .dispatch/evidence/<runId>.jsonl commands run and guards mutation-tested
     .dispatch/docs/<handle>.md       team documents, their head revision
+    .dispatch/memory/<id>.md         team memory entries, active and retired
 
 That is deliberately the same layout a file-backed Dispatch project uses, so
 restoring needs no special tooling.
@@ -265,7 +269,13 @@ no file-backed equivalent, so it survives that route only through Dispatch's
 own restore rather than through the copy above.
 
 Team docs under \`.dispatch/docs/\` come back through
-\`dispatch receipts restore\`, which stages them for the daemon.
+\`dispatch receipts restore\`, which stages them for the daemon. Team memory
+under \`.dispatch/memory/\` is staged the same way and comes back as proposals
+for a human to review, never as entries; retired entries are not restored.
+
+A hard delete removes an entry's file from the next commit, but it
+does not scrub git history: earlier versions stay in this log, and on any
+remote it was pushed to, until that history is rewritten.
 
 ## What is NOT here
 
