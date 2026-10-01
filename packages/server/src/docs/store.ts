@@ -68,11 +68,12 @@ CREATE TABLE IF NOT EXISTS slug_aliases (
 );
 CREATE TABLE IF NOT EXISTS publishes (
   task_id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, rev_id TEXT NOT NULL, path TEXT NOT NULL,
-  state TEXT NOT NULL, "commit" TEXT, created_at TEXT NOT NULL
+  state TEXT NOT NULL, "commit" TEXT, created_at TEXT NOT NULL, reason TEXT
 );
 CREATE TABLE IF NOT EXISTS assets (
   doc_id TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, mime TEXT NOT NULL,
-  created_by TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (doc_id, name)
+  created_by TEXT NOT NULL, created_at TEXT NOT NULL, checked_at TEXT,
+  PRIMARY KEY (doc_id, name)
 );
 CREATE TABLE IF NOT EXISTS imported (
   ns TEXT NOT NULL, slug TEXT NOT NULL, hash TEXT NOT NULL, doc_id TEXT NOT NULL, at TEXT NOT NULL,
@@ -105,6 +106,23 @@ const FTS_DDL =
 
 // Opens (creating if needed) a docs database; refuses a newer schema. `fts`
 // reports whether FTS5 is usable; `{ fts: false }` forces the LIKE fallback.
+// Columns added to version-1 tables after they first shipped, added in place.
+const LATER_COLUMNS: readonly { table: string; column: string; ddl: string }[] =
+  [
+    { table: 'publishes', column: 'reason', ddl: 'reason TEXT' },
+    { table: 'assets', column: 'checked_at', ddl: 'checked_at TEXT' },
+  ];
+
+function addMissingColumns(db: SqliteDatabase): void {
+  for (const { table, column, ddl } of LATER_COLUMNS) {
+    const has = queryAll<{ name: string }>(
+      db,
+      `PRAGMA table_info(${table})`
+    ).some((c) => c.name === column);
+    if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+}
+
 export function openDocsDb(
   path: string,
   opts: { fts?: boolean } = {}
@@ -119,6 +137,7 @@ export function openDocsDb(
       );
     }
     db.exec(DDL);
+    addMissingColumns(db);
     let fts = opts.fts !== false;
     if (fts) {
       try {
@@ -162,6 +181,29 @@ export interface DocRow {
   updatedBy: string;
   updatedAt: string;
   indexedHash: string | null;
+}
+
+// One image stored for a doc; its file is docs-assets/<doc>/<name>.
+export interface AssetRow {
+  doc: string;
+  name: string;
+  bytes: number;
+  mime: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+// One publish of a doc to the repo: the task it runs as and how it ended.
+export interface PublishRow {
+  task: string;
+  doc: string;
+  rev: string;
+  path: string;
+  state: 'open' | 'landed' | 'dropped' | 'failed';
+  commit: string | null;
+  createdAt: string;
+  // Why a publish failed; null otherwise.
+  reason: string | null;
 }
 
 export interface RevisionRow {
@@ -887,12 +929,16 @@ export class SqliteDocStore {
     );
   }
 
-  tombstone(docId: string): { docId: string; origin: string | null } | null {
-    const row = this.one<{ doc_id: string; origin: string | null }>(
-      'SELECT doc_id, origin FROM tombstones WHERE doc_id = ?',
+  tombstone(
+    docId: string
+  ): { docId: string; ns: string; origin: string | null } | null {
+    const row = this.one<{ doc_id: string; ns: string; origin: string | null }>(
+      'SELECT doc_id, ns, origin FROM tombstones WHERE doc_id = ?',
       [docId]
     );
-    return row === undefined ? null : { docId: row.doc_id, origin: row.origin };
+    return row === undefined
+      ? null
+      : { docId: row.doc_id, ns: row.ns, origin: row.origin };
   }
 
   tombstonedOrigin(origin: string): boolean {
@@ -936,6 +982,147 @@ export class SqliteDocStore {
         p.decidedAt,
       ]
     );
+  }
+
+  // INSERT OR IGNORE: a name is the hash of its bytes, so a second upload is the same asset.
+  putAsset(a: AssetRow): void {
+    this.run(
+      'INSERT OR IGNORE INTO assets (doc_id, name, bytes, mime, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [a.doc, a.name, a.bytes, a.mime, a.createdBy, a.createdAt]
+    );
+  }
+
+  assetRow(docId: string, name: string): AssetRow | null {
+    const r = this.one<{
+      doc_id: string;
+      name: string;
+      bytes: number;
+      mime: string;
+      created_by: string;
+      created_at: string;
+    }>('SELECT * FROM assets WHERE doc_id = ? AND name = ?', [docId, name]);
+    return r === undefined
+      ? null
+      : {
+          doc: r.doc_id,
+          name: r.name,
+          bytes: r.bytes,
+          mime: r.mime,
+          createdBy: r.created_by,
+          createdAt: r.created_at,
+        };
+  }
+
+  // How many images a doc stores, and their total bytes.
+  assetUsage(docId: string): { files: number; bytes: number } {
+    const r = this.one<{ files: number; bytes: number | null }>(
+      'SELECT COUNT(*) AS files, SUM(bytes) AS bytes FROM assets WHERE doc_id = ?',
+      [docId]
+    );
+    return { files: r?.files ?? 0, bytes: r?.bytes ?? 0 };
+  }
+
+  // Every image's bytes in the project.
+  assetBytesTotal(): number {
+    return (
+      this.one<{ bytes: number | null }>(
+        'SELECT SUM(bytes) AS bytes FROM assets'
+      )?.bytes ?? 0
+    );
+  }
+
+  // Asset rows created before `beforeIso` and not found referenced since then, oldest first.
+  assetsToCheck(beforeIso: string): AssetRow[] {
+    return this.all<{
+      doc_id: string;
+      name: string;
+      bytes: number;
+      mime: string;
+      created_by: string;
+      created_at: string;
+    }>(
+      'SELECT * FROM assets WHERE created_at < ? AND (checked_at IS NULL OR checked_at < ?) ORDER BY created_at, doc_id, name',
+      [beforeIso, beforeIso]
+    ).map((r) => ({
+      doc: r.doc_id,
+      name: r.name,
+      bytes: r.bytes,
+      mime: r.mime,
+      createdBy: r.created_by,
+      createdAt: r.created_at,
+    }));
+  }
+
+  // Whether any revision of the doc, a proposal's included, links `asset:<name>`.
+  assetReferenced(docId: string, name: string): boolean {
+    return (
+      this.one<{ hit: number }>(
+        'SELECT 1 AS hit FROM revisions WHERE doc_id = ? AND instr(body, ?) > 0 LIMIT 1',
+        [docId, `asset:${name}`]
+      ) !== undefined
+    );
+  }
+
+  // An image found referenced at `atIso`; the sweep skips it until that is old.
+  markAssetChecked(docId: string, name: string, atIso: string): void {
+    this.run('UPDATE assets SET checked_at = ? WHERE doc_id = ? AND name = ?', [
+      atIso,
+      docId,
+      name,
+    ]);
+  }
+
+  deleteAsset(docId: string, name: string): void {
+    this.run('DELETE FROM assets WHERE doc_id = ? AND name = ?', [docId, name]);
+  }
+
+  putPublish(p: PublishRow): void {
+    this.run(
+      'INSERT OR REPLACE INTO publishes (task_id, doc_id, rev_id, path, state, "commit", created_at, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [p.task, p.doc, p.rev, p.path, p.state, p.commit, p.createdAt, p.reason]
+    );
+  }
+
+  // Publish rows matching every given filter, newest first.
+  publishRows(filter: {
+    doc?: string;
+    task?: string;
+    state?: PublishRow['state'];
+  }): PublishRow[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    for (const [column, value] of [
+      ['doc_id', filter.doc],
+      ['task_id', filter.task],
+      ['state', filter.state],
+    ] as const) {
+      if (value === undefined) continue;
+      where.push(`${column} = ?`);
+      params.push(value);
+    }
+    const clause = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`;
+    return this.all<{
+      task_id: string;
+      doc_id: string;
+      rev_id: string;
+      path: string;
+      state: PublishRow['state'];
+      commit: string | null;
+      created_at: string;
+      reason: string | null;
+    }>(
+      `SELECT * FROM publishes${clause} ORDER BY created_at DESC, task_id DESC`,
+      params
+    ).map((r) => ({
+      task: r.task_id,
+      doc: r.doc_id,
+      rev: r.rev_id,
+      path: r.path,
+      state: r.state,
+      commit: r.commit,
+      createdAt: r.created_at,
+      reason: r.reason,
+    }));
   }
 
   // Proposal rows matching every given filter, oldest first.

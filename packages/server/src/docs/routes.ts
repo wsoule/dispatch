@@ -15,7 +15,9 @@ import {
 } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
+import { humanActor, humanOperator } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
+import { MAX_ASSET_BYTES } from './assets.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
 import { readBoundedBytes, readBoundedJson } from './http.js';
 import { parseOps } from './ops.js';
@@ -306,6 +308,28 @@ async function once(
   }
 }
 
+// Starts the publish task's run as the human who asked (MEM-R5..R8: the
+// operator is theirs, the owner only with the owner credential). The task
+// stands either way, so a failed dispatch is reported rather than thrown.
+async function dispatchPublish(
+  ctx: ApiContext,
+  task: string
+): Promise<{ run: string | null; dispatchError: string | null }> {
+  try {
+    const run = await ctx.orchestrator.dispatch(
+      task,
+      ctx.orchestrator.defaultExecutorName(),
+      { actor: humanActor(ctx), operator: humanOperator(ctx) }
+    );
+    return { run: run.id, dispatchError: null };
+  } catch (err) {
+    return {
+      run: null,
+      dispatchError: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 // Routes /api/docs/<rest>; null when nothing here matches, so api.ts 404s.
 export async function handleDocsRoute(
   req: Request,
@@ -464,6 +488,22 @@ export async function handleDocsRoute(
             const wanted = status((await body()).status, 'status');
             return jsonResponse(docs.setStatus(actor, ref, wanted));
           });
+        case 'publish':
+          return await write(async () => {
+            const b = await body();
+            if (b.dispatch !== undefined && typeof b.dispatch !== 'boolean')
+              throw invalid('dispatch', 'expected a boolean');
+            const out = docs.publish(actor, ref, { path: str(b.path, 'path') });
+            return jsonResponse(
+              {
+                ...out,
+                ...(b.dispatch === false
+                  ? { run: null, dispatchError: null }
+                  : await dispatchPublish(ctx, out.task)),
+              },
+              201
+            );
+          });
         case 'reviewed':
           await body();
           return jsonResponse(docs.markReviewed(actor, ref));
@@ -487,6 +527,19 @@ export async function handleDocsRoute(
             });
             return jsonResponse({ links: linked });
           });
+        case 'assets': {
+          // A cross-origin page cannot send this content type without a preflight.
+          if (req.headers.get('content-type') !== 'application/octet-stream')
+            return errorResponse(
+              415,
+              'expected content-type: application/octet-stream'
+            );
+          // Who may write, and the doc's room, are answered before any body is read.
+          docs.assetUploadAllowed(actor, ref);
+          const bytes = await readBoundedBytes(req, MAX_ASSET_BYTES);
+          if (bytes instanceof Response) return bytes;
+          return jsonResponse(docs.putAsset(actor, ref, bytes), 201);
+        }
         case 'promote':
           return await write(async () => {
             await body();
@@ -509,6 +562,20 @@ export async function handleDocsRoute(
         const to = revRef(url.searchParams.get('to'), 'to');
         return jsonResponse(docs.diff(actor, ref, from, to));
       }
+    }
+    if (rest.length === 3 && method === 'GET' && action === 'assets') {
+      const name = decode(rest[2], 'name');
+      const { bytes, mime } = docs.assetBytes(actor, ref, name);
+      // Served as an inert image: typed by its bytes, never sniffed, sandboxed.
+      return new Response(bytes, {
+        headers: {
+          'content-type': mime,
+          'x-content-type-options': 'nosniff',
+          'content-disposition': `inline; filename="${name}"`,
+          'content-security-policy': "default-src 'none'; sandbox",
+          'cache-control': 'private, max-age=3600',
+        },
+      });
     }
     if (rest.length === 3 && method === 'GET' && action === 'revisions') {
       const rev = revRef(decode(rest[2], 'rev'), 'rev');

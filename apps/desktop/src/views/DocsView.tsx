@@ -1,13 +1,19 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { BookText } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { DocList } from '../components/docs/DocList';
 import { DocPage } from '../components/docs/DocPage';
+import { NewDocDialog } from '../components/docs/NewDocDialog';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { useDocList } from '../hooks/useDocs';
+import { docsKey, useDocList, useDocSearch } from '../hooks/useDocs';
 import type { DocFilter } from '../lib/docs';
 import { filterDocs } from '../lib/docs';
+import { Button } from '@/ui/button';
+
+// The most search hits a query asks the daemon for.
+const SEARCH_LIMIT = 50;
 
 // Team documents beside tasks: a filtered list on the left, the open doc on the right.
 // `initialDoc` and `initialAnchor` are what navigation names; `onSelectDoc` hears list picks.
@@ -15,11 +21,14 @@ export function DocsView({
   data,
   initialDoc = null,
   initialAnchor = null,
+  initialMerge = null,
   onSelectDoc,
 }: {
   data: DispatchProjectData;
   initialDoc?: string | null;
   initialAnchor?: string | null;
+  /** A conflicting proposal whose marked merge the named doc opens on. */
+  initialMerge?: string | null;
   onSelectDoc?: (docId: string) => void;
 }) {
   const { client, port, messageAccess } = data;
@@ -31,28 +40,49 @@ export function DocsView({
   });
   const [open, setOpen] = useState<string | null>(initialDoc);
   const [anchor, setAnchor] = useState<string | null>(initialAnchor);
+  const [merge, setMerge] = useState<string | null>(initialMerge);
+  const [creating, setCreating] = useState(false);
+  const queryClient = useQueryClient();
   // A doc named while the view is up (a ref, a palette hit) replaces the open one.
   const [named, setNamed] = useState({
     doc: initialDoc,
     anchor: initialAnchor,
+    merge: initialMerge,
   });
-  if (named.doc !== initialDoc || named.anchor !== initialAnchor) {
-    setNamed({ doc: initialDoc, anchor: initialAnchor });
+  if (
+    named.doc !== initialDoc ||
+    named.anchor !== initialAnchor ||
+    named.merge !== initialMerge
+  ) {
+    setNamed({ doc: initialDoc, anchor: initialAnchor, merge: initialMerge });
     if (initialDoc !== null) {
       setOpen(initialDoc);
       setAnchor(initialAnchor);
+      setMerge(initialMerge);
     }
   }
   const select = (id: string): void => {
     setOpen(id);
     setAnchor(null);
+    setMerge(null);
     onSelectDoc?.(id);
   };
-  const { docs, error } = useDocList(
-    messageAccess.canMessage ? client : null,
-    port,
-    { includeArchived: filter.status === 'archived', limit: 200 }
-  );
+  const listClient = messageAccess.canMessage ? client : null;
+  const { docs, error, loading } = useDocList(listClient, port, {
+    includeArchived: filter.status === 'archived',
+    limit: 200,
+  });
+  // A query also matches the docs whose text the daemon's search finds.
+  const query = filter.query.trim();
+  const hits = useDocSearch(listClient, port, query, SEARCH_LIMIT);
+  const shown = useMemo(() => {
+    if (query === '') return filterDocs(docs, filter);
+    const found = new Set(hits.map((h) => h.doc));
+    const byTitle = new Set(filterDocs(docs, filter).map((d) => d.id));
+    return filterDocs(docs, { ...filter, query: '' }).filter(
+      (d) => found.has(d.id) || byTitle.has(d.id)
+    );
+  }, [docs, filter, hits, query]);
   if (client === null) {
     return (
       <DaemonUnavailable
@@ -75,9 +105,28 @@ export function DocsView({
         <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
           <BookText className="size-4" />
           <h1 className="text-sm font-medium">Docs</h1>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => setCreating(true)}
+          >
+            New doc
+          </Button>
         </header>
+        <NewDocDialog
+          client={client}
+          open={creating}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            void queryClient.invalidateQueries({ queryKey: docsKey(port) });
+            select(id);
+          }}
+        />
         <DocList
-          docs={filterDocs(docs, filter)}
+          docs={shown}
+          loading={loading}
           filter={filter}
           onFilter={setFilter}
           selected={open}
@@ -99,6 +148,8 @@ export function DocsView({
             refId={open}
             canDecide={messageAccess.canDecide}
             anchor={anchor}
+            mergeProposal={merge}
+            onOpenDoc={select}
           />
         )}
       </main>

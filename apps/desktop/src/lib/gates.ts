@@ -263,6 +263,9 @@ export function gateNotification(
       kind,
     };
   }
+  if (kind === 'doc') {
+    return { title: 'Doc edit to review', body: firstLine(message.body), kind };
+  }
   if (kind === 'scope-request') {
     return {
       title: 'An agent needs scope approval',

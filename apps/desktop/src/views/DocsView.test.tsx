@@ -35,6 +35,8 @@ const summary = {
   rel: null,
   fromParent: false,
   head: { id: 'rev-1', n: 1, hash: 'h1', bytes: 10, sealed: true },
+  published: null,
+  lastPublishPath: null,
   updatedBy: 'run:r-1',
   updatedAt: '2026-09-26T10:00:00.000Z',
 } as unknown as DocSummary;
@@ -71,6 +73,9 @@ function renderView(opts: {
   revisions?: ApiClient['listDocRevisions'];
   diff?: ApiClient['diffDoc'];
   text?: string;
+  publish?: ApiClient['publishDoc'];
+  createDoc?: ApiClient['createDoc'];
+  promoteDoc?: ApiClient['promoteDoc'];
 }) {
   const calls: string[] = [];
   const doc = opts.doc ?? summary;
@@ -79,6 +84,9 @@ function renderView(opts: {
     getDoc: () =>
       Promise.resolve({ ...read, doc, text: opts.text ?? read.text }),
     diffDoc: opts.diff,
+    publishDoc: opts.publish,
+    createDoc: opts.createDoc,
+    promoteDoc: opts.promoteDoc,
     saveDocBody:
       opts.save ??
       (() =>
@@ -758,4 +766,226 @@ test('a doc named later replaces the open one, and a list pick is reported', asy
   fireEvent.click(screen.getByText('Auth refactor'));
   expect(await screen.findByLabelText('Editing auth')).toBeDefined();
   expect(picked).toEqual(['doc-1']);
+});
+
+// A reviewed team doc published at rev 1, its head at `headN`, last asked for docs/next.md.
+const publishedDoc = (headN: number) =>
+  ({
+    ...summary,
+    unreviewed: false,
+    head: { id: `rev-${headN}`, n: headN, hash: 'h', bytes: 10, sealed: true },
+    published: {
+      path: 'docs/spec.md',
+      rev: 'rev-1',
+      n: 1,
+      task: 't-pub-1',
+      commit: 'abc123',
+    },
+    lastPublishPath: 'docs/next.md',
+  }) as unknown as DocSummary;
+
+test('says how far the head is past the published revision', async () => {
+  renderView({ canDecide: true, doc: publishedDoc(2) });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  expect(
+    await screen.findByText('published rev 1 to docs/spec.md; head is rev 2')
+  ).toBeDefined();
+});
+
+test('shows no behind line while the head is the published revision', async () => {
+  renderView({ canDecide: true, doc: publishedDoc(1) });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  await screen.findByLabelText('Editing auth');
+  expect(screen.queryByText(/^published rev/)).toBeNull();
+});
+
+test('opens Publish with the remembered path and sends what the human typed', async () => {
+  const sent: unknown[] = [];
+  const publish = ((ref: string, input: unknown) => {
+    sent.push([ref, input]);
+    return Promise.resolve({
+      task: 't-pub-2',
+      run: 'r-1',
+      dispatchError: null,
+      doc: publishedDoc(2),
+    });
+  }) as unknown as ApiClient['publishDoc'];
+  renderView({ canDecide: false, doc: publishedDoc(2), publish });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Publish to repo' })
+  );
+  const path =
+    await screen.findByLabelText<HTMLInputElement>('Path in the repo');
+  expect(path.value).toBe('docs/next.md');
+  fireEvent.change(path, { target: { value: 'docs/specs/auth.md' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+  await waitFor(() =>
+    expect(sent).toEqual([['doc-1', { path: 'docs/specs/auth.md' }]])
+  );
+  expect(await screen.findByText(/task t-pub-2/)).toBeDefined();
+});
+
+test('offers no Publish on an unreviewed draft', async () => {
+  renderView({ canDecide: true });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  await screen.findByLabelText('Editing auth');
+  expect(screen.queryByRole('button', { name: 'Publish to repo' })).toBeNull();
+});
+
+test('a named proposal opens the doc on its marked merge', async () => {
+  const getDocProposal = mock((_rev: string) =>
+    Promise.resolve({
+      proposal: { rev: 'rev-p', author: 'run:r-1', state: 'open' },
+      title: 'Auth refactor',
+      body: '# Auth\nrun\n',
+      chunks: [],
+      mergeable: { clean: false, headN: 1, headRev: 'rev-1', headHash: 'h1' },
+      marked: '# Auth\n<<<<<<< rev-1\nbody\n=======\nrun\n>>>>>>> rev-p\n',
+    })
+  );
+  const client = {
+    listDocs: () => Promise.resolve({ docs: [summary], total: 1 }),
+    getDoc: () => Promise.resolve(read),
+    getDocProposal,
+    listDocRevisions: () => Promise.resolve({ revisions: [] }),
+  } as unknown as ApiClient;
+  const data = {
+    client,
+    port: 1,
+    messageAccess: { canDecide: true, canMessage: true, explanation: null },
+  } as unknown as DispatchProjectData;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DocsView data={data} initialDoc="doc-1" initialMerge="rev-p" />
+    </QueryClientProvider>
+  );
+  expect(
+    await screen.findByRole('region', { name: 'Conflict 1 of 1' })
+  ).toBeDefined();
+  expect(getDocProposal).toHaveBeenCalledWith('rev-p');
+});
+
+test('creates a team doc by default, and a personal one with the toggle', async () => {
+  const made: unknown[] = [];
+  const createDoc = ((input: unknown) => {
+    made.push(input);
+    return Promise.resolve({
+      doc: { id: 'doc-9' },
+      handle: 'x',
+      rev: { id: 'rev-1', n: 1, hash: 'h' },
+      status: 'saved',
+    });
+  }) as unknown as ApiClient['createDoc'];
+  renderView({ canDecide: true, createDoc });
+  fireEvent.click(await screen.findByRole('button', { name: 'New doc' }));
+  fireEvent.change(await screen.findByLabelText('Title'), {
+    target: { value: 'Team notes' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+  await waitFor(() => expect(made).toHaveLength(1));
+  fireEvent.click(await screen.findByRole('button', { name: 'New doc' }));
+  fireEvent.change(await screen.findByLabelText('Title'), {
+    target: { value: 'My notes' },
+  });
+  fireEvent.click(screen.getByRole('radio', { name: 'Personal' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+  await waitFor(() =>
+    expect(made).toEqual([
+      { title: 'Team notes', body: '# Team notes\n', scope: 'team' },
+      { title: 'My notes', body: '# My notes\n', scope: 'personal' },
+    ])
+  );
+});
+
+test('offers Promote to team on a personal doc only, and sends it', async () => {
+  const promoted: string[] = [];
+  const promoteDoc = ((ref: string) => {
+    promoted.push(ref);
+    return Promise.resolve({
+      doc: { id: 'doc-team' },
+      handle: 'auth',
+      rev: { id: 'rev-1', n: 1, hash: 'h' },
+      status: 'saved',
+    });
+  }) as unknown as ApiClient['promoteDoc'];
+  renderView({
+    canDecide: false,
+    promoteDoc,
+    doc: { ...summary, scope: 'personal' } as unknown as DocSummary,
+  });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Promote to team' })
+  );
+  await waitFor(() => expect(promoted).toEqual(['doc-1']));
+});
+
+test('shows no Promote on a team doc', async () => {
+  renderView({ canDecide: true });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  await screen.findByLabelText('Editing auth');
+  expect(screen.queryByRole('button', { name: 'Promote to team' })).toBeNull();
+});
+
+// A DocsView over `listDocs` and `searchDocs` fakes, with every doc readable.
+function renderList(
+  listDocs: ApiClient['listDocs'],
+  searchDocs?: ApiClient['searchDocs']
+) {
+  const client = {
+    listDocs,
+    searchDocs,
+    getDoc: (ref: string) =>
+      Promise.resolve({ ...read, doc: ref === 'doc-2' ? other : summary }),
+    listDocRevisions: () => Promise.resolve({ revisions: [] }),
+  } as unknown as ApiClient;
+  const data = {
+    client,
+    port: 1,
+    messageAccess: { canDecide: true, canMessage: true, explanation: null },
+  } as unknown as DispatchProjectData;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DocsView data={data} />
+    </QueryClientProvider>
+  );
+}
+
+test('says the list is loading until it arrives', async () => {
+  renderList((() => new Promise(() => undefined)) as never);
+  expect(await screen.findByText('Loading docs…')).toBeDefined();
+  expect(screen.queryByText('No docs.')).toBeNull();
+});
+
+test('search finds a doc by its text through the daemon, not only its title', async () => {
+  const asked: string[] = [];
+  renderList(
+    (() => Promise.resolve({ docs: [summary, other], total: 2 })) as never,
+    ((q: string) => {
+      asked.push(q);
+      return Promise.resolve({
+        hits: [{ doc: 'doc-2', handle: 'plan', title: 'Plan' }],
+      });
+    }) as never
+  );
+  await screen.findByText('Auth refactor');
+  fireEvent.change(screen.getByLabelText('Search docs'), {
+    target: { value: 'rollout' },
+  });
+  expect(await screen.findByText('Plan')).toBeDefined();
+  await waitFor(() => expect(screen.queryByText('Auth refactor')).toBeNull());
+  expect(asked).toContain('rollout');
+});
+
+test('j and k move through the list', async () => {
+  renderList((() =>
+    Promise.resolve({ docs: [summary, other], total: 2 })) as never);
+  const first = await screen.findByRole('button', { name: 'Auth refactor' });
+  fireEvent.click(first);
+  await screen.findByLabelText('Editing auth');
+  fireEvent.keyDown(screen.getByRole('list', { name: 'Docs' }), { key: 'j' });
+  expect(await screen.findByLabelText('Editing plan')).toBeDefined();
+  fireEvent.keyDown(screen.getByRole('list', { name: 'Docs' }), { key: 'k' });
+  expect(await screen.findByLabelText('Editing auth')).toBeDefined();
 });

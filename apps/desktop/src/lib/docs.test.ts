@@ -7,6 +7,7 @@ import {
   docBadges,
   docDiffCacheKey,
   docDiffPatch,
+  docStatusActions,
   docStatusLine,
   filterDocs,
   revisionAuthor,
@@ -45,6 +46,27 @@ describe('docs helpers', () => {
       'draft',
       'conflicted',
     ]);
+  });
+
+  it('offers Accept on a draft, Reopen on an accepted doc and Restore from archive', () => {
+    const at = (status: DocSummary['status'], over = {}) =>
+      docStatusActions({ status, restored: null, archivedFrom: null, ...over });
+    expect(at('draft')).toEqual([
+      { label: 'Accept', status: 'accepted' },
+      { label: 'Archive', status: 'archived' },
+    ]);
+    expect(at('draft', { restored: { status: 'accepted', at: 'x' } })).toEqual([
+      { label: 'Accept again', status: 'accepted' },
+      { label: 'Archive', status: 'archived' },
+    ]);
+    expect(at('accepted')).toEqual([
+      { label: 'Reopen', status: 'draft' },
+      { label: 'Archive', status: 'archived' },
+    ]);
+    expect(at('archived', { archivedFrom: 'accepted' })).toEqual([
+      { label: 'Restore', status: 'accepted' },
+    ]);
+    expect(at('archived')).toEqual([{ label: 'Restore', status: 'draft' }]);
   });
 
   it('filters by text, scope, archived and unreviewed', () => {

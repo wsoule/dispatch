@@ -464,3 +464,33 @@ describe('SqliteDocStore without FTS5', () => {
     plain.close();
   });
 });
+
+describe('later columns', () => {
+  it('adds publishes.reason to a docs.db made before it existed', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'docs-cols-')));
+    try {
+      const path = join(base, 'docs.db');
+      const old = openSqliteDb(path);
+      old.exec(
+        'CREATE TABLE publishes (task_id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, rev_id TEXT NOT NULL, path TEXT NOT NULL, state TEXT NOT NULL, "commit" TEXT, created_at TEXT NOT NULL)'
+      );
+      old.close();
+      const { db, fts } = openDocsDb(path);
+      const store = new SqliteDocStore(db, fts);
+      store.putPublish({
+        task: 't-1',
+        doc: 'doc-1',
+        rev: 'rev-1',
+        path: 'docs/a.md',
+        state: 'failed',
+        commit: null,
+        createdAt: AT,
+        reason: 'why',
+      });
+      expect(store.publishRows({ task: 't-1' })[0].reason).toBe('why');
+      store.close();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});

@@ -20,6 +20,7 @@ import {
   refAction,
   rowControl,
 } from '../../lib/threadSources';
+import { DocGateCard } from '../docs/DocGateCard';
 import { MemoryGateCard } from '../memory/MemoryGateCard';
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { Markdown } from '../runs/Markdown';
@@ -55,14 +56,14 @@ export interface MessageRowProps {
   onOpen: (action: RefAction) => void;
   /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
   loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
-  /** Declines an open question from an A2A client, reads a memory gate's
-   *  proposal and a task proposal's draft body; without it there is no
-   *  Decline and no proposal to show. */
+  /** Declines an open question from an A2A client, reads a memory or doc
+   *  gate's proposal and a task proposal's draft body; without it there is
+   *  no Decline and no proposal to show. */
   client?: Pick<
     ApiClient,
-    'declineA2ATask' | 'getMemoryProposal' | 'fetchTask'
+    'declineA2ATask' | 'getMemoryProposal' | 'getDocProposal' | 'fetchTask'
   > | null;
-  /** The daemon's port, keying the proposal read under memory's queries. */
+  /** The daemon's port, keying a proposal read under memory's or docs' queries. */
   port?: number;
 }
 
@@ -283,6 +284,25 @@ function Control({
           availability={availability}
           onRestartDaemon={onRestartDaemon}
           onDecide={(choice) => answer({ body: '', choice })}
+        />
+      );
+    case 'doc':
+      return client === null || client === undefined ? (
+        <p className="text-muted-foreground text-[12px]">
+          This window cannot read the proposal, so it cannot decide it.
+        </p>
+      ) : (
+        <DocGateCard
+          doc={control.doc}
+          proposal={control.proposal}
+          client={client}
+          port={port}
+          availability={availability}
+          onRestartDaemon={onRestartDaemon}
+          onDecide={(choice, body) => answer({ body, choice })}
+          onOpenDoc={(docId, merge) =>
+            onOpen({ kind: 'doc', docId, anchor: null, merge })
+          }
         />
       );
     case 'choices':

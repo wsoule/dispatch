@@ -1115,6 +1115,8 @@ export type {
   DocLink,
   DocLinking,
   DocOp,
+  DocProposal,
+  DocProposalView,
   DocRead,
   DocRecord,
   DocRevisionInfo,
@@ -1122,6 +1124,14 @@ export type {
   DocSummary,
   DocsHealth,
 } from '@dispatch/core';
+
+/** POST /api/docs/:ref/publish: the publish task, and its run unless not dispatched. */
+export interface DocPublishResult {
+  task: string;
+  doc: DocRecord;
+  run: string | null;
+  dispatchError: string | null;
+}
 
 /** A whole-body save: the new head, or the 409's merge conflict as a value. */
 export type DocSaveOutcome =
@@ -3633,6 +3643,18 @@ export interface ApiClient {
   revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
   /** Copies a personal doc's head into a new team draft (its owner only). */
   promoteDoc(ref: string): Promise<DocSaveResult>;
+  /** Stores an image for a doc (png, jpeg, gif or webp, typed by its bytes; ≤ 25 MiB). */
+  uploadDocAsset(
+    ref: string,
+    bytes: Blob | Uint8Array
+  ): Promise<{ name: string; markdown: string }>;
+  /** One of a doc's stored images, for a blob URL. */
+  fetchDocAsset(ref: string, name: string): Promise<Blob>;
+  /** Writes a reviewed or accepted team doc into the repo through an elevated task (humans only). */
+  publishDoc(
+    ref: string,
+    input: { path: string; dispatch?: boolean }
+  ): Promise<DocPublishResult>;
   deleteDoc(ref: string): Promise<void>;
   listDocRevisions(
     ref: string,
@@ -4616,6 +4638,21 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     promoteDoc: (ref) =>
       request(target, `${docPath(ref)}/promote`, { method: 'POST' }),
+    uploadDocAsset: (ref, bytes) =>
+      request(target, `${docPath(ref)}/assets`, {
+        method: 'POST',
+        // The daemon takes images only as raw octet-stream bytes.
+        headers: { 'content-type': 'application/octet-stream' },
+        // A copy, so its buffer is a plain ArrayBuffer fetch accepts.
+        body: bytes instanceof Blob ? bytes : new Uint8Array(bytes),
+      }),
+    fetchDocAsset: (ref, name) =>
+      requestBlob(target, `${docPath(ref)}/assets/${encodeURIComponent(name)}`),
+    publishDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/publish`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
     // send(), not request(): the server answers 204 with no body.
     deleteDoc: async (ref) => {
       await send(target, docPath(ref), { method: 'DELETE' });

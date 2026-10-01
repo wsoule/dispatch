@@ -1,6 +1,7 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 
 import {
+  cutMemoryBody,
   diffExport,
   kindFromClaudeType,
   newIndexLines,
@@ -189,6 +190,24 @@ describe('topic files', () => {
     expect(parsed.body).toMatch(
       /\n\[truncated by Dispatch: \d+ bytes; long-form belongs in Docs\]$/
     );
+  });
+
+  it('keeps the full text beside a truncated body, and none beside a whole one', () => {
+    const lines = 'line of text\n'.repeat(1000).trimEnd();
+    const parsed = parseMemoryFile(`---\nname: n\n---\n${lines}`, 'n.md');
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.fullBody).toBe(lines);
+    expect(parseMemoryFile('short', 's.md').fullBody).toBeUndefined();
+  });
+
+  it('cuts a body to fit with any marker, naming the bytes it cut', () => {
+    const full = 'line of text\n'.repeat(1000).trimEnd();
+    const long = (n: number) => `\n[cut ${n} bytes; ${'z'.repeat(80)}]`;
+    const cut = cutMemoryBody(full, long);
+    expect(utf8(cut)).toBeLessThanOrEqual(8192);
+    const n = Number(/\[cut (\d+) bytes/.exec(cut)?.[1]);
+    expect(utf8(cut.slice(0, cut.lastIndexOf('\n[cut'))) + n).toBe(utf8(full));
+    expect(cutMemoryBody('short', long)).toBe('short');
   });
 
   it('cuts a single line longer than 8 KiB instead of dropping it', () => {

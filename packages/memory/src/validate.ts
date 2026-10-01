@@ -86,7 +86,7 @@ export function validateMemoryInput(input: MemoryWriteInput): ValidMemoryInput {
   if (utf8Bytes(input.body) > MEMORY_LIMITS.bodyBytes)
     invalid(
       'body',
-      `at most ${MEMORY_LIMITS.bodyBytes} bytes (UTF-8); long-form belongs in Docs`
+      `at most ${MEMORY_LIMITS.bodyBytes} bytes (UTF-8); long-form belongs in a doc: doc_save it, then ref it from a short entry`
     );
   const refs = validateRefs(input.refs ?? []);
   const epic = input.epic ?? null;

@@ -3,6 +3,7 @@ import type {
   DocHit,
   DocLinking,
   DocListParams,
+  DocProposal,
   DocRead,
   DocRevisionInfo,
   DocSummary,
@@ -61,6 +62,7 @@ const NO_DOCS: DocSummary[] = [];
 const NO_LINKING: DocLinking[] = [];
 const NO_HITS: DocHit[] = [];
 const NO_REVISIONS: DocRevisionInfo[] = [];
+const NO_PROPOSALS: DocProposal[] = [];
 
 // The most revisions the history panel lists, the route's own cap.
 const HISTORY_LIMIT = 200;
@@ -162,4 +164,19 @@ export function useDocDiff(
     queryFn: () => ready(client).diffDoc(ref, pair?.from ?? '', pair?.to ?? ''),
   });
   return { diff: q.data ?? null, loading: q.isLoading, error: q.error };
+}
+
+// The proposals still waiting on a gate for one doc, oldest first as listed.
+export function useOpenDocProposals(
+  client: ApiClient | null,
+  port: number | undefined,
+  doc: string | null
+): DocProposal[] {
+  const q = useQuery({
+    queryKey: [...docsKey(port), 'proposals', doc],
+    enabled: client !== null && doc !== null,
+    queryFn: () =>
+      ready(client).listDocProposals({ doc: doc ?? '', state: ['open'] }),
+  });
+  return q.data?.proposals ?? NO_PROPOSALS;
 }

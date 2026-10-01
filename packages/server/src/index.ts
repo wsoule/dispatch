@@ -95,6 +95,7 @@ import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
 import type { PreflightResult } from './memory/claudeModes.js';
+import { docsOverflowPort } from './memory/overflow.js';
 import { memoryReceiptsStep, memoryRestoreDir } from './memory/receipts.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
@@ -1092,7 +1093,12 @@ async function bootServer(
   }
   // Docs open before the boot receipt export and need nothing from messaging;
   // a docs.db this build cannot open leaves docs unavailable, never the daemon down.
-  const docsHost = new DaemonDocsHost({ store, events });
+  const docsHost = new DaemonDocsHost({
+    store,
+    events,
+    rootDir,
+    refreshTask: (taskId) => cache.refresh(store, [taskId]),
+  });
   const docs = openDocs({
     rootDir,
     host: docsHost,
@@ -1333,6 +1339,15 @@ async function bootServer(
     isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
   });
   orchestrator.setDocsPort(docs.service);
+  // A publish task's run starts with the doc's recorded revision in its worktree.
+  orchestrator.setWorktreeSeed((taskId, wt) =>
+    docs.service.seedFor(taskId, wt)
+  );
+  // A teammate's synced change never moves a publishing task's risk.
+  syncedStore?.setRiskGuard({
+    publishing: (taskId) => docs.service.publishing(taskId),
+    riskChanged: (taskId) => docs.service.riskChangedDuringPublish(taskId),
+  });
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
@@ -1377,6 +1392,18 @@ async function bootServer(
     memoryRestoreDir(rootDir)
   );
   docsHost.bindRuns(orchestrator);
+  // A publish lands once its task does (on a merged run); task.changed is the signal.
+  const syncDocPublishes = (): void => {
+    try {
+      docs.service.syncPublishes();
+    } catch (err) {
+      console.error('docs: recording publishes failed', err);
+    }
+  };
+  syncDocPublishes();
+  const unsubscribeDocPublishes = events.subscribe((event) => {
+    if (event.type === 'task.changed') syncDocPublishes();
+  });
   docsHost.bindMessaging(messaging.store);
   docsHost.bindMemory(docsMemoryPort(memory));
   // The doc gate's handler registers before messaging.recover(), even with
@@ -1399,6 +1426,8 @@ async function bootServer(
   orchestrator.setMemoryPort(memory);
   // Before any run starts: the owner's runs stay in native mode until their
   // Claude notes are imported, once per project.
+  // Before the first import, so long personal notes go straight to a doc.
+  await memory.bindDocsOverflow(docsOverflowPort(docs.service));
   await memory.importClaudeOnce();
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
@@ -2281,6 +2310,7 @@ async function bootServer(
       unsubscribeLinear();
       await linearSync.stop();
       unsubscribeBoardSync();
+      unsubscribeDocPublishes();
       stopWebhookDelivery();
       stopDecisionFeed();
       stopPolicyEngine();

@@ -111,6 +111,7 @@ export {
   CLAUDE_INDEX_HEADER,
   CLAUDE_TYPE_FOR_KIND,
   claudeIndexLineTitle,
+  cutMemoryBody,
   diffExport,
   kindFromClaudeType,
   newIndexLines,

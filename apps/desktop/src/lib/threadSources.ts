@@ -180,6 +180,8 @@ export type RowControl =
   | { kind: 'scope'; paths: string[]; reason: string }
   /** A memory gate; its card reads the proposal, which the message never carries. */
   | { kind: 'memory'; proposalId: string }
+  /** A doc gate; its card reads the proposal through the docs API. */
+  | { kind: 'doc'; doc: string; proposal: string }
   /** An A2A client's handoff; its card shows the draft to every viewer. */
   | {
       kind: 'task-proposal';
@@ -242,6 +244,15 @@ export function rowControl(
     if (gate.type === 'memory') {
       return { kind: 'memory', proposalId: gate.proposalId };
     }
+    // Only the system raises doc gates; a look-alike or malformed one gets plain choices.
+    if (
+      gate.type === 'doc' &&
+      message.from === SYSTEM &&
+      typeof gate.doc === 'string' &&
+      typeof gate.proposal === 'string'
+    ) {
+      return { kind: 'doc', doc: gate.doc, proposal: gate.proposal };
+    }
     return { kind: 'choices', choices: message.choices ?? [], gate: true };
   }
   if (!message.to.includes(ctx.me)) return { kind: 'none' };
@@ -255,7 +266,15 @@ export function rowControl(
 /** A row control that draws something to answer with. */
 type AnswerControl = Extract<
   RowControl,
-  { kind: 'tool-approval' | 'scope' | 'memory' | 'task-proposal' | 'choices' }
+  {
+    kind:
+      | 'tool-approval'
+      | 'scope'
+      | 'memory'
+      | 'doc'
+      | 'task-proposal'
+      | 'choices';
+  }
 >;
 
 /** Whether a row's control gives this viewer a gate card or at least one
@@ -267,7 +286,8 @@ export function offersAnswer(control: RowControl): control is AnswerControl {
   return (
     control.kind === 'tool-approval' ||
     control.kind === 'scope' ||
-    control.kind === 'memory'
+    control.kind === 'memory' ||
+    control.kind === 'doc'
   );
 }
 
@@ -421,7 +441,8 @@ export type RefAction =
   | { kind: 'run'; taskId: string; runId: string }
   | { kind: 'file'; path: string }
   | { kind: 'message'; messageId: string }
-  | { kind: 'doc'; docId: string; anchor: string | null };
+  /** `merge` names a conflicting proposal whose marked merge the doc opens on. */
+  | { kind: 'doc'; docId: string; anchor: string | null; merge?: string };
 
 /** Where a ref chip leads, or null for one with no page: a commit, a run no longer listed, or a
  *  type this build does not register, which a peer's newer version may send. */
@@ -470,7 +491,7 @@ export interface RefNavigation {
   openThread: (messageId: string) => void;
   openImpact: (subject: { kind: 'file'; id: string }) => void;
   /** The Docs view on one doc, scrolled to `anchor`'s section when set. */
-  openDoc: (docId: string, anchor: string | null) => void;
+  openDoc: (docId: string, anchor: string | null, merge?: string) => void;
 }
 
 export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
@@ -481,7 +502,7 @@ export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
     } else if (action.kind === 'file') {
       nav.openImpact({ kind: 'file', id: action.path });
     } else if (action.kind === 'doc') {
-      nav.openDoc(action.docId, action.anchor);
+      nav.openDoc(action.docId, action.anchor, action.merge);
     } else nav.openThread(action.messageId);
   };
 }

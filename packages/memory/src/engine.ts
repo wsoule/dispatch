@@ -3,6 +3,7 @@ import type { MemoryConfig, PolicyRuling } from '@dispatch/core';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { Address, Ref } from '@dispatch/protocol';
 
+import { withoutPersonalDoc } from './claudeFiles.js';
 import { normalizeTitle } from './contentHash.js';
 import { MemoryError } from './errors.js';
 import { memoryHandle, parseMemoryRef } from './handle.js';
@@ -775,12 +776,13 @@ export class MemoryEngine {
       );
     checkTarget(entry, 'personal', 'id', ref);
     this.mayManage(viewer, entry, 'promote');
+    const shareable = withoutPersonalDoc(entry.body, entry.refs);
     const valid = validateMemoryInput({
       scope: target,
       kind: entry.kind,
       title: entry.title,
-      body: entry.body,
-      refs: entry.refs,
+      body: shareable.body,
+      refs: shareable.refs,
     });
     if (!isDecider(principal))
       return await this.propose(viewer, {

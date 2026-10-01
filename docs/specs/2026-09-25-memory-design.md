@@ -457,14 +457,16 @@ Promoting a personal entry is a copy, and the source stays where it is.
 
 Size limits per write:
 
-| Field                     | Limit                                  |
-| ------------------------- | -------------------------------------- |
-| `title`                   | 200 bytes (UTF-8), one line, non-empty |
-| `body`                    | 8 KiB (UTF-8); long-form belongs to #4 |
-| `refs`                    | 20 entries; `id`, `at` 512 bytes each  |
-| `appliesTo`               | 50 task ids                            |
-| `reason` (forget, reject) | 500 bytes, one line                    |
-| `query` (search)          | 500 bytes                              |
+| Field   | Limit                                  |
+| ------- | -------------------------------------- |
+| `title` | 200 bytes (UTF-8), one line, non-empty |
+| `body`  | 8 KiB (UTF-8); long-form belongs to #4 |
+
+Over 8 KiB, `memory_save` answers
+`body: at most 8192 bytes (UTF-8); long-form belongs in a doc: doc_save it, then ref it from a short entry`.
+| `refs` | 20 entries; `id`, `at` 512 bytes each | | `appliesTo` | 50 task ids |
+| `reason` (forget, reject) | 500 bytes, one line | | `query` (search) | 500
+bytes |
 
 Every failure is a `MemoryError` whose `field` names the bad input. Its `code`
 maps to a status the way `MessagingError`'s does: `invalid` 400, `forbidden`
@@ -762,7 +764,7 @@ When a `project` or `team` entry of kind `hazard` or `constraint` becomes
 active, the service hands a digest line to every live execute run that may see
 it and whose task it reaches, other than the author's own run:
 
-- The line goes through `orchestrator.notifyRun` (`orchestrator.ts:599-611`),
+- The line goes through `orchestrator.notifyRun` (`orchestrator.ts:709-723`),
   the same path messaging's channel digests take (`messaging/host.ts:101-103`):
 
   ```text
@@ -926,16 +928,22 @@ desktop:
   (`:21-27`).
 - `GATE_RUNGS.memory = 4` (`:67-73`): the top rung, per the controller's ruling,
   because a bad team lesson reaches every teammate's runs.
+- **Config hazard.** A `.dispatch/config.yml` naming `policy.gates.memory` used
+  to be a `ConfigError` on a build without the gate. Docs Task 3a made
+  `parsePolicyConfig` skip an unknown gate key with a warning instead, one
+  release before the `memory` gate shipped, so a teammate's older build ignores
+  the pin rather than refusing the file.
 - **Rung 4 is relabelled**, since it now covers two gates:
   - core's stop (`:50`) keeps the name `auto-merge`, which config and old
     receipts use, and its label becomes "Auto-merge on green and accept agents'
-    team memory";
+    team memory and doc edits" (the `doc` gate joined it in docs v1);
   - the desktop slider's label
     (`apps/desktop/src/components/settings/PolicySection.tsx:56`) becomes "Merge
-    and accept memory on their own";
+    and accept memory and doc edits on their own";
   - its description (`:48`) gains "Agents' lessons join shared memory without
     review";
-  - rung 3's description (`:47`) ends "Merging and shared memory still wait."
+  - rung 3's description (`:47`) ends "Merging, shared memory and accepted docs
+    still wait."
 - **Receipts name the gate.** `describePolicyAuthorization`
   (`policy.ts:261-270`) now names the gate instead of the stop:
   `auto-decided by policy rung 4 (memory gate)`, and likewise for every gate.
@@ -1445,7 +1453,13 @@ from the file exactly as Dispatch wrote it.
 - The body is the text after the frontmatter, with Dispatch's provenance line
   removed and `untrustedBlock`'s escapes reversed. It is cut at 8 KiB on a line
   boundary, with the line
-  `[truncated by Dispatch: N bytes; long-form belongs in Docs]`.
+  `[truncated by Dispatch: N bytes; long-form belongs in Docs]`. A personal
+  entry keyed to this project hands its full text to a personal doc of its human
+  instead, and the line reads
+  `[truncated by Dispatch: N bytes; full text in doc <doc id> of project <key>]`
+  with a `doc` ref to it (built in docs Task 18). Every other case stays plain
+  truncation: cross-project personal entries, project and team entries, the
+  `supersede` proposals ingest makes for them, and ledger import rows.
 - **Changed** means the sha256 of the parsed title and body differs from the
   manifest's `parsed_hash`. Claude Code rewrites frontmatter whenever it writes
   a file (`metadata.modified`, `originSessionId`, `node_type`), and those keys

@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -329,6 +330,46 @@ describe('docs routes', () => {
     }
   });
 
+  it("serves a conflicting proposal's marked merge for the merge view", async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n## A\nv1\n' });
+    await post('/docs/spec/status', { status: 'accepted' });
+    const task = await json<{ meta: { id: string } }>(
+      await post('/tasks', { title: 'Proposing task' })
+    );
+    const run = await json<{ id: string }>(
+      await post(`/tasks/${task.meta.id}/runs`, { executor: 'claude' })
+    );
+    await waitFor(
+      async () =>
+        (
+          await json<{ meta: { state: string } }>(
+            await fetch(`${base}/runs/${run.id}`)
+          )
+        ).meta.state === 'running'
+    );
+    const edited = await rawFetch(`${base}/docs/spec/edit`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${executor.lastRunToken ?? ''}`,
+      },
+      body: JSON.stringify({
+        ops: [{ op: 'replace_section', section: 'A', text: 'run' }],
+      }),
+    });
+    const { proposal } = await json<{ proposal: string }>(edited);
+    await post('/docs/spec/edit', {
+      ops: [{ op: 'replace_section', section: 'A', text: 'human' }],
+    });
+    const view = await json<{
+      mergeable: { clean: boolean };
+      marked: string | null;
+    }>(await fetch(`${base}/docs/proposals/${proposal}`));
+    expect(view.mergeable.clean).toBe(false);
+    expect(view.marked).toContain('<<<<<<< ');
+    expect(view.marked).toContain('run\n');
+  });
+
   it("answers a task's index lines, and a dispatched run's prompt carries them", async () => {
     const task = await json<{ meta: { id: string } }>(
       await post('/tasks', { title: 'Indexed task' })
@@ -378,12 +419,16 @@ describe('docs routes', () => {
     for (const file of files) expect(statSync(file).mode & 0o777).toBe(0o600);
     await handle.stop();
     for (const file of files) if (existsSync(file)) chmodSync(file, 0o644);
+    const assets = join(runsDir(root), 'docs-assets');
+    expect(statSync(assets).mode & 0o777).toBe(0o700);
+    chmodSync(assets, 0o755);
     handle = await boot(root, executor);
     base = `http://127.0.0.1:${handle.port}/api`;
     await post('/docs', { title: 'Mode two', body: 'y\n' });
     for (const file of files) {
       if (existsSync(file)) expect(statSync(file).mode & 0o777).toBe(0o600);
     }
+    expect(statSync(assets).mode & 0o777).toBe(0o700);
   });
 
   it('serves health to humans only', async () => {
@@ -415,5 +460,234 @@ describe('docs routes', () => {
     );
     expect(teammate.orphans).toBeUndefined();
     expect(teammate.restore).toBeUndefined();
+  });
+});
+
+describe('publish route', () => {
+  type Published = {
+    task: string;
+    run: string | null;
+    dispatchError: string | null;
+    doc: { published: unknown; lastPublishPath: string | null };
+  };
+
+  it('creates the elevated task, dispatches it with the doc seeded, and refuses a run or a bad path', async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec v1\n' });
+    expect(
+      (await post('/docs/spec/publish', { path: '../escape.md' })).status
+    ).toBe(400);
+    expect(
+      (await post('/docs/spec/publish', { path: '.github/ci.md' })).status
+    ).toBe(400);
+    const res = await post('/docs/spec/publish', { path: 'docs/spec.md' });
+    expect(res.status).toBe(201);
+    const out = await json<Published>(res);
+    expect(out.dispatchError).toBeNull();
+    expect(out.doc.lastPublishPath).toBe('docs/spec.md');
+    const task = await json<{ meta: { risk: string; writes: string[] } }>(
+      await fetch(`${base}/tasks/${out.task}`)
+    );
+    expect(task.meta.risk).toBe('elevated');
+    expect(task.meta.writes).toEqual(['docs/spec.md']);
+    const cwd = executor.started.at(-1)?.cwd ?? '';
+    expect(readFileSync(join(cwd, 'docs/spec.md'), 'utf8')).toBe('# Spec v1\n');
+
+    await waitFor(async () => {
+      const run = await json<{ meta: { state: string } }>(
+        await fetch(`${base}/runs/${out.run}`)
+      );
+      return run.meta.state === 'running';
+    });
+    const refused = await rawFetch(`${base}/docs/spec/publish`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${executor.lastRunToken ?? ''}`,
+      },
+      body: JSON.stringify({ path: 'docs/other.md' }),
+    });
+    expect(refused.status).toBe(403);
+  });
+
+  it("runs a publish for the human who asked: a teammate's for them, the owner's app token for the owner", async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    await post('/docs', { title: 'Plan', body: '# Plan\n' });
+    const operatorOf = (runId: string | null) =>
+      handle.orchestrator.list().find((r) => r.id === runId)?.operator;
+    const mine = await json<Published>(
+      await post('/docs/spec/publish', { path: 'docs/spec.md' })
+    );
+    const ownerRun = handle.orchestrator.list().find((r) => r.id === mine.run);
+    expect(ownerRun?.operator).toBe(ownerRun?.dispatchedBy);
+    expect(ownerRun?.operator).toMatch(/^human:/);
+    const teammate = await teammateToken();
+    const theirs = await json<Published>(
+      await rawFetch(`${base}/docs/plan/publish`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${teammate}`,
+        },
+        body: JSON.stringify({ path: 'docs/plan.md' }),
+      })
+    );
+    expect(theirs.dispatchError).toBeNull();
+    expect(operatorOf(theirs.run)).toBe('human:alice');
+    // The shared agent token never reaches the docs routes, so it starts no publish run.
+    const viaAgent = await rawFetch(`${base}/docs/plan/publish`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ path: 'docs/plan2.md' }),
+    });
+    expect(viaAgent.status).toBe(403);
+  });
+
+  it("keeps a publish task's risk at decide tier: a teammate and the agent token are refused", async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const out = await json<Published>(
+      await post('/docs/spec/publish', {
+        path: 'docs/spec.md',
+        dispatch: false,
+      })
+    );
+    const patchRisk = (headers: Record<string, string>) =>
+      rawFetch(`${base}/tasks/${out.task}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ risk: 'routine' }),
+      });
+    const teammate = await teammateToken();
+    for (const token of [teammate, handle.tokens.agentToken]) {
+      const res = await patchRisk({ authorization: `Bearer ${token}` });
+      expect(res.status).toBe(403);
+    }
+    const task = await json<{ meta: { risk: string } }>(
+      await fetch(`${base}/tasks/${out.task}`)
+    );
+    expect(task.meta.risk).toBe('elevated');
+    // Other fields stay open to a teammate.
+    const titled = await rawFetch(`${base}/tasks/${out.task}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${teammate}`,
+      },
+      body: JSON.stringify({ title: 'Publish the spec' }),
+    });
+    expect(titled.status).toBe(200);
+    const owner = await fetch(`${base}/tasks/${out.task}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ risk: 'critical' }),
+    });
+    expect(owner.status).toBe(200);
+  });
+
+  it('records no landing from a status alone: the task needs a merged run', async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const out = await json<Published>(
+      await post('/docs/spec/publish', {
+        path: 'docs/spec.md',
+        dispatch: false,
+      })
+    );
+    expect(out.run).toBeNull();
+    const patched = await fetch(`${base}/tasks/${out.task}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'landed' }),
+    });
+    expect(patched.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    const read = await json<{ doc: { published: unknown } }>(
+      await fetch(`${base}/docs/spec`)
+    );
+    expect(read.doc.published).toBeNull();
+    expect(
+      (await post('/docs/spec/publish', { path: 'docs/again.md' })).status
+    ).toBe(409);
+  });
+});
+
+describe('image routes', () => {
+  const octet = { 'content-type': 'application/octet-stream' };
+  const png = (tail: number) =>
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, tail]);
+  const upload = (
+    doc: string,
+    body: Uint8Array | string,
+    headers: Record<string, string> = octet
+  ) => fetch(`${base}/docs/${doc}/assets`, { method: 'POST', headers, body });
+
+  it('stores an image by its sniffed type, serves it sandboxed, and refuses SVG and oversize bodies', async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    const up = await upload('img', png(1));
+    expect(up.status).toBe(201);
+    const { name, markdown } = await json<{ name: string; markdown: string }>(
+      up
+    );
+    expect(name).toMatch(/^[0-9a-f]{64}\.png$/);
+    expect(markdown).toBe(`![](asset:${name})`);
+    const got = await fetch(`${base}/docs/img/assets/${name}`);
+    expect(got.status).toBe(200);
+    expect(got.headers.get('content-type')).toBe('image/png');
+    expect(got.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(got.headers.get('content-security-policy')).toBe(
+      "default-src 'none'; sandbox"
+    );
+    expect(got.headers.get('content-disposition')).toBe(
+      `inline; filename="${name}"`
+    );
+    expect(got.headers.get('cache-control')).toBe('private, max-age=3600');
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(png(1));
+    expect((await upload('img', '<svg/>')).status).toBe(400);
+    expect((await upload('img', new Uint8Array(0))).status).toBe(400);
+    const huge = new Uint8Array(25 * 1024 * 1024 + 1);
+    huge.set(png(2));
+    expect((await upload('img', huge)).status).toBe(413);
+  });
+
+  it("answers a caller who may not write before reading the upload's body", async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    await post('/docs/img/status', { status: 'archived' });
+    const huge = new Uint8Array(25 * 1024 * 1024 + 1);
+    huge.set(png(4));
+    expect((await upload('img', huge)).status).toBe(409);
+  });
+
+  it('refuses an image upload that is not application/octet-stream', async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    for (const headers of [
+      { 'content-type': 'text/plain' },
+      { 'content-type': 'image/png' },
+      { 'content-type': 'image/svg+xml' },
+    ]) {
+      expect((await upload('img', png(3), headers)).status).toBe(415);
+    }
+  });
+
+  it('reads an asset only by a well-formed name with a row for that doc, never a path', async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    await post('/docs', { title: 'Other', body: 'y\n' });
+    const { name } = await json<{ name: string }>(await upload('img', png(7)));
+    for (const bad of [
+      encodeURIComponent('../../docs.db'),
+      encodeURIComponent('../docs.db'),
+      `${name.slice(0, 60)}.svg`,
+      `${name}%00.png`,
+      'docs.db',
+    ]) {
+      expect([
+        bad,
+        (await fetch(`${base}/docs/img/assets/${bad}`)).status,
+      ]).toEqual([bad, 400]);
+    }
+    expect(
+      (await fetch(`${base}/docs/img/assets/${'b'.repeat(64)}.png`)).status
+    ).toBe(404);
+    expect((await fetch(`${base}/docs/other/assets/${name}`)).status).toBe(404);
   });
 });

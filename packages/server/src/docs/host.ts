@@ -7,16 +7,23 @@ import type {
   TaskRisk,
   TaskStorePort,
 } from '@dispatch/core';
-import { TaskParseError } from '@dispatch/core';
+import {
+  isCanceledStatus,
+  isCompletedStatus,
+  TaskParseError,
+} from '@dispatch/core';
 import type { MemoryStore, MemoryStores, Operator } from '@dispatch/memory';
 import type { MessageStore } from '@dispatch/protocol';
 
+import { spawnGitSync } from '../blockingGit.js';
 import type { EventBus } from '../events.js';
 import { IDENTITY_PATTERN } from '../memory/identities.js';
 import type { Principal } from '../messaging/principal.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import type { RunMeta } from '../orchestrator/types.js';
 import { runKind } from '../orchestrator/types.js';
+import { WorktreeManager } from '../orchestrator/worktree.js';
+import { statusModelFor } from '../statuses.js';
 import { DocsError } from './errors.js';
 
 // How DocsService reaches the rest of the daemon, so its tests run against a
@@ -89,6 +96,24 @@ export interface DocsHost extends DocsGatePort {
   // One line into a live run's context; throws for a run that cannot take it.
   notifyRun(runId: string, line: string): void;
   now(): Date;
+  // Publish (v1): the project checkout, and the elevated task a publish runs as.
+  readonly rootDir: string;
+  createPublishTask(input: {
+    title: string;
+    body: string;
+    writes: string[];
+    risk: 'elevated';
+  }): string;
+  // Drops a publish task whose seed failed, so it never sits open with no run that can start.
+  closePublishTask(taskId: string, reason: string): void;
+  // How a publish task ended: landed only once a run's merge changed `path`;
+  // failed when a merge landed nothing there; null while it is still open.
+  // `seeded` is the text the publish wrote into the run's worktree.
+  publishOutcome(
+    taskId: string,
+    path: string,
+    seeded: string | null
+  ): PublishOutcome;
 }
 
 // doc.changed events for amends of one doc coalesce within this window.
@@ -97,7 +122,16 @@ export const AMEND_DEBOUNCE_MS = 2_000;
 type DocsRuns = Pick<
   Orchestrator,
   'list' | 'notifyRun' | 'onRunTerminal' | 'taskIdOfRun'
->;
+> &
+  Partial<Pick<Orchestrator, 'diff'>>;
+
+const HEX_COMMIT = /^[0-9a-f]{7,64}$/;
+
+export type PublishOutcome =
+  | { state: 'landed'; commit: string | null }
+  | { state: 'dropped' }
+  | { state: 'failed'; reason: string }
+  | null;
 type DocsMessages = Pick<MessageStore, 'getMessage' | 'thread' | 'deliveries'>;
 type MemoryEntryScope = 'personal' | 'project' | 'team';
 
@@ -154,8 +188,167 @@ export class DaemonDocsHost implements DocsHost {
       store: TaskStorePort;
       events: Pick<EventBus, 'broadcast'>;
       debounceMs?: number;
+      // The project checkout publishes validate against and read git in.
+      rootDir?: string;
+      // Brings the daemon's task cache up to date after a task is created here.
+      refreshTask?: (taskId: string) => void;
     }
   ) {}
+
+  get rootDir(): string {
+    return this.deps.rootDir ?? '';
+  }
+
+  createPublishTask(
+    input: Parameters<DocsHost['createPublishTask']>[0]
+  ): string {
+    const task = this.deps.store.create({
+      title: input.title,
+      description: input.body,
+      writes: input.writes,
+      risk: input.risk,
+    });
+    this.deps.refreshTask?.(task.meta.id);
+    this.deps.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
+    return task.meta.id;
+  }
+
+  closePublishTask(taskId: string, reason: string): void {
+    const now = new Date().toISOString();
+    this.deps.store.update(
+      taskId,
+      {
+        status: statusModelFor(this.rootDir).roles.dropped,
+        appendActivity: `${now} [docs] publish failed: ${reason}`,
+        activityActor: 'none',
+      },
+      now
+    );
+    this.deps.refreshTask?.(taskId);
+    this.deps.events.broadcast({ type: 'task.changed', ids: [taskId] });
+  }
+
+  // A status alone never lands a publish (an agent may set any status): one of
+  // the task's execute runs must carry the orchestrator's merge record, and
+  // what it merged must have changed `path` (a merge commit on the default
+  // branch, or a PR's merged diff). A merge that changed nothing there fails.
+  publishOutcome(
+    taskId: string,
+    path: string,
+    seeded: string | null
+  ): PublishOutcome {
+    let doc;
+    try {
+      doc = this.deps.store.get(taskId);
+    } catch (err) {
+      if (err instanceof TaskParseError) return null;
+      throw err;
+    }
+    if (doc === null) return { state: 'dropped' };
+    const model = statusModelFor(this.rootDir);
+    if (isCanceledStatus(doc.meta.status, model)) return { state: 'dropped' };
+    if (!isCompletedStatus(doc.meta.status, model) || this.runs === null)
+      return null;
+    const merged = this.runs
+      .list()
+      .filter(
+        (r) =>
+          r.taskId === taskId &&
+          runKind(r) === 'execute' &&
+          (r.reviewAction === 'merge' || r.reviewAction === 'pr')
+      );
+    if (merged.length === 0) return null;
+    for (const run of merged) {
+      if (run.reviewAction === 'merge') {
+        const commit = run.mergeCommit;
+        if (commit !== undefined && this.commitLanded(commit, path, seeded))
+          return { state: 'landed', commit };
+      } else if (this.prChanged(run.id, path)) {
+        return { state: 'landed', commit: this.lastCommitFor(path) };
+      }
+    }
+    return {
+      state: 'failed',
+      reason: `nothing landed: no merged run of ${taskId} changed ${path}`,
+    };
+  }
+
+  // Whether `commit` is on the default branch and carries the publish: the
+  // file there holds the seeded bytes, or the commit's own change (against its
+  // first parent) touched it, as a squash that reformatted it does. Someone
+  // else's edit of the path on main never counts.
+  private commitLanded(
+    commit: string,
+    path: string,
+    seeded: string | null
+  ): boolean {
+    if (this.rootDir === '' || !HEX_COMMIT.test(commit)) return false;
+    let base: string;
+    try {
+      base = new WorktreeManager(this.rootDir).defaultBaseBranch();
+    } catch {
+      return false;
+    }
+    const onBase = spawnGitSync(this.rootDir, [
+      'merge-base',
+      '--is-ancestor',
+      commit,
+      base,
+    ]);
+    if (onBase.exitCode !== 0) return false;
+    if (seeded !== null) {
+      const blob = spawnGitSync(this.rootDir, [
+        'cat-file',
+        'blob',
+        `${commit}:${path}`,
+      ]);
+      if (blob.exitCode === 0 && blob.stdout === seeded) return true;
+    }
+    const changed = spawnGitSync(this.rootDir, [
+      '--literal-pathspecs',
+      'diff',
+      '--name-only',
+      `${commit}^1`,
+      commit,
+      '--',
+      path,
+    ]);
+    return changed.exitCode === 0 && changed.stdout.trim() !== '';
+  }
+
+  // Whether a PR-merged run's recorded diff changed `path`.
+  private prChanged(runId: string, path: string): boolean {
+    try {
+      return (
+        this.runs?.diff?.(runId).files.some((f) => f.path === path) ?? false
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  // The newest commit on the default branch that touched `path`, or null.
+  lastCommitFor(path: string): string | null {
+    if (this.rootDir === '') return null;
+    let base: string;
+    try {
+      base = new WorktreeManager(this.rootDir).defaultBaseBranch();
+    } catch {
+      return null;
+    }
+    // Literal pathspecs: the path is a file name, never a glob or `:(magic)`.
+    const out = spawnGitSync(this.rootDir, [
+      '--literal-pathspecs',
+      'log',
+      '-1',
+      '--format=%H',
+      base,
+      '--',
+      path,
+    ]);
+    const sha = out.exitCode === 0 ? out.stdout.trim() : '';
+    return sha === '' ? null : sha;
+  }
 
   bindRuns(orchestrator: DocsRuns): void {
     this.runs = orchestrator;

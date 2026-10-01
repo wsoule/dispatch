@@ -206,6 +206,30 @@ describe('the docs receipts step', () => {
     expect(files()).toEqual(['keep.md']);
   });
 
+  it('never writes through a symlinked docs directory or receipt file', () => {
+    const { service } = makeService();
+    const owner = service.actorFor(OWNER);
+    service.create(owner, { title: 'Spec', body: 'x\n' });
+    service.seal(owner, 'spec');
+    const outside = join(dir, 'outside');
+    mkdirSync(outside);
+    mkdirSync(join(dir, '.dispatch'));
+    symlinkSync(outside, docsDir());
+    const step = docsReceiptsStep(service, restoreDir);
+    const linked = step(dir);
+    expect(linked.changed).toBe(0);
+    expect(linked.problems.join(' ')).toContain('symlink');
+    expect(readdirSync(outside)).toEqual([]);
+
+    rmSync(docsDir());
+    mkdirSync(docsDir());
+    writeFileSync(join(outside, 'secret.md'), 'keep\n');
+    symlinkSync(join(outside, 'secret.md'), join(docsDir(), 'spec.md'));
+    const fileLinked = step(dir);
+    expect(fileLinked.problems.join(' ')).toContain('symlink');
+    expect(readFileSync(join(outside, 'secret.md'), 'utf8')).toBe('keep\n');
+  });
+
   it('removes nothing while a staged restore is pending', () => {
     const { service } = makeService({ coalesceMinutes: 0 });
     service.create(service.actorFor(OWNER), { title: 'A', body: 'x\n' });

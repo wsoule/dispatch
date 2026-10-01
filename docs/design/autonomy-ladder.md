@@ -36,11 +36,11 @@ at a rung keeps its previous behavior. Rungs are cumulative.
    approval escalations also auto-allow, and an agent may wake a sleeping task
    without asking. Merge still blocks.
 
-4. **`auto-merge`** ("Auto-merge on green and accept agents' team memory") — a
-   run whose fix loop completes green auto-enqueues to the merge queue, which
-   rebases, verifies, and lands it, and an agent's lesson for project or team
-   memory joins it without waiting in Needs you. Humans review receipts after
-   the fact.
+4. **`auto-merge`** ("Auto-merge on green and accept agents' team memory and doc
+   edits") — a run whose fix loop completes green auto-enqueues to the merge
+   queue, which rebases, verifies, and lands it; an agent's lesson for project
+   or team memory joins it, and agents' edits to accepted docs (the `doc` gate)
+   apply, without waiting in Needs you. Humans review receipts after the fact.
 
 The config key is `policy.rung: 1 | 2 | 3 | 4` in `.dispatch/config.yml`
 (committed, per-project, shared — same file as `fixLoop`, `verifySteps`,
@@ -111,6 +111,12 @@ one key.
   not earlier: a bad team lesson reaches every teammate's runs. Policy applies
   the proposal and records a receipt, unless it matches a personal entry of the
   run's operator; that one still asks, so policy never publishes a private note.
+- The `doc` gate (an agent's edit to an accepted team doc, held as a proposal,
+  `packages/server/src/docs/gate.ts`) demotes here too: every run linking the
+  doc reads its head. Policy approves the proposal when it merges cleanly and
+  records a ledger decision and a `[policy]` Activity line; a conflicting one
+  fails and still needs a human, and an `elevated` or `critical` task's proposal
+  (or one with no task) always waits.
 
 ## Per-preset defaults: confirmed
 
@@ -216,6 +222,7 @@ verifiably complete, not because the ladder touches it.
 | 15  | Run stalled / interrupted-dirty handling                                                      | feed kind `run-stalled`                                                                                                           | n/a — an after-the-fact repair signal, not a permission                                                                                                                                                                                                   |
 | 16  | Wake gates (an agent's `wake: 'request'` message to a task with no live run)                  | `messaging/host.ts` (`decide`); feed kind `approval`                                                                              | **3**; a human's wake never raises one                                                                                                                                                                                                                    |
 | 17  | Memory gates (an agent's proposal to add to, change or retire project or team memory)         | `memory/gate.ts`; `packages/memory/src/engine.ts` (`propose`); feed kind `memory`                                                 | **4**; a proposal matching the operator's personal entry never auto-applies                                                                                                                                                                               |
+| 18  | Doc gates (an agent's edit to an accepted team doc, held as a proposal)                       | `docs/gate.ts`; `docs/service.ts` (`approveProposal`); feed kind `doc`                                                            | **4**; a conflicting proposal never auto-applies, and `elevated`/`critical` risk caps it below 4                                                                                                                                                          |
 
 ## Mechanism: one seam, a switch per gate
 
@@ -231,8 +238,10 @@ The decision feed already reserved the seam for exactly this epic:
    (`messaging/scopePolicy.ts`, rung ≥ 2), the tool-approval auto-answer
    (`policyEngine.ts`, rung ≥ 3), an agent's wake without a gate
    (`messaging/host.ts`, rung ≥ 3), fix-loop auto-ignition (rung ≥ 3),
-   auto-enqueue of green runs (rung ≥ 4), and an agent's memory proposal applied
-   without a gate (`packages/memory/src/engine.ts`, rung ≥ 4).
+   auto-enqueue of green runs (rung ≥ 4), an agent's memory proposal applied
+   without a gate (`packages/memory/src/engine.ts`, rung ≥ 4), and an agent's
+   edit to an accepted doc approved without a gate
+   (`packages/server/src/docs/service.ts`, rung ≥ 4).
 3. Receipts for every auto-decision, all three of: a ledger entry, the
    decision-feed item kept with `disposition: 'recorded'` (the feed becomes the
    notification center's filter, per the audit amendment), and an Activity line

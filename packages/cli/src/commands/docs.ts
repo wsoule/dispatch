@@ -5,7 +5,13 @@ import type {
   DocStatus,
   LinkRel,
 } from '@dispatch/core';
-import { LINK_RELS, renderDocFile } from '@dispatch/core';
+import {
+  assetNames,
+  LINK_RELS,
+  parseDocFile,
+  renderDocFile,
+  rewriteAssetLinks,
+} from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -13,12 +19,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
@@ -163,15 +170,32 @@ export async function importFiles(
   const unread: { path: string; detail: string }[] = [];
   const files = paths.flatMap((path) => {
     try {
-      const content = readFileSync(path);
+      const raw = readFileSync(path);
+      // A receipts or export file: sent whole (the daemon reads its
+      // frontmatter), under its own slug and time.
+      const parsed = parseDocFile(raw.toString('utf8'));
+      const doc = 'error' in parsed ? null : parsed;
+      // An exported doc in its export's personal/ folder is someone's private
+      // doc: never sent. A plain note in any other personal/ folder is a file.
+      if (
+        doc !== null &&
+        (doc.meta.scope === 'personal' ||
+          basename(dirname(realpathSync(path))).toLowerCase() === 'personal')
+      ) {
+        unread.push({ path, detail: 'personal docs are never imported' });
+        return [];
+      }
       return [
         {
           path,
-          name: basename(path),
-          mtime: statSync(path).mtime.toISOString(),
-          bytes: content.byteLength,
-          hash: createHash('sha256').update(content).digest('hex'),
-          content,
+          name: doc === null ? basename(path) : `${doc.meta.slug}.md`,
+          mtime:
+            doc === null
+              ? statSync(path).mtime.toISOString()
+              : doc.meta.updatedAt,
+          bytes: raw.byteLength,
+          hash: createHash('sha256').update(raw).digest('hex'),
+          content: raw,
         },
       ];
     } catch (err) {
@@ -300,6 +324,35 @@ function ancestryAuthors(
 
 // Writes every doc the caller can see to `dir` (personal ones under `personal/`)
 // in the receipt file format; `revHistory` adds sealed revisions in `.history/<handle>/`.
+// Doc ids are `doc-` and a ULID; one names a directory only once it matches.
+const EXPORT_DOC_ID = /^doc-[0-9A-Z]{26}$/;
+
+// Copies each image `text` references to <dir>/assets/<doc id>/ and points its
+// link there, relative to the doc's own folder; one the daemon lacks keeps its link.
+async function exportImages(
+  api: DocsApi,
+  dir: string,
+  sub: string,
+  docId: string,
+  text: string
+): Promise<string> {
+  const names = assetNames(text);
+  if (names.length === 0 || !EXPORT_DOC_ID.test(docId)) return text;
+  const assetsDir = join(dir, 'assets', docId);
+  const copied = new Set<string>();
+  for (const name of names) {
+    const bytes = await api.asset(docId, name);
+    if (bytes === null) continue;
+    mkdirSync(assetsDir, { recursive: true });
+    writeFileSync(join(assetsDir, name), bytes);
+    copied.add(name);
+  }
+  const rel = relative(sub, assetsDir).split(sep).join('/');
+  return rewriteAssetLinks(text, (n) =>
+    copied.has(n) ? `${rel}/${n}` : `asset:${n}`
+  );
+}
+
 export async function exportDocs(
   api: DocsApi,
   dir: string,
@@ -330,10 +383,13 @@ export async function exportDocs(
         })),
         authors: ancestryAuthors(r.rev, history),
         updatedAt: d.updatedAt,
+        // Names a personal doc as one, so no import takes it for a team doc.
+        scope: d.scope,
       };
       const sub = d.scope === 'personal' ? join(dir, 'personal') : dir;
       mkdirSync(sub, { recursive: true });
-      writeFileSync(join(sub, `${d.handle}.md`), renderDocFile(meta, r.text));
+      const text = await exportImages(api, dir, sub, d.id, r.text);
+      writeFileSync(join(sub, `${d.handle}.md`), renderDocFile(meta, text));
       if (revHistory) {
         const historyDir = join(sub, '.history', d.handle);
         mkdirSync(historyDir, { recursive: true });
@@ -615,6 +671,41 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
       const r = await (await docsClient(ctx, o.token)).promote(ref);
       ctx.log(`promoted to ${r.handle}`);
     });
+
+  docs
+    .command('publish <ref>')
+    .description(
+      'Write a reviewed or accepted team doc into the repo through an elevated task'
+    )
+    .option('--path <path>', 'repo-relative .md path (default: the last one)')
+    .option('--no-dispatch', 'create the task without starting its run')
+    .option(...tokenOpt)
+    .action(
+      async (
+        ref: string,
+        o: { path?: string; dispatch: boolean; token?: string }
+      ) => {
+        const api = await docsClient(ctx, o.token);
+        let path = o.path;
+        if (path === undefined) {
+          const { doc } = await api.get(ref);
+          path = doc.lastPublishPath ?? doc.published?.path;
+        }
+        if (path === undefined)
+          throw new Error(`${ref} has no earlier publish path; pass --path`);
+        const r = await api.publish(ref, {
+          path,
+          ...(o.dispatch ? {} : { dispatch: false }),
+        });
+        const started =
+          r.run !== null
+            ? `, run ${r.run}`
+            : r.dispatchError !== null
+              ? `; dispatch failed: ${r.dispatchError}`
+              : ' (not dispatched)';
+        ctx.log(`publishing ${ref} to ${path}: task ${r.task}${started}`);
+      }
+    );
 
   docs
     .command('reviewed <ref>')

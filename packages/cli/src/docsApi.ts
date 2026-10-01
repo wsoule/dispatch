@@ -56,6 +56,14 @@ export interface ImportReportInfo {
   parity: { files: boolean; names: boolean };
 }
 
+/** What POST /api/docs/:ref/publish answers: the task, and its run unless not dispatched. */
+interface DocPublishResult {
+  task: string;
+  doc: DocRecord;
+  run: string | null;
+  dispatchError: string | null;
+}
+
 export interface DocsApi {
   list(params?: {
     taskId?: string;
@@ -114,8 +122,15 @@ export interface DocsApi {
   // A personal doc's head as a new team draft; its owner only.
   promote(ref: string): Promise<DocSaveResult>;
   setStatus(ref: string, status: DocStatus): Promise<DocRecord>;
+  // An elevated task that writes the doc's head to `path` in the repo (humans only).
+  publish(
+    ref: string,
+    input: { path: string; dispatch?: boolean }
+  ): Promise<DocPublishResult>;
   reviewed(ref: string): Promise<DocRecord>;
   remove(ref: string): Promise<void>;
+  // A doc's stored image as bytes; null when the daemon has none of that name.
+  asset(ref: string, name: string): Promise<Uint8Array | null>;
   // Proposals to accepted docs the caller may see.
   proposals(params?: {
     doc?: string;
@@ -234,9 +249,21 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
     promote: (ref) => json('POST', `${docPath(ref)}/promote`, {}),
     setStatus: (ref, status) =>
       json('POST', `${docPath(ref)}/status`, { status }),
+    publish: (ref, input) => json('POST', `${docPath(ref)}/publish`, input),
     reviewed: (ref) => json('POST', `${docPath(ref)}/reviewed`, {}),
     remove: async (ref) => {
       await call('DELETE', docPath(ref));
+    },
+    asset: async (ref, name) => {
+      const res = await call(
+        'GET',
+        `${docPath(ref)}/assets/${encodeURIComponent(name)}`,
+        undefined,
+        [404]
+      );
+      return res.status === 404
+        ? null
+        : new Uint8Array(await res.arrayBuffer());
     },
     proposals: (p = {}) => {
       const q = new URLSearchParams();

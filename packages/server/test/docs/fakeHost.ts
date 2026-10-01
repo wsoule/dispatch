@@ -11,6 +11,7 @@ import type {
   DocChange,
   DocsHost,
   DocsTaskFacts,
+  PublishOutcome,
 } from '../../src/docs/host.js';
 import { DocsService } from '../../src/docs/service.js';
 import { openDocsDb, SqliteDocStore } from '../../src/docs/store.js';
@@ -117,6 +118,13 @@ export class FakeDocsHost implements DocsHost {
   policyApprovals: DocProposal[] = [];
   openGates: { id: string; proposal: string }[] = [];
   onCloseGate: (() => void) | null = null;
+  // Publish: the checkout, the tasks it created and how each ended.
+  rootDir = '';
+  createdTasks: (Parameters<DocsHost['createPublishTask']>[0] & {
+    id: string;
+  })[] = [];
+  outcomes = new Map<string, NonNullable<PublishOutcome>>();
+  closedTasks: { task: string; reason: string }[] = [];
 
   constructor() {
     for (const id of ['t-1', 't-2', 'e-1', 'e-root']) {
@@ -229,6 +237,27 @@ export class FakeDocsHost implements DocsHost {
   openDocGates(): { id: string; proposal: string }[] {
     return this.openGates;
   }
+  createPublishTask(
+    input: Parameters<DocsHost['createPublishTask']>[0]
+  ): string {
+    const id = `t-pub-${this.createdTasks.length + 1}`;
+    this.createdTasks.push({ ...input, id });
+    this.tasks.set(id, {
+      id,
+      title: input.title,
+      body: input.body,
+      parent: null,
+      risk: input.risk,
+      labels: [],
+    });
+    return id;
+  }
+  closePublishTask(task: string, reason: string): void {
+    this.closedTasks.push({ task, reason });
+  }
+  publishOutcome(taskId: string): PublishOutcome {
+    return this.outcomes.get(taskId) ?? null;
+  }
   now(): Date {
     return this.clock;
   }
@@ -249,7 +278,13 @@ export const DEFAULT_TEST_CONFIG: DocsConfig = {
 };
 
 export function makeService(
-  opts: { fts?: boolean; coalesceMinutes?: number; orphans?: string[] } = {}
+  opts: {
+    fts?: boolean;
+    coalesceMinutes?: number;
+    orphans?: string[];
+    assetsDir?: string;
+    assetLimits?: { files: number; bytes: number; projectBytes: number };
+  } = {}
 ): {
   service: DocsService;
   host: FakeDocsHost;
@@ -273,6 +308,10 @@ export function makeService(
     ...(opts.orphans === undefined
       ? {}
       : { orphans: () => opts.orphans ?? [] }),
+    ...(opts.assetsDir === undefined ? {} : { assetsDir: opts.assetsDir }),
+    ...(opts.assetLimits === undefined
+      ? {}
+      : { assetLimits: opts.assetLimits }),
   });
   return { service, host, store };
 }
