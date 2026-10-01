@@ -1,7 +1,5 @@
 import type {
   AuthResult,
-  BridgePort,
-  Caller,
   ContinueInput,
   ListQuery,
   OpenInput,
@@ -18,26 +16,42 @@ import type { ApiContext } from '../api.js';
 import { jsonResponse, readJsonBody } from '../api/http.js';
 import { authenticateHost } from './hosts.js';
 
-const KEEPALIVE_MS = 15_000;
-
-// Stream slots a standalone host holds, each released by DELETE or, if the
-// host dies, when the lease expires (Review Focus 1, Decision D30).
+// Stream slots a standalone host holds, each released by that host's DELETE,
+// by its revocation, or, if the host dies, when the lease expires (D30).
 export class PortLeases {
   private readonly leases = new Map<
     string,
-    { release: () => void; timer: ReturnType<typeof setTimeout> }
+    {
+      release: () => void;
+      hostId: string;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
   constructor(private readonly ttlMs = 65 * 60_000) {}
 
-  hold(release: () => void): string {
+  hold(release: () => void, hostId: string): string {
     const id = `l-${randomUUID()}`;
-    const timer = setTimeout(() => this.end(id), this.ttlMs);
+    const timer = setTimeout(() => this.release(id), this.ttlMs);
     timer.unref();
-    this.leases.set(id, { release, timer });
+    this.leases.set(id, { release, hostId, timer });
     return id;
   }
 
-  end(id: string): boolean {
+  // Ends a lease only for the host that took it.
+  end(id: string, hostId: string): boolean {
+    return this.leases.get(id)?.hostId === hostId && this.release(id);
+  }
+
+  endHost(hostId: string): void {
+    for (const [id, lease] of [...this.leases])
+      if (lease.hostId === hostId) this.release(id);
+  }
+
+  closeAll(): void {
+    for (const id of [...this.leases.keys()]) this.release(id);
+  }
+
+  private release(id: string): boolean {
     const lease = this.leases.get(id);
     if (lease === undefined) return false;
     clearTimeout(lease.timer);
@@ -45,9 +59,94 @@ export class PortLeases {
     lease.release();
     return true;
   }
+}
+
+export interface WatchLimits {
+  keepaliveMs: number;
+  maxMs: number;
+  perHost: number;
+}
+
+const WATCH_LIMITS: WatchLimits = {
+  keepaliveMs: 15_000,
+  maxMs: 60 * 60_000,
+  perHost: 64,
+};
+
+// The task-watch streams standalone hosts hold: capped per host, re-checked
+// at every keepalive, and closed at once when their host loses access.
+export class PortWatches {
+  private readonly live = new Map<string, Set<() => void>>();
+  constructor(private readonly limits: WatchLimits = WATCH_LIMITS) {}
+
+  // An SSE stream of `change` events, or null when the host is at its cap.
+  // `allowed` false (or throwing) at a keepalive closes the stream.
+  open(
+    hostId: string,
+    subscribe: (onChange: () => void) => () => void,
+    allowed: () => Promise<boolean>,
+    signal: AbortSignal
+  ): Response | null {
+    const mine = this.live.get(hostId) ?? new Set<() => void>();
+    if (mine.size >= this.limits.perHost) return null;
+    this.live.set(hostId, mine);
+    const encoder = new TextEncoder();
+    let close = () => {};
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        let closed = false;
+        const send = (chunk: string) => {
+          try {
+            controller.enqueue(encoder.encode(chunk));
+          } catch {
+            close();
+          }
+        };
+        const unwatch = subscribe(() => send('data: change\n\n'));
+        const keepalive = setInterval(() => {
+          allowed().then(
+            (ok) => (ok ? send(': keepalive\n\n') : close()),
+            () => close()
+          );
+        }, this.limits.keepaliveMs);
+        const expiry = setTimeout(() => close(), this.limits.maxMs);
+        close = () => {
+          if (closed) return;
+          closed = true;
+          clearInterval(keepalive);
+          clearTimeout(expiry);
+          unwatch();
+          mine.delete(close);
+          if (mine.size === 0 && this.live.get(hostId) === mine)
+            this.live.delete(hostId);
+          signal.removeEventListener('abort', close);
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
+        };
+        mine.add(close);
+        signal.addEventListener('abort', close, { once: true });
+        // Bun sends the headers with the first chunk.
+        send(': watching\n\n');
+      },
+      cancel: () => close(),
+    });
+    return new Response(body, {
+      headers: {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+      },
+    });
+  }
+
+  closeHost(hostId: string): void {
+    for (const close of [...(this.live.get(hostId) ?? [])]) close();
+  }
 
   closeAll(): void {
-    for (const id of [...this.leases.keys()]) this.end(id);
+    for (const hostId of [...this.live.keys()]) this.closeHost(hostId);
   }
 }
 
@@ -69,59 +168,6 @@ function hostPublicUrl(raw: string | null): string | null {
   } catch {
     return null;
   }
-}
-
-function watchStream(
-  port: BridgePort,
-  caller: Caller,
-  taskId: string,
-  signal: AbortSignal
-): Response {
-  const encoder = new TextEncoder();
-  let stop = () => {};
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const send = (chunk: string) => {
-        try {
-          controller.enqueue(encoder.encode(chunk));
-        } catch {
-          stop();
-        }
-      };
-      const unwatch = port.watch(caller, taskId, () =>
-        send('data: change\n\n')
-      );
-      const keepalive = setInterval(
-        () => send(': keepalive\n\n'),
-        KEEPALIVE_MS
-      );
-      stop = () => {
-        clearInterval(keepalive);
-        unwatch();
-      };
-      signal.addEventListener(
-        'abort',
-        () => {
-          stop();
-          try {
-            controller.close();
-          } catch {
-            // already closed
-          }
-        },
-        { once: true }
-      );
-    },
-    cancel() {
-      stop();
-    },
-  });
-  return new Response(body, {
-    headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-    },
-  });
 }
 
 const notFound = () => jsonResponse({ error: 'not found' }, 404);
@@ -149,12 +195,9 @@ export async function handlePortRoute(
   const bridge = ctx.a2a;
   if (bridge === undefined || bridge.port === null || !bridge.standalone())
     return notFound();
-  if (
-    authenticateHost(
-      bridge.store,
-      bearerOf(req.headers.get('authorization'))
-    ) === null
-  ) {
+  const hostToken = bearerOf(req.headers.get('authorization'));
+  const host = authenticateHost(bridge.store, hostToken);
+  if (host === null) {
     return jsonResponse(
       {
         error: {
@@ -191,6 +234,12 @@ export async function handlePortRoute(
       })
     );
   }
+  // A lease is the host's own: releasing it needs no client, so a client
+  // whose token rotated cannot strand its slots.
+  if (rest[0] === 'admit' && rest.length === 2 && method === 'DELETE')
+    return bridge.leases.end(decodeURIComponent(rest[1]), host.id)
+      ? new Response(null, { status: 204 })
+      : notFound();
   const clientBearer = bearerOf(req.headers.get(PORT_CLIENT_HEADER));
   const auth: AuthResult =
     clientBearer === null
@@ -232,12 +281,11 @@ export async function handlePortRoute(
       return jsonResponse(
         admitted.release === undefined
           ? { ok: true }
-          : { ok: true, lease: bridge.leases.hold(admitted.release) }
+          : {
+              ok: true,
+              lease: bridge.leases.hold(admitted.release, host.id),
+            }
       );
-    }
-    if (rest[0] === 'admit' && rest.length === 2 && method === 'DELETE') {
-      bridge.leases.end(rest[1]);
-      return new Response(null, { status: 204 });
     }
     if (rest[0] === 'open' && rest.length === 1 && method === 'POST')
       return jsonResponse(await port.open(caller, await body<OpenInput>()));
@@ -276,7 +324,32 @@ export async function handlePortRoute(
     ) {
       const id = decodeURIComponent(rest[1]);
       if ((await port.facts(caller, id)) === null) return taskNotFound();
-      return watchStream(port, caller, id, req.signal);
+      // Re-checked at each keepalive: the host, the switch, and the client.
+      const allowed = async () => {
+        if (!bridge.standalone()) return false;
+        if (authenticateHost(bridge.store, hostToken)?.id !== host.id)
+          return false;
+        const again = await port.authenticate(clientBearer ?? '');
+        return again.ok && again.caller.address === caller.address;
+      };
+      return (
+        bridge.watches.open(
+          host.id,
+          (onChange) => port.watch(caller, id, onChange),
+          allowed,
+          req.signal
+        ) ??
+        jsonResponse(
+          {
+            error: {
+              kind: 'messaging',
+              code: 'limited',
+              message: 'too many watch streams open for this host',
+            },
+          },
+          429
+        )
+      );
     }
     return notFound();
   } catch (err) {

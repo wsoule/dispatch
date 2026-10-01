@@ -423,6 +423,7 @@ async function hostRoute(
     const id = decodeURIComponent(segments[1]);
     if (!b.store.revokeHost(id, new Date().toISOString()))
       return errorResponse(404, `no live A2A host ${id}`);
+    b.a2a.hostRevoked(id);
     changed(ctx);
     return new Response(null, { status: 204 });
   }

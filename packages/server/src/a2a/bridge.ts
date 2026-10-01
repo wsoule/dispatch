@@ -41,7 +41,7 @@ import type { PeerService } from './peers.js';
 import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
-import { PortLeases } from './portRoutes.js';
+import { PortLeases, PortWatches } from './portRoutes.js';
 import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
 import type { ListenerOverrides, ListenerSettings } from './settings.js';
@@ -84,8 +84,11 @@ export interface A2ABridge {
   standalone(): boolean;
   // Changes only that flag in the settings file; the listener is untouched.
   setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
-  // Stream slots standalone hosts hold.
+  // Stream slots and task-watch streams standalone hosts hold.
   readonly leases: PortLeases;
+  readonly watches: PortWatches;
+  // Ends a revoked host's leases and watch streams.
+  hostRevoked(hostId: string): void;
   peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
   // Opens the listener from the settings file plus the one-boot overrides.
@@ -200,6 +203,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
   const leases = new PortLeases();
+  const watches = new PortWatches();
   // Loaded on the first card; null (with the reason) when it cannot be.
   let signer: CardSigner | null | undefined;
   let signerError: string | null = null;
@@ -406,12 +410,21 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       return outbound?.worker ?? null;
     },
     leases,
+    watches,
+    hostRevoked: (hostId) => {
+      leases.endHost(hostId);
+      watches.closeHost(hostId);
+    },
     standalone: () => readListenerSettings(rootDir).settings.standalone,
     setStandalone: (enabled) =>
       serial(() => {
         const file = readListenerSettings(rootDir).settings;
         writeListenerSettings(rootDir, { ...file, standalone: enabled });
         settings = { ...settings, standalone: enabled };
+        if (!enabled) {
+          leases.closeAll();
+          watches.closeAll();
+        }
         return Promise.resolve({ standalone: enabled });
       }),
     peerStatus(alias) {
@@ -507,6 +520,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         outbound?.stop();
         outbound = null;
         leases.closeAll();
+        watches.closeAll();
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
         if (refreshTimer !== null) clearInterval(refreshTimer);
