@@ -331,6 +331,24 @@ describe('a staged memory restore', () => {
     expect(readdirSync(restoreDir)).toHaveLength(1);
   });
 
+  it('removes only the files it handled, never one staged meanwhile', async () => {
+    const t = gatedEngine();
+    const late = lostEntry('staged during the pass');
+    t.host.raise = () => {
+      stage(late);
+      return Promise.resolve('m-gate');
+    };
+    stage(lostEntry('first'));
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report?.restored).toBe(1);
+    expect(readdirSync(restoreDir)).toEqual([`${late.id}.md`]);
+    expect(report?.pending).toContain(restoreDir);
+  });
+
   it('skips a retired receipt', async () => {
     const t = gatedEngine();
     const old = lostEntry('superseded lesson');

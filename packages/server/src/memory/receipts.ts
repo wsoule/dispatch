@@ -14,6 +14,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -257,8 +258,8 @@ export async function applyStagedMemoryRestore(
     else report.skipped++;
     rmSync(join(restoreDir, file), { force: true });
   }
-  if (report.problems.length === 0 && report.deferred === 0)
-    rmSync(restoreDir, { recursive: true, force: true });
+  // Only handled files went; anything else, even a file staged meanwhile, stays.
+  if (readdirSync(restoreDir).length === 0) rmdirSync(restoreDir);
   else report.pending = clearHint(restoreDir);
   return report;
 }
