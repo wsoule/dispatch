@@ -7,6 +7,8 @@ import {
   jsonResponse,
   readJsonBodyOptional,
 } from '../../api/http.js';
+import type { AuthTier } from '../../tiers.js';
+import { tierAllows } from '../../tiers.js';
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
 import type { FedStore } from './store.js';
@@ -39,7 +41,7 @@ const ROUTE_PASS_WAIT_MS = 20_000;
 // never hangs a route; true when it finished. A pass that finishes later and
 // fails is named as a problem, since nobody is waiting on its answer.
 async function boundedPass(
-  fedCtx: FederationContext,
+  fedCtx: FederationContext | null,
   service: NonNullable<ApiContext['boardSync']>,
   what: string
 ): Promise<boolean> {
@@ -47,7 +49,7 @@ async function boundedPass(
   const run = service.syncNow().then(() => {
     const failed = service.status().lastError;
     if (late && failed !== null)
-      fedCtx.fed.problem(
+      fedCtx?.fed.problem(
         'team:route',
         `the sync after ${what} failed: ${failed}; the change is made here and goes out on a later sync`
       );
@@ -58,11 +60,58 @@ async function boundedPass(
     timer = setTimeout(() => {
       late = true;
       resolve(false);
-    }, fedCtx.passWaitMs ?? ROUTE_PASS_WAIT_MS);
+    }, fedCtx?.passWaitMs ?? ROUTE_PASS_WAIT_MS);
   });
   const done = await Promise.race([run, wait]);
   clearTimeout(timer);
   return done;
+}
+
+/** Board sync's status as `tier` may see it: below decide, without the
+ *  transport's health, the team's problems or credentials in the remote (F-D29). */
+export function statusFor(
+  status: object,
+  tier: AuthTier
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...status };
+  if (tierAllows(tier, 'decide')) return out;
+  delete out.transportHealth;
+  delete out.federationProblems;
+  if (typeof out.remote === 'string')
+    out.remote = withoutCredentials(out.remote);
+  return out;
+}
+
+// A URL remote without its userinfo, query or fragment; an scp-style remote
+// (git@host:path) names a login, not a secret, and stays.
+function withoutCredentials(remote: string): string {
+  let url: URL;
+  try {
+    url = new URL(remote);
+  } catch {
+    return remote;
+  }
+  if (url.protocol === 'file:') return remote;
+  url.username = '';
+  url.password = '';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
+/** POST /api/board-sync/now: a pass, waited for at most passWaitMs, then the
+ *  status for the caller's tier, `pending` while the pass still runs. */
+export async function boardSyncNow(
+  ctx: ApiContext,
+  service: NonNullable<ApiContext['boardSync']>
+): Promise<Record<string, unknown>> {
+  const done = await boundedPass(
+    ctx.federation,
+    service,
+    'the sync you asked for'
+  );
+  const view = statusFor(service.status(), ctx.caller?.tier ?? 'request');
+  return done ? view : { ...view, pending: true };
 }
 
 // The roster actions under /api/team, beside the teammate-token routes.

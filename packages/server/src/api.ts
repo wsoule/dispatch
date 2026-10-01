@@ -223,8 +223,10 @@ import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { FederationContext } from './team/federation/routes.js';
 import {
+  boardSyncNow,
   handleFederationRoute,
   isFederationRoute,
+  statusFor,
 } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
 import { TaskTooLargeError } from './team/federation/taskOps.js';
@@ -4702,14 +4704,7 @@ export async function handleApi(
           enabled: false,
           reason: boardSyncOffReason(ctx),
         };
-        if (tierAllows(ctx.caller?.tier ?? 'request', 'decide'))
-          return jsonResponse(status);
-        // The request tier gets the team's id, founding, legacy window and
-        // transport kind; its health and problems stay at decide (F-D29).
-        const shared: Record<string, unknown> = { ...status };
-        delete shared.transportHealth;
-        delete shared.federationProblems;
-        return jsonResponse(shared);
+        return jsonResponse(statusFor(status, ctx.caller?.tier ?? 'request'));
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {
@@ -4718,8 +4713,7 @@ export async function handleApi(
             BOARD_SYNC_OFF_MESSAGE[boardSyncOffReason(ctx)]
           );
         }
-        await ctx.boardSync.syncNow();
-        return jsonResponse(ctx.boardSync.status());
+        return jsonResponse(await boardSyncNow(ctx, ctx.boardSync));
       }
     }
 

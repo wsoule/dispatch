@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import type { ApiContext } from '../../../src/api.js';
-import { handleFederationRoute } from '../../../src/team/federation/routes.js';
+import {
+  boardSyncNow,
+  handleFederationRoute,
+  statusFor,
+} from '../../../src/team/federation/routes.js';
 import { MAX_TASK_FIELD_BYTES } from '../../../src/team/federation/taskOps.js';
 import { daemons } from './helpers/daemon.js';
 import { testReplica } from './helpers/replica.js';
@@ -11,6 +15,32 @@ const { teammate, cleanup, setup } = daemons();
 const SLOW = 60_000;
 beforeEach(setup);
 afterEach(cleanup);
+
+describe('statusFor', () => {
+  const status = {
+    enabled: true,
+    remote: 'https://ada:ghp_secret@example.com/team/board.git?token=x',
+    transportHealth: { kind: 'git' },
+    federationProblems: [],
+    founded: true,
+  };
+  it('keeps everything at the decide tier', () => {
+    expect(statusFor(status, 'decide')).toEqual(status);
+  });
+  it('drops health, problems and the remote credentials below it', () => {
+    expect(statusFor(status, 'request')).toEqual({
+      enabled: true,
+      remote: 'https://example.com/team/board.git',
+      founded: true,
+    });
+    expect(
+      statusFor(
+        { ...status, remote: 'git@example.com:team/board.git' },
+        'request'
+      ).remote
+    ).toBe('git@example.com:team/board.git');
+  });
+});
 
 describe('/api/team federation routes', () => {
   it(
@@ -71,6 +101,12 @@ describe('/api/team federation routes', () => {
       const full = await ada.api('/api/board-sync');
       expect(full.body).toHaveProperty('transportHealth');
       expect(full.body).toHaveProperty('federationProblems');
+      // I1: POST /now answers with the same view for the same tier.
+      const now = await ada.asAgent('/api/board-sync/now', { method: 'POST' });
+      expect(now.status).toBe(200);
+      expect(now.body).not.toHaveProperty('transportHealth');
+      expect(now.body).not.toHaveProperty('federationProblems');
+      expect(now.body).toMatchObject({ founded: true });
     },
     SLOW
   );
@@ -294,6 +330,10 @@ describe('a route whose pass does not finish', () => {
           .problems()
           .some((p) => p.message.includes('the remote is unreachable'))
       ).toBe(true);
+      // I1: POST /api/board-sync/now is bounded the same way.
+      const now = await boardSyncNow(ctx, ctx.boardSync as never);
+      expect(now.pending).toBe(true);
+      finish();
     } finally {
       ada.close();
     }
