@@ -33,6 +33,7 @@ import {
   revisionsSinceReview,
   sameRevisions,
 } from '../../lib/docs';
+import { relativeTime } from '../../lib/landingView';
 import { parseMarked } from '../../lib/mergeLayout';
 import { DiffSurface } from '../code/DiffSurface';
 import { DocEditor } from './DocEditor';
@@ -271,6 +272,20 @@ export function DocPage({
     void flush();
   };
 
+  // Why Accept may not run now: unsaved or marked text, or a conflicted doc.
+  const acceptProblem = (conflicted: boolean): string | null => {
+    const current = bufRef.current;
+    if (current !== null) {
+      const problem = docSealProblem(current);
+      if (problem !== null) return problem;
+      if (parseMarked(current.buffer.text).some((p) => p.kind === 'conflict'))
+        return 'Resolve the conflict markers before accepting.';
+    }
+    return conflicted
+      ? 'This doc is conflicted; resolve it in the merge view before accepting.'
+      : null;
+  };
+
   // The revisions a review would cover now, newest first.
   const unreviewedRevisions = async (
     reviewedRev: string | null
@@ -422,8 +437,12 @@ export function DocPage({
               variant={status === 'accepted' ? 'default' : 'ghost'}
               onClick={() =>
                 act(async () => {
-                  // Accepting seals the head, so it waits on the text as Save version does.
-                  if (status === 'accepted') await flushForSeal();
+                  // Every status change seals the head, so the typed text goes out first.
+                  await flush();
+                  if (status === 'accepted') {
+                    const problem = acceptProblem(doc.conflicted);
+                    if (problem !== null) throw new Error(problem);
+                  }
                   await client.setDocStatus(refId, status);
                 })
               }
@@ -437,7 +456,9 @@ export function DocPage({
           <p>Open proposals, each waiting on its gate in Needs you:</p>
           <ul>
             {proposals.map((p) => (
-              <li key={p.rev}>{`${p.rev} · ${p.author} · ${p.createdAt}`}</li>
+              <li
+                key={p.rev}
+              >{`${p.rev} · ${p.author} · ${relativeTime(p.createdAt, Date.now())}`}</li>
             ))}
           </ul>
         </div>
