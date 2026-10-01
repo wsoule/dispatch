@@ -5,12 +5,13 @@ import { assetNameOf, docUrlTransform, imageFiles } from './docAssets';
 const NAME = `${'a'.repeat(64)}.png`;
 
 describe('docUrlTransform', () => {
-  it('keeps asset: URLs and defers to react-markdown otherwise', () => {
-    expect(docUrlTransform(`asset:${NAME}`)).toBe(`asset:${NAME}`);
-    expect(docUrlTransform('https://example.com/x.png')).toBe(
+  it('keeps asset: only as an image source and defers to react-markdown otherwise', () => {
+    expect(docUrlTransform(`asset:${NAME}`, 'src')).toBe(`asset:${NAME}`);
+    expect(docUrlTransform(`asset:${NAME}`, 'href')).toBe('');
+    expect(docUrlTransform('https://example.com/x.png', 'src')).toBe(
       'https://example.com/x.png'
     );
-    expect(docUrlTransform('javascript:alert(1)')).toBe('');
+    expect(docUrlTransform('javascript:alert(1)', 'href')).toBe('');
   });
 });
 

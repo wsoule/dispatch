@@ -111,7 +111,7 @@ export function Markdown({
   className?: string;
   variant?: 'inline' | 'prose';
   /** Replaces react-markdown's URL filter (the docs preview keeps `asset:`). */
-  urlTransform?: (url: string) => string;
+  urlTransform?: (url: string, key: string) => string;
   /** Renders images; the docs preview resolves `asset:` through the API. */
   img?: (props: { src?: string; alt?: string }) => ReactNode;
 }) {

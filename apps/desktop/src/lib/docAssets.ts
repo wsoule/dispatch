@@ -2,9 +2,12 @@ import { ASSET_NAME } from '@dispatch/core/browser';
 import { defaultUrlTransform } from 'react-markdown';
 
 // react-markdown empties any URL whose protocol it does not know; the docs
-// preview keeps asset: and resolves it itself (AssetImage).
-export function docUrlTransform(url: string): string {
-  return url.startsWith('asset:') ? url : defaultUrlTransform(url);
+// preview keeps asset: as an image's source only (AssetImage resolves it),
+// never as a link a click would follow.
+export function docUrlTransform(url: string, key: string): string {
+  return key === 'src' && url.startsWith('asset:')
+    ? url
+    : defaultUrlTransform(url);
 }
 
 /** The stored image an `asset:` URL names, or null for any other source. */
