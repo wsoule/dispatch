@@ -79,7 +79,7 @@ test("v1 exit: an agent's edit to an accepted spec waits as a gate the human app
     doc: 'gate-spec',
     ops: [{ op: 'replace_section', section: 'API', text: 'v2 from the agent' }],
   });
-  expect(proposed).toMatch(/propos/i);
+  expect(proposed).toMatch(/proposal|proposed/i);
 
   await page.goto(daemon.appUrl);
   await page
