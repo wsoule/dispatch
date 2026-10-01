@@ -1,12 +1,12 @@
 # Docs
 
-Status: **v0 built** (team docs, read and write); v1 and v2 designed, not built.
-v0 also carries v1's task 11, the A2A rules (Staging). Paragraphs marked "As
-built (v0)" record where the code departs from the design below, which was
-revised 2026-09-26 after a feasibility and consistency critique. Fourth of the
-six sub-projects in `docs/specs/2026-09-23-messaging-core-design.md` (:21-30;
-row 4, :28: "Docs — team documents beside tasks", FSL, depending on #2). This
-file replaces the 2026-09-25 draft, which followed the first options draft.
+Status: **v0 and v1 built**; v1.1 and v2 designed, not built. v0 also carries
+v1's task 11, the A2A rules (Staging). Paragraphs marked "As built (v0)" record
+where the code departs from the design below, which was revised 2026-09-26 after
+a feasibility and consistency critique. Fourth of the six sub-projects in
+`docs/specs/2026-09-23-messaging-core-design.md` (:21-30; row 4, :28: "Docs —
+team documents beside tasks", FSL, depending on #2). This file replaces the
+2026-09-25 draft, which followed the first options draft.
 
 Binding input: `.agents/ignore/specs/2026-09-25-docs-options.md` ("options"),
 revised 2026-09-26. Its recommendation, option B, and the recommended answer to

@@ -36,11 +36,11 @@ at a rung keeps its previous behavior. Rungs are cumulative.
    approval escalations also auto-allow, and an agent may wake a sleeping task
    without asking. Merge still blocks.
 
-4. **`auto-merge`** ("Auto-merge on green and accept agents' team memory") — a
-   run whose fix loop completes green auto-enqueues to the merge queue, which
-   rebases, verifies, and lands it, and an agent's lesson for project or team
-   memory joins it without waiting in Needs you. Humans review receipts after
-   the fact.
+4. **`auto-merge`** ("Auto-merge on green and accept agents' team memory and doc
+   edits") — a run whose fix loop completes green auto-enqueues to the merge
+   queue, which rebases, verifies, and lands it; an agent's lesson for project
+   or team memory joins it, and agents' edits to accepted docs (the `doc` gate)
+   apply, without waiting in Needs you. Humans review receipts after the fact.
 
 The config key is `policy.rung: 1 | 2 | 3 | 4` in `.dispatch/config.yml`
 (committed, per-project, shared — same file as `fixLoop`, `verifySteps`,

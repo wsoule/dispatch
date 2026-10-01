@@ -155,6 +155,22 @@ projects as of v1, both accepted:
   lesson one teammate's run learns does not reach the others. Teammates who
   share one daemon share its memory as usual.
 
+Docs (`docs/specs/2026-09-25-docs-design.md`) have three limits in team projects
+as of v1, all accepted:
+
+- **A personal doc a run reads reaches its transcript.** A run's `doc_read` of
+  its operator's personal doc is tool output in the run's transcript, which
+  teammates on a shared host can read. Keep what must stay private out of
+  personal docs there, or run your own daemon.
+- **Files-backend projects back docs up by export.** Team docs live in the
+  daemon's `docs.db`, not in git; a files-backend project backs them up with
+  `dispatch docs export <dir>` (the receipt log carries them for database
+  projects).
+- **Moving the checkout orphans `docs.db`.** Docs are keyed to the checkout's
+  path, so a moved checkout starts empty. `GET /api/docs/health` lists the
+  orphaned `docs.db` files to decide tier, and their docs come back by export
+  and import.
+
 ## 7. Phasing
 
 0. **Storage spine (solo, no server)** — epic `e-99e113`. Extract the

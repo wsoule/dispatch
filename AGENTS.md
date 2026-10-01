@@ -87,14 +87,16 @@ skills under `.agents/skills/`, never through the symlink.
 
 ## Agent Artifacts
 
-Write **every** agent-only file under `.agents/ignore/`. It is the single,
-gitignored scratch directory for anything not meant to be committed: plans,
-specs, throwaway scripts, scratch notes, logs, generated or downloaded data, and
-any other working file. Do not scatter these across the repo root, package
-directories, or the system temp dir.
+Plans and specs go to **Docs**, not files: save them with the `doc_save` MCP
+tool, linked to your task (`links: [{ target: "task:<id>", rel: "spec" }]` or
+`rel: "plan"`), so every run and teammate reads them without a copy. Read a
+linked doc with `doc_read`; your prompt's `## Docs` section lists the ones your
+task links. `dispatch docs` is for humans; agents use the tools.
 
-- Plans: `.agents/ignore/plans/YYYY-MM-DD-<topic>.md`
-- Specs: `.agents/ignore/specs/YYYY-MM-DD-<topic>.md`
+Write every other agent-only file under `.agents/ignore/`, the single gitignored
+scratch directory: throwaway scripts, scratch notes, logs, and generated or
+downloaded data.
+
 - Anything else: a descriptively named subdirectory of `.agents/ignore/`
 
 Do not put source files, tests, or committed documentation under
