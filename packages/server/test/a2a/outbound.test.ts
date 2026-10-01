@@ -268,6 +268,8 @@ describe('the URL guard at every contact', () => {
     const q = await ask('Which colour?', ['a2a:rebound']);
     await waitFor(() => f.store.getOutbound(q.id, 'rebound')?.state === 'open');
     addresses = ['10.0.0.9'];
+    // Lets a read that resolved before the rebind finish first.
+    await Bun.sleep(100);
     peer.answer(peer.latest(), 'Blue');
     await waitFor(
       () => f.store.getOutbound(q.id, 'rebound')?.state === 'failed'
@@ -315,6 +317,8 @@ describe('the URL guard at every contact', () => {
     const q = await ask('Which colour?', ['a2a:flaky']);
     await waitFor(() => f.store.getOutbound(q.id, 'flaky')?.state === 'open');
     f.peers.deps.lookup = () => Promise.reject(new Error('EAI_AGAIN'));
+    // Lets a read that resolved before the change finish first.
+    await Bun.sleep(100);
     peer.answer(peer.latest(), 'Blue');
     await Bun.sleep(200);
     expect(f.store.getOutbound(q.id, 'flaky')?.state).toBe('open');

@@ -2,6 +2,7 @@ import type { JsonValue } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
 
 import type { GuardOptions } from './guard.js';
+import { AddressRefusedError } from './guard.js';
 import {
   isLoopbackHost,
   peerFetch,
@@ -98,7 +99,10 @@ export async function fetchPeerCard(
     })(url);
   } catch (err) {
     if (err instanceof PeerHttpError && err.reason === 'ADDRESS_REFUSED')
-      return invalid('cardUrl', err.message.replace(/^cardUrl: /, ''));
+      throw new AddressRefusedError(
+        `cardUrl: ${err.message.replace(/^cardUrl: /, '')}`,
+        'cardUrl'
+      );
     throw err;
   }
   if (res.status === 304)

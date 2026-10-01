@@ -267,6 +267,31 @@ describe('refreshing a peer', () => {
     );
   });
 
+  it('disables a decide-tier peer whose card fetch is refused after the pre-check', async () => {
+    await addPeer(
+      f.peerDeps({ fetchImpl: serveCard(CARD), lookup: publicDns }),
+      { alias: 'acme', cardUrl: CARD_URL, token: 't' },
+      DECIDE
+    );
+    let calls = 0;
+    const seen: string[] = [];
+    const row = await refreshPeer(
+      f.peerDeps({
+        fetchImpl: serveCard(CARD, { seen }),
+        // Public for the pre-check, private by the pinned fetch.
+        lookup: () =>
+          Promise.resolve(calls++ === 0 ? ['93.184.216.34'] : ['10.0.0.9']),
+      }),
+      f.notices,
+      'acme'
+    );
+    expect(row.status).toBe('disabled');
+    expect(seen).toEqual([]);
+    await waitFor(() =>
+      ownerNotices().some((b) => b.includes('a2a:acme is disabled'))
+    );
+  });
+
   it('skips a refresh while the peer’s name does not resolve, keeping it active', async () => {
     await addPeer(
       f.peerDeps({ fetchImpl: serveCard(CARD), lookup: publicDns }),

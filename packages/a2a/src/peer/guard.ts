@@ -116,6 +116,15 @@ export class UnresolvedHostError extends MessagingError {
   }
 }
 
+/** A peer URL the guard refused at fetch time (a blocked address): final,
+ *  and a sign the peer should be disabled. */
+export class AddressRefusedError extends MessagingError {
+  constructor(message: string, field: string) {
+    super('invalid', message, field);
+    this.name = 'AddressRefusedError';
+  }
+}
+
 export interface GuardOptions {
   lookup?: LookupAll;
   field?: string;

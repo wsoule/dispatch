@@ -8,6 +8,7 @@ import {
   pickInterface,
   summarizeCard,
 } from '../../src/peer/card.js';
+import { AddressRefusedError } from '../../src/peer/guard.js';
 import { PeerHttpError } from '../../src/peer/http.js';
 
 const CARD = {
@@ -330,6 +331,12 @@ describe('fetchPeerCard', () => {
           fetched = true;
           return Promise.resolve(Response.json(CARD));
         }) as unknown as typeof fetch,
+      })
+    ).rejects.toBeInstanceOf(AddressRefusedError);
+    await expect(
+      fetchPeerCard('https://agent.example.com/card', {
+        allowHttp: false,
+        guard: { lookup: () => Promise.resolve(['10.0.0.8']) },
       })
     ).rejects.toMatchObject({
       code: 'invalid',

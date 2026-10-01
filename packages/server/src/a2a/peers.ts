@@ -7,6 +7,7 @@ import type {
   PeerStatus,
 } from '@dispatch/a2a';
 import {
+  AddressRefusedError,
   authHeaders,
   checkPeerCard,
   fetchPeerCard,
@@ -99,7 +100,12 @@ export function peerGuard(
   row: Pick<PeerRow, 'addedTier'>
 ): GuardOptions | undefined {
   if (row.addedTier !== 'decide') return undefined;
-  return deps.lookup === undefined ? {} : { lookup: deps.lookup };
+  if (deps.lookup === undefined) return {};
+  // Read at each resolution, so a client built earlier uses the current resolver.
+  return {
+    lookup: (host) =>
+      (deps.lookup ?? (() => Promise.resolve([] as string[])))(host),
+  };
 }
 
 function mustPeer(deps: PeerDeps, alias: string): PeerRow {
@@ -315,6 +321,17 @@ export async function refreshPeer(
       (err.status === 401 || err.status === 403)
     )
       return markAuthFailed(deps, notices, alias) ?? row;
+    // The pinned fetch refused the address after the pre-check passed (a rebind).
+    if (err instanceof AddressRefusedError)
+      return (
+        disablePeer(
+          deps,
+          notices,
+          alias,
+          'address',
+          addressRefused(alias, err.message)
+        ) ?? row
+      );
     throw err;
   }
   const at = nowOf(deps).toISOString();
