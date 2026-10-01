@@ -396,6 +396,24 @@ describe('an op stamped far ahead of this clock (FW-R21)', () => {
   });
 });
 
+describe('this machine’s own ops and the clock bound (FW-R22 I4)', () => {
+  it('folds its own ops after its wall clock steps back', () => {
+    const ada = make('ada');
+    const bob = make('bob');
+    ada.roster.found('acme');
+    exchange(ada, bob);
+    // The wall clock steps back an hour; the chain's clock cannot.
+    ada.clock.now = new Date(ada.clock.now.getTime() - 60 * 60 * 1000);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    expect(ada.roster.isAdmitted(bob.fed.replica)).toBe(true);
+    expect(
+      ada.fed
+        .problems()
+        .some((p) => p.subject.startsWith(`op:${ada.fed.replica}:`))
+    ).toBe(false);
+  });
+});
+
 describe('the audit log', () => {
   it('records every roster op it applies by kind, on the publisher and on a teammate', () => {
     const ada = make('ada');

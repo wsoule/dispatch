@@ -529,7 +529,9 @@ export class RosterService {
    *  One stamped too far ahead is held (FW-R21): the caller stops there. */
   applyVerified(entry: FederatedOp, hash: string): 'applied' | 'held' {
     const subject = `op:${entry.replica}:${entry.seq}`;
-    if (this.fed.ahead(entry.hlc)) {
+    // This machine's own ops are never held (FW-R22(5)): after its wall clock
+    // steps back, its chain's clock is still ahead of it.
+    if (entry.replica !== this.me && this.fed.ahead(entry.hlc)) {
       this.fed.problem(
         subject,
         `${entry.replica}'s op at seq ${entry.seq} is stamped ${entry.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ahead of this machine's clock; it waits until the clock catches up`
