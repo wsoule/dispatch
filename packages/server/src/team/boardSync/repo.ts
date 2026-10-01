@@ -1,5 +1,6 @@
 import {
   MAX_OP_BYTES,
+  opHash,
   REPLICA_ID,
   stubOf,
 } from '@dispatch/protocol/federation';
@@ -179,8 +180,16 @@ export class SyncRepo {
   ): Promise<void> {
     if (entries.length === 0) return;
     const rel = (name: string) => `${FED_DIR}/${this.replica}/${name}`;
-    let current = this.segments(this.replica).at(-1) ?? null;
     const path = (name: string) => ownFile(this.dir, rel(name));
+    // Appends only to the segment whose last line is this replica's head (the
+    // first new op's prev), never to whatever segment sorts last (FW-R22 N1).
+    const head = entries[0]?.prev;
+    let current =
+      this.segments(this.replica).find((name) => {
+        const last = completeLines(path(name)).at(-1);
+        const entry = last === undefined ? null : parseEntry(last);
+        return entry !== null && opHash(entry) === head;
+      }) ?? null;
     // A write that died partway left a torn line; drop it before appending (M3).
     if (current !== null) {
       const file = path(current);
@@ -201,6 +210,9 @@ export class SyncRepo {
         current = segmentName(e.seq);
         count = 0;
         size = 0;
+        // A new segment of this replica's own: whatever a branch writer left
+        // under that name is replaced.
+        writeFileSync(path(current), '');
       }
       appendFileSync(path(current), line);
       count += 1;
@@ -307,20 +319,25 @@ export class SyncRepo {
   }
 
   // One replica's segments, sorted by their first seq. A name is only a hint
-  // (FW-R22(2)): a segment counts when its first line is that replica's op
-  // at the seq the name says.
+  // (FW-R22(2)): a segment counts when its first line is that replica's op at
+  // the seq the name says, and its range starts past the last segment kept, so
+  // a copy of an op an earlier segment holds never starts a reader there.
   private segments(replica: string): string[] {
     const dir = join(this.dir, FED_DIR, replica);
-    return listDir(dir)
-      .filter((f) => SEGMENT.test(f) && regularFile(join(dir, f)))
-      .filter((f) => {
-        const first = completeLines(join(dir, f))[0];
-        const entry = first === undefined ? null : parseEntry(first);
-        return (
-          entry?.replica === replica && entry.seq === Number(f.slice(0, 12))
-        );
-      })
-      .sort();
+    const kept: string[] = [];
+    let last = 0;
+    for (const f of listDir(dir)
+      .filter((name) => SEGMENT.test(name) && regularFile(join(dir, name)))
+      .sort()) {
+      const entries = completeLines(join(dir, f)).map(parseEntry);
+      const first = entries[0];
+      if (first?.replica !== replica || first.seq !== Number(f.slice(0, 12)))
+        continue;
+      if (first.seq <= last) continue;
+      kept.push(f);
+      last = Math.max(...entries.map((e) => e?.seq ?? 0));
+    }
+    return kept;
   }
 
   /**

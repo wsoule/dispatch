@@ -174,6 +174,23 @@ describe('segment names are hints (FW-R22 I1)', () => {
     expect(a.readV2(new Map([[A, 2]])).map((e) => e.seq)).toEqual([3, 4, 5, 6]);
   });
 
+  // N1: a copy of a real op is a valid first line, so the name check alone
+  // passes it; segments must also be non-overlapping seq ranges.
+  it('ignores a segment that copies an op an earlier segment holds, and appends only after its own head', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(8);
+    await a.writeV2(ops.slice(0, 5));
+    const copy = join(dir, 'a', 'fed', A, '000000000003.jsonl');
+    writeFileSync(copy, `${JSON.stringify(ops[2])}\n`);
+    expect(a.readV2(new Map([[A, 3]])).map((e) => e.seq)).toEqual([4, 5]);
+    await a.writeV2(ops.slice(5));
+    expect(readFileSync(copy, 'utf8')).toBe(`${JSON.stringify(ops[2])}\n`);
+    expect(a.readV2(new Map([[A, 3]])).map((e) => e.seq)).toEqual([
+      4, 5, 6, 7, 8,
+    ]);
+  });
+
   it('repairs a torn tail of its own segment before appending (M3)', async () => {
     const a = clone('a', A);
     await a.ensure();
