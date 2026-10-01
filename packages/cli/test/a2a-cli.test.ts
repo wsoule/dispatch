@@ -147,6 +147,7 @@ function startFakeDaemon() {
             {
               id: 'h-1',
               name: 'relay',
+              publicUrl: 'https://relay.example.com',
               createdBy: 'human:wyat',
               createdAt: '2026-09-25T00:00:00Z',
               revokedAt: null,
@@ -155,7 +156,12 @@ function startFakeDaemon() {
         });
       if (url.pathname === '/api/a2a/hosts' && req.method === 'POST')
         return Response.json(
-          { id: 'h-1', name: 'relay', token: 'h'.repeat(64) },
+          {
+            id: 'h-1',
+            name: 'relay',
+            publicUrl: 'https://relay.example.com',
+            token: 'h'.repeat(64),
+          },
           { status: 201 }
         );
       if (url.pathname === '/api/a2a/hosts/h-1' && req.method === 'DELETE')
@@ -560,14 +566,27 @@ describe('dispatch a2a peers', () => {
 describe('dispatch a2a hosts', () => {
   it('adds a host with the app token and prints its token once', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
-    await run('a2a', 'hosts', 'add', 'relay');
+    await run(
+      'a2a',
+      'hosts',
+      'add',
+      'relay',
+      '--public-url',
+      'https://relay.example.com'
+    );
     expect(a2aCalls()[0]).toMatchObject({
       method: 'POST',
       path: '/api/a2a/hosts',
       auth: `Bearer ${APP_TOKEN}`,
-      body: { name: 'relay' },
+      body: { name: 'relay', publicUrl: 'https://relay.example.com' },
     });
     expect(lines.filter((l) => l.includes('h'.repeat(64)))).toHaveLength(1);
+  });
+
+  it('needs the public URL the host will serve on', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(run('a2a', 'hosts', 'add', 'relay')).rejects.toThrow();
+    expect(a2aCalls()).toEqual([]);
   });
 
   it('allows and denies standalone hosts, lists and removes them', async () => {
@@ -582,13 +601,15 @@ describe('dispatch a2a hosts', () => {
       ['GET', '/api/a2a/hosts', null],
       ['DELETE', '/api/a2a/hosts/h-1', null],
     ]);
-    expect(lines.join('\n')).toContain('h-1 · relay · active');
+    expect(lines.join('\n')).toContain(
+      'h-1 · relay · https://relay.example.com · active'
+    );
   });
 
   it('never runs a hosts command on the agent token', async () => {
     for (const argv of [
       ['a2a', 'hosts', 'list'],
-      ['a2a', 'hosts', 'add', 'relay'],
+      ['a2a', 'hosts', 'add', 'relay', '--public-url', 'https://r.example'],
       ['a2a', 'hosts', 'allow'],
       ['a2a', 'hosts', 'remove', 'h-1'],
     ])

@@ -501,17 +501,21 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       );
       for (const h of list)
         ctx.log(
-          `${h.id} · ${h.name} · ${h.revokedAt === null ? 'active' : `revoked ${h.revokedAt}`} · added by ${h.createdBy}`
+          `${h.id} · ${h.name} · ${h.publicUrl} · ${h.revokedAt === null ? 'active' : `revoked ${h.revokedAt}`} · added by ${h.createdBy}`
         );
     });
   hosts
     .command('add <name>')
     .description('Mint a host token, shown once')
+    .requiredOption(
+      '--public-url <url>',
+      'The URL the host serves on; its card names no other'
+    )
     .option('--token <token>', TOKEN_HELP)
-    .action(async (name: string, o: { token?: string }) => {
+    .action(async (name: string, o: { token?: string; publicUrl: string }) => {
       const client = await withAppToken(o.token, 'dispatch a2a hosts add');
-      const added = await client.addHost(name);
-      ctx.log(`${added.id} · ${added.name}`);
+      const added = await client.addHost(name, o.publicUrl);
+      ctx.log(`${added.id} · ${added.name} · ${added.publicUrl}`);
       ctx.log(`host token: ${added.token}`);
       ctx.log(
         'This token is shown once. Put it in a chmod 600 file on the relay machine and pass --host-token-file, or set DISPATCH_A2A_HOST_TOKEN.'

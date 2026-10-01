@@ -1,4 +1,5 @@
 import type { A2AStore, HostRow } from '@dispatch/a2a';
+import { isLoopbackHost } from '@dispatch/a2a';
 import type { Address } from '@dispatch/protocol';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
@@ -11,11 +12,28 @@ export function isHostName(name: string): boolean {
   return NAME.test(name);
 }
 
+// The public URL a host serves on: https, or http on loopback, with no
+// credentials or query; null when it is anything else.
+export function hostPublicUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const url = new URL(raw);
+    const plainOk = url.protocol === 'http:' && isLoopbackHost(url.hostname);
+    if (url.protocol !== 'https:' && !plainOk) return null;
+    if (url.username !== '' || url.password !== '' || url.search !== '')
+      return null;
+    return url.href.replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
 // An operator-issued credential for one standalone host (spec:1676-1685):
 // 256 random bits, shown once, kept only as sha256 in the 0600 a2a.db.
 export function mintHost(
   store: A2AStore,
   name: string,
+  publicUrl: string,
   createdBy: Address,
   now = new Date()
 ): { row: HostRow; token: string } {
@@ -24,6 +42,7 @@ export function mintHost(
     id: `h-${randomUUID().slice(0, 8)}`,
     name,
     tokenHash: tokenHash(token),
+    publicUrl,
     createdBy,
     createdAt: now.toISOString(),
     revokedAt: null,

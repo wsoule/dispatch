@@ -92,8 +92,12 @@ On the owner's machine (the operator):
 
 ```bash
 dispatch a2a hosts allow          # open /api/a2a/port to standalone hosts
-dispatch a2a hosts add relay      # mint a host token, shown once
+dispatch a2a hosts add relay --public-url https://agent.example.com
+                                  # mint a host token, shown once
 ```
+
+The public URL is pinned to the host: its card is built for that URL and no
+other, so a stolen host token cannot publish a card pointing elsewhere.
 
 Put the token in a file only its owner can read (`chmod 600`) on the relay
 machine, then:

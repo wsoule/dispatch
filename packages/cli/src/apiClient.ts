@@ -1180,7 +1180,10 @@ export interface A2AApiClient {
   ): Promise<A2APeerSummary>;
   removePeer(alias: string): Promise<void>;
   hosts(): Promise<{ standalone: boolean; hosts: A2AHostSummary[] }>;
-  addHost(name: string): Promise<{ id: string; name: string; token: string }>;
+  addHost(
+    name: string,
+    publicUrl: string
+  ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
   removeHost(id: string): Promise<void>;
   setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
 }
@@ -1189,6 +1192,7 @@ export interface A2AApiClient {
 interface A2AHostSummary {
   id: string;
   name: string;
+  publicUrl: string;
   createdBy: string;
   createdAt: string;
   revokedAt: string | null;
@@ -1249,7 +1253,8 @@ export function createA2AApiClient(
         method: 'DELETE',
       }),
     hosts: () => request(target, '/api/a2a/hosts'),
-    addHost: (name) => request(target, '/api/a2a/hosts', jsonBody({ name })),
+    addHost: (name, publicUrl) =>
+      request(target, '/api/a2a/hosts', jsonBody({ name, publicUrl })),
     removeHost: (id) =>
       request(target, `/api/a2a/hosts/${encodeURIComponent(id)}`, {
         method: 'DELETE',

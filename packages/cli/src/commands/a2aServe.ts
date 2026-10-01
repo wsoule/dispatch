@@ -52,7 +52,7 @@ export async function resolveServe(
   const hostToken = readHostToken(o.hostTokenFile);
   if (hostToken === '')
     throw new CliError(
-      'dispatch a2a serve needs a host token: --host-token-file <file> or DISPATCH_A2A_HOST_TOKEN (mint one with: dispatch a2a hosts add <name>)'
+      'dispatch a2a serve needs a host token: --host-token-file <file> or DISPATCH_A2A_HOST_TOKEN (mint one with: dispatch a2a hosts add <name> --public-url <url>)'
     );
   const daemonUrl = (
     o.daemon ?? (await attachToRunningDaemon(ctx)).baseUrl

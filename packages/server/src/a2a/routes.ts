@@ -27,7 +27,7 @@ import { tierAllows } from '../tiers.js';
 import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
-import { isHostName, mintHost } from './hosts.js';
+import { hostPublicUrl, isHostName, mintHost } from './hosts.js';
 import type { PeerAddInput, PeerChange } from './peers.js';
 import {
   addPeer,
@@ -409,15 +409,32 @@ async function hostRoute(
   if (segments.length === 1 && method === 'POST') {
     const parsed = await readJsonBody(req);
     if (!parsed.ok) return parsed.response;
-    const name = (parsed.value as { name?: unknown }).name;
+    const { name, publicUrl: rawUrl } = parsed.value as {
+      name?: unknown;
+      publicUrl?: unknown;
+    };
     if (typeof name !== 'string' || !isHostName(name.trim()))
       return invalid(
         'name',
         'name: letters, digits, spaces, ".", "_" and "-", at most 64'
       );
-    const { row, token } = mintHost(b.store, name.trim(), humanActor(ctx));
+    const publicUrl = hostPublicUrl(rawUrl);
+    if (publicUrl === null)
+      return invalid(
+        'publicUrl',
+        'publicUrl: the URL the host serves on, https (or http on loopback), with no query'
+      );
+    const { row, token } = mintHost(
+      b.store,
+      name.trim(),
+      publicUrl,
+      humanActor(ctx)
+    );
     changed(ctx);
-    return jsonResponse({ id: row.id, name: row.name, token }, 201);
+    return jsonResponse(
+      { id: row.id, name: row.name, publicUrl: row.publicUrl, token },
+      201
+    );
   }
   if (segments.length === 2 && method === 'DELETE') {
     const id = decodeURIComponent(segments[1]);

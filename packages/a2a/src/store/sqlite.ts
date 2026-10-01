@@ -106,6 +106,8 @@ export interface HostRow {
   id: string;
   name: string;
   tokenHash: string;
+  // The URL the host serves on, pinned at minting; its card uses no other.
+  publicUrl: string;
   createdBy: Address;
   createdAt: string;
   revokedAt: string | null;
@@ -216,7 +218,7 @@ CREATE TABLE IF NOT EXISTS push_configs (
 );
 CREATE INDEX IF NOT EXISTS push_client ON push_configs (client);
 CREATE TABLE IF NOT EXISTS hosts (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, public_url TEXT NOT NULL,
   created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
 );
 `;
@@ -381,6 +383,7 @@ interface HostDbRow {
   id: string;
   name: string;
   token_hash: string;
+  public_url: string;
   created_by: string;
   created_at: string;
   revoked_at: string | null;
@@ -391,6 +394,7 @@ function toHost(r: HostDbRow): HostRow {
     id: r.id,
     name: r.name,
     tokenHash: r.token_hash,
+    publicUrl: r.public_url,
     createdBy: r.created_by,
     createdAt: r.created_at,
     revokedAt: r.revoked_at,
@@ -835,9 +839,17 @@ export class SqliteA2AStore implements A2AStore {
   putHost(h: HostRow): void {
     this.db
       .prepare(
-        'INSERT INTO hosts (id, name, token_hash, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?)'
+        'INSERT INTO hosts (id, name, token_hash, public_url, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,?)'
       )
-      .run(h.id, h.name, h.tokenHash, h.createdBy, h.createdAt, h.revokedAt);
+      .run(
+        h.id,
+        h.name,
+        h.tokenHash,
+        h.publicUrl,
+        h.createdBy,
+        h.createdAt,
+        h.revokedAt
+      );
   }
 
   hosts(): HostRow[] {

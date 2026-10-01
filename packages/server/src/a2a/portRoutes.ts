@@ -1,6 +1,5 @@
 import type { AuthResult, ListQuery, TaskStateName } from '@dispatch/a2a';
 import {
-  isLoopbackHost,
   parsePortContinue,
   parsePortOpen,
   PORT_CLIENT_HEADER,
@@ -11,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
 import { jsonResponse, readJsonBody } from '../api/http.js';
-import { authenticateHost } from './hosts.js';
+import { authenticateHost, hostPublicUrl } from './hosts.js';
 
 // Stream slots a standalone host holds, each released by that host's DELETE,
 // by its revocation, or, if the host dies, when the lease expires (D30).
@@ -151,22 +150,6 @@ function bearerOf(value: string | null): string | null {
   return /^Bearer[ ]+(\S+)$/i.exec((value ?? '').trim())?.[1] ?? null;
 }
 
-// The public URL a host asks its card for: https, or http on loopback, with
-// no credentials or query; anything else is refused.
-function hostPublicUrl(raw: string | null): string | null {
-  if (raw === null) return null;
-  try {
-    const url = new URL(raw);
-    const plainOk = url.protocol === 'http:' && isLoopbackHost(url.hostname);
-    if (url.protocol !== 'https:' && !plainOk) return null;
-    if (url.username !== '' || url.password !== '' || url.search !== '')
-      return null;
-    return url.href.replace(/\/$/, '');
-  } catch {
-    return null;
-  }
-}
-
 const notFound = () => jsonResponse({ error: 'not found' }, 404);
 const taskNotFound = () =>
   jsonResponse(
@@ -210,25 +193,22 @@ export async function handlePortRoute(
   const port = bridge.port;
   const url = new URL(req.url);
   if (rest[0] === 'card' && rest.length === 1 && method === 'GET') {
-    const raw = url.searchParams.get('publicUrl');
-    const publicUrl = hostPublicUrl(raw);
-    if (raw !== null && publicUrl === null)
+    // The card is built for the URL pinned at minting, and no other.
+    const asked = url.searchParams.get('publicUrl');
+    if (asked !== null && hostPublicUrl(asked) !== host.publicUrl)
       return jsonResponse(
         {
           error: {
             kind: 'messaging',
-            code: 'invalid',
-            message: 'publicUrl: https, or http on loopback, with no query',
+            code: 'forbidden',
+            message: 'publicUrl: not the URL this host was added with',
             field: 'publicUrl',
           },
         },
-        400
+        403
       );
     return jsonResponse(
-      await port.card({
-        ...(publicUrl === null ? {} : { publicUrl }),
-        standalone: true,
-      })
+      await port.card({ publicUrl: host.publicUrl, standalone: true })
     );
   }
   // A lease is the host's own: releasing it needs no client, so a client

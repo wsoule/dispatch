@@ -62,7 +62,12 @@ describe('leases and host tokens (fixture)', () => {
   });
 
   it('mints a 256-bit token, keeps only its hash, and refuses it once revoked', () => {
-    const { row, token } = mintHost(f.store, 'relay', 'human:wyat');
+    const { row, token } = mintHost(
+      f.store,
+      'relay',
+      'https://relay.example.com',
+      'human:wyat'
+    );
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect(row.tokenHash).toBe(tokenHash(token));
     expect(JSON.stringify(f.store.hosts())).not.toContain(token);
@@ -174,14 +179,15 @@ describe('the /api/a2a/port routes (daemon)', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const mint = async (name = 'relay') =>
+  const RELAY = 'https://relay.example.com';
+  const mint = async (name = 'relay', publicUrl: string = RELAY) =>
     (await (
       await fetch(`${base}/api/a2a/hosts`, {
         method: 'POST',
         headers: json,
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, publicUrl }),
       })
-    ).json()) as { id: string; name: string; token: string };
+    ).json()) as { id: string; name: string; token: string; publicUrl: string };
   const allowStandalone = () =>
     fetch(`${base}/api/a2a/listener/standalone`, {
       method: 'PUT',
@@ -266,25 +272,51 @@ describe('the /api/a2a/port routes (daemon)', () => {
     ).toBe(404);
   });
 
-  it('builds the card for a host’s public URL only when a host asks, and refuses a bad one', async () => {
+  it('pins a host’s public URL when it is minted, and refuses a bad one', async () => {
+    const post = (body: unknown) =>
+      fetch(`${base}/api/a2a/hosts`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify(body),
+      });
+    expect((await post({ name: 'relay' })).status).toBe(400);
+    for (const bad of [
+      'javascript:alert(1)',
+      'http://evil.example.com',
+      'https://relay.example.com/?q=1',
+      'https://user:pw@relay.example.com',
+    ])
+      expect((await post({ name: 'relay', publicUrl: bad })).status).toBe(400);
+    const minted = await mint('relay', 'https://relay.example.com/');
+    expect(minted.publicUrl).toBe(RELAY);
+    const listed = (await (await fetch(`${base}/api/a2a/hosts`)).json()) as {
+      hosts: { publicUrl: string }[];
+    };
+    expect(listed.hosts[0].publicUrl).toBe(RELAY);
+  });
+
+  it('builds the card only for the URL the host was minted with', async () => {
     await allowStandalone();
     const { token } = await mint();
     const card = (q: string, auth = `Bearer ${token}`) =>
       rawFetch(`${base}/api/a2a/port/card${q}`, {
         headers: { authorization: auth },
       });
-    const relay = `?publicUrl=${encodeURIComponent('https://relay.example.com')}`;
-    const res = await card(relay);
+    const at = (url: string) => `?publicUrl=${encodeURIComponent(url)}`;
+    const res = await card(at(RELAY));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
-      publicUrl: 'https://relay.example.com',
+      publicUrl: RELAY,
       pushNotifications: false,
     });
-    expect((await card(relay, 'Bearer nope')).status).toBe(401);
-    for (const bad of ['javascript:alert(1)', 'http://evil.example.com'])
-      expect((await card(`?publicUrl=${encodeURIComponent(bad)}`)).status).toBe(
-        400
-      );
+    expect(await (await card('')).json()).toMatchObject({ publicUrl: RELAY });
+    expect((await card(at(RELAY), 'Bearer nope')).status).toBe(401);
+    for (const other of [
+      'https://other.example.com',
+      'javascript:alert(1)',
+      'http://127.0.0.1:9',
+    ])
+      expect((await card(at(other))).status).toBe(403);
   });
 
   // Opens a task as `clientToken` through `hostToken`, then watches it.
