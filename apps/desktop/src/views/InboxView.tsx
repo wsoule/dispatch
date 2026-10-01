@@ -93,6 +93,8 @@ interface InboxViewProps {
   onOpenTask?: (taskId: string, tab: TaskTab, runId?: string) => void;
   /** Opens the full-window review page for one repo pull request. */
   onOpenPr: (number: number) => void;
+  /** Opens a doc in the Docs view (a conflicted doc's row). */
+  onOpenDoc?: (id: string) => void;
 }
 
 /** Which task mode a row's click lands on: asks about the diff go to the review;
@@ -146,6 +148,7 @@ export function InboxView({
   projectRoot,
   onOpenTask,
   onOpenPr,
+  onOpenDoc,
 }: InboxViewProps) {
   const {
     portLoading,
@@ -264,6 +267,9 @@ export function InboxView({
         return;
       case 'pr':
         onOpenPr(item.pr.number);
+        return;
+      case 'doc':
+        onOpenDoc?.(item.doc.id);
         return;
       case 'notification':
         inbox.navigate(item.entry.target);
@@ -731,7 +737,7 @@ function DetailPane({
         </span>
         <PillButton onClick={onOpen}>Open</PillButton>
       </div>
-      <DetailBody item={item} project={project} />
+      <DetailBody item={item} project={project} onOpen={onOpen} />
     </>
   );
 }
@@ -739,9 +745,11 @@ function DetailPane({
 function DetailBody({
   item,
   project,
+  onOpen,
 }: {
   item: InboxItem;
   project: DispatchProjectData;
+  onOpen: () => void;
 }) {
   switch (item.kind) {
     case 'ask': {
@@ -819,6 +827,19 @@ function DetailBody({
       return <TaskSummary taskId={item.row.taskId} project={project} />;
     case 'pr':
       return <PrSummary pr={item.pr} />;
+    case 'doc':
+      return (
+        <div className="flex flex-col gap-3 p-4">
+          <p className="font-book text-foreground text-[15px] leading-6">
+            {`${item.doc.title} (${item.doc.handle}) holds conflict markers. Resolve them in the doc's merge view and save; this item goes once its head is clean.`}
+          </p>
+          <div>
+            <Button size="sm" onClick={onOpen}>
+              Open doc
+            </Button>
+          </div>
+        </div>
+      );
     case 'notification':
       return (
         <div className="flex flex-col gap-2 p-4">

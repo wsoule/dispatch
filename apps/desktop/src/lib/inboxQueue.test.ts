@@ -1,4 +1,4 @@
-import type { RepoPr, RunMeta } from '@dispatch/client';
+import type { DocSummary, RepoPr, RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
@@ -243,6 +243,30 @@ describe('readyToLand', () => {
 });
 
 describe('inbox items', () => {
+  test('derives one Inbox item per conflicted team doc, counted in the badge', () => {
+    const doc = {
+      id: 'doc-1',
+      handle: 'auth',
+      title: 'Auth refactor',
+      scope: 'team',
+      conflicted: true,
+      updatedAt: '2026-09-26T10:00:00.000Z',
+    } as unknown as DocSummary;
+    const data = buildInbox(input({ conflictedDocs: [doc] }));
+    expect(data.total).toBe(1);
+    const items = buildInboxItems(data, []);
+    expect(items).toEqual([
+      { kind: 'doc', key: 'doc:doc-1', ts: '2026-09-26T10:00:00.000Z', doc },
+    ]);
+    expect(filterInboxItems(items, 'needs-you')).toHaveLength(1);
+    expect(inboxItemText(items[0])).toEqual({
+      id: 'auth',
+      title: 'Conflict markers in Auth refactor',
+      subtitle: 'Resolve them in the doc',
+    });
+    expect(buildInbox(input()).docs ?? []).toEqual([]);
+  });
+
   const reviewRow = () => ({
     runId: 'r-1',
     taskId: 't-1',
