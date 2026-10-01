@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -9,6 +10,7 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -115,41 +117,112 @@ function writeCredentials(file: CredentialsFile): void {
 }
 
 const LOCK_STALE_MS = 10_000;
-const LOCK_WAIT_MS = 5_000;
+// Longer than LOCK_STALE_MS, so a waiter outlives an abandoned lock.
+const LOCK_WAIT_MS = 15_000;
 
-// An advisory lock file beside credentials.json, so two processes writing at
-// once cannot drop each other's update; a lock older than 10s is abandoned.
+function holderGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
+/** Whether a lock holding `text` ("<pid> <nonce>") and last written at
+ *  `mtimeMs` was abandoned: its holder has exited, or it is over 10s old. A
+ *  lock still being written (no pid yet) waits out the age rule. */
+export function isStaleLock(
+  text: string,
+  mtimeMs: number,
+  now = Date.now()
+): boolean {
+  if (now - mtimeMs > LOCK_STALE_MS) return true;
+  const pid = Number(/^(\d+) /.exec(text)?.[1]);
+  return Number.isInteger(pid) && pid > 0 && holderGone(pid);
+}
+
+/** Removes the lock at `lock` only if it still holds `judged`, the text it
+ *  was judged stale on. Breakers take turns through `<lock>.break`, and each
+ *  re-reads the lock under it, so a lock that replaced the stale one is never
+ *  removed. A breaker that died mid-break is cleared the same way. */
+export function takeOverStaleLock(lock: string, judged: string): void {
+  const breaker = `${lock}.break`;
+  let fd: number;
+  try {
+    fd = openSync(breaker, 'wx', 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    // Another breaker is at work; one that exited mid-break is cleared.
+    try {
+      const text = readFileSync(breaker, 'utf8');
+      if (isStaleLock(text, statSync(breaker).mtimeMs)) unlinkSync(breaker);
+    } catch {
+      // Finished meanwhile.
+    }
+    return;
+  }
+  try {
+    writeSync(fd, `${process.pid} break\n`);
+    closeSync(fd);
+    if (readFileSync(lock, 'utf8') === judged) unlinkSync(lock);
+  } catch {
+    // The lock went away meanwhile.
+  } finally {
+    try {
+      unlinkSync(breaker);
+    } catch {
+      // Cleared as stale by another waiter.
+    }
+  }
+}
+
+// An advisory lock file beside credentials.json holding "<pid> <nonce>", so
+// two processes writing at once cannot drop each other's update. Release
+// removes it only while it still holds this nonce. A waiter sleeps 5ms per
+// try; it blocks only while a live process is mid-write, since a lock whose
+// holder exited is taken over at once.
 function lockCredentials(): () => void {
   const lock = `${credentialsPath()}.lock`;
   mkdirSync(resolve(lock, '..'), { recursive: true });
+  const mine = `${process.pid} ${randomBytes(16).toString('hex')}\n`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
     try {
-      closeSync(openSync(lock, 'wx', 0o600));
+      const fd = openSync(lock, 'wx', 0o600);
+      try {
+        writeSync(fd, mine);
+      } finally {
+        closeSync(fd);
+      }
       return () => {
         try {
-          unlinkSync(lock);
+          if (readFileSync(lock, 'utf8') === mine) unlinkSync(lock);
         } catch {
-          // Taken over as stale; nothing left to release.
+          // Already gone.
         }
       };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
     }
+    let text: string;
+    let mtimeMs: number;
     try {
-      if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
-        unlinkSync(lock);
-        continue;
-      }
+      text = readFileSync(lock, 'utf8');
+      mtimeMs = statSync(lock).mtimeMs;
     } catch {
+      continue; // Released between the open and the read.
+    }
+    if (isStaleLock(text, mtimeMs)) {
+      takeOverStaleLock(lock, text);
       continue;
     }
     if (Date.now() > deadline)
       throw new Error(
         `${lock} is held by another process; remove it if no Dispatch process is running`
       );
-    Atomics.wait(pause, 0, 0, 10);
+    Atomics.wait(pause, 0, 0, 5);
   }
 }
 

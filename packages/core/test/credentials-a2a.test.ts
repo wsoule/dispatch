@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -18,9 +19,11 @@ import {
   clearProjectCredential,
   credentialsPath,
   CredentialsUnreadableError,
+  isStaleLock,
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,
+  takeOverStaleLock,
   writeA2ASigningKey,
   writePeerCredential,
   writeProjectCredential,
@@ -214,6 +217,89 @@ describe('concurrent writers', () => {
       for (let i = 0; i < 25; i += 1)
         expect(readPeerCredential(ROOT, `${tag}-${i}`)).not.toBeNull();
     expect(existsSync(`${credentialsPath()}.lock`)).toBe(false);
+  });
+
+  // The pid of a process that has already exited.
+  const deadPid = async () => {
+    const child = Bun.spawn([process.execPath, '-e', '0']);
+    await child.exited;
+    return child.pid;
+  };
+
+  // A writer that waits at a barrier file, so every child meets the stale lock
+  // in the same instant.
+  const racer = (tag: string, count: number, go: string) =>
+    Bun.spawn(
+      [
+        process.execPath,
+        '-e',
+        `const { existsSync } = await import('node:fs');
+         const { writePeerCredential } = await import(${JSON.stringify(SRC)});
+         while (!existsSync(${JSON.stringify(go)})) await Bun.sleep(1);
+         for (let i = 0; i < ${count}; i++)
+           writePeerCredential(${JSON.stringify(ROOT)}, '${tag}-' + i, { scheme: 'bearer', token: 't' });`,
+      ],
+      { env: { ...process.env, DISPATCH_HOME: home }, stderr: 'pipe' }
+    );
+
+  it('lose no update when eight writers race to take over a dead holder’s lock', async () => {
+    mkdirSync(dirname(credentialsPath()), { recursive: true });
+    const lock = `${credentialsPath()}.lock`;
+    const dead = await deadPid();
+    const tags = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    let lost = 0;
+    for (let round = 0; round < 6; round += 1) {
+      rmSync(credentialsPath(), { force: true });
+      writeFileSync(lock, `${dead} abandoned-${round}\n`);
+      const old = new Date(Date.now() - 60_000);
+      utimesSync(lock, old, old);
+      const go = join(home, `go-${round}`);
+      const children = tags.map((tag) => racer(tag, 5, go));
+      await Bun.sleep(400);
+      writeFileSync(go, '');
+      for (const child of children) expect(await child.exited).toBe(0);
+      for (const tag of tags)
+        for (let i = 0; i < 5; i += 1)
+          if (readPeerCredential(ROOT, `${tag}-${i}`) === null) lost += 1;
+      expect(existsSync(lock)).toBe(false);
+    }
+    expect(lost).toBe(0);
+  }, 120_000);
+
+  it('a takeover judged on an old lock never removes the lock that replaced it', async () => {
+    mkdirSync(dirname(credentialsPath()), { recursive: true });
+    const lock = `${credentialsPath()}.lock`;
+    const judged = `${await deadPid()} abandoned\n`;
+    writeFileSync(lock, judged);
+    // A judged it stale, took it over, and now holds a lock of its own.
+    takeOverStaleLock(lock, judged);
+    const fresh = `${process.pid} a-nonce\n`;
+    writeFileSync(lock, fresh);
+    // B judged the same old lock stale before A acted; its takeover is late.
+    takeOverStaleLock(lock, judged);
+    expect(readFileSync(lock, 'utf8')).toBe(fresh);
+    expect(
+      readdirSync(dirname(lock)).filter((n) => n.includes('.lock.'))
+    ).toEqual([]);
+  });
+
+  it('judges a lock stale only when its holder has exited or it is old', async () => {
+    const now = Date.now();
+    expect(isStaleLock(`${await deadPid()} n\n`, now, now)).toBe(true);
+    expect(isStaleLock(`${process.pid} n\n`, now, now)).toBe(false);
+    expect(isStaleLock(`${process.pid} n\n`, now - 60_000, now)).toBe(true);
+    expect(isStaleLock('', now, now)).toBe(false);
+    expect(isStaleLock('', now - 60_000, now)).toBe(true);
+  });
+
+  it('takes over a fresh lock at once when its holder has exited', async () => {
+    mkdirSync(dirname(credentialsPath()), { recursive: true });
+    const lock = `${credentialsPath()}.lock`;
+    writeFileSync(lock, `${await deadPid()} gone\n`);
+    const started = Date.now();
+    writePeerCredential(ROOT, 'acme', { scheme: 'bearer', token: 't' });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(existsSync(lock)).toBe(false);
   });
 
   it('takes over a lock its holder left behind', () => {
