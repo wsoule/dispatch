@@ -560,3 +560,40 @@ describe('push-notification configs (P4)', () => {
     );
   });
 });
+
+describe('the JWKS and the card URL (P4)', () => {
+  const bare = { authorization: '', 'A2A-Version': '' };
+
+  it('serves the port’s JWKS unauthenticated, and 404s without one', async () => {
+    expect(
+      (await call('/.well-known/jwks.json', { headers: bare })).status
+    ).toBe(404);
+    port.cardInputs = {
+      ...port.cardInputs,
+      jwks: { keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'k1' }] },
+    };
+    const res = await call('/.well-known/jwks.json', { headers: bare });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('public, max-age=300');
+    expect(await res.json()).toEqual({
+      keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'k1' }],
+    });
+  });
+
+  it('never builds the card URL from Host or X-Forwarded-* headers', async () => {
+    const res = await call('/.well-known/agent-card.json', {
+      headers: {
+        ...bare,
+        host: 'evil.example.net',
+        'x-forwarded-host': 'evil.example.net',
+        'x-forwarded-proto': 'http',
+      },
+    });
+    const text = await res.text();
+    expect(text).toContain(port.cardInputs.publicUrl);
+    expect(text).not.toContain('evil.example.net');
+    expect(port.calls.filter((c) => c.method === 'card')).toEqual([
+      { method: 'card', args: [] },
+    ]);
+  });
+});

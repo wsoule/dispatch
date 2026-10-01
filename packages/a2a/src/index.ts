@@ -13,7 +13,11 @@ export {
   cardEtag,
   cardJson,
   DEFAULT_CARD_DESCRIPTION,
+  JWKS_PATH,
   offeredSkills,
+  signCard,
+  unsignedCardEtag,
+  unsignedCardJson,
 } from './card.js';
 export {
   DEFAULT_HANDOFF_STATUSES,
@@ -98,8 +102,11 @@ export type {
   BridgePort,
   Caller,
   CardInputs,
+  CardRequest,
+  CardSignatureJson,
   ContinueInput,
   ContinueResult,
+  Jwks,
   ListPage,
   ListQuery,
   OpenGateFact,

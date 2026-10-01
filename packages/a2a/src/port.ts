@@ -128,6 +128,26 @@ export type Admission =
   | { ok: true; release?: () => void }
   | { ok: false; retryAfterSec: number };
 
+/** A JWS over the card (a2a.proto v1.0.1 AgentCardSignature). */
+export interface CardSignatureJson {
+  protected: string;
+  signature: string;
+  header?: Record<string, JsonValue>;
+}
+
+/** Public keys only, served at JWKS_PATH; never part of the card. */
+export interface Jwks {
+  keys: Record<string, JsonValue>[];
+}
+
+/** Who a card is built for. Only a trusted host (T36) sets these, never a
+ *  request's Host or X-Forwarded-* headers. */
+export interface CardRequest {
+  publicUrl?: string;
+  // A standalone host: push delivery is the daemon's, so it is off there.
+  standalone?: boolean;
+}
+
 export interface CardInputs {
   name: string;
   description: string | null;
@@ -136,6 +156,8 @@ export interface CardInputs {
   skills: A2ASkill[];
   blockingWaitSec: number;
   pushNotifications: boolean;
+  signatures?: CardSignatureJson[];
+  jwks?: Jwks;
 }
 
 export type A2APolicy = A2AConfig;
@@ -161,7 +183,7 @@ export interface PushConfigPort {
 export interface BridgePort {
   authenticate(bearer: string): Promise<AuthResult>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
-  card(): Promise<CardInputs>;
+  card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;
   continue(caller: Caller, input: ContinueInput): Promise<ContinueResult>;
   // null when the task is absent or not the caller's.

@@ -1,9 +1,13 @@
-import { AgentCard, canonicalizeAgentCard } from '@a2a-js/sdk';
+import {
+  AgentCard,
+  canonicalizeAgentCard,
+  generateAgentCardSignature,
+} from '@a2a-js/sdk';
 import type { A2ASkill } from '@dispatch/core';
 import type { JsonValue } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
 
-import type { CardInputs } from './port.js';
+import type { CardInputs, CardSignatureJson } from './port.js';
 import { handoffSupported } from './statuses.js';
 import type { HandoffStatuses } from './statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from './uris.js';
@@ -54,9 +58,14 @@ function skillJson(skill: A2ASkill, waitSec: number): JsonValue {
   }
 }
 
+/** Where a signed card's JWKS is served, relative to its public URL. */
+export const JWKS_PATH = '/.well-known/jwks.json';
+
 // The project's agent card as ProtoJSON: one HTTP+JSON interface, bearer auth,
-// the three optional extensions, and no owner or teammate names.
-export function buildCardJson(inputs: CardInputs): Record<string, JsonValue> {
+// the three optional extensions, and no owner or teammate names. Unsigned.
+export function unsignedCardJson(
+  inputs: CardInputs
+): Record<string, JsonValue> {
   return {
     name: inputs.name,
     description: inputs.description ?? DEFAULT_CARD_DESCRIPTION,
@@ -109,6 +118,20 @@ export function buildCardJson(inputs: CardInputs): Record<string, JsonValue> {
   };
 }
 
+// The served card: the unsigned card plus any signatures the port supplied.
+// The JWKS is never part of it.
+export function buildCardJson(inputs: CardInputs): Record<string, JsonValue> {
+  const card = unsignedCardJson(inputs);
+  return inputs.signatures === undefined || inputs.signatures.length === 0
+    ? card
+    : {
+        ...card,
+        signatures: inputs.signatures.map((sig) => ({
+          ...sig,
+        })) as unknown as JsonValue,
+      };
+}
+
 export function buildCard(inputs: CardInputs): AgentCard {
   return AgentCard.fromJSON(buildCardJson(inputs));
 }
@@ -118,10 +141,40 @@ export function cardJson(inputs: CardInputs): unknown {
   return AgentCard.toJSON(buildCard(inputs));
 }
 
-// A strong ETag over the canonical card, so a changed card busts caches.
+// A strong ETag over the canonical card without its signatures, so a changed
+// card busts caches while a re-signed one (ES256 is randomized) does not.
 export function cardEtag(card: AgentCard): string {
   const digest = createHash('sha256')
-    .update(canonicalizeAgentCard(card))
+    .update(
+      canonicalizeAgentCard(
+        AgentCard.fromJSON({
+          ...(AgentCard.toJSON(card) as Record<string, unknown>),
+          signatures: [],
+        })
+      )
+    )
     .digest('hex');
   return `"${digest.slice(0, 16)}"`;
+}
+
+export function unsignedCardEtag(inputs: CardInputs): string {
+  return cardEtag(AgentCard.fromJSON(unsignedCardJson(inputs)));
+}
+
+// A JWS over the JCS-canonical card (spec:791-794, A2A §8.4) with the SDK's
+// signer; ES256, with the key's kid and the jku its JWKS is served at.
+export async function signCard(
+  unsigned: Record<string, JsonValue>,
+  key: { privateJwk: Record<string, JsonValue>; kid: string; jku: string }
+): Promise<CardSignatureJson[]> {
+  const sign = generateAgentCardSignature(
+    key.privateJwk as unknown as Parameters<
+      typeof generateAgentCardSignature
+    >[0],
+    { alg: 'ES256', kid: key.kid, jku: key.jku, typ: 'JOSE' }
+  );
+  const signed = AgentCard.toJSON(await sign(AgentCard.fromJSON(unsigned))) as {
+    signatures?: CardSignatureJson[];
+  };
+  return signed.signatures ?? [];
 }

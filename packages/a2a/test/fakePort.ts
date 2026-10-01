@@ -149,7 +149,8 @@ export class FakePort implements BridgePort {
       },
     });
   }
-  card(): Promise<CardInputs> {
+  card(...args: unknown[]): Promise<CardInputs> {
+    this.calls.push({ method: 'card', args });
     return Promise.resolve(this.cardInputs);
   }
   open(_caller: Caller, input: OpenInput): Promise<OpenResult> {

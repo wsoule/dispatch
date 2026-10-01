@@ -10,7 +10,7 @@ import { MessagingError } from '@dispatch/protocol';
 import type { JsonValue } from '@dispatch/protocol';
 import { randomUUID } from 'node:crypto';
 
-import { buildCard, cardEtag } from '../card.js';
+import { buildCard, cardEtag, JWKS_PATH } from '../card.js';
 import { decodeInbound, outputTextType } from '../codec.js';
 import {
   A2AError,
@@ -645,6 +645,28 @@ async function serveCard(
   });
 }
 
+// The card's public signing keys, unauthenticated like the card; 404 when
+// the card is unsigned.
+async function serveJwks(
+  req: Request,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<Response> {
+  if (req.method !== 'GET' && req.method !== 'HEAD')
+    return new Response(null, { status: 405 });
+  const wait = options.limiter.allowCard(options.clientIp);
+  if (wait !== null) return rateLimited(wait);
+  const jwks = (await port.card()).jwks;
+  if (jwks === undefined) return new Response('not found', { status: 404 });
+  return new Response(JSON.stringify(jwks), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=300',
+    },
+  });
+}
+
 // The HTTP+JSON binding of A2A 1.0 over a BridgePort: version, then auth,
 // then the port's per-client admission, then the operation.
 export async function handleA2A(
@@ -655,6 +677,7 @@ export async function handleA2A(
   const url = new URL(req.url);
   try {
     if (url.pathname === CARD_PATH) return await serveCard(req, port, options);
+    if (url.pathname === JWKS_PATH) return await serveJwks(req, port, options);
     if (!url.pathname.startsWith(`${options.basePath}/`))
       return new Response('not found', { status: 404 });
     if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
