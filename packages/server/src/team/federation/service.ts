@@ -283,8 +283,11 @@ export class FederationService {
       // The fold reads the clock (license expiry, the legacy deadline).
       roster.reload();
       if (!roster.founded()) {
-        await this.v1Pass();
+        const covered = await this.v1Pass();
         await this.discoverFounding();
+        // Lines from a branch that carries a founding wait for it: past the
+        // window they are refused, so no machine applies them first.
+        if (covered !== null && !roster.foundingSeen()) this.v1Apply(covered);
         // A founding pinned just now: this replica's key op goes out this pass.
         if (!roster.founded()) return;
       }
@@ -331,14 +334,16 @@ export class FederationService {
   }
 
   // Today's pass, step for step, until a team is founded.
-  private async v1Pass(): Promise<void> {
+  // Sends this replica's v1 outbox and exchanges; the people the license
+  // covers, or null when this replica is past the seats.
+  private async v1Pass(): Promise<Set<string> | null> {
     const { ledger, v1 } = this.opts;
     const outbox = ledger.outbox();
     const seats = this.opts.seats();
     if (!this.coveredV1(seats, outbox[0]?.hlc).has(this.person())) {
       this.paused = this.opts.seatMessage(seats);
       this.lastSyncAt = this.now().toISOString();
-      return;
+      return null;
     }
     this.paused = null;
     if (outbox.length > 0) {
@@ -353,7 +358,13 @@ export class FederationService {
     }
     const exchanged = await v1.exchange();
     this.lastError = exchanged.offline ?? null;
-    const covered = this.coveredV1(seats);
+    this.lastSyncAt = this.now().toISOString();
+    return this.coveredV1(seats);
+  }
+
+  // Applies other replicas' v1 lines from people the license covers.
+  private v1Apply(covered: Set<string>): void {
+    const { ledger, v1 } = this.opts;
     const incoming = v1
       .readOthers((replica) => ledger.cursor(replica))
       .filter((op) => covered.has(personOf(op.replica)))
@@ -362,7 +373,6 @@ export class FederationService {
     ledger.atomically(() => {
       changed = this.applyV1(incoming);
     });
-    this.lastSyncAt = this.now().toISOString();
     if (changed) this.opts.onBoardChanged();
   }
 

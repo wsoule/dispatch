@@ -93,6 +93,10 @@ interface PendingInvite {
 
 // The daemon's side of the signed roster: it publishes this machine's roster
 // ops, applies verified ones, and reads rights from the shared fold.
+// The tail of a held op's problem, which only the hold clears.
+const CLOCK_HOLD =
+  "ahead of this machine's clock; it waits until the clock catches up";
+
 export class RosterService {
   private cached: RosterView | null | undefined;
   /** Problem subjects the last fold recorded, cleared when they go away. */
@@ -559,11 +563,18 @@ export class RosterService {
     if (entry.replica !== this.me && this.fed.ahead(entry.hlc)) {
       this.fed.problem(
         subject,
-        `${entry.replica}'s op at seq ${entry.seq} is stamped ${entry.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ahead of this machine's clock; it waits until the clock catches up`
+        `${entry.replica}'s op at seq ${entry.seq} is stamped ${entry.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ${CLOCK_HOLD}`
       );
       return 'held';
     }
-    this.fed.clearProblem(subject);
+    // Only the clock hold's own problem: a fold problem (an unreadable op's
+    // pause) shares the subject and stays while the fold reports it.
+    if (
+      this.fed
+        .problems()
+        .some((p) => p.subject === subject && p.message.includes(CLOCK_HOLD))
+    )
+      this.fed.clearProblem(subject);
     this.fed.observe(entry.hlc);
     if (entry.type === 'key') {
       this.pinKey(entry);
@@ -653,6 +664,11 @@ export class RosterService {
     return this.fed.db
       .query<RosterRow, []>('SELECT * FROM fed_roster ORDER BY replica, seq')
       .all();
+  }
+
+  /** Whether any founding is on the branch, pinned or not. */
+  foundingSeen(): boolean {
+    return this.rows().some((r) => isFound(JSON.parse(r.body_json) as unknown));
   }
 
   private foundings(): Founding[] {

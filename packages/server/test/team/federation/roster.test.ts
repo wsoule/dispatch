@@ -394,6 +394,28 @@ describe('dismissing an op no build reads', () => {
     expect(auditKinds(bob)).toContain('dismiss');
   });
 
+  // A paused replica's cursor stays put, so each pass reads the op again; the
+  // re-read must not clear the pause problem that names who can dismiss it.
+  it('keeps the pause problem when the unreadable op is read again', () => {
+    const ada = make('ada');
+    const bob = make('bob');
+    ada.roster.found('acme');
+    exchange(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    exchange(ada, bob);
+    const zap = bob.fed.append({
+      type: 'roster',
+      body: { rv: 9, action: 'zap' },
+    });
+    ada.roster.applyVerified(zap, opHash(zap));
+    ada.roster.applyVerified(zap, opHash(zap));
+    expect(
+      ada.fed
+        .problems()
+        .some((p) => p.message.includes(`${ada.fed.replica} can dismiss`))
+    ).toBe(true);
+  });
+
   it('refuses to dismiss an op every build reads', () => {
     const ada = make('ada');
     ada.roster.found('acme');
