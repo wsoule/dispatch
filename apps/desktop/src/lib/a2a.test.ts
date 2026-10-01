@@ -12,7 +12,6 @@ import {
   cardSummary,
   formFromStatus,
   formToSettings,
-  httpUrlOrNull,
   isA2AAddress,
   isFromA2AClient,
   listenerFieldOf,
@@ -415,22 +414,5 @@ describe('peers', () => {
       interfaceOrigin: 'https://b.example.com',
     });
     expect(originConflict({ field: 'cardUrl', message: 'x' })).toBeNull();
-  });
-
-  it('links only http(s) URLs', () => {
-    expect(httpUrlOrNull('https://agent.example.com/a2a/v1')).toBe(
-      'https://agent.example.com/a2a/v1'
-    );
-    expect(httpUrlOrNull('http://127.0.0.1:9/a2a')).toBe(
-      'http://127.0.0.1:9/a2a'
-    );
-    for (const bad of [
-      'javascript:alert(1)',
-      'data:text/html,x',
-      'file:///etc/passwd',
-      'not a url',
-      '',
-    ])
-      expect(httpUrlOrNull(bad)).toBeNull();
   });
 });

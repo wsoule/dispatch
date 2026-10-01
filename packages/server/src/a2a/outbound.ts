@@ -72,17 +72,23 @@ export interface OutboundDeps {
   concurrency?: number;
 }
 
+// Resolves after `ms`, or at once when `signal` aborts; whichever wins
+// removes the other, so no listener outlives the wait.
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true }
-    );
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -418,12 +424,22 @@ export class OutboundWorker {
   }
 
   // A refused address is final for the delivery and disables the peer.
+  // A failure that lands after the peer was removed, or the row given up,
+  // changes nothing: the tombstone and its one notice stand.
+  private settledMeanwhile(row: OutboundRow): boolean {
+    if (this.deps.store.getPeer(row.alias) === null) return true;
+    return (
+      this.deps.store.getOutbound(row.messageId, row.alias)?.state === 'failed'
+    );
+  }
+
   private async refused(
     row: OutboundRow,
     message: Message,
     via: 'direct' | 'channel',
     reason: string
   ): Promise<void> {
+    if (this.settledMeanwhile(row)) return;
     const at = this.now().toISOString();
     this.lastWorking.delete(`${row.messageId} ${row.alias}`);
     this.deps.store.putOutbound({
@@ -442,6 +458,7 @@ export class OutboundWorker {
     row: OutboundRow,
     err: unknown
   ): Promise<void> {
+    if (this.settledMeanwhile(row)) return;
     const status = err instanceof PeerHttpError ? err.status : null;
     const reason = errorText(err);
     const at = this.now().toISOString();

@@ -1098,25 +1098,23 @@ function PeersGroup({
                   <label className="flex items-center gap-1.5">
                     <input
                       type="checkbox"
-                      aria-label="Allow plain http"
                       className="accent-primary size-3.5"
                       checked={draft.allowHttp}
                       onChange={(e) => update({ allowHttp: e.target.checked })}
                     />
-                    Plain http
+                    Allow plain http
                   </label>
                   {conflict !== null && (
                     <label className="flex items-center gap-1.5">
                       <input
                         type="checkbox"
-                        aria-label="Allow the other origin"
                         className="accent-primary size-3.5"
                         checked={draft.allowOrigin}
                         onChange={(e) =>
                           update({ allowOrigin: e.target.checked })
                         }
                       />
-                      Accept {conflict.interfaceOrigin}
+                      Allow the other origin
                     </label>
                   )}
                 </div>

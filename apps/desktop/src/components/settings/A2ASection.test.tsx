@@ -464,14 +464,20 @@ test('shows both origins and lets the operator confirm the other one', async () 
     )
     .mockImplementationOnce(() => Promise.resolve(PEER));
   await fillPeer('acme', 'https://a.example.com/card');
-  expect(screen.getByLabelText('Allow plain http')).toBeTruthy();
+  // Named by its visible label, not a separate aria-label.
+  const http = screen.getByRole('checkbox', { name: 'Allow plain http' });
+  expect(http.getAttribute('aria-label')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Add peer' }));
   expect(
     await screen.findByText(
       'The card at https://a.example.com points its A2A interface at https://b.example.com.'
     )
   ).toBeTruthy();
-  fireEvent.click(screen.getByLabelText('Allow the other origin'));
+  const other = screen.getByRole('checkbox', {
+    name: 'Allow the other origin',
+  });
+  expect(other.getAttribute('aria-label')).toBeNull();
+  fireEvent.click(other);
   fireEvent.click(screen.getByRole('button', { name: 'Add peer' }));
   await waitFor(() =>
     expect(client.addA2APeer).toHaveBeenLastCalledWith(

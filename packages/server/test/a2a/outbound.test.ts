@@ -492,6 +492,32 @@ describe('removing or disabling a peer mid-flight', () => {
     expect(f.outbound.trackerCount('fixture')).toBe(0);
   });
 
+  it('keeps the tombstone when a send fails after its peer was removed', async () => {
+    peer.status = 503;
+    peer.sendDelayMs = 300;
+    const q = await ask();
+    await waitFor(() => peer.sends === 1);
+    removePeer(f.peerDeps(), 'fixture');
+    f.peers.emit('fixture', 'removed');
+    await waitFor(() => row(q.id)?.state === 'failed');
+    const noticesBefore = notices().length;
+    await Bun.sleep(500);
+    expect(row(q.id)).toMatchObject({
+      state: 'failed',
+      lastError: 'a2a:fixture was removed',
+      remoteTaskId: null,
+      remoteContextId: null,
+    });
+    expect(notices()).toHaveLength(noticesBefore);
+    peer.status = 200;
+    peer.sendDelayMs = 0;
+    await addPeer(
+      f.peerDeps(),
+      { alias: 'fixture', cardUrl: peer.cardUrl(), token: 'peer-token' },
+      OPERATOR
+    );
+  });
+
   it('disabling stops tracking and enabling resumes it', async () => {
     const q = await ask();
     await waitFor(() => row(q.id)?.state === 'open');

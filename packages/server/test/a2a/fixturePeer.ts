@@ -77,12 +77,15 @@ export class FixturePeer implements BridgePort {
     this.server = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
-      fetch: (req) => {
+      fetch: async (req) => {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith('/message:send')) {
+          this.sends += 1;
+          if (this.sendDelayMs > 0) await Bun.sleep(this.sendDelayMs);
+        }
         if (this.status !== 200)
           return new Response('unavailable', { status: this.status });
-        const path = new URL(req.url).pathname;
         if (path === '/.well-known/agent-card.json') this.cardFetches += 1;
-        if (path.endsWith('/message:send')) this.sends += 1;
         if (
           req.method === 'GET' &&
           path.startsWith('/a2a/v1/tasks/') &&
@@ -93,16 +96,12 @@ export class FixturePeer implements BridgePort {
           this.versionNotSupported && path.startsWith('/a2a/')
             ? asPreOneClient(req)
             : req;
-        const handle = () =>
-          handleA2A(wire, this, {
-            basePath: '/a2a/v1',
-            policy: { ...DEFAULT_A2A, blockingWaitSec: 1 },
-            clientIp: '127.0.0.1',
-            limiter,
-          });
-        return this.sendDelayMs > 0 && path.endsWith('/message:send')
-          ? Bun.sleep(this.sendDelayMs).then(handle)
-          : handle();
+        return handleA2A(wire, this, {
+          basePath: '/a2a/v1',
+          policy: { ...DEFAULT_A2A, blockingWaitSec: 1 },
+          clientIp: '127.0.0.1',
+          limiter,
+        });
       },
     });
     this.url = `http://127.0.0.1:${this.server.port}`;

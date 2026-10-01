@@ -65,16 +65,6 @@ export function originConflict(error: {
   return m === null ? null : { cardOrigin: m[1], interfaceOrigin: m[2] };
 }
 
-/** A URL safe to put in an href: http(s) only, else null (render it as text). */
-export function httpUrlOrNull(raw: string): string | null {
-  try {
-    const url = new URL(raw);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? raw : null;
-  } catch {
-    return null;
-  }
-}
-
 /** A blocking, non-gate question from an A2A client, which a deciding human
  *  may decline instead of answering. */
 export function canDecline(message: Message, canDecide: boolean): boolean {
