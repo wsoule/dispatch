@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import {
   addPeer,
+  markAuthFailed,
   peerClientFor,
   refreshDuePeers,
   refreshPeer,
@@ -69,6 +70,30 @@ const ownerNotices = () =>
     .inbox('human:wyat')
     .filter(({ message }) => message.kind === 'notice')
     .map(({ message }) => message.body);
+
+describe('owner notices', () => {
+  it('name the Settings page as well as the CLI, never a CLI-only flag', async () => {
+    await addPeer(
+      f.peerDeps({ fetchImpl: serveCard(CARD), lookup: publicDns }),
+      { alias: 'acme', cardUrl: CARD_URL, token: 't' },
+      DECIDE
+    );
+    markAuthFailed(f.peerDeps(), f.notices, 'acme');
+    await refreshPeer(
+      f.peerDeps({
+        fetchImpl: serveCard(CARD),
+        lookup: () => Promise.resolve(['169.254.169.254']),
+      }),
+      f.notices,
+      'acme'
+    );
+    await waitFor(() => ownerNotices().length >= 2);
+    for (const body of ownerNotices()) {
+      expect(body).toContain('Settings → A2A → Peers');
+      expect(body).not.toContain('--token-stdin');
+    }
+  });
+});
 
 describe('adding a peer', () => {
   it('lets a decide-tier human add a public https peer, the credential kept out of a2a.db', async () => {

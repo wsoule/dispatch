@@ -259,7 +259,7 @@ export function markAuthFailed(
   notices.send(
     alias,
     'auth',
-    `a2a:${alias} refused Dispatch's credential. Direct messages to it fail and channels skip it until you run: dispatch a2a peers enable ${alias} --token-stdin`
+    `a2a:${alias} refused Dispatch's credential. Direct messages to it fail and channels skip it until it is enabled again with a working credential, in Settings → A2A → Peers or with dispatch a2a peers enable ${alias}.`
   );
   return { ...row, status: 'auth-failed' };
 }
@@ -281,7 +281,7 @@ export function disablePeer(
 
 // The notice a decide-tier peer gets when its name stops resolving publicly.
 function addressRefused(alias: string, why: string): string {
-  return `a2a:${alias} is disabled: ${why}. A peer added below the operator tier must resolve only to public addresses. Check it, then run: dispatch a2a peers enable ${alias}`;
+  return `a2a:${alias} is disabled: ${why}. A peer added below the operator tier must resolve only to public addresses. Check it, then enable it in Settings → A2A → Peers or with dispatch a2a peers enable ${alias}.`;
 }
 
 // Why the guard refuses `url` now, or null when it passes (or there is no
