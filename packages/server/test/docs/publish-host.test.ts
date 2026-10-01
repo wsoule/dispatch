@@ -46,6 +46,9 @@ describe('lastCommitFor', () => {
     });
     expect(host.lastCommitFor('docs/spec.md')).toBe(published);
     expect(host.lastCommitFor('docs/never.md')).toBeNull();
+    // A path is matched literally, never as a glob or pathspec magic.
+    expect(host.lastCommitFor('docs/*.md')).toBeNull();
+    expect(host.lastCommitFor(':(glob)docs/*.md')).toBeNull();
   });
 });
 

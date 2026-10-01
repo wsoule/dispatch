@@ -233,7 +233,9 @@ export class DaemonDocsHost implements DocsHost {
     } catch {
       return null;
     }
+    // Literal pathspecs: the path is a file name, never a glob or `:(magic)`.
     const out = spawnGitSync(this.rootDir, [
+      '--literal-pathspecs',
       'log',
       '-1',
       '--format=%H',
