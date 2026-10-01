@@ -59,6 +59,19 @@ describe('founding', () => {
     );
   });
 
+  // M5: a founding that fails after its found op folded leaves no stale view.
+  it('leaves no founded view behind when founding fails partway', () => {
+    const lk = testKeys();
+    const ada = make('ada', {
+      licenseKey: licenseFor(lk.privateKey, { org: 'x'.repeat(1_100_000) }),
+      licensePublicKey: lk.publicKey,
+    });
+    expect(() => ada.roster.found('acme')).toThrow();
+    expect(ada.roster.founded()).toBe(false);
+    expect(ada.roster.view()).toBeNull();
+    expect(ada.fed.outbox()).toEqual([]);
+  });
+
   it('pins neither of two foundings seen at once, until trust picks one', () => {
     const ada = make('ada');
     const bob = make('bob');

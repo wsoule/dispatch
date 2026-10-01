@@ -156,7 +156,7 @@ export class RosterService {
       );
     const seed = randomBytes(SEED_BYTES);
     const recovery = ed25519FromSeed(seed);
-    this.fed.db.transaction(() => {
+    this.atomically(() => {
       this.publishKey();
       const found = this.publish({
         rv: 1,
@@ -169,7 +169,7 @@ export class RosterService {
       const key = this.deps.installedLicense();
       if (key !== null && this.licenseVerifies(key))
         this.publish({ rv: 1, action: 'license', key });
-    })();
+    });
     return { recoveryCode: encodeRecoveryCode(seed) };
   }
 
@@ -256,10 +256,10 @@ export class RosterService {
       sig,
       teamId,
     };
-    this.fed.db.transaction(() => {
+    this.atomically(() => {
       this.fed.setMeta('pending_invite', JSON.stringify(pending));
       this.publishKey();
-    })();
+    });
   }
 
   recover(code: string): void {
@@ -288,7 +288,7 @@ export class RosterService {
       recovery.signPriv,
       `${TAG.recovery}\n${teamId}\n${this.me}\n${this.fed.keys.signPub}`
     );
-    this.fed.db.transaction(() => {
+    this.atomically(() => {
       this.publishKey();
       this.publish({ rv: 1, action: 'recover', proof }, (v, op) =>
         v.members.get(this.me)?.recovered === true
@@ -298,7 +298,7 @@ export class RosterService {
               noteFor(v, op) ?? 'the recovery code did not admit this machine'
             )
       );
-    })();
+    });
   }
 
   replaceRecoveryKey(): { recoveryCode: string } {
@@ -740,6 +740,16 @@ export class RosterService {
     return raw === null ? null : (JSON.parse(raw) as PendingInvite);
   }
 
+  // One state.db transaction; a rollback also drops the view folded inside it.
+  private atomically<T>(fn: () => T): T {
+    try {
+      return this.fed.db.transaction(fn)();
+    } catch (err) {
+      this.refresh();
+      throw err;
+    }
+  }
+
   // Appends a roster op and applies it to this machine's fold at once. The op
   // is judged by the fold itself, and a refused one rolls back with its writes.
   private publish(
@@ -750,23 +760,18 @@ export class RosterService {
       hash: string
     ) => RosterError | null = byDefault
   ): FederatedOp {
-    try {
-      return this.fed.db.transaction(() => {
-        const op = this.fed.append({
-          type: 'roster',
-          body: body as unknown as JsonValue,
-        });
-        const hash = opHash(op);
-        this.applyVerified(op, hash);
-        const view = this.view();
-        const refusal = view === null ? null : judge(view, op, hash);
-        if (refusal !== null) throw refusal;
-        return op;
-      })();
-    } catch (err) {
-      this.refresh();
-      throw err;
-    }
+    return this.atomically(() => {
+      const op = this.fed.append({
+        type: 'roster',
+        body: body as unknown as JsonValue,
+      });
+      const hash = opHash(op);
+      this.applyVerified(op, hash);
+      const view = this.view();
+      const refusal = view === null ? null : judge(view, op, hash);
+      if (refusal !== null) throw refusal;
+      return op;
+    });
   }
 
   // The view, refusing an observer and a machine not admitted under it.
