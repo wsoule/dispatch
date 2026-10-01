@@ -61,15 +61,16 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-// Rewrites a request to connect to the checked address while Host, SNI and the
-// certificate check keep the name, so DNS cannot rebind between check and connect.
+// Rewrites a request to connect to each checked address in turn while Host,
+// SNI and the certificate check keep the name, so DNS cannot rebind between
+// check and connect.
 async function pinned(
   target: string,
   headers: Headers,
   guard: GuardOptions,
   signal: AbortSignal
-): Promise<{ url: string; tls: object }> {
-  let pin: { url: URL; address: string };
+): Promise<{ urls: string[]; tls: object }> {
+  let pin: { url: URL; addresses: string[] };
   try {
     pin = await untilAborted(pinPublicUrl(target, guard), signal);
   } catch (err) {
@@ -81,13 +82,16 @@ async function pinned(
       refused ? 'ADDRESS_REFUSED' : null
     );
   }
-  const { url, address } = pin;
+  const { url, addresses } = pin;
   const name = url.hostname;
   headers.set('host', url.host);
-  const at = new URL(url.href);
-  at.hostname = isIP(address) === 6 ? `[${address}]` : address;
+  const urls = addresses.map((address) => {
+    const at = new URL(url.href);
+    at.hostname = isIP(address) === 6 ? `[${address}]` : address;
+    return at.href;
+  });
   return {
-    url: at.href,
+    urls,
     tls: {
       serverName: name,
       checkServerIdentity: (_host: string, cert: never) =>
@@ -254,17 +258,29 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
       timer = null;
     };
     try {
-      let url = target;
+      let urls = [target];
       let tls: object | undefined;
       if (o.guard !== undefined)
-        ({ url, tls } = await pinned(target, headers, o.guard, ac.signal));
-      const res = await base(url, {
-        ...init,
-        headers,
-        redirect: 'manual',
-        signal: ac.signal,
-        ...(tls === undefined ? {} : { tls }),
-      } as RequestInit);
+        ({ urls, tls } = await pinned(target, headers, o.guard, ac.signal));
+      // A body stream cannot be sent twice, so only a replayable one falls back.
+      const replayable = !(init?.body instanceof ReadableStream);
+      let res: Response | null = null;
+      for (const [i, url] of urls.entries()) {
+        try {
+          res = await base(url, {
+            ...init,
+            headers,
+            redirect: 'manual',
+            signal: ac.signal,
+            ...(tls === undefined ? {} : { tls }),
+          } as RequestInit);
+          break;
+        } catch (err) {
+          if (ac.signal.aborted || !replayable || i === urls.length - 1)
+            throw err;
+        }
+      }
+      if (res === null) throw new Error('no address to connect to');
       if (o.box !== undefined) {
         o.box.status = res.status;
         o.box.retryAfterSec = retryAfterOf(res);

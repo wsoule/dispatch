@@ -144,5 +144,6 @@ describe('pinPublicUrl', () => {
     });
     expect(pinned.url.hostname).toBe('agent.example.com');
     expect(pinned.address).toBe('2606:2800:220:1::1');
+    expect(pinned.addresses).toEqual(['2606:2800:220:1::1', '93.184.216.34']);
   });
 });

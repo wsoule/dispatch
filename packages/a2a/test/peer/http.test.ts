@@ -258,6 +258,47 @@ describe('peerFetch with the public-address guard', () => {
     expect(calls[0].tls).toMatchObject({ serverName: 'agent.example.com' });
   });
 
+  it('tries the next checked address when a connect fails', async () => {
+    const tried: string[] = [];
+    const fetchImpl = ((input: string | URL) => {
+      tried.push(String(input));
+      return String(input).includes('93.184.216.34')
+        ? Promise.reject(new Error('ECONNREFUSED'))
+        : Promise.resolve(new Response('ok'));
+    }) as unknown as typeof fetch;
+    const res = await peerFetch({
+      headers: {},
+      timeoutMs: 1000,
+      fetchImpl,
+      guard: {
+        lookup: () => Promise.resolve(['93.184.216.34', '2606:2800:220:1::1']),
+      },
+    })('https://agent.example.com/x', { method: 'POST', body: '{}' });
+    expect(await res.text()).toBe('ok');
+    expect(tried).toEqual([
+      'https://93.184.216.34/x',
+      'https://[2606:2800:220:1::1]/x',
+    ]);
+  });
+
+  it('stops at the first address that answers, even with an error status', async () => {
+    const tried: string[] = [];
+    const fetchImpl = ((input: string | URL) => {
+      tried.push(String(input));
+      return Promise.resolve(new Response('no', { status: 503 }));
+    }) as unknown as typeof fetch;
+    const res = await peerFetch({
+      headers: {},
+      timeoutMs: 1000,
+      fetchImpl,
+      guard: {
+        lookup: () => Promise.resolve(['93.184.216.34', '93.184.216.35']),
+      },
+    })('https://agent.example.com/x');
+    expect(res.status).toBe(503);
+    expect(tried).toHaveLength(1);
+  });
+
   it('brackets a pinned IPv6 address', async () => {
     const { calls, fetchImpl } = recorder();
     await peerFetch({

@@ -114,11 +114,11 @@ export interface GuardOptions {
 
 // A URL a client or a decide-tier human supplied, checked before every fetch:
 // https, a name (no IP literal, no userinfo), and every resolved address public.
-// Returns the first checked address, which the caller connects to (spec:1768-1780).
+// Returns the checked addresses, in the order the caller should try them.
 export async function pinPublicUrl(
   raw: string,
   opts: GuardOptions = {}
-): Promise<{ url: URL; address: string }> {
+): Promise<{ url: URL; address: string; addresses: string[] }> {
   const field = opts.field ?? 'cardUrl';
   const refuse = (why: string): never => {
     throw new MessagingError('invalid', `${field}: ${why}`, field);
@@ -144,7 +144,7 @@ export async function pinPublicUrl(
     if (why !== null)
       refuse(`${host} resolves to a ${why} address (${address})`);
   }
-  return { url, address: addresses[0] };
+  return { url, address: addresses[0], addresses: [...addresses] };
 }
 
 /** `pinPublicUrl` for callers that only need the verdict. */
