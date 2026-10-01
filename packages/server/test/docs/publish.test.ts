@@ -336,6 +336,26 @@ describe('publish', () => {
     ).not.toBe(task);
   });
 
+  it("fails a publish for good once a teammate's synced change tried to move its risk", () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    const { task } = service.publish(as(OWNER), 'spec', {
+      path: 'docs/spec.md',
+    });
+    expect(service.publishing(task)).toBe(true);
+    service.riskChangedDuringPublish(task);
+    expect(store.publishRows({ task })[0]).toMatchObject({
+      state: 'failed',
+      reason: expect.stringContaining('risk'),
+    });
+    expect(host.closedTasks.map((c) => c.task)).toEqual([task]);
+    // Even with the risk back where it was, the landing is never recorded.
+    host.outcomes.set(task, { state: 'landed', commit: 'abc' });
+    expect(service.syncPublishes()).toBe(0);
+    expect(service.read(as(OWNER), 'spec').doc.published).toBeNull();
+    expect(service.publishing(task)).toBe(false);
+    service.riskChangedDuringPublish('t-unrelated');
+  });
+
   it('remembers the last path asked for, before the task lands', () => {
     service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
     expect(service.read(as(OWNER), 'spec').doc.lastPublishPath).toBeNull();

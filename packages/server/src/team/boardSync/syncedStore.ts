@@ -27,7 +27,16 @@ import type { SyncLedger } from './ledger.js';
  * store directly: a change that arrived from elsewhere is not this replica's
  * to send again.
  */
+// Keeps a publishing task's risk where this replica set it (see setRiskGuard).
+interface RiskGuard {
+  publishing(taskId: string): boolean;
+  // A teammate's change tried to move a publishing task's risk.
+  riskChanged(taskId: string): void;
+}
+
 export class SyncedTaskStore implements TaskStorePort {
+  private riskGuard: RiskGuard | null = null;
+
   constructor(
     private readonly inner: SqliteTaskStore,
     private readonly ledger: SyncLedger,
@@ -98,15 +107,37 @@ export class SyncedTaskStore implements TaskStorePort {
     return tasks.length;
   }
 
+  /** A publish task's elevated risk keeps a human on its merge, so a synced
+   *  change never moves it while it publishes; the attempt is reported. */
+  setRiskGuard(guard: RiskGuard | null): void {
+    this.riskGuard = guard;
+  }
+
   /** Folds a change from another replica into this board. */
-  applyRemote(op: BoardOp): ApplyResult {
-    this.ledger.observe(op.hlc);
+  applyRemote(remote: BoardOp): ApplyResult {
+    this.ledger.observe(remote.hlc);
+    const op = this.withoutGuardedRisk(remote);
     const result = applyOp(op, this.inner.get(op.task), this.ledger.state);
     if (result.changed) {
       if (result.doc === null) this.inner.remove(op.task);
       else this.inner.put(result.doc);
     }
     return result;
+  }
+
+  // The op minus a risk change to a publishing task, reporting it when it differs.
+  private withoutGuardedRisk(op: BoardOp): BoardOp {
+    const guard = this.riskGuard;
+    if (
+      guard === null ||
+      op.fields === undefined ||
+      !Object.hasOwn(op.fields, 'risk') ||
+      !guard.publishing(op.task)
+    )
+      return op;
+    const { risk, ...fields } = op.fields;
+    if (risk !== this.inner.get(op.task)?.meta.risk) guard.riskChanged(op.task);
+    return { ...op, fields };
   }
 
   private capture(

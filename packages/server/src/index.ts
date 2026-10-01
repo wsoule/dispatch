@@ -1335,6 +1335,11 @@ async function bootServer(
   orchestrator.setWorktreeSeed((taskId, wt) =>
     docs.service.seedFor(taskId, wt)
   );
+  // A teammate's synced change never moves a publishing task's risk.
+  syncedStore?.setRiskGuard({
+    publishing: (taskId) => docs.service.publishing(taskId),
+    riskChanged: (taskId) => docs.service.riskChangedDuringPublish(taskId),
+  });
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);

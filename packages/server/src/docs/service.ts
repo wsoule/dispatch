@@ -2416,6 +2416,23 @@ export class DocsService {
     return this.store().publishRows({ task: taskId, state: 'open' }).length > 0;
   }
 
+  // A synced change tried to move an open publish's risk: the publish fails for
+  // good (whatever the risk reads later) and its task closes.
+  riskChangedDuringPublish(taskId: string): void {
+    if (!this.available) return;
+    const store = this.store();
+    const row = store.publishRows({ task: taskId, state: 'open' })[0];
+    if (row === undefined) return;
+    const reason =
+      "a teammate's synced change tried to move the task's risk while it published";
+    this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
+    try {
+      this.host.closePublishTask(taskId, reason);
+    } catch (err) {
+      console.error(`docs: closing publish task ${taskId} failed`, err);
+    }
+  }
+
   // Writes an open publish's recorded revision into its run's worktree; a no-op
   // for any other task. A throw fails the dispatch and marks the publish failed.
   seedFor(taskId: string, worktree: string): void {
