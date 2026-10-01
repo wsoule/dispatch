@@ -164,6 +164,61 @@ describe('an HTTP+JSON peer (handleA2A)', () => {
     expect(err).toMatchObject({ status: null });
   });
 
+  it('times out a getTask body that drips, and refuses one over 1 MiB as final', async () => {
+    const { json } = await fetchPeerCard(
+      `${base}/.well-known/agent-card.json`,
+      { allowHttp: false }
+    );
+    const answering = (body: () => ReadableStream<Uint8Array>) =>
+      (() =>
+        Promise.resolve(
+          new Response(body(), {
+            headers: { 'content-type': 'application/json' },
+          })
+        )) as unknown as typeof fetch;
+    const drip = () => {
+      let sent = 0;
+      return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (sent === 100) return controller.close();
+          await Bun.sleep(100);
+          sent += 1;
+          controller.enqueue(new TextEncoder().encode(sent === 1 ? '{' : ' '));
+        },
+      });
+    };
+    const huge = () => {
+      let sent = 0;
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent === 64) return controller.close();
+          sent += 1;
+          controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+        },
+      });
+    };
+    const iface = { url: `${base}/a2a/v1`, binding: 'HTTP+JSON' as const };
+    const started = Date.now();
+    await expect(
+      new PeerClient({
+        iface,
+        card: json,
+        headers: {},
+        timeoutMs: 200,
+        fetchImpl: answering(drip),
+      }).getTask('m-root')
+    ).rejects.toMatchObject({ status: null });
+    expect(Date.now() - started).toBeLessThan(2000);
+    await expect(
+      new PeerClient({
+        iface,
+        card: json,
+        headers: {},
+        fetchImpl: answering(huge),
+      }).getTask('m-root')
+    ).rejects.toMatchObject({ reason: 'BODY_TOO_LARGE' });
+  });
+
   it('with a guard, never connects to an interface that resolves privately', async () => {
     const { json } = await fetchPeerCard(
       `${base}/.well-known/agent-card.json`,

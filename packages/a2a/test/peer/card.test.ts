@@ -224,6 +224,21 @@ describe('fetchPeerCard', () => {
           );
         if (path === '/list') return Response.json([CARD]);
         if (path === '/hang') return new Promise<Response>(() => undefined);
+        if (path === '/drip') {
+          let sent = 0;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              async pull(controller) {
+                if (sent === 100) return controller.close();
+                await Bun.sleep(100);
+                sent += 1;
+                controller.enqueue(
+                  new TextEncoder().encode(sent === 1 ? '{' : ' ')
+                );
+              },
+            })
+          );
+        }
         return new Response('nope', { status: 404 });
       },
     });
@@ -253,6 +268,14 @@ describe('fetchPeerCard', () => {
     await expect(
       fetchPeerCard(`${base}/hang`, { allowHttp: false, timeoutMs: 50 })
     ).rejects.toBeInstanceOf(PeerHttpError);
+  });
+
+  it('times out a card that drips in slower than the deadline', async () => {
+    const started = Date.now();
+    await expect(
+      fetchPeerCard(`${base}/drip`, { allowHttp: false, timeoutMs: 300 })
+    ).rejects.toBeInstanceOf(PeerHttpError);
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 
   it('refuses a card that is not a JSON object, and a 404', async () => {

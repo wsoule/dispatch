@@ -97,16 +97,125 @@ async function pinned(
 export interface PeerFetchOptions {
   headers: Record<string, string>;
   fetchImpl?: typeof fetch;
+  // The deadline for headers and, except for event streams, the whole body.
   timeoutMs: number;
   signal?: AbortSignal;
   box?: StatusBox;
   // Set for URLs a client or a decide-tier human chose: every request is
   // re-resolved, refused unless all addresses are public, and pinned.
   guard?: GuardOptions;
+  // The body cap for anything but an event stream; 1 MiB by default.
+  maxBodyBytes?: number;
+  // How long an event stream may go without a byte; 60 s by default.
+  idleMs?: number;
 }
 
-// A fetch for talking to peers: fixed headers, http(s) only, no redirects, and a
-// timeout on the response headers only, so an SSE body can stay open.
+type ChunkRead =
+  | { done: true; value?: undefined }
+  | { done: false; value: Uint8Array };
+
+export const MAX_BODY_BYTES = 1024 * 1024;
+const STREAM_IDLE_MS = 60_000;
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
+// The response with its body counted and timed: past `maxBytes` it errors
+// BODY_TOO_LARGE, and an abort (deadline, idle or caller) errors as a network
+// failure. `done` runs once the body ends, errors or is cancelled.
+function guardedBody(
+  res: Response,
+  o: {
+    ac: AbortController;
+    maxBytes: number;
+    box: StatusBox | undefined;
+    idleMs: number | null;
+    done: () => void;
+  }
+): Response {
+  if (res.body === null || NULL_BODY_STATUSES.has(res.status)) {
+    o.done();
+    return res;
+  }
+  const reader = res.body.getReader();
+  let total = 0;
+  let idle: ReturnType<typeof setTimeout> | null = null;
+  const armIdle = () => {
+    if (o.idleMs === null) return;
+    if (idle !== null) clearTimeout(idle);
+    idle = setTimeout(() => o.ac.abort(), o.idleMs);
+  };
+  const finish = () => {
+    if (idle !== null) clearTimeout(idle);
+    idle = null;
+    o.done();
+  };
+  armIdle();
+  // Unblocks a pending read the moment the deadline, idle timer or caller aborts.
+  o.ac.signal.addEventListener(
+    'abort',
+    () => {
+      void reader.cancel().catch(() => undefined);
+    },
+    { once: true }
+  );
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const cutOff = () => {
+        finish();
+        if (o.box !== undefined) o.box.network = true;
+        controller.error(
+          new PeerHttpError(null, "timed out reading the peer's response")
+        );
+      };
+      let chunk: ChunkRead;
+      try {
+        chunk = (await reader.read()) as ChunkRead;
+      } catch {
+        cutOff();
+        return;
+      }
+      // An abort can end the read as a clean finish; it is still a cut-off.
+      if (o.ac.signal.aborted) {
+        await reader.cancel().catch(() => undefined);
+        cutOff();
+        return;
+      }
+      if (chunk.done === true) {
+        finish();
+        controller.close();
+        return;
+      }
+      total += chunk.value.byteLength;
+      if (total > o.maxBytes) {
+        finish();
+        await reader.cancel().catch(() => undefined);
+        controller.error(
+          new PeerHttpError(
+            res.status,
+            `the peer's response is over ${o.maxBytes} bytes`,
+            null,
+            'BODY_TOO_LARGE'
+          )
+        );
+        return;
+      }
+      armIdle();
+      controller.enqueue(chunk.value);
+    },
+    async cancel(reason) {
+      finish();
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+  return new Response(body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
+
+// A fetch for talking to peers: fixed headers, http(s) only, no redirects, a
+// deadline over headers and body, and a body cap. An event stream (the caller
+// accepts text/event-stream) instead ends after `idleMs` without a byte.
 export function peerFetch(o: PeerFetchOptions): typeof fetch {
   const base = o.fetchImpl ?? fetch;
   return (async (input: string | URL | Request, init?: RequestInit) => {
@@ -125,11 +234,17 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
     const headers = new Headers(init?.headers);
     for (const [name, value] of Object.entries(o.headers))
       headers.set(name, value);
+    const stream = (headers.get('accept') ?? '').includes('text/event-stream');
     const ac = new AbortController();
     const abort = () => ac.abort();
     o.signal?.addEventListener('abort', abort, { once: true });
     init?.signal?.addEventListener('abort', abort, { once: true });
-    const timer = o.timeoutMs > 0 ? setTimeout(abort, o.timeoutMs) : null;
+    let timer: ReturnType<typeof setTimeout> | null =
+      o.timeoutMs > 0 ? setTimeout(abort, o.timeoutMs) : null;
+    const clear = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    };
     try {
       let url = target;
       let tls: object | undefined;
@@ -153,8 +268,19 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
           'the peer redirected; redirects are not followed'
         );
       }
-      return res;
+      // An event stream lives on its idle timeout and the caller's signal.
+      if (stream) clear();
+      return guardedBody(res, {
+        ac,
+        maxBytes: stream
+          ? Number.POSITIVE_INFINITY
+          : (o.maxBodyBytes ?? MAX_BODY_BYTES),
+        box: o.box,
+        idleMs: stream ? (o.idleMs ?? STREAM_IDLE_MS) : null,
+        done: clear,
+      });
     } catch (err) {
+      clear();
       if (err instanceof PeerHttpError) {
         if (err.status === null && o.box !== undefined) o.box.network = true;
         throw err;
@@ -164,8 +290,6 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
         null,
         `could not reach the peer: ${(err as Error).message}`
       );
-    } finally {
-      if (timer !== null) clearTimeout(timer);
     }
   }) as typeof fetch;
 }
@@ -193,8 +317,16 @@ export async function readCapped(
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    let next: ChunkRead;
+    try {
+      next = (await reader.read()) as ChunkRead;
+    } catch (err) {
+      if (err instanceof PeerHttpError && err.reason === 'BODY_TOO_LARGE')
+        return tooBig();
+      throw err;
+    }
+    const { done, value } = next;
+    if (done === true) break;
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();

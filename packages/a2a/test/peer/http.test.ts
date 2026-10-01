@@ -11,6 +11,38 @@ import {
   readCapped,
 } from '../../src/peer/http.js';
 
+// A body that sends `count` chunks of `size` bytes, one every `everyMs`.
+function dripping(
+  size: number,
+  everyMs: number,
+  count: number,
+  headers: Record<string, string> = {}
+): Response {
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (sent === count) return controller.close();
+      await Bun.sleep(everyMs);
+      sent += 1;
+      controller.enqueue(new Uint8Array(size).fill(120));
+    },
+  });
+  return new Response(body, { headers });
+}
+
+// A body of `count` chunks of `size` bytes, as fast as the reader takes them.
+function chunked(count: number, size: number): Response {
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent === count) return controller.close();
+      sent += 1;
+      controller.enqueue(new Uint8Array(size).fill(120));
+    },
+  });
+  return new Response(body);
+}
+
 let server: ReturnType<typeof Bun.serve>;
 let base: string;
 const seen: { version: string | null; auth: string | null }[] = [];
@@ -27,7 +59,7 @@ beforeAll(() => {
       });
       if (path === '/redirect')
         return new Response(null, {
-          status: 302,
+          status: Number(new URL(req.url).searchParams.get('status') ?? '302'),
           headers: { location: 'http://169.254.169.254/' },
         });
       if (path === '/limited')
@@ -41,6 +73,15 @@ beforeAll(() => {
       }
       if (path === '/big') return new Response('x'.repeat(2048));
       if (path === '/not-modified') return new Response(null, { status: 304 });
+      if (path === '/drip') return dripping(1, 100, 50);
+      if (path === '/huge') return chunked(64, 1024 * 1024);
+      if (path === '/sse')
+        return dripping(
+          1,
+          Number(new URL(req.url).searchParams.get('every') ?? '50'),
+          Number(new URL(req.url).searchParams.get('n') ?? '3'),
+          { 'content-type': 'text/event-stream' }
+        );
       return new Response('ok');
     },
   });
@@ -63,10 +104,69 @@ describe('peerFetch', () => {
     expect(seen.at(-1)).toEqual({ version: '1.0', auth: 'Bearer peer' });
   });
 
-  it('never follows a redirect', async () => {
-    await expect(
-      peerFetch({ headers: {}, timeoutMs: 1000 })(`${base}/redirect`)
-    ).rejects.toMatchObject({ status: 302 });
+  it.each([301, 302, 303, 307, 308])(
+    'never follows a %d redirect',
+    async (status) => {
+      await expect(
+        peerFetch({ headers: {}, timeoutMs: 1000 })(
+          `${base}/redirect?status=${status}`
+        )
+      ).rejects.toMatchObject({ status });
+    }
+  );
+
+  it('keeps the deadline armed until the body is read', async () => {
+    const b = box();
+    const started = Date.now();
+    const res = await peerFetch({ headers: {}, timeoutMs: 200, box: b })(
+      `${base}/drip`
+    );
+    const err = await res.text().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PeerHttpError);
+    expect(err).toMatchObject({ status: null });
+    expect(b.network).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it('refuses a body over the cap, 1 MiB unless told otherwise', async () => {
+    const huge = await peerFetch({ headers: {}, timeoutMs: 5000 })(
+      `${base}/huge`
+    );
+    await expect(huge.text()).rejects.toMatchObject({
+      reason: 'BODY_TOO_LARGE',
+    });
+    const big = await peerFetch({
+      headers: {},
+      timeoutMs: 1000,
+      maxBodyBytes: 1024,
+    })(`${base}/big`);
+    await expect(big.text()).rejects.toMatchObject({
+      reason: 'BODY_TOO_LARGE',
+    });
+    const ok = await peerFetch({ headers: {}, timeoutMs: 1000 })(`${base}/big`);
+    expect(await ok.text()).toHaveLength(2048);
+  });
+
+  it('lets an event stream outlive the deadline while it keeps sending', async () => {
+    const res = await peerFetch({
+      headers: {},
+      timeoutMs: 100,
+      idleMs: 300,
+    })(`${base}/sse?n=6&every=50`, {
+      headers: { accept: 'text/event-stream' },
+    });
+    expect(await res.text()).toHaveLength(6);
+  });
+
+  it('ends an event stream that goes quiet past the idle timeout', async () => {
+    const res = await peerFetch({
+      headers: {},
+      timeoutMs: 1000,
+      idleMs: 100,
+    })(`${base}/sse?n=3&every=400`, {
+      headers: { accept: 'text/event-stream' },
+    });
+    await expect(res.text()).rejects.toMatchObject({ status: null });
   });
 
   it('hands a 304 back as a response, not a redirect', async () => {

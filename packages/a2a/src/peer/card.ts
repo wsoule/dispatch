@@ -89,6 +89,7 @@ export async function fetchPeerCard(
       headers,
       fetchImpl: o.fetchImpl,
       timeoutMs: o.timeoutMs ?? 10_000,
+      maxBodyBytes: CARD_MAX_BYTES,
       guard:
         o.guard === undefined ? undefined : { field: 'cardUrl', ...o.guard },
     })(url);

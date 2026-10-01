@@ -2,6 +2,7 @@ export { blockedAddressReason, guardPublicUrl, pinPublicUrl } from './guard.js';
 export type { GuardOptions, LookupAll } from './guard.js';
 export {
   isLoopbackHost,
+  MAX_BODY_BYTES,
   peerFetch,
   PeerHttpError,
   readCapped,
