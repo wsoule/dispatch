@@ -67,8 +67,26 @@ export interface PeerRow {
   createdAt: string;
 }
 
+export type OutboundState = 'queued' | 'open' | 'done' | 'failed';
+
+// One Dispatch message relayed to one peer: its retry state and, once sent,
+// the peer task the worker follows.
+export interface OutboundRow {
+  messageId: string;
+  alias: string;
+  thread: string;
+  remoteTaskId: string | null;
+  remoteContextId: string | null;
+  state: OutboundState;
+  attempts: number;
+  firstAttemptAt: string;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+}
+
 // The bridge's own records: registered clients, the A2A tasks they opened,
-// and the outbound peers.
+// the outbound peers and what was relayed to them.
 export interface A2AStore {
   putClient(row: ClientRow): void;
   getClient(address: Address): ClientRow | null;
@@ -97,6 +115,16 @@ export interface A2AStore {
   peers(): PeerRow[];
   setPeerStatus(alias: string, status: PeerStatus): void;
   deletePeer(alias: string): boolean;
+  // Upsert on (message_id, alias); thread and first_attempt_at keep their first values.
+  putOutbound(row: OutboundRow): void;
+  getOutbound(messageId: string, alias: string): OutboundRow | null;
+  // Oldest update first.
+  outboundIn(states: OutboundState[]): OutboundRow[];
+  outboundOf(alias: string, states: OutboundState[]): OutboundRow[];
+  // The peer's context for this thread, from the newest row that has one.
+  contextFor(alias: string, thread: string): string | null;
+  // Open or done rows first attempted since `sinceIso`: the channel quota.
+  relayedSince(alias: string, sinceIso: string): number;
   close(): void;
 }
 
@@ -119,6 +147,14 @@ CREATE TABLE IF NOT EXISTS peers (
   added_by TEXT NOT NULL, added_tier TEXT NOT NULL, allow_http INTEGER NOT NULL, allow_origin INTEGER NOT NULL,
   api_key_header TEXT, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS outbound (
+  message_id TEXT NOT NULL, alias TEXT NOT NULL, thread TEXT NOT NULL,
+  remote_task_id TEXT, remote_context_id TEXT, state TEXT NOT NULL, attempts INTEGER NOT NULL,
+  first_attempt_at TEXT NOT NULL, next_attempt_at TEXT, last_error TEXT, updated_at TEXT NOT NULL,
+  PRIMARY KEY (message_id, alias)
+);
+CREATE INDEX IF NOT EXISTS outbound_state ON outbound (state, alias);
+CREATE INDEX IF NOT EXISTS outbound_thread ON outbound (alias, thread, updated_at);
 `;
 
 // Created 0600 before SQLite opens it, so it never exists world-readable;
@@ -208,6 +244,49 @@ function toPeer(r: PeerDbRow): PeerRow {
     createdAt: r.created_at,
   };
 }
+
+interface OutboundDbRow {
+  message_id: string;
+  alias: string;
+  thread: string;
+  remote_task_id: string | null;
+  remote_context_id: string | null;
+  state: string;
+  attempts: number;
+  first_attempt_at: string;
+  next_attempt_at: string | null;
+  last_error: string | null;
+  updated_at: string;
+}
+
+const OUTBOUND_STATES: readonly OutboundState[] = [
+  'queued',
+  'open',
+  'done',
+  'failed',
+];
+
+// An unknown state reads as failed, so a hand-edited row is never sent again.
+function toOutbound(r: OutboundDbRow): OutboundRow {
+  return {
+    messageId: r.message_id,
+    alias: r.alias,
+    thread: r.thread,
+    remoteTaskId: r.remote_task_id,
+    remoteContextId: r.remote_context_id,
+    state: OUTBOUND_STATES.includes(r.state as OutboundState)
+      ? (r.state as OutboundState)
+      : 'failed',
+    attempts: Number(r.attempts),
+    firstAttemptAt: r.first_attempt_at,
+    nextAttemptAt: r.next_attempt_at,
+    lastError: r.last_error,
+    updatedAt: r.updated_at,
+  };
+}
+
+const placeholders = (n: number): string =>
+  n === 0 ? "''" : Array.from({ length: n }, () => '?').join(',');
 
 const TERMINAL_SQL = [...TERMINAL_STATES].map((s) => `'${s}'`).join(',');
 const PATCH_COLUMNS: Record<keyof TaskPatch, string> = {
@@ -473,6 +552,75 @@ export class SqliteA2AStore implements A2AStore {
       Number(
         this.db.prepare('DELETE FROM peers WHERE alias = ?').run(alias).changes
       ) > 0
+    );
+  }
+
+  putOutbound(r: OutboundRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO outbound (message_id, alias, thread, remote_task_id, remote_context_id, state, attempts, first_attempt_at, next_attempt_at, last_error, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT (message_id, alias) DO UPDATE SET remote_task_id = excluded.remote_task_id, remote_context_id = excluded.remote_context_id,
+           state = excluded.state, attempts = excluded.attempts, next_attempt_at = excluded.next_attempt_at, last_error = excluded.last_error,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        r.messageId,
+        r.alias,
+        r.thread,
+        r.remoteTaskId,
+        r.remoteContextId,
+        r.state,
+        r.attempts,
+        r.firstAttemptAt,
+        r.nextAttemptAt,
+        r.lastError,
+        r.updatedAt
+      );
+  }
+
+  getOutbound(messageId: string, alias: string): OutboundRow | null {
+    const r = queryOne<OutboundDbRow>(
+      this.db,
+      'SELECT * FROM outbound WHERE message_id = ? AND alias = ?',
+      [messageId, alias]
+    );
+    return r === undefined ? null : toOutbound(r);
+  }
+
+  outboundIn(states: OutboundState[]): OutboundRow[] {
+    return queryAll<OutboundDbRow>(
+      this.db,
+      `SELECT * FROM outbound WHERE state IN (${placeholders(states.length)}) ORDER BY updated_at`,
+      states
+    ).map(toOutbound);
+  }
+
+  outboundOf(alias: string, states: OutboundState[]): OutboundRow[] {
+    return queryAll<OutboundDbRow>(
+      this.db,
+      `SELECT * FROM outbound WHERE alias = ? AND state IN (${placeholders(states.length)}) ORDER BY updated_at`,
+      [alias, ...states]
+    ).map(toOutbound);
+  }
+
+  contextFor(alias: string, thread: string): string | null {
+    return (
+      queryOne<{ c: string }>(
+        this.db,
+        'SELECT remote_context_id AS c FROM outbound WHERE alias = ? AND thread = ? AND remote_context_id IS NOT NULL ORDER BY updated_at DESC LIMIT 1',
+        [alias, thread]
+      )?.c ?? null
+    );
+  }
+
+  relayedSince(alias: string, sinceIso: string): number {
+    return Number(
+      queryOne<{ n: number }>(
+        this.db,
+        "SELECT COUNT(*) AS n FROM outbound WHERE alias = ? AND state IN ('open','done') AND first_attempt_at >= ?",
+        [alias, sinceIso]
+      )?.n ?? 0
     );
   }
 

@@ -93,7 +93,7 @@ const cardOf = (row: PeerRow): Record<string, JsonValue> =>
 
 // The public-address guard for a peer a deciding human added; operator-tier
 // peers may name private addresses on purpose and get none.
-function peerGuard(
+export function peerGuard(
   deps: Pick<PeerDeps, 'lookup'>,
   row: Pick<PeerRow, 'addedTier'>
 ): GuardOptions | undefined {
@@ -224,7 +224,7 @@ export async function addPeer(
   return row;
 }
 
-function markAuthFailed(
+export function markAuthFailed(
   deps: PeerDeps,
   notices: PeerNotices,
   alias: string
@@ -241,7 +241,7 @@ function markAuthFailed(
 }
 
 // Disables a peer and tells the owner once a day for this reason.
-function disablePeer(
+export function disablePeer(
   deps: PeerDeps,
   notices: PeerNotices,
   alias: string,

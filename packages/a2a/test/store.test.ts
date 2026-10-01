@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { openA2ADb, SqliteA2AStore } from '../src/store/sqlite.js';
-import type { PeerRow, TaskRow } from '../src/store/sqlite.js';
+import type { OutboundRow, PeerRow, TaskRow } from '../src/store/sqlite.js';
 
 const CLIENT = 'agent:wyat/a2a.acme';
 let dir: string;
@@ -223,5 +223,75 @@ describe('peers', () => {
       addedBy: 'human:wyat',
       addedTier: 'operator',
     });
+  });
+});
+
+function outbound(
+  messageId: string,
+  over: Partial<OutboundRow> = {}
+): OutboundRow {
+  return {
+    messageId,
+    alias: 'acme',
+    thread: 'm-thread',
+    remoteTaskId: null,
+    remoteContextId: null,
+    state: 'queued',
+    attempts: 0,
+    firstAttemptAt: '2026-09-25T10:00:00.000Z',
+    nextAttemptAt: null,
+    lastError: null,
+    updatedAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
+}
+
+describe('outbound', () => {
+  it('upserts rows by message and alias, and lists them by state', () => {
+    store.putOutbound(outbound('m-1'));
+    store.putOutbound(
+      outbound('m-1', {
+        state: 'open',
+        remoteTaskId: 'pt-1',
+        remoteContextId: 'pc-1',
+        attempts: 1,
+      })
+    );
+    store.putOutbound(outbound('m-1', { alias: 'beta' }));
+    expect(store.getOutbound('m-1', 'acme')).toMatchObject({
+      state: 'open',
+      remoteTaskId: 'pt-1',
+      attempts: 1,
+    });
+    expect(store.outboundIn(['open']).map((r) => r.alias)).toEqual(['acme']);
+    expect(store.outboundOf('beta', ['queued'])).toHaveLength(1);
+    expect(store.outboundIn([])).toEqual([]);
+  });
+
+  it('finds the peer’s context for a thread and counts relays per peer since a time', () => {
+    store.putOutbound(
+      outbound('m-1', {
+        state: 'done',
+        remoteContextId: 'pc-old',
+        updatedAt: '2026-09-25T10:00:00.000Z',
+      })
+    );
+    store.putOutbound(
+      outbound('m-2', {
+        state: 'open',
+        remoteContextId: 'pc-new',
+        updatedAt: '2026-09-25T11:00:00.000Z',
+        firstAttemptAt: '2026-09-25T11:00:00.000Z',
+      })
+    );
+    store.putOutbound(
+      outbound('m-3', {
+        state: 'queued',
+        firstAttemptAt: '2026-09-25T11:30:00.000Z',
+      })
+    );
+    expect(store.contextFor('acme', 'm-thread')).toBe('pc-new');
+    expect(store.contextFor('acme', 'm-other')).toBeNull();
+    expect(store.relayedSince('acme', '2026-09-25T10:30:00.000Z')).toBe(1);
   });
 });

@@ -10,6 +10,7 @@ import { RunResultsMemo } from '../../src/a2a/artifacts.js';
 import { tokenHash } from '../../src/a2a/auth.js';
 import { bridgeExternalPolicy } from '../../src/a2a/external.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
+import { startOutbound } from '../../src/a2a/outbound.js';
 import type { PeerDeps } from '../../src/a2a/peers.js';
 import { createPeerService } from '../../src/a2a/peers.js';
 import type { BridgeDeps } from '../../src/a2a/port.js';
@@ -21,9 +22,12 @@ import type { RunMeta } from '../../src/orchestrator/types.js';
 import { makeOrchestrator, openRecovered } from '../messaging/harness.js';
 
 // A bridge over a real engine and task store, with one approved client.
+// `outbound` starts the outbound worker (polling every 20 ms); peers then get
+// real fetches, so a test that opts in must point them at a local fixture.
 export async function bridgeFixture(
   root: string,
-  policy: Partial<A2AConfig> = {}
+  policy: Partial<A2AConfig> = {},
+  opts: { outbound?: boolean } = {}
 ) {
   const { orchestrator, store: tasks, events } = makeOrchestrator(root);
   const messaging = await openRecovered(root, orchestrator, tasks, events);
@@ -37,7 +41,7 @@ export async function bridgeFixture(
     events.broadcast({ type: 'task.changed' });
     return out;
   };
-  const deps: BridgeDeps = {
+  const deps: BridgeDeps & Pick<PeerDeps, 'fetchImpl' | 'lookup'> = {
     rootDir: root,
     engine: messaging.engine,
     messages: messaging.store,
@@ -71,6 +75,8 @@ export async function bridgeFixture(
     ...over,
   });
   messaging.setExternalPolicy(bridgeExternalPolicy(deps, notices));
+  const startWorker = () => startOutbound(peers, { pollMs: () => 20 });
+  let outbound = opts.outbound === true ? startWorker() : null;
   messaging.gates.register('task-proposal', (q, a) =>
     handleProposal(deps, watch, q, a)
   );
@@ -114,7 +120,21 @@ export async function bridgeFixture(
     peers,
     notices,
     peerDeps,
+    get outbound() {
+      if (outbound === null)
+        throw new Error('started without the outbound worker');
+      return outbound.worker;
+    },
+    outboundStop() {
+      outbound?.stop();
+      outbound = null;
+    },
+    restartOutbound() {
+      outbound?.stop();
+      outbound = startWorker();
+    },
     close() {
+      outbound?.stop();
       stopWatch();
       messaging.close();
       store.close();

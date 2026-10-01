@@ -35,6 +35,8 @@ import {
 } from './guards.js';
 import { handleProposal } from './handoff.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
+import type { OutboundWorker } from './outbound.js';
+import { startOutbound } from './outbound.js';
 import type { PeerService } from './peers.js';
 import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
@@ -73,6 +75,8 @@ export interface A2ABridge {
   readonly watch: BridgeWatch | null;
   // Outbound peers; null when a2a.db is down.
   readonly peers: PeerService | null;
+  // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
+  readonly outbound: OutboundWorker | null;
   peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
   // Opens the listener from the settings file plus the one-boot overrides.
@@ -185,6 +189,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let listener: A2AListener | null = null;
   let peers: PeerService | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
   if (store === null) {
     messaging.setExternalPolicy(bridgeExternalPolicy(null, null));
   } else {
@@ -258,6 +263,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       reconcileA2A(bridgeDeps, hub);
     } catch (err) {
       console.error('dispatchd: A2A boot reconciliation failed', err);
+    }
+    // After reconciliation, before any listener opens: relays what boot found held.
+    try {
+      outbound = startOutbound(peerService);
+    } catch (err) {
+      console.error('dispatchd: the A2A outbound worker did not start', err);
     }
   }
   try {
@@ -344,6 +355,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     get peers() {
       return peers;
     },
+    get outbound() {
+      return outbound?.worker ?? null;
+    },
     peerStatus(alias) {
       try {
         return store?.getPeer(alias)?.status ?? null;
@@ -425,6 +439,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
+        outbound?.stop();
+        outbound = null;
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
         if (refreshTimer !== null) clearInterval(refreshTimer);
