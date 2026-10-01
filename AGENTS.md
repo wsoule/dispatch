@@ -91,13 +91,17 @@ Plans and specs go to **Docs**, not files: save them with the `doc_save` MCP
 tool, linked to your task (`links: [{ target: "task:<id>", rel: "spec" }]` or
 `rel: "plan"`), so every run and teammate reads them without a copy. Read a
 linked doc with `doc_read`; your prompt's `## Docs` section lists the ones your
-task links. `dispatch docs` is for humans; agents use the tools.
+task links. `dispatch docs` is for humans; agents use the tools. Team docs are
+visible to every teammate and land in the receipt log; use `scope: "personal"`
+for notes meant only for your operator.
 
-Write every other agent-only file under `.agents/ignore/`, the single gitignored
-scratch directory: throwaway scripts, scratch notes, logs, and generated or
-downloaded data.
+With no Dispatch MCP server, or when `doc_save` is refused, write plans and
+specs to `.agents/ignore/plans/YYYY-MM-DD-<topic>.md` and
+`.agents/ignore/specs/YYYY-MM-DD-<topic>.md` as before.
 
-- Anything else: a descriptively named subdirectory of `.agents/ignore/`
+Write every other agent-only file (throwaway scripts, scratch notes, logs,
+generated or downloaded data) in a descriptively named subdirectory of
+`.agents/ignore/`, the single gitignored scratch directory.
 
 Do not put source files, tests, or committed documentation under
 `.agents/ignore/`.
