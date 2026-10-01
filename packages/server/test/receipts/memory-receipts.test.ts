@@ -416,6 +416,13 @@ describe('a staged memory restore', () => {
       reason: '',
       expired: true,
     });
+    // The retry is gated even under an auto policy.
+    t.host.ruling = {
+      mode: 'auto',
+      gate: 'memory',
+      rung: 4,
+      authorizedBy: 'rung',
+    };
     stage(lost);
     const again = await applyStagedMemoryRestore(
       t.engine,
@@ -425,7 +432,9 @@ describe('a staged memory restore', () => {
     expect(again).toMatchObject({ restored: 1, skipped: 0, problems: [] });
     const open = t.shared.listProposals({ states: ['open'] });
     expect(open).toHaveLength(1);
-    expect(open[0].origin).toStartWith(`receipts:${lost.id}`);
+    expect(open[0].origin).toBe(`receipts:${lost.id}/2`);
+    expect(open[0].gate).toBe('m-gate');
+    expect(t.shared.countEntries()).toBe(0);
     // A third staging finds the open retry and skips.
     stage(lost);
     expect(

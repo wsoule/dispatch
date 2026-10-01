@@ -200,6 +200,26 @@ describe('proposals', () => {
     expect(t.shared.countEntries()).toBe(0);
   });
 
+  it('gates a restore retry and exempts it from the hourly limit', async () => {
+    const t = setup({ proposalsPerHour: 1 });
+    t.host.ruling = AUTO;
+    const system = {
+      address: 'agent:dispatch',
+      canDecide: false,
+      kind: 'agent',
+    } as const;
+    for (const n of [1, 2]) {
+      const out = (await t.engine.submitProposal(system, {
+        action: 'add',
+        scope: 'team',
+        content: valid(`retried ${n}`),
+        origin: `receipts:mem-${n}/2`,
+      })) as Gated;
+      expect(out.gate).toBe(`m-gate-${n}`);
+    }
+    expect(t.shared.countEntries()).toBe(0);
+  });
+
   it('sends a proposal to a human when the policy ruling throws', async () => {
     const t = setup();
     t.host.failing.add('rule');

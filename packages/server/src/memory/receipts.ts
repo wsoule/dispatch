@@ -259,7 +259,16 @@ export async function applyStagedMemoryRestore(
     rmSync(join(restoreDir, file), { force: true });
   }
   // Only handled files went; anything else, even a file staged meanwhile, stays.
-  if (readdirSync(restoreDir).length === 0) rmdirSync(restoreDir);
-  else report.pending = clearHint(restoreDir);
+  if (readdirSync(restoreDir).length > 0)
+    report.pending = clearHint(restoreDir);
+  else {
+    try {
+      rmdirSync(restoreDir);
+    } catch (err) {
+      // A file staged since the listing: it waits for the next boot.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw err;
+      report.pending = clearHint(restoreDir);
+    }
+  }
   return report;
 }

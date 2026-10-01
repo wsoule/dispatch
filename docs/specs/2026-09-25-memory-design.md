@@ -1929,8 +1929,9 @@ interface MemoryOp {
     `receipts:` proposal always raises a gate, whatever the auto policy, as a
     personal-entry match does, and the gate says the lesson came from the
     receipt log. Nothing restored goes live without a human.
-  - **Skipped.** Retired receipts, ids or origins already held, and content
-    conflicts are skipped.
+  - **Skipped.** A receipt whose `status` begins with `retired`, after trimming
+    and lower-casing, is skipped, as are ids or origins already held and content
+    conflicts.
   - **At most 50 per boot.** Handled files leave the staging directory, which is
     removed only once empty. The rest wait for the next boot, and problem files
     stay with a hint.
