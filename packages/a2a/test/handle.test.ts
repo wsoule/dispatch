@@ -543,6 +543,22 @@ describe('push-notification configs (P4)', () => {
     expect(port.calls.filter((c) => c.method === 'open')).toHaveLength(1);
   });
 
+  it('checks an inline config with the port before sending, and sends nothing when refused', async () => {
+    const configs = port.enablePush();
+    configs.refuse = 'private';
+    const res = await call('/a2a/v1/message:send', {
+      body: {
+        ...ask(),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: { url: 'https://private.example.com/a' },
+        },
+      },
+    });
+    expect(res.status).toBe(400);
+    expect(port.calls.some((c) => c.method === 'open')).toBe(false);
+  });
+
   it('refuses push routes and an inline config when the port has no push support', async () => {
     const res = await call('/a2a/v1/message:send', {
       body: {

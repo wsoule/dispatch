@@ -164,6 +164,13 @@ export type A2APolicy = A2AConfig;
 
 /** A host's push configs; every method answers only for the caller's own tasks. */
 export interface PushConfigPort {
+  // A config's URL and the caps, checked before a send carrying it inline
+  // goes out, so a refused config sends nothing. `taskId` is null for a new task.
+  check(
+    caller: Caller,
+    input: PushConfigInput,
+    taskId: string | null
+  ): Promise<void>;
   // A2AError TASK_NOT_FOUND; MessagingError limited, or invalid on 'url'.
   create(
     caller: Caller,

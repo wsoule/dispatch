@@ -78,24 +78,25 @@ export class DaemonPushConfigs implements PushConfigPort {
       throw new A2AError('TASK_NOT_FOUND', 'task not found');
   }
 
-  async create(
+  // The URL's addresses and the caps; `id` names a config being replaced.
+  async check(
     caller: Caller,
-    taskId: string,
-    input: PushConfigInput
-  ): Promise<PushConfigJson> {
-    this.owned(caller, taskId);
+    input: PushConfigInput,
+    taskId: string | null
+  ): Promise<void> {
+    if (taskId !== null) this.owned(caller, taskId);
     await guardPublicUrl(input.url, { ...pushGuard(this.deps), field: 'url' });
-    const id = input.id ?? `pc-${randomUUID()}`;
-    const onTask = this.deps.store.pushConfigsOf(taskId);
-    const replacing = onTask.some((c) => c.id === id);
-    if (!replacing && onTask.length >= PUSH_LIMITS.perTask)
+    const onTask = taskId === null ? [] : this.deps.store.pushConfigsOf(taskId);
+    const replacing =
+      input.id !== null && onTask.some((c) => c.id === input.id);
+    if (replacing) return;
+    if (onTask.length >= PUSH_LIMITS.perTask)
       throw new MessagingError(
         'limited',
         `at most ${PUSH_LIMITS.perTask} push configs per task`,
         'pushNotificationConfig'
       );
     if (
-      !replacing &&
       this.deps.store.countPushConfigs(caller.address) >= PUSH_LIMITS.perClient
     )
       throw new MessagingError(
@@ -103,6 +104,15 @@ export class DaemonPushConfigs implements PushConfigPort {
         `at most ${PUSH_LIMITS.perClient} push configs per client`,
         'pushNotificationConfig'
       );
+  }
+
+  async create(
+    caller: Caller,
+    taskId: string,
+    input: PushConfigInput
+  ): Promise<PushConfigJson> {
+    await this.check(caller, input, taskId);
+    const id = input.id ?? `pc-${randomUUID()}`;
     const row: PushConfigRow = {
       id,
       taskId,

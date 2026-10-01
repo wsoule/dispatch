@@ -77,6 +77,10 @@ class TckPushConfigs implements PushConfigPort {
   readonly last = new Map<string, Snapshot>();
   constructor(private readonly exists: (taskId: string) => boolean) {}
 
+  check(): Promise<void> {
+    return Promise.resolve();
+  }
+
   private of(taskId: string): Map<string, PushConfigJson> {
     if (!this.exists(taskId))
       throw new A2AError('TASK_NOT_FOUND', 'task not found');

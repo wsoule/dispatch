@@ -395,11 +395,18 @@ async function send(op: Op, streaming: boolean): Promise<Response> {
   const inline = request.configuration?.taskPushNotificationConfig;
   const pushInput: PushConfigInput | null =
     inline === undefined || inline.url === '' ? null : parsePushConfig(inline);
-  if (pushInput !== null && op.port.pushConfigs === undefined)
-    throw new A2AError(
-      'PUSH_NOTIFICATION_NOT_SUPPORTED',
-      'push notifications are not supported'
+  if (pushInput !== null) {
+    if (op.port.pushConfigs === undefined)
+      throw new A2AError(
+        'PUSH_NOTIFICATION_NOT_SUPPORTED',
+        'push notifications are not supported'
+      );
+    await op.port.pushConfigs.check(
+      op.caller,
+      pushInput,
+      inbound.kind === 'continue' ? inbound.input.taskId : null
     );
+  }
   let release: (() => void) | null = null;
   if (streaming) {
     const admitted = await admitStream(op);

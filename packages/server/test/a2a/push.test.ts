@@ -1,5 +1,5 @@
 import type { StreamResponseJson } from '@dispatch/a2a';
-import { PUSH_LIMITS } from '@dispatch/a2a';
+import { handleA2A, IpLimiter, PUSH_LIMITS } from '@dispatch/a2a';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { HUMAN, useTempProject, waitFor } from '../messaging/harness.js';
@@ -234,6 +234,40 @@ describe('push configs', () => {
     }
     expect(logged.length).toBeGreaterThan(0);
     expect(logged.join('\n')).not.toContain('SECRET');
+  });
+
+  it('refuses an inline config before the message is sent', async () => {
+    addresses = () => Promise.resolve(['10.0.0.5']);
+    const res = await handleA2A(
+      new Request('http://agent.test/a2a/v1/message:send', {
+        method: 'POST',
+        headers: {
+          'A2A-Version': '1.0',
+          authorization: 'Bearer tok-acme',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: {
+            messageId: 'c-inline',
+            role: 'ROLE_USER',
+            parts: [{ text: 'Is /sessions final?' }],
+          },
+          configuration: {
+            returnImmediately: true,
+            taskPushNotificationConfig: { url: HOOK },
+          },
+        }),
+      }),
+      f.port,
+      {
+        basePath: '/a2a/v1',
+        policy: f.deps.policy(),
+        clientIp: '127.0.0.1',
+        limiter: new IpLimiter(),
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(f.store.tasksOf(f.caller.address)).toEqual([]);
   });
 
   it('never pushes to a revoked client', async () => {

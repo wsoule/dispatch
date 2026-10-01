@@ -1,3 +1,5 @@
+import { MessagingError } from '@dispatch/protocol';
+
 import { A2AError } from '../src/errors.js';
 import type {
   Admission,
@@ -20,7 +22,17 @@ import { CLIENT, facts } from './facts.js';
 // In-memory push configs over a FakePort's tasks.
 export class MemoryPushConfigs implements PushConfigPort {
   readonly configs = new Map<string, PushConfigJson>();
+  // A URL containing this is refused by check(), as a host's guard would.
+  refuse: string | null = null;
   constructor(private readonly port: FakePort) {}
+
+  check(_caller: Caller, input: PushConfigInput): Promise<void> {
+    if (this.refuse !== null && input.url.includes(this.refuse))
+      return Promise.reject(
+        new MessagingError('invalid', 'url: refused', 'url')
+      );
+    return Promise.resolve();
+  }
 
   private owned(caller: Caller, taskId: string): void {
     if (this.port.tasks.get(taskId)?.client !== caller.address)
