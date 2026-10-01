@@ -4,6 +4,7 @@ import {
   blockedAddressReason,
   guardPublicUrl,
   pinPublicUrl,
+  UnresolvedHostError,
 } from '../../src/peer/guard.js';
 
 const resolvesTo =
@@ -126,6 +127,18 @@ describe('guardPublicUrl', () => {
         field: 'url',
       })
     ).rejects.toMatchObject({ field: 'url' });
+  });
+
+  it('tells a name that does not resolve apart from a refused one', async () => {
+    const unresolved = await guardPublicUrl('https://offline.example.com/', {
+      lookup: () => Promise.reject(new Error('EAI_AGAIN')),
+    }).catch((e: unknown) => e);
+    expect(unresolved).toBeInstanceOf(UnresolvedHostError);
+    expect(unresolved).toMatchObject({ code: 'invalid', field: 'cardUrl' });
+    const blocked = await guardPublicUrl('https://inside.example.com/', {
+      lookup: resolvesTo('10.0.0.7'),
+    }).catch((e: unknown) => e);
+    expect(blocked).not.toBeInstanceOf(UnresolvedHostError);
   });
 
   it('refuses a name whose lookup fails', async () => {

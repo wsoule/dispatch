@@ -16,6 +16,7 @@ import {
   PeerHttpError,
   pickInterface,
   summarizeCard,
+  UnresolvedHostError,
 } from '@dispatch/a2a';
 import {
   clearPeerCredential,
@@ -260,7 +261,9 @@ function addressRefused(alias: string, why: string): string {
   return `a2a:${alias} is disabled: ${why}. A peer added below the operator tier must resolve only to public addresses. Check it, then run: dispatch a2a peers enable ${alias}`;
 }
 
-// Why the guard refuses `url` now, or null when it passes (or there is no guard).
+// Why the guard refuses `url` now, or null when it passes (or there is no
+// guard). A name that does not resolve is a network failure, never a refusal:
+// it throws PeerHttpError(null), so the refresh is skipped and the peer kept.
 async function refusedUrl(
   guard: GuardOptions | undefined,
   url: string
@@ -270,6 +273,8 @@ async function refusedUrl(
     await guardPublicUrl(url, { ...guard, field: 'cardUrl' });
     return null;
   } catch (err) {
+    if (err instanceof UnresolvedHostError)
+      throw new PeerHttpError(null, err.message);
     if (err instanceof MessagingError) return err.message;
     throw err;
   }

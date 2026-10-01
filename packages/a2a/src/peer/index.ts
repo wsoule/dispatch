@@ -1,4 +1,9 @@
-export { blockedAddressReason, guardPublicUrl, pinPublicUrl } from './guard.js';
+export {
+  blockedAddressReason,
+  guardPublicUrl,
+  pinPublicUrl,
+  UnresolvedHostError,
+} from './guard.js';
 export type { GuardOptions, LookupAll } from './guard.js';
 export {
   isLoopbackHost,

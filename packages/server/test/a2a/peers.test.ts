@@ -267,6 +267,27 @@ describe('refreshing a peer', () => {
     );
   });
 
+  it('skips a refresh while the peer’s name does not resolve, keeping it active', async () => {
+    await addPeer(
+      f.peerDeps({ fetchImpl: serveCard(CARD), lookup: publicDns }),
+      { alias: 'acme', cardUrl: CARD_URL, token: 't' },
+      DECIDE
+    );
+    await expect(
+      refreshPeer(
+        f.peerDeps({
+          fetchImpl: serveCard(CARD),
+          lookup: () => Promise.reject(new Error('EAI_AGAIN')),
+        }),
+        f.notices,
+        'acme'
+      )
+    ).rejects.toMatchObject({ status: null });
+    expect(f.store.getPeer('acme')?.status).toBe('active');
+    await Bun.sleep(20);
+    expect(ownerNotices()).toEqual([]);
+  });
+
   it('marks a peer auth-failed when its card answers 401, and refreshes only stale peers', async () => {
     await addPeer(
       f.peerDeps({ fetchImpl: serveCard(CARD), lookup: publicDns }),

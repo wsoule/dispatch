@@ -107,6 +107,15 @@ const defaultLookup: LookupAll = async (hostname) =>
     (r) => r.address
   );
 
+/** The name did not resolve (offline, DNS down): a network failure to retry,
+ *  unlike a refused address, which is final. */
+export class UnresolvedHostError extends MessagingError {
+  constructor(message: string, field: string) {
+    super('invalid', message, field);
+    this.name = 'UnresolvedHostError';
+  }
+}
+
 export interface GuardOptions {
   lookup?: LookupAll;
   field?: string;
@@ -138,7 +147,8 @@ export async function pinPublicUrl(
   const addresses = await (opts.lookup ?? defaultLookup)(host).catch(
     () => [] as string[]
   );
-  if (addresses.length === 0) refuse(`${host} does not resolve`);
+  if (addresses.length === 0)
+    throw new UnresolvedHostError(`${field}: ${host} does not resolve`, field);
   for (const address of addresses) {
     const why = blockedAddressReason(address);
     if (why !== null)

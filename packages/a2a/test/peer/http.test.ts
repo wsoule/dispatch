@@ -334,6 +334,22 @@ describe('peerFetch with the public-address guard', () => {
     expect(calls.map((c) => c.url)).toEqual(['https://93.184.216.34/one']);
   });
 
+  it('reads a lookup failure as a retryable network error, not a refusal', async () => {
+    const { calls, fetchImpl } = recorder();
+    const b = box();
+    const err = await peerFetch({
+      headers: {},
+      timeoutMs: 1000,
+      fetchImpl,
+      box: b,
+      guard: { lookup: () => Promise.reject(new Error('EAI_AGAIN')) },
+    })('https://offline.example.com/x').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PeerHttpError);
+    expect(err).toMatchObject({ status: null, reason: null });
+    expect(b.network).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
   it('refuses plain http and IP literals before any lookup', async () => {
     const { calls, fetchImpl } = recorder();
     let lookups = 0;

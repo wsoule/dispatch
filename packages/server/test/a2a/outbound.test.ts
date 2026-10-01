@@ -290,6 +290,41 @@ describe('the URL guard at every contact', () => {
     expect(peer.opened).toHaveLength(0);
   });
 
+  it('retries a send while the peer’s name does not resolve, and never disables it', async () => {
+    decideTierPeer('flaky', () => [PUBLIC]);
+    f.peers.deps.lookup = () => Promise.reject(new Error('EAI_AGAIN'));
+    const q = await ask('Which colour?', ['a2a:flaky']);
+    await waitFor(
+      () => (f.store.getOutbound(q.id, 'flaky')?.attempts ?? 0) === 1
+    );
+    expect(f.store.getOutbound(q.id, 'flaky')).toMatchObject({
+      state: 'queued',
+      lastError: expect.stringContaining('does not resolve'),
+    });
+    expect(f.store.getPeer('flaky')?.status).toBe('active');
+    expect(engine().answerOf(q.id)).toBeNull();
+    f.peers.deps.lookup = () => Promise.resolve([PUBLIC]);
+    const later = Date.now() + 60_000;
+    f.deps.now = () => new Date(later);
+    f.outbound.kick('flaky');
+    await waitFor(() => f.store.getOutbound(q.id, 'flaky')?.state === 'open');
+  });
+
+  it('keeps tracking while the peer’s name does not resolve', async () => {
+    decideTierPeer('flaky', () => [PUBLIC]);
+    const q = await ask('Which colour?', ['a2a:flaky']);
+    await waitFor(() => f.store.getOutbound(q.id, 'flaky')?.state === 'open');
+    f.peers.deps.lookup = () => Promise.reject(new Error('EAI_AGAIN'));
+    peer.answer(peer.latest(), 'Blue');
+    await Bun.sleep(200);
+    expect(f.store.getOutbound(q.id, 'flaky')?.state).toBe('open');
+    expect(f.store.getPeer('flaky')?.status).toBe('active');
+    expect(engine().answerOf(q.id)).toBeNull();
+    f.peers.deps.lookup = () => Promise.resolve([PUBLIC]);
+    await waitFor(() => engine().answerOf(q.id) !== null);
+    expect(engine().answerOf(q.id)?.from).toBe('a2a:flaky');
+  });
+
   it('does not re-check an operator-tier peer, which may be private on purpose', async () => {
     f.peers.deps.lookup = () => Promise.resolve(['10.0.0.9']);
     const q = await ask();

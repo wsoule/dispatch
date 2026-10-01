@@ -3,7 +3,7 @@ import { isIP } from 'node:net';
 import { checkServerIdentity } from 'node:tls';
 
 import type { GuardOptions } from './guard.js';
-import { pinPublicUrl } from './guard.js';
+import { pinPublicUrl, UnresolvedHostError } from './guard.js';
 
 // A peer (or a card URL) failed: status null for network errors and timeouts.
 export class PeerHttpError extends Error {
@@ -74,10 +74,15 @@ async function pinned(
   try {
     pin = await untilAborted(pinPublicUrl(target, guard), signal);
   } catch (err) {
-    const refused = err instanceof MessagingError;
+    // A name that does not resolve is a network failure; any other guard
+    // refusal (a blocked address, a bad URL) is final.
+    const refused =
+      err instanceof MessagingError && !(err instanceof UnresolvedHostError);
     throw new PeerHttpError(
       null,
-      refused ? err.message : `could not resolve the peer: ${String(err)}`,
+      refused
+        ? err.message
+        : `could not resolve the peer: ${err instanceof Error ? err.message : String(err)}`,
       null,
       refused ? 'ADDRESS_REFUSED' : null
     );

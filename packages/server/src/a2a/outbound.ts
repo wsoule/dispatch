@@ -19,6 +19,7 @@ import {
   summarizeCard,
   TERMINAL_STATES,
   TRACK_LIMIT_MS,
+  UnresolvedHostError,
 } from '@dispatch/a2a';
 import type { A2AConfig } from '@dispatch/core';
 import type {
@@ -44,6 +45,11 @@ import {
 } from './peers.js';
 
 const SYSTEM = { address: SYSTEM_ADDRESS, canDecide: true };
+
+type GuardVerdict =
+  | { kind: 'ok' }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'unreachable'; reason: string };
 const HOUR_MS = 3_600_000;
 const QUOTA_RECHECK_MS = 5 * 60_000;
 
@@ -280,9 +286,18 @@ export class OutboundWorker {
       updatedAt: at,
     };
     const link = this.linkFor(message, alias);
-    const blocked = await this.guarded(peer);
-    if (blocked !== null) {
-      await this.refused(base, message, d.via, blocked);
+    const verdict = await this.guarded(peer);
+    if (verdict.kind === 'refused') {
+      await this.refused(base, message, d.via, verdict.reason);
+      return;
+    }
+    if (verdict.kind === 'unreachable') {
+      await this.sendFailed(
+        d,
+        message,
+        base,
+        new PeerHttpError(null, verdict.reason)
+      );
       return;
     }
     let result;
@@ -461,15 +476,21 @@ export class OutboundWorker {
     return `a2a:${alias} was not contacted: its address is now refused (${why})`;
   }
 
-  // Re-checks a decide-tier peer's URL before a contact; on refusal disables
-  // the peer (one owner notice) and returns why, else null (spec:1776-1777).
-  private async guarded(peer: PeerRow): Promise<string | null> {
+  // Re-checks a decide-tier peer's URL before a contact (spec:1776-1777). A
+  // refusal disables the peer (one owner notice) and is final; a name that
+  // does not resolve is only unreachable, retried like any network error.
+  private async guarded(peer: PeerRow): Promise<GuardVerdict> {
     try {
       await this.deps.guard(peer);
-      return null;
+      return { kind: 'ok' };
     } catch (err) {
+      if (err instanceof UnresolvedHostError)
+        return { kind: 'unreachable', reason: err.message };
       if (!(err instanceof MessagingError)) throw err;
-      return this.disableRefused(peer.alias, err.message);
+      return {
+        kind: 'refused',
+        reason: this.disableRefused(peer.alias, err.message),
+      };
     }
   }
 
@@ -564,10 +585,16 @@ export class OutboundWorker {
         return;
       }
       // Before subscribing; poll() re-checks before every read.
-      const blocked = await this.guarded(peer);
-      if (blocked !== null) {
-        await this.blockedWhileTracking(current, blocked);
+      const verdict = await this.guarded(peer);
+      if (verdict.kind === 'refused') {
+        await this.blockedWhileTracking(current, verdict.reason);
         return;
+      }
+      if (verdict.kind === 'unreachable') {
+        // Offline or DNS down: wait and look again, still tracking.
+        await sleep(this.deps.pollMs?.(polls) ?? pollDelayMs(polls), signal);
+        polls += 1;
+        continue;
       }
       if (summarizeCard(this.cardOf(peer)).streaming) {
         try {
@@ -604,11 +631,12 @@ export class OutboundWorker {
     if (signal.aborted || row.remoteTaskId === null) return true;
     const peer = this.deps.store.getPeer(row.alias);
     if (peer === null) return true;
-    const blocked = await this.guarded(peer);
-    if (blocked !== null) {
-      await this.blockedWhileTracking(row, blocked);
+    const verdict = await this.guarded(peer);
+    if (verdict.kind === 'refused') {
+      await this.blockedWhileTracking(row, verdict.reason);
       return true;
     }
+    if (verdict.kind === 'unreachable') return false;
     let task: TaskJson;
     try {
       task = await client.getTask(row.remoteTaskId);
