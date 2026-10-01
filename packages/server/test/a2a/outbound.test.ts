@@ -427,6 +427,20 @@ describe('removing or disabling a peer mid-flight', () => {
     ).rejects.toMatchObject({ code: 'conflict', field: 'alias' });
   });
 
+  it('keeps a row failed when the peer is removed while its send is in flight', async () => {
+    peer.sendDelayMs = 300;
+    const q = await ask();
+    await waitFor(() => peer.sends === 1);
+    removePeer(f.peerDeps(), 'fixture');
+    f.peers.emit('fixture', 'removed');
+    await Bun.sleep(500);
+    expect(row(q.id)?.state).toBe('failed');
+    expect(f.messaging.store.deliveries({ messageId: q.id })[0].state).not.toBe(
+      'pushed'
+    );
+    expect(f.outbound.trackerCount('fixture')).toBe(0);
+  });
+
   it('disabling stops tracking and enabling resumes it', async () => {
     const q = await ask();
     await waitFor(() => row(q.id)?.state === 'open');

@@ -105,6 +105,18 @@ function removedReason(alias: string): string {
   return `a2a:${alias} was removed`;
 }
 
+const MAX_REMOTE_ID_BYTES = 200;
+
+// A peer's task or context id as kept in a2a.db: one line, 1-200 bytes.
+function isRemoteId(id: unknown): id is string {
+  return (
+    typeof id === 'string' &&
+    id !== '' &&
+    !/[\r\n\u0085\u2028\u2029]/.test(id) &&
+    new TextEncoder().encode(id).byteLength <= MAX_REMOTE_ID_BYTES
+  );
+}
+
 const errorText = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
 
@@ -327,6 +339,29 @@ export class OutboundWorker {
       await this.sendFailed(d, message, base, err);
       return;
     }
+    // The peer may have been removed, or the row given up, while the send was
+    // in flight: keep it failed and leave the delivery as the removal left it.
+    const after = this.deps.store.getOutbound(message.id, alias);
+    if (this.deps.store.getPeer(alias) === null || after?.state === 'failed')
+      return;
+    const remoteTask = result.kind === 'task' ? result.task.id : null;
+    const remoteContext =
+      result.kind === 'task'
+        ? result.task.contextId
+        : (result.message.contextId ?? null);
+    if (
+      (remoteTask !== null && !isRemoteId(remoteTask)) ||
+      (remoteContext !== null && !isRemoteId(remoteContext))
+    ) {
+      const reason = `a2a:${alias} answered with an invalid task or context id`;
+      await this.refused(
+        { ...base, attempts: base.attempts + 1 },
+        message,
+        d.via,
+        reason
+      );
+      return;
+    }
     const tracked =
       link.taskId === null &&
       result.kind === 'task' &&
@@ -338,11 +373,8 @@ export class OutboundWorker {
       lastError: null,
       updatedAt: at,
       state: tracked ? 'open' : 'done',
-      remoteTaskId: result.kind === 'task' ? result.task.id : base.remoteTaskId,
-      remoteContextId:
-        result.kind === 'task'
-          ? result.task.contextId
-          : (result.message.contextId ?? base.remoteContextId),
+      remoteTaskId: remoteTask ?? base.remoteTaskId,
+      remoteContextId: remoteContext ?? base.remoteContextId,
     };
     // Written before markRelayed, so a crash between the two re-sends under
     // the same messageId, which the peer dedupes.
@@ -734,7 +766,12 @@ export class OutboundWorker {
     if (signal.aborted) return true;
     const event = peerEventFromTask(task);
     if (event === null || event.kind !== 'task') return false;
-    const current = { ...row, remoteContextId: event.contextId };
+    const current = {
+      ...row,
+      remoteContextId: isRemoteId(event.contextId)
+        ? event.contextId
+        : row.remoteContextId,
+    };
     await this.apply(current, event, this.viaOf(row));
     if (!TERMINAL_STATES.has(event.state)) return false;
     this.finish(current, 'done', null);
