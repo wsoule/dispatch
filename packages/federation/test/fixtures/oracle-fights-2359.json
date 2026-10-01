@@ -1,0 +1,373 @@
+[
+  {
+    "replica": "ada-0000000a",
+    "seq": 1,
+    "hlc": "1790380800000.0000.ada-0000000a",
+    "hash": "ac526da7f83f089675063fd563ad6b61778c3d7ad4b162b072eaf2e1a64add6f",
+    "body": {
+      "rv": 1,
+      "action": "found",
+      "name": "acme",
+      "legacy": [],
+      "recoveryPub": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+    }
+  },
+  {
+    "replica": "ada-0000000a",
+    "seq": 2,
+    "hlc": "1790380800007.0000.ada-0000000a",
+    "hash": "e4a6d3ca1141c1db681ff035069d7689d531b96bd60413de284233cfeb03a751",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "pat-00000011",
+      "handle": "pat",
+      "role": "admin",
+      "fingerprint": "FP-pat-00000011"
+    }
+  },
+  {
+    "replica": "pat-00000011",
+    "seq": 3,
+    "hlc": "1790380800010.0000.pat-00000011",
+    "hash": "705ed7ca7146e6fe1824de32de3e7851af0091196d329a5fe0de6539d6cb45ef",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "bo-0000000b",
+      "handle": "bo",
+      "role": "admin",
+      "fingerprint": "FP-bo-0000000b"
+    }
+  },
+  {
+    "replica": "ada-0000000a",
+    "seq": 3,
+    "hlc": "1790380800012.0000.ada-0000000a",
+    "hash": "9b9a73f2aedd0801fcff6c30a652eac0d4ca8149e526cadb747b276991f815c6",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "bo-0000000b",
+      "handle": "bo",
+      "role": "member",
+      "fingerprint": "FP-bo-0000000b"
+    }
+  },
+  {
+    "replica": "bo-0000000b",
+    "seq": 2,
+    "hlc": "1790380800016.0000.bo-0000000b",
+    "hash": "bb5f3f6b79777e303889baa0f2a16f61b3e2b196a9d593f4bbceaf6dc3dab74c",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "cy-0000000c",
+      "handle": "cy",
+      "role": "member",
+      "fingerprint": "FP-cy-0000000c"
+    }
+  },
+  {
+    "replica": "ada-0000000a",
+    "seq": 4,
+    "hlc": "1790380800017.0000.ada-0000000a",
+    "hash": "98639db6790d1a5d511427e9c146d915764ac37842277df14e6bb97b17bd5714",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "cy-0000000c",
+      "handle": "cy",
+      "role": "admin",
+      "fingerprint": "FP-cy-0000000c"
+    }
+  },
+  {
+    "replica": "ada-0000000a",
+    "seq": 5,
+    "hlc": "1790380800023.0000.ada-0000000a",
+    "hash": "7c7ae6faa9a359e1b126e8dc2a6f8f93f0f05a828078038c15cd5633c69b018b",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "di-0000000d",
+      "handle": "di",
+      "role": "admin",
+      "fingerprint": "FP-di-0000000d"
+    }
+  },
+  {
+    "replica": "bo-0000000b",
+    "seq": 4,
+    "hlc": "1790380800030.0000.bo-0000000b",
+    "hash": "ed2864ef8d01cefff0e765497130a6df795ba95278be910fb6659d4c6a98dd7a",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "mo-0000000e",
+      "handle": "mo",
+      "role": "member",
+      "fingerprint": "FP-mo-0000000e",
+      "hosts": ["mx", "my"]
+    }
+  },
+  {
+    "replica": "ada-0000000a",
+    "seq": 6,
+    "hlc": "1790380800037.0000.ada-0000000a",
+    "hash": "24d5dd0b742fbcad60c31b1699883937b86d5dcdefba8b3944ab042622f3c9a9",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "obs-0000000f",
+      "handle": "obs",
+      "role": "member",
+      "fingerprint": "FP-obs-0000000f",
+      "observer": true
+    }
+  },
+  {
+    "replica": "zed-00000015",
+    "seq": 2,
+    "hlc": "1790380800038.0000.zed-00000015",
+    "hash": "d050e9a837d430fb8ee9f1add2bc7f7b75241861a3b5132b2226688664b627ff",
+    "body": {
+      "rv": 1,
+      "action": "recover",
+      "proof": "signed-by:nobody"
+    }
+  },
+  {
+    "replica": "sy-00000017",
+    "seq": 2,
+    "hlc": "1790380800039.0000.sy-00000017",
+    "hash": "5ac5417d0ad042c1ed62af1632cced3bd9ea3429a342b78c11ac229a3e5b3022",
+    "body": {
+      "rv": 1,
+      "action": "revoke",
+      "reason": "r",
+      "replica": "pat-00000011",
+      "afterSeq": 4,
+      "afterHash": "h-pat-00000011-4"
+    }
+  },
+  {
+    "replica": "pat-00000011",
+    "seq": 4,
+    "hlc": "1790380800043.0000.pat-00000011",
+    "hash": "c533b95a7c93c59274aaec92fa54bda625fceb4c265ee8b9d90d730a2b3afb11",
+    "body": {
+      "rv": 1,
+      "action": "admit",
+      "replica": "pat-00000011",
+      "handle": "pat",
+      "role": "admin",
+      "fingerprint": "FP-pat-00000011"
+    }
+  },
+  {
+    "replica": "pat-00000011",
+    "seq": 5,
+    "hlc": "1790380800047.0000.pat-00000011",
+    "hash": "924e5e6211cc3a0818150165ad5e30a5dbc1cb3b4cacb4f68e8e1a59ffcac165",
+    "body": {
+      "rv": 7,
+      "action": "x-garbage"
+    }
+  },
+  {
+    "replica": "cy-0000000c",
+    "seq": 2,
+    "hlc": "1790380800052.0000.cy-0000000c",
+    "hash": "50b40a64c88c700e705b1704e699332d18d7ba103d9b4036794327af97151fab",
+    "body": {
+      "rv": 1,
+      "action": "role",
+      "role": "member",
+      "replica": "ada-0000000a",
+      "afterSeq": 6,
+      "afterHash": "h-ada-0000000a-6"
+    }
+  },
+  {
+    "replica": "di-0000000d",
+    "seq": 2,
+    "hlc": "1790380800059.0000.di-0000000d",
+    "hash": "9e8c0a6ac6e796bb28fe19a0e00135480ae54d4242a9cc7028f7f1ec2c382fd9",
+    "body": {
+      "rv": 1,
+      "action": "revoke",
+      "reason": "r",
+      "replica": "bo-0000000b",
+      "afterSeq": 4,
+      "afterHash": "h-bo-0000000b-4"
+    }
+  },
+  {
+    "replica": "pat-00000011",
+    "seq": 6,
+    "hlc": "1790380800066.0000.pat-00000011",
+    "hash": "1101b96f37163e0fdba698f76cb52e0b546cf30e4eb04e3ecce6b3c1891f430b",
+    "body": {
+      "rv": 1,
+      "action": "license",
+      "key": "k1-5"
+    }
+  },
+  {
+    "replica": "cy-0000000c",
+    "seq": 3,
+    "hlc": "1790380800067.0000.cy-0000000c",
+    "hash": "cf53d6d60bbb6e35ae1ac82532f2ead50064cb68d97b5bd621d6d11515a11470",
+    "body": {
+      "rv": 1,
+      "action": "hosts",
+      "replica": "mo-0000000e",
+      "hosts": [],
+      "afterSeq": 1,
+      "afterHash": "h-mo-0000000e-1"
+    }
+  },
+  {
+    "replica": "cy-0000000c",
+    "seq": 4,
+    "hlc": "1790380800074.0000.cy-0000000c",
+    "hash": "596476c13cb45a93b1fcd78061a27469b2d7b27560b3d788706e4e3e0b642de8",
+    "body": {
+      "rv": 99,
+      "action": "zap"
+    }
+  },
+  {
+    "replica": "pat-00000011",
+    "seq": 7,
+    "hlc": "1790380800076.0000.pat-00000011",
+    "hash": "ea8f36ce8cb4ba595b602034e995af7dccc3ec73653ed9be983f42f5eda19712",
+    "body": {
+      "rv": 1,
+      "action": "role",
+      "replica": "ada-0000000a",
+      "role": "admin"
+    }
+  },
+  {
+    "replica": "ada-0000000a",
+    "seq": 7,
+    "hlc": "1790380800082.0000.ada-0000000a",
+    "hash": "33a71339b6b06934db088125498944904f9b4a66c818840eb698dabfc2c25f40",
+    "body": {
+      "rv": 1,
+      "action": "revoke",
+      "reason": "r",
+      "replica": "cy-0000000c",
+      "afterSeq": 4,
+      "afterHash": "h-cy-0000000c-4"
+    }
+  },
+  {
+    "replica": "di-0000000d",
+    "seq": 3,
+    "hlc": "1790380800086.0000.di-0000000d",
+    "hash": "c4a1a7588c19260c5183bd6f3ebb2a460a0ec3d200ff2aa1416ba25beac3b547",
+    "body": {
+      "rv": 1,
+      "action": "hosts",
+      "replica": "mo-0000000e",
+      "hosts": [],
+      "afterSeq": 1,
+      "afterHash": "h-mo-0000000e-1"
+    }
+  },
+  {
+    "replica": "cy-0000000c",
+    "seq": 5,
+    "hlc": "1790380800092.0000.cy-0000000c",
+    "hash": "a6b67edcd0b35adcaeb0c191b8caaf95b0527921926149405972be1404658819",
+    "body": {
+      "rv": 1,
+      "action": "revoke",
+      "reason": "r",
+      "replica": "ada-0000000a",
+      "afterSeq": 5,
+      "afterHash": "h-ada-0000000a-5"
+    }
+  },
+  {
+    "replica": "bo-0000000b",
+    "seq": 5,
+    "hlc": "1790380800099.0000.bo-0000000b",
+    "hash": "36e7bcb4f2b0c3367620efecc819c94db7a70ddd20117f5a02bd448194dccd88",
+    "body": {
+      "rv": 1,
+      "action": "revoke",
+      "reason": "r",
+      "replica": "di-0000000d",
+      "afterSeq": 2,
+      "afterHash": "h-di-0000000d-2"
+    }
+  },
+  {
+    "replica": "xi-00000016",
+    "seq": 2,
+    "hlc": "1790380800100.0000.xi-00000016",
+    "hash": "39ce33ac2e1254cf46be955fbd6e49521d207b3df9a2ec43f2cc3a5c9082f812",
+    "body": {
+      "rv": 1,
+      "action": "role",
+      "role": "member",
+      "replica": "pat-00000011",
+      "afterSeq": 2,
+      "afterHash": "h-pat-00000011-2"
+    }
+  },
+  {
+    "replica": "bo-0000000b",
+    "seq": 6,
+    "hlc": "1790380800107.0000.bo-0000000b",
+    "hash": "ed2437bec755f5753c3ca7108a505754f61590e44f5bde1dbb57778da890ad7f",
+    "body": {
+      "rv": 1,
+      "action": "revoke",
+      "reason": "r",
+      "replica": "ada-0000000a",
+      "afterSeq": 8,
+      "afterHash": "h-ada-0000000a-8"
+    }
+  },
+  {
+    "replica": "ada-0000000a",
+    "seq": 8,
+    "hlc": "1790380800111.0000.ada-0000000a",
+    "hash": "46cc0a0f019b5f1dc84060d3cc61a455067d30ff2944fb2629f711c369abc5fe",
+    "body": {
+      "rv": 1,
+      "action": "recovery-key",
+      "pub": "pub-15"
+    }
+  },
+  {
+    "replica": "pat-00000011",
+    "seq": 8,
+    "hlc": "1790380800113.0000.pat-00000011",
+    "hash": "0eafd8969fea24ad26e0e69ff1be4feb67c0a80c4f98100776cc644f765db201",
+    "body": {
+      "rv": 1,
+      "action": "recovery-key",
+      "pub": "_RckOFqgx1tk-3jNYC-h2ZH96_drE8WO1wLqyDXp9hg"
+    }
+  },
+  {
+    "replica": "di-0000000d",
+    "seq": 4,
+    "hlc": "1790380800120.0000.di-0000000d",
+    "hash": "ba3804af19d3885de17dad7f9ba81ba497683de7028d43376c730144faa5ae79",
+    "body": {
+      "rv": 1,
+      "action": "role",
+      "role": "member",
+      "replica": "bo-0000000b",
+      "afterSeq": 1,
+      "afterHash": "h-bo-0000000b-1"
+    }
+  }
+]

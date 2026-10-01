@@ -117,9 +117,8 @@ export interface RosterView {
   problems: readonly Problem[];
   /**
    * Set while the fold keeps an unreadable op from a member or admin at it, no
-   * observer, or while more removals contest one another than it decides at
-   * once and a publisher among them stands (naming the first); the caller then
-   * applies nothing. Always null for the relay.
+   * observer (naming the first); the caller then applies nothing. Always null
+   * for the relay.
    */
   unknown: Paused | null;
 }
@@ -195,6 +194,8 @@ interface Context {
   firstSeq: ReadonlyMap<string, number>;
   /** The replicas whose rights a removal's cut can change, its target included. */
   reach: (cut: Removal) => ReadonlySet<string>;
+  /** What the target's ops a cut exposes link to; its target only via a cycle. */
+  exposes: (cut: Removal) => ReadonlySet<string>;
   /** comparePositions, by index for the ops being folded. */
   order: (a: Position, b: Position) => number;
   /** Whether a recover's proof verifies against a recovery key, memoized. */
@@ -231,12 +232,11 @@ type Granted = Pick<Evaluation, 'cutsOn' | 'order' | 'grants'>;
 // Evaluations under sets of removals, memoized by set.
 type Folds = (cuts: readonly Removal[]) => Evaluation;
 
-// The decision on the Known(1) removals: those accepted, the rank picks among
-// them, and the components too large to search.
+// The decision on the Known(1) removals: those accepted, and the rank picks
+// among them.
 interface Decision {
   accepted: Removal[];
   won: ReadonlySet<Removal>;
-  oversized: readonly (readonly Removal[])[];
 }
 
 // What a component's search reads: the folds, which removals affect which,
@@ -261,12 +261,12 @@ interface Resolved {
   resolution: Map<string, Resolution>;
   accepted: readonly Removal[];
   won: ReadonlySet<Removal>;
-  oversized: Decision['oversized'];
 }
 
 const NO_ADMIN = 'would leave the team with no admin; void';
 
-// The most contested removals one search decides; a larger component pauses.
+// The most contested removals one search decides; a larger component takes
+// the FW-R7 rank fallback.
 const MAX_CONTESTED = 18;
 
 const NEWER_ROSTER =
@@ -312,6 +312,10 @@ export interface ResolutionProbe {
   removals: readonly RosterOpRef[];
   accepted: readonly number[];
   won: readonly number[];
+  /** Whether accepting removal i can change the right removal j needs. */
+  affects: (i: number, j: number) => boolean;
+  /** Whether an admin under `cuts` that no removal in `rest` reaches stands. */
+  stands: (cuts: readonly number[], rest: readonly number[]) => boolean;
   under: (cuts: readonly number[]) => {
     /** Whether removal i's publisher holds its right. */
     had: (i: number) => boolean;
@@ -337,10 +341,13 @@ export function resolutionProbe(
       .filter((i) => i >= 0);
   const fold = foldsOf(ctx, removals);
   const at = (i: number): Removal => removals[i];
+  const affects = affectsOf(ctx);
   return {
     removals: removals.map((r) => r.op),
     accepted: indexOf(accepted),
     won: indexOf(won),
+    affects: (i, j) => affects(at(i), at(j)),
+    stands: (cuts, rest) => stands(ctx, fold(cuts.map(at)), rest.map(at)),
     under: (cuts) => {
       const ev = fold(cuts.map(at));
       return {
@@ -437,8 +444,7 @@ function resolve(ctx: Context): Resolved {
       r.op,
       `${r.op.replica}'s removal at seq ${r.op.seq} ${NO_ADMIN}`
     );
-  const { won, oversized } = fight;
-  return { ev: final, resolution, accepted, won, oversized };
+  return { ev: final, resolution, accepted, won: fight.won };
 }
 
 // Memoizes a fold of rights alone by the set of removals, in fold order.
@@ -504,8 +510,9 @@ function couldHold(
 }
 
 // Whether accepting r can change the right s needs: r's cut reaches s's
-// publisher, or s's target where a member may revoke its own handle's device.
-// A hosts cut changes no right.
+// publisher (its target only for ops it cuts or grants it may refuse), or s's
+// target where a member may revoke its own handle's device. A hosts cut
+// changes no right.
 function affectsOf(ctx: Context): (r: Removal, s: Removal) => boolean {
   const handles = new Map<string, Set<string>>();
   for (const replica of ctx.input.keys.keys())
@@ -524,16 +531,20 @@ function affectsOf(ctx: Context): (r: Removal, s: Removal) => boolean {
   };
   return (r, s) => {
     if (r === s || r.kind === 'hosts') return false;
-    const reach = ctx.reach(r);
-    if (reach.has(s.op.replica)) return true;
+    const by = s.op.replica;
+    if (ctx.exposes(r).has(by)) return true;
+    // A revocation refuses its target's grants after it, which may precede s.
+    const later = r.kind === 'all' && ctx.order(r.op, s.op) < 0;
+    if (by === r.target && (s.op.seq > r.afterSeq || later)) return true;
     return (
-      s.kind === 'all' && reach.has(s.target) && share(s.op.replica, s.target)
+      s.kind === 'all' && ctx.reach(r).has(s.target) && share(by, s.target)
     );
   };
 }
 
 // A removal no undecided one affects is decided outright: void without its
-// right, else accepted, unless the no-admin rule could void it; one an
+// right, else accepted, unless the no-admin rule could void it (no admin sure
+// to stand once it and the removals it cuts below are decided); one an
 // accepted revocation cuts below is void. The rest is searched per connected
 // component, as one when the no-admin rule couples them all.
 function decideAmong(
@@ -542,51 +553,53 @@ function decideAmong(
   fold: Folds
 ): Decision {
   const affects = affectsOf(ctx);
-  const safe = alwaysAdmin(ctx, list, fold);
   const accepted: Removal[] = [];
   const decided = new Set<Removal>();
-  // One an accepted revocation cuts below holds no right in any fold: void.
-  const cutBelow = (r: Removal): boolean =>
-    accepted.some(
-      (c) =>
-        c.kind === 'all' && c.target === r.op.replica && c.afterSeq < r.op.seq
-    );
+  // Whether c, accepted, leaves r's publisher no right: a revocation below r.
+  const below = (c: Removal, r: Removal): boolean =>
+    c.kind === 'all' && c.target === r.op.replica && c.afterSeq < r.op.seq;
+  const open = (): Removal[] => list.filter((r) => !decided.has(r));
   for (let grew = true; grew; ) {
     grew = false;
     for (const s of list) {
       if (decided.has(s)) continue;
-      const free = !list.some((r) => !decided.has(r) && affects(r, s));
-      if (!free && !cutBelow(s)) continue;
+      const free = !open().some((r) => affects(r, s));
+      if (!free && !accepted.some((c) => below(c, s))) continue;
       const right = free && hadRight(ctx, fold(accepted), s);
-      if (right && !safe && s.kind !== 'hosts') continue;
+      const rest = open().filter((r) => r !== s && !below(s, r));
+      if (
+        right &&
+        s.kind !== 'hosts' &&
+        !stands(ctx, fold([...accepted, s]), rest)
+      )
+        continue;
       decided.add(s);
       grew = true;
       if (right) accepted.push(s);
     }
   }
   const won = new Set<Removal>();
-  const oversized: Removal[][] = [];
-  const rest = list.filter((r) => !decided.has(r));
+  const rest = open();
+  const safe = stands(ctx, fold(accepted), rest);
   const comps = safe ? componentsOf(rest, affects) : [rest];
   for (const comp of comps.filter((c) => c.length > 0)) {
-    const large = comp.length > MAX_CONTESTED;
-    if (large) oversized.push(comp);
     const given: Given = { ctx, fold, affects, safe, outside: [...accepted] };
-    const out = solve(given, comp, !large);
+    const out = solve(given, comp, comp.length <= MAX_CONTESTED);
     accepted.push(...out.accepted);
     for (const r of out.won) won.add(r);
   }
-  return { accepted, won, oversized };
+  return { accepted, won };
 }
 
-// Whether some admin holds its rights in every fold, as no cut reaches it.
-function alwaysAdmin(
+// Whether some admin in `ev` holds its rights in every fold that adds any of
+// `removals`, as none of their cuts reaches it.
+function stands(
   ctx: Context,
-  removals: readonly Removal[],
-  fold: Folds
+  ev: Evaluation,
+  removals: readonly Removal[]
 ): boolean {
   const reached = new Set(removals.flatMap((r) => [...ctx.reach(r)]));
-  return adminsOf(fold([])).some((a) => !reached.has(a));
+  return adminsOf(ev).some((a) => !reached.has(a));
 }
 
 // The connected components of `rs` under `affects` either way, in fold order.
@@ -619,7 +632,8 @@ function componentsOf(
 // One component's decision: the first grounded, self-consistent assignment in
 // priority order. With none (odd cycles), or too many removals to search, the
 // best-ranked removal holding its right wins a rank pick and stands, and the
-// rest is decided again (FW-R7: a later cut of the winner's publisher stands).
+// rest is decided again (FW-R7: a later cut of the winner's publisher stands),
+// so no component ever pauses a build.
 function solve(
   given: Given,
   comp: readonly Removal[],
@@ -800,11 +814,8 @@ function search(given: Given, comp: readonly Removal[]): Removal[] | null {
   };
   // A void removal holding its right is void only when accepting it leaves no
   // admin, or its cut cascades into removals its own right rests on.
-  const excused = (m: number, i: number): boolean => {
-    if (adminless(m | bit(i))) return true;
-    const cur = cascade(m, i);
-    return !had(cur & ~bit(i), i) || !grounded(cur);
-  };
+  const excused = (m: number, i: number): boolean =>
+    adminless(m | bit(i)) || !had(cascade(m, i) & ~bit(i), i);
 
   let acc = 0;
   let dec = 0;
@@ -876,8 +887,8 @@ function search(given: Given, comp: readonly Removal[]): Removal[] | null {
     for (const i of all) {
       if ((acc & bit(i)) !== 0 || !had(acc, i) || excused(acc, i)) continue;
       const sure = standing(acc | bit(i), 0) ?? dec;
-      // With nothing dropped, m plus i is grounded as m is: only i's right,
-      // which removals its cut reaches, and their rights decide it.
+      // With nothing dropped, only i's right, which removals its cut reaches,
+      // and their rights decide it.
       if (cascade(acc, i) !== (acc | bit(i))) return close(part[i] | sure);
       const reached = all.filter((j) => (reaches[i] & acc & bit(j)) !== 0);
       const blame = rightOf(i) | reaches[i] | sure;
@@ -886,15 +897,12 @@ function search(given: Given, comp: readonly Removal[]): Removal[] | null {
     for (const p of parts) if (!grounded(acc & p)) return close(p);
     return null;
   };
-  const next = (): number => {
-    const ev = at(acc);
-    let best = -1;
-    for (const i of all) {
-      if ((dec & bit(i)) !== 0) continue;
-      if (best < 0 || byRank(ev, removal(i), removal(best)) < 0) best = i;
-    }
-    return best;
-  };
+  // Priority order, ranks read under the decisions made before the search,
+  // never under what the search has accepted so far.
+  const priority = [...all].sort((i, j) =>
+    byRank(at(0), removal(i), removal(j))
+  );
+  const next = (): number => priority.find((i) => (dec & bit(i)) === 0) ?? -1;
   const dfs = (): number | null => {
     const saved = [acc, dec, forced] as const;
     const restore = (): void => {
@@ -1009,7 +1017,10 @@ function foundingOf(input: FoldInput, items: readonly Item[]): Founding {
 }
 
 // What every fold of one op set shares: the founding, first seqs and the order.
-interface Shared extends Omit<Context, 'items' | 'granting' | 'reach'> {
+interface Shared extends Omit<
+  Context,
+  'items' | 'granting' | 'reach' | 'exposes'
+> {
   all: readonly Item[];
 }
 
@@ -1065,8 +1076,12 @@ function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
   const granting = items.filter(({ body }) =>
     GRANTING.some((a) => isAction(body, a))
   );
-  const reach = reachOf(items, rest.order);
-  const ctx: Context = { ...rest, items, granting, reach };
+  const ctx: Context = {
+    ...rest,
+    items,
+    granting,
+    ...reachOf(items, rest.order),
+  };
   return { ctx, without, ...resolve(ctx) };
 }
 
@@ -1077,7 +1092,7 @@ function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
 function reachOf(
   items: readonly Item[],
   order: Context['order']
-): (cut: Removal) => ReadonlySet<string> {
+): Pick<Context, 'reach' | 'exposes'> {
   const links = new Map<string, { op: RosterOpRef; to: string }[]>();
   const link = (op: RosterOpRef, to: string): void => {
     const list = links.get(op.replica);
@@ -1110,17 +1125,26 @@ function reachOf(
     return seen;
   };
   const memo = new Map<Removal, ReadonlySet<string>>();
-  return (cut) => {
+  const exposes = (cut: Removal): ReadonlySet<string> => {
     const known = memo.get(cut);
     if (known !== undefined) return known;
     const exposed = (op: RosterOpRef): boolean =>
       op.seq > cut.afterSeq || (cut.kind === 'all' && order(cut.op, op) < 0);
-    const out = new Set([cut.target]);
+    const out = new Set<string>();
     for (const { op, to } of links.get(cut.target) ?? [])
       if (exposed(op)) for (const r of fullReach(to)) out.add(r);
     memo.set(cut, out);
     return out;
   };
+  const withTarget = new Map<Removal, ReadonlySet<string>>();
+  const reach = (cut: Removal): ReadonlySet<string> => {
+    const known = withTarget.get(cut);
+    if (known !== undefined) return known;
+    const out = new Set([cut.target, ...exposes(cut)]);
+    withTarget.set(cut, out);
+    return out;
+  };
+  return { reach, exposes };
 }
 
 // One op per (replica, seq); of two that differ, the smaller hash, so the
@@ -1852,7 +1876,7 @@ function dismissNote(
 
 // The pause, which names who can lift it, and what became of each dismiss.
 function notesOf(
-  { ctx, ev, oversized }: Folded,
+  { ctx, ev }: Folded,
   dismisses: readonly Dismiss[],
   valid: ReadonlySet<Dismiss>,
   admins: readonly string[]
@@ -1878,18 +1902,6 @@ function notesOf(
     problems.push({
       subject: at(op),
       message: `${NEWER_ROSTER}, ${dismiss}an admin can revoke ${op.replica} below seq ${op.seq}`,
-    });
-  }
-  for (const comp of oversized) {
-    // Named by its first removal whose publisher stands at it; with none,
-    // every op it names is inert and it pauses nothing.
-    const first = comp.find((r) => standsAt(ev, r.op))?.op;
-    if (first === undefined) continue;
-    unknown ??= { ...positionOf(first), hash: first.hash };
-    const ops = comp.map((r) => `${r.op.replica}:${r.op.seq}`).join(', ');
-    problems.push({
-      subject: at(first),
-      message: `${comp.length} removals contest one another, more than this build decides at once (${ops}); applying is paused until admins revoke some of their publishers below them`,
     });
   }
   return { unknown, problems };
