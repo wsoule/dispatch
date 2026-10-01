@@ -46,6 +46,30 @@ describe('FederationService', () => {
     expect(remote.logs.size).toBe(0);
   });
 
+  // M7: a held v1 change is named under its replica, never over a problem
+  // the task already has, and the note goes once the change applies.
+  it('holds a v1 change from far ahead under its replica, then clears it', async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    bob.clock.now = new Date(bob.clock.now.getTime() + 60 * 60 * 1000);
+    const id = bob.store.create({ title: 'from ahead' }).meta.id;
+    ada.ledger.recordProblem(id, 'two tasks share this id', 'then');
+    await settle(bob, ada);
+    const subject = `replica:${bob.ledger.replica}`;
+    expect(title(ada, id)).toBeUndefined();
+    expect(ada.ledger.problems().map((p) => [p.task, p.message])).toEqual(
+      expect.arrayContaining([
+        [id, 'two tasks share this id'],
+        [subject, expect.stringContaining('ahead of this machine')],
+      ])
+    );
+    ada.clock.now = bob.clock.now;
+    await settle(ada);
+    expect(title(ada, id)).toBe('from ahead');
+    expect(ada.ledger.problems().map((p) => p.task)).toEqual([id]);
+  });
+
   it('founds, admits by fingerprint and converges the board over signed task ops', async () => {
     const {
       remote,

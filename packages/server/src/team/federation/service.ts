@@ -705,12 +705,21 @@ export class FederationService {
     for (const op of ops) {
       if (held.has(op.replica)) continue;
       const result = store.applyRemote(op);
-      if (result.problem !== undefined)
-        ledger.recordProblem(op.task, result.problem, new Date().toISOString());
+      // A held change is named under its replica, never over the task's own
+      // problem, and the note goes once that replica's change applies (M7).
+      const subject = `replica:${op.replica}`;
       if (result.held === true) {
         held.add(op.replica);
+        ledger.recordProblem(
+          subject,
+          result.problem ?? 'held',
+          new Date().toISOString()
+        );
         continue;
       }
+      ledger.clearProblem(subject);
+      if (result.problem !== undefined)
+        ledger.recordProblem(op.task, result.problem, new Date().toISOString());
       if (result.changed) {
         changed = true;
         this.applied += 1;

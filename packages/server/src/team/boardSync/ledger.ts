@@ -211,6 +211,10 @@ export class SyncLedger {
       .run(task, message, at);
   }
 
+  clearProblem(task: string): void {
+    this.db.query('DELETE FROM problems WHERE task = ?').run(task);
+  }
+
   problems(): SyncProblem[] {
     return this.db
       .query<SyncProblem, []>(
