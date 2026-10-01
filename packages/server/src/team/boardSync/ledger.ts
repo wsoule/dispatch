@@ -1,10 +1,10 @@
+import { OpClock } from '@dispatch/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import type { BoardOp, HeldField, MergeState } from './engine.js';
-import { HybridClock } from './engine.js';
 
 // Everything one replica remembers about board sync, in one SQLite file under
 // its sync directory (boardSyncDir): who it is, the merge state core's
@@ -41,17 +41,20 @@ export interface SyncProblem {
   at: string;
 }
 
-/** A replica id: the operator's handle, so a log file says whose it is, and
- *  random hex, so two of one person's machines are still two replicas. */
-function newReplicaId(handle: string): string {
-  const cleaned = handle.replace(/[^a-z0-9._-]/gi, '').slice(0, 32);
+/** A replica id: the lowercased handle, since ids become git paths and sealing
+ *  aad, and random hex, so two of one person's machines are two replicas. */
+export function newReplicaId(handle: string): string {
+  const cleaned = handle
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 32);
   const safe = cleaned === '' ? 'replica' : cleaned;
   return `${safe}-${randomBytes(4).toString('hex')}`;
 }
 
 export class SyncLedger {
   readonly replica: string;
-  readonly clock: HybridClock;
+  readonly clock: OpClock;
   readonly state: MergeState;
   private readonly db: Database;
 
@@ -62,12 +65,17 @@ export class SyncLedger {
     this.db.exec(SCHEMA);
     this.replica =
       this.meta('replica') ?? this.setMeta('replica', newReplicaId(handle));
-    this.clock = new HybridClock(this.replica, this.meta('hlc') ?? null, now);
+    this.clock = new OpClock(this.replica, this.meta('hlc') ?? null, now);
     this.state = this.mergeState();
   }
 
   close(): void {
     this.db.close();
+  }
+
+  /** The one connection, so the federation tables share this file's transactions. */
+  get database(): Database {
+    return this.db;
   }
 
   private meta(key: string): string | undefined {
@@ -116,6 +124,16 @@ export class SyncLedger {
       this.setMeta('hlc', this.clock.last);
       return op;
     });
+  }
+
+  /** The next seq, past both the v1 counter and `atLeast`, and a fresh tick.
+   *  Call inside atomically() so the op using them lands in the same write. */
+  nextStamp(atLeast: number): { seq: number; hlc: string } {
+    const seq = Math.max(Number(this.meta('seq') ?? '0'), atLeast) + 1;
+    const hlc = this.clock.tick();
+    this.setMeta('seq', String(seq));
+    this.setMeta('hlc', this.clock.last);
+    return { seq, hlc };
   }
 
   /** Changes made here and not yet written to the sync branch, oldest first. */
