@@ -870,15 +870,17 @@ function byReplica(entries: LogEntry[]): Map<string, LogEntry[]> {
 }
 
 // FW-R23: one replica's log, rebuilt from its head by following prev links
-// across whatever files held its lines. Copies of one op collapse, and a line
-// that does not chain is dropped, unless it is a validly signed rival of the
-// next op: a fork, which verifyLog halts on.
+// across whatever files held its lines. Copies of one op collapse to the line
+// that verifies, full over stub, and a line that does not chain is dropped,
+// unless it is a validly signed rival of the next op: a fork, which verifyLog
+// halts on.
 function chainFrom(
   entries: readonly LogEntry[],
   head: ChainHead | null,
   signPub: string | null
 ): { chain: LogEntry[]; stalled: { seq: number; reason: string } | null } {
-  const byPrev = new Map<string, Map<string, LogEntry>>();
+  // prev -> op hash -> every line with that hash; a stub shares its op's hash.
+  const byPrev = new Map<string, Map<string, LogEntry[]>>();
   for (const e of entries) {
     let hash: string;
     try {
@@ -886,24 +888,30 @@ function chainFrom(
     } catch {
       continue;
     }
-    const next = byPrev.get(e.prev) ?? new Map<string, LogEntry>();
-    next.set(hash, e);
+    const next = byPrev.get(e.prev) ?? new Map<string, LogEntry[]>();
+    next.set(hash, [...(next.get(hash) ?? []), e]);
     byPrev.set(e.prev, next);
   }
   const out: LogEntry[] = [];
   let at = head;
   let key = signPub;
   for (;;) {
-    const candidates = [...(byPrev.get(at?.hash ?? ZERO_HASH)?.values() ?? [])];
-    const valid = candidates.filter((c) => {
-      const k = key ?? keyOpSignPub(c);
-      return k !== null && verifyEntry(at, c, k).ok;
-    });
+    const groups = [...(byPrev.get(at?.hash ?? ZERO_HASH)?.values() ?? [])];
+    const valid: LogEntry[] = [];
+    for (const lines of groups) {
+      const ok = lines
+        .filter((c) => {
+          const k = key ?? keyOpSignPub(c);
+          return k !== null && verifyEntry(at, c, k).ok;
+        })
+        .sort((a, b) => Number(isStub(a)) - Number(isStub(b)));
+      if (ok[0] !== undefined) valid.push(ok[0]);
+    }
     const [first] = valid;
     if (first === undefined) {
       // Something claims to follow the head and none of it verifies: the log
       // waits there, named, for the op that does.
-      const bad = candidates[0];
+      const bad = groups[0]?.[0];
       if (bad === undefined) return { chain: out, stalled: null };
       const k = key ?? keyOpSignPub(bad);
       const checked = k === null ? null : verifyEntry(at, bad, k);

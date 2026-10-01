@@ -4698,12 +4698,18 @@ export async function handleApi(
     // answered below and read by the app's status strip.
     if (segments[0] === 'board-sync') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(
-          ctx.boardSync?.status() ?? {
-            enabled: false,
-            reason: boardSyncOffReason(ctx),
-          }
-        );
+        const status = ctx.boardSync?.status() ?? {
+          enabled: false,
+          reason: boardSyncOffReason(ctx),
+        };
+        if (tierAllows(ctx.caller?.tier ?? 'request', 'decide'))
+          return jsonResponse(status);
+        // The request tier gets the team's id, founding, legacy window and
+        // transport kind; its health and problems stay at decide (F-D29).
+        const shared: Record<string, unknown> = { ...status };
+        delete shared.transportHealth;
+        delete shared.federationProblems;
+        return jsonResponse(shared);
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {

@@ -168,6 +168,29 @@ describe('FederationService', () => {
     expect(ada.fed.cursor(bob.fed.replica).halted).toBeNull();
   });
 
+  // S1: a stub shares its op's hash, so a stub placed after the op must not
+  // stand in for it; the reader keeps every line and prefers the full one.
+  it('reads the full op when a forged stub of it follows on the branch', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const first = bob.store.create({ title: 'the full op' }).meta.id;
+    await bob.service.syncNow();
+    const log = remote.logs.get(bob.fed.replica) ?? [];
+    const last = log.at(-1) as FederatedOp;
+    remote.logs.set(bob.fed.replica, [...log, stubOf(last)]);
+    const later = bob.store.create({ title: 'after the stub' }).meta.id;
+    await settle(bob, ada);
+    expect(title(ada, first)).toBe('the full op');
+    expect(title(ada, later)).toBe('after the stub');
+    expect(ada.fed.cursor(bob.fed.replica).halted).toBeNull();
+  });
+
   // B1: a cut names one history, checked against what this machine read
   // even after its cursor has moved past the cut.
   it("halts a log whose history differs from a revocation's afterHash after the cursor passed it", async () => {

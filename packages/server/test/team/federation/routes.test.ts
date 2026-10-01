@@ -56,6 +56,12 @@ describe('/api/team federation routes', () => {
         transport: 'git',
       });
       expect(typeof status.body?.legacyUntil).toBe('string');
+      // R1: the request tier sees the team's four fields, not its health.
+      expect(status.body).not.toHaveProperty('transportHealth');
+      expect(status.body).not.toHaveProperty('federationProblems');
+      const full = await ada.api('/api/board-sync');
+      expect(full.body).toHaveProperty('transportHealth');
+      expect(full.body).toHaveProperty('federationProblems');
     },
     SLOW
   );
