@@ -75,6 +75,13 @@ vector ids (see §14.2).
   checked. Vectors: `env.envelope.scope-gates-have-a-fixed-shape`,
   `env.envelope.memory-gates-have-a-fixed-shape`,
   `env.envelope.doc-gates-have-a-fixed-shape`.
+- [additive] The `a2a` address scheme is permanent, in the A2A binding: an
+  `a2a:<alias>` address names an outbound peer by an alias of at most 40
+  characters in the handle grammar, and a delivery to a peer, direct or through
+  a channel, is held for the host to relay (§3.4, §8.9). No registry entry is
+  provisional any more. Vectors: `a2a.peers.parses-an-alias`,
+  `a2a.peers.an-alias-is-at-most-40-characters`,
+  `a2a.peers.a-delivery-to-a-peer-is-held`.
 
 ## 1.0.0-draft.1 (2026-09-28)
 

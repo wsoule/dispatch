@@ -502,14 +502,12 @@ rendered headers so they know.
 
 ## 8.9 Outbound peers
 
-This subsection is provisional: the scheme `a2a` is registered as provisional
-([§11.1](11-registries.md#s11.1)), and no vector tests it yet.
-
 A peer is another A2A agent the host sends to, addressed as `a2a:<alias>`. The
 alias follows the handle grammar of [§3.1](03-addresses.md#s3.1)
 (`[a-z0-9][a-z0-9._-]*`), at most 40 characters. An `a2a:` address is valid in
 `to` and as a channel member; it is `from` only on a message the host records
-from that peer, which never decides. No principal ever sends as one.
+from that peer, which never decides. No principal ever sends as one. Vectors:
+`a2a.peers.parses-an-alias`, `a2a.peers.an-alias-is-at-most-40-characters`.
 
 **Adding a peer.** Only a deciding principal adds a peer, by naming its card's
 URL. The host then:
@@ -549,10 +547,11 @@ the DMP message id (so a peer that deduplicates never processes a retry twice),
 whose parts are the body and the data, and whose `envelope/v1` carries `from`,
 `to` reduced to the peer, `kind`, `replyTo`, `choices`, `choice` and `refs`. A
 handoff to a peer also carries `work/v1` with the handoff's first line as its
-title. On acceptance the delivery moves from `held` to `pushed`. A network error
-or a 5xx is retried with backoff; after 24 hours the host gives up, closing a
-question and sending the sender of any other kind a notice. A 4xx is not
-retried: the sender gets the peer's error as a notice, and a question is closed.
+title. On acceptance the delivery moves from `held` to `pushed`. Vector:
+`a2a.peers.a-delivery-to-a-peer-is-held`. A network error or a 5xx is retried
+with backoff; after 24 hours the host gives up, closing a question and sending
+the sender of any other kind a notice. A 4xx is not retried: the sender gets the
+peer's error as a notice, and a question is closed.
 
 **Replies.** The host follows each open task of a peer, by stream or by polling,
 and records each peer event as at most one message from the peer, through the

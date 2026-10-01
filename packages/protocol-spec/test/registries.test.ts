@@ -117,10 +117,23 @@ describe('renderRegistries', () => {
     );
   });
 
+  // The live registry may have no provisional entry left, so add one.
   it('lists provisional entries apart only in a stable version', () => {
     const apart = 'Not part of this version (provisional):';
-    expect(renderRegistries(registry, '1.0.0-draft.1')).not.toContain(apart);
-    expect(renderRegistries(registry, '1.0.0')).toContain(apart);
+    const withProvisional = structuredClone(registry);
+    withProvisional['address-schemes'].push({
+      value: 'x-peer',
+      scope: 'a2a',
+      status: 'provisional',
+      since: '1.0.0-draft.1',
+      section: '8.9',
+      reference: 'spec/08-a2a-binding.md#s8.9',
+      vectors: [],
+    });
+    expect(renderRegistries(withProvisional, '1.0.0-draft.1')).not.toContain(
+      apart
+    );
+    expect(renderRegistries(withProvisional, '1.0.0')).toContain(apart);
   });
 });
 
