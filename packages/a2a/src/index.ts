@@ -116,6 +116,8 @@ export type {
   PushConfigPort,
   TaskFacts,
 } from './port.js';
+export { HttpBridgePort } from './http/port.js';
+export type { HttpBridgePortOptions } from './http/port.js';
 export {
   PORT_CLIENT_HEADER,
   portErrorFrom,
