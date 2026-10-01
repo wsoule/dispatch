@@ -373,6 +373,60 @@ describe('removing or disabling a peer mid-flight', () => {
     expect(fromPeer(q.thread)).toHaveLength(before);
   });
 
+  it('closes the open questions the removed peer asked', async () => {
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'open');
+    peer.ask(peer.latest(), 'Which region?', ['us', 'eu']);
+    await waitFor(() => fromPeer(q.thread).some((m) => m.kind === 'question'));
+    const theirs = fromPeer(q.thread).find((m) => m.kind === 'question')!;
+    removePeer(f.peerDeps(), 'fixture');
+    f.peers.emit('fixture', 'removed');
+    await waitFor(() => engine().answerOf(theirs.id) !== null);
+    expect(engine().answerOf(theirs.id)).toMatchObject({
+      from: 'agent:dispatch',
+      body: 'Closed: a2a:fixture was removed',
+    });
+  });
+
+  it('lets a removed alias be added again, without its old context', async () => {
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'open');
+    expect(f.store.contextFor('fixture', q.thread)).not.toBeNull();
+    removePeer(f.peerDeps(), 'fixture');
+    f.peers.emit('fixture', 'removed');
+    await waitFor(() => row(q.id)?.state === 'failed');
+    expect(f.store.contextFor('fixture', q.thread)).toBeNull();
+    await addPeer(
+      f.peerDeps(),
+      { alias: 'fixture', cardUrl: peer.cardUrl(), token: 'peer-token' },
+      OPERATOR
+    );
+    expect(f.store.getPeer('fixture')?.status).toBe('active');
+  });
+
+  it('refuses an alias that still has outbound history', async () => {
+    f.store.putOutbound({
+      messageId: 'm-old',
+      alias: 'reused',
+      thread: 'm-old',
+      remoteTaskId: 'pt-old',
+      remoteContextId: 'pc-old',
+      state: 'done',
+      attempts: 1,
+      firstAttemptAt: new Date().toISOString(),
+      nextAttemptAt: null,
+      lastError: null,
+      updatedAt: new Date().toISOString(),
+    });
+    await expect(
+      addPeer(
+        f.peerDeps(),
+        { alias: 'reused', cardUrl: peer.cardUrl(), token: 'peer-token' },
+        OPERATOR
+      )
+    ).rejects.toMatchObject({ code: 'conflict', field: 'alias' });
+  });
+
   it('disabling stops tracking and enabling resumes it', async () => {
     const q = await ask();
     await waitFor(() => row(q.id)?.state === 'open');

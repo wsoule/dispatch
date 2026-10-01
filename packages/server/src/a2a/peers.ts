@@ -172,6 +172,23 @@ export async function addPeer(
       `a2a:${input.alias} exists; refresh it, or remove it first`,
       'alias'
     );
+  // As with clients: an alias with history would inherit the old peer's
+  // threads and context, unless a removal tombstoned that history.
+  const removed = `a2a:${input.alias} was removed`;
+  const history = deps.store
+    .outboundOf(input.alias, ['queued', 'open', 'done', 'failed'])
+    .some(
+      (r) =>
+        r.remoteTaskId !== null ||
+        r.remoteContextId !== null ||
+        r.lastError !== removed
+    );
+  if (history)
+    throw new MessagingError(
+      'conflict',
+      `a2a:${input.alias} was used before; choose a new alias`,
+      'alias'
+    );
   const operator = tierAllows(caller.tier, 'operator');
   if (!operator && input.allowHttp === true)
     throw new MessagingError(

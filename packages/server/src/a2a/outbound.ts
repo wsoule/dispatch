@@ -99,6 +99,12 @@ function delay(ms: number, signal: AbortSignal): Promise<'timeout'> {
   return sleep(ms, signal).then(() => 'timeout');
 }
 
+// The lastError a removed peer's rows carry (peers.ts reads the same text);
+// with cleared remote ids it marks a row tombstoned.
+function removedReason(alias: string): string {
+  return `a2a:${alias} was removed`;
+}
+
 const errorText = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
 
@@ -777,17 +783,19 @@ export class OutboundWorker {
     }
   }
 
-  // Disabled: stop following, keep deliveries held for `enable`. Removed: fail
-  // its rows, close its open direct questions and handoffs.
+  // Disabled: stop following, keep deliveries held for `enable`. Removed:
+  // fail its unfinished rows, close its open direct questions and handoffs
+  // and the questions it asked, and tombstone all its rows (remote ids
+  // cleared), so the alias can be reused without the old peer's context.
   peerGone(alias: string, why: 'disabled' | 'removed'): void {
     for (const [key, ac] of this.trackers)
       if (key.endsWith(` ${alias}`)) ac.abort();
     this.queues.delete(alias);
     if (why === 'disabled') return;
-    const reason = `a2a:${alias} was removed`;
+    const reason = removedReason(alias);
     const at = this.now().toISOString();
-    const rows = this.deps.store.outboundOf(alias, ['queued', 'open']);
-    const seen = new Set(rows.map((r) => r.messageId));
+    const unfinished = this.deps.store.outboundOf(alias, ['queued', 'open']);
+    const seen = new Set(unfinished.map((r) => r.messageId));
     for (const d of this.deps.messages.deliveries({
       recipient: `a2a:${alias}`,
       states: ['held'],
@@ -796,7 +804,7 @@ export class OutboundWorker {
       const m = this.deps.engine.getMessage(d.messageId);
       if (m === null) continue;
       seen.add(m.id);
-      rows.push({
+      unfinished.push({
         messageId: m.id,
         alias,
         thread: m.thread,
@@ -810,20 +818,37 @@ export class OutboundWorker {
         updatedAt: at,
       });
     }
-    for (const row of rows) {
+    for (const row of unfinished) {
       this.deps.store.putOutbound({
         ...row,
         state: 'failed',
+        remoteTaskId: null,
+        remoteContextId: null,
         lastError: reason,
         nextAttemptAt: null,
         updatedAt: at,
       });
+      this.lastWorking.delete(`${row.messageId} ${alias}`);
       const original = this.deps.engine.getMessage(row.messageId);
       if (original !== null)
         this.giveUp(original, this.viaOf(row), reason, false).catch(
           (err: unknown) =>
             console.error('a2a: closing after removal failed', err)
         );
+    }
+    for (const row of this.deps.store.outboundOf(alias, ['done', 'failed'])) {
+      if (seen.has(row.messageId)) continue;
+      this.deps.store.putOutbound({
+        ...row,
+        remoteTaskId: null,
+        remoteContextId: null,
+        lastError: reason,
+        updatedAt: at,
+      });
+    }
+    // The removed peer's own open questions wait on someone no longer there.
+    for (const q of this.deps.engine.openBlocking()) {
+      if (q.from === `a2a:${alias}`) this.closeQuietly(q.id, reason);
     }
   }
 }
