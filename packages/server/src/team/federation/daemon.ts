@@ -132,6 +132,7 @@ export function buildFederation(deps: FederationDeps): Federation {
       signPriv: fed.keys.signPriv,
       verifyAcks,
       acknowledgedBy,
+      ownLog: () => fed.ownLog(),
       now,
     }),
     remote: deps.remoteUrl,

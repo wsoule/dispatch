@@ -200,6 +200,7 @@ describe('GitFederationTransport', () => {
         signPriv: keys.signPriv,
         verifyAcks: () => true,
         acknowledgedBy: () => false,
+        ownLog: () => [],
         now,
       });
     const ta = make(a, A);
@@ -217,6 +218,51 @@ describe('GitFederationTransport', () => {
     expect(ta.health().acks['bob-0000000b']).toBe('2026-09-26T10:00:00.000Z');
   });
 
+  // FW-R22 M6: a merge that removes this replica's segments loses nothing;
+  // its next publish writes back what its own log holds.
+  it('re-publishes its own ops a merge removed from the branch', async () => {
+    const a = clone('a', A);
+    const b = clone('b', 'bob-0000000b');
+    const ops = chain(4);
+    const make = (repo: SyncRepo, replica: string, own: () => FederatedOp[]) =>
+      new GitFederationTransport({
+        repo,
+        replica,
+        signPriv: keys.signPriv,
+        verifyAcks: () => true,
+        acknowledgedBy: () => false,
+        ownLog: own,
+        now: () => new Date(),
+      });
+    let published: FederatedOp[] = [];
+    const ta = make(a, A, () => published);
+    const tb = make(b, 'bob-0000000b', () => []);
+    await a.ensure();
+    await b.ensure();
+    published = ops.slice(0, 3);
+    await ta.publish(published);
+    await ta.pull(new Map());
+    await tb.pull(new Map());
+    runGitSync(join(dir, 'b'), ['rm', '-q', '-r', join('fed', A)]);
+    runGitSync(join(dir, 'b'), [
+      '-c',
+      'user.name=x',
+      '-c',
+      'user.email=x@x',
+      'commit',
+      '-q',
+      '-m',
+      'drop',
+    ]);
+    await tb.pull(new Map());
+    await ta.pull(new Map());
+    expect(a.readV2(new Map())).toEqual([]);
+    published = ops;
+    await ta.publish(ops.slice(3));
+    await ta.pull(new Map());
+    expect((await tb.pull(new Map())).map((e) => e.seq)).toEqual([1, 2, 3, 4]);
+  });
+
   it('reports an unreachable remote without losing what it was given', async () => {
     const a = clone('a', A);
     await a.ensure();
@@ -226,6 +272,7 @@ describe('GitFederationTransport', () => {
       signPriv: keys.signPriv,
       verifyAcks: () => true,
       acknowledgedBy: () => false,
+      ownLog: () => [],
       now: () => new Date(),
     });
     rmSync(remote, { recursive: true, force: true });

@@ -165,6 +165,9 @@ export class FedStore {
       this.db
         .query('INSERT INTO fed_outbox (seq, op_json) VALUES (?, ?)')
         .run(stamp.seq, JSON.stringify(op));
+      this.db
+        .query('INSERT INTO fed_log (seq, op_json) VALUES (?, ?)')
+        .run(stamp.seq, JSON.stringify(op));
       this.setMeta('head_seq', String(stamp.seq));
       this.setMeta('head_hash', opHash(op));
       this.setMeta('head_hlc', stamp.hlc);
@@ -190,6 +193,16 @@ export class FedStore {
     return this.db
       .query<{ op_json: string }, []>(
         'SELECT op_json FROM fed_outbox ORDER BY seq'
+      )
+      .all()
+      .map((row) => JSON.parse(row.op_json) as FederatedOp);
+  }
+
+  /** Every op this replica ever signed, oldest first, published or not. */
+  ownLog(): FederatedOp[] {
+    return this.db
+      .query<{ op_json: string }, []>(
+        'SELECT op_json FROM fed_log ORDER BY seq'
       )
       .all()
       .map((row) => JSON.parse(row.op_json) as FederatedOp);

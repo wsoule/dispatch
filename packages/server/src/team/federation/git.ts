@@ -16,6 +16,8 @@ export interface GitTransportDeps {
   verifyAcks: (acks: SignedAcks) => boolean;
   /** Whether every recipient of a sealed op has acknowledged it. */
   acknowledgedBy: (op: FederatedOp, acks: Map<string, SignedAcks>) => boolean;
+  /** This replica's own ops, oldest first, as its local log keeps them. */
+  ownLog: () => LogEntry[];
   now: () => Date;
 }
 
@@ -31,9 +33,22 @@ export class GitFederationTransport implements FederationTransport {
 
   constructor(private readonly deps: GitTransportDeps) {}
 
+  // Writes `ops`, and first any of this replica's own ops a merge removed
+  // from the branch (FW-R22 M6): its local log is the record, not the branch.
   async publish(ops: FederatedOp[]): Promise<void> {
     this.unpublished += ops.length;
-    await this.deps.repo.writeV2(ops);
+    const { repo, replica } = this.deps;
+    const onBranch = new Set(
+      repo
+        .readV2(new Map())
+        .filter((e) => e.replica === replica)
+        .map((e) => e.seq)
+    );
+    const fresh = new Set(ops.map((o) => o.seq));
+    const missing = this.deps
+      .ownLog()
+      .filter((e) => !onBranch.has(e.seq) && !fresh.has(e.seq));
+    await repo.writeV2([...missing, ...ops]);
   }
 
   async pull(since: Watermarks): Promise<LogEntry[]> {

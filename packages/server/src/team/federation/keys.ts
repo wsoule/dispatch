@@ -20,6 +20,7 @@ import {
 import { join } from 'node:path';
 
 import { newReplicaId } from '../boardSync/ledger.js';
+import { FED_SCHEMA } from './schema.js';
 
 interface KeyFile extends ReplicaKeys {
   v: 1;
@@ -109,6 +110,8 @@ export function rekeyIfKeysLost(
         : `holds ${holder}'s keys in keys/replica.json, not ${old.value}'s,`;
     const revoke = holder === null ? old.value : `${old.value} and ${holder}`;
     // meta.seq stays, so the new id's chain starts past every number used.
+    // A state.db from an earlier build may lack the newer federation tables.
+    db.exec(FED_SCHEMA);
     db.transaction(() => {
       db.query("UPDATE meta SET value = ? WHERE key = 'replica'").run(next);
       db.query(
@@ -120,6 +123,7 @@ export function rekeyIfKeysLost(
         'DELETE FROM fed_roster WHERE replica = ? AND seq IN (SELECT seq FROM fed_outbox)'
       ).run(old.value);
       db.query('DELETE FROM fed_outbox').run();
+      db.query('DELETE FROM fed_log').run();
       // The old id's agents, channels and presence; the new id publishes its own.
       db.query('DELETE FROM fed_published').run();
       db.query("UPDATE outbox SET op = json_set(op, '$.replica', ?)").run(next);
