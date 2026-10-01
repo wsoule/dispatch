@@ -346,6 +346,29 @@ describe('proposals', () => {
     });
   });
 
+  it('announces a proposal made, rejected or expired as a meta change, so open pages refetch', async () => {
+    acceptedSpec();
+    const metas = () =>
+      host.changes.filter((c) => c.kind === 'meta').map((c) => c.summary);
+    const before = metas().length;
+    const first = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'append', text: 'x' }],
+    });
+    service.rejectProposal(first.proposal ?? '', 'human:bob', 'no');
+    const second = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'append', text: 'y' }],
+    });
+    await service.ensureGate(second.proposal ?? '');
+    host.advance(14 * 24 * 60 + 1);
+    service.sweep();
+    expect(metas().slice(before)).toEqual([
+      `proposal ${first.proposal} opened`,
+      `proposal ${first.proposal} rejected`,
+      `proposal ${second.proposal} opened`,
+      `proposal ${second.proposal} expired`,
+    ]);
+  });
+
   it('expires in docs.db first, then closes the gate', async () => {
     acceptedSpec();
     const p = service.edit(as(RUN), 'spec', {

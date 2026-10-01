@@ -1211,6 +1211,7 @@ export class DocsService {
       this.sealInTx(doc, head);
       store.insertRevision(rev);
       store.putProposal(p);
+      this.proposalChanged(doc, p, actor.address, 'opened');
     });
     const task = p.taskId === null ? null : this.host.task(p.taskId);
     const ruling = this.host.rule(task === null ? 'elevated' : task.risk);
@@ -1776,20 +1777,36 @@ export class DocsService {
     const store = this.store();
     const p = this.proposalRow(revId);
     if (p.state !== 'open') return;
-    this.write(() =>
+    const doc = store.doc(p.doc);
+    this.write(() => {
       store.putProposal({
         ...p,
         state: 'rejected',
         reason,
         decidedBy: by,
         decidedAt: this.nowIso(),
-      })
-    );
-    this.tellRun(
-      p,
-      store.doc(p.doc),
-      `your proposal was rejected by ${by}: ${reason}`
-    );
+      });
+      if (doc !== null) this.proposalChanged(doc, p, by, 'rejected');
+    });
+    this.tellRun(p, doc, `your proposal was rejected by ${by}: ${reason}`);
+  }
+
+  // Queues a meta change for a proposal's state, so doc.changed refreshes open
+  // pages and gate cards; the summary names the proposal, never its text.
+  private proposalChanged(
+    doc: DocRow,
+    p: DocProposal,
+    author: string,
+    what: 'opened' | 'rejected' | 'expired'
+  ): void {
+    this.outbox.push({
+      doc: doc.id,
+      scope: doc.scope,
+      kind: 'meta',
+      author,
+      rev: null,
+      summary: `proposal ${p.rev} ${what}`,
+    });
   }
 
   // Marks every open proposal of `doc` withdrawn, inside the caller's write.
@@ -1820,14 +1837,17 @@ export class DocsService {
     for (const p of store.proposalRows({ states: ['open'] })) {
       if (Date.parse(p.createdAt) > cutoff) continue;
       const reason = 'proposal expired';
-      this.write(() =>
+      const doc = store.doc(p.doc);
+      this.write(() => {
         store.putProposal({
           ...p,
           state: 'expired',
           reason,
           decidedAt: now.toISOString(),
-        })
-      );
+        });
+        if (doc !== null)
+          this.proposalChanged(doc, p, SYSTEM_ADDRESS, 'expired');
+      });
       if (p.gate !== null) this.closeGateQuietly(p.gate, reason);
       this.tellRun(p, store.doc(p.doc), 'your proposal expired');
     }
