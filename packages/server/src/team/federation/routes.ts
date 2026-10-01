@@ -27,6 +27,41 @@ export interface FederationContext {
   label(replica: string): string;
   /** "<handle>'s <device>" of an admitted observer, or null. */
   observer(): string | null;
+  /** How long a route waits for its pass; ROUTE_PASS_WAIT_MS unless a test sets it. */
+  passWaitMs?: number;
+}
+
+/** A route waits this long for its pass, then answers with pending: true. */
+const ROUTE_PASS_WAIT_MS = 20_000;
+
+// Runs a pass and waits for it at most passWaitMs, so an unreachable remote
+// never hangs a route; true when it finished. A pass that finishes later and
+// fails is named as a problem, since nobody is waiting on its answer.
+async function boundedPass(
+  fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>,
+  what: string
+): Promise<boolean> {
+  let late = false;
+  const run = service.syncNow().then(() => {
+    const failed = service.status().lastError;
+    if (late && failed !== null)
+      fedCtx.fed.problem(
+        'team:route',
+        `the sync after ${what} failed: ${failed}; the change is made here and goes out on a later sync`
+      );
+    return true;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const wait = new Promise<false>((resolve) => {
+    timer = setTimeout(() => {
+      late = true;
+      resolve(false);
+    }, fedCtx.passWaitMs ?? ROUTE_PASS_WAIT_MS);
+  });
+  const done = await Promise.race([run, wait]);
+  clearTimeout(timer);
+  return done;
 }
 
 // The roster actions under /api/team, beside the teammate-token routes.
@@ -110,10 +145,13 @@ async function act(
       throw new RosterError('invalid', `${key} is required`);
     return value;
   };
-  const after = async <T>(value: T): Promise<T> => {
-    await service.syncNow();
-    return value;
-  };
+  const what = `${segments.slice(1).join(' ')}`;
+  const after = async (
+    value: Record<string, unknown> | null
+  ): Promise<Record<string, unknown> | null> =>
+    (await boundedPass(fedCtx, service, what))
+      ? value
+      : { ...(value ?? { ok: true }), pending: true };
   if (segments.length === 4 && segments[1] === 'keys') {
     const replica = segments[2] ?? '';
     return keyAction(fedCtx, service, replica, segments[3] ?? '', body);
@@ -122,7 +160,16 @@ async function act(
   switch (segments[1]) {
     case 'found': {
       // Founding needs a pull that succeeds (spec:943-944).
-      await service.syncNow();
+      if (!(await boundedPass(fedCtx, service, 'the pull before founding')))
+        return jsonResponse(
+          {
+            error:
+              'the pull before founding is still running; try again shortly',
+            code: 'conflict',
+            pending: true,
+          },
+          409
+        );
       const pulled = service.status().lastError;
       if (pulled !== null)
         return jsonResponse(
@@ -186,7 +233,11 @@ async function keyAction(
   // A removal's cut is the target's last op seen after a pull; offline, the
   // last one applied, which the revocation race covers (Task 10b).
   const pullFirst = async (): Promise<Record<string, unknown> | null> => {
-    await service.syncNow();
+    if (!(await boundedPass(fedCtx, service, `the pull before ${action}`)))
+      return {
+        warning: `this machine could not pull first: the pull is still running; ops it has not seen yet from ${fedCtx.label(replica)} stay applied wherever they already landed`,
+        pending: true,
+      };
     const failed = service.status().lastError;
     return failed === null
       ? null
@@ -237,7 +288,8 @@ async function keyAction(
     default:
       return errorResponse(404, 'not found');
   }
-  await service.syncNow();
+  if (!(await boundedPass(fedCtx, service, action)))
+    return { ...(answer ?? { ok: true }), pending: true };
   return answer;
 }
 

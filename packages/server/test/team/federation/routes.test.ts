@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
+import type { ApiContext } from '../../../src/api.js';
+import { handleFederationRoute } from '../../../src/team/federation/routes.js';
 import { MAX_TASK_FIELD_BYTES } from '../../../src/team/federation/taskOps.js';
 import { daemons } from './helpers/daemon.js';
+import { testReplica } from './helpers/replica.js';
 
 const { teammate, cleanup, setup } = daemons();
 // Several real daemons syncing through a bare remote take seconds each.
@@ -203,6 +206,89 @@ describe('/api/team federation routes', () => {
       });
       expect(none.status).toBe(409);
       expect(none.body?.code).toBe('conflict');
+    },
+    SLOW
+  );
+});
+
+// A route never hangs on an unreachable remote: it waits for its pass at
+// most passWaitMs, then answers with its local result and pending: true.
+describe('a route whose pass does not finish', () => {
+  it('answers within the bound, and names a failure that comes later', async () => {
+    const ada = testReplica('ada');
+    try {
+      ada.roster.found('acme');
+      let finish = (): void => {};
+      let lastError: string | null = null;
+      const service = {
+        syncNow: () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+        status: () => ({ lastError }),
+      };
+      const ctx = {
+        rootDir: ada.dir,
+        boardSync: service,
+        federation: {
+          roster: ada.roster,
+          fed: ada.fed,
+          handle: 'ada',
+          device: 'laptop',
+          now: () => ada.clock.now,
+          remote: null,
+          label: (r: string) => r,
+          observer: () => null,
+          passWaitMs: 50,
+        },
+      } as unknown as ApiContext;
+      const started = Date.now();
+      const res = await handleFederationRoute(
+        new Request('http://x/api/team/invite', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ handle: 'bob' }),
+        }),
+        ctx,
+        ['team', 'invite'],
+        'POST'
+      );
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { code?: string; pending?: boolean };
+      expect(body.pending).toBe(true);
+      expect(typeof body.code).toBe('string');
+      lastError = 'the remote is unreachable';
+      finish();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(
+        ada.fed
+          .problems()
+          .some((p) => p.message.includes('the remote is unreachable'))
+      ).toBe(true);
+    } finally {
+      ada.close();
+    }
+  });
+});
+
+describe('a route against an offline remote', () => {
+  it(
+    'revokes from the last applied cut with a warning instead of hanging',
+    async () => {
+      const ada = await teammate('ada');
+      const bob = await teammate('bob');
+      await ada.found();
+      await ada.admit(bob);
+      await ada.sync();
+      const replica = await bob.replica();
+      ada.partition(true);
+      const res = await ada.api(`/api/team/keys/${replica}/revoke`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'lost laptop' }),
+      });
+      expect(res.status).toBe(200);
+      expect(String(res.body?.warning)).toContain('could not pull first');
     },
     SLOW
   );
