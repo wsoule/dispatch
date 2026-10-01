@@ -202,27 +202,40 @@ export class SyncRepo {
 
   /** Every other replica's changes past where this one has read to. */
   readOthers(cursor: (replica: string) => number): BoardOp[] {
-    const dir = join(this.dir, OPS_DIR);
-    if (!existsSync(dir)) return [];
     const ops: BoardOp[] = [];
-    for (const file of readdirSync(dir)) {
-      if (!file.endsWith('.jsonl')) continue;
-      const replica = file.slice(0, -'.jsonl'.length);
+    for (const replica of this.v1Replicas()) {
       if (replica === this.replica) continue;
       const from = cursor(replica);
-      for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) {
-        if (line.trim() === '') continue;
-        let op: BoardOp;
-        try {
-          op = JSON.parse(line) as BoardOp;
-        } catch {
-          // A torn last line from a write that died partway: skip it, and
-          // pick it up whole on a later pass once its writer finishes it.
-          continue;
-        }
-        if (op.v !== 1 || op.replica !== replica || op.seq <= from) continue;
-        ops.push(op);
+      for (const op of this.readV1(replica)) if (op.seq > from) ops.push(op);
+    }
+    return ops;
+  }
+
+  /** Every replica with a v1 log on the branch, this one included. */
+  v1Replicas(): string[] {
+    const dir = join(this.dir, OPS_DIR);
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter((file) => file.endsWith('.jsonl'))
+      .map((file) => file.slice(0, -'.jsonl'.length));
+  }
+
+  /** One replica's complete v1 lines, parsed, in file order. */
+  readV1(replica: string): BoardOp[] {
+    const file = join(this.dir, OPS_DIR, `${replica}.jsonl`);
+    if (!existsSync(file)) return [];
+    const ops: BoardOp[] = [];
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      if (line.trim() === '') continue;
+      let op: BoardOp;
+      try {
+        op = JSON.parse(line) as BoardOp;
+      } catch {
+        // A torn last line from a write that died partway: skip it, and
+        // pick it up whole on a later pass once its writer finishes it.
+        continue;
       }
+      if (op.v === 1 && op.replica === replica) ops.push(op);
     }
     return ops;
   }

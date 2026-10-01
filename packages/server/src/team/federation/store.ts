@@ -165,6 +165,8 @@ export class FedStore {
       this.setMeta('head_seq', String(stamp.seq));
       this.setMeta('head_hash', opHash(op));
       this.setMeta('head_hlc', stamp.hlc);
+      // Every seq this build mints, so reissue() never takes one for an older build's.
+      this.setMeta('seq_seen', String(stamp.seq));
       input.alsoV1?.(op);
       return op;
     });

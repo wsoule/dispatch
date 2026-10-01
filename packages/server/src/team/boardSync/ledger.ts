@@ -140,6 +140,19 @@ export class SyncLedger {
     return { seq, hlc };
   }
 
+  /** A v1 copy of a signed op, under that op's own seq, for older builds
+   *  while the legacy window is open. */
+  enqueueV1(op: BoardOp): void {
+    this.db
+      .query('INSERT OR REPLACE INTO outbox (seq, op) VALUES (?, ?)')
+      .run(op.seq, JSON.stringify(op));
+  }
+
+  /** The highest seq minted on this root, by this build or an older one. */
+  lastSeq(): number {
+    return Number(this.meta('seq') ?? '0');
+  }
+
   /** Changes made here and not yet written to the sync branch, oldest first. */
   outbox(): BoardOp[] {
     return this.db
