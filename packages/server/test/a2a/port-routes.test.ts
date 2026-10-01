@@ -512,3 +512,130 @@ describe('the /api/a2a/port routes (daemon)', () => {
     expect(logged.join('\n')).not.toContain(token);
   });
 });
+
+describe('watch streams re-checked at each keepalive (daemon)', () => {
+  let home: string;
+  let root: string;
+  let handle: ServerHandle;
+  let base: string;
+  const originalHome = process.env.DISPATCH_HOME;
+  const json = { 'content-type': 'application/json' };
+
+  beforeEach(async () => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-watch-home-')));
+    process.env.DISPATCH_HOME = home;
+    root = initGitRepo('a2a-watch-');
+    TaskStore.init(root);
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      webDistDir: null,
+      a2aWatchLimits: { keepaliveMs: 50 },
+    });
+    useTestAuth(handle);
+    base = `http://127.0.0.1:${handle.port}`;
+    useSeedBase(base);
+    await fetch(`${base}/api/a2a/listener/standalone`, {
+      method: 'PUT',
+      headers: json,
+      body: JSON.stringify({ enabled: true }),
+    });
+  });
+  afterEach(async () => {
+    await handle.stop();
+    if (originalHome === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = originalHome;
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // A watch opened through a fresh host for `client`'s own new task.
+  async function openWatch(name: string): Promise<Response> {
+    const { token: hostToken } = (await (
+      await fetch(`${base}/api/a2a/hosts`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({
+          name: `relay-${name}`,
+          publicUrl: 'https://relay.example.com',
+        }),
+      })
+    ).json()) as { token: string };
+    const { token: client } = await approvedClient(name);
+    const headers = {
+      ...json,
+      authorization: `Bearer ${hostToken}`,
+      'x-a2a-client-authorization': `Bearer ${client}`,
+    };
+    const { taskId } = (await (
+      await rawFetch(`${base}/api/a2a/port/open`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          clientMessageId: `m-${name}`,
+          contextId: null,
+          kind: 'ask',
+          to: null,
+          replyTo: null,
+          body: 'Are you there?',
+          refs: [],
+        }),
+      })
+    ).json()) as { taskId: string };
+    const watch = await rawFetch(`${base}/api/a2a/port/tasks/${taskId}/watch`, {
+      headers,
+    });
+    expect(watch.status).toBe(200);
+    return watch;
+  }
+
+  // True once the body ends, false if it is still open after `ms`.
+  async function endsWithin(res: Response, ms: number): Promise<boolean> {
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      const next = await Promise.race([
+        reader.read(),
+        Bun.sleep(left).then(() => null),
+      ]);
+      if (next === null) return false;
+      if (next.done) return true;
+    }
+  }
+
+  it('keeps a watch open while host and client still check out', async () => {
+    const watch = await openWatch('steady');
+    expect(await endsWithin(watch, 300)).toBe(false);
+  });
+
+  it('ends a watch at the next keepalive once its client’s token is rotated', async () => {
+    const watch = await openWatch('rotated');
+    const rotated = await fetch(`${base}/api/a2a/clients/rotated/rotate`, {
+      method: 'POST',
+    });
+    expect(rotated.status).toBe(200);
+    expect(await endsWithin(watch, 1000)).toBe(true);
+  });
+
+  it('ends a watch at the next keepalive once its client is revoked', async () => {
+    const watch = await openWatch('revoked');
+    const clients = (await (await fetch(`${base}/api/a2a/clients`)).json()) as {
+      clients: { address: string; name: string }[];
+    };
+    const address = clients.clients.find(
+      (c) => c.name === 'a2a.revoked'
+    )?.address;
+    expect(
+      (
+        await fetch(
+          `${base}/api/agents/${encodeURIComponent(address ?? '')}/revoke`,
+          { method: 'POST' }
+        )
+      ).ok
+    ).toBe(true);
+    expect(await endsWithin(watch, 1000)).toBe(true);
+  });
+});

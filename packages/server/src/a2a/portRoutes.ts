@@ -73,7 +73,10 @@ const WATCH_LIMITS: WatchLimits = {
 // at every keepalive, and closed at once when their host loses access.
 export class PortWatches {
   private readonly live = new Map<string, Set<() => void>>();
-  constructor(private readonly limits: WatchLimits = WATCH_LIMITS) {}
+  private readonly limits: WatchLimits;
+  constructor(limits: Partial<WatchLimits> = {}) {
+    this.limits = { ...WATCH_LIMITS, ...limits };
+  }
 
   // An SSE stream of `change` events, or null when the host is at its cap.
   // `allowed` false (or throwing) at a keepalive closes the stream.

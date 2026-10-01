@@ -41,6 +41,7 @@ import type { PeerService } from './peers.js';
 import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
+import type { WatchLimits } from './portRoutes.js';
 import { PortLeases, PortWatches } from './portRoutes.js';
 import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
@@ -138,6 +139,8 @@ interface OpenBridgeDeps {
   daemonPorts: () => number[];
   overrides?: ListenerOverrides;
   teamTls?: { certPath: string; keyPath: string };
+  // Standalone hosts' watch-stream limits over the defaults (tests).
+  watchLimits?: Partial<WatchLimits>;
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -203,7 +206,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
   const leases = new PortLeases();
-  const watches = new PortWatches();
+  const watches = new PortWatches(deps.watchLimits);
   // Loaded on the first card; null (with the reason) when it cannot be.
   let signer: CardSigner | null | undefined;
   let signerError: string | null = null;
