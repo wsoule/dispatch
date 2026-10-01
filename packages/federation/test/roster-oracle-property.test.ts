@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
 import { foldRoster } from '../src/roster.js';
-import { GENERATORS, oracle, u } from './rosterOracle.js';
+import { GENERATORS, u } from './rosterGenerators.js';
+import { oracle } from './rosterOracle.js';
 
 // FW-R18: the fold's decision is the oracle's on seeds 1-3000 of every
 // generator (1-1000 in CI); ORACLE_SEEDS sets another count.

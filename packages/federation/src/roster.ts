@@ -814,10 +814,12 @@ function search(given: Given, comp: readonly Removal[]): Removal[] | null {
     }
     return cur;
   };
-  // A void removal holding its right is void only when accepting it leaves no
-  // admin, or its cut cascades into removals its own right rests on.
-  const excused = (m: number, i: number): boolean =>
-    adminless(m | bit(i)) || !had(cascade(m, i) & ~bit(i), i);
+  // A void removal holding its right is void only when accepting it cascades
+  // until no admin is left or into removals its own right rests on (FW-R19).
+  const excused = (m: number, i: number): boolean => {
+    const cur = cascade(m, i);
+    return adminless(cur) || !had(cur & ~bit(i), i);
+  };
 
   let acc = 0;
   let dec = 0;
@@ -888,10 +890,11 @@ function search(given: Given, comp: readonly Removal[]): Removal[] | null {
     if (adminless(acc)) return dec;
     for (const i of all) {
       if ((acc & bit(i)) !== 0 || !had(acc, i) || excused(acc, i)) continue;
-      const sure = standing(acc | bit(i), 0) ?? dec;
+      const cur = cascade(acc, i);
+      const sure = standing(cur, 0) ?? dec;
       // With nothing dropped, only i's right, which removals its cut reaches,
       // and their rights decide it.
-      if (cascade(acc, i) !== (acc | bit(i))) return close(part[i] | sure);
+      if (cur !== (acc | bit(i))) return close(part[i] | sure);
       const reached = all.filter((j) => (reaches[i] & acc & bit(j)) !== 0);
       const blame = rightOf(i) | reaches[i] | sure;
       return close(reached.reduce((c, j) => c | rightOf(j), blame));

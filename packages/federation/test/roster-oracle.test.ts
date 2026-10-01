@@ -1,8 +1,9 @@
-import { ed25519FromSeed, signText, TAG } from '@dispatch/protocol/federation';
+import { ed25519FromSeed } from '@dispatch/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
 import { foldRoster } from '../src/roster.js';
 import type { FoldInput, RosterOpRef, RosterView } from '../src/roster.js';
+import { fixtureInput, u } from './rosterGenerators.js';
 import {
   admit,
   demote,
@@ -12,7 +13,7 @@ import {
   revoke,
   team,
 } from './rosterOps.js';
-import { oracle, PINNED, u } from './rosterOracle.js';
+import { oracle } from './rosterOracle.js';
 
 // FW-R18: the resolution as the oracle defines it, on the op sets that told
 // the definition and the fold apart, and components too large to search.
@@ -23,7 +24,6 @@ const C = 'cy-0000000c';
 const P = 'pat-00000011';
 const W = 'ea-00000031';
 const Y = 'eb-00000032';
-const T0 = Date.parse('2026-09-26T00:00:00.000Z');
 
 // The accepted removals, as replica:seq.
 const acceptedOf = (v: RosterView, ops: readonly RosterOpRef[]): string[] =>
@@ -38,30 +38,6 @@ function decisionOf(input: FoldInput): string[] {
     throw new Error(`oracle skipped: ${verdict}`);
   expect(verdict.decided).toBe(verdict.best ?? -1n);
   return acceptedOf(foldRoster(input), input.ops);
-}
-
-// A reviewer's op set, its founding first, keyed as the oracle's team is. A
-// recover's proof is stored as `signed-by:RECOVERY` (the team's code, signed
-// here) or `signed-by:nobody` (a proof no code verifies).
-async function fixture(name: string): Promise<FoldInput> {
-  const url = new URL(`fixtures/oracle-${name}.json`, import.meta.url);
-  const stored = (await Bun.file(url).json()) as RosterOpRef[];
-  const teamId = stored[0]?.hash.slice(0, 32) ?? '';
-  const code = ed25519FromSeed(Buffer.alloc(32, 7));
-  const ops = stored.map((o) => {
-    const b = o.body as unknown as Record<string, unknown>;
-    if (b.proof !== 'signed-by:RECOVERY') return o;
-    const signed = `${TAG.recovery}\n${teamId}\n${o.replica}\nsign-${o.replica}`;
-    const proof = signText(code.signPriv, signed);
-    return { ...o, body: { ...o.body, proof } } as RosterOpRef;
-  });
-  return {
-    founder: { replica: A, seq: 1 },
-    ops,
-    keys: keysFor(PINNED),
-    now: new Date(T0 + 24 * 60 * 60 * 1000),
-    licensePublicKey: null,
-  };
 }
 
 describe('the resolution as the oracle defines it', () => {
@@ -121,8 +97,19 @@ describe('the resolution as the oracle defines it', () => {
   ];
   for (const [name, accepted] of RANKED)
     it(`reads ranks under the up-front decisions alone (${name})`, async () => {
-      expect(decisionOf(await fixture(name))).toEqual(accepted);
+      expect(decisionOf(await fixtureInput(name))).toEqual(accepted);
     });
+});
+
+// FW-R19: the no-admin excuse is judged on what remains after the cascade;
+// judged on the raw union, the fold took ada:3, ada:11 and ada:12 here.
+describe('the no-admin excuse, judged after the cascade', () => {
+  it('decides a classes set as the oracle does', async () => {
+    expect(decisionOf(await fixtureInput('classes-663'))).toEqual([
+      'ada-0000000a:3',
+      'cy-0000000c:3',
+    ]);
+  });
 });
 
 // One more contested removal than a component search decides.
