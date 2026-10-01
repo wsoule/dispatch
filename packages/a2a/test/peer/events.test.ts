@@ -335,6 +335,22 @@ describe('mapPeerEvent (spec:1498-1506)', () => {
     );
   });
 
+  it('never asks to wake anyone, so a peer cannot start a run', () => {
+    for (const state of [
+      'TASK_STATE_COMPLETED',
+      'TASK_STATE_WORKING',
+      'TASK_STATE_INPUT_REQUIRED',
+      'TASK_STATE_AUTH_REQUIRED',
+      'TASK_STATE_FAILED',
+    ])
+      for (const via of ['direct', 'channel'] as const)
+        for (const act of mapPeerEvent(
+          event(task(state, 'text')),
+          ctx({ via })
+        ))
+          if (act.kind === 'send') expect(act.input.wake).toBeUndefined();
+  });
+
   it('keeps a close reason to one short line', () => {
     const [act] = mapPeerEvent(
       event(task('TASK_STATE_FAILED', `${'x'.repeat(500)}\nsecond line`)),

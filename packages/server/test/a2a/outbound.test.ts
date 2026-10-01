@@ -160,6 +160,32 @@ describe('failures', () => {
     expect(row(q.id)?.attempts).toBe(2);
   });
 
+  it('gives up after 24 hours of failures: the question is closed', async () => {
+    peer.status = 503;
+    const q = await ask();
+    await waitFor(() => (row(q.id)?.attempts ?? 0) === 1);
+    const later = Date.now() + 25 * 3_600_000;
+    f.deps.now = () => new Date(later);
+    f.outbound.kick('fixture');
+    await waitFor(() => row(q.id)?.state === 'failed');
+    expect(row(q.id)?.lastError).toContain('unreachable for 24 h');
+    expect(engine().answerOf(q.id)).toMatchObject({
+      from: 'agent:dispatch',
+      body: expect.stringContaining('a2a:fixture'),
+    });
+  });
+
+  it('sends once when a delivery is enqueued again while its relay is in flight', async () => {
+    peer.sendDelayMs = 200;
+    const q = await ask();
+    await waitFor(() => peer.sends === 1);
+    f.outbound.kick('fixture');
+    f.outbound.kick('fixture');
+    await waitFor(() => row(q.id)?.state === 'open');
+    await Bun.sleep(300);
+    expect(peer.sends).toBe(1);
+  });
+
   it('keeps one retry timer per peer, however many deliveries wait', async () => {
     peer.status = 503;
     const ids: string[] = [];
