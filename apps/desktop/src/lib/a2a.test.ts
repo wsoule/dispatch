@@ -12,11 +12,15 @@ import {
   cardSummary,
   formFromStatus,
   formToSettings,
+  httpUrlOrNull,
+  isA2AAddress,
   isFromA2AClient,
   listenerFieldOf,
   listenerStatusLine,
   openTasksByClient,
+  originConflict,
   parseRecipients,
+  peerAddresses,
   withHost,
 } from './a2a';
 
@@ -379,5 +383,54 @@ describe('clients, tasks and the card', () => {
       url: null,
       skills: [],
     });
+  });
+});
+
+describe('peers', () => {
+  it('recognizes peers and clients as A2A, and nothing else', () => {
+    expect(isA2AAddress('a2a:acme')).toBe(true);
+    expect(isA2AAddress('agent:wyat/a2a.acme')).toBe(true);
+    expect(isA2AAddress('agent:wyat/claude')).toBe(false);
+    expect(isA2AAddress('human:alice')).toBe(false);
+  });
+
+  it('offers only active peers for completion', () => {
+    expect(
+      peerAddresses([
+        { alias: 'acme', status: 'active' },
+        { alias: 'dead', status: 'auth-failed' },
+      ])
+    ).toEqual(['a2a:acme']);
+  });
+
+  it('reads both origins out of an allowOrigin refusal', () => {
+    expect(
+      originConflict({
+        field: 'allowOrigin',
+        message:
+          'allowOrigin: the card at https://a.example.com points at https://b.example.com; confirm with --allow-origin',
+      })
+    ).toEqual({
+      cardOrigin: 'https://a.example.com',
+      interfaceOrigin: 'https://b.example.com',
+    });
+    expect(originConflict({ field: 'cardUrl', message: 'x' })).toBeNull();
+  });
+
+  it('links only http(s) URLs', () => {
+    expect(httpUrlOrNull('https://agent.example.com/a2a/v1')).toBe(
+      'https://agent.example.com/a2a/v1'
+    );
+    expect(httpUrlOrNull('http://127.0.0.1:9/a2a')).toBe(
+      'http://127.0.0.1:9/a2a'
+    );
+    for (const bad of [
+      'javascript:alert(1)',
+      'data:text/html,x',
+      'file:///etc/passwd',
+      'not a url',
+      '',
+    ])
+      expect(httpUrlOrNull(bad)).toBeNull();
   });
 });

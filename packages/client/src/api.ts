@@ -1326,6 +1326,34 @@ export interface A2ATaskSummary {
   createdAt: string;
 }
 
+// One row of GET /api/a2a/peers: an outbound peer, never its credential.
+// Mirrors PeerSummary in packages/server/src/a2a/peers.ts.
+export interface A2APeerSummary {
+  alias: string;
+  cardUrl: string;
+  interfaceUrl: string;
+  binding: 'HTTP+JSON' | 'JSONRPC';
+  status: 'active' | 'disabled' | 'auth-failed';
+  name: string;
+  description: string;
+  skills: { id: string; name: string; description: string }[];
+  streaming: boolean;
+  addedBy: string;
+  addedTier: 'decide' | 'operator';
+  fetchedAt: string;
+  createdAt: string;
+}
+
+// The body of POST /api/a2a/peers.
+export interface A2APeerInput {
+  alias: string;
+  cardUrl: string;
+  token?: string;
+  apiKeyHeader?: string;
+  allowHttp?: boolean;
+  allowOrigin?: boolean;
+}
+
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {
   runId: string;
@@ -3677,6 +3705,18 @@ export interface ApiClient {
   a2aTasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
   /** Closes an unanswered ask; the client sees REJECTED with the reason. */
   declineA2ATask(id: string, reason?: string): Promise<unknown>;
+  a2aPeers(): Promise<{ peers: A2APeerSummary[] }>;
+  /** Decide tier; private URLs, allowHttp and allowOrigin need the operator. */
+  addA2APeer(input: A2APeerInput): Promise<A2APeerSummary>;
+  refreshA2APeer(alias: string): Promise<A2APeerSummary>;
+  /** `token` replaces the stored credential. */
+  setA2APeerEnabled(
+    alias: string,
+    enabled: boolean,
+    token?: string
+  ): Promise<A2APeerSummary>;
+  /** Removes the peer and its stored credential. */
+  removeA2APeer(alias: string): Promise<void>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -4698,6 +4738,28 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(reason === undefined ? {} : { reason }),
       }),
+    a2aPeers: () => request(target, '/api/a2a/peers'),
+    addA2APeer: (input) =>
+      request(target, '/api/a2a/peers', { method: 'POST', ...jsonBody(input) }),
+    refreshA2APeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}/refresh`, {
+        method: 'POST',
+      }),
+    setA2APeerEnabled: (alias, enabled, token) =>
+      request(
+        target,
+        `/api/a2a/peers/${encodeURIComponent(alias)}/${enabled ? 'enable' : 'disable'}`,
+        {
+          method: 'POST',
+          ...jsonBody(token === undefined ? {} : { token }),
+        }
+      ),
+    // send(), not request(): the daemon answers 204 with no body.
+    removeA2APeer: async (alias) => {
+      await send(target, `/api/a2a/peers/${encodeURIComponent(alias)}`, {
+        method: 'DELETE',
+      });
+    },
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

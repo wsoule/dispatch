@@ -943,6 +943,23 @@ describe('refs and labels', () => {
       channels: ['general'],
       agents: ['agent:wyat/quiet'],
       humans: [ME, 'human:ada'],
+      peers: [],
     });
+  });
+
+  it('completes active A2A peers as a2a: addresses', () => {
+    expect(
+      knownAddresses({
+        tasks: [],
+        channels: [],
+        agents: [],
+        presence: [],
+        me: null,
+        peers: [
+          { alias: 'acme', status: 'active' },
+          { alias: 'gone', status: 'disabled' },
+        ],
+      }).peers
+    ).toEqual(['a2a:acme']);
   });
 });

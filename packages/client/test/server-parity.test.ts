@@ -306,6 +306,7 @@ describe('A2A types mirror dispatchd', () => {
   for (const [client, server, file] of [
     ['A2AListenerSettings', 'ListenerSettings', ['a2a', 'settings.ts']],
     ['A2AListenerStatus', 'ListenerStatus', ['a2a', 'bridge.ts']],
+    ['A2APeerSummary', 'PeerSummary', ['a2a', 'peers.ts']],
   ] as const) {
     it(`${client} declares the fields of the server's ${server}`, () => {
       const theirs = fieldsOf(serverSource(...file), server);
