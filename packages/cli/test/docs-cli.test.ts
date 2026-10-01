@@ -1,5 +1,5 @@
 import type { DocRevisionInfo } from '@dispatch/core';
-import { parseDocFile } from '@dispatch/core';
+import { parseDocFile, renderDocFile } from '@dispatch/core';
 import {
   afterAll,
   afterEach,
@@ -323,6 +323,61 @@ describe('dispatch docs import', () => {
 });
 
 describe('dispatch docs import with unreadable paths', () => {
+  it('imports an exported doc by its frontmatter, and refuses a personal one', async () => {
+    const exported = join(tmpDir, 'export-in');
+    mkdirSync(join(exported, 'personal'), { recursive: true });
+    const meta = {
+      id: 'doc-01K5ZZZZZZZZZZZZZZZZZZZZZZ',
+      slug: 'auth-spec',
+      title: 'Auth spec',
+      status: 'accepted',
+      rev: 'rev-1',
+      n: 1,
+      parents: [],
+      author: 'human:wyat',
+      cause: 'create',
+      createdAt: '2026-09-26T10:00:00.000Z',
+      hash: 'h',
+      links: [],
+      authors: ['human:wyat'],
+      updatedAt: '2026-09-27T10:00:00.000Z',
+    } as unknown as Parameters<typeof renderDocFile>[0];
+    const team = join(exported, 'renamed-on-disk.md');
+    writeFileSync(team, renderDocFile(meta, '# Auth spec\nbody\n'));
+    const personal = join(exported, 'personal', 'notes.md');
+    writeFileSync(personal, '# Notes\n');
+    let manifest: { name: string; mtime: string; hash: string }[] = [];
+    const sent: string[] = [];
+    const api = {
+      openImport: (files: typeof manifest) => {
+        manifest = files;
+        return Promise.resolve({ id: 'imp-2', need: files.map((f) => f.hash) });
+      },
+      putImportContent: (_id: string, _hash: string, bytes: Uint8Array) => {
+        sent.push(new TextDecoder().decode(bytes));
+        return Promise.resolve();
+      },
+      commitImport: () =>
+        Promise.resolve({
+          dryRun: true,
+          files: 1,
+          names: 1,
+          failedNames: 0,
+          errors: [],
+          parity: { files: true, names: true },
+        }),
+      deleteImport: () => Promise.resolve(),
+    } as unknown as DocsApi;
+    const report = await importFiles(api, [team, personal], { dryRun: true });
+    expect(manifest.map((f) => [f.name, f.mtime])).toEqual([
+      ['auth-spec.md', '2026-09-27T10:00:00.000Z'],
+    ]);
+    expect(sent).toEqual(['# Auth spec\nbody\n']);
+    expect(report.errors.map((e) => [e.path, e.detail])).toEqual([
+      [personal, 'personal docs are never imported'],
+    ]);
+  });
+
   it('reports a missing path and a directory by name and imports the rest', async () => {
     const good = join(tmpDir, 'good.md');
     writeFileSync(good, '# Good\n');

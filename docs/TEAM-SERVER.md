@@ -162,14 +162,20 @@ as of v1, all accepted:
   its operator's personal doc is tool output in the run's transcript, which
   teammates on a shared host can read. Keep what must stay private out of
   personal docs there, or run your own daemon.
-- **Files-backend projects back docs up by export.** Team docs live in the
-  daemon's `docs.db`, not in git; a files-backend project backs them up with
-  `dispatch docs export <dir>` (the receipt log carries them for database
-  projects).
+- **Files-backend projects have no restorable copy of docs.** Team docs live in
+  the daemon's `docs.db`, not in git. The receipt log carries them for database
+  projects. `dispatch docs export <dir>` writes a readable copy of every doc,
+  not a backup: importing it back makes new docs with new ids, without their
+  history, reviews or links. Back up `docs.db` itself.
 - **Moving the checkout orphans `docs.db`.** Docs are keyed to the checkout's
-  path, so a moved checkout starts empty. `GET /api/docs/health` lists the
-  orphaned `docs.db` files to decide tier, and their docs come back by export
-  and import.
+  path, so a moved checkout starts empty. `GET /api/docs/health` lists, to
+  decide tier, the `runs/*/docs.db` files whose recorded root no longer exists.
+  To recover: stop the daemon, move the orphaned `docs.db` (with its `-wal` and
+  `-shm` files, and its `docs-assets/` directory) into the new checkout's key
+  directory under `runs/`, and start the daemon again.
+- **The publish risk guard protects only its own replica.** A synced change
+  cannot lower a publish task's risk on the replica that owns the publish; a
+  teammate's replica keeps whatever its own board says.
 
 ## 7. Phasing
 

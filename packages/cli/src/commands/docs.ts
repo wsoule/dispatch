@@ -8,6 +8,7 @@ import type {
 import {
   assetNames,
   LINK_RELS,
+  parseDocFile,
   renderDocFile,
   rewriteAssetLinks,
 } from '@dispatch/core';
@@ -23,7 +24,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, relative, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
@@ -167,13 +168,26 @@ export async function importFiles(
 ): Promise<ImportReportInfo> {
   const unread: { path: string; detail: string }[] = [];
   const files = paths.flatMap((path) => {
+    // An export's personal/ folder holds someone's private docs: never sent.
+    if (dirname(resolve(path)).split(sep).includes('personal')) {
+      unread.push({ path, detail: 'personal docs are never imported' });
+      return [];
+    }
     try {
-      const content = readFileSync(path);
+      const raw = readFileSync(path);
+      // A receipts or export file: its body, under its own slug and time.
+      const parsed = parseDocFile(raw.toString('utf8'));
+      const doc = 'error' in parsed ? null : parsed;
+      const content =
+        doc === null ? raw : new Uint8Array(Buffer.from(doc.body, 'utf8'));
       return [
         {
           path,
-          name: basename(path),
-          mtime: statSync(path).mtime.toISOString(),
+          name: doc === null ? basename(path) : `${doc.meta.slug}.md`,
+          mtime:
+            doc === null
+              ? statSync(path).mtime.toISOString()
+              : doc.meta.updatedAt,
           bytes: content.byteLength,
           hash: createHash('sha256').update(content).digest('hex'),
           content,
