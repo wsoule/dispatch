@@ -54,13 +54,17 @@ vector ids (see §14.2).
 - [editorial] Appendix B lists the `memory_*` tools (§B.3), and Appendix C.4
   says the system's `x-expired` answer also expires a memory proposal.
 - [additive] The `doc` ref type is permanent, in the Dispatch profile: a local
-  send may ref a document by its id and a section anchor (§4.3, App. C.1), and a
-  vector that needs a profile ref type is a `dispatch` vector (§12.3). Vectors:
-  `core.refs.a-local-doc-ref-is-accepted`.
+  send may ref a document by its id and a section anchor (§4.3, App. C.1).
+  Vectors: `core.refs.a-local-doc-ref-is-accepted`.
+- [clarification] A vector that needs a profile ref type is a `dispatch` vector
+  (§12.3). Vectors: `core.refs.a-local-doc-ref-is-accepted`.
 - [additive] The `doc` gate type is permanent: only the system address raises
   it, its shape is fixed, naming a document and its proposed revision and never
-  the text, and only a deciding principal answers it (App. C.3). Vectors:
-  `core.gates.doc-is-raised-only-by-the-system`,
+  the text, and only a deciding principal answers it (App. C.3). With it, every
+  gate type in the registry is permanent, so a Dispatch-profile claim now
+  requires the adapter to declare all eight: `wake`, `tool-approval`, `scope`,
+  `agent-registration`, `overseer-action`, `task-proposal`, `memory` and `doc`
+  (§12.1). Vectors: `core.gates.doc-is-raised-only-by-the-system`,
   `core.gates.doc-needs-a-deciding-answer`,
   `env.envelope.a-doc-gate-names-its-doc-and-proposal`,
   `env.envelope.doc-gates-have-a-fixed-shape`.

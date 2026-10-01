@@ -77,10 +77,10 @@ The read routes (`GET /api/messages/:id`, its answer route and
 id that does not exist ([§13.5](13-security-and-privacy.md#s13.5)). The kit
 tests the rule, not these routes ([§12.5](12-conformance.md#s12.5)).
 
-The rest of the daemon's API (work items, runs, reviews, memory and documents,
-which the tools of [§B.3](appendix-b-agent-tools.md#sB.3) reach under
-`/api/memory`, and the A2A bridge's administration under `/api/a2a/`) is outside
-DMP and this appendix.
+The rest of the daemon's API (work items, runs, reviews, memory under
+`/api/memory`, which the tools of [§B.3](appendix-b-agent-tools.md#sB.3) reach,
+documents under `/api/docs`, and the A2A bridge's administration under
+`/api/a2a/`) is outside DMP and this appendix.
 
 ## A.3 Events
 
