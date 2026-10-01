@@ -82,7 +82,11 @@ export function parsePushConfig(raw: unknown): PushConfigInput {
     throw new MessagingError('invalid', 'url: not a URL', 'url');
   }
   if (protocol !== 'https:' && protocol !== 'http:')
-    throw new MessagingError('invalid', 'url: must be https', 'url');
+    throw new MessagingError(
+      'invalid',
+      'url: must be an http or https URL',
+      'url'
+    );
   const out: PushConfigInput = { id: text(r.id, 'id', 128) ?? null, url };
   const token = text(r.token, 'token', 512, 'header');
   if (token !== undefined) out.token = token;

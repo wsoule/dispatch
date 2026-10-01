@@ -49,6 +49,10 @@ behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced
 - **Responses are `application/json`**, not `application/a2a+json` (§11.1). The
   TCK's `HTTP_JSON-SVC-001` requires `application/json`. Requests may send
   either.
+- **Push configs are read back without their secrets.** Create, get and list
+  return a config's `id`, `taskId`, `url` and `authentication.scheme`, never its
+  `token` or `authentication.credentials`, so a leaked client token cannot read
+  back a webhook's credentials. The TCK's push tests compare no returned fields.
 - **No SHOULD requirement is marked expected-to-fail.** Any that is gets its
   reason here.
 

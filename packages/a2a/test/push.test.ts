@@ -56,6 +56,12 @@ describe('parsePushConfig', () => {
     );
   });
 
+  it('says what a URL must be', () => {
+    expect(() => parsePushConfig({ url: 'ftp://h.example.com/' })).toThrow(
+      'url: must be an http or https URL'
+    );
+  });
+
   it('never quotes a refused secret in its error', () => {
     for (const raw of [
       { url: 'https://h.example.com/', token: 'SECRET\nx' },
