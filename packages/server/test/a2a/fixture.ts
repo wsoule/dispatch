@@ -10,6 +10,8 @@ import { RunResultsMemo } from '../../src/a2a/artifacts.js';
 import { tokenHash } from '../../src/a2a/auth.js';
 import { bridgeExternalPolicy } from '../../src/a2a/external.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
+import type { PeerDeps } from '../../src/a2a/peers.js';
+import { createPeerService } from '../../src/a2a/peers.js';
 import type { BridgeDeps } from '../../src/a2a/port.js';
 import { DaemonBridgePort } from '../../src/a2a/port.js';
 import { BridgeWatch } from '../../src/a2a/watch.js';
@@ -62,7 +64,13 @@ export async function bridgeFixture(
     onChanged: (row) => changed.push(row.id),
   });
   const stopWatch = watch.start();
-  messaging.setExternalPolicy(bridgeExternalPolicy(deps));
+  const peers = createPeerService(deps);
+  const notices = peers.notices;
+  const peerDeps = (over: Partial<PeerDeps> = {}): PeerDeps => ({
+    ...deps,
+    ...over,
+  });
+  messaging.setExternalPolicy(bridgeExternalPolicy(deps, notices));
   messaging.gates.register('task-proposal', (q, a) =>
     handleProposal(deps, watch, q, a)
   );
@@ -103,6 +111,9 @@ export async function bridgeFixture(
     caller,
     addClient,
     changed,
+    peers,
+    notices,
+    peerDeps,
     close() {
       stopWatch();
       messaging.close();

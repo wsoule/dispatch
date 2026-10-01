@@ -673,6 +673,13 @@ export async function joinChannel(
   if (!canActAs(ctx, principal, member)) {
     return errorResponse(403, `cannot add ${member} to a channel`);
   }
+  // A peer member sends every future channel message off the machine; only a registered one.
+  if (
+    member.startsWith('a2a:') &&
+    (ctx.a2a?.peerStatus(member.slice('a2a:'.length)) ?? null) === null
+  ) {
+    return errorResponse(404, `no A2A peer ${member}`);
+  }
   ctx.messaging.engine.join(name, member);
   return new Response(null, { status: 204 });
 }

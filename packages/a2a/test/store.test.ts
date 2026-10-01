@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { openA2ADb, SqliteA2AStore } from '../src/store/sqlite.js';
-import type { TaskRow } from '../src/store/sqlite.js';
+import type { PeerRow, TaskRow } from '../src/store/sqlite.js';
 
 const CLIENT = 'agent:wyat/a2a.acme';
 let dir: string;
@@ -174,5 +174,54 @@ describe('SqliteA2AStore', () => {
       cursor = { statusAt: last.statusAt, id: last.id };
     }
     expect(seen).toEqual(['m-e', 'm-d', 'm-c', 'm-b', 'm-a']);
+  });
+});
+
+function peer(alias: string, over: Partial<PeerRow> = {}): PeerRow {
+  return {
+    alias,
+    cardUrl: 'https://agent.example.com/.well-known/agent-card.json',
+    interfaceUrl: 'https://agent.example.com/a2a/v1',
+    binding: 'HTTP+JSON',
+    cardJson: '{"name":"Acme"}',
+    etag: '"v1"',
+    fetchedAt: '2026-09-25T10:00:00.000Z',
+    status: 'active',
+    addedBy: 'human:wyat',
+    addedTier: 'decide',
+    allowHttp: false,
+    allowOrigin: false,
+    apiKeyHeader: null,
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
+}
+
+describe('peers', () => {
+  it('stores, updates, lists and deletes peers', () => {
+    store.putPeer(peer('beta'));
+    store.putPeer(peer('acme', { allowHttp: true, apiKeyHeader: 'X-API-Key' }));
+    expect(store.peers().map((p) => p.alias)).toEqual(['acme', 'beta']);
+    expect(store.getPeer('acme')).toMatchObject({
+      allowHttp: true,
+      allowOrigin: false,
+      apiKeyHeader: 'X-API-Key',
+    });
+    store.setPeerStatus('acme', 'auth-failed');
+    expect(store.getPeer('acme')?.status).toBe('auth-failed');
+    store.putPeer({ ...peer('acme'), etag: '"v2"' });
+    expect(store.getPeer('acme')?.etag).toBe('"v2"');
+    expect(store.deletePeer('acme')).toBe(true);
+    expect(store.deletePeer('acme')).toBe(false);
+    expect(store.getPeer('acme')).toBeNull();
+  });
+
+  it('keeps who added a peer, and at which tier, across an upsert', () => {
+    store.putPeer(peer('acme', { addedTier: 'operator' }));
+    store.putPeer(peer('acme', { addedBy: 'human:eve', addedTier: 'decide' }));
+    expect(store.getPeer('acme')).toMatchObject({
+      addedBy: 'human:wyat',
+      addedTier: 'operator',
+    });
   });
 });

@@ -1,4 +1,9 @@
-import type { A2AStore, HandoffStatuses, TaskRow } from '@dispatch/a2a';
+import type {
+  A2AStore,
+  HandoffStatuses,
+  PeerStatus,
+  TaskRow,
+} from '@dispatch/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
@@ -30,6 +35,8 @@ import {
 } from './guards.js';
 import { handleProposal } from './handoff.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
+import type { PeerService } from './peers.js';
+import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
 import { reconcileA2A } from './reconcile.js';
@@ -64,6 +71,9 @@ export interface A2ABridge {
   readonly port: DaemonBridgePort | null;
   readonly store: A2AStore | null;
   readonly watch: BridgeWatch | null;
+  // Outbound peers; null when a2a.db is down.
+  readonly peers: PeerService | null;
+  peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
   // Opens the listener from the settings file plus the one-boot overrides.
   start(): Promise<void>;
@@ -173,8 +183,10 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let watch: BridgeWatch | null = null;
   let stopWatch: (() => void) | null = null;
   let listener: A2AListener | null = null;
+  let peers: PeerService | null = null;
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
   if (store === null) {
-    messaging.setExternalPolicy(bridgeExternalPolicy(null));
+    messaging.setExternalPolicy(bridgeExternalPolicy(null, null));
   } else {
     const bridgeDeps: BridgeDeps = {
       rootDir,
@@ -215,7 +227,22 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     });
     watch = hub;
     stopWatch = hub.start();
-    messaging.setExternalPolicy(bridgeExternalPolicy(bridgeDeps));
+    const peerService = createPeerService(bridgeDeps);
+    peers = peerService;
+    messaging.setExternalPolicy(
+      bridgeExternalPolicy(bridgeDeps, peerService.notices)
+    );
+    // The 24 h card refresh, checked hourly.
+    refreshTimer = setInterval(() => {
+      void refreshDuePeers(peerService.deps, peerService.notices).then(
+        (n) => {
+          if (n > 0) deps.events.broadcast({ type: 'a2a.changed' });
+        },
+        (err: unknown) =>
+          console.error('dispatchd: A2A peer refresh failed', err)
+      );
+    }, 3_600_000);
+    refreshTimer.unref();
     messaging.gates.register('task-proposal', (question, answer) =>
       handleProposal(bridgeDeps, hub, question, answer)
     );
@@ -314,6 +341,17 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     get watch() {
       return watch;
     },
+    get peers() {
+      return peers;
+    },
+    peerStatus(alias) {
+      try {
+        return store?.getPeer(alias)?.status ?? null;
+      } catch (err) {
+        console.error(`dispatchd: could not read A2A peer ${alias}`, err);
+        return null;
+      }
+    },
     status,
     start: () =>
       serial(async () => {
@@ -389,6 +427,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       serial(async () => {
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
+        if (refreshTimer !== null) clearInterval(refreshTimer);
+        refreshTimer = null;
         stopWatch?.();
         stopWatch = null;
         await listener?.close();

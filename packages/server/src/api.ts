@@ -4537,6 +4537,25 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     segments: ['a2a', 'tasks', '*', 'decline'],
     tier: 'decide',
   },
+  // Registering or changing a peer decides where this machine sends mail;
+  // private URLs and --allow-http/--allow-origin need the operator, checked in addPeer.
+  { method: 'POST', segments: ['a2a', 'peers'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'refresh'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'enable'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'disable'],
+    tier: 'decide',
+  },
+  { method: 'DELETE', segments: ['a2a', 'peers', '*'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what

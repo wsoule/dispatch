@@ -47,7 +47,28 @@ export interface TaskListQuery {
   cursor?: { statusAt: string; id: string };
 }
 
-// The bridge's own records: registered clients and the A2A tasks they opened.
+export type PeerStatus = 'active' | 'disabled' | 'auth-failed';
+
+// An outbound peer as registered; its credential lives in credentials.json.
+export interface PeerRow {
+  alias: string;
+  cardUrl: string;
+  interfaceUrl: string;
+  binding: 'HTTP+JSON' | 'JSONRPC';
+  cardJson: string;
+  etag: string | null;
+  fetchedAt: string;
+  status: PeerStatus;
+  addedBy: Address;
+  addedTier: 'decide' | 'operator';
+  allowHttp: boolean;
+  allowOrigin: boolean;
+  apiKeyHeader: string | null;
+  createdAt: string;
+}
+
+// The bridge's own records: registered clients, the A2A tasks they opened,
+// and the outbound peers.
 export interface A2AStore {
   putClient(row: ClientRow): void;
   getClient(address: Address): ClientRow | null;
@@ -69,6 +90,13 @@ export interface A2AStore {
   ): number;
   newestTaskAt(client: Address): string | null;
   taskForDispatchTask(taskId: string): TaskRow | null;
+  // Upsert by alias; added_by, added_tier and created_at keep their first values.
+  putPeer(row: PeerRow): void;
+  getPeer(alias: string): PeerRow | null;
+  // By alias.
+  peers(): PeerRow[];
+  setPeerStatus(alias: string, status: PeerStatus): void;
+  deletePeer(alias: string): boolean;
   close(): void;
 }
 
@@ -85,6 +113,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS tasks_client ON tasks (client, status_at, id);
 CREATE INDEX IF NOT EXISTS tasks_dispatch ON tasks (dispatch_task);
+CREATE TABLE IF NOT EXISTS peers (
+  alias TEXT PRIMARY KEY, card_url TEXT NOT NULL, interface_url TEXT NOT NULL, binding TEXT NOT NULL,
+  card_json TEXT NOT NULL, etag TEXT, fetched_at TEXT NOT NULL, status TEXT NOT NULL,
+  added_by TEXT NOT NULL, added_tier TEXT NOT NULL, allow_http INTEGER NOT NULL, allow_origin INTEGER NOT NULL,
+  api_key_header TEXT, created_at TEXT NOT NULL
+);
 `;
 
 // Created 0600 before SQLite opens it, so it never exists world-readable;
@@ -128,6 +162,51 @@ interface TaskDbRow {
   canceled_at: string | null;
   declined_at: string | null;
   created_at: string;
+}
+
+interface PeerDbRow {
+  alias: string;
+  card_url: string;
+  interface_url: string;
+  binding: string;
+  card_json: string;
+  etag: string | null;
+  fetched_at: string;
+  status: string;
+  added_by: string;
+  added_tier: string;
+  allow_http: number;
+  allow_origin: number;
+  api_key_header: string | null;
+  created_at: string;
+}
+
+const PEER_STATUSES: readonly PeerStatus[] = [
+  'active',
+  'disabled',
+  'auth-failed',
+];
+
+// An unknown status reads as disabled, so a hand-edited row never sends.
+function toPeer(r: PeerDbRow): PeerRow {
+  return {
+    alias: r.alias,
+    cardUrl: r.card_url,
+    interfaceUrl: r.interface_url,
+    binding: r.binding === 'JSONRPC' ? 'JSONRPC' : 'HTTP+JSON',
+    cardJson: r.card_json,
+    etag: r.etag,
+    fetchedAt: r.fetched_at,
+    status: PEER_STATUSES.includes(r.status as PeerStatus)
+      ? (r.status as PeerStatus)
+      : 'disabled',
+    addedBy: r.added_by,
+    addedTier: r.added_tier === 'operator' ? 'operator' : 'decide',
+    allowHttp: r.allow_http === 1,
+    allowOrigin: r.allow_origin === 1,
+    apiKeyHeader: r.api_key_header,
+    createdAt: r.created_at,
+  };
 }
 
 const TERMINAL_SQL = [...TERMINAL_STATES].map((s) => `'${s}'`).join(',');
@@ -338,6 +417,63 @@ export class SqliteA2AStore implements A2AStore {
       [taskId]
     );
     return r === undefined ? null : toTask(r);
+  }
+
+  putPeer(p: PeerRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO peers (alias, card_url, interface_url, binding, card_json, etag, fetched_at, status, added_by, added_tier, allow_http, allow_origin, api_key_header, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT (alias) DO UPDATE SET card_url = excluded.card_url, interface_url = excluded.interface_url, binding = excluded.binding,
+           card_json = excluded.card_json, etag = excluded.etag, fetched_at = excluded.fetched_at, status = excluded.status,
+           allow_http = excluded.allow_http, allow_origin = excluded.allow_origin, api_key_header = excluded.api_key_header`
+      )
+      .run(
+        p.alias,
+        p.cardUrl,
+        p.interfaceUrl,
+        p.binding,
+        p.cardJson,
+        p.etag,
+        p.fetchedAt,
+        p.status,
+        p.addedBy,
+        p.addedTier,
+        p.allowHttp ? 1 : 0,
+        p.allowOrigin ? 1 : 0,
+        p.apiKeyHeader,
+        p.createdAt
+      );
+  }
+
+  getPeer(alias: string): PeerRow | null {
+    const r = queryOne<PeerDbRow>(
+      this.db,
+      'SELECT * FROM peers WHERE alias = ?',
+      [alias]
+    );
+    return r === undefined ? null : toPeer(r);
+  }
+
+  peers(): PeerRow[] {
+    return queryAll<PeerDbRow>(
+      this.db,
+      'SELECT * FROM peers ORDER BY alias'
+    ).map(toPeer);
+  }
+
+  setPeerStatus(alias: string, status: PeerStatus): void {
+    this.db
+      .prepare('UPDATE peers SET status = ? WHERE alias = ?')
+      .run(status, alias);
+  }
+
+  deletePeer(alias: string): boolean {
+    return (
+      Number(
+        this.db.prepare('DELETE FROM peers WHERE alias = ?').run(alias).changes
+      ) > 0
+    );
   }
 
   close(): void {

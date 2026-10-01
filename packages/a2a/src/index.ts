@@ -143,6 +143,8 @@ export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
 export type {
   A2AStore,
   ClientRow,
+  PeerRow,
+  PeerStatus,
   TaskListQuery,
   TaskPatch,
   TaskRow,
