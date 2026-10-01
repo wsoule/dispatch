@@ -1,8 +1,10 @@
 import type { DocSummary } from '@dispatch/client';
+import type { KeyboardEvent } from 'react';
 import { useId } from 'react';
 
 import type { DocFilter } from '../../lib/docs';
 import { docBadges } from '../../lib/docs';
+import { resolveListKeyCommand } from '../../lib/keyboard';
 import { cn } from '@/lib/utils';
 import { Input } from '@/ui/input';
 import { Toggle } from '@/ui/toggle';
@@ -21,6 +23,8 @@ interface DocListProps {
   selected: string | null;
   onSelect: (id: string) => void;
   error: Error | null;
+  /** The list has not arrived yet. */
+  loading?: boolean;
 }
 
 // The Docs view's left pane: search, the scope, archived and unreviewed
@@ -32,8 +36,22 @@ export function DocList({
   selected,
   onSelect,
   error,
+  loading = false,
 }: DocListProps) {
   const idPrefix = useId();
+  // j/k (and the arrows) move the selection, as in the other lists.
+  const onKeyDown = (event: KeyboardEvent<HTMLUListElement>): void => {
+    const command = resolveListKeyCommand(event, { isTyping: false });
+    if (command !== 'list-down' && command !== 'list-up') return;
+    event.preventDefault();
+    if (docs.length === 0) return;
+    const at = docs.findIndex((d) => d.id === selected);
+    const next =
+      command === 'list-down'
+        ? Math.min(at + 1, docs.length - 1)
+        : Math.max(at === -1 ? 0 : at - 1, 0);
+    onSelect(docs[next].id);
+  };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-2 border-b border-[var(--color-border)] p-2">
@@ -85,12 +103,22 @@ export function DocList({
           {error.message}
         </p>
       )}
-      {docs.length === 0 && error === null && (
+      {loading && docs.length === 0 && error === null && (
+        <p className="p-3 text-xs text-[var(--color-muted-foreground)]">
+          Loading docs…
+        </p>
+      )}
+      {!loading && docs.length === 0 && error === null && (
         <p className="p-3 text-xs text-[var(--color-muted-foreground)]">
           No docs.
         </p>
       )}
-      <ul className="min-h-0 flex-1 overflow-auto p-1">
+      <ul
+        aria-label="Docs"
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        className="min-h-0 flex-1 overflow-auto p-1 outline-none"
+      >
         {docs.map((d) => (
           <li key={d.id}>
             <button

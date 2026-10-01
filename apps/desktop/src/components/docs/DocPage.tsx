@@ -360,7 +360,11 @@ export function DocPage({
   };
 
   if (read === null || buf === null) {
-    return error === null ? null : (
+    return error === null ? (
+      <p className="p-4 text-xs text-[var(--color-muted-foreground)]">
+        Loading the doc…
+      </p>
+    ) : (
       <p className="p-4 text-xs text-[var(--color-destructive)]">
         {error.message}
       </p>
@@ -368,6 +372,9 @@ export function DocPage({
   }
   const doc = read.doc;
   const archived = doc.status === 'archived';
+  // A personal doc is its owner's to review and move, whatever their tier (only
+  // its owner can read it here).
+  const decides = canDecide || doc.scope === 'personal';
   const fileName = `${doc.handle}.md`;
   // Agent text no human checked never heads for the repo; personal docs never do.
   const publishable =
@@ -442,7 +449,7 @@ export function DocPage({
             Save version
           </Button>
         )}
-        {canDecide && doc.unreviewed && (
+        {decides && doc.unreviewed && (
           <Button
             size="sm"
             onClick={() =>
@@ -481,7 +488,7 @@ export function DocPage({
             Publish to repo
           </Button>
         )}
-        {canDecide &&
+        {decides &&
           docStatusActions(doc).map(({ label, status }) => (
             <Button
               key={label}

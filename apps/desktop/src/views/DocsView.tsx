@@ -1,16 +1,19 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { BookText } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { DocList } from '../components/docs/DocList';
 import { DocPage } from '../components/docs/DocPage';
 import { NewDocDialog } from '../components/docs/NewDocDialog';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { docsKey, useDocList } from '../hooks/useDocs';
+import { docsKey, useDocList, useDocSearch } from '../hooks/useDocs';
 import type { DocFilter } from '../lib/docs';
 import { filterDocs } from '../lib/docs';
 import { Button } from '@/ui/button';
+
+// The most search hits a query asks the daemon for.
+const SEARCH_LIMIT = 50;
 
 // Team documents beside tasks: a filtered list on the left, the open doc on the right.
 // `initialDoc` and `initialAnchor` are what navigation names; `onSelectDoc` hears list picks.
@@ -64,11 +67,22 @@ export function DocsView({
     setMerge(null);
     onSelectDoc?.(id);
   };
-  const { docs, error } = useDocList(
-    messageAccess.canMessage ? client : null,
-    port,
-    { includeArchived: filter.status === 'archived', limit: 200 }
-  );
+  const listClient = messageAccess.canMessage ? client : null;
+  const { docs, error, loading } = useDocList(listClient, port, {
+    includeArchived: filter.status === 'archived',
+    limit: 200,
+  });
+  // A query also matches the docs whose text the daemon's search finds.
+  const query = filter.query.trim();
+  const hits = useDocSearch(listClient, port, query, SEARCH_LIMIT);
+  const shown = useMemo(() => {
+    if (query === '') return filterDocs(docs, filter);
+    const found = new Set(hits.map((h) => h.doc));
+    const byTitle = new Set(filterDocs(docs, filter).map((d) => d.id));
+    return filterDocs(docs, { ...filter, query: '' }).filter(
+      (d) => found.has(d.id) || byTitle.has(d.id)
+    );
+  }, [docs, filter, hits, query]);
   if (client === null) {
     return (
       <DaemonUnavailable
@@ -111,7 +125,8 @@ export function DocsView({
           }}
         />
         <DocList
-          docs={filterDocs(docs, filter)}
+          docs={shown}
+          loading={loading}
           filter={filter}
           onFilter={setFilter}
           selected={open}

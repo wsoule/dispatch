@@ -309,3 +309,19 @@ test('a preview image is fetched once across the page rerendering', async () => 
   await screen.findByRole('img', { name: 'shot' });
   expect(fetchDocAsset).toHaveBeenCalledTimes(1);
 });
+
+test('says the doc is loading until it arrives', async () => {
+  renderPage({
+    client: {
+      getDoc: () => new Promise(() => undefined),
+    } as unknown as Partial<ApiClient>,
+  });
+  expect(await screen.findByText('Loading the doc…')).toBeDefined();
+});
+
+test("a personal doc's owner gets its status buttons below decide tier", async () => {
+  renderPage({ canDecide: false, doc: doc({ scope: 'personal' }) });
+  await screen.findByLabelText('Editing auth');
+  expect(screen.getByRole('button', { name: 'Accept' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Archive' })).toBeDefined();
+});

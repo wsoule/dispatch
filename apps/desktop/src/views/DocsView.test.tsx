@@ -927,3 +927,65 @@ test('shows no Promote on a team doc', async () => {
   await screen.findByLabelText('Editing auth');
   expect(screen.queryByRole('button', { name: 'Promote to team' })).toBeNull();
 });
+
+// A DocsView over `listDocs` and `searchDocs` fakes, with every doc readable.
+function renderList(
+  listDocs: ApiClient['listDocs'],
+  searchDocs?: ApiClient['searchDocs']
+) {
+  const client = {
+    listDocs,
+    searchDocs,
+    getDoc: (ref: string) =>
+      Promise.resolve({ ...read, doc: ref === 'doc-2' ? other : summary }),
+    listDocRevisions: () => Promise.resolve({ revisions: [] }),
+  } as unknown as ApiClient;
+  const data = {
+    client,
+    port: 1,
+    messageAccess: { canDecide: true, canMessage: true, explanation: null },
+  } as unknown as DispatchProjectData;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DocsView data={data} />
+    </QueryClientProvider>
+  );
+}
+
+test('says the list is loading until it arrives', async () => {
+  renderList((() => new Promise(() => undefined)) as never);
+  expect(await screen.findByText('Loading docs…')).toBeDefined();
+  expect(screen.queryByText('No docs.')).toBeNull();
+});
+
+test('search finds a doc by its text through the daemon, not only its title', async () => {
+  const asked: string[] = [];
+  renderList(
+    (() => Promise.resolve({ docs: [summary, other], total: 2 })) as never,
+    ((q: string) => {
+      asked.push(q);
+      return Promise.resolve({
+        hits: [{ doc: 'doc-2', handle: 'plan', title: 'Plan' }],
+      });
+    }) as never
+  );
+  await screen.findByText('Auth refactor');
+  fireEvent.change(screen.getByLabelText('Search docs'), {
+    target: { value: 'rollout' },
+  });
+  expect(await screen.findByText('Plan')).toBeDefined();
+  await waitFor(() => expect(screen.queryByText('Auth refactor')).toBeNull());
+  expect(asked).toContain('rollout');
+});
+
+test('j and k move through the list', async () => {
+  renderList((() =>
+    Promise.resolve({ docs: [summary, other], total: 2 })) as never);
+  const first = await screen.findByRole('button', { name: 'Auth refactor' });
+  fireEvent.click(first);
+  await screen.findByLabelText('Editing auth');
+  fireEvent.keyDown(screen.getByRole('list', { name: 'Docs' }), { key: 'j' });
+  expect(await screen.findByLabelText('Editing plan')).toBeDefined();
+  fireEvent.keyDown(screen.getByRole('list', { name: 'Docs' }), { key: 'k' });
+  expect(await screen.findByLabelText('Editing auth')).toBeDefined();
+});
