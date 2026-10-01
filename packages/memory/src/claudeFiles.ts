@@ -31,6 +31,8 @@ export interface ParsedMemoryFile {
   type: string | undefined;
   modified: string | undefined;
   truncated: boolean;
+  // The whole body before the cut, when `truncated`: a personal doc may take it.
+  fullBody?: string;
 }
 
 // One exported file of a lineage directory, as written: `parsedHash` is what
@@ -172,13 +174,15 @@ function nonEmpty(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
-// Cut to the body limit on a line boundary, ending with a marker naming the bytes cut.
-function cutBody(body: string): { body: string; truncated: boolean } {
+/** `body` cut to the memory body limit on a line boundary, ending with
+ *  `marker(n)` for the n bytes cut; unchanged when it already fits. */
+export function cutMemoryBody(
+  body: string,
+  marker: (n: number) => string
+): string {
   const limit = MEMORY_LIMITS.bodyBytes;
   const size = utf8Bytes(body);
-  if (size <= limit) return { body, truncated: false };
-  const marker = (n: number) =>
-    `\n[truncated by Dispatch: ${n} bytes; long-form belongs in Docs]`;
+  if (size <= limit) return body;
   const room = limit - utf8Bytes(marker(size));
   const lines = body.split('\n');
   const kept: string[] = [];
@@ -192,8 +196,11 @@ function cutBody(body: string): { body: string; truncated: boolean } {
   // A first line longer than the room is cut mid-line rather than lost.
   if (kept.length === 0) kept.push(cutUtf8(lines[0], room));
   const text = kept.join('\n');
-  return { body: text + marker(size - utf8Bytes(text)), truncated: true };
+  return text + marker(size - utf8Bytes(text));
 }
+
+const PLAIN_MARKER = (n: number): string =>
+  `\n[truncated by Dispatch: ${n} bytes; long-form belongs in Docs]`;
 
 // Title and body as ingest reads them: frontmatter is informational, the
 // provenance line and untrustedBlock's escapes are removed. A MEMORY.md link's
@@ -231,7 +238,8 @@ export function parseMemoryFile(
     .map((line) => (ESCAPED_STRUCTURE.test(line) ? line.slice(1) : line))
     .join('\n')
     .trimEnd();
-  const { body, truncated } = cutBody(unescaped);
+  const body = cutMemoryBody(unescaped, PLAIN_MARKER);
+  const truncated = body !== unescaped;
   // A frontmatter fence left in the body by unparseable YAML is never the title.
   const firstLine = body
     .split('\n')
@@ -252,6 +260,7 @@ export function parseMemoryFile(
     type: nonEmpty(meta.type) ?? nonEmpty(front.type),
     modified: nonEmpty(meta.modified) ?? nonEmpty(front.modified),
     truncated,
+    ...(truncated ? { fullBody: unescaped } : {}),
   };
 }
 

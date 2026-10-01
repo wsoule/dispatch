@@ -369,3 +369,75 @@ describe('owner rules', () => {
     expect(service.promote(as(OWNER), '~checked').doc.unreviewed).toBe(false);
   });
 });
+
+describe('overflowFromMemory', () => {
+  const input = {
+    entryId: 'mem-01',
+    human: 'human:wyat',
+    identity: 'id-wyat',
+    title: 'Long note',
+    body: 'line\n'.repeat(3000),
+  };
+
+  it("creates one sealed personal doc per entry, owned by the entry's human, and keeps it current", () => {
+    const id = service.overflowFromMemory(input);
+    const read = service.read(as(OWNER), id);
+    expect(read.doc).toMatchObject({
+      scope: 'personal',
+      ns: 'p:id-wyat',
+      origin: 'memory:mem-01',
+      owner: { human: 'human:wyat', identity: 'id-wyat' },
+      head: { sealed: true },
+    });
+    expect(read.text).toBe('line\n'.repeat(3000));
+    expect(service.overflowFromMemory({ ...input, body: 'changed\n' })).toBe(
+      id
+    );
+    const again = service.read(as(OWNER), id);
+    expect(again.text).toBe('changed\n');
+    expect(again.doc.head.sealed).toBe(true);
+    expect(service.overflowFromMemory({ ...input, body: 'changed\n' })).toBe(
+      id
+    );
+    expect(service.read(as(OWNER), id).doc.head.n).toBe(again.doc.head.n);
+  });
+
+  it('is invisible to anyone but its owner, a decider and the owner’s teammates included', () => {
+    const id = service.overflowFromMemory(input);
+    expect(code(() => service.read(as(TEAMMATE), id))).toBe('not-found');
+    expect(code(() => service.read(as(AGENT), id))).toBe('ok');
+    expect(code(() => service.read(as(DECIDER), id))).not.toBe('ok');
+    expect(service.list(as(TEAMMATE), {}).docs.map((d) => d.id)).not.toContain(
+      id
+    );
+  });
+
+  it('never writes an entry’s doc for another human, nor into a team doc', () => {
+    service.overflowFromMemory(input);
+    for (const other of [
+      { ...input, identity: 'id-alice' },
+      { ...input, human: 'human:alice' },
+    ]) {
+      expect(code(() => service.overflowFromMemory(other))).toBe('forbidden');
+    }
+    expect(
+      code(() =>
+        service.overflowFromMemory({
+          ...input,
+          entryId: '../x',
+          human: 'agent:x',
+        })
+      )
+    ).toBe('invalid');
+  });
+
+  it('keeps a body over the doc cap to its first part', () => {
+    const big = `${'# Part\n'}${'word '.repeat(200_000)}\n`;
+    const id = service.overflowFromMemory({
+      ...input,
+      entryId: 'mem-02',
+      body: big,
+    });
+    expect(service.read(as(OWNER), id).text.length).toBeLessThan(big.length);
+  });
+});

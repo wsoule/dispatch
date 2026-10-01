@@ -73,6 +73,7 @@ import {
   renderImportReport,
 } from './ledgerImport.js';
 import type { LedgerImportReport } from './ledgerImport.js';
+import type { DocsOverflowPort } from './overflow.js';
 import { PersonalStores } from './personalStores.js';
 
 interface MemoryHealth {
@@ -121,6 +122,9 @@ export interface MemoryService extends MemoryPromptPort {
   refreshPreflight(): Promise<PreflightResult>;
   /** Boot: imports the owner's Claude notes unless this project already recorded an import. */
   importClaudeOnce(): Promise<ClaudeImportReport | null>;
+  /** Binds docs for long personal notes; once per project, re-runs a completed
+   *  import so notes cut before docs were there get their full text back. */
+  bindDocsOverflow(port: DocsOverflowPort): Promise<void>;
   /** Re-runs the owner's Claude-notes import; `from` or `none` answers an unconfirmed one. */
   importClaude(opts?: {
     from?: string;
@@ -338,6 +342,11 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       throw err;
     }
   };
+  // Docs bind after memory opens; until then long notes stay plainly cut.
+  let docsOverflow: DocsOverflowPort | null = null;
+  const overflowPort: DocsOverflowPort = {
+    overflow: (input) => docsOverflow?.overflow(input) ?? null,
+  };
   const claudeExport =
     engine === null || shared === null
       ? null
@@ -348,6 +357,8 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           personalStore: personalStoreOf,
           config,
           now,
+          docsOverflow: overflowPort,
+          projectKey: projectKeyOf(deps.rootDir),
         });
   // Scans leftover export directories and deletes those whose lineage closed.
   const sweepExports = async (): Promise<void> => {
@@ -716,6 +727,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           now: now(),
           home: claudeEnv.home,
           dryRun: opts.dryRun,
+          // The owner is identity `self`; overflow waits for docs to bind.
+          ...(docsOverflow === null
+            ? {}
+            : { overflow: overflowPort.overflow, identity: 'self' }),
         });
         if (writes && report.imported + report.updated > 0)
           host.changed({ scope: 'personal' });
@@ -796,6 +811,20 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       }
     },
     importClaude,
+    bindDocsOverflow: async (port) => {
+      docsOverflow = port;
+      const store = openPersonal('self');
+      const key = `claude-import-overflow:${projectKey}`;
+      if (store === null || store.meta(key) !== null) return;
+      try {
+        // Notes a completed import cut before docs were here; none yet means the
+        // coming first import already overflows.
+        if (importState(store, projectKey) === 'complete') await importClaude();
+        store.setMeta(key, 'done');
+      } catch (err) {
+        console.error('dispatchd: recovering cut Claude notes failed', err);
+      }
+    },
     recover: async () => {
       try {
         if (engine === null || shared === null) return { raised: 0, closed: 0 };

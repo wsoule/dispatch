@@ -1,6 +1,7 @@
 import {
   createMemoryIds,
   openMemoryDb,
+  parseMemoryFile,
   SqliteMemoryStore,
 } from '@dispatch/memory';
 import type { MemoryEntry, MemoryIds } from '@dispatch/memory';
@@ -386,6 +387,101 @@ describe('importClaudeNotes', () => {
     expect(other.meta('claude-import:aaaaaaaaaaaa')).toBe('complete');
     other.close();
   });
+
+  it('recovers a note the first import cut plainly once docs can take it, and leaves cross-project notes alone (docs Task 18)', async () => {
+    const DOC_ID = 'doc-01K3Z9R0000000000000000000';
+    const longProject = `---\nname: long\ndescription: long project note\nmetadata:\n  type: project\n---\n${'line of text\n'.repeat(1000)}`;
+    writeFileSync(join(memoryDir, 'long.md'), longProject);
+    writeFileSync(
+      join(memoryDir, 'long-pref.md'),
+      longProject
+        .replace('type: project', 'type: feedback')
+        .replace('long project note', 'long preference')
+    );
+    const found = await findClaudeMemorySource({
+      rootDir: checkout,
+      mainCheckout: checkout,
+      env: {},
+      home,
+    });
+    const base = {
+      source: found,
+      store,
+      projectKey: 'aaaaaaaaaaaa',
+      ownerRef: 'human:wyat',
+      ids,
+      now: NOW,
+      home,
+    };
+    await importClaudeNotes(base);
+    const cut = store
+      .listEntries()
+      .find((e) => e.title === 'long project note');
+    expect(cut?.body).toMatch(/long-form belongs in Docs\]$/);
+
+    const calls: string[] = [];
+    const overflow = (i: {
+      entryId: string;
+      identity: string;
+      human: string;
+    }) => {
+      calls.push(`${i.entryId}@${i.identity}@${i.human}`);
+      return DOC_ID;
+    };
+    // A dry run never creates a doc.
+    await importClaudeNotes({
+      ...base,
+      overflow,
+      identity: 'self',
+      dryRun: true,
+    });
+    expect(calls).toEqual([]);
+    const again = await importClaudeNotes({
+      ...base,
+      overflow,
+      identity: 'self',
+    });
+    expect(again.updated).toBe(1);
+    const recovered = store
+      .listEntries()
+      .find((e) => e.title === 'long project note');
+    expect(recovered?.id).toBe(cut?.id);
+    expect(recovered?.body).toMatch(
+      new RegExp(`full text in doc ${DOC_ID} of project aaaaaaaaaaaa\\]$`)
+    );
+    expect(recovered?.refs).toContainEqual({ type: 'doc', id: DOC_ID });
+    expect(calls).toEqual([`${cut?.id ?? ''}@self@human:wyat`]);
+    expect(
+      store.listEntries().find((e) => e.title === 'long preference')?.body
+    ).toMatch(/long-form belongs in Docs\]$/);
+    expect(
+      (await importClaudeNotes({ ...base, overflow, identity: 'self' })).updated
+    ).toBe(0);
+  });
+
+  it('overflows a long project note on its first import when docs are there', async () => {
+    const DOC_ID = 'doc-01K3Z9R0000000000000000001';
+    writeFileSync(
+      join(memoryDir, 'long.md'),
+      `---\nname: long\ndescription: first long note\nmetadata:\n  type: project\n---\n${'line of text\n'.repeat(1000)}`
+    );
+    const report = await importClaudeNotes({
+      source: { explicit: memoryDir },
+      store,
+      projectKey: 'aaaaaaaaaaaa',
+      ownerRef: 'human:wyat',
+      ids,
+      now: NOW,
+      home,
+      overflow: () => DOC_ID,
+      identity: 'self',
+    });
+    expect(report.problems).toEqual([]);
+    const entry = store
+      .listEntries()
+      .find((e) => e.title === 'first long note');
+    expect(entry?.body).toMatch(new RegExp(`full text in doc ${DOC_ID}`));
+  });
 });
 
 describe('the daemon’s one-time import', () => {
@@ -523,5 +619,55 @@ describe('the daemon’s one-time import', () => {
     expect(await post('?none=1')).toMatchObject({ state: 'complete' });
     expect(await post()).toMatchObject({ state: 'complete', source: null });
     expect(state()).toBe('complete');
+  });
+
+  it('overflows long project notes into the owner’s personal doc, and recovers ones cut before docs, once (docs Task 18)', async () => {
+    const key = projectKeyOf(root);
+    expect(self().meta(`claude-import-overflow:${key}`)).toBe('done');
+    const long = `---\nname: long\ndescription: long project note\nmetadata:\n  type: project\n---\n${'line of text\n'.repeat(1000)}`;
+    writeFileSync(join(memoryDir, 'long.md'), long);
+    const res = await fetch(`${base}/api/memory/import/claude`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    const entry = self()
+      .listEntries()
+      .find((e) => e.title === 'long project note');
+    const docRef = entry?.refs.find((r) => r.type === 'doc');
+    expect(entry?.body).toMatch(
+      new RegExp(`full text in doc ${docRef?.id} of project ${key}\\]$`)
+    );
+    const doc = await fetch(`${base}/api/docs/${docRef?.id}`);
+    expect(doc.status).toBe(200);
+    const read = (await doc.json()) as { doc: { scope: string }; text: string };
+    expect(read.doc.scope).toBe('personal');
+    expect(read.text).toBe('line of text\n'.repeat(1000).trimEnd());
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const theirs = await fetch(`${base}/api/docs/${docRef?.id}`, {
+      headers: { authorization: `Bearer ${ada}` },
+    });
+    expect(theirs.status).not.toBe(200);
+
+    // As a build before docs left it: the plain cut, no doc ref, no recovery mark.
+    const store = self();
+    const plain = parseMemoryFile(long, 'long.md').body;
+    if (entry === undefined) throw new Error('no entry');
+    store.updateEntry(
+      { ...entry, body: plain, refs: [], rev: entry.rev + 1 },
+      'agent:wyat/claude-code',
+      'import'
+    );
+    store.deleteMeta(`claude-import-overflow:${key}`);
+    await handle.stop();
+    await boot();
+    const deadline = Date.now() + 4000;
+    while (
+      self().meta(`claude-import-overflow:${key}`) !== 'done' &&
+      Date.now() < deadline
+    )
+      await new Promise((r) => setTimeout(r, 20));
+    const recovered = self().getEntry(entry.id);
+    expect(recovered?.body).toMatch(/full text in doc doc-/);
+    expect(recovered?.refs.some((r) => r.type === 'doc')).toBe(true);
   });
 });

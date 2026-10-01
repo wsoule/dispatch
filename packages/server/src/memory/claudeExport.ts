@@ -20,6 +20,7 @@ import type {
   ManifestRow,
   MemoryEngine,
   MemoryStore,
+  ParsedMemoryFile,
   Principal,
   SaveResult,
   ScannedFile,
@@ -49,6 +50,8 @@ import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { claudeMemoryDir, claudeMemoryRoot } from '../orchestrator/paths.js';
 import { runKind, runLineage } from '../orchestrator/types.js';
 import type { RunMeta } from '../orchestrator/types.js';
+import type { DocsOverflowPort } from './overflow.js';
+import { overflowBody } from './overflow.js';
 
 const MAX_DEPTH = 3;
 const MAX_FILES = 500;
@@ -146,6 +149,10 @@ export interface ClaudeExportDeps {
   config: () => MemoryConfig;
   now?: () => Date;
   pollMs?: number;
+  // Long personal notes keyed to this project hand their full text to a personal doc.
+  docsOverflow?: DocsOverflowPort;
+  // This project's key: only personal entries keyed to it may overflow.
+  projectKey?: string;
 }
 
 const sha256 = (bytes: Uint8Array | string): string =>
@@ -719,15 +726,18 @@ export class ClaudeExportManager {
           run,
           file,
           scan.text.get(file) ?? null,
-          () =>
-            engine.save(target.principal, {
+          async () => {
+            const result = await engine.save(target.principal, {
               scope: 'personal',
               kind: kindFromClaudeType(parsed.type),
               projectOnly: projectOnlyForClaudeType(parsed.type),
               title: parsed.title,
               body: parsed.body,
               cause: 'ingest',
-            }),
+            });
+            await this.overflow(target.principal, result, parsed);
+            return result;
+          },
           (result, current) => {
             if (result === null) {
               run.refusedNew.push(refusedKey(file, hash));
@@ -741,7 +751,7 @@ export class ClaudeExportManager {
                 file,
                 store: this.identityOf(target.principal) ?? 'shared',
                 memoryId: result.id,
-                rev: 1,
+                rev: this.personalRev(target.principal, result.id) ?? 1,
                 parsedHash: hash,
               });
           }
@@ -778,13 +788,18 @@ export class ClaudeExportManager {
         run,
         row.file,
         scan.text.get(row.file) ?? null,
-        () =>
-          engine.edit(target.principal, row.memoryId, {
+        async () => {
+          const result = await engine.edit(target.principal, row.memoryId, {
             title: change.parsed.title,
             body: change.parsed.body,
             baseRev: row.rev,
             cause: 'ingest',
-          }),
+          });
+          // A shared entry's change is a proposal: it never points at a personal doc.
+          if (row.store !== 'shared')
+            await this.overflow(target.principal, result, change.parsed);
+          return result;
+        },
         (result, current) => {
           if (result?.status === 'proposed') summary.proposed += 1;
           if (result?.status === 'active') summary.edited += 1;
@@ -881,6 +896,44 @@ export class ClaudeExportManager {
           if (result?.status === 'active') summary.saved += 1;
         }
       );
+  }
+
+  // A personal entry's current revision, from the principal's own store.
+  private personalRev(principal: Principal, id: string): number | null {
+    return this.deps.personalStore(principal)?.getEntry(id)?.rev ?? null;
+  }
+
+  // After a personal save or edit that cut a long note, hands the full text to
+  // a personal doc and re-edits the entry to point at it (overflowBody's rule).
+  private async overflow(
+    principal: Principal,
+    result: SaveResult,
+    parsed: ParsedMemoryFile
+  ): Promise<void> {
+    const { docsOverflow, projectKey, engine } = this.deps;
+    if (
+      docsOverflow === undefined ||
+      projectKey === undefined ||
+      parsed.fullBody === undefined ||
+      result.status !== 'active'
+    )
+      return;
+    const entry = this.deps.personalStore(principal)?.getEntry(result.id);
+    const operator = engine.viewer(principal).operator;
+    if (entry === undefined || entry === null || operator === null) return;
+    const out = overflowBody(entry, parsed, {
+      projectKey,
+      human: operator.human,
+      identity: operator.identity,
+      port: docsOverflow,
+    });
+    if (out === null) return;
+    await engine.edit(principal, entry.id, {
+      body: out.body,
+      refs: out.refs,
+      baseRev: entry.rev,
+      cause: 'ingest',
+    });
   }
 
   // The entry's revision after an ingested edit, from the store the row names.

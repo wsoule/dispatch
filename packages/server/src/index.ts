@@ -95,6 +95,7 @@ import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
 import type { PreflightResult } from './memory/claudeModes.js';
+import { docsOverflowPort } from './memory/overflow.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
@@ -1408,6 +1409,8 @@ async function bootServer(
   orchestrator.setMemoryPort(memory);
   // Before any run starts: the owner's runs stay in native mode until their
   // Claude notes are imported, once per project.
+  // Before the first import, so long personal notes go straight to a doc.
+  await memory.bindDocsOverflow(docsOverflowPort(docs.service));
   await memory.importClaudeOnce();
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget

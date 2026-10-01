@@ -22,6 +22,8 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import { readMemoryTree } from './claudeExport.js';
+import type { DocsOverflowPort } from './overflow.js';
+import { overflowBody } from './overflow.js';
 
 interface ClaudeImportSource {
   dir: string;
@@ -65,6 +67,8 @@ interface Note {
   projectKey: string | null;
   title: string;
   body: string;
+  // The whole text when `body` was cut: a personal doc may take it.
+  fullBody?: string;
   createdAt: string;
 }
 
@@ -344,6 +348,7 @@ function notesOf(
       projectKey: projectOnlyForClaudeType(parsed.type) ? projectKey : null,
       title: parsed.title,
       body: parsed.body,
+      ...(parsed.fullBody === undefined ? {} : { fullBody: parsed.fullBody }),
       createdAt: createdAtOf(parsed.modified, join(dir, file), at),
     });
   }
@@ -361,6 +366,35 @@ function notesOf(
     });
   }
   return notes;
+}
+
+// What a long project note's entry holds once its full text is in a personal
+// doc (overflowBody's rule), or null when it stays plain: no port, a dry run,
+// a cross-project note, or docs could not take it.
+function overflowed(
+  input: ImportInput,
+  note: Note,
+  entry: Pick<MemoryEntry, 'id' | 'refs'>
+): { body: string; refs: MemoryEntry['refs'] } | null {
+  const { overflow, identity } = input;
+  if (overflow === undefined || identity === undefined || input.dryRun === true)
+    return null;
+  return overflowBody(
+    {
+      id: entry.id,
+      scope: 'personal',
+      projectKey: note.projectKey,
+      title: note.title,
+      refs: entry.refs,
+    },
+    note,
+    {
+      projectKey: input.projectKey,
+      human: input.ownerRef,
+      identity,
+      port: { overflow },
+    }
+  );
 }
 
 // Writes the notes into the store in one transaction; a dry run counts, then rolls back.
@@ -383,7 +417,13 @@ function applyNotes(
         const existing = store.entryByOrigin(note.origin);
         if (existing !== null) {
           const last = lastImported(store, existing);
-          if (last.title === note.title && last.body === note.body) {
+          // A note cut plainly before docs could take it is recovered here: its
+          // file is unchanged, but what the entry should hold now is not.
+          const over = overflowed(input, note, existing);
+          if (
+            last.title === note.title &&
+            last.body === (over?.body ?? note.body)
+          ) {
             report.unchanged += 1;
             continue;
           }
@@ -391,7 +431,8 @@ function applyNotes(
             {
               ...existing,
               title: note.title,
-              body: note.body,
+              body: over?.body ?? note.body,
+              refs: over?.refs ?? existing.refs,
               trust: 'agent',
               rev: existing.rev + 1,
               updatedAt: at,
@@ -409,7 +450,7 @@ function applyNotes(
           report.duplicates += 1;
           continue;
         }
-        insertFresh(
+        const fresh = insertFresh(
           store,
           ids,
           nowMs,
@@ -433,6 +474,20 @@ function applyNotes(
           author,
           'import'
         );
+        // The entry's id names its doc, so the doc follows the insert.
+        const over = overflowed(input, note, fresh);
+        if (over !== null)
+          store.updateEntry(
+            {
+              ...fresh,
+              body: over.body,
+              refs: over.refs,
+              rev: fresh.rev + 1,
+              updatedAt: at,
+            },
+            author,
+            'import'
+          );
         report.imported += 1;
       }
       if (input.dryRun === true) throw ROLLBACK;
@@ -482,6 +537,9 @@ export function importClaudeNotes(input: {
   now: Date;
   home: string;
   dryRun?: boolean;
+  // With both set, long project notes overflow into the owner's personal doc.
+  overflow?: DocsOverflowPort['overflow'];
+  identity?: string;
 }): Promise<ClaudeImportReport> {
   return Promise.resolve().then(() => importNow(input));
 }

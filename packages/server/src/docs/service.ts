@@ -92,7 +92,7 @@ import type {
   ImportText,
   NamePlan,
 } from './transfer.js';
-import { nameKey, planImport } from './transfer.js';
+import { nameKey, planImport, splitForCap } from './transfer.js';
 
 // Every docs rule in one place: who may do what, the write path with open
 // revisions and three-way merges, links, lifecycle, reads, lists and search.
@@ -2194,6 +2194,77 @@ export class DocsService {
       origin,
       head
     );
+  }
+
+  // ---- memory overflow (v1) -------------------------------------------------
+
+  // The personal doc holding a memory entry's full text, created for the
+  // entry's human and kept current; one doc per entry (origin memory:<id>).
+  // Memory calls it only for that human's own project-keyed personal entries.
+  overflowFromMemory(input: {
+    entryId: string;
+    human: string;
+    identity: string;
+    title: string;
+    body: string;
+  }): string {
+    const { entryId, human, identity } = input;
+    if (!/^mem-[0-9A-Za-z]+$/.test(entryId))
+      throw new DocsError('invalid', 'not a memory entry id', 'entryId');
+    if (!human.startsWith('human:') || identity === '')
+      throw new DocsError(
+        'invalid',
+        'overflow needs the entry’s human',
+        'human'
+      );
+    const owner: Operator = { human, identity };
+    const actor: DocsActor = {
+      principal: { address: human, canDecide: false, kind: 'human' },
+      address: human,
+      kind: 'human',
+      decider: false,
+      runKind: null,
+      taskId: null,
+      runTaskId: null,
+      runId: null,
+      operator: owner,
+      a2aRun: false,
+    };
+    const ns = `p:${identity}`;
+    const body = splitForCap(normalizeDocText(input.body))[0] ?? '';
+    const oneLine = cutUtf8(
+      input.title.replace(/\s+/g, ' ').trim(),
+      DOCS_LIMITS.titleBytes
+    ).trim();
+    const title = oneLine !== '' ? oneLine : 'Memory note';
+    const origin = `memory:${entryId}`;
+    const existing = this.store().docByOrigin(origin);
+    let docId: string;
+    if (existing === null) {
+      docId = this.createDoc(
+        actor,
+        { title, body, scope: 'personal', links: [] },
+        origin
+      ).doc.id;
+    } else {
+      // An entry's doc is its own human's; it never moves to anyone else.
+      if (
+        existing.scope !== 'personal' ||
+        existing.ns !== ns ||
+        existing.ownerHuman !== human
+      )
+        throw forbidden('that memory entry’s doc belongs to someone else');
+      docId = existing.id;
+      this.commitDirect(actor, existing, {
+        body,
+        title,
+        summary: `memory ${entryId} changed`,
+        cause: 'save',
+      });
+    }
+    const doc = this.store().doc(docId);
+    if (doc !== null) this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    return docId;
   }
 
   // ---- images (v1) -----------------------------------------------------------

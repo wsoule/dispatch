@@ -234,6 +234,15 @@ describe('importLedger', () => {
     expect(e.body).toMatch(/\[truncated on import: \d+ bytes\]$/);
   });
 
+  it('truncates a long ledger lesson plainly: team entries never point at a doc (docs Task 18)', () => {
+    const store = fresh();
+    run(store, [row({ detail: 'x'.repeat(20_000) })]);
+    const [entry] = store.listEntries();
+    expect(entry.scope).toBe('team');
+    expect(entry.body).toMatch(/\[truncated on import: \d+ bytes\]$/);
+    expect(entry.refs.some((r) => r.type === 'doc')).toBe(false);
+  });
+
   it('writes nothing on a dry run but reports the same counts', () => {
     const store = fresh();
     const report = run(store, [row(), row()], { dryRun: true });

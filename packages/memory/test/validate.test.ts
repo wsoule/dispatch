@@ -39,6 +39,14 @@ describe('validateMemoryInput', () => {
     });
   });
 
+  it('points an over-long body at doc_save', () => {
+    expect(() =>
+      validateMemoryInput({ ...base, body: 'x'.repeat(8193) })
+    ).toThrow(
+      'long-form belongs in a doc: doc_save it, then ref it from a short entry'
+    );
+  });
+
   it('keeps preferences personal and conventions shared', () => {
     expect(
       failure(() => validateMemoryInput({ ...base, kind: 'preference' })).field

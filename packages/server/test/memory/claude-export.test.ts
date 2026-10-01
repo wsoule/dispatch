@@ -845,3 +845,93 @@ describe('openMemory and Claude export directories', () => {
     }
   });
 });
+
+describe('overflow into docs (docs Task 18)', () => {
+  const DOC_ID = 'doc-01K3Z9R0000000000000000000';
+  const longNote = (type: string) =>
+    `---\ndescription: a long ${type} note\nmetadata:\n  type: ${type}\n---\n${'line of text\n'.repeat(1000)}`;
+  const calls: {
+    entryId: string;
+    human: string;
+    identity: string;
+    title: string;
+    body: string;
+  }[] = [];
+  const docsOverflow = {
+    overflow: (input: (typeof calls)[number]) => {
+      calls.push(input);
+      return DOC_ID;
+    },
+  };
+  let overflowMgr: ClaudeExportManager;
+  beforeEach(() => {
+    calls.length = 0;
+    overflowMgr = managerWith({ docsOverflow, projectKey });
+  });
+
+  it('overflows a project-keyed personal note into a personal doc and refs it by id and project', async () => {
+    const { dir } = overflowMgr.prepare(target);
+    writeFileSync(join(dir, 'long.md'), longNote('project'));
+    expect((await overflowMgr.ingest(target)).saved).toBe(1);
+    const [entry] = personal('self').listEntries();
+    expect(entry.projectKey).toBe(projectKey);
+    expect(entry.body).toMatch(
+      new RegExp(
+        `\\[truncated by Dispatch: \\d+ bytes; full text in doc ${DOC_ID} of project ${projectKey}\\]$`
+      )
+    );
+    expect(entry.refs).toContainEqual({ type: 'doc', id: DOC_ID });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      entryId: entry.id,
+      human: 'human:wyat',
+      identity: 'self',
+      title: 'a long project note',
+    });
+    expect(calls[0].body).toBe('line of text\n'.repeat(1000).trimEnd());
+    // The manifest names the entry's revision after the overflow edit.
+    const [row] = shared.manifest(lineage);
+    expect(row.rev).toBe(entry.rev);
+  });
+
+  it('truncates a cross-project personal note plainly and never calls docs', async () => {
+    const { dir } = overflowMgr.prepare(target);
+    writeFileSync(join(dir, 'long.md'), longNote('feedback'));
+    await overflowMgr.ingest(target);
+    const [entry] = personal('self').listEntries();
+    expect(entry.projectKey).toBeNull();
+    expect(entry.body).toMatch(
+      /\[truncated by Dispatch: \d+ bytes; long-form belongs in Docs\]$/
+    );
+    expect(entry.refs.some((r) => r.type === 'doc')).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("truncates a team entry's supersede proposal plainly: a shared entry never points at a personal doc", async () => {
+    const team = saveTeam('team lesson');
+    const { dir } = overflowMgr.prepare(target);
+    const file = join(dir, `${team.id}.md`);
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace(
+        /\nbody of team lesson\n/,
+        `\n${'line of text\n'.repeat(1000)}`
+      )
+    );
+    expect(await overflowMgr.ingest(target)).toMatchObject({ proposed: 1 });
+    const [proposal] = shared.listProposals({ states: ['open'] });
+    expect(proposal.action).toBe('supersede');
+    expect(proposal.content?.body).toMatch(/long-form belongs in Docs\]$/);
+    expect(JSON.stringify(proposal)).not.toContain(DOC_ID);
+    expect(calls).toEqual([]);
+  });
+
+  it('keeps a long personal note plain without the docs port', async () => {
+    const { dir } = mgr.prepare(target);
+    writeFileSync(join(dir, 'long.md'), longNote('project'));
+    await mgr.ingest(target);
+    expect(personal('self').listEntries()[0].body).toMatch(
+      /long-form belongs in Docs\]$/
+    );
+  });
+});
