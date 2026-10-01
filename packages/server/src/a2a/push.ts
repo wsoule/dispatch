@@ -197,10 +197,18 @@ export class PushWorker {
       opts.force === true ? null : (this.last.get(row.id) ?? null),
       next
     );
-    if (TERMINAL_STATES.has(state)) this.last.delete(row.id);
+    const final = TERMINAL_STATES.has(state);
+    if (final) this.last.delete(row.id);
     else this.last.set(row.id, next);
-    for (const config of configs)
+    for (const config of configs) {
       for (const event of events) this.chain(config, event);
+      // Once the final event is delivered or given up, the config (and its
+      // secrets) has nothing left to do.
+      if (final)
+        this.then(config, () => {
+          this.deps.store.deletePushConfig(config.taskId, config.id);
+        });
+    }
   }
 
   async idle(): Promise<void> {
@@ -209,9 +217,14 @@ export class PushWorker {
   }
 
   private chain(config: PushConfigRow, event: StreamResponseJson): void {
+    this.then(config, () => this.attempt(config, event, 0));
+  }
+
+  // Appends `step` to the config's chain, after everything already queued.
+  private then(config: PushConfigRow, step: () => Promise<void> | void): void {
     const key = `${config.taskId} ${config.id}`;
     const next: Promise<void> = (this.chains.get(key) ?? Promise.resolve())
-      .then(() => this.attempt(config, event, 0))
+      .then(step)
       .catch((err: unknown) =>
         console.error(
           `a2a: push to config ${config.id} of ${config.taskId} failed: ${err instanceof Error ? err.name : 'error'}`

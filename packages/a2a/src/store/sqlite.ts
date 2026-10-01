@@ -145,7 +145,7 @@ export interface A2AStore {
   getPushConfig(taskId: string, id: string): PushConfigRow | null;
   // Enabled configs only, oldest first.
   pushConfigsOf(taskId: string): PushConfigRow[];
-  // Enabled configs only.
+  // Enabled configs on the client's unfinished tasks only.
   countPushConfigs(client: Address): number;
   deletePushConfig(taskId: string, id: string): boolean;
   // Every config of one client (a revoked one); returns how many.
@@ -738,7 +738,8 @@ export class SqliteA2AStore implements A2AStore {
     return Number(
       queryOne<{ n: number }>(
         this.db,
-        'SELECT COUNT(*) AS n FROM push_configs WHERE client = ? AND disabled_at IS NULL',
+        `SELECT COUNT(*) AS n FROM push_configs p JOIN tasks t ON t.id = p.task_id
+         WHERE p.client = ? AND p.disabled_at IS NULL AND t.state NOT IN (${TERMINAL_SQL})`,
         [client]
       )?.n ?? 0
     );

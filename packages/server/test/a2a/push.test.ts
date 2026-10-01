@@ -54,6 +54,43 @@ async function ask(clientMessageId = 'c-1'): Promise<string> {
   return opened.taskId;
 }
 const configs = () => f.port.pushConfigs;
+// Re-sends a still-open task's current state, as any non-final change would.
+async function nudge(id: string): Promise<void> {
+  f.push.onChanged(f.store.getTask(id)!, (await f.port.facts(f.caller, id))!, {
+    force: true,
+  });
+}
+// An A2A task row the client owns, in `state`, for seeding configs.
+function seedTask(id: string, state: 'WORKING' | 'COMPLETED'): void {
+  const at = new Date().toISOString();
+  f.store.insertTask({
+    id,
+    client: f.caller.address,
+    contextId: id,
+    skill: 'ask',
+    dispatchTask: null,
+    gate: null,
+    state,
+    statusAt: at,
+    canceledAt: null,
+    declinedAt: null,
+    createdAt: at,
+  });
+}
+function seedConfig(taskId: string, id: string): void {
+  f.store.putPushConfig({
+    id,
+    taskId,
+    client: f.caller.address,
+    url: HOOK,
+    token: null,
+    authScheme: null,
+    authCredentials: null,
+    failures: 0,
+    disabledAt: null,
+    createdAt: new Date().toISOString(),
+  });
+}
 const HOOK = 'https://hooks.example.com/a2a';
 
 describe('push configs', () => {
@@ -79,24 +116,25 @@ describe('push configs', () => {
     });
   });
 
-  it('caps a client at fifty configs across its tasks', async () => {
+  it('caps a client at fifty configs across its live tasks', async () => {
     const id = await ask();
-    for (let i = 0; i < PUSH_LIMITS.perClient; i++)
-      f.store.putPushConfig({
-        id: `old-${i}`,
-        taskId: `m-elsewhere-${i}`,
-        client: f.caller.address,
-        url: HOOK,
-        token: null,
-        authScheme: null,
-        authCredentials: null,
-        failures: 0,
-        disabledAt: null,
-        createdAt: new Date().toISOString(),
-      });
+    for (let i = 0; i < PUSH_LIMITS.perClient; i++) {
+      seedTask(`m-live-${i}`, 'WORKING');
+      seedConfig(`m-live-${i}`, 'hook');
+    }
     await expect(
       configs().create(f.caller, id, { id: 'one-more', url: HOOK })
     ).rejects.toMatchObject({ code: 'limited' });
+  });
+
+  it('never counts configs on finished or missing tasks toward the cap', async () => {
+    const id = await ask();
+    for (let i = 0; i < 17; i++) {
+      seedTask(`m-done-${i}`, 'COMPLETED');
+      for (const n of [1, 2, 3]) seedConfig(`m-done-${i}`, `hook-${n}`);
+    }
+    for (let i = 0; i < 10; i++) seedConfig(`m-gone-${i}`, 'hook');
+    await configs().create(f.caller, id, { id: 'next', url: HOOK });
   });
 
   it('delivers the change as a StreamResponse with the client’s credentials, pinned to the checked address', async () => {
@@ -114,22 +152,30 @@ describe('push configs', () => {
     expect(posts[0].headers.get('authorization')).toBe('Bearer cred');
     expect(posts[0].headers.get('x-a2a-notification-token')).toBe('tok');
     expect(JSON.stringify(posts[0].body)).toContain('TASK_STATE_COMPLETED');
+    // Delivered the final event: the config and its secrets are gone.
+    await f.push.idle();
+    expect(f.store.getPushConfig(id, 'hook')).toBeNull();
   });
 
-  it('retries three times, and disables a config after ten consecutive failures', async () => {
+  it('deletes a finished task’s configs even when its final event fails', async () => {
     const id = await ask();
     await configs().create(f.caller, id, { id: 'hook', url: HOOK });
     failWith = 500;
     await f.messaging.engine.reply(id, { body: 'done' }, HUMAN);
     await waitFor(() => posts.length === 4);
     await f.push.idle();
+    expect(f.store.getPushConfig(id, 'hook')).toBeNull();
+  });
+
+  it('retries three times, and disables a config after ten consecutive failures', async () => {
+    const id = await ask();
+    await configs().create(f.caller, id, { id: 'hook', url: HOOK });
+    failWith = 500;
+    await nudge(id);
+    await waitFor(() => posts.length === 4);
+    await f.push.idle();
     expect(f.store.getPushConfig(id, 'hook')?.failures).toBe(4);
-    for (let i = 0; i < 6; i++)
-      f.push.onChanged(
-        f.store.getTask(id)!,
-        (await f.port.facts(f.caller, id))!,
-        { force: true }
-      );
+    for (let i = 0; i < 2; i++) await nudge(id);
     await f.push.idle();
     expect(f.store.getPushConfig(id, 'hook')?.disabledAt).not.toBeNull();
   });
@@ -138,7 +184,7 @@ describe('push configs', () => {
     const id = await ask();
     await configs().create(f.caller, id, { id: 'hook', url: HOOK });
     addresses = () => Promise.resolve(['169.254.169.254']);
-    await f.messaging.engine.reply(id, { body: 'done' }, HUMAN);
+    await nudge(id);
     await waitFor(() => f.store.getPushConfig(id, 'hook')?.disabledAt !== null);
     await f.push.idle();
     expect(posts).toEqual([]);
@@ -153,7 +199,7 @@ describe('push configs', () => {
       lookups++ < 2
         ? Promise.reject(new Error('EAI_AGAIN'))
         : Promise.resolve(['93.184.216.34']);
-    await f.messaging.engine.reply(id, { body: 'done' }, HUMAN);
+    await nudge(id);
     await waitFor(() => posts.length === 1);
     await f.push.idle();
     expect(f.store.getPushConfig(id, 'hook')).toMatchObject({
@@ -178,7 +224,7 @@ describe('push configs', () => {
         authentication: { scheme: 'Bearer', credentials: 'SECRET-CRED' },
       });
       addresses = () => Promise.resolve(['10.0.0.5']);
-      await f.messaging.engine.reply(id, { body: 'done' }, HUMAN);
+      await nudge(id);
       await waitFor(
         () => f.store.getPushConfig(id, 'hook')?.disabledAt !== null
       );

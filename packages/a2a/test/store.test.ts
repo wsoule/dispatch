@@ -329,8 +329,10 @@ describe('push_configs of a client', () => {
 
 describe('push_configs', () => {
   it('counts, records results, disables at ten failures and deletes once', () => {
+    store.insertTask(row('m-1'));
     store.putPushConfig(push('a'));
     store.putPushConfig(push('b'));
+    store.putPushConfig(push('gone', { taskId: 'm-missing' }));
     expect(store.countPushConfigs(CLIENT)).toBe(2);
     expect(store.getPushConfig('m-1', 'a')).toMatchObject({
       token: 'tok',
@@ -342,17 +344,19 @@ describe('push_configs', () => {
       store.recordPushResult('m-1', 'a', true, '2026-09-25T10:00:00.000Z')
         ?.failures
     ).toBe(0);
-    let row: PushConfigRow | null = null;
+    let last: PushConfigRow | null = null;
     for (let i = 0; i < 10; i++)
-      row = store.recordPushResult(
+      last = store.recordPushResult(
         'm-1',
         'a',
         false,
         '2026-09-25T11:00:00.000Z'
       );
-    expect(row?.disabledAt).toBe('2026-09-25T11:00:00.000Z');
+    expect(last?.disabledAt).toBe('2026-09-25T11:00:00.000Z');
     expect(store.pushConfigsOf('m-1').map((c) => c.id)).toEqual(['b']);
     expect(store.countPushConfigs(CLIENT)).toBe(1);
+    store.updateTask('m-1', { state: 'COMPLETED' });
+    expect(store.countPushConfigs(CLIENT)).toBe(0);
     store.disablePushConfig('m-1', 'b', '2026-09-25T12:00:00.000Z');
     expect(store.pushConfigsOf('m-1')).toEqual([]);
     expect(store.deletePushConfig('m-1', 'a')).toBe(true);
