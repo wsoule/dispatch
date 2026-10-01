@@ -665,7 +665,7 @@ async function serveJwks(
   if (wait !== null) return rateLimited(wait);
   const jwks = (await port.card()).jwks;
   if (jwks === undefined) return new Response('not found', { status: 404 });
-  return new Response(JSON.stringify(jwks), {
+  return new Response(req.method === 'HEAD' ? null : JSON.stringify(jwks), {
     status: 200,
     headers: {
       'content-type': 'application/json',

@@ -71,6 +71,17 @@ behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced
   always carries the whole artifact (`append: false`, `lastChunk: true`), so
   replace your copy of it rather than appending.
 
+## Signed card
+
+dispatchd signs its card with an ES256 key kept per project in the 0600
+`~/.dispatch/credentials.json`, and serves the public key at
+`/.well-known/jwks.json`; the signature's `kid` is the key's RFC 7638
+thumbprint. A key is made only when none is stored. A stored key that is
+malformed or does not work, or a credentials file that cannot be parsed, turns
+signing off with a warning in the listener status, and nothing is written.
+Losing the credentials file makes a new key, so the `kid` changes and clients
+that pinned the old key must fetch the JWKS again.
+
 ## Standalone host
 
 Use `dispatch a2a serve` when the public A2A listener should run on another

@@ -316,8 +316,6 @@ export class DaemonBridgePort implements BridgePort {
 
   // `req` comes only from a trusted host (T36), never from a request's Host
   // or X-Forwarded-* headers; the listener's card uses the configured URL.
-  // `req` comes only from a trusted host (T36), never from a request's Host
-  // or X-Forwarded-* headers; the listener's card uses the configured URL.
   async card(req: CardRequest = {}): Promise<CardInputs> {
     const policy = this.deps.policy();
     const base = this.deps.cardBase();

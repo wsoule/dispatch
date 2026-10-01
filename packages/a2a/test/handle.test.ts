@@ -596,6 +596,20 @@ describe('the JWKS and the card URL (P4)', () => {
     });
   });
 
+  it('answers HEAD on the JWKS with its headers and no body', async () => {
+    port.cardInputs = {
+      ...port.cardInputs,
+      jwks: { keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'k1' }] },
+    };
+    const res = await call('/.well-known/jwks.json', {
+      method: 'HEAD',
+      headers: bare,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/json');
+    expect(await res.text()).toBe('');
+  });
+
   it('never builds the card URL from Host or X-Forwarded-* headers', async () => {
     const res = await call('/.well-known/agent-card.json', {
       headers: {
