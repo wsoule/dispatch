@@ -329,6 +329,7 @@ export {
   clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
+  CredentialsUnreadableError,
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,
@@ -345,6 +346,7 @@ export type {
   CredentialsFile,
   PeerCredential,
   ProjectCredentials,
+  SigningKeyRead,
 } from './credentials.js';
 export * from './linearContainers.js';
 export * from './linearFields.js';

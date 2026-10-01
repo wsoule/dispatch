@@ -56,24 +56,39 @@ export function credentialsPath(): string {
   return resolve(credentialsHome(), '.dispatch', 'credentials.json');
 }
 
+/** The credentials file exists but cannot be read as JSON; nothing may write
+ *  over it, since it holds every project's secrets. Never quotes the file. */
+export class CredentialsUnreadableError extends Error {
+  constructor() {
+    super(
+      `${credentialsPath()} cannot be parsed; fix or move it before Dispatch stores another secret`
+    );
+    this.name = 'CredentialsUnreadableError';
+  }
+}
+
+// What the file holds: absent, a JSON object, or something unreadable.
+function loadCredentials():
+  | { kind: 'absent' }
+  | { kind: 'ok'; file: CredentialsFile }
+  | { kind: 'unreadable' } {
+  const path = credentialsPath();
+  if (!existsSync(path)) return { kind: 'absent' };
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+      return { kind: 'unreadable' };
+    return { kind: 'ok', file: parsed as CredentialsFile };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
 // A missing or corrupt file reads as "no credentials stored" rather than throwing,
 // so a damaged file degrades to "not connected" instead of breaking every read.
 export function readCredentials(): CredentialsFile {
-  const path = credentialsPath();
-  if (!existsSync(path)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      return {};
-    }
-    return parsed as CredentialsFile;
-  } catch {
-    return {};
-  }
+  const loaded = loadCredentials();
+  return loaded.kind === 'ok' ? loaded.file : {};
 }
 
 // Writes to a sibling temp file and renames it onto the live path, so a crash or
@@ -83,6 +98,10 @@ export function readCredentials(): CredentialsFile {
 // is set on both the create and the overwrite path — writeFileSync's `mode` is
 // ignored when the file already exists, so the chmod is explicit.
 function writeCredentials(file: CredentialsFile): void {
+  // Every writer comes through here: a file that cannot be parsed is never
+  // replaced, or every project's secrets would be lost to one write.
+  if (loadCredentials().kind === 'unreadable')
+    throw new CredentialsUnreadableError();
   const path = credentialsPath();
   mkdirSync(resolve(path, '..'), { recursive: true });
   const tmpPath = `${path}.${process.pid}.tmp`;
@@ -225,19 +244,31 @@ export function clearPeerCredential(rootDir: string, alias: string): void {
   writeProjectEntry(file, key, next);
 }
 
-/** The project's card-signing key as a private JWK, or null when absent or malformed. */
-export function readA2ASigningKey(
-  rootDir: string
-): Record<string, string> | null {
+export type SigningKeyRead =
+  | { status: 'absent' }
+  | { status: 'ok'; jwk: Record<string, string> }
+  // The slot holds something that is not a JWK of strings.
+  | { status: 'malformed' }
+  // The credentials file itself cannot be parsed.
+  | { status: 'unreadable' };
+
+/** The project's card-signing key. Only 'absent' means a new key may be made. */
+export function readA2ASigningKey(rootDir: string): SigningKeyRead {
+  const loaded = loadCredentials();
+  if (loaded.kind === 'unreadable') return { status: 'unreadable' };
+  if (loaded.kind === 'absent') return { status: 'absent' };
   const raw: unknown =
-    readCredentials().projects?.[normalizeProjectPath(rootDir)]?.a2a
-      ?.signingKey;
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.signingKey;
+  if (raw === undefined) return { status: 'absent' };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
-    return null;
+    return { status: 'malformed' };
   const entries = Object.entries(raw as Record<string, unknown>);
   if (entries.length === 0 || entries.some(([, v]) => typeof v !== 'string'))
-    return null;
-  return Object.fromEntries(entries) as Record<string, string>;
+    return { status: 'malformed' };
+  return {
+    status: 'ok',
+    jwk: Object.fromEntries(entries) as Record<string, string>,
+  };
 }
 
 /** Stores the project's card-signing key in the 0600 credentials file. */

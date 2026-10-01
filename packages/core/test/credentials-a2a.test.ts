@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -14,6 +15,7 @@ import {
   clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
+  CredentialsUnreadableError,
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,
@@ -119,10 +121,10 @@ describe('the A2A card-signing key', () => {
   const KEY = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', d: 'd' };
 
   it('round-trips per project in the 0600 file', () => {
-    expect(readA2ASigningKey(ROOT)).toBeNull();
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'absent' });
     writeA2ASigningKey(ROOT, KEY);
-    expect(readA2ASigningKey(ROOT)).toEqual(KEY);
-    expect(readA2ASigningKey('/work/other')).toBeNull();
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: KEY });
+    expect(readA2ASigningKey('/work/other')).toEqual({ status: 'absent' });
     expect(statSync(credentialsPath()).mode & 0o777).toBe(0o600);
   });
 
@@ -130,17 +132,58 @@ describe('the A2A card-signing key', () => {
     writePeerCredential(ROOT, 'acme', { scheme: 'bearer', token: 't' });
     writeA2ASigningKey(ROOT, KEY);
     writePeerCredential(ROOT, 'beta', { scheme: 'bearer', token: 'b' });
-    expect(readA2ASigningKey(ROOT)).toEqual(KEY);
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: KEY });
     clearPeerCredential(ROOT, 'acme');
     clearPeerCredential(ROOT, 'beta');
-    expect(readA2ASigningKey(ROOT)).toEqual(KEY);
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: KEY });
     expect(readPeerCredential(ROOT, 'acme')).toBeNull();
   });
 
-  it('reads a malformed key as none', () => {
+  it('tells a malformed key apart from an absent one', () => {
     writeRaw({ a2a: { signingKey: { kty: 7 } } });
-    expect(readA2ASigningKey(ROOT)).toBeNull();
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'malformed' });
     writeRaw({ a2a: { signingKey: 'x' } });
-    expect(readA2ASigningKey(ROOT)).toBeNull();
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'malformed' });
+  });
+});
+
+describe('a credentials file that cannot be parsed', () => {
+  const BROKEN = '{"projects": {"/work/x": {"linear": {"apiKey": "k"},}}}\n';
+
+  function writeBroken(): void {
+    mkdirSync(dirname(credentialsPath()), { recursive: true });
+    writeFileSync(credentialsPath(), BROKEN);
+  }
+
+  it('is never written over, by any writer', () => {
+    writeBroken();
+    const writers = [
+      () => writeA2ASigningKey(ROOT, { kty: 'EC', d: 'd' }),
+      () => writePeerCredential(ROOT, 'acme', { scheme: 'bearer', token: 't' }),
+      () => writeProjectCredential(ROOT, 'linear', { apiKey: 'k2' }),
+    ];
+    for (const write of writers)
+      expect(write).toThrow(CredentialsUnreadableError);
+    // A clear finds nothing to clear in a file it cannot read, and writes nothing.
+    clearProjectCredential(ROOT, 'linear');
+    clearPeerCredential(ROOT, 'acme');
+    expect(readFileSync(credentialsPath(), 'utf8')).toBe(BROKEN);
+  });
+
+  it('reads the signing key as unreadable, not absent', () => {
+    writeBroken();
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'unreadable' });
+  });
+
+  it('never quotes the file in its error', () => {
+    writeBroken();
+    let message = '';
+    try {
+      writeA2ASigningKey(ROOT, { kty: 'EC', d: 'd' });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain('cannot be parsed');
+    expect(message).not.toContain('apiKey');
   });
 });
