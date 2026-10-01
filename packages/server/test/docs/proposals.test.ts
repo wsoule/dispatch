@@ -281,6 +281,12 @@ describe('proposals', () => {
     });
     const view = service.proposal(as(DECIDER), p.proposal ?? '');
     expect(view.mergeable.clean).toBe(false);
+    const head = service.read(as(DECIDER), 'spec').rev;
+    expect(view.mergeable).toMatchObject({
+      headN: head.n,
+      headRev: head.id,
+      headHash: head.hash,
+    });
     expect(view.marked).toContain('<<<<<<< ');
     expect(view.marked).toContain('human\n');
     expect(view.marked).toContain('run\n');
@@ -469,7 +475,9 @@ describe('proposals', () => {
       }
       expect(service.proposals(as(viewer), {})).toEqual([]);
     }
-    expect(service.proposal(as(DECIDER), p.proposal ?? '').mergeable).toEqual({
+    expect(
+      service.proposal(as(DECIDER), p.proposal ?? '').mergeable
+    ).toMatchObject({
       clean: true,
       headN: 1,
     });

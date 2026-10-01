@@ -181,7 +181,13 @@ export interface DocProposalView {
   title: string;
   body: string;
   chunks: { equal: boolean; a: string[]; b: string[] }[];
-  mergeable: { clean: boolean; headN: number };
+  // The head the merge was computed against: a resolution saves on this base.
+  mergeable: {
+    clean: boolean;
+    headN: number;
+    headRev: string;
+    headHash: string;
+  };
   // The head merged with the proposal, diff3 markers at each conflict; null when it merges cleanly.
   marked: string | null;
 }

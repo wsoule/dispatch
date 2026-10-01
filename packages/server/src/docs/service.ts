@@ -1643,7 +1643,12 @@ export class DocsService {
       title: prop.title,
       body: prop.body,
       chunks: diffChunks(base?.body ?? '', prop.body).chunks,
-      mergeable: { clean, headN: head.n ?? 0 },
+      mergeable: {
+        clean,
+        headN: head.n ?? 0,
+        headRev: head.id,
+        headHash: head.hash,
+      },
       marked: clean ? null : this.markedMerge(prop, base, head),
     };
   }

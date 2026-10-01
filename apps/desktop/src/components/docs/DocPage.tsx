@@ -98,6 +98,9 @@ export function DocPage({
   const [actionError, setActionError] = useState<string | null>(null);
   // A proposal's marked merge the merge view shows in place of the buffer's text.
   const [mergeText, setMergeText] = useState<string | null>(null);
+  // The head that merge was computed from: its resolution saves on this base,
+  // so a newer head goes through the server's merge or 409 instead of being overwritten.
+  const [mergeBase, setMergeBase] = useState<DocBuffer['base'] | null>(null);
   const [mergeNote, setMergeNote] = useState<string | null>(null);
   const proposalMerge = useQuery({
     queryKey: [...docsKey(port), 'proposal', mergeProposal],
@@ -257,15 +260,22 @@ export function DocPage({
       return;
     }
     setMergeText(view.marked);
+    setMergeBase({
+      rev: view.mergeable.headRev,
+      n: view.mergeable.headN,
+      hash: view.mergeable.headHash,
+    });
     setPanel('merge');
   }, [proposalMerge.data]);
 
   // The merge view's resolution replaces the text and goes out at once.
   const saveResolution = (resolved: string): void => {
-    update((b) => editDocBuffer(b, resolved));
+    const base = mergeText === null ? null : mergeBase;
+    update((b) => editDocBuffer(base === null ? b : { ...b, base }, resolved));
     setPanel('editor');
     if (mergeText !== null) {
       setMergeText(null);
+      setMergeBase(null);
       setMergeNote(
         'Resolution saved. Now reject the proposal as resolved in its gate.'
       );

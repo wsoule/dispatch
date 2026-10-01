@@ -229,3 +229,64 @@ test("the preview shows a doc's asset: image through the docs API", async () => 
   expect(await screen.findByRole('img', { name: 'shot' })).toBeDefined();
   expect(fetchDocAsset).toHaveBeenCalledWith('doc-1', name);
 });
+
+test('saves a proposal resolution against the head its merge was computed from', async () => {
+  const marked = '# Auth\n<<<<<<< rev-1\nhuman\n=======\nrun\n>>>>>>> rev-p\n';
+  const saves: { baseRev: unknown; baseHash: unknown; body: string }[] = [];
+  const saveDocBody = (
+    _ref: string,
+    input: { baseRev: unknown; baseHash?: unknown; body: string }
+  ) => {
+    saves.push({
+      baseRev: input.baseRev,
+      baseHash: input.baseHash,
+      body: input.body,
+    });
+    return Promise.resolve({
+      ok: true,
+      result: {
+        status: 'merged',
+        handle: 'auth',
+        rev: { id: 'rev-3', n: 3, hash: 'h3' },
+        doc: doc(),
+      },
+    });
+  };
+  // A newer head (rev 2) arrived after the merge was computed against rev 1.
+  renderPage({
+    doc: doc({
+      status: 'accepted',
+      head: { id: 'rev-2', n: 2, hash: 'h2', bytes: 10, sealed: true },
+    }),
+    mergeProposal: 'rev-p',
+    client: {
+      saveDocBody,
+      getDocProposal: () =>
+        Promise.resolve({
+          proposal: { rev: 'rev-p', author: 'run:r-1', state: 'open' },
+          title: 'Auth refactor',
+          body: '# Auth\nrun\n',
+          chunks: [],
+          mergeable: {
+            clean: false,
+            headN: 1,
+            headRev: 'rev-1',
+            headHash: 'h1',
+          },
+          marked,
+        }),
+    } as unknown as Partial<ApiClient>,
+  });
+  const conflict = await screen.findByRole('region', {
+    name: 'Conflict 1 of 1',
+  });
+  fireEvent.click(within(conflict).getByRole('button', { name: 'Take yours' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save resolution' }));
+  await waitFor(() =>
+    expect(saves[0]).toEqual({
+      baseRev: 'rev-1',
+      baseHash: 'h1',
+      body: '# Auth\nrun\n',
+    })
+  );
+});
