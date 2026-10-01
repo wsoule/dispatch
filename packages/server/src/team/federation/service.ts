@@ -35,14 +35,14 @@ import type {
 /** The one clock rule: an op stamped further ahead than this waits (FW-R21). */
 export const CLOCK_GUARD_MS = MAX_CLOCK_LEAD_MS;
 /** An op this far ahead also names its machine's clock as wrong. */
-export const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
+const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
 /** How soon the next pass runs while an asker waits (fastUntil). */
-export const FAST_PASS_MS = 10_000;
+const FAST_PASS_MS = 10_000;
 /** fed_applied rows kept for the revocation race (F-D34). */
-export const APPLIED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const APPLIED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** What `GET /api/board-sync` reports. */
-export interface SyncStatus {
+interface SyncStatus {
   enabled: true;
   replica: string;
   remote: string;
@@ -76,7 +76,7 @@ export interface FederationStatus extends SyncStatus {
 }
 
 /** Run and agent evidence from this pull's verified ops (Task 14 fills it). */
-export interface Evidence {
+interface Evidence {
   runs: Map<string, string>;
   agents: Map<string, string>;
 }
@@ -436,7 +436,29 @@ export class FederationService {
       if (halted !== null) this.recordHalt(replica, halted);
       out.set(replica, { entries: kept, halted });
     }
+    this.checkCuts(out);
     return out;
+  }
+
+  // A revoked replica's op at afterSeq must hash to afterHash: the cut names
+  // one history, and a log that shows another halts there. Checked once every
+  // log is verified, since the revocation may come in another replica's log.
+  private checkCuts(verified: Map<string, Verified>): void {
+    const view = this.opts.roster.view();
+    if (view === null) return;
+    for (const [replica, v] of verified) {
+      const cut = view.revoked.get(replica);
+      if (cut === undefined) continue;
+      const at = v.entries.find(({ entry }) => entry.seq === cut.afterSeq);
+      const read = this.opts.fed.cursor(replica).head;
+      const hash =
+        at?.hash ?? (read?.seq === cut.afterSeq ? read.hash : undefined);
+      if (hash === undefined || hash === cut.afterHash) continue;
+      const reason = `${replica}'s log fails verification at seq ${cut.afterSeq}: it shows another history than the one its revocation names; revoke it, or have it push again`;
+      v.entries = v.entries.filter(({ entry }) => entry.seq < cut.afterSeq);
+      v.halted = reason;
+      this.recordHalt(replica, reason);
+    }
   }
 
   // A halt's problem and audit row, by its reason (F-D38).

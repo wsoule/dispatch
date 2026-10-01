@@ -87,7 +87,7 @@ describe('FederationService', () => {
     ).toContain('task');
   });
 
-  it("holds an unadmitted replica's ops with its cursor unmoved, then applies them on admission", async () => {
+  it("holds a pending replica's ops with its cursor unmoved, then applies them on admission", async () => {
     const {
       rs: [ada, bob],
     } = team('ada', 'bob');
@@ -194,6 +194,45 @@ describe('FederationService', () => {
   it('has one clock rule: the guard is the clock backstop, five minutes', () => {
     expect(CLOCK_GUARD_MS).toBe(MAX_CLOCK_LEAD_MS);
     expect(CLOCK_GUARD_MS).toBe(5 * 60 * 1000);
+  });
+
+  it("halts a revoked replica's log where its op at the cut does not hash to afterHash", async () => {
+    const {
+      remote,
+      rs: [ada, bob, cy],
+    } = team('ada', 'bob', 'cy');
+    ada.roster.found('acme');
+    await settle(ada, bob, cy);
+    for (const o of [bob, cy])
+      ada.roster.admit(o.fed.replica, { fingerprint: fp(o) });
+    await settle(ada, bob, cy);
+    bob.store.create({ title: 'cut here' });
+    await bob.service.syncNow();
+    await ada.service.syncNow();
+    ada.roster.revoke(bob.fed.replica, 'lost laptop');
+    const cut = ada.fed.outbox().at(-1)?.body as { afterSeq: number };
+    await ada.service.syncNow();
+    // Before cy reads it, the op at the cut becomes another, validly signed one.
+    const log = remote.logs.get(bob.fed.replica) ?? [];
+    const at = log.find((e) => e.seq === cut.afterSeq) as FederatedOp;
+    const other = buildOp(
+      {
+        replica: at.replica,
+        seq: at.seq,
+        prev: at.prev,
+        hlc: at.hlc,
+        type: 'task',
+        body: { task: 't-00000f0e', kind: 'put', fields: { title: 'other' } },
+      },
+      bob.fed.keys.signPriv
+    );
+    remote.logs.set(
+      bob.fed.replica,
+      log.map((e) => (e.seq === cut.afterSeq ? other : e))
+    );
+    await cy.service.syncNow();
+    expect(cy.fed.cursor(bob.fed.replica).halted).toContain('revocation');
+    expect(title(cy, 't-00000f0e')).toBeUndefined();
   });
 
   it('holds ops more than five minutes ahead until this clock catches up, and flags an hour', async () => {

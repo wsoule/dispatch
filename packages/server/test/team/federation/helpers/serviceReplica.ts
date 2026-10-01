@@ -38,11 +38,13 @@ export class MemoryV1 {
     return {
       readV1: (r) => this.readV1(r),
       v1Replicas: () => this.v1Replicas(),
-      ensure: async () => {},
-      exchange: async (): Promise<RepoSyncResult> => ({ pushed: true }),
-      write: async (ops) => {
+      ensure: () => Promise.resolve(),
+      exchange: (): Promise<RepoSyncResult> =>
+        Promise.resolve({ pushed: true }),
+      write: (ops) => {
         const file = this.files.get(replica) ?? [];
         this.files.set(replica, [...file, ...ops]);
+        return Promise.resolve();
       },
       readOthers: (cursor) =>
         this.v1Replicas()

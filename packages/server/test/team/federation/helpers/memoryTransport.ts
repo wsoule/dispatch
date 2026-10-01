@@ -31,24 +31,29 @@ export class MemoryTransport implements FederationTransport {
     private readonly remote: MemoryRemote,
     private readonly replica: string
   ) {}
-  async publish(ops: FederatedOp[]): Promise<void> {
+  publish(ops: FederatedOp[]): Promise<void> {
     if (this.remote.offline)
-      throw new TransportOffline('the remote is unreachable');
+      return Promise.reject(new TransportOffline('the remote is unreachable'));
     const log = this.remote.logs.get(this.replica) ?? [];
     for (const op of ops) if (!log.some((e) => e.seq === op.seq)) log.push(op);
     this.remote.logs.set(this.replica, log);
+    return Promise.resolve();
   }
-  async pull(since: Watermarks): Promise<LogEntry[]> {
+  pull(since: Watermarks): Promise<LogEntry[]> {
     if (this.remote.offline) {
       this.lastError = 'the remote is unreachable';
-      throw new TransportOffline(this.lastError);
+      return Promise.reject(new TransportOffline(this.lastError));
     }
     this.lastError = null;
-    return [...this.remote.logs].flatMap(([r, log]) =>
-      log.filter((e) => e.seq > (since.get(r) ?? 0))
+    return Promise.resolve(
+      [...this.remote.logs].flatMap(([r, log]) =>
+        log.filter((e) => e.seq > (since.get(r) ?? 0))
+      )
     );
   }
-  async ack(): Promise<void> {}
+  ack(): Promise<void> {
+    return Promise.resolve();
+  }
   presence(): null {
     return null;
   }
