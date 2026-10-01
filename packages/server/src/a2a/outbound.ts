@@ -766,9 +766,10 @@ export class OutboundWorker {
         this.deps.markAuthFailed(row.alias);
         return true;
       }
+      // A 404 may mean the peer moved its interface; its card says where.
       if (
-        err instanceof PeerHttpError &&
-        err.reason === 'VERSION_NOT_SUPPORTED'
+        status === 404 ||
+        (err instanceof PeerHttpError && err.reason === 'VERSION_NOT_SUPPORTED')
       )
         this.deps.refreshPeer(row.alias).catch((e: unknown) => {
           console.error(`a2a: refreshing a2a:${row.alias} failed`, e);

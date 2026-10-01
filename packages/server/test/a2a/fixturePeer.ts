@@ -131,6 +131,12 @@ export class FixturePeer implements BridgePort {
     return f;
   }
 
+  // Drops a task, so reading it answers TASK_NOT_FOUND (404).
+  forget(taskId: string): void {
+    this.tasks.delete(taskId);
+    for (const fn of this.watchers.get(taskId) ?? []) fn();
+  }
+
   answer(taskId: string, body: string): void {
     const cur = this.current(taskId);
     const answer = msg({

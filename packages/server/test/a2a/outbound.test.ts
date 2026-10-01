@@ -247,6 +247,17 @@ describe('failures', () => {
   });
 });
 
+describe('a peer that lost the task', () => {
+  it('refreshes the card when reading the tracked task answers 404', async () => {
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'open');
+    const before = peer.cardFetches;
+    peer.forget(peer.latest());
+    await waitFor(() => row(q.id)?.state === 'failed');
+    await waitFor(() => peer.cardFetches > before);
+  });
+});
+
 describe('the URL guard at every contact', () => {
   // A peer a deciding human added (public-address rules), reached in the test
   // through a fetch that maps the pinned public address onto the fixture peer.
