@@ -725,4 +725,22 @@ describe('the daemon’s one-time import', () => {
     expect(recovered?.body).toMatch(/full text in doc doc-/);
     expect(recovered?.refs.some((r) => r.type === 'doc')).toBe(true);
   });
+
+  it('marks the recovery done only once docs answered it', async () => {
+    const key = projectKeyOf(root);
+    const long = `---\nname: long\ndescription: long project note\nmetadata:\n  type: project\n---\n${'line of text\n'.repeat(1000)}`;
+    writeFileSync(join(memoryDir, 'long.md'), long);
+    // A plain import of it, as a build before docs made it.
+    const store = self();
+    store.deleteMeta(`claude-import-overflow:${key}`);
+    await handle.memory.bindDocsOverflow({ overflow: () => null });
+    await handle.memory.importClaude();
+    store.deleteMeta(`claude-import-overflow:${key}`);
+    await handle.memory.bindDocsOverflow({ overflow: () => null });
+    expect(store.meta(`claude-import-overflow:${key}`)).toBeNull();
+    await handle.memory.bindDocsOverflow({
+      overflow: () => 'doc-01K3Z9R0000000000000000004',
+    });
+    expect(store.meta(`claude-import-overflow:${key}`)).toBe('done');
+  });
 });

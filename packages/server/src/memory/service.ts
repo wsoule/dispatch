@@ -812,7 +812,16 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     },
     importClaude,
     bindDocsOverflow: async (port) => {
-      docsOverflow = port;
+      // Counts docs refusing (null), so the recovery is done only once every
+      // note it asked about went to a doc.
+      let refused = 0;
+      docsOverflow = {
+        overflow: (input) => {
+          const docId = port.overflow(input);
+          if (docId === null) refused += 1;
+          return docId;
+        },
+      };
       const store = openPersonal('self');
       const key = `claude-import-overflow:${projectKey}`;
       if (store === null || store.meta(key) !== null) return;
@@ -820,7 +829,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
         // Notes a completed import cut before docs were here; none yet means the
         // coming first import already overflows.
         if (importState(store, projectKey) === 'complete') await importClaude();
-        store.setMeta(key, 'done');
+        if (refused === 0) store.setMeta(key, 'done');
       } catch (err) {
         console.error('dispatchd: recovering cut Claude notes failed', err);
       }
