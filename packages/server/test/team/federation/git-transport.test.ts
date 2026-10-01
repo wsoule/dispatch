@@ -270,16 +270,35 @@ describe('the read budget (FW-R23 hint)', () => {
     const a = clone('a', A);
     await a.ensure();
     await a.writeV2(chain(9), { ops: 3, bytes: 1024 * 1024 });
-    // A budget of one byte still reads one new segment per pass.
-    expect(seqs(a.readV2(new Map([[A, 4]]), 1))).toEqual([5, 6]);
-    expect(seqs(a.readV2(new Map([[A, 4]]), 1))).toEqual([5, 6, 7, 8, 9]);
+    const budget =
+      Buffer.byteLength(
+        readFileSync(join(dir, 'a', 'fed', A, '000000000004.jsonl'), 'utf8')
+      ) + 1;
+    // One segment's budget reads one new segment per pass.
+    expect(seqs(a.readV2(new Map([[A, 4]]), budget))).toEqual([5, 6]);
+    expect(seqs(a.readV2(new Map([[A, 4]]), budget))).toEqual([5, 6, 7, 8, 9]);
     // A reader from the start, with nothing cached, works forward the same way.
     const fresh = clone('a', A);
-    expect(seqs(fresh.readV2(new Map(), 1))).toEqual([1, 2, 3]);
-    expect(seqs(fresh.readV2(new Map(), 1))).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(seqs(fresh.readV2(new Map(), 1))).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9,
-    ]);
+    expect(seqs(fresh.readV2(new Map(), budget))).toEqual([1, 2, 3]);
+    expect(seqs(fresh.readV2(new Map(), budget))).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('holds no more than the budget in cache, and drops lines the cursor has passed', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(9), { ops: 3, bytes: 1024 * 1024 });
+    const segment = readFileSync(
+      join(dir, 'a', 'fed', A, '000000000004.jsonl'),
+      'utf8'
+    );
+    const budget = Buffer.byteLength(segment) + 1;
+    a.readV2(new Map([[A, 3]]), budget);
+    a.readV2(new Map([[A, 3]]), budget);
+    a.readV2(new Map([[A, 3]]), budget);
+    expect(a.cachedBytes()).toBeLessThanOrEqual(budget);
+    expect(a.cachedBytes()).toBeGreaterThan(0);
+    a.readV2(new Map([[A, 9]]), budget);
+    expect(a.cachedBytes()).toBe(0);
   });
 
   it('sees an append to a segment it already read', async () => {

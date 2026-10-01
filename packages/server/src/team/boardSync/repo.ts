@@ -291,6 +291,7 @@ export class SyncRepo {
       const cursor = since.get(replica) ?? 0;
       const seen = new Set<string>();
       let spent = 0;
+      let kept = 0;
       let readOne = false;
       for (const name of hintOrder(this.segments(replica), cursor)) {
         const file = join(root, replica, name);
@@ -316,11 +317,28 @@ export class SyncRepo {
           seen.add(line);
           out.push(entry);
         }
+        // Lines the cursor has passed go; past the budget, the file is read
+        // again when its turn comes rather than held.
+        if (held.floor < cursor) {
+          held.lines = held.lines.filter((l) => l.entry.seq > cursor);
+          held.floor = cursor;
+        }
+        const bytes = held.lines.reduce((sum, l) => sum + l.line.length, 0);
+        if (kept + bytes > budget) this.segmentCache.delete(file);
+        else kept += bytes;
       }
     }
     for (const file of this.segmentCache.keys())
       if (!live.has(file)) this.segmentCache.delete(file);
     return out;
+  }
+
+  /** Characters of segment lines the read cache holds. */
+  cachedBytes(): number {
+    let total = 0;
+    for (const held of this.segmentCache.values())
+      for (const l of held.lines) total += l.line.length;
+    return total;
   }
 
   /** Writes this replica's acks.json and commits it, only when `through` changed. */

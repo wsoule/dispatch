@@ -688,7 +688,7 @@ export interface ApiClient {
   recoverTeam(code: string): Promise<void>;
   newRecoveryCode(): Promise<{ recoveryCode: string }>;
   shareTeamLicense(): Promise<void>;
-  admitReplica(replica: string, body: AdmitBody): Promise<void>;
+  admitReplica(replica: string, body: AdmitBody): Promise<RosterAnswer>;
   revokeReplica(replica: string, reason?: string): Promise<RosterAnswer>;
   setReplicaRole(
     replica: string,
@@ -716,6 +716,8 @@ interface AdmitBody {
 export interface RosterAnswer {
   warning?: string;
   pending?: boolean;
+  /** The roster already showed this change; nothing new was signed. */
+  already?: boolean;
 }
 
 /** Mirrors TeamKeys in packages/server/src/team/federation/teamKeys.ts. */
@@ -991,9 +993,8 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     shareTeamLicense: async () => {
       await request(target, '/api/team/license', jsonBody({}));
     },
-    admitReplica: async (replica, body) => {
-      await request(target, rosterPath(replica, 'admit'), jsonBody(body));
-    },
+    admitReplica: (replica, body) =>
+      request(target, rosterPath(replica, 'admit'), jsonBody(body)),
     revokeReplica: (replica, reason) =>
       request(
         target,

@@ -276,6 +276,13 @@ async function keyAction(
         };
   };
   let answer: Record<string, unknown> | null = null;
+  // A retry of a change the roster already shows (the first answer may have
+  // been `pending`) is answered as done rather than refused.
+  if (alreadyDone(fedCtx, replica, action, body)) {
+    if (!(await boundedPass(fedCtx, service, action)))
+      return { ok: true, already: true, pending: true };
+    return { ok: true, already: true };
+  }
   switch (action) {
     case 'admit': {
       if (typeof body.fingerprint !== 'string')
@@ -321,6 +328,35 @@ async function keyAction(
   if (!(await boundedPass(fedCtx, service, action)))
     return { ...(answer ?? { ok: true }), pending: true };
   return answer;
+}
+
+// Whether the roster already shows what an admit, revoke or role asks for.
+function alreadyDone(
+  fedCtx: FederationContext,
+  replica: string,
+  action: string,
+  body: Body
+): boolean {
+  const view = fedCtx.roster.view();
+  if (view === null) return false;
+  const member = view.members.get(replica);
+  switch (action) {
+    case 'admit': {
+      const pin = fedCtx.fed.pinned(replica);
+      return (
+        member !== undefined &&
+        pin !== null &&
+        fingerprint(pin.signPub, pin.sealPub) === body.fingerprint &&
+        member.role === (body.role === 'admin' ? 'admin' : 'member')
+      );
+    }
+    case 'revoke':
+      return view.revoked.has(replica);
+    case 'role':
+      return member !== undefined && member.role === body.role;
+    default:
+      return false;
+  }
 }
 
 function teamKeys(

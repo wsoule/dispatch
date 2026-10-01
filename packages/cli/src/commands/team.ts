@@ -64,7 +64,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
   team
     .command('invite <emailOrHandle>')
     .description(
-      'Issue a teammate a token (adds them to team.yml when given an email)'
+      "Issue a teammate a daemon token (adds them to team.yml when given an email); for a machine's invite code, see `team keys invite`"
     )
     .option('--name <displayName>', 'display name for a new roster entry')
     .option(
@@ -151,7 +151,9 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
 
   team
     .command('revoke <handle>')
-    .description("Revoke a teammate's token; it stops working immediately")
+    .description(
+      "Revoke a teammate's daemon token; it stops working immediately. To remove a machine from the signed team, see `team keys revoke`"
+    )
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(async (handle: string, opts: { token?: string }) => {
       const client = await decideClient(
@@ -236,6 +238,8 @@ export function describeTeamKeys(keys: TeamKeys): string[] {
 // A roster change's answer: its warning, and whether its sync still runs.
 function logAnswer(ctx: CliContext, answer: RosterAnswer | void): void {
   if (answer === undefined) return;
+  if (answer.already === true)
+    ctx.log('The team already shows this; nothing new was signed.');
   if (answer.warning !== undefined) ctx.log(answer.warning);
   if (answer.pending === true)
     ctx.log(
@@ -388,7 +392,9 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
 
   keys
     .command('invite <handle>')
-    .description('Create an invite code for a new machine with this handle')
+    .description(
+      'Create an invite code for a new machine to join the signed team; a daemon token is `team invite`'
+    )
     .option(tokenOption, tokenHelp)
     .action(async (handle: string, opts: { token?: string }) => {
       const invite = await (
@@ -422,7 +428,7 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
           token?: string;
         }
       ) => {
-        await (
+        const answer = await (
           await client(opts, 'dispatch team keys admit')
         ).admitReplica(replica, {
           fingerprint: opts.fingerprint,
@@ -438,13 +444,16 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
               }),
           ...(opts.observer === true ? { observer: true } : {}),
         });
+        logAnswer(ctx, answer);
         ctx.log(`Admitted ${replica}.`);
       }
     );
 
   keys
     .command('revoke <replica>')
-    .description('Revoke a machine from the team for good')
+    .description(
+      "Revoke a machine's key from the signed team for good; a daemon token is `team revoke`"
+    )
     .option('--reason <text>', 'why, for the audit log')
     .option(tokenOption, tokenHelp)
     .action(

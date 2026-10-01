@@ -100,12 +100,25 @@ describe('/api/team federation routes', () => {
         body: JSON.stringify({ fingerprint: w?.fingerprint }),
       });
       expect(good.status).toBe(200);
+      // A retry of a change the roster already shows answers `already`.
+      const post = (action: string, body: unknown) =>
+        ada.api(`/api/team/keys/${w?.replica}/${action}`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+      const again = await post('admit', { fingerprint: w?.fingerprint });
+      expect([again.status, again.body?.already]).toEqual([200, true]);
+      const role = await post('role', { role: 'member' });
+      expect([role.status, role.body?.already]).toEqual([200, true]);
       await ada.sync();
       await bob.sync();
       const mine = (await bob.api('/api/team/keys')).body?.roster as {
         handle: string;
       }[];
       expect(mine.map((r) => r.handle).sort()).toEqual(['ada', 'bob']);
+      expect((await post('revoke', {})).status).toBe(200);
+      const revoked = await post('revoke', {});
+      expect([revoked.status, revoked.body?.already]).toEqual([200, true]);
     },
     SLOW
   );
