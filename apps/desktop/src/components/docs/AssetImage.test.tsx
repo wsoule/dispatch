@@ -108,7 +108,7 @@ test('links a remote image only over http or https, never another scheme', () =>
   const fetchDocAsset = mock(() => Promise.resolve(new Blob()));
   for (const [src, alt] of [
     ['javascript:alert(1)', 'js'],
-    ['  JAVASCRIPT:alert(1)', 'shouty'],
+    ['  JAVASCRIPT:alert(1)', 'upper'],
     ['data:image/png;base64,AAAA', 'inline'],
   ] as const) {
     render(
