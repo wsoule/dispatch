@@ -15,6 +15,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -389,6 +390,21 @@ describe('dispatch docs import with unreadable paths', () => {
     expect(sent[0].startsWith('---')).toBe(true);
     expect(report.errors.map((e) => [e.path, e.detail])).toEqual([
       [personal, 'personal docs are never imported'],
+    ]);
+
+    // Through a symlink to the export's personal folder, or with the export's
+    // personal scope wherever the file sits, it is still refused.
+    symlinkSync(join(exported, 'Personal'), join(tmpDir, 'linked-in'));
+    const viaLink = join(tmpDir, 'linked-in', 'notes.md');
+    const moved = join(tmpDir, 'moved-notes.md');
+    writeFileSync(
+      moved,
+      renderDocFile({ ...meta, slug: 'moved', scope: 'personal' }, '# Moved\n')
+    );
+    const again = await importFiles(api, [viaLink, moved], { dryRun: true });
+    expect(again.errors.map((e) => [e.path, e.detail])).toEqual([
+      [viaLink, 'personal docs are never imported'],
+      [moved, 'personal docs are never imported'],
     ]);
   });
 

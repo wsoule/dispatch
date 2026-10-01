@@ -242,6 +242,49 @@ describe('the staged import', () => {
       ['x/mine.md', 'invalid'],
     ]);
     expect(service.read(owner, 'team-copy').text).toBe('# Team copy\nbody\n');
+
+    // The backstops: a personal scope in the frontmatter, the id in another
+    // case, a deleted personal doc's id, and export-shaped frontmatter that
+    // does not parse are all refused, never imported as text.
+    const gone = service.create(owner, {
+      title: 'Gone',
+      body: 'x\n',
+      scope: 'personal',
+    });
+    service.remove(owner, gone.doc.id);
+    const scoped = file(
+      'y/scoped.md',
+      renderDocFile(
+        {
+          ...meta('doc-01K5AAAAAAAAAAAAAAAAAAAAAA', 'scoped'),
+          scope: 'personal',
+        },
+        'private\n'
+      ),
+      '2026-09-27T10:00:00.000Z'
+    );
+    const lowered = file(
+      'y/lowered.md',
+      renderDocFile(meta(mine.doc.id.toLowerCase(), 'lowered'), 'x\n'),
+      '2026-09-27T10:00:00.000Z'
+    );
+    const deleted = file(
+      'y/deleted.md',
+      renderDocFile(meta(gone.doc.id, 'deleted'), 'x\n'),
+      '2026-09-27T10:00:00.000Z'
+    );
+    const broken = file(
+      'y/broken.md',
+      `---\nid: "${mine.doc.id}"\nslug: "broken"\nstatus: draft-ish\n---\nprivate\n`,
+      '2026-09-27T10:00:00.000Z'
+    );
+    const second = stage(service, [scoped, lowered, deleted, broken]).report;
+    expect(second.errors.map((e) => [e.path, e.reason])).toEqual([
+      ['y/broken.md', 'invalid'],
+      ['y/deleted.md', 'invalid'],
+      ['y/lowered.md', 'invalid'],
+      ['y/scoped.md', 'invalid'],
+    ]);
   });
 
   it('imports more than 2 MiB across uploads, drifted copies as revisions, newest as head', () => {

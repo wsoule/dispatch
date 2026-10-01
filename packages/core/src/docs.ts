@@ -375,6 +375,9 @@ export interface DocFileMeta {
   links: { target: string; rel: LinkRel }[];
   authors: string[];
   updatedAt: string;
+  // An export names a personal doc's scope, so no import mistakes it for a
+  // team doc; receipt files (team docs only) leave it out.
+  scope?: DocScope;
 }
 
 const DOC_FILE_FIELDS: readonly (keyof DocFileMeta)[] = [
@@ -448,6 +451,8 @@ function docFileValueProblem(
 
 export function renderDocFile(meta: DocFileMeta, body: string): string {
   const lines = DOC_FILE_FIELDS.map((k) => `${k}: ${JSON.stringify(meta[k])}`);
+  if (meta.scope !== undefined)
+    lines.push(`scope: ${JSON.stringify(meta.scope)}`);
   return `---\n${lines.join('\n')}\n---\n${body}`;
 }
 
@@ -487,6 +492,12 @@ export function parseDocFile(
     DOC_FILE_FIELDS.map((k) => [k, fields.get(k)])
   ) as unknown as DocFileMeta;
   meta.links = meta.links.map(({ target, rel }) => ({ target, rel }));
+  const scope = fields.get('scope');
+  if (scope !== undefined) {
+    if (scope !== 'team' && scope !== 'personal')
+      return { error: 'scope must be team or personal' };
+    meta.scope = scope;
+  }
   return { meta, body: text.slice(end + 5) };
 }
 

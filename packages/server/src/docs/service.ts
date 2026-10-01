@@ -2259,6 +2259,31 @@ export class DocsService {
     }
   }
 
+  // Why an imported file must not be imported: an export of a personal doc
+  // (its frontmatter says so, or its id names a personal doc, live or deleted),
+  // or export-shaped frontmatter that does not parse. Null for any other file.
+  private exportRefusal(text: string): string | null {
+    const personal =
+      'the file is an export of a personal doc, which is never imported';
+    if (!text.startsWith('---\n')) return null;
+    const end = text.indexOf('\n---\n', 3);
+    const front = text.slice(4, end === -1 ? Math.min(text.length, 8192) : end);
+    const idLine = /^id: "?(doc-[0-9A-Za-z]{26})"?$/m.exec(front);
+    const parsed = parseDocFile(text);
+    if ('error' in parsed)
+      return idLine === null
+        ? null
+        : `the file looks like an exported doc but its frontmatter does not parse (${parsed.error})`;
+    if (parsed.meta.scope === 'personal') return personal;
+    const raw = idLine?.[1] ?? parsed.meta.id;
+    if (!/^doc-[0-9A-Za-z]{26}$/i.test(raw)) return null;
+    const id = `doc-${raw.slice(4).toUpperCase()}`;
+    const store = this.store();
+    if (store.doc(id)?.scope === 'personal') return personal;
+    if (store.tombstone(id)?.ns.startsWith('p:') === true) return personal;
+    return null;
+  }
+
   // ---- memory overflow (v1) -------------------------------------------------
 
   // The personal doc holding a memory entry's full text, owned by the entry's
@@ -3170,18 +3195,13 @@ export class DocsService {
         continue;
       }
       // An export or receipt file: its body, and never someone's personal doc.
-      const exported = parseDocFile(text);
-      if (!('error' in exported)) {
-        if (store.doc(exported.meta.id)?.scope === 'personal') {
-          texts.set(hash, {
-            error: 'invalid',
-            detail:
-              'the file is an export of a personal doc, which is never imported',
-          });
-          continue;
-        }
-        text = exported.body;
+      const refusal = this.exportRefusal(text);
+      if (refusal !== null) {
+        texts.set(hash, { error: 'invalid', detail: refusal });
+        continue;
       }
+      const exported = parseDocFile(text);
+      if (!('error' in exported)) text = exported.body;
       texts.set(
         hash,
         text.includes('\u0000')

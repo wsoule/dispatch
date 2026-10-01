@@ -621,6 +621,7 @@ describe('review state, revert and lifecycle', () => {
     expect(code(() => service.read(as(OWNER), made.doc.id))).toBe('not-found');
     expect(store.tombstone(made.doc.id)).toEqual({
       docId: made.doc.id,
+      ns: 'team',
       origin: null,
     });
   });

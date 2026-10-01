@@ -179,7 +179,8 @@ export async function importFiles(
       // doc: never sent. A plain note in any other personal/ folder is a file.
       if (
         doc !== null &&
-        basename(dirname(realpathSync(path))).toLowerCase() === 'personal'
+        (doc.meta.scope === 'personal' ||
+          basename(dirname(realpathSync(path))).toLowerCase() === 'personal')
       ) {
         unread.push({ path, detail: 'personal docs are never imported' });
         return [];
@@ -382,6 +383,8 @@ export async function exportDocs(
         })),
         authors: ancestryAuthors(r.rev, history),
         updatedAt: d.updatedAt,
+        // Names a personal doc as one, so no import takes it for a team doc.
+        scope: d.scope,
       };
       const sub = d.scope === 'personal' ? join(dir, 'personal') : dir;
       mkdirSync(sub, { recursive: true });

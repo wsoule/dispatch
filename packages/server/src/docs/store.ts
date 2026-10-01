@@ -929,12 +929,16 @@ export class SqliteDocStore {
     );
   }
 
-  tombstone(docId: string): { docId: string; origin: string | null } | null {
-    const row = this.one<{ doc_id: string; origin: string | null }>(
-      'SELECT doc_id, origin FROM tombstones WHERE doc_id = ?',
+  tombstone(
+    docId: string
+  ): { docId: string; ns: string; origin: string | null } | null {
+    const row = this.one<{ doc_id: string; ns: string; origin: string | null }>(
+      'SELECT doc_id, ns, origin FROM tombstones WHERE doc_id = ?',
       [docId]
     );
-    return row === undefined ? null : { docId: row.doc_id, origin: row.origin };
+    return row === undefined
+      ? null
+      : { docId: row.doc_id, ns: row.ns, origin: row.origin };
   }
 
   tombstonedOrigin(origin: string): boolean {
