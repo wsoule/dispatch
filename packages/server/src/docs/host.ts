@@ -7,16 +7,23 @@ import type {
   TaskRisk,
   TaskStorePort,
 } from '@dispatch/core';
-import { TaskParseError } from '@dispatch/core';
+import {
+  isCanceledStatus,
+  isCompletedStatus,
+  TaskParseError,
+} from '@dispatch/core';
 import type { MemoryStore, MemoryStores, Operator } from '@dispatch/memory';
 import type { MessageStore } from '@dispatch/protocol';
 
+import { spawnGitSync } from '../blockingGit.js';
 import type { EventBus } from '../events.js';
 import { IDENTITY_PATTERN } from '../memory/identities.js';
 import type { Principal } from '../messaging/principal.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import type { RunMeta } from '../orchestrator/types.js';
 import { runKind } from '../orchestrator/types.js';
+import { WorktreeManager } from '../orchestrator/worktree.js';
+import { statusModelFor } from '../statuses.js';
 import { DocsError } from './errors.js';
 
 // How DocsService reaches the rest of the daemon, so its tests run against a
@@ -89,6 +96,19 @@ export interface DocsHost extends DocsGatePort {
   // One line into a live run's context; throws for a run that cannot take it.
   notifyRun(runId: string, line: string): void;
   now(): Date;
+  // Publish (v1): the project checkout, and the elevated task a publish runs as.
+  readonly rootDir: string;
+  createPublishTask(input: {
+    title: string;
+    body: string;
+    writes: string[];
+    risk: 'elevated';
+  }): string;
+  // 'landed' only once the task is done and one of its runs really merged;
+  // 'dropped' when it was dropped or is gone; null while it is neither.
+  publishOutcome(taskId: string): 'landed' | 'dropped' | null;
+  // The newest commit on the default branch that touched `path`, or null.
+  lastCommitFor(path: string): string | null;
 }
 
 // doc.changed events for amends of one doc coalesce within this window.
@@ -154,8 +174,76 @@ export class DaemonDocsHost implements DocsHost {
       store: TaskStorePort;
       events: Pick<EventBus, 'broadcast'>;
       debounceMs?: number;
+      // The project checkout publishes validate against and read git in.
+      rootDir?: string;
+      // Brings the daemon's task cache up to date after a task is created here.
+      refreshTask?: (taskId: string) => void;
     }
   ) {}
+
+  get rootDir(): string {
+    return this.deps.rootDir ?? '';
+  }
+
+  createPublishTask(
+    input: Parameters<DocsHost['createPublishTask']>[0]
+  ): string {
+    const task = this.deps.store.create({
+      title: input.title,
+      description: input.body,
+      writes: input.writes,
+      risk: input.risk,
+    });
+    this.deps.refreshTask?.(task.meta.id);
+    this.deps.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
+    return task.meta.id;
+  }
+
+  // A status alone never lands a publish (an agent may set any status): one of
+  // the task's execute runs must carry the orchestrator's own merge record.
+  publishOutcome(taskId: string): 'landed' | 'dropped' | null {
+    let doc;
+    try {
+      doc = this.deps.store.get(taskId);
+    } catch (err) {
+      if (err instanceof TaskParseError) return null;
+      throw err;
+    }
+    if (doc === null) return 'dropped';
+    const model = statusModelFor(this.rootDir);
+    if (isCanceledStatus(doc.meta.status, model)) return 'dropped';
+    if (!isCompletedStatus(doc.meta.status, model) || this.runs === null)
+      return null;
+    const merged = this.runs
+      .list()
+      .some(
+        (r) =>
+          r.taskId === taskId &&
+          runKind(r) === 'execute' &&
+          (r.reviewAction === 'merge' || r.reviewAction === 'pr')
+      );
+    return merged ? 'landed' : null;
+  }
+
+  lastCommitFor(path: string): string | null {
+    if (this.rootDir === '') return null;
+    let base: string;
+    try {
+      base = new WorktreeManager(this.rootDir).defaultBaseBranch();
+    } catch {
+      return null;
+    }
+    const out = spawnGitSync(this.rootDir, [
+      'log',
+      '-1',
+      '--format=%H',
+      base,
+      '--',
+      path,
+    ]);
+    const sha = out.exitCode === 0 ? out.stdout.trim() : '';
+    return sha === '' ? null : sha;
+  }
 
   bindRuns(orchestrator: DocsRuns): void {
     this.runs = orchestrator;

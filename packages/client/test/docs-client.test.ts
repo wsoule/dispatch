@@ -193,6 +193,23 @@ describe('docs bindings', () => {
     }
   });
 
+  it('publishes a doc with its path and dispatch choice', async () => {
+    const s = stub(201, { task: 't-pub-1' });
+    try {
+      await createApiClient(BASE, 't').publishDoc('spec', {
+        path: 'docs/spec.md',
+        dispatch: false,
+      });
+      expect(s.calls[0].url).toBe(`${BASE}/api/docs/spec/publish`);
+      expect(s.calls[0].init?.method).toBe('POST');
+      expect(s.calls[0].init?.body).toBe(
+        '{"path":"docs/spec.md","dispatch":false}'
+      );
+    } finally {
+      s.restore();
+    }
+  });
+
   it('deletes through a 204 that has no body', async () => {
     const s = stub(204, null);
     try {

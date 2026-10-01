@@ -117,6 +117,13 @@ export class FakeDocsHost implements DocsHost {
   policyApprovals: DocProposal[] = [];
   openGates: { id: string; proposal: string }[] = [];
   onCloseGate: (() => void) | null = null;
+  // Publish: the checkout, the tasks it created, how each ended and the commits git reports.
+  rootDir = '';
+  createdTasks: (Parameters<DocsHost['createPublishTask']>[0] & {
+    id: string;
+  })[] = [];
+  outcomes = new Map<string, 'landed' | 'dropped'>();
+  commits = new Map<string, string>();
 
   constructor() {
     for (const id of ['t-1', 't-2', 'e-1', 'e-root']) {
@@ -228,6 +235,27 @@ export class FakeDocsHost implements DocsHost {
   }
   openDocGates(): { id: string; proposal: string }[] {
     return this.openGates;
+  }
+  createPublishTask(
+    input: Parameters<DocsHost['createPublishTask']>[0]
+  ): string {
+    const id = `t-pub-${this.createdTasks.length + 1}`;
+    this.createdTasks.push({ ...input, id });
+    this.tasks.set(id, {
+      id,
+      title: input.title,
+      body: input.body,
+      parent: null,
+      risk: input.risk,
+      labels: [],
+    });
+    return id;
+  }
+  publishOutcome(taskId: string): 'landed' | 'dropped' | null {
+    return this.outcomes.get(taskId) ?? null;
+  }
+  lastCommitFor(path: string): string | null {
+    return this.commits.get(path) ?? null;
   }
   now(): Date {
     return this.clock;

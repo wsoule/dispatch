@@ -617,6 +617,41 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
     });
 
   docs
+    .command('publish <ref>')
+    .description(
+      'Write a reviewed or accepted team doc into the repo through an elevated task'
+    )
+    .option('--path <path>', 'repo-relative .md path (default: the last one)')
+    .option('--no-dispatch', 'create the task without starting its run')
+    .option(...tokenOpt)
+    .action(
+      async (
+        ref: string,
+        o: { path?: string; dispatch: boolean; token?: string }
+      ) => {
+        const api = await docsClient(ctx, o.token);
+        let path = o.path;
+        if (path === undefined) {
+          const { doc } = await api.get(ref);
+          path = doc.lastPublishPath ?? doc.published?.path;
+        }
+        if (path === undefined)
+          throw new Error(`${ref} has no earlier publish path; pass --path`);
+        const r = await api.publish(ref, {
+          path,
+          ...(o.dispatch ? {} : { dispatch: false }),
+        });
+        const started =
+          r.run !== null
+            ? `, run ${r.run}`
+            : r.dispatchError !== null
+              ? `; dispatch failed: ${r.dispatchError}`
+              : ' (not dispatched)';
+        ctx.log(`publishing ${ref} to ${path}: task ${r.task}${started}`);
+      }
+    );
+
+  docs
     .command('reviewed <ref>')
     .description("Mark a doc's head reviewed")
     .option(...tokenOpt)

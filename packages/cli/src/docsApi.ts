@@ -56,6 +56,14 @@ export interface ImportReportInfo {
   parity: { files: boolean; names: boolean };
 }
 
+/** What POST /api/docs/:ref/publish answers: the task, and its run unless not dispatched. */
+interface DocPublishResult {
+  task: string;
+  doc: DocRecord;
+  run: string | null;
+  dispatchError: string | null;
+}
+
 export interface DocsApi {
   list(params?: {
     taskId?: string;
@@ -114,6 +122,11 @@ export interface DocsApi {
   // A personal doc's head as a new team draft; its owner only.
   promote(ref: string): Promise<DocSaveResult>;
   setStatus(ref: string, status: DocStatus): Promise<DocRecord>;
+  // An elevated task that writes the doc's head to `path` in the repo (humans only).
+  publish(
+    ref: string,
+    input: { path: string; dispatch?: boolean }
+  ): Promise<DocPublishResult>;
   reviewed(ref: string): Promise<DocRecord>;
   remove(ref: string): Promise<void>;
   // Proposals to accepted docs the caller may see.
@@ -234,6 +247,7 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
     promote: (ref) => json('POST', `${docPath(ref)}/promote`, {}),
     setStatus: (ref, status) =>
       json('POST', `${docPath(ref)}/status`, { status }),
+    publish: (ref, input) => json('POST', `${docPath(ref)}/publish`, input),
     reviewed: (ref) => json('POST', `${docPath(ref)}/reviewed`, {}),
     remove: async (ref) => {
       await call('DELETE', docPath(ref));

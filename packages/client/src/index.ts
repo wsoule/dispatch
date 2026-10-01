@@ -58,6 +58,7 @@ export type {
   DocOp,
   DocProposal,
   DocProposalView,
+  DocPublishResult,
   DocRead,
   DocRecord,
   DocRevisionInfo,

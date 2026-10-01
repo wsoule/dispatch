@@ -512,6 +512,7 @@ describe('dispatch docs handles', () => {
   let root: string;
   let home: string;
   let lines: string[];
+  let published: unknown[];
   let server: ReturnType<typeof Bun.serve>;
   const savedHome = process.env.DISPATCH_HOME;
   const run = (...argv: string[]) => {
@@ -526,6 +527,7 @@ describe('dispatch docs handles', () => {
     lines = [];
     await run('init');
     lines = [];
+    published = [];
     server = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
@@ -557,6 +559,29 @@ describe('dispatch docs handles', () => {
                 createdAt: '2026-09-29T10:00:00.000Z',
               },
             ],
+          });
+        if (pathname === '/api/docs/notes/publish' && req.method === 'POST')
+          return req.json().then((b) => {
+            published.push(b);
+            return Response.json(
+              {
+                task: 't-pub-1',
+                doc: team,
+                run:
+                  (b as { dispatch?: boolean }).dispatch === false
+                    ? null
+                    : 'r-9',
+                dispatchError: null,
+              },
+              { status: 201 }
+            );
+          });
+        if (pathname === '/api/docs/notes')
+          return Response.json({
+            doc: { ...team, lastPublishPath: 'docs/notes.md' },
+            rev: { n: 2, author: 'human:wyat' },
+            outline: [],
+            text: 'x\n',
           });
         if (pathname === '/api/docs/~notes')
           return Response.json({
@@ -624,6 +649,27 @@ describe('dispatch docs handles', () => {
       '~notes: accepted',
       '~notes: draft',
       'rev-p\topen\tdoc-t\trun:r-1\tgate m-g\t2026-09-29T10:00:00.000Z',
+    ]);
+  });
+
+  it('publishes to the path given, or the one last asked for, and can skip the dispatch', async () => {
+    const token = ['--token', 'app-token'];
+    await run(
+      'docs',
+      'publish',
+      'notes',
+      '--path',
+      'docs/specs/notes.md',
+      ...token
+    );
+    await run('docs', 'publish', 'notes', '--no-dispatch', ...token);
+    expect(published).toEqual([
+      { path: 'docs/specs/notes.md' },
+      { path: 'docs/notes.md', dispatch: false },
+    ]);
+    expect(lines).toEqual([
+      'publishing notes to docs/specs/notes.md: task t-pub-1, run r-9',
+      'publishing notes to docs/notes.md: task t-pub-1 (not dispatched)',
     ]);
   });
 });

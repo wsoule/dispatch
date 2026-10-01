@@ -1090,7 +1090,12 @@ async function bootServer(
   }
   // Docs open before the boot receipt export and need nothing from messaging;
   // a docs.db this build cannot open leaves docs unavailable, never the daemon down.
-  const docsHost = new DaemonDocsHost({ store, events });
+  const docsHost = new DaemonDocsHost({
+    store,
+    events,
+    rootDir,
+    refreshTask: (taskId) => cache.refresh(store, [taskId]),
+  });
   const docs = openDocs({
     rootDir,
     host: docsHost,
@@ -1325,6 +1330,10 @@ async function bootServer(
     isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
   });
   orchestrator.setDocsPort(docs.service);
+  // A publish task's run starts with the doc's recorded revision in its worktree.
+  orchestrator.setWorktreeSeed((taskId, wt) =>
+    docs.service.seedFor(taskId, wt)
+  );
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
@@ -1365,6 +1374,18 @@ async function bootServer(
       : { preflight: opts.memoryPreflight }),
   });
   docsHost.bindRuns(orchestrator);
+  // A publish lands once its task does (on a merged run); task.changed is the signal.
+  const syncDocPublishes = (): void => {
+    try {
+      docs.service.syncPublishes();
+    } catch (err) {
+      console.error('docs: recording publishes failed', err);
+    }
+  };
+  syncDocPublishes();
+  const unsubscribeDocPublishes = events.subscribe((event) => {
+    if (event.type === 'task.changed') syncDocPublishes();
+  });
   docsHost.bindMessaging(messaging.store);
   docsHost.bindMemory(docsMemoryPort(memory));
   // The doc gate's handler registers before messaging.recover(), even with
@@ -2255,6 +2276,7 @@ async function bootServer(
       unsubscribeLinear();
       await linearSync.stop();
       unsubscribeBoardSync();
+      unsubscribeDocPublishes();
       stopWebhookDelivery();
       stopDecisionFeed();
       stopPolicyEngine();

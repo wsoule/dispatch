@@ -446,6 +446,9 @@ export class Orchestrator {
   private memoryPort: MemoryPromptPort | null = null;
   // Renders each dispatch prompt's `## Docs` section (see setDocsPort); null leaves it out.
   private docsPort: DocsPromptPort | null = null;
+  // Writes files a task needs into its new worktree (see setWorktreeSeed).
+  private worktreeSeed: ((taskId: string, worktree: string) => void) | null =
+    null;
   // Why a task may not run right now, or null (see setDispatchGuard).
   private dispatchGuard: ((task: TaskDoc) => string | null) | null = null;
   // When each run's claims were last refreshed from git status — see
@@ -575,6 +578,14 @@ export class Orchestrator {
   // Installed by the docs service at boot; until then prompts carry no docs section.
   setDocsPort(port: DocsPromptPort | null): void {
     this.docsPort = port;
+  }
+
+  // Called right after a fresh dispatch adds its worktree, before the executor
+  // starts; a throw removes the worktree and fails the dispatch.
+  setWorktreeSeed(
+    hook: ((taskId: string, worktree: string) => void) | null
+  ): void {
+    this.worktreeSeed = hook;
   }
 
   // Subscribes to "a run just became live" (its ExecutorRun is registered), so
@@ -1022,6 +1033,16 @@ export class Orchestrator {
     const wtPath = worktreePath(this.ctx.rootDir, runId);
 
     this.worktrees.add(wtPath, branch, baseBranch);
+    if (this.worktreeSeed !== null) {
+      try {
+        this.worktreeSeed(taskId, wtPath);
+      } catch (err) {
+        this.worktrees.remove(wtPath, branch, runId);
+        throw new OrchestratorClientError(
+          `could not seed the worktree: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
 
     const dispatchedBy = humanOwner(
       opts.dispatchedBy ?? opts.actor ?? this.ctx.actorContext?.humanRef

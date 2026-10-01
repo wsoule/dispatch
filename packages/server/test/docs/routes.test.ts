@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -415,5 +416,77 @@ describe('docs routes', () => {
     );
     expect(teammate.orphans).toBeUndefined();
     expect(teammate.restore).toBeUndefined();
+  });
+});
+
+describe('publish route', () => {
+  type Published = {
+    task: string;
+    run: string | null;
+    dispatchError: string | null;
+    doc: { published: unknown; lastPublishPath: string | null };
+  };
+
+  it('creates the elevated task, dispatches it with the doc seeded, and refuses a run or a bad path', async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec v1\n' });
+    expect(
+      (await post('/docs/spec/publish', { path: '../escape.md' })).status
+    ).toBe(400);
+    expect(
+      (await post('/docs/spec/publish', { path: '.github/ci.md' })).status
+    ).toBe(400);
+    const res = await post('/docs/spec/publish', { path: 'docs/spec.md' });
+    expect(res.status).toBe(201);
+    const out = await json<Published>(res);
+    expect(out.dispatchError).toBeNull();
+    expect(out.doc.lastPublishPath).toBe('docs/spec.md');
+    const task = await json<{ meta: { risk: string; writes: string[] } }>(
+      await fetch(`${base}/tasks/${out.task}`)
+    );
+    expect(task.meta.risk).toBe('elevated');
+    expect(task.meta.writes).toEqual(['docs/spec.md']);
+    const cwd = executor.started.at(-1)?.cwd ?? '';
+    expect(readFileSync(join(cwd, 'docs/spec.md'), 'utf8')).toBe('# Spec v1\n');
+
+    await waitFor(async () => {
+      const run = await json<{ meta: { state: string } }>(
+        await fetch(`${base}/runs/${out.run}`)
+      );
+      return run.meta.state === 'running';
+    });
+    const refused = await rawFetch(`${base}/docs/spec/publish`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${executor.lastRunToken ?? ''}`,
+      },
+      body: JSON.stringify({ path: 'docs/other.md' }),
+    });
+    expect(refused.status).toBe(403);
+  });
+
+  it('records no landing from a status alone: the task needs a merged run', async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const out = await json<Published>(
+      await post('/docs/spec/publish', {
+        path: 'docs/spec.md',
+        dispatch: false,
+      })
+    );
+    expect(out.run).toBeNull();
+    const patched = await fetch(`${base}/tasks/${out.task}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'landed' }),
+    });
+    expect(patched.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    const read = await json<{ doc: { published: unknown } }>(
+      await fetch(`${base}/docs/spec`)
+    );
+    expect(read.doc.published).toBeNull();
+    expect(
+      (await post('/docs/spec/publish', { path: 'docs/again.md' })).status
+    ).toBe(409);
   });
 });

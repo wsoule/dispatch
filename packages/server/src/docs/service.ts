@@ -48,6 +48,7 @@ import { diffChunks, merge3 } from './merge.js';
 import { applyOps } from './ops.js';
 import type { IndexLine, InlineSpec } from './prompt.js';
 import { renderDocsSection } from './prompt.js';
+import { seedFile, validatePublishPath } from './publish.js';
 import type { RestoreReport } from './receipts.js';
 import { carriesUnreviewed, unreviewedAtCreation } from './review.js';
 import {
@@ -857,7 +858,7 @@ export class DocsService {
               task: doc.publishedTask,
               commit: doc.publishedCommit,
             },
-      lastPublishPath: null,
+      lastPublishPath: store.publishRows({ doc: doc.id })[0]?.path ?? null,
       createdBy: doc.createdBy,
       createdAt: doc.createdAt,
       updatedBy: doc.updatedBy,
@@ -2097,6 +2098,143 @@ export class DocsService {
       origin,
       head
     );
+  }
+
+  // ---- publish to the repo (v1) --------------------------------------------
+
+  // Seals the head and creates the elevated task that writes it to `path`: a
+  // human asks, and a human merges, since elevated risk caps the merge rung.
+  publish(
+    actor: DocsActor,
+    ref: string,
+    input: { path: string }
+  ): { task: string; doc: DocRecord } {
+    const doc = this.resolve(actor, ref);
+    if (actor.kind !== 'human') throw forbidden('humans publish docs', 'doc');
+    if (doc.scope === 'personal')
+      throw forbidden('personal docs are never published', 'doc');
+    if (doc.status === 'archived') throw archivedError();
+    if (doc.status !== 'accepted' && doc.unreviewed)
+      throw new DocsError(
+        'conflict',
+        'review it first: agent text no human checked never heads for the repo',
+        'doc'
+      );
+    const path = validatePublishPath(this.host.rootDir, input.path);
+    const store = this.store();
+    const open = store.publishRows({ doc: doc.id, state: 'open' })[0];
+    if (open !== undefined)
+      throw new DocsError(
+        'conflict',
+        `already publishing: ${open.task}`,
+        'doc'
+      );
+    this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    const head = this.headOf(doc);
+    const n = head.n ?? 0;
+    const task = this.host.createPublishTask({
+      title: `Publish doc ${doc.handle} (rev ${n}) to ${path}`,
+      body: `Dispatch has written revision ${n} of doc ${doc.handle} to ${path} in this worktree. Format and lint it with the repository's own tools, fix only formatting, and commit it as "docs: publish ${doc.handle} rev ${n}". Do not rewrite its content.`,
+      writes: [path],
+      risk: 'elevated',
+    });
+    const at = this.nowIso();
+    this.write(() => {
+      this.putLink(
+        actor,
+        doc,
+        { type: 'task', id: task },
+        'context',
+        false,
+        at
+      );
+      store.putPublish({
+        task,
+        doc: doc.id,
+        rev: head.id,
+        path,
+        state: 'open',
+        commit: null,
+        createdAt: at,
+      });
+      this.outbox.push({
+        doc: doc.id,
+        scope: doc.scope,
+        kind: 'meta',
+        author: actor.address,
+        rev: null,
+        summary: `publishing to ${path}`,
+      });
+    });
+    return { task, doc: this.record(doc) };
+  }
+
+  // Writes an open publish's recorded revision into its run's worktree; a no-op
+  // for any other task. A throw fails the dispatch and marks the publish failed.
+  seedFor(taskId: string, worktree: string): void {
+    if (!this.available) return;
+    const store = this.store();
+    const row = store.publishRows({ task: taskId })[0];
+    if (row === undefined) return;
+    // A rerun of a publish that already ended would run with no seeded file.
+    if (row.state !== 'open')
+      throw new Error(
+        `publish task ${taskId} is ${row.state}; publish the doc again`
+      );
+    try {
+      // Lowering the risk would let policy merge it with no human.
+      if (this.host.task(taskId)?.risk === 'routine')
+        throw new Error(
+          `publish task ${taskId}'s risk was lowered; publish the doc again`
+        );
+      const rev = store.revision(row.rev);
+      if (rev === null)
+        throw new Error(`publish ${taskId}: revision ${row.rev} is gone`);
+      seedFile(worktree, row.path, rev.body);
+    } catch (err) {
+      this.write(() => store.putPublish({ ...row, state: 'failed' }));
+      throw err;
+    }
+  }
+
+  // Records each open publish whose task has landed or been dropped; returns
+  // how many changed. A landing counts only as the host verifies it (a merged
+  // run, not a status alone) and only while the task is still elevated.
+  syncPublishes(): number {
+    if (!this.available) return 0;
+    const store = this.store();
+    let changed = 0;
+    for (const row of store.publishRows({ state: 'open' })) {
+      const outcome = this.host.publishOutcome(row.task);
+      if (outcome === null) continue;
+      if (outcome === 'dropped') {
+        this.write(() => store.putPublish({ ...row, state: 'dropped' }));
+        changed += 1;
+        continue;
+      }
+      if (this.host.task(row.task)?.risk === 'routine') continue;
+      const commit = this.host.lastCommitFor(row.path);
+      const doc = store.doc(row.doc);
+      this.write(() => {
+        store.putPublish({ ...row, state: 'landed', commit });
+        if (doc === null) return;
+        doc.publishedPath = row.path;
+        doc.publishedRev = row.rev;
+        doc.publishedTask = row.task;
+        doc.publishedCommit = commit;
+        store.putDoc(doc);
+        this.outbox.push({
+          doc: doc.id,
+          scope: doc.scope,
+          kind: 'meta',
+          author: SYSTEM_ADDRESS,
+          rev: null,
+          summary: `published to ${row.path}`,
+        });
+      });
+      changed += 1;
+    }
+    return changed;
   }
 
   // ---- links ----------------------------------------------------------------

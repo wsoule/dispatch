@@ -35,6 +35,8 @@ const summary = {
   rel: null,
   fromParent: false,
   head: { id: 'rev-1', n: 1, hash: 'h1', bytes: 10, sealed: true },
+  published: null,
+  lastPublishPath: null,
   updatedBy: 'run:r-1',
   updatedAt: '2026-09-26T10:00:00.000Z',
 } as unknown as DocSummary;
@@ -71,6 +73,7 @@ function renderView(opts: {
   revisions?: ApiClient['listDocRevisions'];
   diff?: ApiClient['diffDoc'];
   text?: string;
+  publish?: ApiClient['publishDoc'];
 }) {
   const calls: string[] = [];
   const doc = opts.doc ?? summary;
@@ -79,6 +82,7 @@ function renderView(opts: {
     getDoc: () =>
       Promise.resolve({ ...read, doc, text: opts.text ?? read.text }),
     diffDoc: opts.diff,
+    publishDoc: opts.publish,
     saveDocBody:
       opts.save ??
       (() =>
@@ -758,4 +762,69 @@ test('a doc named later replaces the open one, and a list pick is reported', asy
   fireEvent.click(screen.getByText('Auth refactor'));
   expect(await screen.findByLabelText('Editing auth')).toBeDefined();
   expect(picked).toEqual(['doc-1']);
+});
+
+// A reviewed team doc published at rev 1, its head at `headN`, last asked for docs/next.md.
+const publishedDoc = (headN: number) =>
+  ({
+    ...summary,
+    unreviewed: false,
+    head: { id: `rev-${headN}`, n: headN, hash: 'h', bytes: 10, sealed: true },
+    published: {
+      path: 'docs/spec.md',
+      rev: 'rev-1',
+      n: 1,
+      task: 't-pub-1',
+      commit: 'abc123',
+    },
+    lastPublishPath: 'docs/next.md',
+  }) as unknown as DocSummary;
+
+test('says how far the head is past the published revision', async () => {
+  renderView({ canDecide: true, doc: publishedDoc(2) });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  expect(
+    await screen.findByText('published rev 1 to docs/spec.md; head is rev 2')
+  ).toBeDefined();
+});
+
+test('shows no behind line while the head is the published revision', async () => {
+  renderView({ canDecide: true, doc: publishedDoc(1) });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  await screen.findByLabelText('Editing auth');
+  expect(screen.queryByText(/^published rev/)).toBeNull();
+});
+
+test('opens Publish with the remembered path and sends what the human typed', async () => {
+  const sent: unknown[] = [];
+  const publish = ((ref: string, input: unknown) => {
+    sent.push([ref, input]);
+    return Promise.resolve({
+      task: 't-pub-2',
+      run: 'r-1',
+      dispatchError: null,
+      doc: publishedDoc(2),
+    });
+  }) as unknown as ApiClient['publishDoc'];
+  renderView({ canDecide: false, doc: publishedDoc(2), publish });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Publish to repo' })
+  );
+  const path =
+    await screen.findByLabelText<HTMLInputElement>('Path in the repo');
+  expect(path.value).toBe('docs/next.md');
+  fireEvent.change(path, { target: { value: 'docs/specs/auth.md' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+  await waitFor(() =>
+    expect(sent).toEqual([['doc-1', { path: 'docs/specs/auth.md' }]])
+  );
+  expect(await screen.findByText(/task t-pub-2/)).toBeDefined();
+});
+
+test('offers no Publish on an unreviewed draft', async () => {
+  renderView({ canDecide: true });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  await screen.findByLabelText('Editing auth');
+  expect(screen.queryByRole('button', { name: 'Publish to repo' })).toBeNull();
 });

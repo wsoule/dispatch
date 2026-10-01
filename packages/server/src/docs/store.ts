@@ -164,6 +164,17 @@ export interface DocRow {
   indexedHash: string | null;
 }
 
+// One publish of a doc to the repo: the task it runs as and how it ended.
+export interface PublishRow {
+  task: string;
+  doc: string;
+  rev: string;
+  path: string;
+  state: 'open' | 'landed' | 'dropped' | 'failed';
+  commit: string | null;
+  createdAt: string;
+}
+
 export interface RevisionRow {
   id: string;
   docId: string;
@@ -936,6 +947,53 @@ export class SqliteDocStore {
         p.decidedAt,
       ]
     );
+  }
+
+  putPublish(p: PublishRow): void {
+    this.run(
+      'INSERT OR REPLACE INTO publishes (task_id, doc_id, rev_id, path, state, "commit", created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [p.task, p.doc, p.rev, p.path, p.state, p.commit, p.createdAt]
+    );
+  }
+
+  // Publish rows matching every given filter, newest first.
+  publishRows(filter: {
+    doc?: string;
+    task?: string;
+    state?: PublishRow['state'];
+  }): PublishRow[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    for (const [column, value] of [
+      ['doc_id', filter.doc],
+      ['task_id', filter.task],
+      ['state', filter.state],
+    ] as const) {
+      if (value === undefined) continue;
+      where.push(`${column} = ?`);
+      params.push(value);
+    }
+    const clause = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`;
+    return this.all<{
+      task_id: string;
+      doc_id: string;
+      rev_id: string;
+      path: string;
+      state: PublishRow['state'];
+      commit: string | null;
+      created_at: string;
+    }>(
+      `SELECT * FROM publishes${clause} ORDER BY created_at DESC, task_id DESC`,
+      params
+    ).map((r) => ({
+      task: r.task_id,
+      doc: r.doc_id,
+      rev: r.rev_id,
+      path: r.path,
+      state: r.state,
+      commit: r.commit,
+      createdAt: r.created_at,
+    }));
   }
 
   // Proposal rows matching every given filter, oldest first.

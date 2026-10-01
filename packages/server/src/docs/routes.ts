@@ -15,6 +15,7 @@ import {
 } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
+import { humanActor, humanOperator } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
 import { readBoundedBytes, readBoundedJson } from './http.js';
@@ -306,6 +307,28 @@ async function once(
   }
 }
 
+// Starts the publish task's run as the human who asked (MEM-R5..R8: the
+// operator is theirs, the owner only with the owner credential). The task
+// stands either way, so a failed dispatch is reported rather than thrown.
+async function dispatchPublish(
+  ctx: ApiContext,
+  task: string
+): Promise<{ run: string | null; dispatchError: string | null }> {
+  try {
+    const run = await ctx.orchestrator.dispatch(
+      task,
+      ctx.orchestrator.defaultExecutorName(),
+      { actor: humanActor(ctx), operator: humanOperator(ctx) }
+    );
+    return { run: run.id, dispatchError: null };
+  } catch (err) {
+    return {
+      run: null,
+      dispatchError: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 // Routes /api/docs/<rest>; null when nothing here matches, so api.ts 404s.
 export async function handleDocsRoute(
   req: Request,
@@ -463,6 +486,22 @@ export async function handleDocsRoute(
           return await write(async () => {
             const wanted = status((await body()).status, 'status');
             return jsonResponse(docs.setStatus(actor, ref, wanted));
+          });
+        case 'publish':
+          return await write(async () => {
+            const b = await body();
+            if (b.dispatch !== undefined && typeof b.dispatch !== 'boolean')
+              throw invalid('dispatch', 'expected a boolean');
+            const out = docs.publish(actor, ref, { path: str(b.path, 'path') });
+            return jsonResponse(
+              {
+                ...out,
+                ...(b.dispatch === false
+                  ? { run: null, dispatchError: null }
+                  : await dispatchPublish(ctx, out.task)),
+              },
+              201
+            );
           });
         case 'reviewed':
           await body();

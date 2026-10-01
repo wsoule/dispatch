@@ -129,6 +129,20 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('publishes a doc to a repo path, dispatching unless told not to', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await api.publish('spec', { path: 'docs/spec.md' });
+    await api.publish('spec', { path: 'docs/spec.md', dispatch: false });
+    expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
+      ['POST', '/api/docs/spec/publish', '{"path":"docs/spec.md"}'],
+      [
+        'POST',
+        '/api/docs/spec/publish',
+        '{"path":"docs/spec.md","dispatch":false}',
+      ],
+    ]);
+  });
+
   it('lists proposals by doc and state', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await api.proposals();

@@ -39,6 +39,7 @@ import { DocEditor } from './DocEditor';
 import { DocHistory } from './DocHistory';
 import { DocLinksRail } from './DocLinksRail';
 import { DocMergeView } from './DocMergeView';
+import { PublishDialog } from './PublishDialog';
 import { Button } from '@/ui/button';
 
 interface DocPageProps {
@@ -90,6 +91,9 @@ export function DocPage({
   // What a Mark reviewed would cover, shown before it acts.
   const [confirming, setConfirming] = useState<ReviewCover | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  // What the last publish from this page started, shown under the header.
+  const [publishNote, setPublishNote] = useState<string | null>(null);
   // Where the editor opens: placed once per named anchor, so later reads of
   // the same doc never move the caret out from under typing.
   const [placeAt, setPlaceAt] = useState<{ line: number } | null>(null);
@@ -278,6 +282,12 @@ export function DocPage({
   const doc = read.doc;
   const archived = doc.status === 'archived';
   const fileName = `${doc.handle}.md`;
+  // Agent text no human checked never heads for the repo; personal docs never do.
+  const publishable =
+    doc.scope === 'team' &&
+    !archived &&
+    (doc.status === 'accepted' || !doc.unreviewed);
+  const published = doc.published;
   const togglePanel = (to: 'history' | 'merge'): void =>
     setPanel((p) => (p === to ? 'editor' : to));
   return (
@@ -360,6 +370,15 @@ export function DocPage({
             Mark reviewed
           </Button>
         )}
+        {publishable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setPublishOpen(true)}
+          >
+            Publish to repo
+          </Button>
+        )}
         {canDecide &&
           docStatusActions(doc).map(({ label, status }) => (
             <Button
@@ -387,6 +406,38 @@ export function DocPage({
             ))}
           </ul>
         </div>
+      )}
+      {published !== null && published.rev !== doc.head.id && (
+        <p className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-muted-foreground)]">
+          {`published rev ${published.n ?? '-'} to ${published.path}; head is rev ${doc.head.n}`}
+        </p>
+      )}
+      {publishNote !== null && (
+        <p
+          role="status"
+          className="border-b border-[var(--color-border)] px-3 py-1 text-xs"
+        >
+          {publishNote}
+        </p>
+      )}
+      {publishOpen && (
+        <PublishDialog
+          open
+          onOpenChange={setPublishOpen}
+          client={client}
+          docRef={doc.id}
+          initialPath={doc.lastPublishPath ?? published?.path ?? ''}
+          onPublished={(result, path) => {
+            const run =
+              result.run !== null
+                ? `, run ${result.run}`
+                : result.dispatchError !== null
+                  ? `; its run did not start: ${result.dispatchError}`
+                  : '';
+            setPublishNote(`Publishing to ${path}: task ${result.task}${run}`);
+            void queryClient.invalidateQueries({ queryKey: docsKey(port) });
+          }}
+        />
       )}
       {actionError !== null && (
         <p
