@@ -1,3 +1,4 @@
+import { renderDocFile } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 
@@ -193,6 +194,55 @@ describe('the staged import', () => {
     }
     return { id, report: service.commitImport(owner, id, dryRun) };
   }
+
+  it("reads an exported file by its frontmatter, and refuses one naming someone's personal doc", () => {
+    const { service, host } = makeService();
+    host.operators.set('human:wyat', {
+      human: 'human:wyat',
+      identity: 'id-wyat',
+    });
+    const owner = service.actorFor(OWNER);
+    const mine = service.create(owner, {
+      title: 'Mine',
+      body: 'private\n',
+      scope: 'personal',
+    });
+    const meta = (id: string, slug: string) =>
+      ({
+        id,
+        slug,
+        title: slug,
+        status: 'draft',
+        rev: 'rev-1',
+        n: 1,
+        parents: [],
+        author: 'human:wyat',
+        cause: 'create',
+        createdAt: '2026-09-26T10:00:00.000Z',
+        hash: 'h',
+        links: [],
+        authors: ['human:wyat'],
+        updatedAt: '2026-09-27T10:00:00.000Z',
+      }) as unknown as Parameters<typeof renderDocFile>[0];
+    const team = file(
+      'x/team-copy.md',
+      renderDocFile(
+        meta('doc-01K5ZZZZZZZZZZZZZZZZZZZZZY', 'team-copy'),
+        '# Team copy\nbody\n'
+      ),
+      '2026-09-27T10:00:00.000Z'
+    );
+    const leaked = file(
+      'x/mine.md',
+      renderDocFile(meta(mine.doc.id, 'mine'), 'private\n'),
+      '2026-09-27T10:00:00.000Z'
+    );
+    const { report } = stage(service, [team, leaked]);
+    expect(report.errors.map((e) => [e.path, e.reason])).toEqual([
+      ['x/mine.md', 'invalid'],
+    ]);
+    expect(service.read(owner, 'team-copy').text).toBe('# Team copy\nbody\n');
+  });
 
   it('imports more than 2 MiB across uploads, drifted copies as revisions, newest as head', () => {
     const { service } = makeService();

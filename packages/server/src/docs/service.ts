@@ -35,6 +35,7 @@ import {
   LINK_RELS,
   LINK_TARGET_TYPES,
   normalizeDocText,
+  parseDocFile,
   rewriteAssetLinks,
   untrustedInline,
 } from '@dispatch/core';
@@ -3167,6 +3168,19 @@ export class DocsService {
           detail: 'the file is not UTF-8',
         });
         continue;
+      }
+      // An export or receipt file: its body, and never someone's personal doc.
+      const exported = parseDocFile(text);
+      if (!('error' in exported)) {
+        if (store.doc(exported.meta.id)?.scope === 'personal') {
+          texts.set(hash, {
+            error: 'invalid',
+            detail:
+              'the file is an export of a personal doc, which is never imported',
+          });
+          continue;
+        }
+        text = exported.body;
       }
       texts.set(
         hash,

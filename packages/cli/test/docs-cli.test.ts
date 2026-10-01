@@ -325,7 +325,7 @@ describe('dispatch docs import', () => {
 describe('dispatch docs import with unreadable paths', () => {
   it('imports an exported doc by its frontmatter, and refuses a personal one', async () => {
     const exported = join(tmpDir, 'export-in');
-    mkdirSync(join(exported, 'personal'), { recursive: true });
+    mkdirSync(exported, { recursive: true });
     const meta = {
       id: 'doc-01K5ZZZZZZZZZZZZZZZZZZZZZZ',
       slug: 'auth-spec',
@@ -344,8 +344,17 @@ describe('dispatch docs import with unreadable paths', () => {
     } as unknown as Parameters<typeof renderDocFile>[0];
     const team = join(exported, 'renamed-on-disk.md');
     writeFileSync(team, renderDocFile(meta, '# Auth spec\nbody\n'));
-    const personal = join(exported, 'personal', 'notes.md');
-    writeFileSync(personal, '# Notes\n');
+    // An exported personal doc sits in the export's Personal/ folder, in any case.
+    mkdirSync(join(exported, 'Personal'), { recursive: true });
+    const personal = join(exported, 'Personal', 'notes.md');
+    writeFileSync(
+      personal,
+      renderDocFile({ ...meta, slug: 'notes' }, '# Notes\n')
+    );
+    // A plain note under some other personal/ folder is just a file.
+    mkdirSync(join(tmpDir, 'home-personal', 'personal'), { recursive: true });
+    const plain = join(tmpDir, 'home-personal', 'personal', 'todo.md');
+    writeFileSync(plain, '# Todo\n');
     let manifest: { name: string; mtime: string; hash: string }[] = [];
     const sent: string[] = [];
     const api = {
@@ -360,19 +369,24 @@ describe('dispatch docs import with unreadable paths', () => {
       commitImport: () =>
         Promise.resolve({
           dryRun: true,
-          files: 1,
-          names: 1,
+          files: 2,
+          names: 2,
           failedNames: 0,
           errors: [],
           parity: { files: true, names: true },
         }),
       deleteImport: () => Promise.resolve(),
     } as unknown as DocsApi;
-    const report = await importFiles(api, [team, personal], { dryRun: true });
+    const report = await importFiles(api, [team, personal, plain], {
+      dryRun: true,
+    });
     expect(manifest.map((f) => [f.name, f.mtime])).toEqual([
       ['auth-spec.md', '2026-09-27T10:00:00.000Z'],
+      ['todo.md', expect.any(String)],
     ]);
-    expect(sent).toEqual(['# Auth spec\nbody\n']);
+    // The file goes whole, so the daemon reads its frontmatter too.
+    expect(sent[0]).toContain('# Auth spec\nbody\n');
+    expect(sent[0].startsWith('---')).toBe(true);
     expect(report.errors.map((e) => [e.path, e.detail])).toEqual([
       [personal, 'personal docs are never imported'],
     ]);

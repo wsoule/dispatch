@@ -19,12 +19,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
@@ -168,18 +169,21 @@ export async function importFiles(
 ): Promise<ImportReportInfo> {
   const unread: { path: string; detail: string }[] = [];
   const files = paths.flatMap((path) => {
-    // An export's personal/ folder holds someone's private docs: never sent.
-    if (dirname(resolve(path)).split(sep).includes('personal')) {
-      unread.push({ path, detail: 'personal docs are never imported' });
-      return [];
-    }
     try {
       const raw = readFileSync(path);
-      // A receipts or export file: its body, under its own slug and time.
+      // A receipts or export file: sent whole (the daemon reads its
+      // frontmatter), under its own slug and time.
       const parsed = parseDocFile(raw.toString('utf8'));
       const doc = 'error' in parsed ? null : parsed;
-      const content =
-        doc === null ? raw : new Uint8Array(Buffer.from(doc.body, 'utf8'));
+      // An exported doc in its export's personal/ folder is someone's private
+      // doc: never sent. A plain note in any other personal/ folder is a file.
+      if (
+        doc !== null &&
+        basename(dirname(realpathSync(path))).toLowerCase() === 'personal'
+      ) {
+        unread.push({ path, detail: 'personal docs are never imported' });
+        return [];
+      }
       return [
         {
           path,
@@ -188,9 +192,9 @@ export async function importFiles(
             doc === null
               ? statSync(path).mtime.toISOString()
               : doc.meta.updatedAt,
-          bytes: content.byteLength,
-          hash: createHash('sha256').update(content).digest('hex'),
-          content,
+          bytes: raw.byteLength,
+          hash: createHash('sha256').update(raw).digest('hex'),
+          content: raw,
         },
       ];
     } catch (err) {
