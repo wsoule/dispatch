@@ -1,6 +1,6 @@
 import type { StandaloneOptions } from '@dispatch/a2a';
 import { checkStandalone } from '@dispatch/a2a';
-import { readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 
 import { type CliContext, CliError } from '../context.js';
 import { attachToRunningDaemon } from './appToken.js';
@@ -17,17 +17,26 @@ export interface ServeCommandOptions {
   trustForwardedFor?: boolean;
 }
 
-// The host token, from a file only its owner can read or the environment;
-// never argv, and never quoted in an error.
+// The host token, from a regular file the current user owns and alone can
+// read, or the environment; never argv, and never quoted in an error.
 function readHostToken(file: string | undefined): string {
   if (file !== undefined) {
-    let mode: number;
+    let st: ReturnType<typeof lstatSync>;
     try {
-      mode = statSync(file).mode;
+      st = lstatSync(file);
     } catch {
       throw new CliError(`cannot read the host token file ${file}`);
     }
-    if ((mode & 0o077) !== 0)
+    if (!st.isFile())
+      throw new CliError(
+        `the host token file ${file} must be a regular file, not a symlink or directory`
+      );
+    const uid = process.getuid?.();
+    if (uid !== undefined && st.uid !== uid)
+      throw new CliError(
+        `the host token file ${file} is not owned by the current user`
+      );
+    if ((Number(st.mode) & 0o077) !== 0)
       throw new CliError(
         `the host token file ${file} is readable by others; run chmod 600 on it`
       );

@@ -99,7 +99,7 @@ dispatch a2a hosts add relay --public-url https://agent.example.com
 The public URL is pinned to the host: its card is built for that URL and no
 other, so a stolen host token cannot publish a card pointing elsewhere.
 
-Put the token in a file only its owner can read (`chmod 600`) on the relay
+Put the token in a regular file you own and only you can read (`chmod 600`; not a symlink) on the relay
 machine, then:
 
 ```bash

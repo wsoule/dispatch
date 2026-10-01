@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -54,6 +61,24 @@ it('refuses a host token file others can read, without quoting it', async () => 
   expect(err).toBeInstanceOf(CliError);
   expect((err as Error).message).toContain('chmod 600');
   expect((err as Error).message).not.toContain('host-secret');
+});
+
+it('refuses a host token file that is a symlink or not a regular file', async () => {
+  const target = tokenFile(0o600);
+  const link = join(dir, 'link');
+  symlinkSync(target, link);
+  const folder = join(dir, 'folder');
+  mkdirSync(folder, { mode: 0o700 });
+  for (const hostTokenFile of [link, folder]) {
+    const err = await resolveServe(ctx, {
+      port: '7460',
+      daemon: 'https://team.example.com',
+      hostTokenFile,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as Error).message).toContain('regular file');
+    expect((err as Error).message).not.toContain('host-secret');
+  }
 });
 
 it.each([
