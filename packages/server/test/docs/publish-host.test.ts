@@ -53,10 +53,44 @@ describe('lastCommitFor', () => {
 });
 
 describe('publishOutcome', () => {
+  // A real repo: main holds a commit that wrote docs/spec.md and one that did not;
+  // a side branch holds another that wrote it but never reached main.
+  function repoWithCommits(): {
+    repo: string;
+    wrote: string;
+    other: string;
+    side: string;
+  } {
+    const repo = realpathSync(initGitRepo('docs-publish-land-'));
+    repos.push(repo);
+    mkdirSync(join(repo, 'docs'));
+    writeFileSync(join(repo, 'docs', 'spec.md'), 'v1\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-qm', 'docs: publish spec rev 1');
+    const wrote = git(repo, 'rev-parse', 'HEAD');
+    writeFileSync(join(repo, 'other.md'), 'x\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-qm', 'unrelated');
+    const other = git(repo, 'rev-parse', 'HEAD');
+    git(repo, 'checkout', '-qb', 'side');
+    writeFileSync(join(repo, 'docs', 'spec.md'), 'side\n');
+    git(repo, 'commit', '-qam', 'side edit');
+    const side = git(repo, 'rev-parse', 'HEAD');
+    git(repo, 'checkout', '-q', 'main');
+    return { repo, wrote, other, side };
+  }
+
   // A task store holding one task at `status`, and runs of it as given.
   function hostWith(
     status: string | null,
-    runs: { taskId: string; kind?: string; reviewAction?: string }[]
+    runs: {
+      taskId: string;
+      kind?: string;
+      reviewAction?: string;
+      mergeCommit?: string;
+      files?: string[];
+    }[],
+    rootDir?: string
   ): DaemonDocsHost {
     const host = new DaemonDocsHost({
       store: {
@@ -75,47 +109,83 @@ describe('publishOutcome', () => {
             : null,
       } as never,
       events,
+      ...(rootDir === undefined ? {} : { rootDir }),
     });
+    const listed = runs.map((r, i) => ({
+      id: `r-${i}`,
+      kind: 'execute',
+      ...r,
+    }));
     host.bindRuns({
-      list: () =>
-        runs.map((r, i) => ({ id: `r-${i}`, kind: 'execute', ...r })) as never,
+      list: () => listed as never,
       taskIdOfRun: () => null,
       notifyRun: () => undefined,
       onRunTerminal: () => () => undefined,
+      diff: (id: string) => ({
+        patch: '',
+        files: (listed.find((r) => r.id === id)?.files ?? []).map((path) => ({
+          path,
+          status: 'M',
+        })),
+      }),
     });
     return host;
   }
 
-  it('counts a landing only when one of the task’s execute runs really merged', () => {
-    expect(hostWith('landed', []).publishOutcome('t-pub')).toBeNull();
+  it('lands a merge only through a merge commit on main that changed the path', () => {
+    const { repo, wrote, other, side } = repoWithCommits();
+    const merged = (mergeCommit?: string) =>
+      hostWith(
+        'landed',
+        [{ taskId: 't-pub', reviewAction: 'merge', mergeCommit }],
+        repo
+      ).publishOutcome('t-pub', 'docs/spec.md');
+    expect(merged(wrote)).toEqual({ state: 'landed', commit: wrote });
+    for (const commit of [undefined, other, side]) {
+      expect(merged(commit)).toEqual({
+        state: 'failed',
+        reason: expect.stringContaining('nothing landed'),
+      });
+    }
+  });
+
+  it('lands a PR merge only when the run’s merged diff changed the path', () => {
+    const { repo, other } = repoWithCommits();
+    const viaPr = (files: string[]) =>
+      hostWith(
+        'done',
+        [{ taskId: 't-pub', reviewAction: 'pr', files }],
+        repo
+      ).publishOutcome('t-pub', 'docs/spec.md');
+    expect(viaPr(['docs/spec.md'])).toMatchObject({ state: 'landed' });
+    expect(viaPr(['other.md'])).toMatchObject({ state: 'failed' });
+    expect(other).not.toBe('');
+  });
+
+  it('waits on a status alone, and on a review or discarded run', () => {
+    expect(
+      hostWith('landed', []).publishOutcome('t-pub', 'docs/spec.md')
+    ).toBeNull();
     expect(
       hostWith('landed', [
         { taskId: 't-other', reviewAction: 'merge' },
-      ]).publishOutcome('t-pub')
-    ).toBeNull();
-    expect(
-      hostWith('landed', [
         { taskId: 't-pub', kind: 'review', reviewAction: 'merge' },
         { taskId: 't-pub', reviewAction: 'discard' },
-      ]).publishOutcome('t-pub')
+      ]).publishOutcome('t-pub', 'docs/spec.md')
     ).toBeNull();
-    expect(
-      hostWith('landed', [
-        { taskId: 't-pub', reviewAction: 'merge' },
-      ]).publishOutcome('t-pub')
-    ).toBe('landed');
-    expect(
-      hostWith('done', [
-        { taskId: 't-pub', reviewAction: 'pr' },
-      ]).publishOutcome('t-pub')
-    ).toBe('landed');
   });
 
   it('is null while the task is open, and dropped once it is dropped or gone', () => {
     const merged = [{ taskId: 't-pub', reviewAction: 'merge' }];
-    expect(hostWith('review', merged).publishOutcome('t-pub')).toBeNull();
-    expect(hostWith('dropped', []).publishOutcome('t-pub')).toBe('dropped');
-    expect(hostWith(null, []).publishOutcome('t-pub')).toBe('dropped');
+    expect(
+      hostWith('review', merged).publishOutcome('t-pub', 'docs/spec.md')
+    ).toBeNull();
+    expect(
+      hostWith('dropped', []).publishOutcome('t-pub', 'docs/spec.md')
+    ).toEqual({ state: 'dropped' });
+    expect(hostWith(null, []).publishOutcome('t-pub', 'docs/spec.md')).toEqual({
+      state: 'dropped',
+    });
   });
 
   it('is null before runs bind, whatever the status says', () => {
@@ -134,6 +204,6 @@ describe('publishOutcome', () => {
       } as never,
       events,
     });
-    expect(host.publishOutcome('t-pub')).toBeNull();
+    expect(host.publishOutcome('t-pub', 'docs/spec.md')).toBeNull();
   });
 });

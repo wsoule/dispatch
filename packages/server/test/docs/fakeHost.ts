@@ -11,6 +11,7 @@ import type {
   DocChange,
   DocsHost,
   DocsTaskFacts,
+  PublishOutcome,
 } from '../../src/docs/host.js';
 import { DocsService } from '../../src/docs/service.js';
 import { openDocsDb, SqliteDocStore } from '../../src/docs/store.js';
@@ -117,13 +118,12 @@ export class FakeDocsHost implements DocsHost {
   policyApprovals: DocProposal[] = [];
   openGates: { id: string; proposal: string }[] = [];
   onCloseGate: (() => void) | null = null;
-  // Publish: the checkout, the tasks it created, how each ended and the commits git reports.
+  // Publish: the checkout, the tasks it created and how each ended.
   rootDir = '';
   createdTasks: (Parameters<DocsHost['createPublishTask']>[0] & {
     id: string;
   })[] = [];
-  outcomes = new Map<string, 'landed' | 'dropped'>();
-  commits = new Map<string, string>();
+  outcomes = new Map<string, NonNullable<PublishOutcome>>();
 
   constructor() {
     for (const id of ['t-1', 't-2', 'e-1', 'e-root']) {
@@ -251,11 +251,8 @@ export class FakeDocsHost implements DocsHost {
     });
     return id;
   }
-  publishOutcome(taskId: string): 'landed' | 'dropped' | null {
+  publishOutcome(taskId: string): PublishOutcome {
     return this.outcomes.get(taskId) ?? null;
-  }
-  lastCommitFor(path: string): string | null {
-    return this.commits.get(path) ?? null;
   }
   now(): Date {
     return this.clock;

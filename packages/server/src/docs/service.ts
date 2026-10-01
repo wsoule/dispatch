@@ -2391,23 +2391,27 @@ export class DocsService {
     const store = this.store();
     let changed = 0;
     for (const row of store.publishRows({ state: 'open' })) {
-      const outcome = this.host.publishOutcome(row.task);
+      const outcome = this.host.publishOutcome(row.task, row.path);
       if (outcome === null) continue;
-      if (outcome === 'dropped') {
+      if (outcome.state === 'dropped') {
         this.write(() => store.putPublish({ ...row, state: 'dropped' }));
         changed += 1;
         continue;
       }
       // A routine risk let policy merge it with no human: never recorded, and a
       // new publish may start.
-      if (this.host.task(row.task)?.risk === 'routine') {
-        const reason =
-          'the task landed after its risk was lowered to routine, so no human merged it';
+      const reason =
+        outcome.state === 'failed'
+          ? outcome.reason
+          : this.host.task(row.task)?.risk === 'routine'
+            ? 'the task landed after its risk was lowered to routine, so no human merged it'
+            : null;
+      if (reason !== null) {
         this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
         changed += 1;
         continue;
       }
-      const commit = this.host.lastCommitFor(row.path);
+      const commit = outcome.state === 'landed' ? outcome.commit : null;
       const doc = store.doc(row.doc);
       this.write(() => {
         store.putPublish({ ...row, state: 'landed', commit });

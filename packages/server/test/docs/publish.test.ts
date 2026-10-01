@@ -253,8 +253,7 @@ describe('publish', () => {
     expect(readFileSync(join(wt, 'docs/spec.md'), 'utf8')).toBe('# Spec v1\n');
     service.seedFor('t-unrelated', wt);
     expect(service.syncPublishes()).toBe(0);
-    host.outcomes.set(task, 'landed');
-    host.commits.set('docs/spec.md', 'abc123');
+    host.outcomes.set(task, { state: 'landed', commit: 'abc123' });
     expect(service.syncPublishes()).toBe(1);
     const doc = service.read(as(OWNER), 'spec').doc;
     expect(doc.published).toEqual({
@@ -280,7 +279,7 @@ describe('publish', () => {
     const wt = tempDir('docs-wt-');
     expect(() => service.seedFor(task, wt)).toThrow('risk');
     expect(existsSync(join(wt, 'docs/spec.md'))).toBe(false);
-    host.outcomes.set(task, 'landed');
+    host.outcomes.set(task, { state: 'landed', commit: null });
     expect(service.syncPublishes()).toBe(0);
     expect(service.read(as(OWNER), 'spec').doc.published).toBeNull();
   });
@@ -325,7 +324,7 @@ describe('publish', () => {
     const facts = host.tasks.get(task);
     if (facts === undefined) throw new Error('no publish task');
     host.tasks.set(task, { ...facts, risk: 'routine' });
-    host.outcomes.set(task, 'landed');
+    host.outcomes.set(task, { state: 'landed', commit: null });
     expect(service.syncPublishes()).toBe(1);
     expect(store.publishRows({ task })[0]).toMatchObject({
       state: 'failed',
@@ -366,12 +365,29 @@ describe('publish', () => {
     ).not.toBe(task);
   });
 
+  it('marks a publish whose task merged nothing at its path failed, with the reason', () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    const { task } = service.publish(as(OWNER), 'spec', {
+      path: 'docs/spec.md',
+    });
+    host.outcomes.set(task, {
+      state: 'failed',
+      reason: 'nothing landed at docs/spec.md',
+    });
+    expect(service.syncPublishes()).toBe(1);
+    expect(store.publishRows({ task })[0]).toMatchObject({
+      state: 'failed',
+      reason: 'nothing landed at docs/spec.md',
+    });
+    expect(service.read(as(OWNER), 'spec').doc.published).toBeNull();
+  });
+
   it('records a dropped publish task as dropped, leaving the doc unpublished', () => {
     service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
     const { task } = service.publish(as(OWNER), 'spec', {
       path: 'docs/spec.md',
     });
-    host.outcomes.set(task, 'dropped');
+    host.outcomes.set(task, { state: 'dropped' });
     expect(service.syncPublishes()).toBe(1);
     expect(store.publishRows({ task })[0].state).toBe('dropped');
     expect(service.read(as(OWNER), 'spec').doc.published).toBeNull();

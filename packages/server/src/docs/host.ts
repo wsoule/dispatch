@@ -104,11 +104,9 @@ export interface DocsHost extends DocsGatePort {
     writes: string[];
     risk: 'elevated';
   }): string;
-  // 'landed' only once the task is done and one of its runs really merged;
-  // 'dropped' when it was dropped or is gone; null while it is neither.
-  publishOutcome(taskId: string): 'landed' | 'dropped' | null;
-  // The newest commit on the default branch that touched `path`, or null.
-  lastCommitFor(path: string): string | null;
+  // How a publish task ended: landed only once a run's merge changed `path`;
+  // failed when a merge landed nothing there; null while it is still open.
+  publishOutcome(taskId: string, path: string): PublishOutcome;
 }
 
 // doc.changed events for amends of one doc coalesce within this window.
@@ -117,7 +115,14 @@ export const AMEND_DEBOUNCE_MS = 2_000;
 type DocsRuns = Pick<
   Orchestrator,
   'list' | 'notifyRun' | 'onRunTerminal' | 'taskIdOfRun'
->;
+> &
+  Partial<Pick<Orchestrator, 'diff'>>;
+
+export type PublishOutcome =
+  | { state: 'landed'; commit: string | null }
+  | { state: 'dropped' }
+  | { state: 'failed'; reason: string }
+  | null;
 type DocsMessages = Pick<MessageStore, 'getMessage' | 'thread' | 'deliveries'>;
 type MemoryEntryScope = 'personal' | 'project' | 'team';
 
@@ -200,8 +205,10 @@ export class DaemonDocsHost implements DocsHost {
   }
 
   // A status alone never lands a publish (an agent may set any status): one of
-  // the task's execute runs must carry the orchestrator's own merge record.
-  publishOutcome(taskId: string): 'landed' | 'dropped' | null {
+  // the task's execute runs must carry the orchestrator's merge record, and
+  // what it merged must have changed `path` (a merge commit on the default
+  // branch, or a PR's merged diff). A merge that changed nothing there fails.
+  publishOutcome(taskId: string, path: string): PublishOutcome {
     let doc;
     try {
       doc = this.deps.store.get(taskId);
@@ -209,22 +216,75 @@ export class DaemonDocsHost implements DocsHost {
       if (err instanceof TaskParseError) return null;
       throw err;
     }
-    if (doc === null) return 'dropped';
+    if (doc === null) return { state: 'dropped' };
     const model = statusModelFor(this.rootDir);
-    if (isCanceledStatus(doc.meta.status, model)) return 'dropped';
+    if (isCanceledStatus(doc.meta.status, model)) return { state: 'dropped' };
     if (!isCompletedStatus(doc.meta.status, model) || this.runs === null)
       return null;
     const merged = this.runs
       .list()
-      .some(
+      .filter(
         (r) =>
           r.taskId === taskId &&
           runKind(r) === 'execute' &&
           (r.reviewAction === 'merge' || r.reviewAction === 'pr')
       );
-    return merged ? 'landed' : null;
+    if (merged.length === 0) return null;
+    for (const run of merged) {
+      if (run.reviewAction === 'merge') {
+        const commit = run.mergeCommit;
+        if (commit !== undefined && this.commitLanded(commit, path))
+          return { state: 'landed', commit };
+      } else if (this.prChanged(run.id, path)) {
+        return { state: 'landed', commit: this.lastCommitFor(path) };
+      }
+    }
+    return {
+      state: 'failed',
+      reason: `nothing landed: no merged run of ${taskId} changed ${path}`,
+    };
   }
 
+  // Whether `commit` is on the default branch and changed `path` against its first parent.
+  private commitLanded(commit: string, path: string): boolean {
+    if (this.rootDir === '' || !/^[0-9a-f]{7,64}$/.test(commit)) return false;
+    let base: string;
+    try {
+      base = new WorktreeManager(this.rootDir).defaultBaseBranch();
+    } catch {
+      return false;
+    }
+    const onBase = spawnGitSync(this.rootDir, [
+      'merge-base',
+      '--is-ancestor',
+      commit,
+      base,
+    ]);
+    if (onBase.exitCode !== 0) return false;
+    const changed = spawnGitSync(this.rootDir, [
+      '--literal-pathspecs',
+      'diff',
+      '--name-only',
+      `${commit}^1`,
+      commit,
+      '--',
+      path,
+    ]);
+    return changed.exitCode === 0 && changed.stdout.trim() !== '';
+  }
+
+  // Whether a PR-merged run's recorded diff changed `path`.
+  private prChanged(runId: string, path: string): boolean {
+    try {
+      return (
+        this.runs?.diff?.(runId).files.some((f) => f.path === path) ?? false
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  // The newest commit on the default branch that touched `path`, or null.
   lastCommitFor(path: string): string | null {
     if (this.rootDir === '') return null;
     let base: string;
