@@ -86,3 +86,23 @@ export async function resolveServe(
   if (!checked.ok) throw new CliError(`${checked.key}: ${checked.error}`);
   return options;
 }
+
+type SignalSource = Pick<NodeJS.EventEmitter, 'once' | 'off'>;
+
+// Resolves with the first SIGINT or SIGTERM, so `a2a serve` stops cleanly
+// under a terminal or a service manager; both listeners are removed.
+export function stopSignal(
+  source: SignalSource = process
+): Promise<'SIGINT' | 'SIGTERM'> {
+  return new Promise((resolve) => {
+    const on = (signal: 'SIGINT' | 'SIGTERM') => () => {
+      source.off('SIGINT', onInt);
+      source.off('SIGTERM', onTerm);
+      resolve(signal);
+    };
+    const onInt = on('SIGINT');
+    const onTerm = on('SIGTERM');
+    source.once('SIGINT', onInt);
+    source.once('SIGTERM', onTerm);
+  });
+}

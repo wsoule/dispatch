@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import {
   chmodSync,
   mkdirSync,
@@ -10,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveServe } from '../src/commands/a2aServe.js';
+import { resolveServe, stopSignal } from '../src/commands/a2aServe.js';
 import { CliError } from '../src/context.js';
 
 let dir: string;
@@ -121,4 +122,15 @@ it.each([
     process.env.DISPATCH_A2A_HOST_TOKEN = 'host-secret';
   await expect(resolveServe(ctx, o)).rejects.toThrow(message);
   await expect(resolveServe(ctx, o)).rejects.toBeInstanceOf(CliError);
+});
+
+it('stops on SIGTERM as on SIGINT, and leaves no listener behind', async () => {
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    const emitter = new EventEmitter();
+    const stopped = stopSignal(emitter);
+    emitter.emit(signal);
+    expect(await stopped).toBe(signal);
+    expect(emitter.listenerCount('SIGTERM')).toBe(0);
+    expect(emitter.listenerCount('SIGINT')).toBe(0);
+  }
 });

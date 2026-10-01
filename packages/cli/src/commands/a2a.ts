@@ -13,7 +13,7 @@ import { createA2AApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
 import type { ServeCommandOptions } from './a2aServe.js';
-import { resolveServe } from './a2aServe.js';
+import { resolveServe, stopSignal } from './a2aServe.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 
 const TOKEN_HELP = 'the daemon app token (or DISPATCH_APP_TOKEN)';
@@ -95,7 +95,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
   const a2a = program
     .command('a2a')
     .description(
-      'Expose this project as an A2A agent: the listener, its card, clients and their tasks'
+      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, and standalone hosts (hosts, serve)'
     );
 
   const withAgentToken = async (): Promise<A2AApiClient> => {
@@ -480,11 +480,9 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
     .action(async (o: ServeCommandOptions) => {
       const standalone = await startStandalone(await resolveServe(ctx, o));
       ctx.log(
-        `A2A standalone host listening at ${standalone.url} (card: ${standalone.url}/.well-known/agent-card.json). Ctrl-C to stop.`
+        `A2A standalone host listening at ${standalone.url} (card: ${standalone.url}/.well-known/agent-card.json). Ctrl-C or SIGTERM stops it.`
       );
-      await new Promise<void>((resolve) =>
-        process.once('SIGINT', () => resolve())
-      );
+      await stopSignal();
       await standalone.stop();
     });
 
@@ -503,6 +501,10 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       ctx.log(
         `standalone hosts: ${standalone ? 'allowed' : 'not allowed (dispatch a2a hosts allow)'}`
       );
+      if (list.length === 0)
+        ctx.log(
+          'No hosts yet. Add one with: dispatch a2a hosts add <name> --public-url <url>'
+        );
       for (const h of list)
         ctx.log(
           `${h.id} · ${h.name} · ${h.publicUrl} · ${h.revokedAt === null ? 'active' : `revoked ${h.revokedAt}`} · added by ${h.createdBy}`

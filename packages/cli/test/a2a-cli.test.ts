@@ -39,6 +39,8 @@ let root: string;
 let home: string;
 // What the fake daemon answers a listener write with.
 let written: object;
+// Whether the fake daemon lists no hosts.
+let noHosts = false;
 let lines: string[];
 let ctx: CliContext;
 let server: ReturnType<typeof Bun.serve>;
@@ -143,16 +145,18 @@ function startFakeDaemon() {
       if (url.pathname === '/api/a2a/hosts' && req.method === 'GET')
         return Response.json({
           standalone: false,
-          hosts: [
-            {
-              id: 'h-1',
-              name: 'relay',
-              publicUrl: 'https://relay.example.com',
-              createdBy: 'human:wyat',
-              createdAt: '2026-09-25T00:00:00Z',
-              revokedAt: null,
-            },
-          ],
+          hosts: noHosts
+            ? []
+            : [
+                {
+                  id: 'h-1',
+                  name: 'relay',
+                  publicUrl: 'https://relay.example.com',
+                  createdBy: 'human:wyat',
+                  createdAt: '2026-09-25T00:00:00Z',
+                  revokedAt: null,
+                },
+              ],
         });
       if (url.pathname === '/api/a2a/hosts' && req.method === 'POST')
         return Response.json(
@@ -186,6 +190,7 @@ beforeEach(async () => {
   lines = [];
   received = [];
   written = STATUS;
+  noHosts = false;
   ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
   lines = [];
@@ -572,6 +577,12 @@ describe('dispatch a2a peers', () => {
   });
 });
 
+it('names peers, hosts and serve in the a2a group description', () => {
+  const a2a = makeProgram(ctx).commands.find((c) => c.name() === 'a2a');
+  for (const word of ['peers', 'hosts', 'standalone'])
+    expect(a2a?.description()).toContain(word);
+});
+
 describe('dispatch a2a hosts', () => {
   it('adds a host with the app token and prints its token once', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
@@ -612,6 +623,15 @@ describe('dispatch a2a hosts', () => {
     ]);
     expect(lines.join('\n')).toContain(
       'h-1 · relay · https://relay.example.com · active'
+    );
+  });
+
+  it('says how to add one when there are no hosts', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    noHosts = true;
+    await run('a2a', 'hosts', 'list');
+    expect(lines.join('\n')).toContain(
+      'No hosts yet. Add one with: dispatch a2a hosts add <name> --public-url <url>'
     );
   });
 
