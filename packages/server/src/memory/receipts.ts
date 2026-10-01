@@ -203,7 +203,7 @@ async function restoreFile(
 }
 
 // Most proposals one boot raises; the rest wait staged for the next boot.
-export const RESTORE_PER_BOOT = 50;
+const RESTORE_PER_BOOT = 50;
 
 // Applies the receipt files the CLI staged, removing each once handled, up to
 // `limit` proposals. Null when nothing is staged or memory is unavailable.
