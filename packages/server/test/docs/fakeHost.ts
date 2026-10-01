@@ -255,6 +255,9 @@ export class FakeDocsHost implements DocsHost {
   closePublishTask(task: string, reason: string): void {
     this.closedTasks.push({ task, reason });
   }
+  defaultBaseCommit(): string | null {
+    return null;
+  }
   publishOutcome(taskId: string): PublishOutcome {
     return this.outcomes.get(taskId) ?? null;
   }

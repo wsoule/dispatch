@@ -165,13 +165,54 @@ describe('publishOutcome', () => {
         'landed',
         [{ taskId: 't-pub', reviewAction: 'merge', mergeCommit }],
         repo
-      ).publishOutcome('t-pub', 'docs/spec.md');
+      ).publishOutcome('t-pub', 'docs/spec.md', null);
     expect(merged(wrote)).toEqual({ state: 'landed', commit: wrote });
     for (const commit of [undefined, other, side]) {
       expect(merged(commit)).toEqual({
         state: 'failed',
         reason: expect.stringContaining('nothing landed'),
       });
+    }
+  });
+
+  it('reads the whole merged range from the publish’s base, not only the last commit', () => {
+    const repo = realpathSync(initGitRepo('docs-publish-range-'));
+    repos.push(repo);
+    const base = git(repo, 'rev-parse', 'HEAD');
+    mkdirSync(join(repo, 'docs'));
+    writeFileSync(join(repo, 'docs', 'spec.md'), 'v1\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-qm', 'docs: publish spec rev 1');
+    writeFileSync(join(repo, 'fmt.txt'), 'formatting\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-qm', 'format');
+    // A fast-forwarded run: its merge record names the last of its commits.
+    const tip = git(repo, 'rev-parse', 'HEAD');
+    const host = hostWith(
+      'landed',
+      [{ taskId: 't-pub', reviewAction: 'merge', mergeCommit: tip }],
+      repo
+    );
+    expect(host.publishOutcome('t-pub', 'docs/spec.md', base)).toEqual({
+      state: 'landed',
+      commit: tip,
+    });
+    // From the tip itself nothing in range changed the path.
+    expect(host.publishOutcome('t-pub', 'docs/spec.md', tip)).toMatchObject({
+      state: 'failed',
+    });
+  });
+
+  it('refuses a merge record whose commit is not a hex id', () => {
+    const { repo } = repoWithCommits();
+    for (const mergeCommit of ['HEAD', 'main', '--all', 'abc', 'zzzzzzzzzz']) {
+      expect(
+        hostWith(
+          'landed',
+          [{ taskId: 't-pub', reviewAction: 'merge', mergeCommit }],
+          repo
+        ).publishOutcome('t-pub', 'docs/spec.md', null)
+      ).toMatchObject({ state: 'failed' });
     }
   });
 
@@ -182,7 +223,7 @@ describe('publishOutcome', () => {
         'done',
         [{ taskId: 't-pub', reviewAction: 'pr', files }],
         repo
-      ).publishOutcome('t-pub', 'docs/spec.md');
+      ).publishOutcome('t-pub', 'docs/spec.md', null);
     expect(viaPr(['docs/spec.md'])).toMatchObject({ state: 'landed' });
     expect(viaPr(['other.md'])).toMatchObject({ state: 'failed' });
     expect(other).not.toBe('');
@@ -190,26 +231,28 @@ describe('publishOutcome', () => {
 
   it('waits on a status alone, and on a review or discarded run', () => {
     expect(
-      hostWith('landed', []).publishOutcome('t-pub', 'docs/spec.md')
+      hostWith('landed', []).publishOutcome('t-pub', 'docs/spec.md', null)
     ).toBeNull();
     expect(
       hostWith('landed', [
         { taskId: 't-other', reviewAction: 'merge' },
         { taskId: 't-pub', kind: 'review', reviewAction: 'merge' },
         { taskId: 't-pub', reviewAction: 'discard' },
-      ]).publishOutcome('t-pub', 'docs/spec.md')
+      ]).publishOutcome('t-pub', 'docs/spec.md', null)
     ).toBeNull();
   });
 
   it('is null while the task is open, and dropped once it is dropped or gone', () => {
     const merged = [{ taskId: 't-pub', reviewAction: 'merge' }];
     expect(
-      hostWith('review', merged).publishOutcome('t-pub', 'docs/spec.md')
+      hostWith('review', merged).publishOutcome('t-pub', 'docs/spec.md', null)
     ).toBeNull();
     expect(
-      hostWith('dropped', []).publishOutcome('t-pub', 'docs/spec.md')
+      hostWith('dropped', []).publishOutcome('t-pub', 'docs/spec.md', null)
     ).toEqual({ state: 'dropped' });
-    expect(hostWith(null, []).publishOutcome('t-pub', 'docs/spec.md')).toEqual({
+    expect(
+      hostWith(null, []).publishOutcome('t-pub', 'docs/spec.md', null)
+    ).toEqual({
       state: 'dropped',
     });
   });
@@ -230,6 +273,6 @@ describe('publishOutcome', () => {
       } as never,
       events,
     });
-    expect(host.publishOutcome('t-pub', 'docs/spec.md')).toBeNull();
+    expect(host.publishOutcome('t-pub', 'docs/spec.md', null)).toBeNull();
   });
 });

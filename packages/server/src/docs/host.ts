@@ -108,7 +108,13 @@ export interface DocsHost extends DocsGatePort {
   closePublishTask(taskId: string, reason: string): void;
   // How a publish task ended: landed only once a run's merge changed `path`;
   // failed when a merge landed nothing there; null while it is still open.
-  publishOutcome(taskId: string, path: string): PublishOutcome;
+  publishOutcome(
+    taskId: string,
+    path: string,
+    baseCommit: string | null
+  ): PublishOutcome;
+  // The default branch's commit now, which a publish records as its base.
+  defaultBaseCommit(): string | null;
 }
 
 // doc.changed events for amends of one doc coalesce within this window.
@@ -119,6 +125,8 @@ type DocsRuns = Pick<
   'list' | 'notifyRun' | 'onRunTerminal' | 'taskIdOfRun'
 > &
   Partial<Pick<Orchestrator, 'diff'>>;
+
+const HEX_COMMIT = /^[0-9a-f]{7,64}$/;
 
 export type PublishOutcome =
   | { state: 'landed'; commit: string | null }
@@ -225,7 +233,11 @@ export class DaemonDocsHost implements DocsHost {
   // the task's execute runs must carry the orchestrator's merge record, and
   // what it merged must have changed `path` (a merge commit on the default
   // branch, or a PR's merged diff). A merge that changed nothing there fails.
-  publishOutcome(taskId: string, path: string): PublishOutcome {
+  publishOutcome(
+    taskId: string,
+    path: string,
+    baseCommit: string | null
+  ): PublishOutcome {
     let doc;
     try {
       doc = this.deps.store.get(taskId);
@@ -250,7 +262,7 @@ export class DaemonDocsHost implements DocsHost {
     for (const run of merged) {
       if (run.reviewAction === 'merge') {
         const commit = run.mergeCommit;
-        if (commit !== undefined && this.commitLanded(commit, path))
+        if (commit !== undefined && this.commitLanded(commit, path, baseCommit))
           return { state: 'landed', commit };
       } else if (this.prChanged(run.id, path)) {
         return { state: 'landed', commit: this.lastCommitFor(path) };
@@ -262,9 +274,31 @@ export class DaemonDocsHost implements DocsHost {
     };
   }
 
-  // Whether `commit` is on the default branch and changed `path` against its first parent.
-  private commitLanded(commit: string, path: string): boolean {
-    if (this.rootDir === '' || !/^[0-9a-f]{7,64}$/.test(commit)) return false;
+  defaultBaseCommit(): string | null {
+    if (this.rootDir === '') return null;
+    try {
+      const base = new WorktreeManager(this.rootDir).defaultBaseBranch();
+      const out = spawnGitSync(this.rootDir, [
+        'rev-parse',
+        '--verify',
+        `${base}^{commit}`,
+      ]);
+      const sha = out.exitCode === 0 ? out.stdout.trim() : '';
+      return HEX_COMMIT.test(sha) ? sha : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Whether `commit` is on the default branch and its merged range changed
+  // `path`: every commit from where it met the publish's base (or, with no
+  // base recorded, its first parent) up to it.
+  private commitLanded(
+    commit: string,
+    path: string,
+    baseCommit: string | null
+  ): boolean {
+    if (this.rootDir === '' || !HEX_COMMIT.test(commit)) return false;
     let base: string;
     try {
       base = new WorktreeManager(this.rootDir).defaultBaseBranch();
@@ -278,12 +312,22 @@ export class DaemonDocsHost implements DocsHost {
       base,
     ]);
     if (onBase.exitCode !== 0) return false;
+    let from = `${commit}^1`;
+    if (baseCommit !== null && HEX_COMMIT.test(baseCommit)) {
+      const met = spawnGitSync(this.rootDir, [
+        'merge-base',
+        commit,
+        baseCommit,
+      ]);
+      const sha = met.exitCode === 0 ? met.stdout.trim() : '';
+      if (!HEX_COMMIT.test(sha)) return false;
+      from = sha;
+    }
     const changed = spawnGitSync(this.rootDir, [
       '--literal-pathspecs',
-      'diff',
-      '--name-only',
-      `${commit}^1`,
-      commit,
+      'log',
+      '--format=%H',
+      `${from}..${commit}`,
       '--',
       path,
     ]);

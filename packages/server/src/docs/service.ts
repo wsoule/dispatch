@@ -2483,6 +2483,7 @@ export class DocsService {
         commit: null,
         createdAt: at,
         reason: null,
+        baseCommit: this.host.defaultBaseCommit(),
       });
       this.outbox.push({
         doc: doc.id,
@@ -2576,7 +2577,11 @@ export class DocsService {
     const store = this.store();
     let changed = 0;
     for (const row of store.publishRows({ state: 'open' })) {
-      const outcome = this.host.publishOutcome(row.task, row.path);
+      const outcome = this.host.publishOutcome(
+        row.task,
+        row.path,
+        row.baseCommit
+      );
       if (outcome === null) continue;
       if (outcome.state === 'dropped') {
         this.write(() => store.putPublish({ ...row, state: 'dropped' }));

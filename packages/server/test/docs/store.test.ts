@@ -486,6 +486,7 @@ describe('later columns', () => {
         commit: null,
         createdAt: AT,
         reason: 'why',
+        baseCommit: null,
       });
       expect(store.publishRows({ task: 't-1' })[0].reason).toBe('why');
       store.close();
