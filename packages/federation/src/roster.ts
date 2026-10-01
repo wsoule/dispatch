@@ -234,11 +234,12 @@ type Granted = Pick<Evaluation, 'cutsOn' | 'order' | 'grants'>;
 // Evaluations under sets of removals, memoized by set.
 type Folds = (cuts: readonly Removal[]) => Evaluation;
 
-// The decision on the Known(1) removals: those accepted, and the rank picks
-// among them.
+// The decision on the Known(1) removals: those accepted, the rank picks among
+// them, and those decided up front (and of them, accepted) before any search.
 interface Decision {
   accepted: Removal[];
   won: ReadonlySet<Removal>;
+  upfront: { decided: readonly Removal[]; accepted: readonly Removal[] };
 }
 
 // What a component's search reads: the folds, which removals affect which,
@@ -263,6 +264,7 @@ interface Resolved {
   resolution: Map<string, Resolution>;
   accepted: readonly Removal[];
   won: ReadonlySet<Removal>;
+  upfront: Decision['upfront'];
 }
 
 const NO_ADMIN = 'would leave the team with no admin; void';
@@ -314,6 +316,8 @@ export interface ResolutionProbe {
   removals: readonly RosterOpRef[];
   accepted: readonly number[];
   won: readonly number[];
+  /** The removals decided before any search, and those of them accepted. */
+  upfront: { decided: readonly number[]; accepted: readonly number[] };
   /** Whether accepting removal i can change the right removal j needs. */
   affects: (i: number, j: number) => boolean;
   /** Whether an admin under `cuts` that no removal in `rest` reaches stands. */
@@ -332,7 +336,7 @@ export function resolutionProbe(
   input: FoldInput,
   later: LaterPairs
 ): ResolutionProbe {
-  const { ctx, accepted, won } = finalFold(input, later).final;
+  const { ctx, accepted, won, upfront } = finalFold(input, later).final;
   const removals = ctx.items
     .map(removalOf)
     .filter((r): r is Removal => r !== null && !r.later);
@@ -348,6 +352,10 @@ export function resolutionProbe(
     removals: removals.map((r) => r.op),
     accepted: indexOf(accepted),
     won: indexOf(won),
+    upfront: {
+      decided: indexOf(upfront.decided),
+      accepted: indexOf(upfront.accepted),
+    },
     affects: (i, j) => affects(at(i), at(j)),
     stands: (cuts, rest) => stands(ctx, fold(cuts.map(at)), rest.map(at)),
     under: (cuts) => {
@@ -446,7 +454,13 @@ function resolve(ctx: Context): Resolved {
       r.op,
       `${r.op.replica}'s removal at seq ${r.op.seq} ${NO_ADMIN}`
     );
-  return { ev: final, resolution, accepted, won: fight.won };
+  return {
+    ev: final,
+    resolution,
+    accepted,
+    won: fight.won,
+    upfront: fight.upfront,
+  };
 }
 
 // Memoizes a fold of rights alone by the set of removals, in fold order.
@@ -582,6 +596,7 @@ function decideAmong(
   }
   const won = new Set<Removal>();
   const rest = open();
+  const upfront = { decided: [...decided], accepted: [...accepted] };
   const safe = stands(ctx, fold(accepted), rest);
   const comps = safe ? componentsOf(rest, affects) : [rest];
   for (const comp of comps.filter((c) => c.length > 0)) {
@@ -590,7 +605,7 @@ function decideAmong(
     accepted.push(...out.accepted);
     for (const r of out.won) won.add(r);
   }
-  return { accepted, won };
+  return { accepted, won, upfront };
 }
 
 // Whether some admin in `ev` holds its rights in every fold that adds any of
