@@ -173,6 +173,8 @@ export class PushWorker {
 
   constructor(
     private readonly deps: PushDeps & {
+      // Whether a client may still hear from us: approved, not revoked.
+      clientActive: (client: string) => boolean;
       fetchImpl?: typeof fetch;
       delaysMs?: readonly number[];
       // Off only for a local test webhook; production always guards.
@@ -186,6 +188,7 @@ export class PushWorker {
     facts: TaskFacts,
     opts: { force?: boolean } = {}
   ): void {
+    if (!this.deps.clientActive(row.client)) return;
     const configs = this.deps.store.pushConfigsOf(row.id);
     if (configs.length === 0) return;
     const state = decideState(facts).state;
@@ -227,6 +230,7 @@ export class PushWorker {
   ): Promise<void> {
     const current = this.deps.store.getPushConfig(config.taskId, config.id);
     if (current === null || current.disabledAt !== null) return;
+    if (!this.deps.clientActive(current.client)) return;
     const at = () => (this.deps.now?.() ?? new Date()).toISOString();
     const result = await deliverPush(toJson(current), event, {
       ...(this.deps.fetchImpl === undefined

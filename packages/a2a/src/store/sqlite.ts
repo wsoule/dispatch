@@ -148,6 +148,8 @@ export interface A2AStore {
   // Enabled configs only.
   countPushConfigs(client: Address): number;
   deletePushConfig(taskId: string, id: string): boolean;
+  // Every config of one client (a revoked one); returns how many.
+  deletePushConfigsOf(client: Address): number;
   // A success resets the failure count; a failure adds one and disables the
   // config at `disableAt` in a row. Null when the config is gone.
   recordPushResult(
@@ -749,6 +751,13 @@ export class SqliteA2AStore implements A2AStore {
           .prepare('DELETE FROM push_configs WHERE task_id = ? AND id = ?')
           .run(taskId, id).changes
       ) > 0
+    );
+  }
+
+  deletePushConfigsOf(client: Address): number {
+    return Number(
+      this.db.prepare('DELETE FROM push_configs WHERE client = ?').run(client)
+        .changes
     );
   }
 

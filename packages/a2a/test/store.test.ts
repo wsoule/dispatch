@@ -317,6 +317,16 @@ function push(id: string, over: Partial<PushConfigRow> = {}): PushConfigRow {
   };
 }
 
+describe('push_configs of a client', () => {
+  it('deletes every config of one client', () => {
+    store.putPushConfig(push('a'));
+    store.putPushConfig(push('b', { client: 'agent:wyat/a2a.other' }));
+    expect(store.deletePushConfigsOf(CLIENT)).toBe(1);
+    expect(store.getPushConfig('m-1', 'a')).toBeNull();
+    expect(store.getPushConfig('m-1', 'b')).not.toBeNull();
+  });
+});
+
 describe('push_configs', () => {
   it('counts, records results, disables at ten failures and deletes once', () => {
     store.putPushConfig(push('a'));

@@ -190,6 +190,17 @@ describe('push configs', () => {
     expect(logged.join('\n')).not.toContain('SECRET');
   });
 
+  it('never pushes to a revoked client', async () => {
+    const id = await ask();
+    await configs().create(f.caller, id, { id: 'hook', url: HOOK });
+    const agent = f.messaging.store.getAgent(f.caller.address)!;
+    f.messaging.store.putAgent({ ...agent, status: 'revoked' });
+    await f.messaging.engine.reply(id, { body: 'Yes, final.' }, HUMAN);
+    await Bun.sleep(100);
+    await f.push.idle();
+    expect(posts).toEqual([]);
+  });
+
   // Review Focus 5.
   it('a hanging webhook never delays a stream event', async () => {
     const id = await ask();

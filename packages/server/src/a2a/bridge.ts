@@ -244,7 +244,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     };
     // Push delivery returns at once and runs on its own chains, so a slow
     // webhook never delays the watch, its streams or the broadcast.
-    const push = new PushWorker({ store, now: () => new Date() });
+    const push = new PushWorker({
+      store,
+      now: () => new Date(),
+      clientActive: (client) =>
+        messaging.store.getAgent(client)?.status === 'approved',
+    });
     const hub = new BridgeWatch({
       ...bridgeDeps,
       events: deps.events,
@@ -447,6 +452,15 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     // Never throws: the revocation has already happened, and one task that
     // cannot close is logged without stopping the others.
     clientRevoked(address) {
+      // First, so closing its asks below pushes nothing to its webhooks.
+      try {
+        store?.deletePushConfigsOf(address);
+      } catch (err) {
+        console.error(
+          `dispatchd: could not delete ${address}'s push configs`,
+          err
+        );
+      }
       let rows: TaskRow[] = [];
       try {
         rows = store?.tasksOf(address) ?? [];

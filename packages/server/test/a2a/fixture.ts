@@ -70,6 +70,8 @@ export async function bridgeFixture(
   };
   const push = new PushWorker({
     store,
+    clientActive: (client) =>
+      messaging.store.getAgent(client)?.status === 'approved',
     lookup: (host) =>
       (deps.lookup ?? (() => Promise.resolve([] as string[])))(host),
     delaysMs: [5, 5, 5],
