@@ -1475,7 +1475,19 @@ human's merge, and the repo copy is never read back.
    `published: { path, rev, task, commit }`, with `commit` from
    `git log -1 --format=%H <base> -- <path>`; `dropped` marks the row dropped.
    The doc page then shows "published rev N to `<path>`; head is rev M" while
-   the copy is behind.
+   the copy is behind. As built, a landing counts only when a run of the task
+   carries the orchestrator's merge record and what it merged changed the path;
+   otherwise the row becomes `failed`.
+
+**Known limit of "a human always merges".** The guarantee holds for merges
+Dispatch performs: the merge queue and review at a rung the `elevated` risk
+caps, and a risk that only decide tier may change while the task publishes. It
+does not hold against the run itself. A run with shell access can merge its own
+branch into the base with plain git from its worktree, and the orchestrator's
+hand-merge detection (`markRunMergedExternally`) then records that run as
+merged, so the publish is recorded as landed with no human having merged it.
+Closing this needs the run sandbox to deny writes to the base branch's ref;
+until then, treat a publish as reviewed only when a human merged it.
 
 ### Import (v0, Q13)
 
