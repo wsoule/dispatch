@@ -271,7 +271,11 @@ own restore rather than through the copy above.
 Team docs under \`.dispatch/docs/\` come back through
 \`dispatch receipts restore\`, which stages them for the daemon. Team memory
 under \`.dispatch/memory/\` is staged the same way and comes back as proposals
-for a human to review, never as entries.
+for a human to review, never as entries; retired entries are not restored.
+
+A hard delete removes an entry's file from the next commit, but it
+does not scrub git history: earlier versions stay in this log, and on any
+remote it was pushed to, until that history is rewritten.
 
 ## What is NOT here
 
