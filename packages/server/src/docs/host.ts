@@ -108,13 +108,12 @@ export interface DocsHost extends DocsGatePort {
   closePublishTask(taskId: string, reason: string): void;
   // How a publish task ended: landed only once a run's merge changed `path`;
   // failed when a merge landed nothing there; null while it is still open.
+  // `seeded` is the text the publish wrote into the run's worktree.
   publishOutcome(
     taskId: string,
     path: string,
-    baseCommit: string | null
+    seeded: string | null
   ): PublishOutcome;
-  // The default branch's commit now, which a publish records as its base.
-  defaultBaseCommit(): string | null;
 }
 
 // doc.changed events for amends of one doc coalesce within this window.
@@ -236,7 +235,7 @@ export class DaemonDocsHost implements DocsHost {
   publishOutcome(
     taskId: string,
     path: string,
-    baseCommit: string | null
+    seeded: string | null
   ): PublishOutcome {
     let doc;
     try {
@@ -262,7 +261,7 @@ export class DaemonDocsHost implements DocsHost {
     for (const run of merged) {
       if (run.reviewAction === 'merge') {
         const commit = run.mergeCommit;
-        if (commit !== undefined && this.commitLanded(commit, path, baseCommit))
+        if (commit !== undefined && this.commitLanded(commit, path, seeded))
           return { state: 'landed', commit };
       } else if (this.prChanged(run.id, path)) {
         return { state: 'landed', commit: this.lastCommitFor(path) };
@@ -274,29 +273,14 @@ export class DaemonDocsHost implements DocsHost {
     };
   }
 
-  defaultBaseCommit(): string | null {
-    if (this.rootDir === '') return null;
-    try {
-      const base = new WorktreeManager(this.rootDir).defaultBaseBranch();
-      const out = spawnGitSync(this.rootDir, [
-        'rev-parse',
-        '--verify',
-        `${base}^{commit}`,
-      ]);
-      const sha = out.exitCode === 0 ? out.stdout.trim() : '';
-      return HEX_COMMIT.test(sha) ? sha : null;
-    } catch {
-      return null;
-    }
-  }
-
-  // Whether `commit` is on the default branch and its merged range changed
-  // `path`: every commit from where it met the publish's base (or, with no
-  // base recorded, its first parent) up to it.
+  // Whether `commit` is on the default branch and carries the publish: the
+  // file there holds the seeded bytes, or the commit's own change (against its
+  // first parent) touched it, as a squash that reformatted it does. Someone
+  // else's edit of the path on main never counts.
   private commitLanded(
     commit: string,
     path: string,
-    baseCommit: string | null
+    seeded: string | null
   ): boolean {
     if (this.rootDir === '' || !HEX_COMMIT.test(commit)) return false;
     let base: string;
@@ -312,22 +296,20 @@ export class DaemonDocsHost implements DocsHost {
       base,
     ]);
     if (onBase.exitCode !== 0) return false;
-    let from = `${commit}^1`;
-    if (baseCommit !== null && HEX_COMMIT.test(baseCommit)) {
-      const met = spawnGitSync(this.rootDir, [
-        'merge-base',
-        commit,
-        baseCommit,
+    if (seeded !== null) {
+      const blob = spawnGitSync(this.rootDir, [
+        'cat-file',
+        'blob',
+        `${commit}:${path}`,
       ]);
-      const sha = met.exitCode === 0 ? met.stdout.trim() : '';
-      if (!HEX_COMMIT.test(sha)) return false;
-      from = sha;
+      if (blob.exitCode === 0 && blob.stdout === seeded) return true;
     }
     const changed = spawnGitSync(this.rootDir, [
       '--literal-pathspecs',
-      'log',
-      '--format=%H',
-      `${from}..${commit}`,
+      'diff',
+      '--name-only',
+      `${commit}^1`,
+      commit,
       '--',
       path,
     ]);

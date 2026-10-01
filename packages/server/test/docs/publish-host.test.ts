@@ -175,31 +175,67 @@ describe('publishOutcome', () => {
     }
   });
 
-  it('reads the whole merged range from the publish’s base, not only the last commit', () => {
-    const repo = realpathSync(initGitRepo('docs-publish-range-'));
+  // A repo on main, and a helper that commits files and answers the new commit.
+  function freshRepo(): {
+    repo: string;
+    commit: (files: Record<string, string>, msg: string) => string;
+  } {
+    const repo = realpathSync(initGitRepo('docs-publish-bytes-'));
     repos.push(repo);
-    const base = git(repo, 'rev-parse', 'HEAD');
     mkdirSync(join(repo, 'docs'));
-    writeFileSync(join(repo, 'docs', 'spec.md'), 'v1\n');
-    git(repo, 'add', '.');
-    git(repo, 'commit', '-qm', 'docs: publish spec rev 1');
-    writeFileSync(join(repo, 'fmt.txt'), 'formatting\n');
-    git(repo, 'add', '.');
-    git(repo, 'commit', '-qm', 'format');
-    // A fast-forwarded run: its merge record names the last of its commits.
-    const tip = git(repo, 'rev-parse', 'HEAD');
-    const host = hostWith(
+    return {
+      repo,
+      commit: (files, msg) => {
+        for (const [path, text] of Object.entries(files))
+          writeFileSync(join(repo, path), text);
+        git(repo, 'add', '.');
+        git(repo, 'commit', '-qm', msg);
+        return git(repo, 'rev-parse', 'HEAD');
+      },
+    };
+  }
+  const SEEDED = '# Spec\nv1\n';
+  const outcomeOf = (repo: string, mergeCommit: string) =>
+    hostWith(
       'landed',
-      [{ taskId: 't-pub', reviewAction: 'merge', mergeCommit: tip }],
+      [{ taskId: 't-pub', reviewAction: 'merge', mergeCommit }],
       repo
+    ).publishOutcome('t-pub', 'docs/spec.md', SEEDED);
+
+  it('lands a squash whose commit writes the seeded bytes, or reformats them', () => {
+    const { repo, commit } = freshRepo();
+    const squash = commit(
+      { 'docs/spec.md': SEEDED },
+      'docs: publish spec rev 1'
     );
-    expect(host.publishOutcome('t-pub', 'docs/spec.md', base)).toEqual({
+    expect(outcomeOf(repo, squash)).toEqual({
       state: 'landed',
-      commit: tip,
+      commit: squash,
     });
-    // From the tip itself nothing in range changed the path.
-    expect(host.publishOutcome('t-pub', 'docs/spec.md', tip)).toMatchObject({
+    const formatted = commit(
+      { 'docs/spec.md': '# Spec\n\nv1\n' },
+      'docs: publish spec rev 1 (formatted)'
+    );
+    expect(outcomeOf(repo, formatted)).toMatchObject({ state: 'landed' });
+  });
+
+  it('lands a fast-forward whose last commit touched something else, by the bytes at the tip', () => {
+    const { repo, commit } = freshRepo();
+    commit({ 'docs/spec.md': SEEDED }, 'docs: publish spec rev 1');
+    const tip = commit({ 'fmt.txt': 'x\n' }, 'format');
+    expect(outcomeOf(repo, tip)).toEqual({ state: 'landed', commit: tip });
+  });
+
+  it("never counts someone else's edit of the path on main as the publish landing", () => {
+    const { repo, commit } = freshRepo();
+    commit({ 'docs/spec.md': 'a teammate wrote this\n' }, 'teammate edit');
+    const squash = commit(
+      { 'other.txt': 'run\n' },
+      'the run, touching only other.txt'
+    );
+    expect(outcomeOf(repo, squash)).toMatchObject({
       state: 'failed',
+      reason: expect.stringContaining('nothing landed'),
     });
   });
 

@@ -82,6 +82,7 @@ import {
 import type {
   DocRow,
   LinkRow,
+  PublishRow,
   RevisionMeta,
   RevisionRow,
   SectionRow,
@@ -2511,7 +2512,6 @@ export class DocsService {
         commit: null,
         createdAt: at,
         reason: null,
-        baseCommit: this.host.defaultBaseCommit(),
       });
       this.outbox.push({
         doc: doc.id,
@@ -2530,6 +2530,34 @@ export class DocsService {
   publishing(taskId: string): boolean {
     if (!this.available) return true;
     return this.store().publishRows({ task: taskId, state: 'open' }).length > 0;
+  }
+
+  // The text a publish writes at `path`: the revision with the links of the
+  // images copied beside it pointed at their copies.
+  private seededBody(
+    path: string,
+    body: string,
+    copied: readonly string[]
+  ): string {
+    const stem = publishAssetsDir(path).split('/').at(-1) ?? '';
+    const linked = new Set(copied);
+    return rewriteAssetLinks(body, (n) =>
+      linked.has(n) ? `${stem}/${n}` : `asset:${n}`
+    );
+  }
+
+  // What a publish wrote into its run's worktree, to check a landing against;
+  // null when its revision is gone.
+  private seededText(row: PublishRow): string | null {
+    const store = this.store();
+    const rev = store.revision(row.rev);
+    const doc = store.doc(row.doc);
+    if (rev === null || doc === null) return null;
+    return this.seededBody(
+      row.path,
+      rev.body,
+      this.storedAssets(doc, rev.body)
+    );
   }
 
   // A synced change tried to move an open publish's risk: the publish fails for
@@ -2580,15 +2608,7 @@ export class DocsService {
           readAssetFile(this.assetsRoot(), row.doc, name)
         );
       }
-      const stem = publishAssetsDir(row.path).split('/').at(-1) ?? '';
-      const linked = new Set(copied);
-      seedFile(
-        worktree,
-        row.path,
-        rewriteAssetLinks(rev.body, (n) =>
-          linked.has(n) ? `${stem}/${n}` : `asset:${n}`
-        )
-      );
+      seedFile(worktree, row.path, this.seededBody(row.path, rev.body, copied));
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
@@ -2612,7 +2632,7 @@ export class DocsService {
       const outcome = this.host.publishOutcome(
         row.task,
         row.path,
-        row.baseCommit
+        this.seededText(row)
       );
       if (outcome === null) continue;
       if (outcome.state === 'dropped') {
