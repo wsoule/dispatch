@@ -448,6 +448,33 @@ describe('overflowFromMemory', () => {
     ).toBe('invalid');
   });
 
+  it('never recreates a doc its owner deleted, nor writes one they archived', () => {
+    const id = service.overflowFromMemory(input) ?? '';
+    service.setStatus(as(OWNER), id, 'archived');
+    expect(service.overflowFromMemory({ ...input, body: 'new\n' })).toBeNull();
+    expect(service.read(as(OWNER), id).text).toBe(input.body);
+    service.remove(as(OWNER), id);
+    expect(service.overflowFromMemory({ ...input, body: 'new\n' })).toBeNull();
+    expect(service.list(as(OWNER), {}).docs).toEqual([]);
+  });
+
+  it('adds a revision rather than amending the owner’s own open edit', () => {
+    const id = service.overflowFromMemory(input) ?? '';
+    const read = service.read(as(OWNER), id);
+    service.saveBody(as(OWNER), id, {
+      baseRev: read.rev.id,
+      body: 'the owner typed this\n',
+    });
+    service.overflowFromMemory({ ...input, body: 'from the note\n' });
+    const revisions = service.revisions(as(OWNER), id, {});
+    expect(revisions.map((r) => r.author)).toEqual([
+      'agent:wyat/claude-code',
+      'human:wyat',
+      'agent:wyat/claude-code',
+    ]);
+    expect(service.read(as(OWNER), id).text).toBe('from the note\n');
+  });
+
   it('keeps a body over the doc cap to its first part', () => {
     const big = `${'# Part\n'}${'word '.repeat(200_000)}\n`;
     const id = service.overflowFromMemory({

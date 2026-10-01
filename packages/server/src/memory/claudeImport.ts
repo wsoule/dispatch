@@ -23,7 +23,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { spawnGitSync } from '../blockingGit.js';
 import { readMemoryTree } from './claudeExport.js';
 import type { DocsOverflowPort } from './overflow.js';
-import { overflowBody } from './overflow.js';
+import { overflowBody, overflowDocOf, overflowedText } from './overflow.js';
 
 interface ClaudeImportSource {
   dir: string;
@@ -368,37 +368,82 @@ function notesOf(
   return notes;
 }
 
-// What a long project note's entry holds once its full text is in a personal
-// doc (overflowBody's rule), or null when it stays plain: no port, a dry run,
-// a cross-project note, or docs could not take it.
-function overflowed(
-  input: ImportInput,
-  note: Note,
-  entry: Pick<MemoryEntry, 'id' | 'refs' | 'author'>
-): { body: string; refs: MemoryEntry['refs'] } | null {
-  const { overflow, identity } = input;
-  if (overflow === undefined || identity === undefined || input.dryRun === true)
-    return null;
-  return overflowBody(
-    {
-      id: entry.id,
-      scope: 'personal',
-      projectKey: note.projectKey,
-      author: entry.author,
-      title: note.title,
-      refs: entry.refs,
-    },
-    note,
-    {
-      projectKey: input.projectKey,
-      human: input.ownerRef,
-      identity,
-      port: { overflow },
-    }
+// Whether a note's full text should go to the owner's personal doc on this
+// run: a port and identity, not a dry run, a cut note keyed to this project.
+function overflows(input: ImportInput, note: Note): boolean {
+  return (
+    input.overflow !== undefined &&
+    input.identity !== undefined &&
+    input.dryRun !== true &&
+    note.fullBody !== undefined &&
+    note.projectKey === input.projectKey
   );
 }
 
-// Writes the notes into the store in one transaction; a dry run counts, then rolls back.
+// Whether `body` is what overflow made of this note: its full text cut with
+// the marker of the doc it names.
+function isOverflowOf(body: string, note: Note, projectKey: string): boolean {
+  const docId = overflowDocOf(body);
+  return (
+    docId !== null &&
+    note.fullBody !== undefined &&
+    body === overflowedText(note.fullBody, docId, projectKey)
+  );
+}
+
+interface PendingOverflow {
+  note: Note;
+  entryId: string;
+  // A note cut plainly before docs were here: counted as updated once it overflows.
+  recovery: boolean;
+}
+
+// After the import committed, hands each queued note's full text to the
+// owner's personal doc and points its entry at it; docs.db is never written for
+// an import that rolled back. Answers how many recoveries took.
+function overflowAfterCommit(
+  input: ImportInput,
+  pending: readonly PendingOverflow[],
+  author: string
+): number {
+  const { store, overflow, identity } = input;
+  if (overflow === undefined || identity === undefined) return 0;
+  let recovered = 0;
+  for (const { note, entryId, recovery } of pending) {
+    const entry = store.getEntry(entryId);
+    if (entry === null) continue;
+    const over = overflowBody(
+      { ...entry, scope: 'personal', title: note.title },
+      note,
+      {
+        projectKey: input.projectKey,
+        human: input.ownerRef,
+        identity,
+        port: { overflow },
+      }
+    );
+    if (over === null) continue;
+    const at = input.now.toISOString();
+    store.transaction(() =>
+      store.updateEntry(
+        {
+          ...entry,
+          body: over.body,
+          refs: over.refs,
+          rev: entry.rev + 1,
+          updatedAt: at,
+        },
+        author,
+        'import'
+      )
+    );
+    if (recovery) recovered += 1;
+  }
+  return recovered;
+}
+
+// Writes the notes into the store in one transaction; a dry run counts, then
+// rolls back. Long project notes overflow into a doc once it has committed.
 function applyNotes(
   input: ImportInput,
   notes: readonly Note[],
@@ -408,6 +453,7 @@ function applyNotes(
   const at = input.now.toISOString();
   const nowMs = input.now.getTime();
   const author = `agent:${input.ownerRef.slice('human:'.length)}/claude-code`;
+  const pending: PendingOverflow[] = [];
   try {
     store.transaction(() => {
       for (const note of notes) {
@@ -418,12 +464,21 @@ function applyNotes(
         const existing = store.entryByOrigin(note.origin);
         if (existing !== null) {
           const last = lastImported(store, existing);
-          // A note cut plainly before docs could take it is recovered here: its
-          // file is unchanged, but what the entry should hold now is not.
-          const over = overflowed(input, note, existing);
+          if (last.title === note.title && last.body === note.body) {
+            // Cut plainly before docs were here: recovered after commit, but
+            // only while the owner has not edited it since that import.
+            if (
+              overflows(input, note) &&
+              existing.title === last.title &&
+              existing.body === last.body
+            )
+              pending.push({ note, entryId: existing.id, recovery: true });
+            else report.unchanged += 1;
+            continue;
+          }
           if (
             last.title === note.title &&
-            last.body === (over?.body ?? note.body)
+            isOverflowOf(last.body, note, projectKey)
           ) {
             report.unchanged += 1;
             continue;
@@ -432,8 +487,7 @@ function applyNotes(
             {
               ...existing,
               title: note.title,
-              body: over?.body ?? note.body,
-              refs: over?.refs ?? existing.refs,
+              body: note.body,
               trust: 'agent',
               rev: existing.rev + 1,
               updatedAt: at,
@@ -441,6 +495,8 @@ function applyNotes(
             author,
             'import'
           );
+          if (overflows(input, note))
+            pending.push({ note, entryId: existing.id, recovery: false });
           report.updated += 1;
           continue;
         }
@@ -475,20 +531,8 @@ function applyNotes(
           author,
           'import'
         );
-        // The entry's id names its doc, so the doc follows the insert.
-        const over = overflowed(input, note, fresh);
-        if (over !== null)
-          store.updateEntry(
-            {
-              ...fresh,
-              body: over.body,
-              refs: over.refs,
-              rev: fresh.rev + 1,
-              updatedAt: at,
-            },
-            author,
-            'import'
-          );
+        if (overflows(input, note))
+          pending.push({ note, entryId: fresh.id, recovery: false });
         report.imported += 1;
       }
       if (input.dryRun === true) throw ROLLBACK;
@@ -496,7 +540,13 @@ function applyNotes(
     });
   } catch (err) {
     if (err !== ROLLBACK) throw err;
+    return;
   }
+  const recovered = overflowAfterCommit(input, pending, author);
+  const waiting = pending.filter((p) => p.recovery).length;
+  report.updated += recovered;
+  report.unchanged += waiting - recovered;
+  if (pending.length > 0) record(store, projectKey, report);
 }
 
 function record(

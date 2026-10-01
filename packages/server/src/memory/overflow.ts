@@ -26,6 +26,28 @@ interface RefLike {
   id: string;
 }
 
+/** `full` cut to the memory limit with the marker naming its doc. */
+export function overflowedText(
+  full: string,
+  docId: string,
+  projectKey: string
+): string {
+  return cutMemoryBody(
+    full,
+    (n) =>
+      `\n[truncated by Dispatch: ${n} bytes; full text in doc ${docId} of project ${projectKey}]`
+  );
+}
+
+// The doc an overflowed body names, or null for any other body.
+export function overflowDocOf(body: string): string | null {
+  return (
+    /\n\[truncated by Dispatch: \d+ bytes; full text in doc (doc-[0-9A-Z]{26}) of project [^\]]+\]$/.exec(
+      body
+    )?.[1] ?? null
+  );
+}
+
 /** The body cut with a doc marker and the doc ref added, when the entry is a
  *  personal one keyed to this project and docs took its full text; null otherwise. */
 export function overflowBody<R extends RefLike>(
@@ -71,11 +93,7 @@ export function overflowBody<R extends RefLike>(
   if (docId === null) return null;
   const id = docId;
   return {
-    body: cutMemoryBody(
-      full,
-      (n) =>
-        `\n[truncated by Dispatch: ${n} bytes; full text in doc ${id} of project ${ctx.projectKey}]`
-    ),
+    body: overflowedText(full, id, ctx.projectKey),
     refs: [
       ...entry.refs.filter((r) => !(r.type === 'doc' && r.id === id)),
       { type: 'doc', id },

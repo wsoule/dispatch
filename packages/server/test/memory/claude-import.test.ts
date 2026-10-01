@@ -459,6 +459,61 @@ describe('importClaudeNotes', () => {
     ).toBe(0);
   });
 
+  it('writes docs only after the import commits, and never over an entry the owner edited', async () => {
+    const longProject = `---\nname: long\ndescription: long project note\nmetadata:\n  type: project\n---\n${'line of text\n'.repeat(1000)}`;
+    writeFileSync(join(memoryDir, 'long.md'), longProject);
+    const base = {
+      source: { explicit: memoryDir },
+      store,
+      projectKey: 'aaaaaaaaaaaa',
+      ownerRef: 'human:wyat',
+      ids,
+      now: NOW,
+      home,
+    };
+    const seen: (string | null)[] = [];
+    await importClaudeNotes({
+      ...base,
+      identity: 'self',
+      overflow: () => {
+        // The import's own record is written by the time docs are asked.
+        seen.push(store.meta('claude-import:aaaaaaaaaaaa'));
+        return 'doc-01K3Z9R0000000000000000002';
+      },
+    });
+    expect(seen).toEqual(['complete']);
+
+    // An entry cut plainly and then edited by its owner is left alone.
+    const other = new SqliteMemoryStore(openMemoryDb(':memory:'));
+    try {
+      const plain = { ...base, store: other };
+      await importClaudeNotes(plain);
+      const cut = other
+        .listEntries()
+        .find((e) => e.title === 'long project note');
+      if (cut === undefined) throw new Error('no entry');
+      other.updateEntry(
+        { ...cut, body: 'my own short note', rev: cut.rev + 1 },
+        'human:wyat',
+        'edit'
+      );
+      const asked: string[] = [];
+      const report = await importClaudeNotes({
+        ...plain,
+        identity: 'self',
+        overflow: (i) => {
+          asked.push(i.entryId);
+          return 'doc-01K3Z9R0000000000000000003';
+        },
+      });
+      expect(asked).toEqual([]);
+      expect(report.updated).toBe(0);
+      expect(other.getEntry(cut.id)?.body).toBe('my own short note');
+    } finally {
+      other.close();
+    }
+  });
+
   it('overflows a long project note on its first import when docs are there', async () => {
     const DOC_ID = 'doc-01K3Z9R0000000000000000001';
     writeFileSync(
