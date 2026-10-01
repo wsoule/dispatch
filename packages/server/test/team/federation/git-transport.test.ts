@@ -14,6 +14,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -146,7 +147,7 @@ describe('the fed/ tree', () => {
     await a.ensure();
     const ops = chain(4);
     await a.writeV2(ops);
-    expect(await a.pruneOwn((op) => op.type === 'mail')).toBe(2);
+    expect(await a.pruneOwn((op) => op.type === 'mail')).toEqual([2, 4]);
     const read = a.readV2(new Map());
     expect(read.map((e) => ('pruned' in e ? 'stub' : e.type))).toEqual([
       'key',
@@ -278,6 +279,47 @@ describe('GitFederationTransport', () => {
     await ta.publish(ops.slice(3));
     await ta.pull(new Map());
     expect((await tb.pull(new Map())).map((e) => e.seq)).toEqual([1, 2, 3, 4]);
+  });
+
+  // N2: a branch writer turned this replica's segment into a symlink; the
+  // next ack restores it from the local log, and a fresh clone reads it.
+  it('restores its own files a branch writer turned into symlinks, on the next ack', async () => {
+    const a = clone('a', A);
+    const ops = chain(2);
+    const ta = new GitFederationTransport({
+      repo: a,
+      replica: A,
+      signPriv: keys.signPriv,
+      verifyAcks: () => true,
+      acknowledgedBy: () => false,
+      ownLog: () => ops,
+      now: () => new Date(),
+    });
+    await a.ensure();
+    await ta.publish(ops);
+    await ta.pull(new Map());
+    const raw = join(dir, 'raw');
+    runGitSync(dir, ['clone', '-q', '-b', 'dispatch-sync', remote, raw]);
+    rmSync(join(raw, 'fed', A, '000000000001.jsonl'));
+    symlinkSync('/etc/hosts', join(raw, 'fed', A, '000000000001.jsonl'));
+    runGitSync(raw, ['add', '-A']);
+    runGitSync(raw, [
+      '-c',
+      'user.name=x',
+      '-c',
+      'user.email=x@x',
+      'commit',
+      '-q',
+      '-m',
+      'plant',
+    ]);
+    runGitSync(raw, ['push', '-q', 'origin', 'HEAD:dispatch-sync']);
+    await ta.pull(new Map());
+    await ta.ack(new Map());
+    await ta.pull(new Map());
+    const fresh = clone('fresh', 'bob-0000000b');
+    await fresh.ensure();
+    expect(fresh.readV2(new Map()).map((e) => e.seq)).toEqual([1, 2]);
   });
 
   it('reports an unreachable remote without losing what it was given', async () => {

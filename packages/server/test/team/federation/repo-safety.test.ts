@@ -149,4 +149,81 @@ describe('a hostile sync branch and the filesystem', () => {
     expect(repo.readV1(B)).toEqual([]);
     expect(repo.people().has('bob')).toBe(false);
   });
+
+  // N2: a symlink a branch writer commits keeps mode 120000 in git, so a
+  // fresh clone would check it out as a link and read nothing of its owner.
+  it('checks a committed symlink out as a plain file in a fresh clone', async () => {
+    const raw = join(dir, 'raw');
+    runGitSync(dir, ['clone', '-q', remote, raw]);
+    runGitSync(raw, ['checkout', '-q', '-b', 'dispatch-sync']);
+    mkdirSync(join(raw, 'fed', B), { recursive: true });
+    symlinkSync(outside, join(raw, 'fed', B, 'acks.json'));
+    gitCommitAndPush(raw);
+    await clone();
+    expect(isLink(join(dir, 'clone', 'fed', B, 'acks.json'))).toBe(false);
+  });
+
+  it('re-records its own path a branch writer committed as a symlink', async () => {
+    const repo = await clone();
+    await repo.writeV2([keyOp(A)]);
+    await repo.writeAcks(acks(A));
+    await repo.exchange();
+    const raw = join(dir, 'raw');
+    runGitSync(dir, ['clone', '-q', '-b', 'dispatch-sync', remote, raw]);
+    for (const name of ['acks.json', '000000000001.jsonl']) {
+      rmSync(join(raw, 'fed', A, name));
+      symlinkSync(outside, join(raw, 'fed', A, name));
+    }
+    gitCommitAndPush(raw);
+    await repo.exchange();
+    expect(await repo.repairOwn()).toBe(2);
+    await repo.writeV2([keyOp(A)]);
+    await repo.writeAcks(acks(A));
+    await repo.exchange();
+    const mode = (name: string) =>
+      runGitSync(join(dir, 'clone'), [
+        'ls-files',
+        '-s',
+        `fed/${A}/${name}`,
+      ]).slice(0, 6);
+    expect(mode('acks.json')).toBe('100644');
+    expect(mode('000000000001.jsonl')).toBe('100644');
+    const fresh = new SyncRepo(
+      join(dir, 'fresh'),
+      remote,
+      'dispatch-sync',
+      B,
+      defaultAsyncGitRunner
+    );
+    await fresh.ensure();
+    expect(fresh.readAcks().has(A)).toBe(true);
+    expect(fresh.readV2(new Map()).map((e) => e.seq)).toEqual([1]);
+  });
+
+  // M4: reads are size-capped.
+  it('never reads an acks.json over its size cap', async () => {
+    const repo = await clone();
+    mkdirSync(join(dir, 'clone', 'fed', B), { recursive: true });
+    writeFileSync(
+      join(dir, 'clone', 'fed', B, 'acks.json'),
+      JSON.stringify({ ...acks(B), pad: 'p'.repeat(2 * 1024 * 1024) })
+    );
+    expect(repo.readAcks().has(B)).toBe(false);
+  });
 });
+
+// Commits and pushes a raw clone's work, as any branch writer could.
+function gitCommitAndPush(raw: string): void {
+  runGitSync(raw, ['add', '-A']);
+  runGitSync(raw, [
+    '-c',
+    'user.name=x',
+    '-c',
+    'user.email=x@example.com',
+    'commit',
+    '-q',
+    '-m',
+    'plant',
+  ]);
+  runGitSync(raw, ['push', '-q', 'origin', 'HEAD:dispatch-sync']);
+}

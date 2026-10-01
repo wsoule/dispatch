@@ -11,6 +11,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -112,6 +113,9 @@ export class SyncRepo {
     if (!existsSync(join(this.dir, '.git'))) {
       mkdirSync(this.dir, { recursive: true });
       await this.run(['init', '-q']);
+      // Before anything is checked out: a symlink on the branch arrives as a
+      // plain file naming its target (FW-R22 N2).
+      await this.run(['config', 'core.symlinks', 'false']);
       await this.run(['remote', 'add', 'origin', this.remoteUrl]);
       const fetched = await this.run(['fetch', '-q', 'origin', this.branch]);
       if (fetched.ok) {
@@ -158,6 +162,11 @@ export class SyncRepo {
   }
 
   private async commitPaths(paths: string[], message: string): Promise<void> {
+    // git keeps a path's symlink mode when a plain file is added over it, so
+    // an own path a branch writer committed as a link is recorded afresh.
+    const links = await this.linkedPaths(paths);
+    if (links.length > 0)
+      await this.run(['rm', '--cached', '-q', '--', ...links]);
     await this.run(['add', ...paths]);
     const committed = await this.run([
       ...IDENTITY,
@@ -170,6 +179,39 @@ export class SyncRepo {
     // Nothing changed is not a failure: the branch already holds this.
     if (!committed.ok && !/nothing (added )?to commit/.test(committed.out))
       throw new Error(`could not commit sync log: ${committed.out}`);
+  }
+
+  // The tracked paths under `paths` that git holds as symlinks (mode 120000).
+  private async linkedPaths(paths: string[]): Promise<string[]> {
+    const listed = await this.run(['ls-files', '-s', '--', ...paths]);
+    return listed.out
+      .split('\n')
+      .filter((line) => line.startsWith('120000 '))
+      .map((line) => line.slice(line.indexOf('\t') + 1));
+  }
+
+  /** Removes this replica's own paths a branch writer committed as symlinks,
+   *  committing once; the next publish and ack write them back (FW-R22 N2). */
+  async repairOwn(): Promise<number> {
+    const own = [
+      join(FED_DIR, this.replica),
+      join(OPS_DIR, `${this.replica}.jsonl`),
+    ];
+    const links = await this.linkedPaths(own);
+    if (links.length === 0) return 0;
+    await this.run(['rm', '--cached', '-q', '--', ...links]);
+    for (const path of links) rmSync(join(this.dir, path), { force: true });
+    const committed = await this.run([
+      ...IDENTITY,
+      'commit',
+      '-q',
+      '--no-verify',
+      '-m',
+      `${this.replica}: restore its own files`,
+    ]);
+    if (!committed.ok)
+      throw new Error(`could not commit sync log: ${committed.out}`);
+    return links.length;
   }
 
   /** Appends this replica's v2 ops to its current segment, rolling over at
@@ -280,9 +322,9 @@ export class SyncRepo {
   }
 
   /** Replaces this replica's full mail and state ops that `prune` accepts
-   *  with their signed stubs, committing once; how many it replaced. */
-  async pruneOwn(prune: (op: FederatedOp) => boolean): Promise<number> {
-    let replaced = 0;
+   *  with their signed stubs, committing once; the seqs it replaced. */
+  async pruneOwn(prune: (op: FederatedOp) => boolean): Promise<number[]> {
+    const pruned: number[] = [];
     for (const name of this.segments(this.replica)) {
       const file = ownFile(this.dir, `${FED_DIR}/${this.replica}/${name}`);
       let changed = false;
@@ -296,17 +338,25 @@ export class SyncRepo {
         )
           return line;
         changed = true;
-        replaced += 1;
+        pruned.push(entry.seq);
         return JSON.stringify(stubOf(entry));
       });
       if (changed) writeFileSync(file, lines.map((l) => `${l}\n`).join(''));
     }
-    if (replaced > 0)
+    if (pruned.length > 0)
       await this.commitPaths(
         [join(FED_DIR, this.replica)],
-        `${this.replica}: pruned ${replaced} acknowledged op${replaced === 1 ? '' : 's'}`
+        `${this.replica}: pruned ${pruned.length} acknowledged op${pruned.length === 1 ? '' : 's'}`
       );
-    return replaced;
+    return pruned;
+  }
+
+  /** This replica's own entries on the branch, read from its segments only. */
+  readOwn(): LogEntry[] {
+    const dir = join(this.dir, FED_DIR, this.replica);
+    return this.segments(this.replica)
+      .flatMap((name) => completeLines(join(dir, name)).map(parseEntry))
+      .filter((e): e is LogEntry => e !== null && e.replica === this.replica);
   }
 
   /** The bytes under fed/ and ops/, for the branch-size warning. */

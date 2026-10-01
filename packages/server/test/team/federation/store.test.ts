@@ -4,6 +4,7 @@ import {
   MAX_HLC_COUNTER,
   opHash,
   parseOpHlc,
+  sealPayload,
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
 import { Database } from 'bun:sqlite';
@@ -202,6 +203,35 @@ describe('FedStore.append', () => {
     expect(clock).not.toBeNull();
     expect(clock !== null && clock.counter <= MAX_HLC_COUNTER).toBe(true);
     expect(clock !== null && clock.ms > wall).toBe(true);
+    ledger.close();
+  });
+});
+
+describe('this replica’s own log (FW-R22 M6, M-f)', () => {
+  it('keeps every op it signs after publishing, and stubs a pruned one in place', () => {
+    const ledger = new SyncLedger(join(dir, 'state.db'), 'ada');
+    const keys = generateReplicaKeys();
+    const peer = generateReplicaKeys();
+    const fed = new FedStore(ledger, keys);
+    fed.append({ type: 'key', body: keyBody(keys) });
+    const mail = fed.append({
+      type: 'mail',
+      seal: (stamp) =>
+        sealPayload({
+          replica: ledger.replica,
+          seq: stamp.seq,
+          type: 'mail',
+          payload: { n: 1 },
+          recipients: new Map([['bob-0000000b', peer.sealPub]]),
+        }),
+    });
+    fed.published(mail.seq);
+    expect(fed.outbox()).toEqual([]);
+    expect(fed.ownLog().map((e) => e.seq)).toEqual([mail.seq - 1, mail.seq]);
+    fed.stubLog([mail.seq]);
+    const stub = fed.ownLog().at(-1);
+    expect(stub !== undefined && 'pruned' in stub).toBe(true);
+    expect(stub === undefined ? null : opHash(stub)).toBe(opHash(mail));
     ledger.close();
   });
 });

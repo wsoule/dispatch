@@ -3,6 +3,7 @@ import type { JsonValue } from '@dispatch/protocol';
 import type {
   ChainHead,
   FederatedOp,
+  LogEntry,
   OpType,
   ReplicaKeys,
   Sealed,
@@ -12,6 +13,7 @@ import {
   canonicalize,
   MAX_OP_BYTES,
   opHash,
+  stubOf,
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
 import type { Database } from 'bun:sqlite';
@@ -198,14 +200,32 @@ export class FedStore {
       .map((row) => JSON.parse(row.op_json) as FederatedOp);
   }
 
-  /** Every op this replica ever signed, oldest first, published or not. */
-  ownLog(): FederatedOp[] {
+  /** Every op this replica ever signed, oldest first, published or not;
+   *  a pruned one as its stub. */
+  ownLog(): LogEntry[] {
     return this.db
       .query<{ op_json: string }, []>(
         'SELECT op_json FROM fed_log ORDER BY seq'
       )
       .all()
-      .map((row) => JSON.parse(row.op_json) as FederatedOp);
+      .map((row) => JSON.parse(row.op_json) as LogEntry);
+  }
+
+  /** Stubs pruned ops in the local log too, keeping their hash (FW-R22 M-f). */
+  stubLog(seqs: readonly number[]): void {
+    for (const seq of seqs) {
+      const row = this.db
+        .query<{ op_json: string }, [number]>(
+          'SELECT op_json FROM fed_log WHERE seq = ?'
+        )
+        .get(seq);
+      if (row === null) continue;
+      const op = JSON.parse(row.op_json) as FederatedOp;
+      if (op.sealed === undefined) continue;
+      this.db
+        .query('UPDATE fed_log SET op_json = ? WHERE seq = ?')
+        .run(JSON.stringify(stubOf(op)), seq);
+    }
   }
 
   /** Forgets outbox entries once the transport holds them; the head stays. */

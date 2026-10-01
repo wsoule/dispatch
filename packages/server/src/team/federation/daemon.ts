@@ -133,6 +133,7 @@ export function buildFederation(deps: FederationDeps): Federation {
       verifyAcks,
       acknowledgedBy,
       ownLog: () => fed.ownLog(),
+      onPruned: (seqs) => fed.stubLog(seqs),
       now,
     }),
     remote: deps.remoteUrl,

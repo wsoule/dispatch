@@ -1,4 +1,9 @@
-import { canonicalize, signText, TAG } from '@dispatch/protocol/federation';
+import {
+  canonicalize,
+  opHash,
+  signText,
+  TAG,
+} from '@dispatch/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 
 import type { SignedAcks, SyncRepo } from '../boardSync/repo.js';
@@ -18,6 +23,8 @@ export interface GitTransportDeps {
   acknowledgedBy: (op: FederatedOp, acks: Map<string, SignedAcks>) => boolean;
   /** This replica's own ops, oldest first, as its local log keeps them. */
   ownLog: () => LogEntry[];
+  /** The seqs pruned to stubs on the branch, so the local log stubs them too. */
+  onPruned?: (seqs: number[]) => void;
   now: () => Date;
 }
 
@@ -33,22 +40,22 @@ export class GitFederationTransport implements FederationTransport {
 
   constructor(private readonly deps: GitTransportDeps) {}
 
-  // Writes `ops`, and first any of this replica's own ops a merge removed
-  // from the branch (FW-R22 M6): its local log is the record, not the branch.
   async publish(ops: FederatedOp[]): Promise<void> {
     this.unpublished += ops.length;
-    const { repo, replica } = this.deps;
-    const onBranch = new Set(
-      repo
-        .readV2(new Map())
-        .filter((e) => e.replica === replica)
-        .map((e) => e.seq)
-    );
-    const fresh = new Set(ops.map((o) => o.seq));
+    await this.republish(ops);
+  }
+
+  // Writes `fresh`, and first any of this replica's own ops the branch lacks
+  // or holds otherwise (FW-R22 M6): its local log is the record, and only
+  // its own segments are read, compared by op hash.
+  private async republish(fresh: readonly FederatedOp[] = []): Promise<void> {
+    const { repo } = this.deps;
+    const onBranch = new Map(repo.readOwn().map((e) => [e.seq, opHash(e)]));
+    const seqs = new Set(fresh.map((o) => o.seq));
     const missing = this.deps
       .ownLog()
-      .filter((e) => !onBranch.has(e.seq) && !fresh.has(e.seq));
-    await repo.writeV2([...missing, ...ops]);
+      .filter((e) => !seqs.has(e.seq) && onBranch.get(e.seq) !== opHash(e));
+    await repo.writeV2([...missing, ...fresh]);
   }
 
   async pull(since: Watermarks): Promise<LogEntry[]> {
@@ -70,6 +77,8 @@ export class GitFederationTransport implements FederationTransport {
       through: Object.fromEntries(through),
       at: this.deps.now().toISOString(),
     };
+    // Own files a branch writer turned into symlinks come back as ours (N2).
+    if ((await this.deps.repo.repairOwn()) > 0) await this.republish();
     const sig = signText(
       this.deps.signPriv,
       `${TAG.ack}\n${canonicalize(body)}`
@@ -82,7 +91,10 @@ export class GitFederationTransport implements FederationTransport {
     this.lastAcks = Object.fromEntries(
       [...acks].map(([replica, a]) => [replica, a.at])
     );
-    await this.deps.repo.pruneOwn((op) => this.deps.acknowledgedBy(op, acks));
+    const pruned = await this.deps.repo.pruneOwn((op) =>
+      this.deps.acknowledgedBy(op, acks)
+    );
+    if (pruned.length > 0) this.deps.onPruned?.(pruned);
   }
 
   presence(): null {
