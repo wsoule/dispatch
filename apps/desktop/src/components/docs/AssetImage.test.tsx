@@ -63,3 +63,41 @@ test('never fetches a malformed asset name, and shows other images as they are',
   );
   expect(fetchDocAsset).not.toHaveBeenCalled();
 });
+
+test('a new name drops the old image and its failure, and shows the new one', async () => {
+  const other = `${'b'.repeat(64)}.png`;
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  let made = 0;
+  URL.createObjectURL = () => `blob:image-${(made += 1)}`;
+  URL.revokeObjectURL = () => undefined;
+  try {
+    const fetchDocAsset = (_doc: string, name: string) =>
+      name === NAME
+        ? Promise.reject(new Error('gone'))
+        : Promise.resolve(new Blob([new Uint8Array([1])]));
+    const view = render(
+      <AssetImage
+        client={{ fetchDocAsset }}
+        docId="doc-1"
+        src={`asset:${NAME}`}
+        alt="pic"
+      />
+    );
+    expect(await screen.findByText(/could not load/)).toBeDefined();
+    view.rerender(
+      <AssetImage
+        client={{ fetchDocAsset }}
+        docId="doc-1"
+        src={`asset:${other}`}
+        alt="pic"
+      />
+    );
+    const img = await screen.findByRole('img', { name: 'pic' });
+    expect(img.getAttribute('src')).toBe('blob:image-1');
+    expect(screen.queryByText(/could not load/)).toBeNull();
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  }
+});
