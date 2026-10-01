@@ -427,7 +427,7 @@ describe('receipt files', () => {
     expect(parseReceiptFile('just a body', 'x.md').status).toBeUndefined();
   });
 
-  it('normalise the status and refuse one that is not a single string', () => {
+  it('normalize the status and refuse one that is not a single string', () => {
     const text = renderReceiptFile(entry);
     const withStatus = (line: string) =>
       text.replace('    status: active', line);
