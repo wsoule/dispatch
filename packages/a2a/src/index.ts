@@ -117,6 +117,8 @@ export type {
   TaskFacts,
 } from './port.js';
 export { HttpBridgePort } from './http/port.js';
+export { checkStandalone, startStandalone } from './http/serve.js';
+export type { StandaloneCheck, StandaloneOptions } from './http/serve.js';
 export type { HttpBridgePortOptions } from './http/port.js';
 export {
   PORT_CLIENT_HEADER,

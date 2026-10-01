@@ -71,6 +71,42 @@ behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced
   always carries the whole artifact (`append: false`, `lastChunk: true`), so
   replace your copy of it rather than appending.
 
+## Standalone host
+
+Use `dispatch a2a serve` when the public A2A listener should run on another
+machine than the owner's (a relay or hosted box), reaching the owner's daemon
+over its team-local TLS listener.
+
+On the owner's machine (the operator):
+
+```bash
+dispatch a2a hosts allow          # open /api/a2a/port to standalone hosts
+dispatch a2a hosts add relay      # mint a host token, shown once
+```
+
+Put the token in a file only its owner can read (`chmod 600`) on the relay
+machine, then:
+
+```bash
+dispatch a2a serve --host 0.0.0.0 --public --port 443 \
+  --public-url https://agent.example.com \
+  --tls-cert cert.pem --tls-key key.pem \
+  --daemon https://<daemon>:<tls port> --host-token-file ./host-token
+```
+
+- The listener binds `127.0.0.1` unless `--public` is given; every network
+  interface also needs TLS and `--public-url`.
+- A remote daemon is reached over https only. A self-signed team-local
+  certificate is trusted through `NODE_EXTRA_CA_CERTS=<cert.pem>`, read when the
+  process starts.
+- A host token opens only `/api/a2a/port/*`, and only while hosts are allowed;
+  `dispatch a2a hosts remove <id>` revokes one at once. The app, agent, run and
+  teammate tokens never open those routes, and an A2A client's token never works
+  on `/api` at all.
+- The card is built for the host's configured public URL, never from a request's
+  `Host` or `X-Forwarded-*` headers.
+- A standalone host offers no push configs; push is the daemon's own.
+
 ## Running the TCK
 
 The official [A2A TCK](https://github.com/a2aproject/a2a-tck) runs against

@@ -1,3 +1,4 @@
+import { startStandalone } from '@dispatch/a2a';
 import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -11,6 +12,8 @@ import type {
 import { createA2AApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
+import type { ServeCommandOptions } from './a2aServe.js';
+import { resolveServe } from './a2aServe.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 
 const TOKEN_HELP = 'the daemon app token (or DISPATCH_APP_TOKEN)';
@@ -437,4 +440,111 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
         printPeer(ctx, await client.setPeerEnabled(alias, true, token));
       }
     );
+
+  a2a
+    .command('serve')
+    .description(
+      'Run a standalone A2A listener that reaches this daemon with a host token (a relay or hosted setup)'
+    )
+    .option(
+      '--port <n>',
+      'the listener port (required: the card needs a stable one)'
+    )
+    .option('--host <addr>', '127.0.0.1 (default) or a wildcard with --public')
+    .option(
+      '--public',
+      'allow binding every network interface (needs TLS and --public-url)'
+    )
+    .option(
+      '--public-url <url>',
+      'what the card advertises (https unless loopback)'
+    )
+    .option('--tls-cert <file>', 'serve over HTTPS (PEM)')
+    .option('--tls-key <file>', 'the private key for --tls-cert')
+    .option(
+      '--daemon <url>',
+      "the daemon to reach (default: this project's); a remote one over https"
+    )
+    .option(
+      '--host-token-file <file>',
+      'a 0600 file holding the host token (default: DISPATCH_A2A_HOST_TOKEN)'
+    )
+    .option(
+      '--trust-forwarded-for',
+      'behind a tunnel on loopback: key per-IP limits on X-Forwarded-For'
+    )
+    .action(async (o: ServeCommandOptions) => {
+      const standalone = await startStandalone(await resolveServe(ctx, o));
+      ctx.log(
+        `A2A standalone host listening at ${standalone.url} (card: ${standalone.url}/.well-known/agent-card.json). Ctrl-C to stop.`
+      );
+      await new Promise<void>((resolve) =>
+        process.once('SIGINT', () => resolve())
+      );
+      await standalone.stop();
+    });
+
+  const hosts = a2a
+    .command('hosts')
+    .description(
+      'Standalone A2A hosts allowed to reach this daemon (needs the daemon app token)'
+    );
+  hosts
+    .command('list', { isDefault: true })
+    .description('List hosts and whether standalone hosts are allowed')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a hosts list');
+      const { standalone, hosts: list } = await client.hosts();
+      ctx.log(
+        `standalone hosts: ${standalone ? 'allowed' : 'not allowed (dispatch a2a hosts allow)'}`
+      );
+      for (const h of list)
+        ctx.log(
+          `${h.id} · ${h.name} · ${h.revokedAt === null ? 'active' : `revoked ${h.revokedAt}`} · added by ${h.createdBy}`
+        );
+    });
+  hosts
+    .command('add <name>')
+    .description('Mint a host token, shown once')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (name: string, o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a hosts add');
+      const added = await client.addHost(name);
+      ctx.log(`${added.id} · ${added.name}`);
+      ctx.log(`host token: ${added.token}`);
+      ctx.log(
+        'This token is shown once. Put it in a chmod 600 file on the relay machine and pass --host-token-file, or set DISPATCH_A2A_HOST_TOKEN.'
+      );
+    });
+  hosts
+    .command('remove <id>')
+    .description('Revoke a host token at once')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (id: string, o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a hosts remove');
+      await client.removeHost(id);
+      ctx.log(`Revoked host ${id}.`);
+    });
+  for (const [verb, enabled] of [
+    ['allow', true],
+    ['deny', false],
+  ] as const) {
+    hosts
+      .command(verb)
+      .description(
+        enabled
+          ? 'Let standalone hosts reach /api/a2a/port'
+          : 'Close /api/a2a/port to every standalone host'
+      )
+      .option('--token <token>', TOKEN_HELP)
+      .action(async (o: { token?: string }) => {
+        const client = await withAppToken(
+          o.token,
+          `dispatch a2a hosts ${verb}`
+        );
+        const { standalone } = await client.setStandalone(enabled);
+        ctx.log(`standalone hosts: ${standalone ? 'allowed' : 'not allowed'}`);
+      });
+  }
 }

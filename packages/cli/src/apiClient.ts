@@ -1179,6 +1179,19 @@ export interface A2AApiClient {
     token?: string
   ): Promise<A2APeerSummary>;
   removePeer(alias: string): Promise<void>;
+  hosts(): Promise<{ standalone: boolean; hosts: A2AHostSummary[] }>;
+  addHost(name: string): Promise<{ id: string; name: string; token: string }>;
+  removeHost(id: string): Promise<void>;
+  setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+}
+
+// A standalone host as /api/a2a/hosts lists it; never its token or hash.
+interface A2AHostSummary {
+  id: string;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt: string | null;
 }
 
 export function createA2AApiClient(
@@ -1234,6 +1247,17 @@ export function createA2AApiClient(
     removePeer: (alias) =>
       request(target, `/api/a2a/peers/${encodeURIComponent(alias)}`, {
         method: 'DELETE',
+      }),
+    hosts: () => request(target, '/api/a2a/hosts'),
+    addHost: (name) => request(target, '/api/a2a/hosts', jsonBody({ name })),
+    removeHost: (id) =>
+      request(target, `/api/a2a/hosts/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    setStandalone: (enabled) =>
+      request(target, '/api/a2a/listener/standalone', {
+        ...jsonBody({ enabled }),
+        method: 'PUT',
       }),
   };
 }

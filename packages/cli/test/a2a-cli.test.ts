@@ -140,6 +140,30 @@ function startFakeDaemon() {
           ...PEER,
           status: url.pathname.endsWith('/disable') ? 'disabled' : 'active',
         });
+      if (url.pathname === '/api/a2a/hosts' && req.method === 'GET')
+        return Response.json({
+          standalone: false,
+          hosts: [
+            {
+              id: 'h-1',
+              name: 'relay',
+              createdBy: 'human:wyat',
+              createdAt: '2026-09-25T00:00:00Z',
+              revokedAt: null,
+            },
+          ],
+        });
+      if (url.pathname === '/api/a2a/hosts' && req.method === 'POST')
+        return Response.json(
+          { id: 'h-1', name: 'relay', token: 'h'.repeat(64) },
+          { status: 201 }
+        );
+      if (url.pathname === '/api/a2a/hosts/h-1' && req.method === 'DELETE')
+        return new Response(null, { status: 204 });
+      if (url.pathname === '/api/a2a/listener/standalone')
+        return Response.json({
+          standalone: (body as { enabled?: boolean } | null)?.enabled === true,
+        });
       if (url.pathname === '/api/a2a/tasks/m-1/decline') {
         return Response.json({ id: 'm-1' });
       }
@@ -530,5 +554,45 @@ describe('dispatch a2a peers', () => {
     ]);
     expect(a2aCalls()[3].body).toEqual({ token: 'new-secret' });
     expect(lines.join('\n')).not.toContain('new-secret');
+  });
+});
+
+describe('dispatch a2a hosts', () => {
+  it('adds a host with the app token and prints its token once', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'hosts', 'add', 'relay');
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/hosts',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { name: 'relay' },
+    });
+    expect(lines.filter((l) => l.includes('h'.repeat(64)))).toHaveLength(1);
+  });
+
+  it('allows and denies standalone hosts, lists and removes them', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'hosts', 'allow');
+    await run('a2a', 'hosts', 'deny');
+    await run('a2a', 'hosts', 'list');
+    await run('a2a', 'hosts', 'remove', 'h-1');
+    expect(a2aCalls().map((c) => [c.method, c.path, c.body])).toEqual([
+      ['PUT', '/api/a2a/listener/standalone', { enabled: true }],
+      ['PUT', '/api/a2a/listener/standalone', { enabled: false }],
+      ['GET', '/api/a2a/hosts', null],
+      ['DELETE', '/api/a2a/hosts/h-1', null],
+    ]);
+    expect(lines.join('\n')).toContain('h-1 · relay · active');
+  });
+
+  it('never runs a hosts command on the agent token', async () => {
+    for (const argv of [
+      ['a2a', 'hosts', 'list'],
+      ['a2a', 'hosts', 'add', 'relay'],
+      ['a2a', 'hosts', 'allow'],
+      ['a2a', 'hosts', 'remove', 'h-1'],
+    ])
+      await expect(run(...argv)).rejects.toThrow(CliError);
+    expect(a2aCalls()).toEqual([]);
   });
 });
