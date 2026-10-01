@@ -1,0 +1,142 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "a2a-binding",
+  "area": "peers",
+  "vectors": [
+    {
+      "id": "a2a.peers.parses-an-alias",
+      "title": "An a2a: address parses to its alias and the address",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.4", "8.9"],
+      "given": {},
+      "when": [
+        { "op": "parseAddress", "input": "a2a:acme.research" },
+        {
+          "op": "parseAddress",
+          "input": "a2a:acme.research-lab.north-america.team-001"
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "kind": "a2a",
+              "alias": "acme.research",
+              "address": "a2a:acme.research"
+            }
+          },
+          {
+            "ok": true,
+            "result": {
+              "kind": "a2a",
+              "alias": "acme.research-lab.north-america.team-001",
+              "address": "a2a:acme.research-lab.north-america.team-001"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.peers.an-alias-is-at-most-40-characters",
+      "title": "An alias over 40 characters is refused, as is one outside the handle grammar or an empty one",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1", "8.9"],
+      "given": {},
+      "when": [
+        {
+          "op": "parseAddress",
+          "input": "a2a:acme.research-lab.north-america.team-001x"
+        },
+        { "op": "parseAddress", "input": "a2a:Acme" },
+        { "op": "parseAddress", "input": "a2a:.acme" },
+        { "op": "parseAddress", "input": "a2a:acme/lab" },
+        { "op": "parseAddress", "input": "a2a:" },
+        {
+          "op": "validate",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": [
+              "human:ada",
+              "a2a:acme.research-lab.north-america.team-001x"
+            ],
+            "kind": "message",
+            "body": "hi"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid", "field": "to[1]" } }
+        ]
+      }
+    },
+    {
+      "id": "a2a.peers.a-delivery-to-a-peer-is-held",
+      "title": "A delivery to a peer, sent directly or through a channel it is a member of, is held for the host to relay",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.4", "6.2", "8.9"],
+      "given": {
+        "channels": [{ "name": "ops", "members": ["human:ada", "a2a:acme"] }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["a2a:acme"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Is the export API rate limited?"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["channel:ops"],
+            "kind": "message",
+            "body": "standup"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "a2a:acme",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          },
+          {
+            "message": "$s2",
+            "recipient": "a2a:acme",
+            "via": "channel",
+            "state": "held",
+            "session": null
+          },
+          {
+            "message": "$s2",
+            "recipient": "human:ada",
+            "via": "channel",
+            "state": "notified"
+          }
+        ]
+      }
+    }
+  ]
+}

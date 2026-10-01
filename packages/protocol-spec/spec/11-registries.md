@@ -6,14 +6,14 @@ This section is generated from `registries/registries.json` by
 
 ## 11.1 Address schemes
 
-| Value     | Scope | Status      | Since         | Defined in                     | Vectors                                                                                      |
-| --------- | ----- | ----------- | ------------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
-| `human`   | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-operator-on-a-human`               |
-| `agent`   | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.parses-an-agent-without-an-operator`          |
-| `task`    | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-id-outside-the-identifier-grammar` |
-| `run`     | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`                                                             |
-| `channel` | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-empty-channel-segment`             |
-| `a2a`     | a2a   | provisional | 1.0.0-draft.1 | [§8.9](08-a2a-binding.md#s8.9) | none                                                                                         |
+| Value     | Scope | Status    | Since         | Defined in                     | Vectors                                                                                                              |
+| --------- | ----- | --------- | ------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `human`   | core  | permanent | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-operator-on-a-human`                                       |
+| `agent`   | core  | permanent | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.parses-an-agent-without-an-operator`                                  |
+| `task`    | core  | permanent | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-id-outside-the-identifier-grammar`                         |
+| `run`     | core  | permanent | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`                                                                                     |
+| `channel` | core  | permanent | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-empty-channel-segment`                                     |
+| `a2a`     | a2a   | permanent | 1.0.0-draft.1 | [§8.9](08-a2a-binding.md#s8.9) | `a2a.peers.parses-an-alias`, `a2a.peers.an-alias-is-at-most-40-characters`, `a2a.peers.a-delivery-to-a-peer-is-held` |
 
 ## 11.2 Address characters
 
