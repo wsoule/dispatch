@@ -270,6 +270,17 @@ describe('push configs', () => {
     expect(f.store.tasksOf(f.caller.address)).toEqual([]);
   });
 
+  it('forgets a task’s last snapshot once it has no configs', async () => {
+    const id = await ask();
+    await configs().create(f.caller, id, { id: 'hook', url: HOOK });
+    await nudge(id);
+    await f.push.idle();
+    expect(f.push.snapshotCount()).toBe(1);
+    await configs().delete(f.caller, id, 'hook');
+    await nudge(id);
+    expect(f.push.snapshotCount()).toBe(0);
+  });
+
   it('never pushes to a revoked client', async () => {
     const id = await ask();
     await configs().create(f.caller, id, { id: 'hook', url: HOOK });

@@ -196,9 +196,13 @@ export class PushWorker {
     facts: TaskFacts,
     opts: { force?: boolean } = {}
   ): void {
-    if (!this.deps.clientActive(row.client)) return;
-    const configs = this.deps.store.pushConfigsOf(row.id);
-    if (configs.length === 0) return;
+    const configs = this.deps.clientActive(row.client)
+      ? this.deps.store.pushConfigsOf(row.id)
+      : [];
+    if (configs.length === 0) {
+      this.last.delete(row.id);
+      return;
+    }
     const state = decideState(facts).state;
     const next = snapshotOf(project(facts, pushView(row.client)), state);
     const events = eventsBetween(
@@ -217,6 +221,11 @@ export class PushWorker {
           this.deps.store.deletePushConfig(config.taskId, config.id);
         });
     }
+  }
+
+  // Tasks whose last pushed snapshot is kept (tests).
+  snapshotCount(): number {
+    return this.last.size;
   }
 
   async idle(): Promise<void> {

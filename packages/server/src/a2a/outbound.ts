@@ -43,6 +43,7 @@ import {
   peerGuard,
   refreshPeer,
 } from './peers.js';
+import { sleep } from './sleep.js';
 
 const SYSTEM = { address: SYSTEM_ADDRESS, canDecide: true };
 
@@ -70,26 +71,6 @@ export interface OutboundDeps {
   now?: () => Date;
   pollMs?: (polls: number) => number;
   concurrency?: number;
-}
-
-// Resolves after `ms`, or at once when `signal` aborts; whichever wins
-// removes the other, so no listener outlives the wait.
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const onAbort = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 // The next stream event as 'tick', or 'done' when the stream ends or fails.
