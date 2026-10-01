@@ -840,6 +840,24 @@ async function updateTask(
     if (!guard.ok) return errorResponse(guard.status, guard.error);
   }
 
+  // A publish task's elevated risk is what keeps a human on its merge, so only
+  // decide tier (never the shared agent token) may change it while it publishes.
+  if (
+    patch.risk !== undefined &&
+    patch.risk !== existing.meta.risk &&
+    ctx.docs.publishing(id) &&
+    !(
+      ctx.viaAgentToken !== true &&
+      ctx.caller !== undefined &&
+      tierAllows(ctx.caller.tier, 'decide')
+    )
+  ) {
+    return errorResponse(
+      403,
+      `${id} is publishing a doc; changing its risk needs the decide tier`
+    );
+  }
+
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
   // credited to the human whose credential made the call, never whatever the

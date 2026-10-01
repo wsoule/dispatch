@@ -2319,6 +2319,7 @@ export class DocsService {
         state: 'open',
         commit: null,
         createdAt: at,
+        reason: null,
       });
       this.outbox.push({
         doc: doc.id,
@@ -2330,6 +2331,13 @@ export class DocsService {
       });
     });
     return { task, doc: this.record(doc) };
+  }
+
+  // Whether `taskId` runs an open publish; with docs.db closed it cannot be
+  // ruled out, so it fails closed (callers guard the task's risk on it).
+  publishing(taskId: string): boolean {
+    if (!this.available) return true;
+    return this.store().publishRows({ task: taskId, state: 'open' }).length > 0;
   }
 
   // Writes an open publish's recorded revision into its run's worktree; a no-op
@@ -2369,7 +2377,8 @@ export class DocsService {
         )
       );
     } catch (err) {
-      this.write(() => store.putPublish({ ...row, state: 'failed' }));
+      const reason = err instanceof Error ? err.message : String(err);
+      this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
       throw err;
     }
   }
@@ -2389,7 +2398,15 @@ export class DocsService {
         changed += 1;
         continue;
       }
-      if (this.host.task(row.task)?.risk === 'routine') continue;
+      // A routine risk let policy merge it with no human: never recorded, and a
+      // new publish may start.
+      if (this.host.task(row.task)?.risk === 'routine') {
+        const reason =
+          'the task landed after its risk was lowered to routine, so no human merged it';
+        this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
+        changed += 1;
+        continue;
+      }
       const commit = this.host.lastCommitFor(row.path);
       const doc = store.doc(row.doc);
       this.write(() => {

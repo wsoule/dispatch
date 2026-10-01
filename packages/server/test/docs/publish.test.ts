@@ -316,6 +316,27 @@ describe('publish', () => {
     ).toEqual(png);
   });
 
+  it('marks a landing whose risk was lowered after the seed failed, with the reason, and lets a new publish start', () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    const { task } = service.publish(as(OWNER), 'spec', {
+      path: 'docs/spec.md',
+    });
+    service.seedFor(task, tempDir('docs-wt-'));
+    const facts = host.tasks.get(task);
+    if (facts === undefined) throw new Error('no publish task');
+    host.tasks.set(task, { ...facts, risk: 'routine' });
+    host.outcomes.set(task, 'landed');
+    expect(service.syncPublishes()).toBe(1);
+    expect(store.publishRows({ task })[0]).toMatchObject({
+      state: 'failed',
+      reason: expect.stringContaining('risk was lowered'),
+    });
+    expect(service.read(as(OWNER), 'spec').doc.published).toBeNull();
+    expect(
+      service.publish(as(OWNER), 'spec', { path: 'docs/spec.md' }).task
+    ).not.toBe(task);
+  });
+
   it('remembers the last path asked for, before the task lands', () => {
     service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
     expect(service.read(as(OWNER), 'spec').doc.lastPublishPath).toBeNull();

@@ -509,6 +509,47 @@ describe('publish route', () => {
     expect(refused.status).toBe(403);
   });
 
+  it("keeps a publish task's risk at decide tier: a teammate and the agent token are refused", async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const out = await json<Published>(
+      await post('/docs/spec/publish', {
+        path: 'docs/spec.md',
+        dispatch: false,
+      })
+    );
+    const patchRisk = (headers: Record<string, string>) =>
+      rawFetch(`${base}/tasks/${out.task}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ risk: 'routine' }),
+      });
+    const teammate = await teammateToken();
+    for (const token of [teammate, handle.tokens.agentToken]) {
+      const res = await patchRisk({ authorization: `Bearer ${token}` });
+      expect(res.status).toBe(403);
+    }
+    const task = await json<{ meta: { risk: string } }>(
+      await fetch(`${base}/tasks/${out.task}`)
+    );
+    expect(task.meta.risk).toBe('elevated');
+    // Other fields stay open to a teammate.
+    const titled = await rawFetch(`${base}/tasks/${out.task}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${teammate}`,
+      },
+      body: JSON.stringify({ title: 'Publish the spec' }),
+    });
+    expect(titled.status).toBe(200);
+    const owner = await fetch(`${base}/tasks/${out.task}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ risk: 'critical' }),
+    });
+    expect(owner.status).toBe(200);
+  });
+
   it('records no landing from a status alone: the task needs a merged run', async () => {
     await post('/docs', { title: 'Spec', body: '# Spec\n' });
     const out = await json<Published>(

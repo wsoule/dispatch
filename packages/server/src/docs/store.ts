@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS slug_aliases (
 );
 CREATE TABLE IF NOT EXISTS publishes (
   task_id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, rev_id TEXT NOT NULL, path TEXT NOT NULL,
-  state TEXT NOT NULL, "commit" TEXT, created_at TEXT NOT NULL
+  state TEXT NOT NULL, "commit" TEXT, created_at TEXT NOT NULL, reason TEXT
 );
 CREATE TABLE IF NOT EXISTS assets (
   doc_id TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, mime TEXT NOT NULL,
@@ -105,6 +105,20 @@ const FTS_DDL =
 
 // Opens (creating if needed) a docs database; refuses a newer schema. `fts`
 // reports whether FTS5 is usable; `{ fts: false }` forces the LIKE fallback.
+// Columns added to version-1 tables after they first shipped, added in place.
+const LATER_COLUMNS: readonly { table: string; column: string; ddl: string }[] =
+  [{ table: 'publishes', column: 'reason', ddl: 'reason TEXT' }];
+
+function addMissingColumns(db: SqliteDatabase): void {
+  for (const { table, column, ddl } of LATER_COLUMNS) {
+    const has = queryAll<{ name: string }>(
+      db,
+      `PRAGMA table_info(${table})`
+    ).some((c) => c.name === column);
+    if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+}
+
 export function openDocsDb(
   path: string,
   opts: { fts?: boolean } = {}
@@ -119,6 +133,7 @@ export function openDocsDb(
       );
     }
     db.exec(DDL);
+    addMissingColumns(db);
     let fts = opts.fts !== false;
     if (fts) {
       try {
@@ -183,6 +198,8 @@ export interface PublishRow {
   state: 'open' | 'landed' | 'dropped' | 'failed';
   commit: string | null;
   createdAt: string;
+  // Why a publish failed; null otherwise.
+  reason: string | null;
 }
 
 export interface RevisionRow {
@@ -990,8 +1007,8 @@ export class SqliteDocStore {
 
   putPublish(p: PublishRow): void {
     this.run(
-      'INSERT OR REPLACE INTO publishes (task_id, doc_id, rev_id, path, state, "commit", created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [p.task, p.doc, p.rev, p.path, p.state, p.commit, p.createdAt]
+      'INSERT OR REPLACE INTO publishes (task_id, doc_id, rev_id, path, state, "commit", created_at, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [p.task, p.doc, p.rev, p.path, p.state, p.commit, p.createdAt, p.reason]
     );
   }
 
@@ -1021,6 +1038,7 @@ export class SqliteDocStore {
       state: PublishRow['state'];
       commit: string | null;
       created_at: string;
+      reason: string | null;
     }>(
       `SELECT * FROM publishes${clause} ORDER BY created_at DESC, task_id DESC`,
       params
@@ -1032,6 +1050,7 @@ export class SqliteDocStore {
       state: r.state,
       commit: r.commit,
       createdAt: r.created_at,
+      reason: r.reason,
     }));
   }
 
