@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -161,13 +163,14 @@ describe('a credentials file that cannot be parsed', () => {
       () => writeA2ASigningKey(ROOT, { kty: 'EC', d: 'd' }),
       () => writePeerCredential(ROOT, 'acme', { scheme: 'bearer', token: 't' }),
       () => writeProjectCredential(ROOT, 'linear', { apiKey: 'k2' }),
+      // A clear cannot tell whether the secret is still in there.
+      () => clearProjectCredential(ROOT, 'linear'),
+      () => clearPeerCredential(ROOT, 'acme'),
     ];
     for (const write of writers)
       expect(write).toThrow(CredentialsUnreadableError);
-    // A clear finds nothing to clear in a file it cannot read, and writes nothing.
-    clearProjectCredential(ROOT, 'linear');
-    clearPeerCredential(ROOT, 'acme');
     expect(readFileSync(credentialsPath(), 'utf8')).toBe(BROKEN);
+    expect(existsSync(`${credentialsPath()}.lock`)).toBe(false);
   });
 
   it('reads the signing key as unreadable, not absent', () => {
@@ -185,5 +188,42 @@ describe('a credentials file that cannot be parsed', () => {
     }
     expect(message).toContain('cannot be parsed');
     expect(message).not.toContain('apiKey');
+  });
+});
+
+describe('concurrent writers', () => {
+  const SRC = join(import.meta.dir, '../src/credentials.ts');
+
+  // Each child writes `count` peers, one read-modify-write at a time.
+  const writer = (tag: string, count: number) =>
+    Bun.spawn(
+      [
+        process.execPath,
+        '-e',
+        `const { writePeerCredential } = await import(${JSON.stringify(SRC)});
+         for (let i = 0; i < ${count}; i++)
+           writePeerCredential(${JSON.stringify(ROOT)}, '${tag}-' + i, { scheme: 'bearer', token: 't' });`,
+      ],
+      { env: { ...process.env, DISPATCH_HOME: home }, stderr: 'pipe' }
+    );
+
+  it('lose no update when two processes write at once', async () => {
+    const children = [writer('a', 25), writer('b', 25)];
+    for (const child of children) expect(await child.exited).toBe(0);
+    for (const tag of ['a', 'b'])
+      for (let i = 0; i < 25; i += 1)
+        expect(readPeerCredential(ROOT, `${tag}-${i}`)).not.toBeNull();
+    expect(existsSync(`${credentialsPath()}.lock`)).toBe(false);
+  });
+
+  it('takes over a lock its holder left behind', () => {
+    mkdirSync(dirname(credentialsPath()), { recursive: true });
+    const lock = `${credentialsPath()}.lock`;
+    writeFileSync(lock, '');
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    writePeerCredential(ROOT, 'acme', { scheme: 'bearer', token: 't' });
+    expect(readPeerCredential(ROOT, 'acme')?.token).toBe('t');
+    expect(existsSync(lock)).toBe(false);
   });
 });
