@@ -1,8 +1,14 @@
 import { AgentCard, verifyAgentCardSignature } from '@a2a-js/sdk';
 import { buildCardJson } from '@dispatch/a2a';
-import { credentialsPath } from '@dispatch/core';
+import {
+  credentialsPath,
+  normalizeProjectPath,
+  writeA2ASigningKey,
+} from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { readFileSync, statSync } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 import { CardSigner, loadOrCreateSigningKey } from '../../src/a2a/signing.js';
 import { useTempProject } from '../messaging/harness.js';
@@ -24,6 +30,59 @@ describe('the signing key', () => {
     expect(readFileSync(credentialsPath(), 'utf8')).toContain(
       first.privateJwk.d
     );
+  });
+});
+
+describe('a stored key it cannot use', () => {
+  const p256 = () =>
+    generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({
+      format: 'jwk',
+    }) as Record<string, string>;
+
+  it('refuses a well-formed but bogus key', () => {
+    writeA2ASigningKey(project.root(), {
+      kty: 'EC',
+      crv: 'P-256',
+      x: 'AAAA',
+      y: 'BBBB',
+      d: 'CCCC',
+    });
+    expect(() => loadOrCreateSigningKey(project.root())).toThrow(
+      'not a usable ES256 private key'
+    );
+  });
+
+  it('refuses a key whose d does not belong to its x and y', () => {
+    const a = p256();
+    const b = p256();
+    writeA2ASigningKey(project.root(), { ...a, d: b.d });
+    expect(() => loadOrCreateSigningKey(project.root())).toThrow(
+      'not a usable ES256 private key'
+    );
+  });
+
+  it('refuses a malformed slot rather than replacing it', () => {
+    mkdirSync(dirname(credentialsPath()), { recursive: true });
+    const key = normalizeProjectPath(project.root());
+    writeFileSync(
+      credentialsPath(),
+      JSON.stringify({
+        projects: { [key]: { a2a: { signingKey: { kty: 7 } } } },
+      })
+    );
+    const before = readFileSync(credentialsPath(), 'utf8');
+    expect(() => loadOrCreateSigningKey(project.root())).toThrow();
+    expect(readFileSync(credentialsPath(), 'utf8')).toBe(before);
+  });
+
+  it('never makes a key when the credentials file cannot be parsed', () => {
+    mkdirSync(dirname(credentialsPath()), { recursive: true });
+    const broken = '{"projects": {},}\n';
+    writeFileSync(credentialsPath(), broken);
+    expect(() => loadOrCreateSigningKey(project.root())).toThrow(
+      'cannot be parsed'
+    );
+    expect(readFileSync(credentialsPath(), 'utf8')).toBe(broken);
   });
 });
 

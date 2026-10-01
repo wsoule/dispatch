@@ -1,10 +1,16 @@
-import { openSqliteDb, TaskStore, writeA2ASigningKey } from '@dispatch/core';
+import {
+  credentialsPath,
+  openSqliteDb,
+  TaskStore,
+  writeA2ASigningKey,
+} from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -460,8 +466,37 @@ describe('the A2A listener', () => {
       404
     );
     expect(h.a2a.status().warnings).toEqual([
-      'card signing is off: the stored card-signing key is not an ES256 private key',
+      'card signing is off: the stored card-signing key is not a usable ES256 private key',
     ]);
+  });
+
+  it('leaves a credentials file it cannot parse untouched after a card GET', async () => {
+    const path = credentialsPath();
+    mkdirSync(dirname(path), { recursive: true });
+    const broken = '{"projects": {"/work/x": {"linear": {"apiKey": "k"},}}}\n';
+    writeFileSync(path, broken);
+    const h = await boot();
+    const port = await freePort();
+    const status = await h.a2a.applySettings({
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      port,
+    });
+    const spy = spyOn(console, 'error').mockImplementation(() => undefined);
+    let card: { signatures?: unknown[] };
+    try {
+      card = (await (
+        await rawFetch(`${status.url}/.well-known/agent-card.json`)
+      ).json()) as { signatures?: unknown[] };
+    } finally {
+      spy.mockRestore();
+    }
+    expect(card.signatures ?? []).toEqual([]);
+    expect(readFileSync(path, 'utf8')).toBe(broken);
+    expect(h.a2a.status().warnings.join('\n')).toContain(
+      'card signing is off: the credentials file cannot be parsed'
+    );
+    expect(h.a2a.status().warnings.join('\n')).not.toContain('apiKey');
   });
 
   it('answers an unexpected throw with an opaque 500, never a stack or a path', async () => {
