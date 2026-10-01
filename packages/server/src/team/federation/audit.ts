@@ -14,6 +14,7 @@ export const AUDIT_KINDS = [
   'legacy-close',
   'transport',
   'dismiss',
+  'reissue',
   'fork',
   'halt',
   'bad-signature',

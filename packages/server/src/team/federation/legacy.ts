@@ -1,5 +1,10 @@
 import type { RosterView } from '@dispatch/federation';
-import { canonicalize, sha256Hex } from '@dispatch/protocol/federation';
+import {
+  canonicalize,
+  compareHlc,
+  parseOpHlc,
+  sha256Hex,
+} from '@dispatch/protocol/federation';
 import type {
   FederatedOp,
   LegacyAttestation,
@@ -184,12 +189,49 @@ export class LegacyWindow {
     const out: FederatedOp[] = [];
     for (const row of minted) {
       const op = JSON.parse(row.op_json) as BoardOp;
-      if (op.replica === this.me)
-        out.push(...this.deps.signer().commit(changeOf(op)));
+      if (op.replica !== this.me) continue;
+      const change = this.stillCurrent(op);
+      if (change !== null) out.push(...this.deps.signer().commit(change));
     }
     const last = minted.at(-1)?.seq ?? 0;
     fed.db.query('DELETE FROM fed_v1_minted WHERE seq <= ?').run(last);
     return out;
+  }
+
+  // An older op re-signed now carries a later clock, so it keeps only the
+  // fields no newer change has touched since (FW-R22 M-d); null when nothing
+  // is left, with an audit row naming what was dropped.
+  private stillCurrent(op: BoardOp): TaskChange | null {
+    const { ledger, fed } = this.deps;
+    const newer = (field: string): boolean => {
+      const held = ledger.state.field(op.task, field);
+      return held !== undefined && laterHlc(held.hlc, op.hlc);
+    };
+    const change = changeOf(op);
+    const fields = Object.keys(op.fields ?? {});
+    const dropped =
+      op.kind === 'remove'
+        ? Object.keys(ledger.state.fields(op.task)).filter(newer)
+        : fields.filter(newer);
+    if (dropped.length === 0) return change;
+    const kept =
+      op.kind === 'remove'
+        ? null
+        : Object.fromEntries(
+            Object.entries(op.fields ?? {}).filter(([f]) => !newer(f))
+          );
+    const empty =
+      kept === null ||
+      (Object.keys(kept).length === 0 && (op.activity ?? []).length === 0);
+    fed.audit('reissue', `task:${op.task}`, {
+      task: op.task,
+      seq: op.seq,
+      dropped,
+      whole: empty,
+    });
+    if (empty) return null;
+    const { fields: _all, ...rest } = change;
+    return Object.keys(kept).length === 0 ? rest : { ...rest, fields: kept };
   }
 
   // One replica's lines, judged against the bounds the roster attests.
@@ -260,4 +302,12 @@ function changeOf(op: BoardOp): TaskChange {
     ...(op.fields === undefined ? {} : { fields: op.fields }),
     ...(op.activity === undefined ? {} : { activity: op.activity }),
   };
+}
+
+// Whether hlc reading `a` sorts after `b`, by wall time and counter.
+function laterHlc(a: string, b: string): boolean {
+  const pa = parseOpHlc(a);
+  const pb = parseOpHlc(b);
+  if (pa === null || pb === null) return a > b;
+  return compareHlc(pa, pb) > 0;
 }

@@ -236,6 +236,39 @@ describe('this replica’s own log (FW-R22 M6, M-f)', () => {
   });
 });
 
+describe('older-build ops of another id (FW-R22 M-d(2))', () => {
+  it('audits the minted rows of another id before the key op drops them', () => {
+    const path = join(dir, 'state.db');
+    let ledger = new SyncLedger(path, 'ada');
+    let fed = new FedStore(ledger, loadOrCreateKeys(dir, ledger.replica));
+    fed.append({ type: 'key', body: keyBody(fed.keys) });
+    const old = ledger.replica;
+    // An older build's change under the old id, not yet re-issued.
+    const lost = ledger.commitLocal(
+      { task: 't-00000a01', kind: 'put', fields: { title: 'x' } },
+      () => {}
+    );
+    ledger.close();
+    rmSync(join(dir, 'keys', 'replica.json'));
+    expect(rekeyIfKeysLost(dir, path, 'ada')).toBe(old);
+    ledger = new SyncLedger(path, 'ada');
+    fed = new FedStore(ledger, loadOrCreateKeys(dir, ledger.replica));
+    fed.append({ type: 'key', body: keyBody(fed.keys) });
+    const rows = fed.db
+      .query<{ kind: string; detail_json: string }, []>(
+        "SELECT kind, detail_json FROM fed_audit WHERE kind = 'reissue'"
+      )
+      .all();
+    expect(rows).toEqual([
+      {
+        kind: 'reissue',
+        detail_json: JSON.stringify({ dropped: [lost.seq], from: [old] }),
+      },
+    ]);
+    ledger.close();
+  });
+});
+
 describe('pins, cursors, problems and the audit log', () => {
   it('pins a key once and reports a conflicting one', () => {
     const ledger = new SyncLedger(join(dir, 'state.db'), 'ada');

@@ -139,9 +139,9 @@ export class FedStore {
       if (head !== null && input.type === 'key')
         throw new Error('a log has one key op');
       const stamp = this.ledger.nextStamp(head?.seq ?? 0);
-      // The v1 history before this replica's key op is attested, never re-issued.
-      if (input.type === 'key')
-        this.db.query('DELETE FROM fed_v1_minted WHERE seq < ?').run(stamp.seq);
+      // The v1 history before this replica's key op is attested, never
+      // re-issued; another id's ops left after a re-key are named first.
+      if (input.type === 'key') this.dropMintedBefore(stamp.seq);
       input.onStamp?.(stamp);
       const sealedPart = input.seal?.(stamp);
       const op = buildOp(
@@ -198,6 +198,25 @@ export class FedStore {
       )
       .all()
       .map((row) => JSON.parse(row.op_json) as FederatedOp);
+  }
+
+  private dropMintedBefore(seq: number): void {
+    const others = this.db
+      .query<{ seq: number; op_json: string }, [number]>(
+        'SELECT seq, op_json FROM fed_v1_minted WHERE seq < ? ORDER BY seq'
+      )
+      .all(seq)
+      .map((row) => ({
+        seq: row.seq,
+        replica: (JSON.parse(row.op_json) as { replica?: unknown }).replica,
+      }))
+      .filter((row) => row.replica !== this.replica);
+    if (others.length > 0)
+      this.audit('reissue', `replica:${this.replica}`, {
+        dropped: others.map((o) => o.seq),
+        from: [...new Set(others.map((o) => String(o.replica)))],
+      });
+    this.db.query('DELETE FROM fed_v1_minted WHERE seq < ?').run(seq);
   }
 
   /** Every op this replica ever signed, oldest first, published or not;

@@ -292,6 +292,47 @@ describe('an older build on the same root', () => {
     expect(legacy.reissue()).toEqual([]);
   });
 
+  // M-d(1): a change recorded before the founder pin is re-signed later, so
+  // it must not overwrite a newer change a teammate made to the same field.
+  it('re-issues a field only when no newer change to it was applied, and audits what it drops', () => {
+    const { ada, legacy } = founded(new MemoryV1());
+    ada.roster.found('acme', legacy.attestAll());
+    const old = ada.ledger.commitLocal(
+      {
+        task: 't-00000a05',
+        kind: 'put',
+        fields: { title: 'old title', status: 'todo' },
+      },
+      () => {}
+    );
+    ada.ledger.state.setField(
+      't-00000a05',
+      'title',
+      `9${old.hlc.slice(1)}`,
+      'newer title from bob'
+    );
+    const reissued = legacy.reissue();
+    expect(reissued.map((o) => (o.body as { fields: object }).fields)).toEqual([
+      { status: 'todo' },
+    ]);
+    const only = ada.ledger.commitLocal(
+      { task: 't-00000a06', kind: 'put', fields: { title: 'stale' } },
+      () => {}
+    );
+    ada.ledger.state.setField(
+      't-00000a06',
+      'title',
+      `9${only.hlc.slice(1)}`,
+      'x'
+    );
+    expect(legacy.reissue()).toEqual([]);
+    const kinds = ada.fed.db
+      .query<{ kind: string }, []>('SELECT kind FROM fed_audit')
+      .all()
+      .map((r) => r.kind);
+    expect(kinds).toContain('reissue');
+  });
+
   it("re-issues an older build's oversized field without it, with a problem, and the rest signed", () => {
     const { ada, legacy } = founded(new MemoryV1());
     ada.roster.found('acme', legacy.attestAll());
