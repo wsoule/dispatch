@@ -2193,12 +2193,38 @@ export class DocsService {
       );
     this.write(() => this.sealInTx(doc, this.headOf(doc)));
     const head = this.headOf(doc);
-    return this.createDoc(
+    const out = this.createDoc(
       actor,
       { title: head.title, body: head.body, scope: 'team' },
       origin,
       head
     );
+    this.copyAssets(doc, out.doc.id, head.body, actor.address);
+    return out;
+  }
+
+  // Copies the images `body` links from `from` to the doc `to`, row and file,
+  // so a copy of its text shows them too.
+  private copyAssets(from: DocRow, to: string, body: string, by: string): void {
+    const root = this.deps.assetsDir;
+    if (root === undefined) return;
+    const store = this.store();
+    for (const name of this.storedAssets(from, body)) {
+      const row = store.assetRow(from.id, name);
+      if (row === null) continue;
+      const bytes = new Uint8Array(
+        readFileSync(assetFilePath(root, from.id, name))
+      );
+      storeAssetFile(root, to, name, bytes);
+      this.write(() =>
+        store.putAsset({
+          ...row,
+          doc: to,
+          createdBy: by,
+          createdAt: this.nowIso(),
+        })
+      );
+    }
   }
 
   // ---- memory overflow (v1) -------------------------------------------------

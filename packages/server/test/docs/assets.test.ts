@@ -155,6 +155,27 @@ describe('the asset store', () => {
     }
   });
 
+  it('promotes a personal doc with its images, so the team copy shows them', () => {
+    service.create(as(OWNER), {
+      title: 'Mine',
+      body: 'x\n',
+      scope: 'personal',
+    });
+    const shot = service.putAsset(as(OWNER), '~mine', PNG);
+    service.putAsset(as(OWNER), '~mine', JPEG);
+    service.saveBody(as(OWNER), '~mine', {
+      baseRev: service.read(as(OWNER), '~mine').rev.id,
+      body: `x\n${shot.markdown}\n`,
+    });
+    const promoted = service.promote(as(OWNER), '~mine');
+    const read = service.asset(as(TEAMMATE), promoted.doc.id, shot.name);
+    expect(new Uint8Array(readFileSync(read.path))).toEqual(PNG);
+    // Only the images the head links travel.
+    expect(() =>
+      service.asset(as(TEAMMATE), promoted.doc.id, `${'0'.repeat(64)}.jpg`)
+    ).toThrow('not found');
+  });
+
   it('removes a deleted doc’s images', () => {
     const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
     service.putAsset(as(OWNER), 'img', PNG);
