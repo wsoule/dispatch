@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -140,6 +142,43 @@ describe('the asset store', () => {
     symlinkSync(elsewhere, join(dir, 'docs-assets', other.doc.id));
     expect(() => service.putAsset(as(OWNER), 'two', JPEG)).toThrow('symlink');
     expect(existsSync(join(elsewhere, `${'0'.repeat(64)}.jpg`))).toBe(false);
+  });
+
+  it('refuses to read through a symlinked docs-assets or doc directory', () => {
+    const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    const { name } = service.putAsset(as(OWNER), 'img', PNG);
+    const real = join(dir, 'docs-assets');
+    const moved = join(dir, 'moved-assets');
+    renameSync(real, moved);
+    symlinkSync(moved, real);
+    expect(() => service.assetBytes(as(OWNER), 'img', name)).toThrow('symlink');
+    rmSync(real);
+    renameSync(moved, real);
+    const docDir = join(real, made.doc.id);
+    const movedDoc = join(dir, 'moved-doc');
+    renameSync(docDir, movedDoc);
+    symlinkSync(movedDoc, docDir);
+    expect(() => service.assetBytes(as(OWNER), 'img', name)).toThrow('symlink');
+  });
+
+  it('refuses an asset file with another hard link to it', () => {
+    const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    const { name } = service.putAsset(as(OWNER), 'img', PNG);
+    linkSync(
+      join(dir, 'docs-assets', made.doc.id, name),
+      join(dir, 'elsewhere-link.png')
+    );
+    expect(() => service.assetBytes(as(OWNER), 'img', name)).toThrow('link');
+  });
+
+  it('rewrites an existing asset file whose bytes no longer match its name', () => {
+    const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    const { name } = service.putAsset(as(OWNER), 'img', PNG);
+    const file = join(dir, 'docs-assets', made.doc.id, name);
+    writeFileSync(file, 'tampered');
+    service.putAsset(as(OWNER), 'img', PNG);
+    expect(new Uint8Array(readFileSync(file))).toEqual(PNG);
+    expect(service.assetBytes(as(OWNER), 'img', name).bytes).toEqual(PNG);
   });
 
   it("hides a personal doc's asset from anyone else, and an agent may not read it", () => {

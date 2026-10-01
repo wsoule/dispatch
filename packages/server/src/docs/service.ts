@@ -42,12 +42,13 @@ import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
 import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
-import { readFileSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 
 import type { Principal } from '../messaging/principal.js';
 import {
   assetFilePath,
   MAX_ASSET_BYTES,
+  readAssetFile,
   removeAssetDir,
   sniffImage,
   storeAssetFile,
@@ -2212,9 +2213,7 @@ export class DocsService {
     for (const name of this.storedAssets(from, body)) {
       const row = store.assetRow(from.id, name);
       if (row === null) continue;
-      const bytes = new Uint8Array(
-        readFileSync(assetFilePath(root, from.id, name))
-      );
+      const bytes = readAssetFile(root, from.id, name);
       storeAssetFile(root, to, name, bytes);
       this.write(() =>
         store.putAsset({
@@ -2376,6 +2375,18 @@ export class DocsService {
       })
     );
     return { name, markdown: `![](asset:${name})` };
+  }
+
+  // An image's bytes and type for the caller, read through readAssetFile
+  // (no symlink, one hard link) after asset()'s checks.
+  assetBytes(
+    actor: DocsActor,
+    ref: string,
+    name: string
+  ): { bytes: Uint8Array; mime: string } {
+    const { mime } = this.asset(actor, ref, name);
+    const doc = this.resolve(actor, ref);
+    return { bytes: readAssetFile(this.assetsRoot(), doc.id, name), mime };
   }
 
   // An image of a doc the caller can see: the name is checked before any
@@ -2545,8 +2556,12 @@ export class DocsService {
       const doc = store.doc(row.doc);
       const copied = doc === null ? [] : this.storedAssets(doc, rev.body);
       for (const name of copied) {
-        const file = assetFilePath(this.assetsRoot(), row.doc, name);
-        seedAsset(worktree, row.path, name, new Uint8Array(readFileSync(file)));
+        seedAsset(
+          worktree,
+          row.path,
+          name,
+          readAssetFile(this.assetsRoot(), row.doc, name)
+        );
       }
       const stem = publishAssetsDir(row.path).split('/').at(-1) ?? '';
       const linked = new Set(copied);

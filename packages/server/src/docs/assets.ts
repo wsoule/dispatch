@@ -1,8 +1,13 @@
 import { ASSET_NAME } from '@dispatch/core';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -97,15 +102,26 @@ export function storeAssetFile(
   const target = join(dir, name);
   try {
     const st = lstatSync(target);
-    // Content-addressed: a regular file of this name already holds these bytes.
-    if (st.isFile()) return;
-    throw symlinkError(`docs-assets/${docId}/${name}`);
+    if (!st.isFile()) throw symlinkError(`docs-assets/${docId}/${name}`);
+    // Content-addressed: a file whose bytes still match its name is kept; a
+    // damaged one is written again below.
+    if (
+      st.nlink === 1 &&
+      hashOf(readAssetFile(root, docId, name)) === name.slice(0, 64)
+    )
+      return;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    // Missing, damaged, linked elsewhere or a symlink: replaced below, since a
+    // rename swaps the directory entry and never writes through it.
+    if (
+      !(err instanceof DocsError) &&
+      (err as NodeJS.ErrnoException).code !== 'ENOENT'
+    )
+      throw err;
   }
   const temp = join(dir, `.${randomUUID()}.tmp`);
-  writeFileSync(temp, bytes, { flag: 'wx', mode: 0o600 });
   try {
+    writeFileSync(temp, bytes, { flag: 'wx', mode: 0o600 });
     renameSync(temp, target);
   } catch (err) {
     rmSync(temp, { force: true });
@@ -138,6 +154,38 @@ export function assetFilePath(
   if (inside.startsWith('..') || isAbsolute(inside))
     throw symlinkError(`docs-assets/${docId}/${name}`);
   return path;
+}
+
+const hashOf = (bytes: Uint8Array): string =>
+  createHash('sha256').update(bytes).digest('hex');
+
+/** A stored asset's bytes, read without following a symlink (O_NOFOLLOW) and
+ *  only from a regular file no other hard link reaches. */
+export function readAssetFile(
+  root: string,
+  docId: string,
+  name: string
+): Uint8Array {
+  const path = assetFilePath(root, docId, name);
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ELOOP')
+      throw symlinkError(`docs-assets/${docId}/${name}`);
+    throw err;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1)
+      throw new DocsError(
+        'invalid',
+        `docs-assets/${docId}/${name} is not a single-link regular file`
+      );
+    return new Uint8Array(readFileSync(fd));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Removes a deleted doc's asset directory; a symlink there is unlinked, never followed. */

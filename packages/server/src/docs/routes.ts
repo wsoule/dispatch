@@ -565,9 +565,9 @@ export async function handleDocsRoute(
     }
     if (rest.length === 3 && method === 'GET' && action === 'assets') {
       const name = decode(rest[2], 'name');
-      const { path, mime } = docs.asset(actor, ref, name);
+      const { bytes, mime } = docs.assetBytes(actor, ref, name);
       // Served as an inert image: typed by its bytes, never sniffed, sandboxed.
-      return new Response(Bun.file(path), {
+      return new Response(bytes, {
         headers: {
           'content-type': mime,
           'x-content-type-options': 'nosniff',
