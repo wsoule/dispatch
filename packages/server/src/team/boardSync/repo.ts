@@ -1,14 +1,18 @@
+import { REPLICA_ID, stubOf } from '@dispatch/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AsyncGitRunner } from '../../sync/worktree.js';
+import type { Watermarks } from '../federation/transport.js';
 import type { BoardOp } from './engine.js';
 
 // The git half of board sync: a clone of one branch, where every replica keeps
@@ -21,6 +25,23 @@ import type { BoardOp } from './engine.js';
 // has to rewrite history or force a push.
 
 const OPS_DIR = 'ops';
+// Signed v2 ops: fed/<replica>/<first seq>.jsonl segments, and acks.json.
+const FED_DIR = 'fed';
+const ACKS = 'acks.json';
+const SEGMENT_MAX_OPS = 1000;
+const SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
+const SEGMENT = /^\d{12}\.jsonl$/;
+const segmentName = (firstSeq: number): string =>
+  `${String(firstSeq).padStart(12, '0')}.jsonl`;
+
+/** A replica's signed statement of how far it has read everyone's log. */
+export interface SignedAcks {
+  v: 1;
+  replica: string;
+  through: Record<string, number>;
+  at: string;
+  sig: string;
+}
 
 // Identical on every replica, so two that each started the branch from
 // nothing still merge cleanly: git treats the same file added on both sides
@@ -110,17 +131,165 @@ export class SyncRepo {
     if (ops.length === 0) return;
     const file = join(this.dir, OPS_DIR, `${this.replica}.jsonl`);
     appendFileSync(file, ops.map((op) => `${JSON.stringify(op)}\n`).join(''));
-    await this.run(['add', join(OPS_DIR, `${this.replica}.jsonl`)]);
+    await this.commitPaths(
+      [join(OPS_DIR, `${this.replica}.jsonl`)],
+      `${this.replica}: ${ops.length} change${ops.length === 1 ? '' : 's'}`
+    );
+  }
+
+  private async commitPaths(paths: string[], message: string): Promise<void> {
+    await this.run(['add', ...paths]);
     const committed = await this.run([
       ...IDENTITY,
       'commit',
       '-q',
       '--no-verify',
       '-m',
-      `${this.replica}: ${ops.length} change${ops.length === 1 ? '' : 's'}`,
+      message,
     ]);
     if (!committed.ok)
       throw new Error(`could not commit sync log: ${committed.out}`);
+  }
+
+  /** Appends this replica's v2 ops to its current segment, rolling over at
+   *  the limits, and commits; the next exchange pushes them. */
+  async writeV2(
+    entries: readonly LogEntry[],
+    limits = { ops: SEGMENT_MAX_OPS, bytes: SEGMENT_MAX_BYTES }
+  ): Promise<void> {
+    if (entries.length === 0) return;
+    const dir = join(this.dir, FED_DIR, this.replica);
+    mkdirSync(dir, { recursive: true });
+    let current = this.segments(this.replica).at(-1) ?? null;
+    let count = current === null ? 0 : completeLines(join(dir, current)).length;
+    let size = current === null ? 0 : statSync(join(dir, current)).size;
+    for (const e of entries) {
+      const line = `${JSON.stringify(e)}\n`;
+      const bytes = Buffer.byteLength(line);
+      if (
+        current === null ||
+        count >= limits.ops ||
+        size + bytes > limits.bytes
+      ) {
+        current = segmentName(e.seq);
+        count = 0;
+        size = 0;
+      }
+      appendFileSync(join(dir, current), line);
+      count += 1;
+      size += bytes;
+    }
+    await this.commitPaths(
+      [join(FED_DIR, this.replica)],
+      `${this.replica}: ${entries.length} signed op${entries.length === 1 ? '' : 's'}`
+    );
+  }
+
+  /** Every replica's v2 entries past its watermark, reading only from the
+   *  segment holding watermark + 1 onward. Torn last lines are skipped. */
+  readV2(since: Watermarks): LogEntry[] {
+    const root = join(this.dir, FED_DIR);
+    if (!existsSync(root)) return [];
+    const out: LogEntry[] = [];
+    for (const replica of readdirSync(root)) {
+      if (!REPLICA_ID.test(replica)) continue;
+      const cursor = since.get(replica) ?? 0;
+      const segments = this.segments(replica);
+      let start = 0;
+      segments.forEach((name, i) => {
+        if (Number(name.slice(0, 12)) <= cursor + 1) start = i;
+      });
+      for (const name of segments.slice(start)) {
+        for (const line of completeLines(join(root, replica, name))) {
+          const entry = parseEntry(line);
+          if (entry !== null && entry.replica === replica && entry.seq > cursor)
+            out.push(entry);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Writes this replica's acks.json and commits it, only when `through` changed. */
+  async writeAcks(acks: SignedAcks): Promise<void> {
+    const dir = join(this.dir, FED_DIR, this.replica);
+    const file = join(dir, ACKS);
+    const held = this.readAcks().get(this.replica);
+    if (
+      held !== undefined &&
+      JSON.stringify(sortedKeys(held.through)) ===
+        JSON.stringify(sortedKeys(acks.through))
+    )
+      return;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, `${JSON.stringify(acks)}\n`);
+    await this.commitPaths(
+      [join(FED_DIR, this.replica, ACKS)],
+      `${this.replica}: acks`
+    );
+  }
+
+  /** Every replica's acks.json, by replica; malformed ones are skipped. */
+  readAcks(): Map<string, SignedAcks> {
+    const root = join(this.dir, FED_DIR);
+    const out = new Map<string, SignedAcks>();
+    if (!existsSync(root)) return out;
+    for (const replica of readdirSync(root)) {
+      const file = join(root, replica, ACKS);
+      if (!REPLICA_ID.test(replica) || !existsSync(file)) continue;
+      const acks = parseAcks(readFileSync(file, 'utf8'));
+      if (acks !== null && acks.replica === replica) out.set(replica, acks);
+    }
+    return out;
+  }
+
+  /** Replaces this replica's full mail and state ops that `prune` accepts
+   *  with their signed stubs, committing once; how many it replaced. */
+  async pruneOwn(prune: (op: FederatedOp) => boolean): Promise<number> {
+    const dir = join(this.dir, FED_DIR, this.replica);
+    let replaced = 0;
+    for (const name of this.segments(this.replica)) {
+      const file = join(dir, name);
+      let changed = false;
+      const lines = completeLines(file).map((line) => {
+        const entry = parseEntry(line);
+        if (
+          entry === null ||
+          'pruned' in entry ||
+          (entry.type !== 'mail' && entry.type !== 'state') ||
+          !prune(entry)
+        )
+          return line;
+        changed = true;
+        replaced += 1;
+        return JSON.stringify(stubOf(entry));
+      });
+      if (changed) writeFileSync(file, lines.map((l) => `${l}\n`).join(''));
+    }
+    if (replaced > 0)
+      await this.commitPaths(
+        [join(FED_DIR, this.replica)],
+        `${this.replica}: pruned ${replaced} acknowledged op${replaced === 1 ? '' : 's'}`
+      );
+    return replaced;
+  }
+
+  /** The bytes under fed/ and ops/, for the branch-size warning. */
+  sizeBytes(): number | null {
+    if (!existsSync(this.dir)) return null;
+    return [FED_DIR, OPS_DIR].reduce(
+      (sum, sub) => sum + treeBytes(join(this.dir, sub)),
+      0
+    );
+  }
+
+  // One replica's segment names, sorted by their first seq.
+  private segments(replica: string): string[] {
+    const dir = join(this.dir, FED_DIR, replica);
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter((f) => SEGMENT.test(f))
+      .sort();
   }
 
   /**
@@ -248,4 +417,60 @@ export class SyncRepo {
  */
 export function personOf(replica: string): string {
   return replica.replace(/-[0-9a-f]{8}$/, '');
+}
+
+// The lines before the last newline: a torn tail from an unfinished write is dropped.
+function completeLines(file: string): string[] {
+  const text = readFileSync(file, 'utf8');
+  const end = text.lastIndexOf('\n');
+  if (end < 0) return [];
+  return text
+    .slice(0, end)
+    .split('\n')
+    .filter((line) => line.trim() !== '');
+}
+
+// A v2 entry, or null for a line that is not JSON with v: 2.
+function parseEntry(line: string): LogEntry | null {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    return (parsed as { v?: unknown }).v === 2 ? (parsed as LogEntry) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseAcks(text: string): SignedAcks | null {
+  try {
+    const a = JSON.parse(text) as Partial<SignedAcks>;
+    const through = a.through as unknown;
+    if (
+      a.v !== 1 ||
+      typeof a.replica !== 'string' ||
+      typeof a.at !== 'string' ||
+      typeof a.sig !== 'string' ||
+      typeof through !== 'object' ||
+      through === null ||
+      Object.values(through).some((n) => !Number.isSafeInteger(n))
+    )
+      return null;
+    return a as SignedAcks;
+  } catch {
+    return null;
+  }
+}
+
+function sortedKeys(o: Record<string, number>): [string, number][] {
+  return Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1));
+}
+
+function treeBytes(path: string): number {
+  if (!existsSync(path)) return 0;
+  const stat = statSync(path);
+  if (!stat.isDirectory()) return stat.size;
+  return readdirSync(path).reduce(
+    (sum, name) => sum + treeBytes(join(path, name)),
+    0
+  );
 }
