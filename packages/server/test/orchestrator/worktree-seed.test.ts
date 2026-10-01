@@ -48,4 +48,22 @@ describe('the worktree seed hook', () => {
       .split('\n');
     expect(worktrees).toHaveLength(1);
   });
+
+  it('reports the seed error even when removing the worktree also fails', async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    orchestrator.registerExecutor('claude', new StallingExecutor());
+    orchestrator.setWorktreeSeed(() => {
+      throw new Error('a path became a symlink');
+    });
+    const worktrees = (
+      orchestrator as unknown as { worktrees: { remove: () => void } }
+    ).worktrees;
+    worktrees.remove = () => {
+      throw new Error('git worktree remove failed');
+    };
+    const task = store.create({ title: 'Seed fails twice' });
+    await expect(orchestrator.dispatch(task.meta.id, 'claude')).rejects.toThrow(
+      'could not seed the worktree: a path became a symlink'
+    );
+  });
 });

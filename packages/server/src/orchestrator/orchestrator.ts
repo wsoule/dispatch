@@ -1037,7 +1037,15 @@ export class Orchestrator {
       try {
         this.worktreeSeed(taskId, wtPath);
       } catch (err) {
-        this.worktrees.remove(wtPath, branch, runId);
+        // A failed cleanup is logged; the seed's reason is what the caller hears.
+        try {
+          this.worktrees.remove(wtPath, branch, runId);
+        } catch (removeErr) {
+          console.error(
+            `dispatchd: removing ${wtPath} after a failed seed failed`,
+            removeErr
+          );
+        }
         throw new OrchestratorClientError(
           `could not seed the worktree: ${err instanceof Error ? err.message : String(err)}`
         );

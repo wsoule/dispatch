@@ -2379,6 +2379,11 @@ export class DocsService {
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
+      try {
+        this.host.closePublishTask(taskId, reason);
+      } catch (closeErr) {
+        console.error(`docs: closing publish task ${taskId} failed`, closeErr);
+      }
       throw err;
     }
   }

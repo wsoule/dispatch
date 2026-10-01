@@ -104,6 +104,8 @@ export interface DocsHost extends DocsGatePort {
     writes: string[];
     risk: 'elevated';
   }): string;
+  // Drops a publish task whose seed failed, so it never sits undispatchable.
+  closePublishTask(taskId: string, reason: string): void;
   // How a publish task ended: landed only once a run's merge changed `path`;
   // failed when a merge landed nothing there; null while it is still open.
   publishOutcome(taskId: string, path: string): PublishOutcome;
@@ -202,6 +204,21 @@ export class DaemonDocsHost implements DocsHost {
     this.deps.refreshTask?.(task.meta.id);
     this.deps.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
     return task.meta.id;
+  }
+
+  closePublishTask(taskId: string, reason: string): void {
+    const now = new Date().toISOString();
+    this.deps.store.update(
+      taskId,
+      {
+        status: statusModelFor(this.rootDir).roles.dropped,
+        appendActivity: `${now} [docs] publish failed: ${reason}`,
+        activityActor: 'none',
+      },
+      now
+    );
+    this.deps.refreshTask?.(taskId);
+    this.deps.events.broadcast({ type: 'task.changed', ids: [taskId] });
   }
 
   // A status alone never lands a publish (an agent may set any status): one of

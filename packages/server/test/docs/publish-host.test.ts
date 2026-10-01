@@ -52,6 +52,32 @@ describe('lastCommitFor', () => {
   });
 });
 
+describe('closePublishTask', () => {
+  it('drops the task with the reason in its activity', () => {
+    const updates: { id: string; patch: Record<string, unknown> }[] = [];
+    const host = new DaemonDocsHost({
+      store: {
+        update: (id: string, patch: Record<string, unknown>) => {
+          updates.push({ id, patch });
+          return { meta: { id } };
+        },
+      } as never,
+      events,
+    });
+    host.closePublishTask('t-pub', 'path became a symlink');
+    expect(updates).toEqual([
+      {
+        id: 't-pub',
+        patch: expect.objectContaining({
+          status: 'dropped',
+          appendActivity: expect.stringContaining('path became a symlink'),
+          activityActor: 'none',
+        }),
+      },
+    ]);
+  });
+});
+
 describe('publishOutcome', () => {
   // A real repo: main holds a commit that wrote docs/spec.md and one that did not;
   // a side branch holds another that wrote it but never reached main.

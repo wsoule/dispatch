@@ -135,9 +135,9 @@ function writeChecked(
   const target = join(worktree, rel);
   const name = rel.split('/').at(-1) ?? 'file';
   const temp = join(target, '..', `.${name}.${randomUUID()}.dispatch-tmp`);
-  // `wx` refuses an existing file or symlink at the temp name.
-  writeFileSync(temp, data, { flag: 'wx', mode: 0o644 });
   try {
+    // `wx` refuses an existing file or symlink at the temp name.
+    writeFileSync(temp, data, { flag: 'wx', mode: 0o644 });
     checkComponents(worktree, rel);
     renameSync(temp, target);
   } catch (err) {

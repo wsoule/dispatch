@@ -124,6 +124,7 @@ export class FakeDocsHost implements DocsHost {
     id: string;
   })[] = [];
   outcomes = new Map<string, NonNullable<PublishOutcome>>();
+  closedTasks: { task: string; reason: string }[] = [];
 
   constructor() {
     for (const id of ['t-1', 't-2', 'e-1', 'e-root']) {
@@ -250,6 +251,9 @@ export class FakeDocsHost implements DocsHost {
       labels: [],
     });
     return id;
+  }
+  closePublishTask(task: string, reason: string): void {
+    this.closedTasks.push({ task, reason });
   }
   publishOutcome(taskId: string): PublishOutcome {
     return this.outcomes.get(taskId) ?? null;

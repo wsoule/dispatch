@@ -355,6 +355,10 @@ describe('publish', () => {
     symlinkSync(outside, join(wt, 'docs'));
     expect(() => service.seedFor(task, wt)).toThrow('symlink');
     expect(store.publishRows({ task })[0].state).toBe('failed');
+    // The elevated task is closed, so it never sits undispatchable.
+    expect(host.closedTasks).toEqual([
+      { task, reason: expect.stringContaining('symlink') },
+    ]);
     expect(existsSync(join(outside, 'spec.md'))).toBe(false);
     // Dispatching the failed task again seeds nothing, so it must not run.
     expect(() => service.seedFor(task, tempDir('docs-wt-'))).toThrow(
