@@ -82,6 +82,16 @@ signing off with a warning in the listener status, and nothing is written.
 Losing the credentials file makes a new key, so the `kid` changes and clients
 that pinned the old key must fetch the JWKS again.
 
+## Outbound address checks
+
+Every outbound contact (a peer's card, its interface, a push webhook) resolves
+the host name first and refuses private, loopback, link-local and metadata
+addresses unless an operator allowed them for that peer. The connection is then
+pinned to the address that was checked, with TLS still verified against the
+name, so a DNS answer that changes between the check and the connect (DNS
+rebinding) cannot redirect it. Redirects are not followed. A name that does not
+resolve is retried; a refused address is final.
+
 ## Standalone host
 
 Use `dispatch a2a serve` when the public A2A listener should run on another
@@ -99,8 +109,8 @@ dispatch a2a hosts add relay --public-url https://agent.example.com
 The public URL is pinned to the host: its card is built for that URL and no
 other, so a stolen host token cannot publish a card pointing elsewhere.
 
-Put the token in a regular file you own and only you can read (`chmod 600`; not a symlink) on the relay
-machine, then:
+Put the token in a regular file you own and only you can read (`chmod 600`; not
+a symlink) on the relay machine, then:
 
 ```bash
 dispatch a2a serve --host 0.0.0.0 --public --port 443 \
@@ -137,6 +147,10 @@ clones the TCK at a pinned commit into `.agents/ignore/a2a-tck/`, runs its MUST
 level and copies `reports/compatibility.json` to
 `.agents/ignore/a2a-tck-compatibility.json`. It is not part of `moon ci`;
 `.github/workflows/a2a-tck.yml` runs it on changes under `packages/a2a/`.
+
+Run it against the SUT, not dispatchd: the TCK's push tests (`PUSH-DELIVER`)
+register a webhook on the TCK's own machine, which dispatchd's push guard
+refuses as a private address. The SUT delivers push without that guard.
 
 ## Before a release
 
