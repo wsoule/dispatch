@@ -317,6 +317,20 @@ describe('a staged memory restore', () => {
     expect(t.shared.listProposals()).toHaveLength(3);
   });
 
+  it('proposes at most 50 by default', async () => {
+    const t = gatedEngine();
+    const lost = Array.from({ length: 51 }, (_, i) => lostEntry(`lesson ${i}`));
+    for (const e of lost) stage(e);
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report).toMatchObject({ restored: 50, deferred: 1, problems: [] });
+    expect(t.shared.listProposals()).toHaveLength(50);
+    expect(readdirSync(restoreDir)).toHaveLength(1);
+  });
+
   it('skips a retired receipt', async () => {
     const t = gatedEngine();
     const old = lostEntry('superseded lesson');
