@@ -136,7 +136,11 @@ export class OutboundWorker {
   private readonly queues = new Map<string, string[]>();
   private readonly busy = new Set<string>();
   private readonly trackers = new Map<string, AbortController>();
-  private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  // One wake-up per peer: at its earliest due retry, it rescans the peer.
+  private readonly retryTimers = new Map<
+    string,
+    { at: number; timer: ReturnType<typeof setTimeout> }
+  >();
   private readonly lastWorking = new Map<string, string>();
   private readonly inflight = new Set<Promise<unknown>>();
   private stopped = false;
@@ -152,17 +156,33 @@ export class OutboundWorker {
     void p.finally(() => this.inflight.delete(p));
   }
 
-  private later(atIso: string, fn: () => void): void {
+  // Rescans `alias` at `atIso`, keeping only the earliest pending wake-up;
+  // each delivery not yet due schedules its own time again when relayed.
+  private laterKick(alias: string, atIso: string): void {
     if (this.stopped) return;
+    const at = Date.parse(atIso);
+    const existing = this.retryTimers.get(alias);
+    if (existing !== undefined && existing.at <= at) return;
+    if (existing !== undefined) clearTimeout(existing.timer);
     const timer = setTimeout(
       () => {
-        this.timers.delete(timer);
-        fn();
+        this.retryTimers.delete(alias);
+        this.kick(alias);
       },
-      Math.max(0, Date.parse(atIso) - this.now().getTime())
+      Math.max(0, at - this.now().getTime())
     );
     timer.unref();
-    this.timers.add(timer);
+    this.retryTimers.set(alias, { at, timer });
+  }
+
+  // Pending retry wake-ups (tests).
+  retryTimerCount(): number {
+    return this.retryTimers.size;
+  }
+
+  // Rows whose WORKING-notice clock is kept (tests).
+  workingClockCount(): number {
+    return this.lastWorking.size;
   }
 
   // Subscribes to held peer deliveries, then relays what is already held and
@@ -181,8 +201,8 @@ export class OutboundWorker {
       off();
       this.stopped = true;
       for (const ac of this.trackers.values()) ac.abort();
-      for (const timer of this.timers) clearTimeout(timer);
-      this.timers.clear();
+      for (const { timer } of this.retryTimers.values()) clearTimeout(timer);
+      this.retryTimers.clear();
     };
   }
 
@@ -217,6 +237,9 @@ export class OutboundWorker {
   private enqueue(d: Delivery): void {
     if (this.stopped) return;
     const alias = d.recipient.slice('a2a:'.length);
+    // A given-up row's delivery stays held for the record; never rescan it.
+    if (this.deps.store.getOutbound(d.messageId, alias)?.state === 'failed')
+      return;
     const queue = this.queues.get(alias) ?? [];
     if (!queue.includes(d.id)) queue.push(d.id);
     this.queues.set(alias, queue);
@@ -287,7 +310,7 @@ export class OutboundWorker {
       existing?.nextAttemptAt != null &&
       Date.parse(existing.nextAttemptAt) > now.getTime()
     ) {
-      this.later(existing.nextAttemptAt, () => this.enqueue(d));
+      this.laterKick(alias, existing.nextAttemptAt);
       return;
     }
     if (
@@ -297,8 +320,9 @@ export class OutboundWorker {
         new Date(now.getTime() - HOUR_MS).toISOString()
       ) >= this.deps.policy().outboundPerHour
     ) {
-      this.later(new Date(now.getTime() + QUOTA_RECHECK_MS).toISOString(), () =>
-        this.enqueue(d)
+      this.laterKick(
+        alias,
+        new Date(now.getTime() + QUOTA_RECHECK_MS).toISOString()
       );
       return;
     }
@@ -401,6 +425,7 @@ export class OutboundWorker {
     reason: string
   ): Promise<void> {
     const at = this.now().toISOString();
+    this.lastWorking.delete(`${row.messageId} ${row.alias}`);
     this.deps.store.putOutbound({
       ...row,
       state: 'failed',
@@ -462,7 +487,7 @@ export class OutboundWorker {
         lastError: reason,
         updatedAt: at,
       });
-      this.later(decision.at, () => this.enqueue(d));
+      this.laterKick(row.alias, decision.at);
       return;
     }
     this.deps.store.putOutbound({
@@ -561,6 +586,7 @@ export class OutboundWorker {
     state: 'done' | 'failed',
     error: string | null
   ): void {
+    this.lastWorking.delete(`${row.messageId} ${row.alias}`);
     const current =
       this.deps.store.getOutbound(row.messageId, row.alias) ?? row;
     this.deps.store.putOutbound({

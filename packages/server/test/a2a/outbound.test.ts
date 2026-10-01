@@ -160,6 +160,31 @@ describe('failures', () => {
     expect(row(q.id)?.attempts).toBe(2);
   });
 
+  it('keeps one retry timer per peer, however many deliveries wait', async () => {
+    peer.status = 503;
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++)
+      ids.push(
+        (
+          await engine().send(
+            { to: ['a2a:fixture'], kind: 'message', body: `note ${i}` },
+            HUMAN
+          )
+        ).message.id
+      );
+    await waitFor(() => ids.every((id) => (row(id)?.attempts ?? 0) === 1));
+    expect(f.outbound.retryTimerCount()).toBe(1);
+  });
+
+  it('forgets the WORKING-notice clock once a row is finished', async () => {
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'open');
+    expect(f.outbound.workingClockCount()).toBe(1);
+    peer.answer(peer.latest(), 'Blue');
+    await waitFor(() => row(q.id)?.state === 'done');
+    expect(f.outbound.workingClockCount()).toBe(0);
+  });
+
   it('gives up at once on another 4xx: the question is closed and the sender told', async () => {
     peer.status = 400;
     const q = await ask();
