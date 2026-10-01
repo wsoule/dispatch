@@ -9,6 +9,7 @@ import type { FederatedOp } from '@dispatch/protocol/federation';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   appendFileSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -258,6 +259,76 @@ describe('segments hold storage, never order (FW-R23)', () => {
     await a.writeV2([next]);
     expect(readFileSync(seg1, 'utf8')).toBe(junked);
     expect(readFileSync(seg6, 'utf8').trim().split('\n')).toHaveLength(6);
+  });
+});
+
+describe('the writer and the republish, against what the branch holds', () => {
+  const transport = (a: SyncRepo, own: () => FederatedOp[]) =>
+    new GitFederationTransport({
+      repo: a,
+      replica: A,
+      signPriv: keys.signPriv,
+      verifyAcks: () => true,
+      acknowledgedBy: () => false,
+      ownLog: own,
+      now: () => new Date(),
+    });
+
+  it('never appends to a clean file that sorts first but does not end on its head', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(5);
+    await a.writeV2(ops.slice(0, 4));
+    const decoy = join(dir, 'a', 'fed', A, '000000000000.jsonl');
+    writeFileSync(decoy, `${JSON.stringify(ops[2])}\n`);
+    await a.writeV2(ops.slice(4));
+    expect(readFileSync(decoy, 'utf8')).toBe(`${JSON.stringify(ops[2])}\n`);
+    const seg = readFileSync(
+      join(dir, 'a', 'fed', A, '000000000001.jsonl'),
+      'utf8'
+    );
+    expect(seg.trim().split('\n')).toHaveLength(5);
+  });
+
+  it('republishes an op its own files hold only as junk at that seq (by hash, M-g)', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(3);
+    await a.writeV2([ops[0]]);
+    writeFileSync(
+      join(dir, 'a', 'fed', A, '000000000050.jsonl'),
+      `${JSON.stringify({ ...ops[1], sig: 'junk' })}\n`
+    );
+    await transport(a, () => ops.slice(0, 2)).publish([ops[2]]);
+    expect(
+      a
+        .readOwn()
+        .filter((e) => e.sig !== 'junk')
+        .map((e) => e.seq)
+        .sort()
+    ).toEqual([1, 2, 3]);
+  });
+
+  it('republishes an op only another replica’s files hold (its own files only, M-g)', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(2);
+    await a.writeV2([ops[0]]);
+    mkdirSync(join(dir, 'a', 'fed', 'bob-0000000b'), { recursive: true });
+    writeFileSync(
+      join(dir, 'a', 'fed', 'bob-0000000b', '000000000002.jsonl'),
+      `${JSON.stringify(ops[1])}\n`
+    );
+    await transport(a, () => ops).publish([]);
+    const own = readdirSync(join(dir, 'a', 'fed', A))
+      .filter((f) => f.endsWith('.jsonl'))
+      .flatMap((f) =>
+        readFileSync(join(dir, 'a', 'fed', A, f), 'utf8')
+          .trim()
+          .split('\n')
+      )
+      .map((line) => (JSON.parse(line) as { seq: number }).seq);
+    expect(own.sort()).toEqual([1, 2]);
   });
 });
 

@@ -333,6 +333,28 @@ describe('an older build on the same root', () => {
     expect(kinds).toContain('reissue');
   });
 
+  it('drops a re-issued removal when a newer change touched the task, with an audit row', () => {
+    const { ada, legacy } = founded(new MemoryV1());
+    ada.roster.found('acme', legacy.attestAll());
+    const gone = ada.ledger.commitLocal(
+      { task: 't-00000a07', kind: 'remove' },
+      () => {}
+    );
+    ada.ledger.state.setField(
+      't-00000a07',
+      'title',
+      `9${gone.hlc.slice(1)}`,
+      'kept by bob'
+    );
+    expect(legacy.reissue()).toEqual([]);
+    const rows = ada.fed.db
+      .query<{ detail_json: string }, []>(
+        "SELECT detail_json FROM fed_audit WHERE kind = 'reissue'"
+      )
+      .all();
+    expect(rows.some((r) => r.detail_json.includes('t-00000a07'))).toBe(true);
+  });
+
   it("re-issues an older build's oversized field without it, with a problem, and the rest signed", () => {
     const { ada, legacy } = founded(new MemoryV1());
     ada.roster.found('acme', legacy.attestAll());

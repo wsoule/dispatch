@@ -231,6 +231,20 @@ describe('leaving an invite behind (FW-R22 M-e)', () => {
     expect(bob.roster.view()?.founder).toBe(hal.fed.replica);
   });
 
+  it('pins on the next reload once the invite stops binding, with no new founding', () => {
+    const ada = make('ada');
+    const hal = make('hal');
+    const bob = make('bob');
+    ada.roster.found('acme');
+    hal.roster.found('acme');
+    bob.roster.join(ada.roster.invite('bob').code);
+    feed(hal, bob);
+    expect(bob.roster.founded()).toBe(false);
+    bob.clock.now = new Date(bob.clock.now.getTime() + 8 * 24 * 60 * 60 * 1000);
+    bob.roster.reload();
+    expect(bob.roster.view()?.founder).toBe(hal.fed.replica);
+  });
+
   it('stops binding once the invite is past its seven days', () => {
     const ada = make('ada');
     const hal = make('hal');
