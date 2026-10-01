@@ -162,6 +162,73 @@ describe('the asset store', () => {
     expect(existsSync(join(dir, 'docs-assets', made.doc.id))).toBe(false);
   });
 
+  it("caps a doc's images by count and total bytes, from its rows", () => {
+    const capped = makeService({
+      assetsDir: join(dir, 'capped'),
+      assetLimits: { files: 2, bytes: 40 },
+    });
+    const owner = capped.service.actorFor(OWNER);
+    capped.service.create(owner, { title: 'Img', body: 'x\n' });
+    const png = (tail: number) => {
+      const b = new Uint8Array(PNG.length + 1);
+      b.set(PNG);
+      b[PNG.length] = tail;
+      return b;
+    };
+    capped.service.putAsset(owner, 'img', png(1));
+    // The same bytes again are the same asset, so they do not count twice.
+    capped.service.putAsset(owner, 'img', png(1));
+    capped.service.putAsset(owner, 'img', png(2));
+    expect(() => capped.service.putAsset(owner, 'img', png(3))).toThrow(
+      'at most 2 images'
+    );
+    expect(() => capped.service.assetUploadAllowed(owner, 'img')).toThrow(
+      'at most 2 images'
+    );
+    const bytesCapped = makeService({
+      assetsDir: join(dir, 'bytes'),
+      assetLimits: { files: 10, bytes: 20 },
+    });
+    const o2 = bytesCapped.service.actorFor(OWNER);
+    bytesCapped.service.create(o2, { title: 'Img', body: 'x\n' });
+    bytesCapped.service.putAsset(o2, 'img', png(1));
+    expect(() => bytesCapped.service.putAsset(o2, 'img', png(2))).toThrow(
+      'at most 20 bytes of images'
+    );
+  });
+
+  it('checks the caller may write before the body is read', () => {
+    service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    service.setStatus(as(OWNER), 'img', 'archived');
+    expect(() => service.assetUploadAllowed(as(OWNER), 'img')).toThrow(
+      'archived'
+    );
+    expect(() => service.assetUploadAllowed(as(REVIEW_RUN), 'img')).toThrow();
+  });
+
+  it('sweeps images no revision or proposal references, once they are 30 days old', () => {
+    const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    const kept = service.putAsset(as(OWNER), 'img', PNG);
+    const dropped = service.putAsset(as(OWNER), 'img', JPEG);
+    service.saveBody(as(OWNER), 'img', {
+      baseRev: service.read(as(OWNER), 'img').rev.id,
+      body: `x\n${kept.markdown}\n`,
+    });
+    service.sweep();
+    expect(service.asset(as(OWNER), 'img', dropped.name).mime).toBe(
+      'image/jpeg'
+    );
+    host.advance(31 * 24 * 60);
+    service.sweep();
+    expect(() => service.asset(as(OWNER), 'img', dropped.name)).toThrow(
+      'not found'
+    );
+    expect(
+      existsSync(join(dir, 'docs-assets', made.doc.id, dropped.name))
+    ).toBe(false);
+    expect(service.asset(as(OWNER), 'img', kept.name).mime).toBe('image/png');
+  });
+
   it('answers unavailable with no asset store', () => {
     const plain = makeService();
     plain.service.create(plain.service.actorFor(OWNER), {

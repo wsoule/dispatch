@@ -650,6 +650,14 @@ describe('image routes', () => {
     expect((await upload('img', huge)).status).toBe(413);
   });
 
+  it("answers a caller who may not write before reading the upload's body", async () => {
+    await post('/docs', { title: 'Img', body: 'x\n' });
+    await post('/docs/img/status', { status: 'archived' });
+    const huge = new Uint8Array(25 * 1024 * 1024 + 1);
+    huge.set(png(4));
+    expect((await upload('img', huge)).status).toBe(409);
+  });
+
   it('refuses an image upload that is not application/octet-stream', async () => {
     await post('/docs', { title: 'Img', body: 'x\n' });
     for (const headers of [

@@ -534,6 +534,8 @@ export async function handleDocsRoute(
               415,
               'expected content-type: application/octet-stream'
             );
+          // Who may write, and the doc's room, are answered before any body is read.
+          docs.assetUploadAllowed(actor, ref);
           const bytes = await readBoundedBytes(req, MAX_ASSET_BYTES);
           if (bytes instanceof Response) return bytes;
           return jsonResponse(docs.putAsset(actor, ref, bytes), 201);

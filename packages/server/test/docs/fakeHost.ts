@@ -283,6 +283,7 @@ export function makeService(
     coalesceMinutes?: number;
     orphans?: string[];
     assetsDir?: string;
+    assetLimits?: { files: number; bytes: number };
   } = {}
 ): {
   service: DocsService;
@@ -308,6 +309,9 @@ export function makeService(
       ? {}
       : { orphans: () => opts.orphans ?? [] }),
     ...(opts.assetsDir === undefined ? {} : { assetsDir: opts.assetsDir }),
+    ...(opts.assetLimits === undefined
+      ? {}
+      : { assetLimits: opts.assetLimits }),
   });
   return { service, host, store };
 }

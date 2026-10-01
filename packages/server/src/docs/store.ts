@@ -1005,6 +1005,51 @@ export class SqliteDocStore {
         };
   }
 
+  // How many images a doc stores, and their total bytes.
+  assetUsage(docId: string): { files: number; bytes: number } {
+    const r = this.one<{ files: number; bytes: number | null }>(
+      'SELECT COUNT(*) AS files, SUM(bytes) AS bytes FROM assets WHERE doc_id = ?',
+      [docId]
+    );
+    return { files: r?.files ?? 0, bytes: r?.bytes ?? 0 };
+  }
+
+  // Asset rows created before `beforeIso`, oldest first.
+  assetsCreatedBefore(beforeIso: string): AssetRow[] {
+    return this.all<{
+      doc_id: string;
+      name: string;
+      bytes: number;
+      mime: string;
+      created_by: string;
+      created_at: string;
+    }>(
+      'SELECT * FROM assets WHERE created_at < ? ORDER BY created_at, doc_id, name',
+      [beforeIso]
+    ).map((r) => ({
+      doc: r.doc_id,
+      name: r.name,
+      bytes: r.bytes,
+      mime: r.mime,
+      createdBy: r.created_by,
+      createdAt: r.created_at,
+    }));
+  }
+
+  // Whether any revision of the doc, a proposal's included, links `asset:<name>`.
+  assetReferenced(docId: string, name: string): boolean {
+    return (
+      this.one<{ hit: number }>(
+        'SELECT 1 AS hit FROM revisions WHERE doc_id = ? AND instr(body, ?) > 0 LIMIT 1',
+        [docId, `asset:${name}`]
+      ) !== undefined
+    );
+  }
+
+  deleteAsset(docId: string, name: string): void {
+    this.run('DELETE FROM assets WHERE doc_id = ? AND name = ?', [docId, name]);
+  }
+
   putPublish(p: PublishRow): void {
     this.run(
       'INSERT OR REPLACE INTO publishes (task_id, doc_id, rev_id, path, state, "commit", created_at, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',

@@ -42,7 +42,7 @@ import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
 import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 
 import type { Principal } from '../messaging/principal.js';
 import {
@@ -178,6 +178,8 @@ export interface DocsServiceDeps {
   orphans?: () => string[];
   // docs-assets/: where images live (v1); without it uploads answer unavailable.
   assetsDir?: string;
+  // Per-doc caps on stored images; the defaults are 200 files and 256 MiB.
+  assetLimits?: { files: number; bytes: number };
 }
 
 // A team doc as the receipt log writes it: its newest sealed head, the
@@ -200,6 +202,9 @@ interface RawHit {
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
+// Per-doc image caps, and how long an image no revision links is kept.
+const DEFAULT_ASSET_LIMITS = { files: 200, bytes: 256 * 1024 * 1024 };
+const ASSET_TTL_DAYS = 30;
 // A doc line to a run, as live notices are: at most 160 characters.
 const RUN_LINE_CHARS = 160;
 // Mergeability answers kept, per (proposal body, head).
@@ -2276,6 +2281,40 @@ export class DocsService {
     return dir;
   }
 
+  // Whether the caller may upload an image to the doc at all, checked before
+  // the route reads the body: a writer of a visible, live doc under its caps.
+  assetUploadAllowed(actor: DocsActor, ref: string): void {
+    const doc = this.resolve(actor, ref);
+    this.requireWritable(actor, doc);
+    this.assetsRoot();
+    this.requireAssetRoom(doc, 0, null);
+  }
+
+  // Refuses one more image that would take the doc past its file or byte cap;
+  // the same bytes again (`name` already stored) take no room.
+  private requireAssetRoom(
+    doc: DocRow,
+    bytes: number,
+    name: string | null
+  ): void {
+    const store = this.store();
+    if (name !== null && store.assetRow(doc.id, name) !== null) return;
+    const limits = this.deps.assetLimits ?? DEFAULT_ASSET_LIMITS;
+    const used = store.assetUsage(doc.id);
+    if (used.files + 1 > limits.files)
+      throw new DocsError(
+        'limited',
+        `a doc stores at most ${limits.files} images`,
+        'body'
+      );
+    if (used.bytes + bytes > limits.bytes)
+      throw new DocsError(
+        'limited',
+        `a doc stores at most ${limits.bytes} bytes of images`,
+        'body'
+      );
+  }
+
   // Stores an image a writer of the doc pasted, named by its hash and typed by
   // its bytes; the same bytes are the same asset.
   putAsset(
@@ -2297,6 +2336,7 @@ export class DocsService {
         'body'
       );
     const name = `${sha256Bytes(bytes)}.${kind.ext}`;
+    this.requireAssetRoom(doc, bytes.byteLength, name);
     const root = this.assetsRoot();
     storeAssetFile(root, doc.id, name, bytes);
     this.write(() =>
@@ -2329,6 +2369,27 @@ export class DocsService {
       path: assetFilePath(this.assetsRoot(), doc.id, name),
       mime: row.mime,
     };
+  }
+
+  // Drops images 30 days old that no revision or proposal of their doc links:
+  // the row first, then the file.
+  private sweepAssets(now: Date): void {
+    const root = this.deps.assetsDir;
+    const store = this.deps.store;
+    if (root === undefined || store === null) return;
+    const cutoff = new Date(
+      now.getTime() - ASSET_TTL_DAYS * DAY_MS
+    ).toISOString();
+    for (const a of store.assetsCreatedBefore(cutoff)) {
+      if (store.assetReferenced(a.doc, a.name)) continue;
+      this.write(() => store.deleteAsset(a.doc, a.name));
+      try {
+        rmSync(assetFilePath(root, a.doc, a.name), { force: true });
+      } catch (err) {
+        if (!(err instanceof DocsError && err.code === 'not-found'))
+          console.error(`docs: removing image ${a.name} failed`, err);
+      }
+    }
   }
 
   // The images `body` references that are stored for `doc`; none without an asset store.
@@ -3839,6 +3900,7 @@ export class DocsService {
       reindexed++;
     }
     this.expireProposals(now);
+    this.sweepAssets(now);
     const dayAgo = new Date(now.getTime() - DAY_MS).toISOString();
     for (const id of store.idleImportSessions(dayAgo))
       store.deleteImportSession(id);
