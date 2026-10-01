@@ -122,6 +122,8 @@ describe('delivery', () => {
   });
   afterAll(() => server.stop(true));
 
+  // The local test webhook is the one place delivery may skip the guard.
+  const LOCAL = { unguarded: true } as const;
   const config = (url: string) => ({
     id: 'cfg-1',
     taskId: 'm-root',
@@ -137,13 +139,20 @@ describe('delivery', () => {
     },
   };
 
+  it('refuses to deliver without a guard or an explicit unguarded opt-out', async () => {
+    await expect(
+      deliverPush(config(`${base}/ok`), event, {} as never)
+    ).rejects.toThrow('guard');
+    expect(seen).toHaveLength(0);
+  });
+
   it('posts one StreamResponse with the authentication and token headers', async () => {
     expect(pushHeaders(config(`${base}/ok`))).toEqual({
       'content-type': 'application/json',
       authorization: 'Bearer cred',
       [PUSH_TOKEN_HEADER]: 'tok',
     });
-    expect(await deliverPush(config(`${base}/ok`), event)).toEqual({
+    expect(await deliverPush(config(`${base}/ok`), event, LOCAL)).toEqual({
       ok: true,
     });
     expect(seen[0].body).toEqual(event);
@@ -151,17 +160,24 @@ describe('delivery', () => {
   });
 
   it('reports a 5xx, a redirect and a timeout as failures', async () => {
-    expect(await deliverPush(config(`${base}/fail`), event)).toMatchObject({
+    expect(
+      await deliverPush(config(`${base}/fail`), event, LOCAL)
+    ).toMatchObject({
       ok: false,
       status: 500,
       refused: false,
     });
-    expect(await deliverPush(config(`${base}/moved`), event)).toMatchObject({
+    expect(
+      await deliverPush(config(`${base}/moved`), event, LOCAL)
+    ).toMatchObject({
       ok: false,
       status: 302,
     });
     expect(
-      await deliverPush(config(`${base}/hang`), event, { timeoutMs: 50 })
+      await deliverPush(config(`${base}/hang`), event, {
+        ...LOCAL,
+        timeoutMs: 50,
+      })
     ).toMatchObject({ ok: false, status: null });
   });
 

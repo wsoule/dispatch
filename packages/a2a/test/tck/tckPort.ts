@@ -129,7 +129,8 @@ class TckPushConfigs implements PushConfigPort {
       const events = eventsBetween(this.last.get(key) ?? null, next);
       this.last.set(key, next);
       void (async () => {
-        for (const event of events) await deliverPush(config, event);
+        for (const event of events)
+          await deliverPush(config, event, { unguarded: true });
       })();
     }
   }

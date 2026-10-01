@@ -187,8 +187,6 @@ export class PushWorker {
       clientActive: (client: string) => boolean;
       fetchImpl?: typeof fetch;
       delaysMs?: readonly number[];
-      // Off only for a local test webhook; production always guards.
-      guard?: boolean;
     }
   ) {}
 
@@ -259,7 +257,7 @@ export class PushWorker {
       ...(this.deps.fetchImpl === undefined
         ? {}
         : { fetchImpl: this.deps.fetchImpl }),
-      ...(this.deps.guard === false ? {} : { guard: pushGuard(this.deps) }),
+      guard: pushGuard(this.deps),
     });
     if (result.ok) {
       this.deps.store.recordPushResult(config.taskId, config.id, true, at());

@@ -144,11 +144,23 @@ export type PushResult =
 // One attempt: POST one StreamResponse with no redirects, a 10 s deadline and,
 // with `guard`, re-resolved and pinned to a public address (spec:1781-1786).
 // Errors are generic so a token or credential never reaches a log.
+export type DeliverOptions = {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+} & (
+  | { guard: GuardOptions; unguarded?: never }
+  // Only for a webhook on this machine that a test or the TCK runs.
+  | { unguarded: true; guard?: never }
+);
+
 export async function deliverPush(
   config: PushConfigJson,
   event: StreamResponseJson,
-  o: { fetchImpl?: typeof fetch; timeoutMs?: number; guard?: GuardOptions } = {}
+  o: DeliverOptions
 ): Promise<PushResult> {
+  // The type demands one of the two; a caller that slipped past it fails loudly.
+  if (o.guard === undefined && o.unguarded !== true)
+    throw new Error('deliverPush needs a guard, or unguarded: true');
   try {
     const res = await peerFetch({
       headers: pushHeaders(config),

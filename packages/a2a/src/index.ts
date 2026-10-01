@@ -140,6 +140,7 @@ export {
   pushHeaders,
 } from './push.js';
 export type {
+  DeliverOptions,
   PushAuth,
   PushConfigInput,
   PushConfigJson,
