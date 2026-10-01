@@ -281,6 +281,14 @@ describe('rowControl', () => {
     expect(
       rowControl(docGate, { me: ME, open: true, access: TEAMMATE })
     ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+    const malformed = { ...docGate, data: { type: 'doc', doc: 7 } };
+    expect(
+      rowControl(malformed as unknown as Message, {
+        me: ME,
+        open: true,
+        access: DECIDER,
+      })
+    ).toEqual({ kind: 'choices', choices: ['approve', 'reject'], gate: true });
     const lookAlike = { ...docGate, from: 'agent:wyat/impostor' };
     expect(
       rowControl(lookAlike, { me: ME, open: true, access: DECIDER })

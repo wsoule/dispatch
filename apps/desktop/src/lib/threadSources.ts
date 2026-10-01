@@ -244,8 +244,13 @@ export function rowControl(
     if (gate.type === 'memory') {
       return { kind: 'memory', proposalId: gate.proposalId };
     }
-    // Only the system raises doc gates; a look-alike gets plain choices.
-    if (gate.type === 'doc' && message.from === SYSTEM) {
+    // Only the system raises doc gates; a look-alike or malformed one gets plain choices.
+    if (
+      gate.type === 'doc' &&
+      message.from === SYSTEM &&
+      typeof gate.doc === 'string' &&
+      typeof gate.proposal === 'string'
+    ) {
       return { kind: 'doc', doc: gate.doc, proposal: gate.proposal };
     }
     return { kind: 'choices', choices: message.choices ?? [], gate: true };
