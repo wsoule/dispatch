@@ -279,20 +279,53 @@ export function parseMemoryFile(
   };
 }
 
+// The frontmatter's `metadata.dispatch` block read strictly: a duplicated key
+// or unreadable YAML is a problem rather than a value picked silently.
+function strictDispatch(text: string): {
+  dispatch: Record<string, unknown>;
+  problem: string | null;
+} {
+  const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
+  const match = FRONTMATTER.exec(source);
+  if (match === null) return { dispatch: {}, problem: null };
+  try {
+    const front = record(
+      parseYaml(match[1] ?? '', {
+        logLevel: 'error',
+        uniqueKeys: true,
+      }) as unknown
+    );
+    return { dispatch: record(record(front.metadata).dispatch), problem: null };
+  } catch (err) {
+    const why =
+      err instanceof Error ? err.message.split('\n')[0] : 'unreadable';
+    return { dispatch: {}, problem: `frontmatter: ${why}` };
+  }
+}
+
 // A receipt file as restore reads it: the kind is kept only when Dispatch
-// knows it, and the status as written, for restore to skip retired entries.
+// knows it; the status is trimmed and lower-cased, and must be one string.
 export function parseReceiptFile(
   text: string,
   fileName: string
-): ParsedMemoryFile & { kind: MemoryKind; status: string | undefined } {
-  const dispatch = record(
-    record(splitFrontmatter(text).front.metadata).dispatch
-  );
+): ParsedMemoryFile & {
+  kind: MemoryKind;
+  status: string | undefined;
+  problem: string | null;
+} {
+  const { dispatch, problem } = strictDispatch(text);
   const kind = MEMORY_KINDS.find((k) => k === dispatch.kind) ?? 'fact';
+  const raw = dispatch.status;
+  const status = typeof raw === 'string' ? raw.trim().toLowerCase() : undefined;
+  const statusProblem =
+    raw === undefined || typeof raw === 'string'
+      ? null
+      : 'status: expected a string';
   return {
     ...parseMemoryFile(text, fileName),
     kind,
-    status: nonEmpty(dispatch.status),
+    status: status === '' ? undefined : status,
+    problem: problem ?? statusProblem,
   };
 }
 

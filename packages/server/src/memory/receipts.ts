@@ -185,6 +185,7 @@ async function restoreFile(
     return { problem: `over ${MEMORY_RECEIPT_FILE_BYTES} bytes` };
   if (shared.getEntry(id) !== null) return 'skipped';
   const parsed = parseReceiptFile(readFileSync(path, 'utf8'), file);
+  if (parsed.problem !== null) return { problem: parsed.problem };
   // A retired lesson stays retired: only live ones come back.
   if (parsed.status?.startsWith('retired') === true) return 'skipped';
   if (parsed.truncated)

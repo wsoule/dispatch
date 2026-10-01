@@ -347,6 +347,29 @@ describe('a staged memory restore', () => {
     expect(t.shared.listProposals()).toHaveLength(1);
   });
 
+  it('skips a retired status in any case or spacing, and refuses one that is not a string', async () => {
+    const t = gatedEngine();
+    const variant = (title: string, line: string) => {
+      const e = lostEntry(title);
+      stage(e, renderReceiptFile(e).replace('    status: active', line));
+      return `${e.id}.md`;
+    };
+    variant('upper', '    status: Retired');
+    variant('spaced', '    status: " retired"');
+    const list = variant('list', '    status: [retired]');
+    const twice = variant('twice', '    status: active\n    status: retired');
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report).toMatchObject({ restored: 0, skipped: 2 });
+    expect(report?.problems.map((p) => p.file).sort()).toEqual(
+      [list, twice].sort()
+    );
+    expect(t.shared.listProposals()).toEqual([]);
+  });
+
   it('proposes again a restore whose proposal expired undecided', async () => {
     const t = gatedEngine();
     const lost = lostEntry('expired once');

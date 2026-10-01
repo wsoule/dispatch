@@ -427,6 +427,28 @@ describe('receipt files', () => {
     expect(parseReceiptFile('just a body', 'x.md').status).toBeUndefined();
   });
 
+  it('normalise the status and refuse one that is not a single string', () => {
+    const text = renderReceiptFile(entry);
+    const withStatus = (line: string) =>
+      text.replace('    status: active', line);
+    expect(
+      parseReceiptFile(withStatus('    status: Retired'), 'x.md').status
+    ).toBe('retired');
+    expect(
+      parseReceiptFile(withStatus('    status: " retired"'), 'x.md').status
+    ).toBe('retired');
+    expect(parseReceiptFile(text, 'x.md').problem).toBeNull();
+    expect(
+      parseReceiptFile(withStatus('    status: [retired]'), 'x.md').problem
+    ).toBe('status: expected a string');
+    expect(
+      parseReceiptFile(
+        withStatus('    status: active\n    status: retired'),
+        'x.md'
+      ).problem
+    ).toStartWith('frontmatter: ');
+  });
+
   it('read an unknown or missing kind as a fact', () => {
     const text = renderReceiptFile(entry);
     const forged = text.replace('    kind: hazard', '    kind: root');
