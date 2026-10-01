@@ -3,6 +3,7 @@ import {
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
+  CredentialsUnreadableError,
   describeValue,
   EFFORT_LEVELS,
   getSection,
@@ -4555,6 +4556,25 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     segments: ['a2a', 'tasks', '*', 'decline'],
     tier: 'decide',
   },
+  // Registering or changing a peer decides where this machine sends mail;
+  // private URLs and --allow-http/--allow-origin need the operator, checked in addPeer.
+  { method: 'POST', segments: ['a2a', 'peers'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'refresh'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'enable'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'disable'],
+    tier: 'decide',
+  },
+  { method: 'DELETE', segments: ['a2a', 'peers', '*'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
@@ -4564,6 +4584,16 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Opening the A2A listener exposes this machine on a network port and
   // points the daemon at TLS files on disk; closing it is paired.
   { method: 'PUT', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Standalone A2A hosts put this project on another machine's network
+  // (spec:1656); minting, listing and revoking them is the owner's call.
+  { method: 'GET', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'POST', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'hosts', '*'], tier: 'operator' },
+  {
+    method: 'PUT',
+    segments: ['a2a', 'listener', 'standalone'],
+    tier: 'operator',
+  },
   { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
@@ -4726,6 +4756,9 @@ function requiredTier(
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
   // this ladder — returning null here just opens the gate for them.
   if (isSelfAuthenticated(segments, method)) return null;
+  // A standalone host's routes accept its host token only, checked in
+  // a2a/portRoutes.ts; A2A client tokens were already refused above.
+  if (segments[0] === 'a2a' && segments[1] === 'port') return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
       return route.tier;
@@ -6601,6 +6634,10 @@ export async function handleApi(
       return errorResponse(404, err.message);
     }
     if (err instanceof OrchestratorConflictError) {
+      return errorResponse(409, err.message);
+    }
+    // The message says which file and what to do; it never quotes the file.
+    if (err instanceof CredentialsUnreadableError) {
       return errorResponse(409, err.message);
     }
     if (err instanceof OrchestratorClientError) {

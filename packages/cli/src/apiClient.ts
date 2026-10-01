@@ -1098,7 +1098,8 @@ interface A2AListenerSettings {
   publicUrl: string | null;
   tls: { certPath: string; keyPath: string } | null;
   trustForwardedFor: boolean;
-  standalone: boolean;
+  // Left out, the daemon keeps its current switch.
+  standalone?: boolean;
 }
 
 export interface A2AListenerStatus {
@@ -1129,6 +1130,24 @@ interface A2ATaskSummary {
   dispatchTask: string | null;
 }
 
+// An outbound peer as /api/a2a/peers shows it; never its credential.
+// Mirrors packages/server/src/a2a/peers.ts PeerSummary.
+export interface A2APeerSummary {
+  alias: string;
+  cardUrl: string;
+  interfaceUrl: string;
+  binding: 'HTTP+JSON' | 'JSONRPC';
+  status: 'active' | 'disabled' | 'auth-failed';
+  name: string;
+  description: string;
+  skills: { id: string; name: string; description: string }[];
+  streaming: boolean;
+  addedBy: string;
+  addedTier: 'decide' | 'operator';
+  fetchedAt: string;
+  createdAt: string;
+}
+
 // Separate from ApiClient so its test fakes need not grow the A2A routes.
 export interface A2AApiClient {
   listenerStatus(): Promise<A2AListenerStatus>;
@@ -1145,6 +1164,39 @@ export interface A2AApiClient {
   revokeAgent(address: string): Promise<unknown>;
   tasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
   declineTask(id: string, reason?: string): Promise<unknown>;
+  peers(): Promise<{ peers: A2APeerSummary[] }>;
+  addPeer(input: {
+    alias: string;
+    cardUrl: string;
+    token?: string;
+    apiKeyHeader?: string;
+    allowHttp?: boolean;
+    allowOrigin?: boolean;
+  }): Promise<A2APeerSummary>;
+  refreshPeer(alias: string): Promise<A2APeerSummary>;
+  setPeerEnabled(
+    alias: string,
+    enabled: boolean,
+    token?: string
+  ): Promise<A2APeerSummary>;
+  removePeer(alias: string): Promise<void>;
+  hosts(): Promise<{ standalone: boolean; hosts: A2AHostSummary[] }>;
+  addHost(
+    name: string,
+    publicUrl: string
+  ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
+  removeHost(id: string): Promise<void>;
+  setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+}
+
+// A standalone host as /api/a2a/hosts lists it; never its token or hash.
+interface A2AHostSummary {
+  id: string;
+  name: string;
+  publicUrl: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt: string | null;
 }
 
 export function createA2AApiClient(
@@ -1185,5 +1237,33 @@ export function createA2AApiClient(
         `/api/a2a/tasks/${encodeURIComponent(id)}/decline`,
         jsonBody(reason === undefined ? {} : { reason })
       ),
+    peers: () => request(target, '/api/a2a/peers'),
+    addPeer: (input) => request(target, '/api/a2a/peers', jsonBody(input)),
+    refreshPeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}/refresh`, {
+        method: 'POST',
+      }),
+    setPeerEnabled: (alias, enabled, token) =>
+      request(
+        target,
+        `/api/a2a/peers/${encodeURIComponent(alias)}/${enabled ? 'enable' : 'disable'}`,
+        jsonBody(token === undefined ? {} : { token })
+      ),
+    removePeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}`, {
+        method: 'DELETE',
+      }),
+    hosts: () => request(target, '/api/a2a/hosts'),
+    addHost: (name, publicUrl) =>
+      request(target, '/api/a2a/hosts', jsonBody({ name, publicUrl })),
+    removeHost: (id) =>
+      request(target, `/api/a2a/hosts/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    setStandalone: (enabled) =>
+      request(target, '/api/a2a/listener/standalone', {
+        ...jsonBody({ enabled }),
+        method: 'PUT',
+      }),
   };
 }

@@ -11,6 +11,7 @@ import type {
 import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
 import { canonicalStatus } from '@dispatch/core/browser';
 
+import { peerAddresses } from './a2a';
 import type { MessageAccess } from './daemonAuth';
 import { gateOf, taskProposalOf } from './gates';
 import type { KnownAddresses } from './threads';
@@ -148,6 +149,7 @@ export function knownAddresses(input: {
   agents: readonly AgentSummary[];
   presence: readonly { ref: string }[];
   me: string | null;
+  peers?: readonly { alias: string; status: string }[];
 }): KnownAddresses {
   const humans = new Set<string>(input.me === null ? [] : [input.me]);
   for (const person of input.presence) humans.add(person.ref);
@@ -158,6 +160,7 @@ export function knownAddresses(input: {
       .filter((a) => a.status === 'approved')
       .map((a) => a.address),
     humans: [...humans],
+    peers: peerAddresses(input.peers ?? []),
   };
 }
 

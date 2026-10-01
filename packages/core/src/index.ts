@@ -327,19 +327,27 @@ export type {
 } from './config.js';
 export {
   clearCredential,
+  clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
+  CredentialsUnreadableError,
+  readA2ASigningKey,
   readCredentials,
+  readPeerCredential,
   resolveLinearApiKey,
   resolveTypesafeApiKey,
+  writeA2ASigningKey,
   writeCredential,
+  writePeerCredential,
   writeProjectCredential,
 } from './credentials.js';
 export type {
   CredentialName,
   CredentialSource,
   CredentialsFile,
+  PeerCredential,
   ProjectCredentials,
+  SigningKeyRead,
 } from './credentials.js';
 export * from './linearContainers.js';
 export * from './linearFields.js';

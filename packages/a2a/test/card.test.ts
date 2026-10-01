@@ -1,5 +1,6 @@
-import { AgentCard } from '@a2a-js/sdk';
+import { AgentCard, verifyAgentCardSignature } from '@a2a-js/sdk';
 import { describe, expect, it } from 'bun:test';
+import { generateKeyPairSync } from 'node:crypto';
 
 import {
   buildCard,
@@ -8,7 +9,11 @@ import {
   cardEtag,
   cardJson,
   offeredSkills,
+  signCard,
+  unsignedCardEtag,
+  unsignedCardJson,
 } from '../src/card.js';
+import type { CardInputs } from '../src/port.js';
 import { handoffStatuses, namedStatusVocabulary } from '../src/statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from '../src/uris.js';
 
@@ -127,5 +132,73 @@ describe('offeredSkills', () => {
         ['ask']
       )
     ).toEqual(['ask']);
+  });
+});
+
+const SIGNED: CardInputs = {
+  name: 'Acme API',
+  description: null,
+  publicUrl: 'https://acme-agent.example.com',
+  version: '1.0.0',
+  skills: ['ask'],
+  blockingWaitSec: 60,
+  pushNotifications: true,
+};
+
+function keyPair() {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+  });
+  return {
+    privateJwk: privateKey.export({ format: 'jwk' }) as Record<string, string>,
+    publicJwk: publicKey.export({ format: 'jwk' }) as Record<string, string>,
+  };
+}
+
+describe('signed cards', () => {
+  it('signs the canonical card so the SDK verifies it, and a changed card fails', async () => {
+    const { privateJwk, publicJwk } = keyPair();
+    const jku = 'https://acme-agent.example.com/.well-known/jwks.json';
+    const signatures = await signCard(unsignedCardJson(SIGNED), {
+      privateJwk,
+      kid: 'k1',
+      jku,
+    });
+    expect(signatures).toHaveLength(1);
+    const header = JSON.parse(
+      Buffer.from(signatures[0].protected, 'base64url').toString('utf8')
+    ) as Record<string, string>;
+    expect(header).toMatchObject({ alg: 'ES256', kid: 'k1', jku });
+    expect(JSON.stringify(signatures)).not.toContain(String(privateJwk.d));
+    const verify = verifyAgentCardSignature((kid) => {
+      expect(kid).toBe('k1');
+      return Promise.resolve(publicJwk);
+    });
+    await expect(
+      verify(AgentCard.fromJSON(buildCardJson({ ...SIGNED, signatures })))
+    ).resolves.toBeUndefined();
+    await expect(
+      verify(
+        AgentCard.fromJSON({
+          ...buildCardJson({ ...SIGNED, signatures }),
+          name: 'Evil API',
+        })
+      )
+    ).rejects.toThrow();
+  });
+
+  it('keeps one ETag with and without signatures, and never puts the JWKS in the card', () => {
+    const signed = {
+      ...SIGNED,
+      signatures: [{ protected: 'p', signature: 's' }],
+    };
+    expect(cardEtag(buildCard(signed))).toBe(cardEtag(buildCard(SIGNED)));
+    expect(unsignedCardEtag(signed)).toBe(cardEtag(buildCard(SIGNED)));
+    expect(
+      JSON.stringify(
+        buildCardJson({ ...SIGNED, jwks: { keys: [{ kty: 'EC' }] } })
+      )
+    ).not.toContain('"keys"');
+    expect(unsignedCardJson(signed)).not.toHaveProperty('signatures');
   });
 });

@@ -551,6 +551,15 @@ export class SqliteMessageStore implements MessageStore {
     return row === undefined ? 0 : Number(row.n);
   }
 
+  countDeliveredTo(recipient: Address, sinceIso: string): number {
+    const row = queryOne<{ n: number }>(
+      this.db,
+      'SELECT COUNT(DISTINCT m.id) AS n FROM deliveries d JOIN messages m ON m.id = d.message_id WHERE d.recipient = ? AND m.created_at >= ?',
+      [recipient, sinceIso]
+    );
+    return row === undefined ? 0 : Number(row.n);
+  }
+
   // A remote agent:dispatch is an ordinary agent here, so only the local
   // system address is excluded.
   countAgentAuthored(
@@ -560,7 +569,7 @@ export class SqliteMessageStore implements MessageStore {
   ): number {
     const row = queryOne<{ n: number }>(
       this.db,
-      "SELECT COUNT(*) AS n FROM messages WHERE thread = ? AND COALESCE(received_at, created_at) >= ? AND (from_addr != ? OR origin IS NOT NULL) AND (from_addr LIKE 'run:%' OR from_addr LIKE 'agent:%')",
+      "SELECT COUNT(*) AS n FROM messages WHERE thread = ? AND COALESCE(received_at, created_at) >= ? AND (from_addr != ? OR origin IS NOT NULL) AND (from_addr LIKE 'run:%' OR from_addr LIKE 'agent:%' OR from_addr LIKE 'a2a:%')",
       [threadId, sinceIso, exclude]
     );
     return row === undefined ? 0 : Number(row.n);

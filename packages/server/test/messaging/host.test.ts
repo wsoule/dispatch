@@ -393,10 +393,16 @@ describe('DaemonMessagingHost.wake', () => {
     await host.wake('task:t-abc123', stubMessage({ from: 'human:ada' }));
     await host.wake('task:t-abc123', stubMessage({ from: 'run:r-000002' }));
     await host.wake('task:t-abc123', stubMessage({ from: 'agent:reviewer' }));
+    // An outside A2A peer's reply acts for no one (MEM-R6).
+    await host.wake('task:t-abc123', stubMessage({ from: 'a2a:acme' }));
     expect(calls.wakeTask).toEqual([
       [
         't-abc123',
         { actor: 'human:ada', continueFinished: true, operator: 'human:ada' },
+      ],
+      [
+        't-abc123',
+        { actor: 'agent:dispatch', continueFinished: false, operator: null },
       ],
       [
         't-abc123',

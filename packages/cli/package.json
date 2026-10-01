@@ -14,6 +14,7 @@
     "prepublishOnly": "moon run cli:prepublish"
   },
   "dependencies": {
+    "@dispatch/a2a": "workspace:*",
     "@dispatch/core": "workspace:*",
     "@dispatch/mcp": "workspace:*",
     "commander": "catalog:"

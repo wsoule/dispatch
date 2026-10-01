@@ -784,6 +784,33 @@ describe('msg_send (blocking)', () => {
     expect(elapsedMs).toBeLessThan(2000);
   });
 
+  it('waits the agent budget, not the human one, for a blocking send to an a2a: peer', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    daemon.configStatus = 500;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root, {
+      ...FAST_TIMING,
+      humanTotalWaitMs: 5000,
+      defaultAgentTotalWaitMs: 200,
+    });
+    const start = Date.now();
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: {
+        to: ['a2a:acme'],
+        kind: 'question',
+        body: 'Which colour?',
+        blocking: true,
+      },
+    })) as ToolCallResult;
+    expect(result.structuredContent?.answer).toBeNull();
+    expect((daemon.sendCalls[0].body as { to: string[] }).to).toEqual([
+      'a2a:acme',
+    ]);
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+
   it('stops polling once the client cancels a blocking send', async () => {
     daemon = new FakeDaemon();
     daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;

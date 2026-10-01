@@ -452,6 +452,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@dispatch/a2a':
+        specifier: workspace:*
+        version: link:../a2a
       '@dispatch/core':
         specifier: workspace:*
         version: link:../core

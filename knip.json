@@ -23,11 +23,13 @@
       //
       // test/fixtures/watchdogTeardown.ts is spawned as a subprocess by
       // test/watchdog-teardown.test.ts (its stderr is the thing under test),
-      // so nothing imports it either.
+      // so nothing imports it either. test/fixtures/a2aFixturePeer.ts is
+      // spawned by the desktop's A2A e2e specs, which run under Node.
       "entry": [
         "src/index.ts",
         "src/watchdogWorker.ts",
-        "test/fixtures/watchdogTeardown.ts"
+        "test/fixtures/watchdogTeardown.ts",
+        "test/fixtures/a2aFixturePeer.ts"
       ]
     },
     "packages/protocol-spec": {

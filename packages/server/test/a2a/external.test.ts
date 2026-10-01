@@ -68,7 +68,7 @@ it('refuses an answer to a gate on data, even inside the client’s task', async
     via: 'direct' as const,
     field: 'to[0]',
   };
-  const policy = bridgeExternalPolicy(f.deps);
+  const policy = bridgeExternalPolicy(f.deps, f.notices);
   expect(() => policy.admitExternal(target, HUMAN, gate, answer)).toThrow(
     expect.objectContaining({ code: 'forbidden', field: 'data' })
   );
@@ -76,7 +76,7 @@ it('refuses an answer to a gate on data, even inside the client’s task', async
 });
 
 it('refuses every client while a2a.db is down, and delivers to anyone else', () => {
-  const policy = bridgeExternalPolicy(null);
+  const policy = bridgeExternalPolicy(null, null);
   const reply = message({ to: [f.caller.address] });
   expect(() =>
     policy.admitExternal(
@@ -95,5 +95,14 @@ it('refuses every client while a2a.db is down, and delivers to anyone else', () 
     )
   ).toBe('deliver');
   expect(policy.external(f.caller.address)).toBe('client');
+  expect(policy.external('a2a:acme')).toBe('peer');
   expect(policy.external('human:alice')).toBeNull();
+  expect(() =>
+    policy.admitExternal(
+      { recipient: 'a2a:acme', via: 'channel', field: 'to[0]' },
+      HUMAN,
+      null,
+      reply
+    )
+  ).toThrow('the A2A bridge is unavailable');
 });

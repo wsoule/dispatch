@@ -36,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 import packageJson from '../package.json';
 import type { A2ABridge } from './a2a/bridge.js';
 import { openA2ABridge } from './a2a/bridge.js';
+import type { WatchLimits } from './a2a/portRoutes.js';
 import type { ListenerOverrides } from './a2a/settings.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
@@ -343,6 +344,8 @@ export interface StartServerOptions {
   onIdle?: () => void;
   // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
   a2a?: ListenerOverrides;
+  // Standalone hosts' watch-stream limits; tests shorten the keepalive.
+  a2aWatchLimits?: Partial<WatchLimits>;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -1527,6 +1530,9 @@ async function bootServer(
       ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
     ],
     ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    ...(opts.a2aWatchLimits === undefined
+      ? {}
+      : { watchLimits: opts.a2aWatchLimits }),
     ...(opts.tls === undefined
       ? {}
       : {

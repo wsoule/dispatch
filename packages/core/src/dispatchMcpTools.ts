@@ -17,6 +17,7 @@ export const DISPATCH_MCP_TOOLS = [
   'memory_search',
   'msg_reply',
   'msg_send',
+  'peer_list',
   'record_evidence',
   'record_mutation',
   'run_list',
@@ -38,5 +39,6 @@ export const DISPATCH_MESSAGING_TOOLS = [
   'inbox_read',
   'msg_reply',
   'msg_send',
+  'peer_list',
   'thread_read',
 ] as const satisfies readonly (typeof DISPATCH_MCP_TOOLS)[number][];

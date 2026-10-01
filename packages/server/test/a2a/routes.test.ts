@@ -467,6 +467,39 @@ describe('decline and revocation', () => {
     expect(handle.a2a.store!.getTask(two.taskId)?.state).toBe('FAILED');
   });
 
+  it('deletes a revoked client’s push configs, secrets included', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-1',
+      contextId: null,
+      kind: 'ask',
+      to: null,
+      replyTo: null,
+      body: 'q1',
+      refs: [],
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const store = handle.a2a.store!;
+    store.putPushConfig({
+      id: 'hook',
+      taskId: opened.taskId,
+      client: caller.address,
+      url: 'https://hooks.example.com/a2a',
+      token: 'tok',
+      authScheme: 'Bearer',
+      authCredentials: 'cred',
+      failures: 0,
+      disabledAt: null,
+      createdAt: new Date().toISOString(),
+    });
+    await fetch(
+      `${base}/api/agents/${encodeURIComponent(caller.address)}/revoke`,
+      { method: 'POST' }
+    );
+    expect(store.getPushConfig(opened.taskId, 'hook')).toBeNull();
+  });
+
   it('records a decline before closing the question', async () => {
     const { caller } = await approvedClient('acme');
     const port = handle.a2a.port!;
