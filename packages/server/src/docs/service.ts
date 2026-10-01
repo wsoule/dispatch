@@ -1605,16 +1605,31 @@ export class DocsService {
     const prop = this.proposalRevision(p);
     const base = store.revision(prop.parents[0]);
     const head = this.headOf(doc);
+    const clean = this.mergesCleanly(prop, base, head);
     return {
       proposal: p,
       title: prop.title,
       body: prop.body,
       chunks: diffChunks(base?.body ?? '', prop.body).chunks,
-      mergeable: {
-        clean: this.mergesCleanly(prop, base, head),
-        headN: head.n ?? 0,
-      },
+      mergeable: { clean, headN: head.n ?? 0 },
+      marked: clean ? null : this.markedMerge(prop, base, head),
     };
+  }
+
+  // What the merge view resolves for a conflicting proposal: diff3 of base,
+  // head and proposal with markers; null when there is nothing to mark.
+  private markedMerge(
+    prop: RevisionRow,
+    base: RevisionRow | null,
+    head: RevisionRow
+  ): string | null {
+    if (base === null) return null;
+    const merged = merge3(base.body, head.body, prop.body, {
+      head: head.id,
+      base: base.id,
+      mine: prop.id,
+    });
+    return merged.clean ? null : merged.marked;
   }
 
   // One merge per (proposal body, head) pair, kept in a small LRU.

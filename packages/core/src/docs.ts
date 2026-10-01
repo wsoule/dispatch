@@ -182,6 +182,8 @@ export interface DocProposalView {
   body: string;
   chunks: { equal: boolean; a: string[]; b: string[] }[];
   mergeable: { clean: boolean; headN: number };
+  // The head merged with the proposal, diff3 markers at each conflict; null when it merges cleanly.
+  marked: string | null;
 }
 
 export interface DocConflict {

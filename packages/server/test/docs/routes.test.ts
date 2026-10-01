@@ -330,6 +330,46 @@ describe('docs routes', () => {
     }
   });
 
+  it("serves a conflicting proposal's marked merge for the merge view", async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n## A\nv1\n' });
+    await post('/docs/spec/status', { status: 'accepted' });
+    const task = await json<{ meta: { id: string } }>(
+      await post('/tasks', { title: 'Proposing task' })
+    );
+    const run = await json<{ id: string }>(
+      await post(`/tasks/${task.meta.id}/runs`, { executor: 'claude' })
+    );
+    await waitFor(
+      async () =>
+        (
+          await json<{ meta: { state: string } }>(
+            await fetch(`${base}/runs/${run.id}`)
+          )
+        ).meta.state === 'running'
+    );
+    const edited = await rawFetch(`${base}/docs/spec/edit`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${executor.lastRunToken ?? ''}`,
+      },
+      body: JSON.stringify({
+        ops: [{ op: 'replace_section', section: 'A', text: 'run' }],
+      }),
+    });
+    const { proposal } = await json<{ proposal: string }>(edited);
+    await post('/docs/spec/edit', {
+      ops: [{ op: 'replace_section', section: 'A', text: 'human' }],
+    });
+    const view = await json<{
+      mergeable: { clean: boolean };
+      marked: string | null;
+    }>(await fetch(`${base}/docs/proposals/${proposal}`));
+    expect(view.mergeable.clean).toBe(false);
+    expect(view.marked).toContain('<<<<<<< ');
+    expect(view.marked).toContain('run\n');
+  });
+
   it("answers a task's index lines, and a dispatched run's prompt carries them", async () => {
     const task = await json<{ meta: { id: string } }>(
       await post('/tasks', { title: 'Indexed task' })

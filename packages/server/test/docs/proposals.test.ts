@@ -270,6 +270,23 @@ describe('proposals', () => {
     ).toEqual(['approve', 'proposal']);
   });
 
+  it('hands a decider the marked merge of a conflicting proposal, and none for a clean one', () => {
+    acceptedSpec();
+    const p = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'replace_section', section: 'API', text: 'run' }],
+    });
+    expect(service.proposal(as(DECIDER), p.proposal ?? '').marked).toBeNull();
+    service.edit(as(DECIDER), 'spec', {
+      ops: [{ op: 'replace_section', section: 'API', text: 'human' }],
+    });
+    const view = service.proposal(as(DECIDER), p.proposal ?? '');
+    expect(view.mergeable.clean).toBe(false);
+    expect(view.marked).toContain('<<<<<<< ');
+    expect(view.marked).toContain('human\n');
+    expect(view.marked).toContain('run\n');
+    expect(view.marked).toContain('>>>>>>> ');
+  });
+
   it('fails an approval that conflicts, with a notice, and changes nothing', () => {
     acceptedSpec();
     const p = service.edit(as(RUN), 'spec', {
