@@ -1,3 +1,4 @@
+import type { LookupAll } from '@dispatch/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   openA2ADb,
@@ -15,6 +16,7 @@ import type { PeerDeps } from '../../src/a2a/peers.js';
 import { createPeerService } from '../../src/a2a/peers.js';
 import type { BridgeDeps } from '../../src/a2a/port.js';
 import { DaemonBridgePort } from '../../src/a2a/port.js';
+import { PushWorker } from '../../src/a2a/push.js';
 import { BridgeWatch } from '../../src/a2a/watch.js';
 import { validateTaskInput } from '../../src/api.js';
 import { TaskCache } from '../../src/cache.js';
@@ -27,7 +29,12 @@ import { makeOrchestrator, openRecovered } from '../messaging/harness.js';
 export async function bridgeFixture(
   root: string,
   policy: Partial<A2AConfig> = {},
-  opts: { outbound?: boolean } = {}
+  opts: {
+    outbound?: boolean;
+    // Push seams: the webhook fetch and the resolver behind the push guard.
+    pushFetch?: typeof fetch;
+    lookup?: LookupAll;
+  } = {}
 ) {
   const { orchestrator, store: tasks, events } = makeOrchestrator(root);
   const messaging = await openRecovered(root, orchestrator, tasks, events);
@@ -59,13 +66,24 @@ export async function bridgeFixture(
     runPatch: () => null,
     prOpen: () => false,
     runResults: new RunResultsMemo(),
+    ...(opts.lookup === undefined ? {} : { lookup: opts.lookup }),
   };
+  const push = new PushWorker({
+    store,
+    lookup: (host) =>
+      (deps.lookup ?? (() => Promise.resolve([] as string[])))(host),
+    delaysMs: [5, 5, 5],
+    ...(opts.pushFetch === undefined ? {} : { fetchImpl: opts.pushFetch }),
+  });
   const changed: string[] = [];
   const watch = new BridgeWatch({
     ...deps,
     events,
     coalesceMs: 5,
-    onChanged: (row) => changed.push(row.id),
+    onChanged: (row, facts) => {
+      changed.push(row.id);
+      push.onChanged(row, facts);
+    },
   });
   const stopWatch = watch.start();
   const peers = createPeerService(deps);
@@ -120,6 +138,7 @@ export async function bridgeFixture(
     peers,
     notices,
     peerDeps,
+    push,
     get outbound() {
       if (outbound === null)
         throw new Error('started without the outbound worker');

@@ -10,6 +10,7 @@ import type {
   HandoffStatuses,
   ListPage,
   ListQuery,
+  LookupAll,
   OpenInput,
   OpenResult,
   StatusEntry,
@@ -53,6 +54,7 @@ import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
+import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
 import type { BridgeWatch } from './watch.js';
 
@@ -93,6 +95,8 @@ export interface BridgeDeps {
   // Those evidence and patch reads, kept per task's latest settled run.
   runResults: RunResultsMemo;
   now?: () => Date;
+  // Resolves webhook names for the push guard; tests swap it.
+  lookup?: LookupAll;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
@@ -100,11 +104,14 @@ export interface BridgeDeps {
 export class DaemonBridgePort implements BridgePort {
   private readonly requestTimes = new Map<string, number[]>();
   private readonly streams = new Map<string, number>();
+  readonly pushConfigs: DaemonPushConfigs;
 
   constructor(
     readonly deps: BridgeDeps,
     private readonly hub: BridgeWatch
-  ) {}
+  ) {
+    this.pushConfigs = new DaemonPushConfigs(deps);
+  }
 
   private now(): Date {
     return this.deps.now?.() ?? new Date();
@@ -314,7 +321,7 @@ export class DaemonBridgePort implements BridgePort {
         version: base.version,
         skills: offeredSkills(policy.skills, this.deps.statuses()),
         blockingWaitSec: policy.blockingWaitSec,
-        pushNotifications: false,
+        pushNotifications: true,
       };
     });
   }

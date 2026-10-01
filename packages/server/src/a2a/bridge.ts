@@ -41,6 +41,7 @@ import type { PeerService } from './peers.js';
 import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
+import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
 import type { ListenerOverrides, ListenerSettings } from './settings.js';
 import {
@@ -225,10 +226,22 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       prOpen: deps.prOpen,
       runResults: new RunResultsMemo(),
     };
+    // Push delivery returns at once and runs on its own chains, so a slow
+    // webhook never delays the watch, its streams or the broadcast.
+    const push = new PushWorker({ store, now: () => new Date() });
     const hub = new BridgeWatch({
       ...bridgeDeps,
       events: deps.events,
-      onChanged: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      onChanged: (row, facts) => {
+        deps.events.broadcast({ type: 'a2a.changed' });
+        try {
+          push.onChanged(row, facts);
+        } catch (err) {
+          console.error(
+            `dispatchd: A2A push for ${row.id} failed: ${err instanceof Error ? err.name : 'error'}`
+          );
+        }
+      },
     });
     watch = hub;
     stopWatch = hub.start();
