@@ -43,6 +43,7 @@ export type FedMetaKey =
   | 'team_id'
   | 'founder'
   | 'founder_seq'
+  | 'founder_pin'
   | 'founded_at'
   | 'legacy_until'
   | 'legacy_closed'
@@ -167,6 +168,11 @@ export class FedStore {
       input.alsoV1?.(op);
       return op;
     });
+  }
+
+  /** Moves this replica's clock past a verified op's, so its next op sorts after. */
+  observe(hlc: string): void {
+    this.ledger.observe(hlc);
   }
 
   /** Signed ops not yet published, oldest first. */

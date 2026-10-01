@@ -13,6 +13,7 @@ export const AUDIT_KINDS = [
   'recovery',
   'legacy-close',
   'transport',
+  'dismiss',
   'fork',
   'halt',
   'bad-signature',
