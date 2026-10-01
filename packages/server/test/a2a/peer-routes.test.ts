@@ -1,6 +1,12 @@
-import { TaskStore } from '@dispatch/core';
+import { credentialsPath, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -176,4 +182,32 @@ it('answers 502 naming cardUrl when the card cannot be fetched', async () => {
   });
   expect(res.status).toBe(502);
   expect(((await res.json()) as { field: string }).field).toBe('cardUrl');
+});
+
+it('answers 409 with the fix when credentials.json cannot be parsed, and keeps the peer', async () => {
+  await fetch(`${base}/api/a2a/peers`, {
+    method: 'POST',
+    headers: json,
+    body: addBody(),
+  });
+  const good = readFileSync(credentialsPath(), 'utf8');
+  writeFileSync(credentialsPath(), `${good.trimEnd()},\n`);
+  const del = () =>
+    fetch(`${base}/api/a2a/peers/fixture`, { method: 'DELETE' });
+  const refused = await del();
+  expect(refused.status).toBe(409);
+  const { error } = (await refused.json()) as { error: string };
+  expect(error).toContain('cannot be parsed; fix or move it');
+  expect(error).not.toContain('peer-secret');
+  expect(await (await fetch(`${base}/api/a2a/peers`)).text()).toContain(
+    'fixture'
+  );
+  const add = await fetch(`${base}/api/a2a/peers`, {
+    method: 'POST',
+    headers: json,
+    body: addBody({ alias: 'other' }),
+  });
+  expect(add.status).toBe(409);
+  writeFileSync(credentialsPath(), good);
+  expect((await del()).status).toBe(204);
 });

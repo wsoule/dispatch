@@ -451,9 +451,10 @@ export async function setPeerEnabled(
 }
 
 export function removePeer(deps: PeerDeps, alias: string): boolean {
-  const removed = deps.store.deletePeer(alias);
+  // The secret goes first: a credentials file that refuses the clear leaves
+  // the peer listed, never a row gone with its token still stored.
   clearPeerCredential(deps.rootDir, alias);
-  return removed;
+  return deps.store.deletePeer(alias);
 }
 
 // The peer notices plus a listener set: routes emit each change, and the

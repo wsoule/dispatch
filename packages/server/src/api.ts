@@ -3,6 +3,7 @@ import {
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
+  CredentialsUnreadableError,
   describeValue,
   EFFORT_LEVELS,
   getSection,
@@ -6615,6 +6616,10 @@ export async function handleApi(
       return errorResponse(404, err.message);
     }
     if (err instanceof OrchestratorConflictError) {
+      return errorResponse(409, err.message);
+    }
+    // The message says which file and what to do; it never quotes the file.
+    if (err instanceof CredentialsUnreadableError) {
       return errorResponse(409, err.message);
     }
     if (err instanceof OrchestratorClientError) {
