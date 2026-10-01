@@ -95,9 +95,10 @@ never for a call the floor holds. Vectors:
 paths. Only a session raises it, and its shape is fixed
 ([§5.3](05-gates.md#s5.3)): kind `question`, `blocking` true, `choices` exactly
 `grant` then `deny`, and data `{ "type": "scope", "paths", "reason" }`, with a
-non-empty list of non-empty paths and a reason that is not blank. Any other
-shape fails `invalid` on `data`, `data.paths` or `data.reason`. `grant` widens
-the session's writes by the paths; `deny` leaves them as they were. The system
+non-empty list of non-empty paths and a reason that is not blank. A request that
+breaks one of these rules fails `invalid` on `data`, `data.paths` or
+`data.reason`; other members of its data are not checked. `grant` widens the
+session's writes by the paths; `deny` leaves them as they were. The system
 grants a request the autonomy policy allows, with an `x-policy` marker, and
 denies one that no one decided within 29 minutes, with an `x-expired` marker
 ([§C.4](appendix-c-dispatch-profile.md#sC.4)). Vectors:
@@ -138,8 +139,9 @@ human may raise one too. Its shape is fixed ([§5.3](05-gates.md#s5.3)): kind
 `mp-` and an uppercase ULID, and names the proposal, whose text stays with the
 host and never travels in the gate. `action` is `add`, `supersede` or `retire`,
 `scope` is `project` or `team`, and `kind` is one of `preference`, `convention`,
-`constraint`, `hazard`, `decision`, `fact` or `reference`. Any other shape fails
-`invalid` on `data` or the field. `approve` applies the proposal; `reject`
+`constraint`, `hazard`, `decision`, `fact` or `reference`. A gate that breaks
+one of these rules fails `invalid` on `data` or the member it names; other
+members of its data are not checked. `approve` applies the proposal; `reject`
 discards it. The system rejects a proposal no one decided within the project's
 memory `proposalTtlDays` (14 by default) with an `x-expired` marker
 ([§C.4](appendix-c-dispatch-profile.md#sC.4)). Vectors:
@@ -159,12 +161,13 @@ shape is fixed ([§5.3](05-gates.md#s5.3)): kind `question`, `blocking` true,
 `{ "type": "doc", "doc", "proposal", "taskId"?, "runId"? }`. `doc` is the
 document's `doc-` id and `proposal` the proposed revision's `rev-` id; the
 proposed text stays with the host and never travels in the gate. `taskId` and
-`runId` name the proposer's work item and session. Any other shape fails
-`invalid` on `data`, `data.doc` or `data.proposal`. `approve` applies the
-proposed revision; `reject` discards it. When the project's autonomy policy
-approves the proposal, or the proposal expires after the project's docs
-`proposalTtlDays`, the system closes the gate ([§4.8](04-messages.md#s4.8)).
-Vectors: `core.gates.doc-is-raised-only-by-the-system`,
+`runId` name the proposer's work item and session. A gate that breaks one of
+these rules fails `invalid` on `data`, `data.doc` or `data.proposal`; other
+members of its data are not checked. `approve` applies the proposed revision;
+`reject` discards it. When the project's autonomy policy approves the proposal,
+or the proposal expires after the project's docs `proposalTtlDays`, the system
+closes the gate ([§4.8](04-messages.md#s4.8)). Vectors:
+`core.gates.doc-is-raised-only-by-the-system`,
 `core.gates.doc-needs-a-deciding-answer`,
 `env.envelope.a-doc-gate-names-its-doc-and-proposal`,
 `env.envelope.doc-gates-have-a-fixed-shape`.

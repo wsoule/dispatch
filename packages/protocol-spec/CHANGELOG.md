@@ -66,6 +66,11 @@ vector ids (see §14.2).
   `env.envelope.doc-gates-have-a-fixed-shape`.
 - [editorial] Appendix A, complete since draft 1, names memory and documents
   among the daemon routes outside DMP, and no appendix is a stub.
+- [clarification] A `scope`, `memory` or `doc` gate fails `invalid` only for
+  breaking a rule App. C.3 lists for it; other members of its data are not
+  checked. Vectors: `env.envelope.scope-gates-have-a-fixed-shape`,
+  `env.envelope.memory-gates-have-a-fixed-shape`,
+  `env.envelope.doc-gates-have-a-fixed-shape`.
 
 ## 1.0.0-draft.1 (2026-09-28)
 
