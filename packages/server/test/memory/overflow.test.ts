@@ -9,6 +9,7 @@ const entry = {
   id: 'mem-01',
   scope: 'personal',
   projectKey: 'aaaaaaaaaaaa',
+  author: 'agent:wyat/claude-code',
   title: 'Long note',
   refs: [{ type: 'task', id: 't-1' }],
 };
@@ -45,6 +46,7 @@ describe('overflowBody', () => {
         entryId: 'mem-01',
         human: 'human:wyat',
         identity: 'self',
+        author: 'agent:wyat/claude-code',
         title: 'Long note',
         body: FULL,
       },
@@ -105,6 +107,7 @@ describe('docsOverflowPort', () => {
     entryId: 'mem-01',
     human: 'human:wyat',
     identity,
+    author: 'agent:wyat/claude-code',
     title: 't',
     body: 'b',
   });

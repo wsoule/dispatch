@@ -375,12 +375,13 @@ describe('overflowFromMemory', () => {
     entryId: 'mem-01',
     human: 'human:wyat',
     identity: 'id-wyat',
+    author: 'agent:wyat/claude-code',
     title: 'Long note',
     body: 'line\n'.repeat(3000),
   };
 
   it("creates one sealed personal doc per entry, owned by the entry's human, and keeps it current", () => {
-    const id = service.overflowFromMemory(input);
+    const id = service.overflowFromMemory(input) ?? '';
     const read = service.read(as(OWNER), id);
     expect(read.doc).toMatchObject({
       scope: 'personal',
@@ -402,8 +403,24 @@ describe('overflowFromMemory', () => {
     expect(service.read(as(OWNER), id).doc.head.n).toBe(again.doc.head.n);
   });
 
+  it('reads as unreviewed agent text, and a promote keeps the flag', () => {
+    const id = service.overflowFromMemory(input) ?? '';
+    const read = service.read(as(OWNER), id);
+    expect(read.doc.unreviewed).toBe(true);
+    expect(read.rev.author).toBe('agent:wyat/claude-code');
+    const promoted = service.promote(as(OWNER), id);
+    expect(service.read(as(OWNER), promoted.doc.id).doc.unreviewed).toBe(true);
+    // A run's note is the run's text too.
+    const fromRun = service.overflowFromMemory({
+      ...input,
+      entryId: 'mem-02',
+      author: 'run:r-1',
+    });
+    expect(service.read(as(OWNER), fromRun ?? '').doc.unreviewed).toBe(true);
+  });
+
   it('is invisible to anyone but its owner, a decider and the owner’s teammates included', () => {
-    const id = service.overflowFromMemory(input);
+    const id = service.overflowFromMemory(input) ?? '';
     expect(code(() => service.read(as(TEAMMATE), id))).toBe('not-found');
     expect(code(() => service.read(as(AGENT), id))).toBe('ok');
     expect(code(() => service.read(as(DECIDER), id))).not.toBe('ok');
@@ -438,6 +455,8 @@ describe('overflowFromMemory', () => {
       entryId: 'mem-02',
       body: big,
     });
-    expect(service.read(as(OWNER), id).text.length).toBeLessThan(big.length);
+    expect(service.read(as(OWNER), id ?? '').text.length).toBeLessThan(
+      big.length
+    );
   });
 });

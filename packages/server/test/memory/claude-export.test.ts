@@ -854,6 +854,7 @@ describe('overflow into docs (docs Task 18)', () => {
     entryId: string;
     human: string;
     identity: string;
+    author: string;
     title: string;
     body: string;
   }[] = [];
@@ -886,6 +887,7 @@ describe('overflow into docs (docs Task 18)', () => {
       entryId: entry.id,
       human: 'human:wyat',
       identity: 'self',
+      author: 'run:r-9f2c01',
       title: 'a long project note',
     });
     expect(calls[0].body).toBe('line of text\n'.repeat(1000).trimEnd());

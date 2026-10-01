@@ -10,6 +10,8 @@ interface OverflowInput {
   entryId: string;
   human: string;
   identity: string;
+  // Who wrote the entry (an agent or run): the doc's text is theirs, unreviewed.
+  author: string;
   title: string;
   body: string;
 }
@@ -31,6 +33,7 @@ export function overflowBody<R extends RefLike>(
     id: string;
     scope: string;
     projectKey: string | null;
+    author: string;
     title: string;
     refs: readonly R[];
   },
@@ -57,6 +60,7 @@ export function overflowBody<R extends RefLike>(
       entryId: entry.id,
       human: ctx.human,
       identity: ctx.identity,
+      author: entry.author,
       title: entry.title,
       body: full,
     });
@@ -83,7 +87,7 @@ export function overflowBody<R extends RefLike>(
  *  identity (identities.db down, a reused handle) that many humans share. */
 export function docsOverflowPort(docs: {
   available: boolean;
-  overflowFromMemory(input: OverflowInput): string;
+  overflowFromMemory(input: OverflowInput): string | null;
 }): DocsOverflowPort {
   return {
     overflow: (input) =>

@@ -374,7 +374,7 @@ function notesOf(
 function overflowed(
   input: ImportInput,
   note: Note,
-  entry: Pick<MemoryEntry, 'id' | 'refs'>
+  entry: Pick<MemoryEntry, 'id' | 'refs' | 'author'>
 ): { body: string; refs: MemoryEntry['refs'] } | null {
   const { overflow, identity } = input;
   if (overflow === undefined || identity === undefined || input.dryRun === true)
@@ -384,6 +384,7 @@ function overflowed(
       id: entry.id,
       scope: 'personal',
       projectKey: note.projectKey,
+      author: entry.author,
       title: note.title,
       refs: entry.refs,
     },

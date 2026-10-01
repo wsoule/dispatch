@@ -2228,17 +2228,20 @@ export class DocsService {
 
   // ---- memory overflow (v1) -------------------------------------------------
 
-  // The personal doc holding a memory entry's full text, created for the
-  // entry's human and kept current; one doc per entry (origin memory:<id>).
+  // The personal doc holding a memory entry's full text, owned by the entry's
+  // human but written as the entry's author (an agent or run), so its text
+  // reads unreviewed. One doc per entry (origin memory:<id>), kept current by
+  // new sealed revisions; null when its doc was deleted or archived.
   // Memory calls it only for that human's own project-keyed personal entries.
   overflowFromMemory(input: {
     entryId: string;
     human: string;
     identity: string;
+    author: string;
     title: string;
     body: string;
-  }): string {
-    const { entryId, human, identity } = input;
+  }): string | null {
+    const { entryId, human, identity, author } = input;
     if (!/^mem-[0-9A-Za-z]+$/.test(entryId))
       throw new DocsError('invalid', 'not a memory entry id', 'entryId');
     if (!human.startsWith('human:') || identity === '')
@@ -2247,17 +2250,28 @@ export class DocsService {
         'overflow needs the entry’s human',
         'human'
       );
-    const owner: Operator = { human, identity };
+    if (!/^(?:agent|run|human):\S+$/.test(author))
+      throw new DocsError(
+        'invalid',
+        'overflow needs the entry’s author',
+        'author'
+      );
+    const store = this.store();
+    const origin = `memory:${entryId}`;
+    // A doc its owner deleted stays deleted.
+    if (store.tombstonedOrigin(origin)) return null;
+    // Writes as the author, owned by the human. A human-kind actor: the
+    // owner's own notes are exempt from the agent create limit.
     const actor: DocsActor = {
-      principal: { address: human, canDecide: false, kind: 'human' },
-      address: human,
+      principal: { address: author, canDecide: false, kind: 'human' },
+      address: author,
       kind: 'human',
       decider: false,
       runKind: null,
       taskId: null,
       runTaskId: null,
       runId: null,
-      operator: owner,
+      operator: { human, identity },
       a2aRun: false,
     };
     const ns = `p:${identity}`;
@@ -2267,8 +2281,7 @@ export class DocsService {
       DOCS_LIMITS.titleBytes
     ).trim();
     const title = oneLine !== '' ? oneLine : 'Memory note';
-    const origin = `memory:${entryId}`;
-    const existing = this.store().docByOrigin(origin);
+    const existing = store.docByOrigin(origin);
     let docId: string;
     if (existing === null) {
       docId = this.createDoc(
@@ -2284,7 +2297,11 @@ export class DocsService {
         existing.ownerHuman !== human
       )
         throw forbidden('that memory entry’s doc belongs to someone else');
+      // The owner archived it: not written, and not pointed at.
+      if (existing.status === 'archived') return null;
       docId = existing.id;
+      // A new revision, never an amend of anyone's open head.
+      this.write(() => this.sealInTx(existing, this.headOf(existing)));
       this.commitDirect(actor, existing, {
         body,
         title,
@@ -2292,7 +2309,7 @@ export class DocsService {
         cause: 'save',
       });
     }
-    const doc = this.store().doc(docId);
+    const doc = store.doc(docId);
     if (doc !== null) this.write(() => this.sealInTx(doc, this.headOf(doc)));
     return docId;
   }
