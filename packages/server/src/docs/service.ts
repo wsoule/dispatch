@@ -180,8 +180,9 @@ export interface DocsServiceDeps {
   orphans?: () => string[];
   // docs-assets/: where images live (v1); without it uploads answer unavailable.
   assetsDir?: string;
-  // Per-doc caps on stored images; the defaults are 200 files and 256 MiB.
-  assetLimits?: { files: number; bytes: number };
+  // Caps on stored images, per doc and for the project; the defaults are 200
+  // files and 256 MiB a doc, 2 GiB in all.
+  assetLimits?: { files: number; bytes: number; projectBytes: number };
 }
 
 // A team doc as the receipt log writes it: its newest sealed head, the
@@ -205,7 +206,11 @@ interface RawHit {
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 // Per-doc image caps, and how long an image no revision links is kept.
-const DEFAULT_ASSET_LIMITS = { files: 200, bytes: 256 * 1024 * 1024 };
+const DEFAULT_ASSET_LIMITS = {
+  files: 200,
+  bytes: 256 * 1024 * 1024,
+  projectBytes: 2 * 1024 * 1024 * 1024,
+};
 const ASSET_TTL_DAYS = 30;
 // A doc line to a run, as live notices are: at most 160 characters.
 const RUN_LINE_CHARS = 160;
@@ -2201,8 +2206,34 @@ export class DocsService {
       origin,
       head
     );
-    this.copyAssets(doc, out.doc.id, head.body, actor.address);
+    try {
+      this.copyAssets(doc, out.doc.id, head.body, actor.address);
+    } catch (err) {
+      // An image that cannot be copied takes the new draft back out.
+      this.dropDoc(out.doc.id, actor.address);
+      throw err;
+    }
     return out;
+  }
+
+  // Removes a doc this call just made, rows and images, leaving no tombstone.
+  private dropDoc(docId: string, by: string): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    if (doc === null) return;
+    this.write(() => {
+      store.deleteDoc(docId);
+      this.outbox.push({
+        doc: docId,
+        scope: doc.scope,
+        kind: 'deleted',
+        author: by,
+        rev: null,
+        summary: 'deleted',
+      });
+    });
+    if (this.deps.assetsDir !== undefined)
+      removeAssetDir(this.deps.assetsDir, docId);
   }
 
   // Copies the images `body` links from `from` to the doc `to`, row and file,
@@ -2356,6 +2387,12 @@ export class DocsService {
         `a doc stores at most ${limits.bytes} bytes of images`,
         'body'
       );
+    if (store.assetBytesTotal() + bytes > limits.projectBytes)
+      throw new DocsError(
+        'limited',
+        `the project stores at most ${limits.projectBytes} bytes of images`,
+        'body'
+      );
   }
 
   // Stores an image a writer of the doc pasted, named by its hash and typed by
@@ -2435,8 +2472,13 @@ export class DocsService {
     const cutoff = new Date(
       now.getTime() - ASSET_TTL_DAYS * DAY_MS
     ).toISOString();
-    for (const a of store.assetsCreatedBefore(cutoff)) {
-      if (store.assetReferenced(a.doc, a.name)) continue;
+    for (const a of store.assetsToCheck(cutoff)) {
+      if (store.assetReferenced(a.doc, a.name)) {
+        this.write(() =>
+          store.markAssetChecked(a.doc, a.name, now.toISOString())
+        );
+        continue;
+      }
       this.write(() => store.deleteAsset(a.doc, a.name));
       try {
         rmSync(assetFilePath(root, a.doc, a.name), { force: true });

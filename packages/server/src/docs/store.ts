@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS publishes (
 );
 CREATE TABLE IF NOT EXISTS assets (
   doc_id TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, mime TEXT NOT NULL,
-  created_by TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (doc_id, name)
+  created_by TEXT NOT NULL, created_at TEXT NOT NULL, checked_at TEXT,
+  PRIMARY KEY (doc_id, name)
 );
 CREATE TABLE IF NOT EXISTS imported (
   ns TEXT NOT NULL, slug TEXT NOT NULL, hash TEXT NOT NULL, doc_id TEXT NOT NULL, at TEXT NOT NULL,
@@ -107,7 +108,10 @@ const FTS_DDL =
 // reports whether FTS5 is usable; `{ fts: false }` forces the LIKE fallback.
 // Columns added to version-1 tables after they first shipped, added in place.
 const LATER_COLUMNS: readonly { table: string; column: string; ddl: string }[] =
-  [{ table: 'publishes', column: 'reason', ddl: 'reason TEXT' }];
+  [
+    { table: 'publishes', column: 'reason', ddl: 'reason TEXT' },
+    { table: 'assets', column: 'checked_at', ddl: 'checked_at TEXT' },
+  ];
 
 function addMissingColumns(db: SqliteDatabase): void {
   for (const { table, column, ddl } of LATER_COLUMNS) {
@@ -1014,8 +1018,17 @@ export class SqliteDocStore {
     return { files: r?.files ?? 0, bytes: r?.bytes ?? 0 };
   }
 
-  // Asset rows created before `beforeIso`, oldest first.
-  assetsCreatedBefore(beforeIso: string): AssetRow[] {
+  // Every image's bytes in the project.
+  assetBytesTotal(): number {
+    return (
+      this.one<{ bytes: number | null }>(
+        'SELECT SUM(bytes) AS bytes FROM assets'
+      )?.bytes ?? 0
+    );
+  }
+
+  // Asset rows created before `beforeIso` and not found referenced since then, oldest first.
+  assetsToCheck(beforeIso: string): AssetRow[] {
     return this.all<{
       doc_id: string;
       name: string;
@@ -1024,8 +1037,8 @@ export class SqliteDocStore {
       created_by: string;
       created_at: string;
     }>(
-      'SELECT * FROM assets WHERE created_at < ? ORDER BY created_at, doc_id, name',
-      [beforeIso]
+      'SELECT * FROM assets WHERE created_at < ? AND (checked_at IS NULL OR checked_at < ?) ORDER BY created_at, doc_id, name',
+      [beforeIso, beforeIso]
     ).map((r) => ({
       doc: r.doc_id,
       name: r.name,
@@ -1044,6 +1057,15 @@ export class SqliteDocStore {
         [docId, `asset:${name}`]
       ) !== undefined
     );
+  }
+
+  // An image found referenced at `atIso`; the sweep skips it until that is old.
+  markAssetChecked(docId: string, name: string, atIso: string): void {
+    this.run('UPDATE assets SET checked_at = ? WHERE doc_id = ? AND name = ?', [
+      atIso,
+      docId,
+      name,
+    ]);
   }
 
   deleteAsset(docId: string, name: string): void {

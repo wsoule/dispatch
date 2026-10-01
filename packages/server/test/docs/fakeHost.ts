@@ -283,7 +283,7 @@ export function makeService(
     coalesceMinutes?: number;
     orphans?: string[];
     assetsDir?: string;
-    assetLimits?: { files: number; bytes: number };
+    assetLimits?: { files: number; bytes: number; projectBytes: number };
   } = {}
 ): {
   service: DocsService;

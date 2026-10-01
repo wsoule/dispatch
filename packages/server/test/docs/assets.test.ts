@@ -225,7 +225,7 @@ describe('the asset store', () => {
   it("caps a doc's images by count and total bytes, from its rows", () => {
     const capped = makeService({
       assetsDir: join(dir, 'capped'),
-      assetLimits: { files: 2, bytes: 40 },
+      assetLimits: { files: 2, bytes: 40, projectBytes: 1000 },
     });
     const owner = capped.service.actorFor(OWNER);
     capped.service.create(owner, { title: 'Img', body: 'x\n' });
@@ -247,13 +247,42 @@ describe('the asset store', () => {
     );
     const bytesCapped = makeService({
       assetsDir: join(dir, 'bytes'),
-      assetLimits: { files: 10, bytes: 20 },
+      assetLimits: { files: 10, bytes: 20, projectBytes: 1000 },
     });
     const o2 = bytesCapped.service.actorFor(OWNER);
     bytesCapped.service.create(o2, { title: 'Img', body: 'x\n' });
     bytesCapped.service.putAsset(o2, 'img', png(1));
     expect(() => bytesCapped.service.putAsset(o2, 'img', png(2))).toThrow(
       'at most 20 bytes of images'
+    );
+  });
+
+  it("caps the project's images in all, across docs", () => {
+    const capped = makeService({
+      assetsDir: join(dir, 'project-cap'),
+      assetLimits: { files: 10, bytes: 1000, projectBytes: 25 },
+    });
+    const owner = capped.service.actorFor(OWNER);
+    capped.service.create(owner, { title: 'One', body: 'x\n' });
+    capped.service.create(owner, { title: 'Two', body: 'x\n' });
+    capped.service.putAsset(owner, 'one', PNG);
+    expect(() => capped.service.putAsset(owner, 'two', JPEG)).not.toThrow();
+    expect(() => capped.service.putAsset(owner, 'two', GIF)).toThrow(
+      'project stores at most 25 bytes of images'
+    );
+  });
+
+  it('re-uploads the same bytes at the file cap', () => {
+    const capped = makeService({
+      assetsDir: join(dir, 'same'),
+      assetLimits: { files: 1, bytes: 1000, projectBytes: 1000 },
+    });
+    const owner = capped.service.actorFor(OWNER);
+    capped.service.create(owner, { title: 'Img', body: 'x\n' });
+    const first = capped.service.putAsset(owner, 'img', PNG);
+    expect(capped.service.putAsset(owner, 'img', PNG).name).toBe(first.name);
+    expect(() => capped.service.putAsset(owner, 'img', JPEG)).toThrow(
+      'at most 1 images'
     );
   });
 
@@ -287,6 +316,57 @@ describe('the asset store', () => {
       existsSync(join(dir, 'docs-assets', made.doc.id, dropped.name))
     ).toBe(false);
     expect(service.asset(as(OWNER), 'img', kept.name).mime).toBe('image/png');
+  });
+
+  it('rescans a referenced image only once its last check is 30 days old', () => {
+    const {
+      service: svc,
+      host: h,
+      store,
+    } = makeService({
+      assetsDir: join(dir, 'rescan'),
+    });
+    const owner = svc.actorFor(OWNER);
+    svc.create(owner, { title: 'Img', body: 'x\n' });
+    const kept = svc.putAsset(owner, 'img', PNG);
+    svc.saveBody(owner, 'img', {
+      baseRev: svc.read(owner, 'img').rev.id,
+      body: `x\n${kept.markdown}\n`,
+    });
+    h.advance(31 * 24 * 60);
+    let scans = 0;
+    const original = store.assetReferenced.bind(store);
+    store.assetReferenced = (doc: string, name: string) => {
+      scans += 1;
+      return original(doc, name);
+    };
+    svc.sweep();
+    svc.sweep();
+    expect(scans).toBe(1);
+    h.advance(31 * 24 * 60);
+    svc.sweep();
+    expect(scans).toBe(2);
+  });
+
+  it('leaves no team doc behind when promote cannot copy an image', () => {
+    const made = service.create(as(OWNER), {
+      title: 'Mine',
+      body: 'x\n',
+      scope: 'personal',
+    });
+    const shot = service.putAsset(as(OWNER), '~mine', PNG);
+    service.saveBody(as(OWNER), '~mine', {
+      baseRev: service.read(as(OWNER), '~mine').rev.id,
+      body: `x\n${shot.markdown}\n`,
+    });
+    rmSync(join(dir, 'docs-assets', made.doc.id, shot.name));
+    expect(() => service.promote(as(OWNER), '~mine')).toThrow();
+    expect(
+      service.list(as(OWNER), {}).docs.filter((d) => d.scope === 'team')
+    ).toEqual([]);
+    // Fixed, it promotes.
+    service.putAsset(as(OWNER), '~mine', PNG);
+    expect(service.promote(as(OWNER), '~mine').doc.scope).toBe('team');
   });
 
   it('answers unavailable with no asset store', () => {
