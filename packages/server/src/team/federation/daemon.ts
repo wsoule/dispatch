@@ -6,12 +6,12 @@ import { join } from 'node:path';
 
 import type { AsyncGitRunner } from '../../sync/worktree.js';
 import type { SyncLedger } from '../boardSync/ledger.js';
-import type { SignedAcks } from '../boardSync/repo.js';
+import type { ReadHints, SignedAcks } from '../boardSync/repo.js';
 import { SyncRepo } from '../boardSync/repo.js';
 import type { SyncedTaskStore } from '../boardSync/syncedStore.js';
 import type { Team } from '../index.js';
 import { syncSeats } from '../index.js';
-import { GitFederationTransport } from './git.js';
+import { GitFederationTransport, signedEntry } from './git.js';
 import { loadOrCreateKeys } from './keys.js';
 import { LegacyWindow } from './legacy.js';
 import { RosterService } from './roster.js';
@@ -126,6 +126,8 @@ export function buildFederation(deps: FederationDeps): Federation {
       acknowledgedBy,
       ownLog: () => fed.ownLog(),
       onPruned: (seqs) => fed.stubLog(seqs),
+      readHints: () => readHints(fed),
+      onStarved: (replicas) => starvedProblems(fed, replicas),
       now,
     }),
     remote: deps.remoteUrl,
@@ -137,4 +139,40 @@ export function buildFederation(deps: FederationDeps): Federation {
     now,
   });
   return { service, fed, roster, legacy };
+}
+
+// Each replica's cursor head, and a check against its pinned key, so a pull
+// reads the segment that continues the log before any other (I2).
+function readHints(fed: FedStore): ReadHints {
+  const heads = new Map<string, string>();
+  for (const row of fed.db
+    .query<{ replica: string; hash: string | null }, []>(
+      'SELECT replica, hash FROM fed_cursors'
+    )
+    .all())
+    if (row.hash !== null) heads.set(row.replica, row.hash);
+  return {
+    heads,
+    signedBy: (e) => {
+      const pin = fed.pinned(e.replica);
+      return pin !== null && signedEntry(e, pin.signPub);
+    },
+  };
+}
+
+// A problem per replica whose reads the budget keeps cutting short; cleared
+// once its reads fit again.
+function starvedProblems(fed: FedStore, replicas: string[]): void {
+  const prefix = 'transport:read:';
+  for (const p of fed.problems())
+    if (
+      p.subject.startsWith(prefix) &&
+      !replicas.includes(p.subject.slice(prefix.length))
+    )
+      fed.clearProblem(p.subject);
+  for (const replica of replicas)
+    fed.problem(
+      `${prefix}${replica}`,
+      `${replica}'s files on the sync branch are more than one pass can read; files that add nothing to its log may be crowding it out`
+    );
 }

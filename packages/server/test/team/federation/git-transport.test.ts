@@ -5,7 +5,7 @@ import {
   sealPayload,
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   appendFileSync,
@@ -23,7 +23,10 @@ import { join } from 'node:path';
 
 import { defaultAsyncGitRunner } from '../../../src/sync/worktree.js';
 import { SyncRepo } from '../../../src/team/boardSync/repo.js';
-import { GitFederationTransport } from '../../../src/team/federation/git.js';
+import {
+  GitFederationTransport,
+  signedEntry,
+} from '../../../src/team/federation/git.js';
 import { runGitSync } from '../../orchestrator/helpers.js';
 
 const A = 'ada-0000000a';
@@ -275,12 +278,16 @@ describe('the read budget (FW-R23 hint)', () => {
         readFileSync(join(dir, 'a', 'fed', A, '000000000004.jsonl'), 'utf8')
       ) + 1;
     // One segment's budget reads one new segment per pass.
-    expect(seqs(a.readV2(new Map([[A, 4]]), budget))).toEqual([5, 6]);
-    expect(seqs(a.readV2(new Map([[A, 4]]), budget))).toEqual([5, 6, 7, 8, 9]);
+    expect(seqs(a.readV2(new Map([[A, 4]]), { budget }))).toEqual([5, 6]);
+    expect(seqs(a.readV2(new Map([[A, 4]]), { budget }))).toEqual([
+      5, 6, 7, 8, 9,
+    ]);
     // A reader from the start, with nothing cached, works forward the same way.
     const fresh = clone('a', A);
-    expect(seqs(fresh.readV2(new Map(), budget))).toEqual([1, 2, 3]);
-    expect(seqs(fresh.readV2(new Map(), budget))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(seqs(fresh.readV2(new Map(), { budget }))).toEqual([1, 2, 3]);
+    expect(seqs(fresh.readV2(new Map(), { budget }))).toEqual([
+      1, 2, 3, 4, 5, 6,
+    ]);
   });
 
   it('holds no more than the budget in cache, and drops lines the cursor has passed', async () => {
@@ -292,13 +299,51 @@ describe('the read budget (FW-R23 hint)', () => {
       'utf8'
     );
     const budget = Buffer.byteLength(segment) + 1;
-    a.readV2(new Map([[A, 3]]), budget);
-    a.readV2(new Map([[A, 3]]), budget);
-    a.readV2(new Map([[A, 3]]), budget);
+    a.readV2(new Map([[A, 3]]), { budget });
+    a.readV2(new Map([[A, 3]]), { budget });
+    a.readV2(new Map([[A, 3]]), { budget });
     expect(a.cachedBytes()).toBeLessThanOrEqual(budget);
     expect(a.cachedBytes()).toBeGreaterThan(0);
-    a.readV2(new Map([[A, 9]]), budget);
+    a.readV2(new Map([[A, 9]]), { budget });
     expect(a.cachedBytes()).toBe(0);
+  });
+
+  // I2: junk files named past the cursor, rewritten every pass, must not
+  // starve the segment the owner appends to.
+  it('advances past junk files rewritten each pass while the owner appends, and names the starvation', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(16);
+    await a.writeV2(ops.slice(0, 10));
+    const signedBy = (e: LogEntry) => signedEntry(e, keys.signPub);
+    const segDir = join(dir, 'a', 'fed', A);
+    const budget = 4096;
+    let cursor = 10;
+    let headHash = opHash(ops[9]);
+    const read = () =>
+      a.readV2(new Map([[A, cursor]]), {
+        budget,
+        heads: new Map([[A, headHash]]),
+        signedBy,
+      });
+    read();
+    for (let k = 0; k < 6; k++) {
+      for (const n of [11, 12, 13, 14])
+        writeFileSync(
+          join(segDir, `0000000000${n}.jsonl`),
+          `${'x'.repeat(budget)}${k}\n`
+        );
+      await a.writeV2([ops[10 + k]]);
+      const next = read().find(
+        (e) => e.seq === cursor + 1 && e.prev === headHash
+      );
+      if (next !== undefined) {
+        cursor = next.seq;
+        headHash = opHash(next);
+      }
+    }
+    expect(cursor).toBe(16);
+    expect(a.starvedReplicas()).toEqual([A]);
   });
 
   it('sees an append to a segment it already read', async () => {

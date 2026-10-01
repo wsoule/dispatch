@@ -50,6 +50,8 @@ const MAX_SEGMENT_READ = SEGMENT_MAX_BYTES + MAX_OP_BYTES;
 const MAX_ACKS_READ = 1024 * 1024;
 // FW-R23: fresh segment bytes one pass reads per replica; the rest wait.
 const READ_BUDGET_BYTES = 2 * MAX_SEGMENT_READ;
+// The whole read cache, across replicas.
+const MAX_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_V1_READ = 256 * 1024 * 1024;
 const segmentName = (firstSeq: number): string =>
   `${String(firstSeq).padStart(12, '0')}.jsonl`;
@@ -99,8 +101,29 @@ interface CachedSegment {
   lines: { line: string; entry: LogEntry }[];
 }
 
+// What earlier reads learned of a segment, kept after its lines are dropped:
+// the seq of its last line when that is its replica's signed op, and how many
+// reads in a row gave no signed op above the cursor.
+interface SegmentInfo {
+  lastOwnSeq: number | null;
+  idle: number;
+}
+
+/** What the pass knows that orders a replica's reads (FW-R23, I2). */
+export interface ReadHints {
+  /** Fresh segment bytes per replica a pass (READ_BUDGET_BYTES). */
+  budget?: number;
+  /** Per replica, the hash of the op its cursor stands on. */
+  heads?: ReadonlyMap<string, string>;
+  /** Whether an entry carries its replica's valid signature. */
+  signedBy?: (e: LogEntry) => boolean;
+}
+
 export class SyncRepo {
   private readonly segmentCache = new Map<string, CachedSegment>();
+  private readonly segmentInfo = new Map<string, SegmentInfo>();
+  /** Per replica, passes in a row whose reads the budget cut short. */
+  private readonly cutPasses = new Map<string, number>();
 
   constructor(
     readonly dir: string,
@@ -278,40 +301,77 @@ export class SyncRepo {
 
   /** Every replica's v2 entries past its watermark, from its segment files,
    *  identical lines once. Files are storage, never order (FW-R23): the pass
-   *  rebuilds each log by its prev chain. Names are only a hint: the segment
-   *  named for cursor + 1 and later ones are read first, unchanged files come
-   *  from cache, and fresh reads stop at `budget` bytes per replica a pass
-   *  (one file at least), the rest following on later passes. */
-  readV2(since: Watermarks, budget = READ_BUDGET_BYTES): LogEntry[] {
+   *  rebuilds each log by its prev chain. Unchanged files come from cache;
+   *  changed ones are read within the budget (one file at least), first the
+   *  one whose lines chain from the cursor head, then the ones whose last line
+   *  is the replica's own signed op, newest first, then by name from the
+   *  cursor, and last the ones that gave nothing signed before. A file the
+   *  budget skips still serves the lines cached from its last read. */
+  readV2(since: Watermarks, hints: ReadHints = {}): LogEntry[] {
+    const budget = hints.budget ?? READ_BUDGET_BYTES;
+    const signed = hints.signedBy ?? (() => true);
     const root = join(this.dir, FED_DIR);
     const out: LogEntry[] = [];
     const live = new Set<string>();
     for (const replica of listDir(root)) {
       if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
       const cursor = since.get(replica) ?? 0;
-      const seen = new Set<string>();
-      let spent = 0;
-      let kept = 0;
-      let readOne = false;
+      const head = hints.heads?.get(replica);
+      const files: { file: string; stamp: string; size: number }[] = [];
       for (const name of hintOrder(this.segments(replica), cursor)) {
         const file = join(root, replica, name);
-        live.add(file);
         const st = lstatSync(file, { throwIfNoEntry: false });
         if (st === undefined) continue;
+        live.add(file);
         const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-        let held = this.segmentCache.get(file);
-        if (held === undefined || held.stamp !== stamp || held.floor > cursor) {
-          if (readOne && spent + st.size > budget) continue;
-          readOne = true;
-          spent += st.size;
-          held = { stamp, floor: cursor, lines: [] };
-          for (const line of completeLines(file)) {
-            const entry = parseEntry(line);
-            if (entry?.replica === replica && entry.seq > cursor)
-              held.lines.push({ line, entry });
-          }
-          this.segmentCache.set(file, held);
+        files.push({ file, stamp, size: st.size });
+      }
+      const stale = files.filter(({ file, stamp }) => {
+        const held = this.segmentCache.get(file);
+        return (
+          held === undefined || held.stamp !== stamp || held.floor > cursor
+        );
+      });
+      const rank = (file: string): [number, number] => {
+        const held = this.segmentCache.get(file);
+        const info = this.segmentInfo.get(file);
+        if (
+          head !== undefined &&
+          held?.lines.some((l) => l.entry.prev === head) === true
+        )
+          return [0, 0];
+        if (info?.lastOwnSeq != null) return [1, -info.lastOwnSeq];
+        if ((info?.idle ?? 0) > 0) return [3, info?.idle ?? 0];
+        return [2, 0];
+      };
+      const order = stale
+        .map((f, i) => ({ ...f, i, r: rank(f.file) }))
+        .sort((a, b) =>
+          a.r[0] !== b.r[0]
+            ? a.r[0] - b.r[0]
+            : a.r[1] !== b.r[1]
+              ? a.r[1] - b.r[1]
+              : a.i - b.i
+        );
+      let spent = 0;
+      let cut = false;
+      for (const [n, f] of order.entries()) {
+        if (n > 0 && spent + f.size > budget) {
+          cut = true;
+          continue;
         }
+        spent += f.size;
+        this.readSegment(f.file, f.stamp, replica, cursor, signed);
+      }
+      this.cutPasses.set(
+        replica,
+        cut ? (this.cutPasses.get(replica) ?? 0) + 1 : 0
+      );
+      const seen = new Set<string>();
+      let kept = 0;
+      for (const { file } of files) {
+        const held = this.segmentCache.get(file);
+        if (held === undefined) continue;
         for (const { line, entry } of held.lines) {
           if (entry.seq <= cursor || seen.has(line)) continue;
           seen.add(line);
@@ -328,9 +388,59 @@ export class SyncRepo {
         else kept += bytes;
       }
     }
-    for (const file of this.segmentCache.keys())
-      if (!live.has(file)) this.segmentCache.delete(file);
+    for (const map of [this.segmentCache, this.segmentInfo])
+      for (const file of map.keys()) if (!live.has(file)) map.delete(file);
+    this.capCache();
     return out;
+  }
+
+  // Reads one segment into the cache and records what it showed.
+  private readSegment(
+    file: string,
+    stamp: string,
+    replica: string,
+    cursor: number,
+    signed: (e: LogEntry) => boolean
+  ): void {
+    const held: CachedSegment = { stamp, floor: cursor, lines: [] };
+    let last: LogEntry | null = null;
+    let gave = false;
+    for (const line of completeLines(file)) {
+      const entry = parseEntry(line);
+      last = entry;
+      if (entry?.replica !== replica || entry.seq <= cursor) continue;
+      held.lines.push({ line, entry });
+      if (signed(entry)) gave = true;
+    }
+    this.segmentCache.set(file, held);
+    const before = this.segmentInfo.get(file);
+    this.segmentInfo.set(file, {
+      lastOwnSeq:
+        last !== null && last.replica === replica && signed(last)
+          ? last.seq
+          : null,
+      idle: gave ? 0 : (before?.idle ?? 0) + 1,
+    });
+  }
+
+  // Keeps the whole read cache under MAX_CACHE_BYTES, dropping files in
+  // insertion order (the oldest reads first).
+  private capCache(): void {
+    let total = this.cachedBytes();
+    for (const [file, held] of this.segmentCache) {
+      if (total <= MAX_CACHE_BYTES) return;
+      total -= held.lines.reduce((sum, l) => sum + l.line.length, 0);
+      this.segmentCache.delete(file);
+    }
+  }
+
+  /** Replicas whose reads the budget cut short on two or more passes in a
+   *  row: their directories may hold files that crowd out the real log. */
+  starvedReplicas(): string[] {
+    return [...this.cutPasses]
+      .filter(([, n]) => n >= 2)
+      .map(([replica]) => replica)
+      .sort();
   }
 
   /** Characters of segment lines the read cache holds. */

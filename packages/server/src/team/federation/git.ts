@@ -3,10 +3,11 @@ import {
   opHash,
   signText,
   TAG,
+  verifyEntry,
 } from '@dispatch/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 
-import type { SignedAcks, SyncRepo } from '../boardSync/repo.js';
+import type { ReadHints, SignedAcks, SyncRepo } from '../boardSync/repo.js';
 import { TransportOffline } from './transport.js';
 import type {
   FederationTransport,
@@ -25,7 +26,25 @@ export interface GitTransportDeps {
   ownLog: () => LogEntry[];
   /** The seqs pruned to stubs on the branch, so the local log stubs them too. */
   onPruned?: (seqs: number[]) => void;
+  /** What orders a pull's segment reads: cursor heads and signature checks. */
+  readHints?: () => ReadHints;
+  /** Replicas whose reads the budget cut short on consecutive pulls. */
+  onStarved?: (replicas: string[]) => void;
   now: () => Date;
+}
+
+/** Whether `e` is a well-formed op signed with `signPub`, linked to the prev
+ *  it names; for ordering reads only, the pass still verifies the chain. */
+export function signedEntry(e: LogEntry, signPub: string): boolean {
+  const before =
+    e.type === 'key'
+      ? null
+      : {
+          seq: e.seq - 1,
+          hash: e.prev,
+          hlc: `0000000000000.0000.${e.replica}`,
+        };
+  return verifyEntry(before, e, signPub).ok;
 }
 
 // The git half of the seam: publish commits into the clone, pull runs the
@@ -67,7 +86,9 @@ export class GitFederationTransport implements FederationTransport {
     this.lastError = null;
     this.unpublished = 0;
     this.lastExchangeAt = this.deps.now().toISOString();
-    return this.deps.repo.readV2(since);
+    const entries = this.deps.repo.readV2(since, this.deps.readHints?.());
+    this.deps.onStarved?.(this.deps.repo.starvedReplicas());
+    return entries;
   }
 
   async ack(through: Watermarks): Promise<void> {

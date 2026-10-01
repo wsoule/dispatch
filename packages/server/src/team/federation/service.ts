@@ -566,6 +566,12 @@ export class FederationService {
         (read?.seq === cut.afterSeq
           ? read.hash
           : (this.seenHash(replica, cut.afterSeq) ?? undefined));
+      // Past the cut with its hash pruned: the history there cannot be checked.
+      if (hash === undefined && read !== null && read.seq > cut.afterSeq)
+        this.opts.fed.problem(
+          `team:cut:${replica}`,
+          `the revocation of ${replica} names seq ${cut.afterSeq}, older than the hashes this machine keeps; its history there cannot be checked`
+        );
       if (hash === undefined || hash === cut.afterHash) continue;
       const reason = `${replica}'s log fails verification at seq ${cut.afterSeq}: it shows another history than the one its revocation names; revoke it, or have it push again`;
       v.entries = v.entries.filter(({ entry }) => entry.seq < cut.afterSeq);

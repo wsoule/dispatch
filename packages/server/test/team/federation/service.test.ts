@@ -209,6 +209,38 @@ describe('FederationService', () => {
     expect(seqs).toEqual([head - 2, head - 1, head]);
   });
 
+  // A late revocation naming a seq whose hash was pruned here cannot be
+  // checked against this machine's history; it says so.
+  it('names a cut it cannot check because the hash at afterSeq was pruned', async () => {
+    const remote = new MemoryRemote();
+    const v1 = new MemoryV1();
+    const ada = serviceReplica('ada', remote, v1, { seenOpsKept: 2 });
+    const bob = serviceReplica('bob', remote, v1);
+    const cy = serviceReplica('cy', remote, v1);
+    open.push(ada, bob, cy);
+    ada.roster.found('acme');
+    await settle(ada, bob, cy);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    ada.roster.admit(cy.fed.replica, { fingerprint: fp(cy) });
+    ada.roster.setRole(cy.fed.replica, 'admin');
+    await settle(ada, bob, cy);
+    bob.store.create({ title: 'seen by cy' });
+    await settle(bob, ada, cy);
+    for (const n of [1, 2, 3, 4, 5]) bob.store.create({ title: `t${n}` });
+    await settle(bob, ada);
+    cy.roster.revoke(bob.fed.replica, 'late');
+    await settle(cy, ada);
+    expect(
+      ada.fed
+        .problems()
+        .some(
+          (p) =>
+            p.subject === `team:cut:${bob.fed.replica}` &&
+            p.message.includes('cannot be checked')
+        )
+    ).toBe(true);
+  });
+
   // FW-R23: a reader follows the prev chain, so a junk line with a high seq
   // and a duplicate of a real op neither halt a log nor hide later ops.
   it('follows the chain past a junk high seq and a duplicate', async () => {
@@ -726,5 +758,42 @@ describe('FederationService', () => {
         )
     ).toBe(true);
     expect(bob.fed.cursor(ada.fed.replica).halted).toBeNull();
+  });
+
+  // S1: a mail stub verifies, so with its full op beside it the sort decides;
+  // placed first, it still loses to the full op.
+  it('reads the full mail op when its valid stub comes first on the branch', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const op = ada.fed.append({
+      type: 'mail',
+      seal: (stamp) =>
+        sealPayload({
+          replica: ada.fed.replica,
+          seq: stamp.seq,
+          type: 'mail',
+          payload: { n: 1 },
+          recipients: new Map([[bob.fed.replica, bob.fed.keys.sealPub]]),
+        }),
+    });
+    await ada.service.syncNow();
+    const log = remote.logs.get(ada.fed.replica) ?? [];
+    const full = log.find((e) => e.seq === op.seq) as FederatedOp;
+    remote.logs.set(ada.fed.replica, [
+      ...log.filter((e) => e.seq !== op.seq),
+      stubOf(full),
+      full,
+    ]);
+    await bob.service.syncNow();
+    expect(
+      bob.fed.problems().some((p) => p.message.includes('was pruned'))
+    ).toBe(false);
+    expect(bob.fed.cursor(ada.fed.replica).head?.seq).toBe(op.seq);
   });
 });
