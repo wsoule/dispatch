@@ -69,13 +69,30 @@ function writeExported(store: MemoryStore, ids: ReadonlySet<string>): void {
   if (store.meta(EXPORTED_KEY) !== value) store.setMeta(EXPORTED_KEY, value);
 }
 
-// Whether a restore already took `<id>.md` in: an entry holds its origin, or
-// a proposal holding it was decided; an open one is not yet settled.
-function restoredFrom(store: MemoryStore, id: string): boolean {
-  const origin = `receipts:${id}`;
-  if (store.entryByOrigin(origin) !== null) return true;
-  const proposal = store.proposalByOrigin(origin);
-  return proposal !== null && proposal.state !== 'open';
+// One restore attempt of `<id>.md` per origin: `receipts:<id>`, then `/2`,
+// `/3` after each proposal that expired undecided.
+interface RestoreAttempts {
+  // An entry, or an open, approved or rejected proposal, holds an origin.
+  settled: boolean;
+  // Some entry or approved or rejected proposal holds one.
+  owned: boolean;
+  // The first origin nothing holds yet.
+  next: string;
+}
+
+function restoreAttempts(store: MemoryStore, id: string): RestoreAttempts {
+  const out = { settled: false, owned: false, next: '' };
+  for (let n = 1; ; n++) {
+    const origin = n === 1 ? `receipts:${id}` : `receipts:${id}/${n}`;
+    const entry = store.entryByOrigin(origin);
+    const proposal = store.proposalByOrigin(origin);
+    if (entry === null && proposal === null) return { ...out, next: origin };
+    if (entry !== null) out.owned = true;
+    if (proposal?.state === 'approved' || proposal?.state === 'rejected')
+      out.owned = true;
+    if (entry !== null || (proposal !== null && proposal.state !== 'expired'))
+      out.settled = true;
+  }
 }
 
 // Writes every team entry of `shared()`, in any state; a file is removed only
@@ -109,7 +126,10 @@ export function memoryReceiptsStep(
     for (const file of readdirSync(out).sort()) {
       const id = receiptId(file);
       if (!file.endsWith('.md') || (id !== null && wanted.has(id))) continue;
-      if (id !== null && (exported.has(id) || restoredFrom(store, id))) {
+      if (
+        id !== null &&
+        (exported.has(id) || restoreAttempts(store, id).owned)
+      ) {
         rmSync(join(out, file));
         removed++;
       } else if (pending.length === 0) {
@@ -171,12 +191,10 @@ async function restoreFile(
     return {
       problem: `body: over the ${MEMORY_LIMITS.bodyBytes}-byte limit`,
     };
-  const origin = `receipts:${id}`;
-  if (
-    shared.entryByOrigin(origin) !== null ||
-    shared.proposalByOrigin(origin) !== null
-  )
-    return 'skipped';
+  // A restore made before is skipped, unless every attempt expired undecided.
+  const attempts = restoreAttempts(shared, id);
+  if (attempts.settled) return 'skipped';
+  const origin = attempts.next;
   try {
     await engine.submitProposal(RESTORER, {
       action: 'add',

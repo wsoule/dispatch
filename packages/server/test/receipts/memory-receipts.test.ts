@@ -126,12 +126,13 @@ describe('the memory receipts step', () => {
     expect(files()).toEqual([`${kept.id}.md`, stranger].sort());
   });
 
-  it('owns a file whose id a restored entry or a decided restore proposal names', async () => {
+  it('owns a file whose id a restored entry or an approved or rejected restore proposal names', async () => {
     const t = testEngine();
     t.host.raise = () => Promise.resolve('m-gate');
     const approved = 'mem-01K00000000000000000000001';
     const rejected = 'mem-01K00000000000000000000002';
     const waiting = 'mem-01K00000000000000000000003';
+    const expired = 'mem-01K00000000000000000000004';
     const restoredEntry = seed(t, 'team', 'restored', {
       origin: `receipts:${approved}`,
     });
@@ -164,14 +165,24 @@ describe('the memory receipts step', () => {
       expired: false,
     });
     await propose(waiting, 'waiting');
+    const lapsed = (await propose(expired, 'expired')) as { proposal: string };
+    t.engine.applyGateAnswer({
+      proposalId: lapsed.proposal,
+      gateId: 'm-gate',
+      choice: 'reject',
+      by: 'agent:dispatch',
+      reason: '',
+      expired: true,
+    });
     mkdirSync(memoryDir(), { recursive: true });
-    for (const id of [approved, rejected, waiting])
+    for (const id of [approved, rejected, waiting, expired])
       writeFileSync(join(memoryDir(), `${id}.md`), 'from the old log\n');
     const out = memoryReceiptsStep(() => t.shared, restoreDir)(dir);
     expect(out.removed).toBe(2);
-    expect(out.problems).toHaveLength(1);
-    expect(out.problems[0]).toContain(`${waiting}.md`);
-    expect(files()).toEqual([`${restoredEntry.id}.md`, `${waiting}.md`].sort());
+    expect(out.problems).toHaveLength(2);
+    expect(files()).toEqual(
+      [`${restoredEntry.id}.md`, `${waiting}.md`, `${expired}.md`].sort()
+    );
   });
 
   it('keeps unknown files while a restore is staged, but still prunes its own', () => {
@@ -334,6 +345,37 @@ describe('a staged memory restore', () => {
     );
     expect(again).toMatchObject({ restored: 0, skipped: 1, problems: [] });
     expect(t.shared.listProposals()).toHaveLength(1);
+  });
+
+  it('proposes again a restore whose proposal expired undecided', async () => {
+    const t = gatedEngine();
+    const lost = lostEntry('expired once');
+    stage(lost);
+    await applyStagedMemoryRestore(t.engine, t.shared, restoreDir);
+    const [first] = t.shared.listProposals();
+    t.engine.applyGateAnswer({
+      proposalId: first.id,
+      gateId: 'm-gate',
+      choice: 'reject',
+      by: 'agent:dispatch',
+      reason: '',
+      expired: true,
+    });
+    stage(lost);
+    const again = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(again).toMatchObject({ restored: 1, skipped: 0, problems: [] });
+    const open = t.shared.listProposals({ states: ['open'] });
+    expect(open).toHaveLength(1);
+    expect(open[0].origin).toStartWith(`receipts:${lost.id}`);
+    // A third staging finds the open retry and skips.
+    stage(lost);
+    expect(
+      await applyStagedMemoryRestore(t.engine, t.shared, restoreDir)
+    ).toMatchObject({ restored: 0, skipped: 1 });
   });
 
   it('refuses symlinks, oversized files, foreign names and broken input, and keeps the staging', async () => {
