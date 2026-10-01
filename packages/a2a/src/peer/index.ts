@@ -47,3 +47,5 @@ export {
   TRACK_LIMIT_MS,
 } from './retry.js';
 export type { RetryDecision } from './retry.js';
+export { PeerClient } from './client.js';
+export type { PeerClientOptions, PeerSendResult } from './client.js';
