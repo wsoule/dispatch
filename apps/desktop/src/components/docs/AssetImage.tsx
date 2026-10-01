@@ -11,7 +11,8 @@ interface AssetImageProps {
 }
 
 /** A doc preview's image: `asset:` names one of the doc's stored images, read
- *  through the docs API into a blob URL revoked on unmount; other sources pass through. */
+ *  through the docs API into a blob URL revoked on unmount; any other source
+ *  becomes a link, never a loaded image. */
 export function AssetImage({ client, docId, src, alt }: AssetImageProps) {
   const name = assetNameOf(src);
   const key = name === null ? null : `${docId}/${name}`;
@@ -51,5 +52,12 @@ export function AssetImage({ client, docId, src, alt }: AssetImageProps) {
       );
     return url === null ? null : <img src={url} alt={alt ?? ''} />;
   }
-  return <img src={src} alt={alt ?? ''} />;
+  // A remote image would load from someone else's server on every view (a
+  // tracking pixel), so it is shown as a link, never fetched.
+  if (src === undefined || src === '') return null;
+  return (
+    <a href={src} target="_blank" rel="noreferrer noopener">
+      {`[image: ${alt !== undefined && alt !== '' ? alt : src}]`}
+    </a>
+  );
 }

@@ -39,7 +39,7 @@ test('resolves asset: through the docs API into a blob URL, revoked on unmount',
   }
 });
 
-test('never fetches a malformed asset name, and shows other images as they are', () => {
+test('never fetches a malformed asset name, and never loads a remote image', () => {
   const fetchDocAsset = mock(() => Promise.resolve(new Blob()));
   render(
     <AssetImage
@@ -58,9 +58,11 @@ test('never fetches a malformed asset name, and shows other images as they are',
       alt="remote"
     />
   );
-  expect(screen.getByRole('img', { name: 'remote' }).getAttribute('src')).toBe(
-    'https://example.com/x.png'
-  );
+  // A remote image is never loaded (no tracking pixels): a link stands in.
+  expect(screen.queryByRole('img', { name: 'remote' })).toBeNull();
+  expect(
+    screen.getByRole('link', { name: /remote/ }).getAttribute('href')
+  ).toBe('https://example.com/x.png');
   expect(fetchDocAsset).not.toHaveBeenCalled();
 });
 
