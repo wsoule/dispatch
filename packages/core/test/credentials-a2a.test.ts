@@ -14,8 +14,10 @@ import {
   clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
+  readA2ASigningKey,
   readCredentials,
   readPeerCredential,
+  writeA2ASigningKey,
   writePeerCredential,
   writeProjectCredential,
 } from '../src/credentials.js';
@@ -110,5 +112,35 @@ describe('peer credentials', () => {
     writePeerCredential(ROOT, 'acme', { scheme: 'bearer', token: 'a' });
     expect(readPeerCredential(ROOT, '__proto__')).toBeNull();
     expect(readPeerCredential(ROOT, 'constructor')).toBeNull();
+  });
+});
+
+describe('the A2A card-signing key', () => {
+  const KEY = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', d: 'd' };
+
+  it('round-trips per project in the 0600 file', () => {
+    expect(readA2ASigningKey(ROOT)).toBeNull();
+    writeA2ASigningKey(ROOT, KEY);
+    expect(readA2ASigningKey(ROOT)).toEqual(KEY);
+    expect(readA2ASigningKey('/work/other')).toBeNull();
+    expect(statSync(credentialsPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it('lives beside the peer credentials without either disturbing the other', () => {
+    writePeerCredential(ROOT, 'acme', { scheme: 'bearer', token: 't' });
+    writeA2ASigningKey(ROOT, KEY);
+    writePeerCredential(ROOT, 'beta', { scheme: 'bearer', token: 'b' });
+    expect(readA2ASigningKey(ROOT)).toEqual(KEY);
+    clearPeerCredential(ROOT, 'acme');
+    clearPeerCredential(ROOT, 'beta');
+    expect(readA2ASigningKey(ROOT)).toEqual(KEY);
+    expect(readPeerCredential(ROOT, 'acme')).toBeNull();
+  });
+
+  it('reads a malformed key as none', () => {
+    writeRaw({ a2a: { signingKey: { kty: 7 } } });
+    expect(readA2ASigningKey(ROOT)).toBeNull();
+    writeRaw({ a2a: { signingKey: 'x' } });
+    expect(readA2ASigningKey(ROOT)).toBeNull();
   });
 });

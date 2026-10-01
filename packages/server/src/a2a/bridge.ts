@@ -50,6 +50,7 @@ import {
   resolveListener,
   writeListenerSettings,
 } from './settings.js';
+import { CardSigner, loadOrCreateSigningKey } from './signing.js';
 import { BridgeWatch } from './watch.js';
 
 interface ListenerStatus {
@@ -191,6 +192,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let peers: PeerService | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
+  // Loaded on the first card; null (with the reason) when it cannot be.
+  let signer: CardSigner | null | undefined;
+  let signerError: string | null = null;
   if (store === null) {
     messaging.setExternalPolicy(bridgeExternalPolicy(null, null));
   } else {
@@ -225,6 +229,18 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       },
       prOpen: deps.prOpen,
       runResults: new RunResultsMemo(),
+      signer: () => {
+        if (signer !== undefined) return signer;
+        try {
+          signer = new CardSigner(loadOrCreateSigningKey(rootDir));
+        } catch (err) {
+          // The message names the problem, never the key.
+          signerError = err instanceof Error ? err.message : 'unknown error';
+          console.error(`dispatchd: A2A card signing is off: ${signerError}`);
+          signer = null;
+        }
+        return signer;
+      },
     };
     // Push delivery returns at once and runs on its own chains, so a slow
     // webhook never delays the watch, its streams or the broadcast.
@@ -347,7 +363,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       listening: url() !== null,
       url: url(),
       error: dbError ?? settingsError ?? openError,
-      warnings: a2aConfig(rootDir).warnings,
+      warnings: [
+        ...a2aConfig(rootDir).warnings,
+        ...(signerError === null
+          ? []
+          : [`card signing is off: ${signerError}`]),
+      ],
       legacyClients,
       settings,
       teamTls: deps.teamTls ?? null,

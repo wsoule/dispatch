@@ -1,4 +1,4 @@
-import { openSqliteDb, TaskStore } from '@dispatch/core';
+import { openSqliteDb, TaskStore, writeA2ASigningKey } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
@@ -409,6 +409,59 @@ describe('the A2A listener', () => {
     expect(status).toMatchObject({ listening: true, error: null });
     const card = await rawFetch(`${status.url}/.well-known/agent-card.json`);
     expect(card.status).toBe(200);
+  });
+
+  it('serves a signed card and the JWKS holding the key its signature names', async () => {
+    const h = await boot();
+    const port = await freePort();
+    const status = await h.a2a.applySettings({
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      port,
+    });
+    expect(status.listening).toBe(true);
+    const card = (await (
+      await rawFetch(`${status.url}/.well-known/agent-card.json`)
+    ).json()) as { signatures?: { protected: string }[] };
+    const header = JSON.parse(
+      Buffer.from(card.signatures?.[0]?.protected ?? '', 'base64url').toString(
+        'utf8'
+      )
+    ) as { kid: string; jku: string };
+    expect(header.jku).toBe(`${status.url}/.well-known/jwks.json`);
+    const jwks = (await (
+      await rawFetch(`${status.url}/.well-known/jwks.json`)
+    ).json()) as { keys: Record<string, string>[] };
+    expect(jwks.keys.map((k) => k.kid)).toEqual([header.kid]);
+    expect(jwks.keys[0]).not.toHaveProperty('d');
+    expect(h.a2a.status().warnings).toEqual([]);
+  });
+
+  it('serves the card unsigned, with a warning, when the stored key is unusable', async () => {
+    writeA2ASigningKey(root, { kty: 'EC', crv: 'P-256', x: 'xx', y: 'yy' });
+    const h = await boot();
+    const port = await freePort();
+    const status = await h.a2a.applySettings({
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      port,
+    });
+    const spy = spyOn(console, 'error').mockImplementation(() => undefined);
+    let card: { signatures?: unknown[] };
+    try {
+      card = (await (
+        await rawFetch(`${status.url}/.well-known/agent-card.json`)
+      ).json()) as { signatures?: unknown[] };
+    } finally {
+      spy.mockRestore();
+    }
+    expect(card.signatures ?? []).toEqual([]);
+    expect((await rawFetch(`${status.url}/.well-known/jwks.json`)).status).toBe(
+      404
+    );
+    expect(h.a2a.status().warnings).toEqual([
+      'card signing is off: the stored card-signing key is not an ES256 private key',
+    ]);
   });
 
   it('answers an unexpected throw with an opaque 500, never a stack or a path', async () => {

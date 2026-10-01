@@ -5,6 +5,7 @@ import type {
   BridgePort,
   Caller,
   CardInputs,
+  CardRequest,
   ContinueInput,
   ContinueResult,
   HandoffStatuses,
@@ -56,6 +57,7 @@ import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
 import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
+import type { CardSigner } from './signing.js';
 import type { BridgeWatch } from './watch.js';
 
 const MINUTE_MS = 60_000;
@@ -97,6 +99,8 @@ export interface BridgeDeps {
   now?: () => Date;
   // Resolves webhook names for the push guard; tests swap it.
   lookup?: LookupAll;
+  // The card signer, created on first use; null serves the card unsigned.
+  signer?: () => CardSigner | null;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
@@ -310,20 +314,29 @@ export class DaemonBridgePort implements BridgePort {
     );
   }
 
-  card(): Promise<CardInputs> {
-    return settle(() => {
-      const policy = this.deps.policy();
-      const base = this.deps.cardBase();
-      return {
-        name: policy.name ?? basename(this.deps.rootDir),
-        description: policy.description,
-        publicUrl: base.publicUrl,
-        version: base.version,
-        skills: offeredSkills(policy.skills, this.deps.statuses()),
-        blockingWaitSec: policy.blockingWaitSec,
-        pushNotifications: true,
-      };
-    });
+  // `req` comes only from a trusted host (T36), never from a request's Host
+  // or X-Forwarded-* headers; the listener's card uses the configured URL.
+  // `req` comes only from a trusted host (T36), never from a request's Host
+  // or X-Forwarded-* headers; the listener's card uses the configured URL.
+  async card(req: CardRequest = {}): Promise<CardInputs> {
+    const policy = this.deps.policy();
+    const base = this.deps.cardBase();
+    const inputs: CardInputs = {
+      name: policy.name ?? basename(this.deps.rootDir),
+      description: policy.description,
+      publicUrl: req.publicUrl ?? base.publicUrl,
+      version: base.version,
+      skills: offeredSkills(policy.skills, this.deps.statuses()),
+      blockingWaitSec: policy.blockingWaitSec,
+      pushNotifications: req.standalone !== true,
+    };
+    const signer = this.deps.signer?.() ?? null;
+    if (signer === null) return inputs;
+    return {
+      ...inputs,
+      signatures: await signer.signaturesFor(inputs),
+      jwks: signer.jwks(),
+    };
   }
 
   // A replayed messageId returns its first result before any limit applies;

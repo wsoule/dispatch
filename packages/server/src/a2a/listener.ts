@@ -6,6 +6,7 @@ import { clientIpFor } from './settings.js';
 
 const MAX_REQUEST_BODY = 256 * 1024;
 const CARD_PATH = '/.well-known/agent-card.json';
+const JWKS_PATH = '/.well-known/jwks.json';
 const BASE_PATH = '/a2a/v1';
 
 interface ListenerDeps {
@@ -70,7 +71,11 @@ export class A2AListener {
       srv.requestIP(req)?.address ?? null,
       listener.trustForwardedFor
     );
-    if (pathname !== CARD_PATH && !pathname.startsWith(`${BASE_PATH}/`)) {
+    if (
+      pathname !== CARD_PATH &&
+      pathname !== JWKS_PATH &&
+      !pathname.startsWith(`${BASE_PATH}/`)
+    ) {
       this.access(clientIp, req.method, pathname, 404, started);
       return new Response('not found', { status: 404 });
     }

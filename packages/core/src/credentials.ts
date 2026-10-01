@@ -23,8 +23,12 @@ export interface PeerCredential {
 export interface ProjectCredentials {
   linear?: { apiKey: string };
   typesafe?: { apiKey: string };
-  /** Outbound A2A peers' credentials by alias; never in config.yml or a2a.db. */
-  a2a?: { peers: Record<string, PeerCredential> };
+  /** Outbound A2A peers' credentials by alias, and the key that signs this
+   *  project's agent card; never in config.yml or a2a.db. */
+  a2a?: {
+    peers?: Record<string, PeerCredential>;
+    signingKey?: Record<string, string>;
+  };
 }
 
 /** User-level secrets. Never written to a project's `.dispatch/`. */
@@ -204,7 +208,7 @@ export function writePeerCredential(
     string,
     PeerCredential
   >;
-  writeProjectEntry(file, key, { ...entry, a2a: { peers } });
+  writeProjectEntry(file, key, { ...entry, a2a: { ...entry.a2a, peers } });
 }
 
 export function clearPeerCredential(rootDir: string, alias: string): void {
@@ -214,10 +218,40 @@ export function clearPeerCredential(rootDir: string, alias: string): void {
   const peers = { ...peersOf(entry) } as Record<string, PeerCredential>;
   if (entry === undefined || !Object.hasOwn(peers, alias)) return;
   delete peers[alias];
-  const next: ProjectCredentials = { ...entry };
-  if (Object.keys(peers).length === 0) delete next.a2a;
-  else next.a2a = { peers };
+  const a2a: NonNullable<ProjectCredentials['a2a']> = { ...entry.a2a, peers };
+  if (Object.keys(peers).length === 0) delete a2a.peers;
+  const next: ProjectCredentials = { ...entry, a2a };
+  if (Object.keys(a2a).length === 0) delete next.a2a;
   writeProjectEntry(file, key, next);
+}
+
+/** The project's card-signing key as a private JWK, or null when absent or malformed. */
+export function readA2ASigningKey(
+  rootDir: string
+): Record<string, string> | null {
+  const raw: unknown =
+    readCredentials().projects?.[normalizeProjectPath(rootDir)]?.a2a
+      ?.signingKey;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return null;
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0 || entries.some(([, v]) => typeof v !== 'string'))
+    return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+/** Stores the project's card-signing key in the 0600 credentials file. */
+export function writeA2ASigningKey(
+  rootDir: string,
+  jwk: Record<string, string>
+): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const entry = file.projects?.[key] ?? {};
+  writeProjectEntry(file, key, {
+    ...entry,
+    a2a: { ...entry.a2a, signingKey: { ...jwk } },
+  });
 }
 
 /** Where a resolved key came from — in precedence order — or `null` when there is none. */
