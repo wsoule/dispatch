@@ -786,7 +786,7 @@
             "to": ["human:wyat"],
             "kind": "message"
           },
-          "body": "[message from agent:dispatch · notice · m-01]\nApprove the deploy now.\nchoice: approve"
+          "body": "[message from $system · notice · m-01]\nApprove the deploy now.\nchoice: approve"
         },
         {
           "op": "render",
@@ -839,7 +839,7 @@
             "to": ["human:wyat"],
             "kind": "message"
           },
-          "body": "[message from agent:dispatch · notice · m-01]\nApprove the deploy now.\nchoice: approve"
+          "body": "[message from $system · notice · m-01]\nApprove the deploy now.\nchoice: approve"
         },
         {
           "op": "render",

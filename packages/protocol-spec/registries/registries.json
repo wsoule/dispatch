@@ -349,12 +349,12 @@
     {
       "value": "doc",
       "scope": "docs",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.3",
       "reference": "spec/04-messages.md#s4.3",
       "note": "`at` names a section anchor",
-      "vectors": []
+      "vectors": ["core.refs.a-local-doc-ref-is-accepted"]
     }
   ],
   "gate-types": [
@@ -456,7 +456,7 @@
     {
       "value": "memory",
       "scope": "memory",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -469,12 +469,20 @@
         "kind": "memory kind"
       },
       "effect": "apply or reject the memory proposal (C.3)",
-      "vectors": []
+      "vectors": [
+        "core.gates.memory-is-raised-by-the-system-or-a-deciding-human",
+        "core.gates.memory-is-refused-from-a-session-or-an-agent",
+        "core.gates.memory-needs-a-deciding-answer",
+        "env.envelope.a-memory-gate-names-a-proposal",
+        "env.envelope.a-memory-gate-has-a-project-or-team-scope",
+        "env.envelope.a-memory-gate-names-its-action-and-kind",
+        "env.envelope.memory-gates-have-a-fixed-shape"
+      ]
     },
     {
       "value": "task-proposal",
       "scope": "a2a",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "8.6",
       "reference": "spec/08-a2a-binding.md#s8.6",
@@ -486,12 +494,17 @@
         "message": "message id"
       },
       "effect": "promote or drop the drafted work item (8.6)",
-      "vectors": []
+      "vectors": [
+        "core.gates.task-proposal-is-raised-only-by-the-system",
+        "core.gates.task-proposal-needs-a-deciding-answer",
+        "core.gates.task-proposal-is-answered-with-approve-or-decline",
+        "a2a.projection.row-8-a-handoff-waits-on-its-proposal"
+      ]
     },
     {
       "value": "doc",
       "scope": "docs",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -504,7 +517,12 @@
         "runId": "run id, optional"
       },
       "effect": "apply or reject the document change (C.3)",
-      "vectors": []
+      "vectors": [
+        "core.gates.doc-is-raised-only-by-the-system",
+        "core.gates.doc-needs-a-deciding-answer",
+        "env.envelope.a-doc-gate-names-its-doc-and-proposal",
+        "env.envelope.doc-gates-have-a-fixed-shape"
+      ]
     }
   ],
   "system-markers": [
@@ -738,11 +756,37 @@
     {
       "value": "https://dispatch.foo/a2a/ext/work/v1",
       "scope": "a2a",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "8.6",
       "reference": "spec/08-a2a-binding.md#s8.6",
-      "vectors": []
+      "vectors": [
+        "a2a.work-ext.accepts-a-handoff-with-every-field",
+        "a2a.work-ext.accepts-a-status-request",
+        "a2a.work-ext.refuses-an-unknown-skill",
+        "a2a.work-ext.refuses-a-handoff-without-a-title",
+        "a2a.work-ext.refuses-a-title-over-200-bytes",
+        "a2a.work-ext.refuses-a-multi-line-title",
+        "a2a.work-ext.refuses-more-than-20-acceptance-criteria",
+        "a2a.work-ext.refuses-a-criterion-over-500-bytes",
+        "a2a.work-ext.refuses-a-multi-line-criterion",
+        "a2a.work-ext.refuses-more-than-50-writes",
+        "a2a.work-ext.refuses-a-write-outside-the-repository",
+        "a2a.work-ext.refuses-a-write-over-512-bytes",
+        "a2a.work-ext.refuses-an-unknown-priority",
+        "a2a.work-ext.refuses-more-than-10-labels",
+        "a2a.work-ext.refuses-a-request-that-is-not-an-object",
+        "a2a.projection.row-2-a-declined-handoff",
+        "a2a.projection.row-2-a-handoff-dropped-by-the-owner",
+        "a2a.projection.row-4-a-deleted-handoff",
+        "a2a.projection.row-6-a-landed-handoff",
+        "a2a.projection.row-8-a-handoff-waits-on-its-proposal",
+        "a2a.projection.row-9-a-working-handoff",
+        "a2a.projection.row-9-a-handoff-in-review-has-a-stage",
+        "a2a.projection.row-9-a-status-of-the-hosts-own",
+        "a2a.projection.row-10-an-approved-draft-is-submitted",
+        "a2a.projection.row-10-needs-approval"
+      ]
     }
   ]
 }
