@@ -1,11 +1,15 @@
-import { REPLICA_ID, stubOf } from '@dispatch/protocol/federation';
+import {
+  MAX_OP_BYTES,
+  REPLICA_ID,
+  stubOf,
+} from '@dispatch/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -14,6 +18,13 @@ import { join } from 'node:path';
 import type { AsyncGitRunner } from '../../sync/worktree.js';
 import type { Watermarks } from '../federation/transport.js';
 import type { BoardOp } from './engine.js';
+import {
+  listDir,
+  ownFile,
+  readCapped,
+  realDir,
+  regularFile,
+} from './safeFs.js';
 
 // The git half of board sync: a clone of one branch, where every replica keeps
 // an append-only log of the changes it made, `ops/<replica>.jsonl`.
@@ -31,6 +42,11 @@ const ACKS = 'acks.json';
 const SEGMENT_MAX_OPS = 1000;
 const SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
 const SEGMENT = /^\d{12}\.jsonl$/;
+// Reads are size-capped: a segment never grows past one op over its limit, an
+// acks.json is one small map, and a v1 log is read whole.
+const MAX_SEGMENT_READ = SEGMENT_MAX_BYTES + MAX_OP_BYTES;
+const MAX_ACKS_READ = 1024 * 1024;
+const MAX_V1_READ = 256 * 1024 * 1024;
 const segmentName = (firstSeq: number): string =>
   `${String(firstSeq).padStart(12, '0')}.jsonl`;
 
@@ -123,13 +139,16 @@ export class SyncRepo {
       // made; follow it rather than syncing with the old one forever.
       await this.run(['remote', 'set-url', 'origin', this.remoteUrl]);
     }
-    mkdirSync(join(this.dir, OPS_DIR), { recursive: true });
+    // A symlink on the branch checks out as a plain file naming its target.
+    await this.run(['config', 'core.symlinks', 'false']);
+    if (!realDir(join(this.dir, OPS_DIR)))
+      ownFile(this.dir, `${OPS_DIR}/.keep`);
   }
 
   /** Appends this replica's changes to its log and commits them. */
   async write(ops: BoardOp[]): Promise<void> {
     if (ops.length === 0) return;
-    const file = join(this.dir, OPS_DIR, `${this.replica}.jsonl`);
+    const file = ownFile(this.dir, `${OPS_DIR}/${this.replica}.jsonl`);
     appendFileSync(file, ops.map((op) => `${JSON.stringify(op)}\n`).join(''));
     await this.commitPaths(
       [join(OPS_DIR, `${this.replica}.jsonl`)],
@@ -147,7 +166,8 @@ export class SyncRepo {
       '-m',
       message,
     ]);
-    if (!committed.ok)
+    // Nothing changed is not a failure: the branch already holds this.
+    if (!committed.ok && !/nothing (added )?to commit/.test(committed.out))
       throw new Error(`could not commit sync log: ${committed.out}`);
   }
 
@@ -158,11 +178,11 @@ export class SyncRepo {
     limits = { ops: SEGMENT_MAX_OPS, bytes: SEGMENT_MAX_BYTES }
   ): Promise<void> {
     if (entries.length === 0) return;
-    const dir = join(this.dir, FED_DIR, this.replica);
-    mkdirSync(dir, { recursive: true });
+    const rel = (name: string) => `${FED_DIR}/${this.replica}/${name}`;
     let current = this.segments(this.replica).at(-1) ?? null;
-    let count = current === null ? 0 : completeLines(join(dir, current)).length;
-    let size = current === null ? 0 : statSync(join(dir, current)).size;
+    const path = (name: string) => ownFile(this.dir, rel(name));
+    let count = current === null ? 0 : completeLines(path(current)).length;
+    let size = current === null ? 0 : statSync(path(current)).size;
     for (const e of entries) {
       const line = `${JSON.stringify(e)}\n`;
       const bytes = Buffer.byteLength(line);
@@ -175,7 +195,7 @@ export class SyncRepo {
         count = 0;
         size = 0;
       }
-      appendFileSync(join(dir, current), line);
+      appendFileSync(path(current), line);
       count += 1;
       size += bytes;
     }
@@ -189,10 +209,9 @@ export class SyncRepo {
    *  segment holding watermark + 1 onward. Torn last lines are skipped. */
   readV2(since: Watermarks): LogEntry[] {
     const root = join(this.dir, FED_DIR);
-    if (!existsSync(root)) return [];
     const out: LogEntry[] = [];
-    for (const replica of readdirSync(root)) {
-      if (!REPLICA_ID.test(replica)) continue;
+    for (const replica of listDir(root)) {
+      if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
       const cursor = since.get(replica) ?? 0;
       const segments = this.segments(replica);
       let start = 0;
@@ -212,8 +231,6 @@ export class SyncRepo {
 
   /** Writes this replica's acks.json and commits it, only when `through` changed. */
   async writeAcks(acks: SignedAcks): Promise<void> {
-    const dir = join(this.dir, FED_DIR, this.replica);
-    const file = join(dir, ACKS);
     const held = this.readAcks().get(this.replica);
     if (
       held !== undefined &&
@@ -221,7 +238,7 @@ export class SyncRepo {
         JSON.stringify(sortedKeys(acks.through))
     )
       return;
-    mkdirSync(dir, { recursive: true });
+    const file = ownFile(this.dir, `${FED_DIR}/${this.replica}/${ACKS}`);
     writeFileSync(file, `${JSON.stringify(acks)}\n`);
     await this.commitPaths(
       [join(FED_DIR, this.replica, ACKS)],
@@ -233,11 +250,11 @@ export class SyncRepo {
   readAcks(): Map<string, SignedAcks> {
     const root = join(this.dir, FED_DIR);
     const out = new Map<string, SignedAcks>();
-    if (!existsSync(root)) return out;
-    for (const replica of readdirSync(root)) {
-      const file = join(root, replica, ACKS);
-      if (!REPLICA_ID.test(replica) || !existsSync(file)) continue;
-      const acks = parseAcks(readFileSync(file, 'utf8'));
+    for (const replica of listDir(root)) {
+      if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
+      const text = readCapped(join(root, replica, ACKS), MAX_ACKS_READ);
+      if (text === null) continue;
+      const acks = parseAcks(text);
       if (acks !== null && acks.replica === replica) out.set(replica, acks);
     }
     return out;
@@ -246,10 +263,9 @@ export class SyncRepo {
   /** Replaces this replica's full mail and state ops that `prune` accepts
    *  with their signed stubs, committing once; how many it replaced. */
   async pruneOwn(prune: (op: FederatedOp) => boolean): Promise<number> {
-    const dir = join(this.dir, FED_DIR, this.replica);
     let replaced = 0;
     for (const name of this.segments(this.replica)) {
-      const file = join(dir, name);
+      const file = ownFile(this.dir, `${FED_DIR}/${this.replica}/${name}`);
       let changed = false;
       const lines = completeLines(file).map((line) => {
         const entry = parseEntry(line);
@@ -286,9 +302,8 @@ export class SyncRepo {
   // One replica's segment names, sorted by their first seq.
   private segments(replica: string): string[] {
     const dir = join(this.dir, FED_DIR, replica);
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter((f) => SEGMENT.test(f))
+    return listDir(dir)
+      .filter((f) => SEGMENT.test(f) && regularFile(join(dir, f)))
       .sort();
   }
 
@@ -346,15 +361,13 @@ export class SyncRepo {
    * replica's log is append-only, so its first line is its earliest.
    */
   people(): Map<string, string> {
-    const dir = join(this.dir, OPS_DIR);
     const people = new Map<string, string>();
-    if (!existsSync(dir)) return people;
-    for (const file of readdirSync(dir)) {
-      if (!file.endsWith('.jsonl')) continue;
-      const replica = file.slice(0, -'.jsonl'.length);
-      const first = readFileSync(join(dir, file), 'utf8')
-        .split('\n')
-        .find((line) => line.trim() !== '');
+    for (const replica of this.v1Replicas()) {
+      const text = readCapped(
+        join(this.dir, OPS_DIR, `${replica}.jsonl`),
+        MAX_V1_READ
+      );
+      const first = text?.split('\n').find((line) => line.trim() !== '');
       if (first === undefined) continue;
       let hlc: string;
       try {
@@ -383,18 +396,20 @@ export class SyncRepo {
   /** Every replica with a v1 log on the branch, this one included. */
   v1Replicas(): string[] {
     const dir = join(this.dir, OPS_DIR);
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter((file) => file.endsWith('.jsonl'))
+    return listDir(dir)
+      .filter((file) => file.endsWith('.jsonl') && regularFile(join(dir, file)))
       .map((file) => file.slice(0, -'.jsonl'.length));
   }
 
   /** One replica's complete v1 lines, parsed, in file order. */
   readV1(replica: string): BoardOp[] {
-    const file = join(this.dir, OPS_DIR, `${replica}.jsonl`);
-    if (!existsSync(file)) return [];
+    const text = readCapped(
+      join(this.dir, OPS_DIR, `${replica}.jsonl`),
+      MAX_V1_READ
+    );
+    if (text === null) return [];
     const ops: BoardOp[] = [];
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
+    for (const line of text.split('\n')) {
       if (line.trim() === '') continue;
       let op: BoardOp;
       try {
@@ -421,7 +436,8 @@ export function personOf(replica: string): string {
 
 // The lines before the last newline: a torn tail from an unfinished write is dropped.
 function completeLines(file: string): string[] {
-  const text = readFileSync(file, 'utf8');
+  const text = readCapped(file, MAX_SEGMENT_READ);
+  if (text === null) return [];
   const end = text.lastIndexOf('\n');
   if (end < 0) return [];
   return text
@@ -466,9 +482,9 @@ function sortedKeys(o: Record<string, number>): [string, number][] {
 }
 
 function treeBytes(path: string): number {
-  if (!existsSync(path)) return 0;
-  const stat = statSync(path);
-  if (!stat.isDirectory()) return stat.size;
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (stat === undefined) return 0;
+  if (!stat.isDirectory()) return stat.isFile() ? stat.size : 0;
   return readdirSync(path).reduce(
     (sum, name) => sum + treeBytes(join(path, name)),
     0
