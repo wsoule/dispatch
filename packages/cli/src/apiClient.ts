@@ -676,6 +676,107 @@ export interface ApiClient {
   getLicense(): Promise<LicenseStatus>;
   /** Installs a license key (operator tier). */
   installLicense(key: string): Promise<LicenseStatus>;
+  // The signed team roster (decide tier to read, operator tier to change):
+  // build the client on the app token.
+  getTeamKeys(): Promise<TeamKeys>;
+  foundTeam(
+    name?: string
+  ): Promise<{ teamId: string; recoveryCode: string; fingerprint: string }>;
+  trustFounder(fingerprint: string): Promise<void>;
+  inviteToTeam(handle: string): Promise<{ code: string; expires: string }>;
+  joinTeam(code: string): Promise<void>;
+  recoverTeam(code: string): Promise<void>;
+  newRecoveryCode(): Promise<{ recoveryCode: string }>;
+  shareTeamLicense(): Promise<void>;
+  admitReplica(replica: string, body: AdmitBody): Promise<void>;
+  revokeReplica(replica: string, reason?: string): Promise<RosterAnswer>;
+  setReplicaRole(
+    replica: string,
+    role: 'member' | 'admin'
+  ): Promise<RosterAnswer>;
+  setReplicaHosts(replica: string, hosts: string[]): Promise<RosterAnswer>;
+  closeLegacy(): Promise<void>;
+  /** Takes an op no build reads out of every fold, when this admin may. */
+  dismissRosterOp(replica: string, seq: number, hash: string): Promise<void>;
+  /** Lets go of the invite this machine joined with. */
+  abandonInvite(): Promise<void>;
+}
+
+/** What `keys admit` sends. */
+interface AdmitBody {
+  fingerprint: string;
+  handle?: string;
+  role?: 'member' | 'admin';
+  hosts?: string[];
+  observer?: boolean;
+}
+
+/** A roster change's answer: a warning when it could not pull first, and
+ *  pending while its sync is still running. */
+export interface RosterAnswer {
+  warning?: string;
+  pending?: boolean;
+}
+
+/** Mirrors TeamKeys in packages/server/src/team/federation/teamKeys.ts. */
+export interface TeamKeys {
+  machine: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+  };
+  team: {
+    id: string;
+    name: string;
+    founder: { replica: string; handle: string; fingerprint: string };
+  } | null;
+  foundings: { replica: string; fingerprint: string }[];
+  roster: {
+    replica: string;
+    handle: string;
+    device: string;
+    build: string;
+    role: 'member' | 'admin';
+    rank: number | null;
+    hosts: string[];
+    observer: boolean;
+    recovered: boolean;
+    fingerprint: string;
+    lastSeen: string | null;
+    skewMs: number | null;
+  }[];
+  waiting: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+    invitedBy: string | null;
+  }[];
+  invites: { handle: string; expires: string; by: string }[];
+  legacy: { until: string | null; closed: boolean; olderBuilds: string[] };
+  transport: {
+    kind: 'git' | 'relay';
+    lastExchangeAt: string | null;
+    lastError: string | null;
+    unpublished: number;
+    sizeBytes: number | null;
+    acks: Record<string, string>;
+  };
+  license: {
+    seats: number;
+    org: string | null;
+    sharedBy: string | null;
+  } | null;
+  pruningBlockers: {
+    replica: string;
+    handle: string;
+    lastAck: string | null;
+  }[];
+  originWarning: string | null;
+  relayDisclosure: string;
+  warnings: string[];
+  problems: { subject: string; message: string; at: string }[];
 }
 
 /** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts.
@@ -696,6 +797,12 @@ export type SyncStatus =
       people: number;
       seats: number;
       paused: string | null;
+      // From a daemon with federation (FederationStatus); absent on older ones.
+      founded?: boolean;
+      teamId?: string | null;
+      legacyUntil?: string | null;
+      transport?: 'git' | 'relay';
+      federationProblems?: { subject: string; message: string; at: string }[];
     };
 
 /** Mirrors licenseView in packages/server/src/team/routes.ts. */
@@ -861,10 +968,64 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         ...jsonBody({ key }),
         method: 'PUT',
       }),
+    getTeamKeys: () => request(target, '/api/team/keys'),
+    foundTeam: (name) =>
+      request(
+        target,
+        '/api/team/found',
+        jsonBody(name === undefined ? {} : { name })
+      ),
+    trustFounder: async (fingerprint) => {
+      await request(target, '/api/team/trust', jsonBody({ fingerprint }));
+    },
+    inviteToTeam: (handle) =>
+      request(target, '/api/team/invite', jsonBody({ handle })),
+    joinTeam: async (code) => {
+      await request(target, '/api/team/join', jsonBody({ code }));
+    },
+    recoverTeam: async (code) => {
+      await request(target, '/api/team/recover', jsonBody({ code }));
+    },
+    newRecoveryCode: () =>
+      request(target, '/api/team/recovery-key', jsonBody({})),
+    shareTeamLicense: async () => {
+      await request(target, '/api/team/license', jsonBody({}));
+    },
+    admitReplica: async (replica, body) => {
+      await request(target, rosterPath(replica, 'admit'), jsonBody(body));
+    },
+    revokeReplica: (replica, reason) =>
+      request(
+        target,
+        rosterPath(replica, 'revoke'),
+        jsonBody(reason === undefined ? {} : { reason })
+      ),
+    setReplicaRole: (replica, role) =>
+      request(target, rosterPath(replica, 'role'), jsonBody({ role })),
+    setReplicaHosts: (replica, hosts) =>
+      request(target, rosterPath(replica, 'hosts'), jsonBody({ hosts })),
+    closeLegacy: async () => {
+      await request(target, '/api/team/close-legacy', jsonBody({}));
+    },
+    dismissRosterOp: async (replica, seq, hash) => {
+      await request(
+        target,
+        '/api/team/dismiss',
+        jsonBody({ replica, seq, hash })
+      );
+    },
+    abandonInvite: async () => {
+      await request(target, '/api/team/abandon-invite', jsonBody({}));
+    },
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
       });
     },
   };
+}
+
+// A roster action on one replica's key.
+function rosterPath(replica: string, action: string): string {
+  return `/api/team/keys/${encodeURIComponent(replica)}/${action}`;
 }

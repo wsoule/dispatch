@@ -3,10 +3,13 @@ import type { Command } from 'commander';
 import type { SyncStatus } from '../apiClient.js';
 import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
-import { attachToRunningDaemon } from './appToken.js';
+import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 
 /** Board sync's state as a few lines a person can read at a glance. */
-export function describeSync(status: SyncStatus): string[] {
+export function describeSync(
+  status: SyncStatus,
+  opts: { now?: Date; originWarning?: string | null } = {}
+): string[] {
   if (!status.enabled) {
     switch (status.reason) {
       case 'files':
@@ -44,6 +47,21 @@ export function describeSync(status: SyncStatus): string[] {
   for (const problem of status.problems) {
     lines.push(`Problem with ${problem.task}: ${problem.message}`);
   }
+  if (status.founded === true && status.teamId != null)
+    lines.push(
+      `Team ${status.teamId.slice(0, 8)}…, over ${status.transport ?? 'git'}.`
+    );
+  if (status.legacyUntil != null) {
+    const now = (opts.now ?? new Date()).getTime();
+    const days = Math.ceil(
+      (Date.parse(status.legacyUntil) - now) / (24 * 60 * 60 * 1000)
+    );
+    if (days > 0)
+      lines.push(`Older Dispatch builds can sync for ${days} more days.`);
+  }
+  if (opts.originWarning != null) lines.push(opts.originWarning);
+  for (const problem of status.federationProblems ?? [])
+    lines.push(`Team problem with ${problem.subject}: ${problem.message}`);
   return lines;
 }
 
@@ -60,6 +78,24 @@ export function registerBoardSyncCommands(
     return createApiClient(baseUrl, agentToken);
   }
 
+  // The team view's origin warning needs the app token; without one it is
+  // left out rather than failing the status.
+  async function originWarning(): Promise<string | null> {
+    let token: string;
+    try {
+      token = resolveAppToken(undefined, 'dispatch sync status');
+    } catch {
+      return null;
+    }
+    const { baseUrl } = await attachToRunningDaemon(ctx);
+    try {
+      return (await createApiClient(baseUrl, token).getTeamKeys())
+        .originWarning;
+    } catch {
+      return null;
+    }
+  }
+
   sync
     .command('status')
     .description(
@@ -69,7 +105,11 @@ export function registerBoardSyncCommands(
     .action(async (opts: { json?: boolean }) => {
       const status = await (await client()).getSyncStatus();
       if (opts.json === true) ctx.log(JSON.stringify(status, null, 2));
-      else for (const line of describeSync(status)) ctx.log(line);
+      else
+        for (const line of describeSync(status, {
+          originWarning: await originWarning(),
+        }))
+          ctx.log(line);
     });
 
   sync

@@ -50,6 +50,21 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     syncNow: () => Promise.reject(new Error('not used')),
     getLicense: () => Promise.reject(new Error('not used')),
     installLicense: () => Promise.reject(new Error('not used')),
+    getTeamKeys: () => Promise.reject(new Error('not used')),
+    foundTeam: () => Promise.reject(new Error('not used')),
+    trustFounder: () => Promise.reject(new Error('not used')),
+    inviteToTeam: () => Promise.reject(new Error('not used')),
+    joinTeam: () => Promise.reject(new Error('not used')),
+    recoverTeam: () => Promise.reject(new Error('not used')),
+    newRecoveryCode: () => Promise.reject(new Error('not used')),
+    shareTeamLicense: () => Promise.reject(new Error('not used')),
+    admitReplica: () => Promise.reject(new Error('not used')),
+    revokeReplica: () => Promise.reject(new Error('not used')),
+    setReplicaRole: () => Promise.reject(new Error('not used')),
+    setReplicaHosts: () => Promise.reject(new Error('not used')),
+    closeLegacy: () => Promise.reject(new Error('not used')),
+    dismissRosterOp: () => Promise.reject(new Error('not used')),
+    abandonInvite: () => Promise.reject(new Error('not used')),
   };
 }
 
