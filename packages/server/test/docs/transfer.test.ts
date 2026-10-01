@@ -227,7 +227,7 @@ describe('the staged import', () => {
     const team = file(
       'x/team-copy.md',
       renderDocFile(
-        meta('doc-01K5ZZZZZZZZZZZZZZZZZZZZZY', 'team-copy'),
+        meta('doc-01K5ZZZZZZZZZZZZZZZZZZZZZZ', 'team-copy'),
         '# Team copy\nbody\n'
       ),
       '2026-09-27T10:00:00.000Z'
