@@ -312,7 +312,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     }
     // After reconciliation, before any listener opens: relays what boot found held.
     try {
-      outbound = startOutbound(peerService);
+      outbound = startOutbound(peerService, {
+        changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      });
     } catch (err) {
       console.error('dispatchd: the A2A outbound worker did not start', err);
     }

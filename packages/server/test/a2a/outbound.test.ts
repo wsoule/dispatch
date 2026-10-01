@@ -234,6 +234,21 @@ describe('failures', () => {
     await waitFor(() => row(q.id)?.state === 'open');
   });
 
+  it('tells the app when the worker marks a peer auth-failed or disables it', async () => {
+    let broadcasts = 0;
+    const off = f.events.subscribe((event) => {
+      if (event.type === 'a2a.changed') broadcasts += 1;
+    });
+    try {
+      await setPeerEnabled(f.peerDeps(), 'fixture', true, 'wrong-token');
+      await ask();
+      await waitFor(() => f.store.getPeer('fixture')?.status === 'auth-failed');
+      await waitFor(() => broadcasts > 0);
+    } finally {
+      off();
+    }
+  });
+
   it('refreshes the card when the peer answers VERSION_NOT_SUPPORTED, and gives up on that delivery', async () => {
     const before = peer.cardFetches;
     peer.versionNotSupported = true;

@@ -915,12 +915,18 @@ export class OutboundWorker {
   }
 }
 
-// Builds and starts the worker over a peer service, and routes peer changes to it.
+// Builds and starts the worker over a peer service, and routes peer changes to
+// it; `changed` tells the app when the worker itself changes a peer's status.
 export function startOutbound(
   peers: PeerService,
-  opts: { pollMs?: (polls: number) => number; concurrency?: number } = {}
+  opts: {
+    pollMs?: (polls: number) => number;
+    concurrency?: number;
+    changed?: () => void;
+  } = {}
 ): { worker: OutboundWorker; stop: () => void } {
   const d = peers.deps;
+  const { changed = () => {}, ...workerOpts } = opts;
   const worker: OutboundWorker = new OutboundWorker({
     engine: d.engine,
     messages: d.messages,
@@ -930,10 +936,12 @@ export function startOutbound(
     refreshPeer: async (alias) => {
       const row = await refreshPeer(d, peers.notices, alias);
       if (row.status !== 'active') peers.emit(alias, 'disabled');
+      changed();
     },
     markAuthFailed: (alias) => {
       markAuthFailed(d, peers.notices, alias);
       worker.peerGone(alias, 'disabled');
+      changed();
     },
     // Read at call time (d.lookup, not a copy), so a test can swap the resolver.
     guard: async (row) => {
@@ -953,9 +961,10 @@ export function startOutbound(
         `a2a:${alias} was disabled: ${reason}. Check where its name resolves, then enable it in Settings → A2A → Peers.`
       );
       peers.emit(alias, 'disabled');
+      changed();
     },
     now: () => d.now?.() ?? new Date(),
-    ...opts,
+    ...workerOpts,
   });
   const stopWorker = worker.start();
   const offPeers = peers.onChange((alias, what) => {
