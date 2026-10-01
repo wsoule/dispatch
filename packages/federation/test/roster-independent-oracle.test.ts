@@ -14,6 +14,10 @@ const SEEDS = Number(
   process.env.ORACLE_SEEDS ?? (process.env.CI === undefined ? 3000 : 1000)
 );
 
+// The seeds, per generator, whose sets only ground by deferring an up-front
+// removal (FW-R13(e)), over seeds 1-3000.
+const DEFERRED: Record<string, number[]> = { chain: [2094, 2869] };
+
 const A = 'ada-0000000a';
 const B = 'bo-0000000b';
 const E = 'ea-00000031';
@@ -55,9 +59,11 @@ describe('the up-front decisions against an independent oracle', () => {
   for (const [name, gen] of GENERATORS)
     it(`holds on ${name} sets`, () => {
       const skipped: Record<string, number> = {};
+      const deferred: number[] = [];
       let checked = 0;
       for (let seed = 1; seed <= SEEDS; seed++) {
         const verdict = judge(u.input(gen(seed)));
+        if (verdict === 'deferred') deferred.push(seed);
         if (typeof verdict === 'string') {
           skipped[verdict] = (skipped[verdict] ?? 0) + 1;
           continue;
@@ -72,6 +78,10 @@ describe('the up-front decisions against an independent oracle', () => {
         });
       }
       expect(checked).toBeGreaterThan(SEEDS / 2);
+      // FW-R13(e) residuals are pinned, so a new one is a decision to make.
+      expect(deferred).toEqual(
+        (DEFERRED[name] ?? []).filter((seed) => seed <= SEEDS)
+      );
     }, 600_000);
 });
 

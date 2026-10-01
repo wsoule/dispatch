@@ -6,7 +6,7 @@ import type { FoldInput, LaterPairs } from '../src/roster.js';
 // reads which removals the fold decided up front solely to check them.
 
 /** The most removals able to hold their right whose subsets it enumerates. */
-const MAX_COULD = 11;
+const MAX_COULD = 13;
 /** The most removals left open by the up-front decisions it judges. */
 const MAX_OPEN = 11;
 
@@ -37,6 +37,19 @@ export function judge(
 ): IndependentVerdict | Unjudged {
   const probe = resolutionProbe(input, later);
   const n = probe.removals.length;
+  // The fold's own account: every up-front acceptance stands in its answer,
+  // and no up-front void does.
+  const answer = new Set(probe.accepted);
+  const broken = [
+    ...probe.upfront.accepted.filter((i) => !answer.has(i)),
+    ...probe.upfront.decided.filter(
+      (i) => !probe.upfront.accepted.includes(i) && answer.has(i)
+    ),
+  ].map(
+    (i) => `upfront ${probe.removals[i]?.replica}:${probe.removals[i]?.seq}`
+  );
+  if (broken.length > 0)
+    return { unsound: broken, stable: false, wins: false, count: 0 };
   const all = [...Array(n).keys()];
   const under = new Map<number, ReturnType<typeof probe.under>>();
   // FW-R14: a right with no cut, or one cut by another such removal.
