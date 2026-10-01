@@ -104,7 +104,7 @@ export interface DocsHost extends DocsGatePort {
     writes: string[];
     risk: 'elevated';
   }): string;
-  // Drops a publish task whose seed failed, so it never sits undispatchable.
+  // Drops a publish task whose seed failed, so it never sits open with no run that can start.
   closePublishTask(taskId: string, reason: string): void;
   // How a publish task ended: landed only once a run's merge changed `path`;
   // failed when a merge landed nothing there; null while it is still open.

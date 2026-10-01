@@ -355,7 +355,7 @@ describe('publish', () => {
     symlinkSync(outside, join(wt, 'docs'));
     expect(() => service.seedFor(task, wt)).toThrow('symlink');
     expect(store.publishRows({ task })[0].state).toBe('failed');
-    // The elevated task is closed, so it never sits undispatchable.
+    // The elevated task is closed, so it never sits open with no run that can start.
     expect(host.closedTasks).toEqual([
       { task, reason: expect.stringContaining('symlink') },
     ]);
