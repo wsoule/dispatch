@@ -1,13 +1,16 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { BookText } from 'lucide-react';
 import { useState } from 'react';
 
 import { DocList } from '../components/docs/DocList';
 import { DocPage } from '../components/docs/DocPage';
+import { NewDocDialog } from '../components/docs/NewDocDialog';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { useDocList } from '../hooks/useDocs';
+import { docsKey, useDocList } from '../hooks/useDocs';
 import type { DocFilter } from '../lib/docs';
 import { filterDocs } from '../lib/docs';
+import { Button } from '@/ui/button';
 
 // Team documents beside tasks: a filtered list on the left, the open doc on the right.
 // `initialDoc` and `initialAnchor` are what navigation names; `onSelectDoc` hears list picks.
@@ -35,6 +38,8 @@ export function DocsView({
   const [open, setOpen] = useState<string | null>(initialDoc);
   const [anchor, setAnchor] = useState<string | null>(initialAnchor);
   const [merge, setMerge] = useState<string | null>(initialMerge);
+  const [creating, setCreating] = useState(false);
+  const queryClient = useQueryClient();
   // A doc named while the view is up (a ref, a palette hit) replaces the open one.
   const [named, setNamed] = useState({
     doc: initialDoc,
@@ -86,7 +91,25 @@ export function DocsView({
         <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
           <BookText className="size-4" />
           <h1 className="text-sm font-medium">Docs</h1>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => setCreating(true)}
+          >
+            New doc
+          </Button>
         </header>
+        <NewDocDialog
+          client={client}
+          open={creating}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            void queryClient.invalidateQueries({ queryKey: docsKey(port) });
+            select(id);
+          }}
+        />
         <DocList
           docs={filterDocs(docs, filter)}
           filter={filter}
@@ -111,6 +134,7 @@ export function DocsView({
             canDecide={messageAccess.canDecide}
             anchor={anchor}
             mergeProposal={merge}
+            onOpenDoc={select}
           />
         )}
       </main>

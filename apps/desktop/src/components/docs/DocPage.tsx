@@ -53,6 +53,8 @@ interface DocPageProps {
   anchor?: string | null;
   /** A conflicting proposal whose marked merge the page opens on. */
   mergeProposal?: string | null;
+  /** Opens another doc (the team copy a promote makes). */
+  onOpenDoc?: (id: string) => void;
 }
 
 // The most saves one flush sends; a 409 on the way marks the text against the
@@ -76,6 +78,7 @@ export function DocPage({
   canDecide,
   anchor = null,
   mergeProposal = null,
+  onOpenDoc,
 }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
@@ -452,6 +455,21 @@ export function DocPage({
             }
           >
             Mark reviewed
+          </Button>
+        )}
+        {doc.scope === 'personal' && !archived && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              act(async () => {
+                await flush();
+                const out = await client.promoteDoc(refId);
+                onOpenDoc?.(out.doc.id);
+              })
+            }
+          >
+            Promote to team
           </Button>
         )}
         {publishable && (

@@ -74,6 +74,8 @@ function renderView(opts: {
   diff?: ApiClient['diffDoc'];
   text?: string;
   publish?: ApiClient['publishDoc'];
+  createDoc?: ApiClient['createDoc'];
+  promoteDoc?: ApiClient['promoteDoc'];
 }) {
   const calls: string[] = [];
   const doc = opts.doc ?? summary;
@@ -83,6 +85,8 @@ function renderView(opts: {
       Promise.resolve({ ...read, doc, text: opts.text ?? read.text }),
     diffDoc: opts.diff,
     publishDoc: opts.publish,
+    createDoc: opts.createDoc,
+    promoteDoc: opts.promoteDoc,
     saveDocBody:
       opts.save ??
       (() =>
@@ -860,4 +864,66 @@ test('a named proposal opens the doc on its marked merge', async () => {
     await screen.findByRole('region', { name: 'Conflict 1 of 1' })
   ).toBeDefined();
   expect(getDocProposal).toHaveBeenCalledWith('rev-p');
+});
+
+test('creates a team doc by default, and a personal one with the toggle', async () => {
+  const made: unknown[] = [];
+  const createDoc = ((input: unknown) => {
+    made.push(input);
+    return Promise.resolve({
+      doc: { id: 'doc-9' },
+      handle: 'x',
+      rev: { id: 'rev-1', n: 1, hash: 'h' },
+      status: 'saved',
+    });
+  }) as unknown as ApiClient['createDoc'];
+  renderView({ canDecide: true, createDoc });
+  fireEvent.click(await screen.findByRole('button', { name: 'New doc' }));
+  fireEvent.change(await screen.findByLabelText('Title'), {
+    target: { value: 'Team notes' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+  await waitFor(() => expect(made).toHaveLength(1));
+  fireEvent.click(await screen.findByRole('button', { name: 'New doc' }));
+  fireEvent.change(await screen.findByLabelText('Title'), {
+    target: { value: 'My notes' },
+  });
+  fireEvent.click(screen.getByRole('radio', { name: 'Personal' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+  await waitFor(() =>
+    expect(made).toEqual([
+      { title: 'Team notes', body: '# Team notes\n', scope: 'team' },
+      { title: 'My notes', body: '# My notes\n', scope: 'personal' },
+    ])
+  );
+});
+
+test('offers Promote to team on a personal doc only, and sends it', async () => {
+  const promoted: string[] = [];
+  const promoteDoc = ((ref: string) => {
+    promoted.push(ref);
+    return Promise.resolve({
+      doc: { id: 'doc-team' },
+      handle: 'auth',
+      rev: { id: 'rev-1', n: 1, hash: 'h' },
+      status: 'saved',
+    });
+  }) as unknown as ApiClient['promoteDoc'];
+  renderView({
+    canDecide: false,
+    promoteDoc,
+    doc: { ...summary, scope: 'personal' } as unknown as DocSummary,
+  });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Promote to team' })
+  );
+  await waitFor(() => expect(promoted).toEqual(['doc-1']));
+});
+
+test('shows no Promote on a team doc', async () => {
+  renderView({ canDecide: true });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  await screen.findByLabelText('Editing auth');
+  expect(screen.queryByRole('button', { name: 'Promote to team' })).toBeNull();
 });
