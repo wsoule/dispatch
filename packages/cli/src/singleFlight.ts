@@ -1,6 +1,6 @@
 // Wraps an async function so overlapping calls share exactly one in-flight
-// invocation instead of racing multiple concurrent ones — used by every
-// `--watch` surface (run/epic) to collapse "several WS events landed while
+// invocation instead of racing multiple concurrent ones — used by the epic
+// `--watch` surface to collapse "several WS events landed while
 // one refetch was already in progress" into a single HTTP round-trip
 // instead of firing one per event. A fresh call starts a new invocation
 // only once the previous one has settled (resolved OR rejected); the

@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   appendFileSync,
@@ -173,6 +173,7 @@ describe('Orchestrator execute runs on a derived task', () => {
     // the caller's own `await` that turns this into a rejection).
     expect(() =>
       orchestrator.dispatchAuxRun({
+        operator: null,
         taskId: task.meta.id,
         kind: 'execute',
         head: 'HEAD',
@@ -197,6 +198,7 @@ describe('Orchestrator execute runs on a derived task', () => {
     });
 
     const meta = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'HEAD',
@@ -269,13 +271,8 @@ describe('Orchestrator.cancel', () => {
   });
 });
 
-// Builds a controllable Executor whose `start()` never calls
-// onFinish/onApprovalRequest on its own — the run sits in `running` until
-// the test itself decides it's done observing, exactly the same shape
-// plan-epic-api.test.ts's HTTP-level inject tests use, just constructed
-// directly here for the orchestrator's own unit tests. `sent` collects
-// every `executorRun.send()` call so a test can assert on the exact text
-// (prefixed or not) the executor actually received.
+// A controllable Executor whose run sits in `running` until the test ends it;
+// `sent` collects every `executorRun.send()` text the executor received.
 function controllableExecutor(sent: string[]): Executor {
   return {
     start(_opts: ExecutorStartOptions, _events: ExecutorEvents): ExecutorRun {
@@ -284,6 +281,7 @@ function controllableExecutor(sent: string[]): Executor {
         requestStop: () => {},
         send: (message: string) => sent.push(message),
         approve: () => {},
+        notify: () => {},
       };
     },
   };
@@ -306,120 +304,8 @@ describe('Orchestrator.sendMessage (mid-run message)', () => {
       from: 'user',
       text: 'hello agent',
     });
-    // sendMessage never prefixes — that's inject's job for the
-    // agent-to-agent channel, not the human-to-agent one.
+    // A human's message reaches the agent verbatim, with no sender prefix.
     expect(sent).toEqual(['hello agent']);
-  });
-});
-
-describe('Orchestrator.inject sender identity', () => {
-  it("resolves fromRunId to the sender run's task title + id label", async () => {
-    const { orchestrator, store } = makeOrchestrator(repo);
-    const sent: string[] = [];
-    orchestrator.registerExecutor('fake', controllableExecutor(sent));
-
-    const senderTask = store.create({ title: 'Sender task' });
-    const senderMeta = await orchestrator.dispatch(senderTask.meta.id, 'fake');
-    const targetTask = store.create({ title: 'Target task' });
-    const targetMeta = await orchestrator.dispatch(targetTask.meta.id, 'fake');
-
-    orchestrator.inject(targetMeta.id, 'need a hand', {
-      runId: senderMeta.id,
-    });
-
-    const entries = orchestrator.getRun(targetMeta.id)!.entries;
-    const messageEntry = entries.find((e) => e.kind === 'message');
-    expect(messageEntry).toMatchObject({
-      kind: 'message',
-      from: 'agent',
-      fromLabel: `Sender task (${senderMeta.id})`,
-      text: 'need a hand',
-    });
-    // An inbound agent->agent message is NOT a user-flag — the app relies on
-    // `toUser` being absent here to render it as "↳ <sender>" rather than a
-    // "To you" attention row.
-    expect(messageEntry?.toUser).toBeUndefined();
-    expect(sent).toEqual([
-      `[message from Sender task (${senderMeta.id})] need a hand`,
-    ]);
-  });
-
-  it('falls back to the generic "another agent" label when fromRunId is omitted', async () => {
-    const { orchestrator, store } = makeOrchestrator(repo);
-    const sent: string[] = [];
-    orchestrator.registerExecutor('fake', controllableExecutor(sent));
-    const task = store.create({ title: 'Target task' });
-    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
-
-    orchestrator.inject(meta.id, 'hello');
-
-    const entries = orchestrator.getRun(meta.id)!.entries;
-    const messageEntry = entries.find((e) => e.kind === 'message');
-    expect(messageEntry).toMatchObject({
-      kind: 'message',
-      from: 'agent',
-      fromLabel: 'another agent',
-      text: 'hello',
-    });
-    expect(sent).toEqual(['[message from another agent] hello']);
-  });
-
-  it('falls back to the generic label when fromRunId does not match a known run', async () => {
-    const { orchestrator, store } = makeOrchestrator(repo);
-    const sent: string[] = [];
-    orchestrator.registerExecutor('fake', controllableExecutor(sent));
-    const task = store.create({ title: 'Target task' });
-    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
-
-    orchestrator.inject(meta.id, 'hello', { runId: 'r-nonexistent' });
-
-    const entries = orchestrator.getRun(meta.id)!.entries;
-    const messageEntry = entries.find((e) => e.kind === 'message');
-    expect(messageEntry?.fromLabel).toBe('another agent');
-  });
-});
-
-describe('Orchestrator.messageUser', () => {
-  it("records a from:agent entry on the run's own transcript labeled with its own task", async () => {
-    const { orchestrator, store } = makeOrchestrator(repo);
-    const sent: string[] = [];
-    orchestrator.registerExecutor('fake', controllableExecutor(sent));
-    const task = store.create({ title: 'Flag something' });
-    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
-
-    orchestrator.messageUser(meta.id, 'need clarification on X');
-
-    const entries = orchestrator.getRun(meta.id)!.entries;
-    const messageEntry = entries.find((e) => e.kind === 'message');
-    expect(messageEntry).toMatchObject({
-      kind: 'message',
-      from: 'agent',
-      fromLabel: `Flag something (${meta.id})`,
-      // The discriminator that lets the app badge this agent->user flag
-      // apart from an inbound agent->agent message (which never sets it).
-      toUser: true,
-      text: 'need clarification on X',
-    });
-    // messageUser never delivers into the executor — there is no recipient
-    // beyond the human reading this run's own Session tab.
-    expect(sent).toEqual([]);
-  });
-
-  it('409s a run that is not running', async () => {
-    const { orchestrator, store } = makeOrchestrator(repo);
-    orchestrator.registerExecutor(
-      'fake',
-      new FakeExecutor({ finish: { state: 'finished' } })
-    );
-    const task = store.create({ title: 'Already finished' });
-    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
-    await waitFor(
-      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
-    );
-
-    expect(() => orchestrator.messageUser(meta.id, 'too late')).toThrow(
-      OrchestratorConflictError
-    );
   });
 });
 
@@ -588,6 +474,7 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });
@@ -668,6 +555,7 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });
@@ -1245,6 +1133,7 @@ describe('Orchestrator.review merge closes superseded predecessors', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });
@@ -2290,7 +2179,7 @@ describe('Orchestrator request-changes executor fallback', () => {
 // behind it — dispatch()/requestChanges() transition the run to 'running'
 // *before* calling start(), so a start() throw left a zombie the caller could
 // neither message nor finish. Its only eventual resolution was the next
-// approve()/sendMessage()/inject() lazily healing it via healZombieRun() and
+// approve()/sendMessage()/deliverToRun() lazily healing it via healZombieRun() and
 // stamping the misleading "the daemon restarted" message on a daemon that
 // never restarted; the throw itself also escaped to Bun.serve's `error`
 // handler as an opaque 500.
@@ -2348,9 +2237,13 @@ describe('Orchestrator eager fail on executor start failure (no zombie)', () => 
     expect(() => orchestrator.sendMessage(meta.id, 'hello')).toThrow(
       /run is not live/
     );
-    expect(() => orchestrator.inject(meta.id, 'hi')).toThrow(
-      /run is not running/
-    );
+    expect(() =>
+      orchestrator.deliverToRun(meta.id, 'hi', {
+        label: 'human:test',
+        messageId: 'm-1',
+        human: true,
+      })
+    ).toThrow(/run is not live/);
   });
 
   it('an approval request fired right before start() throws still ends failed, not stuck awaiting-approval', async () => {
@@ -2400,6 +2293,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       };
     }
   }
@@ -2468,6 +2362,31 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.prompt).toContain('Add login rate limiting');
     expect(executor.lastOpts?.prompt).toContain('Harden auth');
     expect(executor.lastOpts?.prompt).toContain('resistant to abuse');
+  });
+
+  it("names the project owner's address as the human to ask", async () => {
+    const store = TaskStore.init(repo);
+    const cache = new TaskCache();
+    cache.rebuild(store);
+    const orchestrator = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache,
+      events: new EventBus(),
+      actorContext: ActorContext.resolve(repo, (args) =>
+        args.includes('user.email') ? 'wyat@example.com' : 'Wyat'
+      ),
+    });
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    const task = store.create({ title: 'Ask the owner' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(executor.lastOpts?.prompt).toContain('to: ["human:wyat"]');
   });
 
   it('hands the agent the repo orientation instead of instructions to go find it', async () => {

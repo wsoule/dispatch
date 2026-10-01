@@ -13,6 +13,8 @@ import {
   loadConfig,
   projectPolicy,
 } from '@dispatch/core';
+import type { JsonValue } from '@dispatch/protocol';
+import { gateOf, MessagingError } from '@dispatch/protocol';
 
 import type { TaskCache } from './cache.js';
 import type { DecisionPolicy } from './decisionFeed.js';
@@ -24,11 +26,12 @@ import {
 } from './floor.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { FixLoopState } from './orchestrator/fixLoop.js';
-import type { ApprovalDecision, RunMeta } from './orchestrator/types.js';
+import type { RunMeta } from './orchestrator/types.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
   runKind,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type {
@@ -79,6 +82,8 @@ export type ApprovalFloor = (toolName: string, input: unknown) => boolean;
 const DECISION_KIND_GATES: Readonly<Record<string, PolicyGate>> = {
   'scope-request': 'scope',
   approval: 'approval',
+  memory: 'memory',
+  doc: 'doc',
 };
 
 export interface PolicyClassifierOptions {
@@ -110,7 +115,11 @@ export function policyDecisionClassifier(
     if (item.state === 'open') return 'blocking';
     const gate = DECISION_KIND_GATES[item.kind];
     if (gate === undefined) return 'blocking';
-    if (gate === 'approval' && opts.approvalFloor === undefined) {
+    // Policy answers only tool approvals; a human decided every other approval.
+    if (
+      gate === 'approval' &&
+      (opts.approvalFloor === undefined || item.reason !== 'tool-approval')
+    ) {
       return 'blocking';
     }
     // A scope request outside the repo or into .git/ is the floor's own
@@ -154,21 +163,17 @@ export function policyActivityAppender(ctx: {
 interface PolicyEngineRuns {
   list(): RunMeta[];
   onRunTerminal(callback: (meta: RunMeta) => void): () => void;
-  pendingApprovals(): {
-    runId: string;
-    taskId: string;
-    requestId: string;
-    toolName: string;
-    input: unknown;
-  }[];
-  approve(runId: string, requestId: string, decision: ApprovalDecision): void;
+  pendingApprovalFor(
+    runId: string,
+    requestId: string
+  ): { requestId: string; toolName: string; input: unknown } | undefined;
   /** The run's working diff against its base — what auto-merge would land. */
   diff(runId: string): { files: { path: string; status: string }[] };
 }
 
 interface PolicyEngineFixLoop {
   get(taskId: string): FixLoopState | null;
-  ignite(taskId: string): Promise<FixLoopState>;
+  ignite(taskId: string, operator: string | null): Promise<FixLoopState>;
 }
 
 interface PolicyEngineVerification {
@@ -176,6 +181,7 @@ interface PolicyEngineVerification {
   startVerification(opts: {
     taskId: string;
     head: string;
+    operator: string | null;
   }): Promise<StartVerificationResult>;
 }
 
@@ -209,11 +215,16 @@ export interface PolicyEngineContext {
   /** The Activity half of every receipt (policyActivityAppender). Optional
    *  so the ledger half still lands where no task store is wired. */
   appendActivity?: (taskId: string, text: string) => void;
+  /** Answers an open gate as the system (a policy decision). */
+  answerGate(
+    messageId: string,
+    answer: { choice: string; body: string; data?: JsonValue }
+  ): Promise<void>;
 }
 
 // One line naming what a tool call asked for, for the receipt: the command
 // for a shell tool, otherwise the input's JSON, either way cut to fit.
-function describeToolInput(input: unknown): string {
+export function describeToolInput(input: unknown): string {
   let text: string;
   if (typeof input === 'object' && input !== null && 'command' in input) {
     const { command } = input as { command: unknown };
@@ -227,11 +238,11 @@ function describeToolInput(input: unknown): string {
 
 /**
  * Subscribes the approval, verify-retry and merge gates to the daemon's own
- * signals. (The scope gate needs no subscription: it is consulted inline
- * where the request is created — see api/scopeRequests.ts.)
+ * signals. (The scope gate is not here: messaging subscribes it to new scope
+ * gates — see messaging/scopePolicy.ts.)
  *
- * - A tool-approval escalation, at rung `approval`, is allowed on the spot
- *   unless the floor detector claims it.
+ * - A tool-approval gate, at rung `approval`, is answered `approve` by the
+ *   engine as the system unless the floor detector claims the call.
  * - A finished implementer, at rung `verify-retry`, ignites the review→fix
  *   loop exactly as `fixLoop.auto: true` would (the two OR together, and a
  *   task's own `fixLoop: false` still opts out); a failed verification
@@ -282,17 +293,16 @@ export class PolicyEngine {
           this.logHookError('fix-loop-complete', event.taskId, err);
         });
       }
-      if (event.type === 'approval.requested') {
-        // Deferred one tick: the executor registers the request's resolver
-        // right after it raises this event, so answering synchronously inside
-        // the broadcast would answer a request nobody is listening for yet.
-        void Promise.resolve().then(() => {
-          try {
-            this.onApprovalRequested(event.runId, event.requestId);
-          } catch (err) {
-            this.logHookError('approval', event.runId, err);
-          }
-        });
+      if (event.type === 'message.new') {
+        const gate = gateOf(event.message);
+        if (gate?.type === 'tool-approval' && gate.runId !== undefined) {
+          const { id } = event.message;
+          const { runId, requestId } = gate;
+          // Deferred a tick: the executor registers its resolver right after raising.
+          void Promise.resolve()
+            .then(() => this.onToolApprovalGate(id, runId, requestId))
+            .catch((err: unknown) => this.logHookError('approval', runId, err));
+        }
       }
     });
     const unsubscribeTerminal = this.ctx.orchestrator.onRunTerminal((meta) => {
@@ -317,33 +327,42 @@ export class PolicyEngine {
     return this.ctx.store.get(taskId)?.meta.risk;
   }
 
-  // A tool call the SDK classifier referred to a human: at rung `approval`
-  // the daemon answers it, unless the floor says this is an act no rung may
-  // wave through. Without a floor detector wired nothing is ever auto-allowed.
-  private onApprovalRequested(runId: string, requestId: string): void {
+  // A tool call referred to a human: at rung `approval` the daemon answers its
+  // gate, unless the floor claims the FULL input (never the gate's preview).
+  private async onToolApprovalGate(
+    messageId: string,
+    runId: string,
+    requestId: string
+  ): Promise<void> {
     const floor = this.ctx.approvalFloor;
     if (floor === undefined) return;
-    const pending = this.ctx.orchestrator
-      .pendingApprovals()
-      .find((a) => a.runId === runId && a.requestId === requestId);
+    const pending = this.ctx.orchestrator.pendingApprovalFor(runId, requestId);
     if (pending === undefined) return;
+    const taskId = this.ctx.orchestrator
+      .list()
+      .find((r) => r.id === runId)?.taskId;
+    if (taskId === undefined) return;
     const ruling = consultProjectPolicy(
       this.ctx.rootDir,
       'approval',
-      this.riskOf(pending.taskId)
+      this.riskOf(taskId)
     );
     if (ruling.mode !== 'auto') return;
     if (floor(pending.toolName, pending.input)) return;
     try {
-      this.ctx.orchestrator.approve(runId, requestId, { allow: true });
+      await this.ctx.answerGate(messageId, {
+        choice: 'approve',
+        body: describePolicyAuthorization(ruling),
+        data: { type: 'x-policy', gate: 'approval', rung: ruling.rung },
+      });
     } catch (err) {
-      // A human answered first, or the run moved on: nothing to record.
-      if (err instanceof OrchestratorClientError) return;
+      // A human answered first, or the gate closed: nothing to record.
+      if (err instanceof MessagingError && err.code === 'conflict') return;
       throw err;
     }
     this.record(
       ruling,
-      pending.taskId,
+      taskId,
       `Tool approval auto-allowed for run ${runId}`,
       `${pending.toolName}: ${describeToolInput(pending.input)}`
     );
@@ -358,6 +377,7 @@ export class PolicyEngine {
     if (this.configAutoIgnites()) return;
     await this.igniteFixLoop(
       meta.taskId,
+      runOperator(meta),
       `Review & fix loop auto-started for ${meta.taskId}`,
       `implementer run ${meta.id} finished; the loop was ignited in place of a "Review & fix" click, and its round cap still bounds the retries`
     );
@@ -379,6 +399,7 @@ export class PolicyEngine {
     if (result === null || result.pass) return;
     await this.igniteFixLoop(
       taskId,
+      this.operatorOfRun(result.runId),
       `Verify retry auto-started for ${taskId}`,
       `verification run ${result.runId} failed; the fix loop was ignited in place of a human review request, and its round cap still bounds the retries`
     );
@@ -389,6 +410,7 @@ export class PolicyEngine {
   // loop, open or capped, is left to its own machinery.
   private async igniteFixLoop(
     taskId: string,
+    operator: string | null,
     title: string,
     detail: string
   ): Promise<void> {
@@ -403,7 +425,7 @@ export class PolicyEngine {
     if (this.budgetFloorHolds(taskId, 'fix loop auto-ignite')) return;
     if (this.ctx.fixLoop.get(taskId) !== null) return;
     try {
-      await this.ctx.fixLoop.ignite(taskId);
+      await this.ctx.fixLoop.ignite(taskId, operator);
     } catch (err) {
       // Nothing to review (no implementer, no commits, a standing block) is a
       // quiet decline, not a failure — the manual route stays open.
@@ -421,15 +443,17 @@ export class PolicyEngine {
     if (loop === null || loop.state !== 'complete') return;
     const result = this.ctx.verificationRunner.getLatestResult(taskId);
     if (result !== null && !result.pass) {
-      await this.retryVerification(taskId, result);
+      await this.retryVerification(taskId, result, loop.operator ?? null);
     }
     const latest = this.latestFinishedExecuteRun(taskId);
     if (latest !== null) this.enqueueForMerge(latest);
   }
 
+  // `operator` is the completed loop's: the retry follows its last round.
   private async retryVerification(
     taskId: string,
-    failed: VerificationResult
+    failed: VerificationResult,
+    operator: string | null
   ): Promise<void> {
     const ruling = consultProjectPolicy(
       this.ctx.rootDir,
@@ -445,6 +469,7 @@ export class PolicyEngine {
     const started = await this.ctx.verificationRunner.startVerification({
       taskId,
       head: run.branch,
+      operator,
     });
     if (started.skipped) return;
     this.retriedVerifications.set(taskId, failed.createdAt);
@@ -454,6 +479,12 @@ export class PolicyEngine {
       `Verification auto-retried for ${taskId}`,
       `run ${failed.runId} verified red, the fix loop completed, and run ${started.meta.id} now re-verifies ${run.branch}`
     );
+  }
+
+  // Who a run acted for; no one once it has left the registry.
+  private operatorOfRun(runId: string): string | null {
+    const run = this.ctx.orchestrator.list().find((r) => r.id === runId);
+    return run === undefined ? null : runOperator(run);
   }
 
   private hasLiveVerifyRun(taskId: string): boolean {

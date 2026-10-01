@@ -100,14 +100,24 @@ describe('dispatch-mcp stdio e2e', () => {
         .map((t) => t.name)
         .sort();
       expect(names).toEqual([
-        'agent_message',
-        'ask_user',
+        'channel_join',
+        'channel_leave',
+        'channel_list',
         'dispatch_note',
-        'message_user',
-        'record_decision',
+        'doc_link',
+        'doc_list',
+        'doc_read',
+        'doc_save',
+        'doc_search',
+        'inbox_read',
+        'memory_forget',
+        'memory_read',
+        'memory_save',
+        'memory_search',
+        'msg_reply',
+        'msg_send',
         'record_evidence',
         'record_mutation',
-        'request_scope',
         'run_list',
         'task_comment',
         'task_comments',
@@ -115,6 +125,7 @@ describe('dispatch-mcp stdio e2e', () => {
         'task_list',
         'task_next',
         'task_save',
+        'thread_read',
       ]);
 
       const call = await send('tools/call', {

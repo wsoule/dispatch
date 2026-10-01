@@ -1,0 +1,26 @@
+{
+  "name": "@dispatch/federation",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Elastic-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --clean",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
+  },
+  "dependencies": {
+    "@dispatch/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  }
+}

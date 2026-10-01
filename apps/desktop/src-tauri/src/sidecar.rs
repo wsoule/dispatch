@@ -1748,9 +1748,6 @@ mod tests {
         init_git_project(&proj);
 
         std::env::set_var("DISPATCH_HOME", &dispatch_home);
-        // Keeps the fake executor's run parked in `running` long enough to open
-        // a scope request against it.
-        std::env::set_var("DISPATCH_FAKE_LINGER_MS", "600000");
 
         let root = proj.to_string_lossy().to_string();
         let children = DispatchdChildren::new();
@@ -1816,77 +1813,36 @@ mod tests {
         let http = reqwest::Client::new();
         let base = format!("http://127.0.0.1:{}", spawned.port);
 
-        let (_, body) = post_json(
-            &http,
-            &format!("{base}/api/tasks"),
-            &agent_token,
-            serde_json::json!({ "title": "live fixture" }),
-        )
-        .await;
-        let task_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["meta"]["id"]
-            .as_str()
-            .expect("task created")
-            .to_string();
-
-        let (_, body) = post_json(
-            &http,
-            &format!("{base}/api/tasks/{task_id}/runs"),
-            &agent_token,
-            serde_json::json!({ "executor": "fake" }),
-        )
-        .await;
-        let run_id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
-            .as_str()
-            .expect("run created")
-            .to_string();
-
-        for _ in 0..100 {
-            let state = http
-                .get(format!("{base}/api/runs/{run_id}"))
-                .bearer_auth(&agent_token)
-                .send()
-                .await
-                .unwrap()
-                .json::<serde_json::Value>()
-                .await
-                .map(|v| v["meta"]["state"].as_str().unwrap_or("?").to_string())
-                .unwrap_or_default();
-            if state == "running" {
-                break;
-            }
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-
-        let open_scope_request = |token: String| {
+        // A pending agent registration: approving it is a decide-tier action.
+        let register_agent = |name: &'static str| {
             let http = http.clone();
             let base = base.clone();
-            let run_id = run_id.clone();
+            let agent_token = agent_token.clone();
             async move {
                 let (_, body) = post_json(
                     &http,
-                    &format!("{base}/api/runs/{run_id}/scope-requests"),
-                    &token,
-                    serde_json::json!({
-                        "paths": ["packages/core/src/browser.ts"],
-                        "reason": "needs a type this file never re-exports",
-                    }),
+                    &format!("{base}/api/agents/register"),
+                    &agent_token,
+                    serde_json::json!({ "name": name, "client": "live-test" }),
                 )
                 .await;
-                serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+                let address = serde_json::from_str::<serde_json::Value>(&body).unwrap()["address"]
                     .as_str()
-                    .expect("scope request created")
-                    .to_string()
+                    .expect("agent registered")
+                    .to_string();
+                // An address is `agent:<handle>/<name>`; both separators need escaping in a path.
+                address.replace(':', "%3A").replace('/', "%2F")
             }
         };
 
         // The credential an attached app would hold: 403, on the exact code the
         // UI keys its "Restart daemon to enable approvals" affordance on.
-        let sr_denied = open_scope_request(agent_token.clone()).await;
+        let denied = register_agent("live-denied").await;
         let (status, body) = post_json(
             &http,
-            &format!("{base}/api/runs/{run_id}/scope-requests/{sr_denied}/decide"),
+            &format!("{base}/api/agents/{denied}/approve"),
             &agent_token,
-            serde_json::json!({ "granted": true, "reason": "self-granted from an agent shell" }),
+            serde_json::json!({}),
         )
         .await;
         eprintln!("[live] decide with the agent token  -> {status} {body}");
@@ -1894,17 +1850,17 @@ mod tests {
         assert!(body.contains("auth_insufficient_tier"), "body was {body}");
 
         // The credential a spawning app holds: the decision lands.
-        let sr_allowed = open_scope_request(agent_token.clone()).await;
+        let allowed = register_agent("live-allowed").await;
         let (status, body) = post_json(
             &http,
-            &format!("{base}/api/runs/{run_id}/scope-requests/{sr_allowed}/decide"),
+            &format!("{base}/api/agents/{allowed}/approve"),
             &app_token,
-            serde_json::json!({ "granted": true, "reason": "approved by the human at the app" }),
+            serde_json::json!({}),
         )
         .await;
         eprintln!("[live] decide with the app token    -> {status} {body}");
         assert_eq!(status, 200, "app token should decide: {body}");
-        assert!(body.contains("\"granted\":true"), "body was {body}");
+        assert!(body.contains("\"status\":\"approved\""), "body was {body}");
 
         // --- re-attaching ---
         // Same app instance, second call: the fast path finds the daemon we

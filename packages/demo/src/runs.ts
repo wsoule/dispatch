@@ -1,4 +1,6 @@
 import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
+import { renderForAgent } from '@dispatch/protocol';
+import type { Message } from '@dispatch/protocol';
 import {
   existsSync,
   mkdirSync,
@@ -9,6 +11,8 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { seedMessages } from './messages.js';
+import type { SeededMessages } from './messages.js';
 import { actorFile, runKey, runsDir } from './paths.js';
 import { FINDINGS } from './records.js';
 import { assertSafeToDelete, BRANCH_FIXES, computeFixDiff } from './repo.js';
@@ -69,6 +73,7 @@ interface NormalizedEntry {
   from?: 'user' | 'agent';
   fromLabel?: string;
   toUser?: boolean;
+  messageId?: string;
 }
 
 interface RunMeta {
@@ -156,18 +161,29 @@ function T(
   return { ts: '', kind: 'tool', toolName, toolInput, status };
 }
 
-// One agent-to-user message — the shape `messageUser()` writes for both
-// `ask_user` questions and `request_scope` asks (see api.ts's
-// questionEntryText/scopeRequestEntryText). `fromLabel` mirrors
-// `"${taskTitle} (${runId})"`, the label resolveSenderLabel would produce.
-function Msg(taskTitle: string, id: string, text: string): NormalizedEntry {
+// A run's own message to a human, in the shape Orchestrator.logOutgoing
+// writes: `toUser`, labelled "<task title> (<run id>)", tagged with its id.
+function Msg(taskTitle: string, id: string, m: Message): NormalizedEntry {
   return {
     ts: '',
     kind: 'message',
     from: 'agent',
     fromLabel: `${taskTitle} (${id})`,
     toUser: true,
-    text,
+    text: m.body,
+    messageId: m.id,
+  };
+}
+
+// A message the daemon pushed into the run, as Orchestrator.deliverToRun logs it.
+function Delivered(m: Message): NormalizedEntry {
+  return {
+    ts: '',
+    kind: 'message',
+    from: m.from.startsWith('human:') ? 'user' : 'agent',
+    fromLabel: m.from,
+    text: renderForAgent(m),
+    messageId: m.id,
   };
 }
 
@@ -175,7 +191,7 @@ function Msg(taskTitle: string, id: string, text: string): NormalizedEntry {
 // run — the shape Orchestrator.requestChanges actually records for
 // `sendMessage(runId, prompt, { resume: true })`: `{ ts, kind: 'message',
 // from: 'user', text }`, with no `fromLabel`/`toUser`. That pair is reserved
-// for an agent's own `messageUser()` calls (Msg, above) — a fix round's
+// for a run's own messages to a human (Msg, above) — a fix round's
 // prompt is not the agent broadcasting to the human, it is the loop's
 // automated feedback arriving the same way a human's own "request changes"
 // text would. RunLogView.tsx renders `toUser: true` as a "TO YOU" megaphone
@@ -712,16 +728,13 @@ function writeVerifyRun(dir: string, rootDir: string): void {
   });
 }
 
-// A scope request that was granted: t-3f8a21 needs to touch routes.ts as
-// well as discount.ts, since the inline client-trusted check being retired
-// lives in the route handler itself. `messageUser()` is how both
-// `request_scope` and `ask_user` actually land text on a transcript (see
-// api/scopeRequests.ts's scopeRequestEntryText) — the grant itself lives only
-// in the daemon's in-memory ScopeRequestRegistry (never persisted to disk),
-// so the outcome is recorded here as a system note, the way the Session log
-// would read it, rather than pretending to replay a registry record that
-// does not survive a restart in the real system either.
-function writeScopeRequestRun(dir: string, rootDir: string): void {
+// A granted scope gate: t-3f8a21 must edit routes.ts too, where the check
+// being retired lives. messages.ts seeds the gate's thread to match.
+function writeScopeRequestRun(
+  dir: string,
+  rootDir: string,
+  seeded: SeededMessages
+): void {
   const taskId = 't-3f8a21';
   const taskTitle = 'Validate discount codes server-side';
   const id = 'r-1e6a4f';
@@ -743,14 +756,8 @@ function writeScopeRequestRun(dir: string, rootDir: string): void {
       ),
       T('Read', { file_path: 'src/checkout/discount.ts' }),
       T('Read', { file_path: 'src/server/routes.ts' }),
-      Msg(
-        taskTitle,
-        id,
-        'Requesting to edit outside my scope: src/server/routes.ts\n\nThe client-trusted check being retired is inlined in the route handler, not just discount.ts — moving it server-side means touching both files together.'
-      ),
-      Sys(
-        'Scope granted: src/server/routes.ts — the discount check and its route belong together [decided via app]'
-      ),
+      Msg(taskTitle, id, seeded.scope),
+      Delivered(seeded.granted),
       T('Edit', { file_path: 'src/checkout/discount.ts' }),
       T('Edit', { file_path: 'src/server/routes.ts' }),
       T('Bash', { command: 'bun test src/checkout' }),
@@ -764,17 +771,14 @@ function writeScopeRequestRun(dir: string, rootDir: string): void {
   });
 }
 
-// A run holding unanswered `ask_user` questions. There is no on-disk plan
-// artifact to seed here: PlanManager's PlanRecord is explicitly in-memory
-// only ("a lost daemon losing in-flight drafts is acceptable", plan.ts) and
-// is never written to any file, so a static demo fixture cannot reproduce
-// one after a restart any more than the real daemon can. The closest thing
-// that DOES survive on disk is a run transcript whose agent asked
-// clarifying questions via `ask_user` and never got an answer — exactly
-// what QuestionRegistry's own timeout path documents (UNANSWERED_NOTE in
-// packages/mcp/src/tools.ts): the agent proceeds on its own judgement and
-// states the assumption, rather than the run hanging forever.
-function writePlanDraftRun(dir: string, rootDir: string): void {
+// Plan drafts are in-memory only (plan.ts), so this seeds the nearest durable
+// thing: a run whose blocking `msg_send` questions timed out unanswered, and
+// which went on with its best judgement and stated the assumptions.
+function writePlanDraftRun(
+  dir: string,
+  rootDir: string,
+  seeded: SeededMessages
+): void {
   const taskId = 't-9b2d14';
   const taskTitle = 'Add address autocomplete';
   const id = 'r-88bf02';
@@ -793,16 +797,8 @@ function writePlanDraftRun(dir: string, rootDir: string): void {
       A(
         'The task does not say which geocoding provider to wire the address field to.'
       ),
-      Msg(
-        taskTitle,
-        id,
-        'Which geocoding provider should this use — no default is specified in the task?\n\n- Google Places\n- Mapbox'
-      ),
-      Msg(
-        taskTitle,
-        id,
-        'Should the API key live in an env var already used elsewhere, or a new one?\n\n- Reuse an existing key\n- Add a new one'
-      ),
+      Msg(taskTitle, id, seeded.question),
+      Msg(taskTitle, id, seeded.keyQuestion),
       A(
         'No one answered in time. Proceeding on my best judgement: defaulting to Google Places, since nothing else in the codebase already depends on Mapbox, and adding a new PLACES_API_KEY env var. Both are worth confirming in review.'
       ),
@@ -818,7 +814,11 @@ function writePlanDraftRun(dir: string, rootDir: string): void {
 // own — the run still reaches its normal terminal state (`finished`) through
 // the usual finish path, marked only by `stopRequestedAt` on that state line
 // and the system note it appends to the Session log.
-function writeStoppedRun(dir: string, rootDir: string): void {
+function writeStoppedRun(
+  dir: string,
+  rootDir: string,
+  seeded: SeededMessages
+): void {
   const taskId = 't-1d77e5';
   const taskTitle = 'Cache the search index in redis';
   const id = 'r-f30c76';
@@ -840,6 +840,8 @@ function writeStoppedRun(dir: string, rootDir: string): void {
       ),
       T('Read', { file_path: 'src/search/index.ts' }),
       T('Edit', { file_path: 'src/search/index.ts' }),
+      Msg(taskTitle, id, seeded.handoff),
+      Delivered(seeded.accepted),
       Sys(
         'Stop requested — the agent will finish its current operation and then stop.'
       ),
@@ -925,8 +927,8 @@ export function clearRunHistory(rootDir: string, home: string): void {
  * Seeds this clone's run history under `$DISPATCH_HOME/.dispatch/runs/<key>/`
  * — the six runs ported from the marketing-screenshot fixture plus one of
  * every additional run kind the demo narrative needs (review, a three-round
- * fix loop, verify, a granted scope request, unanswered questions, and a
- * graceful stop) — and this clone's actor identity file. Every run is
+ * fix loop, verify, a granted scope gate, unanswered `msg_send` questions, and
+ * a graceful stop) — and this clone's actor identity file. Every run is
  * terminal (see TERMINAL_STATES): `reconcileOnBoot` force-fails anything
  * left non-terminal on boot, since a static fixture never has a live process
  * behind it.
@@ -939,9 +941,11 @@ export function writeRuns(rootDir: string, home: string, handle: string): void {
   writeReviewRun(dir, rootDir);
   writeFixLoopRuns(dir, rootDir);
   writeVerifyRun(dir, rootDir);
-  writeScopeRequestRun(dir, rootDir);
-  writePlanDraftRun(dir, rootDir);
-  writeStoppedRun(dir, rootDir);
+  // The messages these runs sent and received, by the ids messages.ts seeds.
+  const seeded = seedMessages(handle);
+  writeScopeRequestRun(dir, rootDir, seeded);
+  writePlanDraftRun(dir, rootDir, seeded);
+  writeStoppedRun(dir, rootDir, seeded);
   writeReviewDiffs(dir, rootDir);
 
   writeActorIdentity(rootDir, home, handle);

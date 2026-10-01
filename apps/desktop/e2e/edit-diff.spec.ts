@@ -47,7 +47,7 @@ function authedUrl(baseURL: string | undefined): string {
  *
  * FIXME (branch: the task-centric consolidation, 98bf1858): the Review page
  * this drives was retired; the run review surface now lives on a task's Diff
- * tab, reached via Inbox (⌘5) → a "Needs review" row. That navigation is
+ * tab, reached via Inbox → a "Needs review" row. That navigation is
  * mechanical, but the file-selection step below is not: `RunReviewView`
  * renders no changed-files tree and passes no `only` narrowing to
  * `PierreReviewDiff`, so there is no `treeitem` to click and no guarantee of
@@ -72,7 +72,7 @@ test.describe('editing a run diff end to end', () => {
     });
     await page.goto(authedUrl(baseURL));
     await page.getByText('Dispatch').first().waitFor();
-    await page.keyboard.press('Meta+5');
+    await page.locator('#dispatch-sidebar [data-nav-item="inbox"]').click();
 
     // Same fixture run views.spec.ts's `review detail` test already relies
     // on: "Rate limit the search endpoint" is seeded `finished` with no

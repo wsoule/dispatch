@@ -132,7 +132,7 @@ async function resolveTaskRoute(ctx: CliContext): Promise<TaskRoute> {
   // `findRunningDaemon` throws rather than returning one. For a task command
   // that is not fatal — it just means there is no daemon we can present a
   // credential to, so fall through to the same handling as no daemon at all.
-  // Commands that genuinely require dispatchd (scope decide, orchestrate)
+  // Commands that genuinely require dispatchd (approve, message, scope, orchestrate)
   // keep the explicit error, which is the right answer for them.
   // projectRoot(), not the raw cwd — see its doc comment: inside a run's
   // worktree the daemon, the marker and the real board all live at the

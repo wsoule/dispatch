@@ -147,6 +147,7 @@ export const CLI_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: false,
   reportsTurns: false,
   enforcesCaps: false,
+  acceptsMessages: false,
   permissionRefusal: (permissionMode) =>
     GATED_MODES.has(permissionMode)
       ? `this agent is a plain CLI with no approval protocol, so it cannot run under "${permissionMode}" — dispatch it with an ungated mode, or use claude/codex for gated runs`
@@ -206,6 +207,7 @@ export class CliExecutor implements Executor {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       };
     }
 
@@ -269,6 +271,8 @@ export class CliExecutor implements Executor {
         });
       },
       approve: () => {},
+      // No channel for a note either; silent, since a note is best-effort.
+      notify: () => {},
     };
   }
 }

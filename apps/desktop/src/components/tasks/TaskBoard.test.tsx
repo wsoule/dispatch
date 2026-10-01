@@ -147,6 +147,7 @@ function shellWith(
     openTask: (taskId: string, tab?: string) => {
       opened.push([taskId, tab]);
     },
+    openThread: noop,
     peekTask: noop,
     openCreateTask: (preset?: CreateTaskPreset) => {
       presets.push(preset ?? {});

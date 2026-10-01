@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
 import type {
+  A2AConfig,
+  A2ASkill,
   CartoConfig,
   CartoMode,
   ConfigPatch,
@@ -14,6 +16,8 @@ import type {
   ExecutorPricing,
   FixLoopConfig,
   LinearConfig,
+  MemoryConfig,
+  MessagingConfig,
   ModelConfig,
   NotificationKind,
   NotificationsConfig,
@@ -27,11 +31,15 @@ import type {
   VerifyConfig,
 } from './configTypes.js';
 import {
+  A2A_SKILLS,
   CARTO_MODES,
+  DEFAULT_A2A,
   DEFAULT_CARTO,
   DEFAULT_EXECUTOR_NAME,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
+  DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_PREVIEW,
@@ -143,6 +151,7 @@ const DEFAULTS: DispatchConfig = {
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
   notifications: cloneNotifications(DEFAULT_NOTIFICATIONS),
+  messaging: { ...DEFAULT_MESSAGING },
   receipts: { ...DEFAULT_RECEIPTS },
   policy: { ...DEFAULT_POLICY, gates: {} },
   // No `queue` here: it is the one optional block, so a DEFAULTS entry could
@@ -218,7 +227,7 @@ function parseNotificationKinds(
 
 // Validates the optional `notifications:` block, same contract as the blocks
 // below. `kinds` merges over the defaults, so switching one kind off does not
-// switch the other four off with it.
+// switch the others off with it.
 function parseNotificationsConfig(raw: unknown): NotificationsConfig {
   if (raw === undefined) return cloneNotifications(DEFAULT_NOTIFICATIONS);
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -246,6 +255,240 @@ function parseNotificationsConfig(raw: unknown): NotificationsConfig {
     );
   }
   return result;
+}
+
+// A run's MCP tool call is cut off after 31 minutes, so a blocking agent wait
+// must give up first and leave the answer to arrive in the inbox.
+const MESSAGING_MAXIMUMS: Partial<Record<keyof MessagingConfig, number>> = {
+  agentBlockingTimeoutSec: 1800,
+};
+
+// Validates the optional `messaging:` block: each key is a positive integer
+// (some capped) overriding its own default, the way `notifications:` merges.
+function parseMessagingConfig(raw: unknown): MessagingConfig {
+  if (raw === undefined) return { ...DEFAULT_MESSAGING };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: messaging must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const result = { ...DEFAULT_MESSAGING };
+  for (const key of Object.keys(DEFAULT_MESSAGING) as Array<
+    keyof MessagingConfig
+  >) {
+    const value = obj[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: messaging.${key} must be a positive integer`
+      );
+    }
+    const max = MESSAGING_MAXIMUMS[key];
+    if (max !== undefined && value > max) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: messaging.${key} must be at most ${max}`
+      );
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+type MemoryIntegerKey = Exclude<
+  keyof MemoryConfig,
+  'claudeAutoMemory' | 'retireAfterDays'
+>;
+
+const MEMORY_RANGES: Record<MemoryIntegerKey, readonly [number, number]> = {
+  indexTokens: [200, 4000],
+  personalWritesPerHour: [1, 500],
+  proposalsPerHour: [1, 100],
+  maxOpenProposals: [1, 500],
+  proposalTtlDays: [1, 90],
+  staleAfterDays: [7, 3650],
+};
+
+const MAX_RETIRE_AFTER_DAYS = 3650;
+
+export interface MemoryConfigWarning {
+  key: string;
+  message: string;
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value);
+}
+
+/** Parses the `memory:` block leniently: a bad value costs only that key, with
+ *  a warning naming it, and never fails the read. */
+export function parseMemoryConfig(raw: unknown): {
+  config: MemoryConfig;
+  warnings: MemoryConfigWarning[];
+} {
+  const config: MemoryConfig = { ...DEFAULT_MEMORY };
+  const warnings: MemoryConfigWarning[] = [];
+  if (raw === undefined || raw === null) return { config, warnings };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      config,
+      warnings: [
+        { key: 'memory', message: 'memory must be a mapping; using defaults' },
+      ],
+    };
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const [key, [min, max]] of Object.entries(MEMORY_RANGES) as Array<
+    [MemoryIntegerKey, readonly [number, number]]
+  >) {
+    const value = obj[key];
+    if (value === undefined) continue;
+    if (isInteger(value) && value >= min && value <= max) {
+      config[key] = value;
+    } else {
+      warnings.push({
+        key: `memory.${key}`,
+        message: `memory.${key} must be an integer from ${min} to ${max}; using ${DEFAULT_MEMORY[key]}`,
+      });
+    }
+  }
+  const retire = obj.retireAfterDays;
+  if (retire !== undefined) {
+    if (
+      isInteger(retire) &&
+      retire > config.staleAfterDays &&
+      retire <= MAX_RETIRE_AFTER_DAYS
+    ) {
+      config.retireAfterDays = retire;
+    } else {
+      warnings.push({
+        key: 'memory.retireAfterDays',
+        message: `memory.retireAfterDays must be an integer above staleAfterDays (${config.staleAfterDays}) and at most ${MAX_RETIRE_AFTER_DAYS}; using ${DEFAULT_MEMORY.retireAfterDays}`,
+      });
+    }
+  }
+  // A long staleAfterDays can pass the default retire age; retire just after.
+  if (config.retireAfterDays <= config.staleAfterDays) {
+    config.retireAfterDays = Math.min(
+      MAX_RETIRE_AFTER_DAYS,
+      config.staleAfterDays + 1
+    );
+  }
+  const mode = obj.claudeAutoMemory;
+  if (mode !== undefined) {
+    if (mode === 'export' || mode === 'off') {
+      config.claudeAutoMemory = mode;
+    } else {
+      warnings.push({
+        key: 'memory.claudeAutoMemory',
+        message: `memory.claudeAutoMemory must be export or off; using ${DEFAULT_MEMORY.claudeAutoMemory}`,
+      });
+    }
+  }
+  return { config, warnings };
+}
+
+const A2A_LIMIT_KEYS = [
+  'blockingWaitSec',
+  'requestsPerMinute',
+  'sendsPerHour',
+  'handoffsPerDay',
+  'openTasksPerClient',
+  'streamsPerClient',
+  'outboundPerHour',
+] as const;
+type A2ALimitKey = (typeof A2A_LIMIT_KEYS)[number];
+const A2A_LIMIT_MAX: Partial<Record<A2ALimitKey, number>> = {
+  blockingWaitSec: 600,
+};
+const A2A_TEXT_MAX = { name: 100, description: 500 } as const;
+
+// Unlike `messaging:`, a bad `a2a:` key falls back to its default with a
+// warning, so a typo there never breaks every loadConfig caller.
+function parseA2AConfig(raw: unknown): {
+  config: A2AConfig;
+  warnings: string[];
+} {
+  const config: A2AConfig = { ...DEFAULT_A2A };
+  if (raw === undefined || raw === null) return { config, warnings: [] };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { config, warnings: ['a2a must be a mapping; using the defaults'] };
+  }
+  const warnings: string[] = [];
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === 'name' || key === 'description') {
+      const max = A2A_TEXT_MAX[key];
+      const text = typeof value === 'string' ? value.trim() : '';
+      if (text !== '' && text.length <= max) {
+        config[key] = text;
+      } else {
+        warnings.push(
+          `a2a.${key} must be text of at most ${max} characters; using the default`
+        );
+      }
+    } else if (key === 'skills') {
+      const ok =
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((s) => (A2A_SKILLS as readonly unknown[]).includes(s));
+      if (ok) {
+        config.skills = [...new Set(value as A2ASkill[])];
+      } else {
+        warnings.push(
+          'a2a.skills must be a list of ask, handoff, status; using every skill built'
+        );
+      }
+    } else if ((A2A_LIMIT_KEYS as readonly string[]).includes(key)) {
+      const k = key as A2ALimitKey;
+      const max = A2A_LIMIT_MAX[k];
+      const ok =
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value > 0 &&
+        (max === undefined || value <= max);
+      if (ok) {
+        config[k] = value;
+      } else {
+        warnings.push(
+          max === undefined
+            ? `a2a.${k} must be a positive integer; using ${DEFAULT_A2A[k]}`
+            : `a2a.${k} must be an integer from 1 to ${max}; using ${DEFAULT_A2A[k]}`
+        );
+      }
+    } else {
+      warnings.push(`a2a.${key} is not a setting; ignored`);
+    }
+  }
+  return { config, warnings };
+}
+
+/** Reads the `memory:` block alone, per use, so a broken block elsewhere in
+ *  config.yml (or a file that does not parse) costs memory only its defaults. */
+export function readMemoryConfig(rootDir: string): {
+  config: MemoryConfig;
+  warnings: MemoryConfigWarning[];
+} {
+  const path = join(rootDir, DISPATCH_DIR, 'config.yml');
+  if (!existsSync(path)) return parseMemoryConfig(undefined);
+  let doc: unknown;
+  try {
+    doc = YAML.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    return {
+      config: { ...DEFAULT_MEMORY },
+      warnings: [
+        {
+          key: 'memory',
+          message: `config.yml does not parse (${(err as Error).message}); using defaults`,
+        },
+      ],
+    };
+  }
+  const block =
+    typeof doc === 'object' && doc !== null
+      ? (doc as Record<string, unknown>).memory
+      : undefined;
+  return parseMemoryConfig(block);
 }
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -1489,11 +1732,15 @@ export function loadConfig(rootDir: string): DispatchConfig {
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
       notifications: cloneNotifications(DEFAULTS.notifications),
+      messaging: { ...DEFAULTS.messaging },
+      memory: { ...DEFAULT_MEMORY },
       receipts: { ...DEFAULT_RECEIPTS },
       sync: { ...DEFAULT_SYNC },
       policy: { ...DEFAULT_POLICY, gates: {} },
       preview: { ...DEFAULT_PREVIEW },
       queue: defaultQueue(),
+      a2a: { ...DEFAULT_A2A },
+      a2aWarnings: [],
     };
   }
   let parsed: unknown;
@@ -1564,6 +1811,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
       'invalid .dispatch/config.yml: prWorktreeDir must be a non-empty string'
     );
   }
+  const a2a = parseA2AConfig(raw.a2a);
   return {
     ...statusBlock,
     ...(statusRoles === undefined ? {} : { statusRoles }),
@@ -1583,12 +1831,16 @@ function parseConfig(parsed: unknown): DispatchConfig {
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     notifications: parseNotificationsConfig(raw.notifications),
+    messaging: parseMessagingConfig(raw.messaging),
+    memory: parseMemoryConfig(raw.memory).config,
     receipts: parseReceiptsConfig(raw.receipts),
     sync: parseSyncConfig(raw.sync),
     policy: parsePolicyConfig(raw.policy),
     preview: parsePreviewConfig(raw.preview),
     queue: parseQueueConfig(raw.queue),
     prWorktreeDir: raw.prWorktreeDir,
+    a2a: a2a.config,
+    a2aWarnings: a2a.warnings,
   };
 }
 
@@ -1822,6 +2074,7 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
     ['receipts', patch.receipts],
     ['sync', patch.sync],
     ['preview', patch.preview],
+    ['memory', patch.memory],
   ] as const;
   for (const [block, fields] of blocks) {
     if (fields === undefined) continue;
@@ -2085,6 +2338,18 @@ export function updateConfig(
   }
 
   applyBlockPatches(doc, patch);
+  // The loader is lenient about memory keys, so a patch is checked strictly here.
+  if (patch.memory !== undefined) {
+    const block = doc.getIn(['memory']);
+    const { warnings } = parseMemoryConfig(
+      YAML.isMap(block) ? block.toJSON() : block
+    );
+    if (warnings.length > 0) {
+      throw new ConfigError(
+        `invalid memory settings: ${warnings.map((w) => w.message).join('; ')}`
+      );
+    }
+  }
 
   // The whole patched document, checked by the same parser loadConfig uses
   // before anything is written: a value it would refuse — from any key, not

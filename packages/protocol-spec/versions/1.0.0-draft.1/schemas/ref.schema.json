@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatch.foo/protocol/1.0.0-draft.1/schemas/ref.schema.json",
+  "title": "DMP ref",
+  "description": "What a message is about (section 4.3). Informative: the 512-byte limits and the one-line rule on `id` and `at` are not expressed, and a local send also refuses a `type` the host does not know.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "A registered ref type (section 11.5); a received ref may carry any identifier (section 4.4).",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "maxLength": 64
+    },
+    "id": {
+      "description": "What the ref names: a work item, a session, a file path, a commit or a message id.",
+      "type": "string",
+      "minLength": 1
+    },
+    "at": {
+      "description": "For a `file` ref, the commit the path is read at.",
+      "type": "string"
+    }
+  },
+  "required": ["type", "id"],
+  "additionalProperties": false
+}

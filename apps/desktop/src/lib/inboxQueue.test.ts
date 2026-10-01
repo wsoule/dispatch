@@ -1,7 +1,8 @@
-import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
+import type { DocSummary, RepoPr, RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
+import type { RunQuestion } from './gates';
 import type { InboxEntry } from './inbox';
 import type { InboxData, InboxInput } from './inboxQueue';
 import {
@@ -58,6 +59,7 @@ function input(over: Partial<InboxInput> = {}): InboxInput {
     mergeQueue: null,
     pendingApprovals: new Map(),
     openQuestions: new Map(),
+    openScopeRequests: new Map(),
     fixLoops: new Map(),
     ...over,
   };
@@ -87,6 +89,26 @@ describe('buildInbox', () => {
       input({
         runs: [run({ state: 'running' })],
         openQuestions: new Map([['r-1', [question()]]]),
+      })
+    );
+    expect(sectionStates(data)).toEqual(['answer']);
+  });
+
+  test("an ended run's open question still lands in answer", () => {
+    const data = buildInbox(
+      input({
+        runs: [run({ state: 'failed' })],
+        openQuestions: new Map([['r-1', [question()]]]),
+      })
+    );
+    expect(sectionStates(data)).toEqual(['answer']);
+  });
+
+  test("an ended run's open scope gate lands in answer", () => {
+    const data = buildInbox(
+      input({
+        runs: [run()],
+        openScopeRequests: new Map([['r-1', { paths: ['a.ts'] }]]),
       })
     );
     expect(sectionStates(data)).toEqual(['answer']);
@@ -221,6 +243,30 @@ describe('readyToLand', () => {
 });
 
 describe('inbox items', () => {
+  test('derives one Inbox item per conflicted team doc, counted in the badge', () => {
+    const doc = {
+      id: 'doc-1',
+      handle: 'auth',
+      title: 'Auth refactor',
+      scope: 'team',
+      conflicted: true,
+      updatedAt: '2026-09-26T10:00:00.000Z',
+    } as unknown as DocSummary;
+    const data = buildInbox(input({ conflictedDocs: [doc] }));
+    expect(data.total).toBe(1);
+    const items = buildInboxItems(data, []);
+    expect(items).toEqual([
+      { kind: 'doc', key: 'doc:doc-1', ts: '2026-09-26T10:00:00.000Z', doc },
+    ]);
+    expect(filterInboxItems(items, 'needs-you')).toHaveLength(1);
+    expect(inboxItemText(items[0])).toEqual({
+      id: 'auth',
+      title: 'Conflict markers in Auth refactor',
+      subtitle: 'Resolve them in the doc',
+    });
+    expect(buildInbox(input()).docs ?? []).toEqual([]);
+  });
+
   const reviewRow = () => ({
     runId: 'r-1',
     taskId: 't-1',

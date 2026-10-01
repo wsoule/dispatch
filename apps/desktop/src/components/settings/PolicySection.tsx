@@ -44,8 +44,8 @@ interface PolicyPatch {
 const RUNG_DESCRIPTIONS: Record<number, string> = {
   1: 'Every decision waits for you.',
   2: 'Requests to edit extra files are approved for you. Everything else waits.',
-  3: 'Extra files and uncertain commands are decided for you, and failed checks go straight back to be fixed. Merging still waits.',
-  4: 'Work that passes its checks merges on its own. You review what happened afterwards.',
+  3: 'Extra files and uncertain commands are decided for you, and failed checks go straight back to be fixed. Merging, shared memory and accepted docs still wait.',
+  4: "Work that passes its checks merges on its own. You review what happened afterwards. Agents' lessons join shared memory without review. Agents' edits to accepted docs apply without review.",
 };
 
 // Short names for the slider's stops, in the page's words rather than core's.
@@ -53,7 +53,7 @@ const RUNG_LABELS: Record<number, string> = {
   1: 'Review everything',
   2: 'Allow extra files',
   3: 'Fix on its own',
-  4: 'Merge on its own',
+  4: 'Merge and accept memory and doc edits on their own',
 };
 
 // One line per gate: what actually happens when it auto-decides, so the table
@@ -74,6 +74,20 @@ const GATE_COPY: Record<PolicyGate, { label: string; meaning: string }> = {
   merge: {
     label: 'Merging',
     meaning: 'Finished work that passed its checks joins the merge queue.',
+  },
+  wake: {
+    label: 'Waking agents for messages',
+    meaning: 'A queued message wakes a sleeping agent to deliver it.',
+  },
+  memory: {
+    label: 'Shared memory from agents',
+    meaning:
+      "An agent's lesson joins the memory every run here, and every teammate's run, reads.",
+  },
+  doc: {
+    label: 'Edits to accepted docs',
+    meaning:
+      "An agent's edit to an accepted team doc applies without review, and every run that links the doc reads it.",
   },
 };
 
@@ -291,7 +305,7 @@ export function PolicySection({
     if (client === null) return;
     let cancelled = false;
     client
-      .fetchLedger()
+      .fetchLedger({ class: 'audit' })
       .then((entries) => {
         if (cancelled) return;
         setReceipts(policyReceipts(entries, RECEIPT_LIMIT));

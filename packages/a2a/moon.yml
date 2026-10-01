@@ -1,0 +1,44 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'library'
+tags: ['tsdown']
+
+tasks:
+  # test/vectors.test.ts reads the kit's registries, vectors and source at run
+  # time; **/* is listed because an override replaces the defaults.
+  test:
+    inputs:
+      - '**/*'
+      - '/packages/protocol-spec/registries/**/*'
+      - '/packages/protocol-spec/vectors/**/*'
+      - '/packages/protocol-spec/src/**/*'
+
+  # The a2a-binding vectors through the built a2a adapter under Node; the A2A
+  # TCK is attested separately (moonx a2a:tck). dispatch-profile is claimed
+  # too, so the A2A claim judges the dispatch-profile a2a-binding vectors.
+  conformance:
+    command:
+      'node ../protocol-spec/dist/bin.js --adapter "node
+      dist/conformance-adapter.js" --claim a2a-binding --claim dispatch-profile
+      --vectors-only --report dist/dmp-conformance.json'
+    deps:
+      - 'build'
+      - 'protocol-spec:build'
+    inputs:
+      - 'src/**/*'
+      - '/packages/protocol-spec/vectors/**/*'
+      - '/packages/protocol-spec/registries/**/*'
+      - '/packages/protocol-spec/src/**/*'
+    options:
+      runInCI: 'always'
+
+  # The official A2A TCK against handleA2A. Needs Python 3.11, uv and the
+  # network, so it is not part of moon ci; .github/workflows/a2a-tck.yml runs it.
+  tck:
+    command: 'bun test/tck/run.ts'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      runInCI: 'skip'

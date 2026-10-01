@@ -3,6 +3,8 @@ import {
   DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
+  DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
@@ -36,6 +38,8 @@ export const testConfig: DispatchConfig = {
   carto: DEFAULT_CARTO,
   repoDigest: DEFAULT_REPO_DIGEST,
   notifications: DEFAULT_NOTIFICATIONS,
+  messaging: DEFAULT_MESSAGING,
+  memory: DEFAULT_MEMORY,
 };
 
 /** A Linear team's workflow mirrored into config: none of these names is a built-in,
@@ -84,6 +88,8 @@ export function dataWith(
     // passes `myTier`, the way it does before a connection exists.
     myTier: null,
     attachedWithoutAppToken: false,
+    whoamiError: null,
+    retryWhoami: () => {},
     tasks: [],
     runs: [],
     linearStatus: {

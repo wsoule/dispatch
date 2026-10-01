@@ -685,6 +685,7 @@ describe('PrManager polling', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });

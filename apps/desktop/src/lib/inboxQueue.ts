@@ -1,9 +1,9 @@
 import type {
+  DocSummary,
   FixLoopState,
   MergeQueueSnapshot,
   RepoPr,
   RunMeta,
-  RunQuestion,
 } from '@dispatch/client';
 import type {
   StatusModel,
@@ -17,6 +17,7 @@ import type { FeedRowModel } from './controlRoom';
 import { buildFeed } from './controlRoom';
 import type { FeedState } from './feedState';
 import { FEED_STATE_LABEL, isUrgentState } from './feedState';
+import type { RunQuestion } from './gates';
 import type { InboxEntry } from './inbox';
 import { criteriaItems } from './reviewCriteria';
 import { activeStatusModel } from './statusModel';
@@ -33,8 +34,9 @@ export interface InboxInput {
   epics: TaskListItem[];
   repoPrs: RepoPr[];
   mergeQueue: MergeQueueSnapshot | null;
-  pendingApprovals: ReadonlyMap<string, { toolName: string }>;
+  pendingApprovals: ReadonlyMap<string, readonly { toolName: string }[]>;
   openQuestions: ReadonlyMap<string, RunQuestion[]>;
+  openScopeRequests: ReadonlyMap<string, { paths: readonly string[] }>;
   fixLoops: ReadonlyMap<string, FixLoopState>;
   /** This window's ActorRef. When set, asks on runs someone else dispatched are
    * that person's to answer: still listed, under Teammates, but not in Needs you
@@ -43,6 +45,9 @@ export interface InboxInput {
   /** The project's statuses, which say a task is already landed or dropped. A memo keyed
    * on config passes that config's; absent reads the open project's. */
   model?: StatusModel;
+  /** Team docs whose head carries conflict markers or a sync problem: each is
+   * an item until a human's save clears it (derived, not a gate). */
+  conflictedDocs?: readonly DocSummary[];
 }
 
 interface InboxSection {
@@ -67,6 +72,8 @@ export interface InboxData {
    * `buildInbox` always sets it; optional only so hand-built InboxData literals
    * (test fixtures) predating it stay valid, the same rule config blocks use. */
   teammateOwners?: ReadonlyMap<string, string>;
+  /** Conflicted team docs; optional, as teammateOwners is, for older fixtures. */
+  docs?: readonly DocSummary[];
 }
 
 /**
@@ -86,6 +93,7 @@ export function buildInbox(input: InboxInput): InboxData {
     mergeQueue: input.mergeQueue,
     pendingApprovals: input.pendingApprovals,
     openQuestions: input.openQuestions,
+    openScopeRequests: input.openScopeRequests,
     fixLoops: input.fixLoops,
     query: '',
     activeStates: new Set(),
@@ -129,8 +137,10 @@ export function buildInbox(input: InboxInput): InboxData {
         0
       ) +
       readyToLand.filter(mine).length +
-      prs.length,
+      prs.length +
+      (input.conflictedDocs?.length ?? 0),
     teammateOwners,
+    docs: input.conflictedDocs ?? [],
   };
 }
 
@@ -203,6 +213,7 @@ export type InboxItem =
       owner?: string;
     }
   | { kind: 'pr'; key: string; ts: string; pr: RepoPr }
+  | { kind: 'doc'; key: `doc:${string}`; ts: string; doc: DocSummary }
   | { kind: 'notification'; key: string; ts: string; entry: InboxEntry };
 
 /** The list-pane filter: everything, only what is still waiting on you, or only what
@@ -265,6 +276,9 @@ export function buildInboxItems(
   }
   for (const pr of data.prs) {
     items.push({ kind: 'pr', key: `pr:${pr.number}`, ts: pr.updatedAt, pr });
+  }
+  for (const doc of data.docs ?? []) {
+    items.push({ kind: 'doc', key: `doc:${doc.id}`, ts: doc.updatedAt, doc });
   }
   for (const entry of entries) {
     items.push({
@@ -362,6 +376,9 @@ export function groupInboxItems(items: readonly InboxItem[]): InboxGroup[] {
       case 'pr':
         ensure('pr', 'Pull requests', 'review').items.push(item);
         break;
+      case 'doc':
+        ensure('doc', 'Conflicted docs', 'unblock').items.push(item);
+        break;
       case 'notification':
         ensure('earlier', 'Earlier', null).items.push(item);
         break;
@@ -399,6 +416,8 @@ export function inboxItemBadge(item: InboxItem): InboxBadge {
       return 'merge';
     case 'pr':
       return 'pr';
+    case 'doc':
+      return 'alert';
     case 'notification':
       return notificationBadge(item.entry);
   }
@@ -422,6 +441,8 @@ export function inboxItemState(item: InboxItem): FeedState {
       return 'landing';
     case 'pr':
       return 'review';
+    case 'doc':
+      return 'unblock';
     case 'notification': {
       const title = item.entry.title.toLowerCase();
       if (title.startsWith('merged')) return 'landing';
@@ -442,6 +463,8 @@ export function inboxItemActor(item: InboxItem): string {
       return 'Agent';
     case 'pr':
       return item.pr.author;
+    case 'doc':
+      return 'Docs';
     case 'notification':
       switch (item.entry.target.kind) {
         case 'queue':
@@ -485,6 +508,12 @@ export function inboxItemText(item: InboxItem): {
         id: `#${item.pr.number}`,
         title: item.pr.title,
         subtitle: `Pull request by ${item.pr.author}`,
+      };
+    case 'doc':
+      return {
+        id: item.doc.handle,
+        title: `Conflict markers in ${item.doc.title}`,
+        subtitle: 'Resolve them in the doc',
       };
     case 'notification':
       return { id: null, title: item.entry.title, subtitle: item.entry.body };

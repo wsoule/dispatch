@@ -48,7 +48,7 @@ interface DaemonFileInfo {
   agentToken?: string;
 }
 
-function daemonHome(): string {
+export function daemonHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();
 }
@@ -528,8 +528,8 @@ export async function ensureDaemon(
   // recovered — deliberately, since `dispatch` runs inside agent shells whose
   // stdout the agent reads, and relaying that line there would hand the
   // decide-tier credential to the very caller the tier split excludes. Use
-  // `dispatch serve` when you need an app token; `dispatch scope decide` says
-  // so when it has none.
+  // `dispatch serve` when you need an app token; `dispatch approve`, `message`
+  // and `scope` say so when they have none.
   //
   // On the bun-script
   // path no `env` override is passed, so the child inherits this process's
@@ -610,6 +610,53 @@ async function resolveRaceWinner(
   return fallback;
 }
 
+export interface ServeOptions {
+  port?: string;
+  host?: string;
+  publicOrigin?: string;
+  webDist?: string;
+  tlsCert?: string;
+  tlsKey?: string;
+  tlsPort?: string;
+  a2aHost?: string;
+  a2aPort?: string;
+  a2aPublicUrl?: string;
+  a2aTlsCert?: string;
+  a2aTlsKey?: string;
+}
+
+// The dispatchd arguments `dispatch serve` passes, in a stable order; throws
+// when a certificate comes without its key or a key without its certificate.
+export function serveArgs(root: string, o: ServeOptions): string[] {
+  if ((o.tlsCert === undefined) !== (o.tlsKey === undefined)) {
+    throw new CliError('--tls-cert and --tls-key go together');
+  }
+  if ((o.a2aTlsCert === undefined) !== (o.a2aTlsKey === undefined)) {
+    throw new CliError('--a2a-tls-cert and --a2a-tls-key go together');
+  }
+  const flags: [string, string | undefined][] = [
+    ['--port', o.port],
+    ['--host', o.host],
+    ['--public-origin', o.publicOrigin],
+    ['--web-dist', o.webDist],
+    ['--tls-cert', o.tlsCert],
+    ['--tls-key', o.tlsKey],
+    ['--tls-port', o.tlsPort],
+    ['--a2a-host', o.a2aHost],
+    ['--a2a-port', o.a2aPort],
+    ['--a2a-public-url', o.a2aPublicUrl],
+    ['--a2a-tls-cert', o.a2aTlsCert],
+    ['--a2a-tls-key', o.a2aTlsKey],
+  ];
+  const args = ['--root', root];
+  for (const [flag, value] of flags) {
+    if (value !== undefined) args.push(flag, value);
+  }
+  return args;
+}
+
+const A2A_OVERRIDE_HELP = 'override for this boot; see `dispatch a2a listen`';
+
 export function registerDaemonCommands(
   program: Command,
   ctx: CliContext
@@ -636,55 +683,47 @@ export function registerDaemonCommands(
       '--tls-port <n>',
       'team-local: port for the HTTPS listener (default: ephemeral)'
     )
-    .action(
-      (opts: {
-        port?: string;
-        host?: string;
-        publicOrigin?: string;
-        webDist?: string;
-        tlsCert?: string;
-        tlsKey?: string;
-        tlsPort?: string;
-      }) => {
-        // requireInitialized, NOT requireStore: the latter demands
-        // `.dispatch/tasks`, which a database-backed project does not have and
-        // never will. Gating on it made this command refuse to start the daemon
-        // in exactly the projects that CANNOT be used without one — the CLI
-        // sends them here ("Start it with: dispatch serve") and this sent them
-        // back with "not initialized".
-        requireInitialized(ctx);
-        const launcher = resolveDaemonLauncher();
-        const args = [...launcher.leadingArgs, '--root', projectRoot(ctx.cwd)];
-        if (opts.port !== undefined) args.push('--port', opts.port);
-        if (opts.host !== undefined) args.push('--host', opts.host);
-        if (opts.publicOrigin !== undefined) {
-          args.push('--public-origin', opts.publicOrigin);
-        }
-        if (opts.webDist !== undefined) args.push('--web-dist', opts.webDist);
-        if ((opts.tlsCert === undefined) !== (opts.tlsKey === undefined)) {
-          throw new CliError('--tls-cert and --tls-key go together');
-        }
-        if (opts.tlsCert !== undefined) args.push('--tls-cert', opts.tlsCert);
-        if (opts.tlsKey !== undefined) args.push('--tls-key', opts.tlsKey);
-        if (opts.tlsPort !== undefined) args.push('--tls-port', opts.tlsPort);
+    .option('--a2a-host <addr>', `A2A listener host ${A2A_OVERRIDE_HELP}`)
+    .option('--a2a-port <n>', `A2A listener port ${A2A_OVERRIDE_HELP}`)
+    .option('--a2a-public-url <url>', `A2A card URL ${A2A_OVERRIDE_HELP}`)
+    .option(
+      '--a2a-tls-cert <file>',
+      `A2A listener certificate (PEM) ${A2A_OVERRIDE_HELP}`
+    )
+    .option(
+      '--a2a-tls-key <file>',
+      `A2A listener private key ${A2A_OVERRIDE_HELP}`
+    )
+    .action((opts: ServeOptions) => {
+      // requireInitialized, NOT requireStore: the latter demands
+      // `.dispatch/tasks`, which a database-backed project does not have and
+      // never will. Gating on it made this command refuse to start the daemon
+      // in exactly the projects that CANNOT be used without one — the CLI
+      // sends them here ("Start it with: dispatch serve") and this sent them
+      // back with "not initialized".
+      requireInitialized(ctx);
+      const launcher = resolveDaemonLauncher();
+      const args = [
+        ...launcher.leadingArgs,
+        ...serveArgs(projectRoot(ctx.cwd), opts),
+      ];
 
-        const result = spawnSync(launcher.cmd, args, {
-          stdio: 'inherit',
-          env: childEnvFor(launcher),
-        });
-        if (result.error !== undefined) {
-          if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-            throw new CliError(
-              launcher.usesBun
-                ? 'dispatch serve requires bun (https://bun.sh)'
-                : `dispatch serve could not launch the daemon binary: ${launcher.cmd}`
-            );
-          }
-          throw result.error;
+      const result = spawnSync(launcher.cmd, args, {
+        stdio: 'inherit',
+        env: childEnvFor(launcher),
+      });
+      if (result.error !== undefined) {
+        if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new CliError(
+            launcher.usesBun
+              ? 'dispatch serve requires bun (https://bun.sh)'
+              : `dispatch serve could not launch the daemon binary: ${launcher.cmd}`
+          );
         }
-        process.exitCode = result.status ?? 0;
+        throw result.error;
       }
-    );
+      process.exitCode = result.status ?? 0;
+    });
 
   program
     .command('ui')

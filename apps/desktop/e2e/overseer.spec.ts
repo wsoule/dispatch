@@ -1,29 +1,15 @@
 import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
-import { APP_TOKEN, DAEMON_PORT } from './paths';
+import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 
-// Duplicated verbatim from `views.spec.ts`, following the convention its other
-// copy in `edit-diff.spec.ts` documents: this token resolution is small enough
-// to duplicate per call site rather than factor into a shared module.
-function requireToken(): string {
-  const token = process.env.DISPATCH_E2E_TOKEN;
-  if (!token) {
-    throw new Error(
-      'DISPATCH_E2E_TOKEN is unset — global-setup.ts should have resolved it ' +
-        'before any test ran. Without it every fetch 401s and the app renders ' +
-        'its empty state instead of the fixture data this test checks for.'
-    );
-  }
-  return token;
-}
+// This spec's own daemon on a copy of the fixture, so the run it dispatches
+// never shifts the counts and rows views.spec.ts screenshots.
+let daemon: IsolatedDaemon | null = null;
 
-function authedUrl(baseURL: string | undefined): string {
-  if (!baseURL) throw new Error('baseURL is not configured');
-  // Approving or denying an overseer action is a decide-tier call, which the
-  // request-tier `token` cannot make — the harness's preset app token rides
-  // along so this flow can actually adjudicate.
-  return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
+function requireDaemon(): IsolatedDaemon {
+  if (daemon === null) throw new Error('the isolated daemon is not running');
+  return daemon;
 }
 
 // The same daemon the app under test talks to, hit directly. The deny path's
@@ -31,8 +17,9 @@ function authedUrl(baseURL: string | undefined): string {
 // truth for that — a UI-only check could pass because a row simply hadn't
 // rendered yet.
 async function listRunIds(request: APIRequestContext): Promise<Set<string>> {
-  const res = await request.get(`http://localhost:${DAEMON_PORT}/api/runs`, {
-    headers: { authorization: `Bearer ${requireToken()}` },
+  const { origin, agentToken } = requireDaemon();
+  const res = await request.get(`${origin}/api/runs`, {
+    headers: { authorization: `Bearer ${agentToken}` },
   });
   if (!res.ok()) {
     throw new Error(
@@ -47,21 +34,15 @@ async function getRun(
   request: APIRequestContext,
   runId: string
 ): Promise<{ meta: { taskId: string; state: string } }> {
-  const res = await request.get(
-    `http://localhost:${DAEMON_PORT}/api/runs/${runId}`,
-    { headers: { authorization: `Bearer ${requireToken()}` } }
-  );
+  const { origin, agentToken } = requireDaemon();
+  const res = await request.get(`${origin}/api/runs/${runId}`, {
+    headers: { authorization: `Bearer ${agentToken}` },
+  });
   if (!res.ok()) {
     throw new Error(`GET /api/runs/${runId} failed: ${res.status()}`);
   }
   return (await res.json()) as { meta: { taskId: string; state: string } };
 }
-
-// Run ids present before this spec touched anything. The cleanup below
-// archives whatever appeared beyond these, so the run this spec dispatches
-// (its one deliberate mutation) does not shift the ribbon counts and Runs
-// rows the screenshot suite's baselines pin.
-let baselineRunIds: Set<string> | null = null;
 
 /**
  * The overseer chat against the scripted fake backend (`FakeOverseer`, registered
@@ -83,64 +64,37 @@ let baselineRunIds: Set<string> | null = null;
  * write.
  */
 test.describe('overseer chat end to end', () => {
-  test.afterEach(async ({ request }) => {
-    // Undo this spec's one deliberate mutation even on mid-test failure, so
-    // nothing leaks into the counts and board columns the screenshot suite's
-    // baselines pin ('5 Needs review' in particular). Three steps per run
-    // that appeared beyond the baseline: discard its review (sets reviewedAt
-    // — the overview feed counts even archived runs while that is unset),
-    // archive it off the Runs list, and put its task back to `todo` (dispatch
-    // flips a task to in-progress, the run finishing flips it on to
-    // in-review). The task's appended activity lines stay — they are not
-    // board-visible.
-    if (baselineRunIds === null) return;
-    const headers = { authorization: `Bearer ${requireToken()}` };
-    const after = await listRunIds(request);
-    for (const runId of after) {
-      if (baselineRunIds.has(runId)) continue;
-      const run = await getRun(request, runId);
-      await request.post(
-        `http://localhost:${DAEMON_PORT}/api/runs/${runId}/review`,
-        { headers, data: { action: 'discard' } }
-      );
-      await request.post(
-        `http://localhost:${DAEMON_PORT}/api/runs/${runId}/archive`,
-        { headers, data: { archived: true } }
-      );
-      // The fake overseer only ever dispatches a *ready* task, and ready means
-      // unblocked `todo` — so `todo` is exactly the pre-test status.
-      await request.patch(
-        `http://localhost:${DAEMON_PORT}/api/tasks/${run.meta.taskId}`,
-        { headers, data: { status: 'todo' } }
-      );
-    }
-    baselineRunIds = null;
+  // The copy goes with its daemon, so the dispatched run needs no undoing.
+  test.afterAll(async () => {
+    await daemon?.stop();
+    daemon = null;
   });
 
   test('status answer, then deny leaves state alone and approve dispatches', async ({
     page,
-    baseURL,
     request,
   }, testInfo) => {
     // Functional coverage, not visual — one theme is plenty, and running it
     // twice would dispatch (and have to clean up) a second run for no gain.
     test.skip(testInfo.project.name !== 'dark', 'theme-independent flow');
 
-    baselineRunIds = await listRunIds(request);
+    daemon = await startIsolatedDaemon('overseer');
+    // Run ids present before this spec touched anything, so the one run it
+    // dispatches can be told apart from the fixture's.
+    const baselineRunIds = await listRunIds(request);
 
     // Route new conversations to the daemon's 'fake' overseer backend — set
     // before load, same as any localStorage-keyed devtool. The live rail
     await page.addInitScript(() => {
       window.localStorage.setItem('dispatch.devFakeOverseer', '1');
     });
-    await page.goto(authedUrl(baseURL));
+    await page.goto(requireDaemon().appUrl);
     await page.locator('#dispatch-sidebar').waitFor();
 
-    // The Overseer row sits in the rail's fixed top group. Scoped to the rail
-    // because the frame's status strip carries a ghost "Overseer" link too,
-    // which would make an unscoped name lookup ambiguous under strict mode.
+    // The overseer's row, labelled Assistant, sits in the rail's top group;
+    // other "Assistant" labels would make an unscoped lookup ambiguous.
     const rail = page.locator('#dispatch-sidebar');
-    const overseerRow = rail.getByRole('button', { name: /^Overseer/ });
+    const overseerRow = rail.getByRole('button', { name: /^Assistant/ });
     await overseerRow.click();
     await expect(page.getByLabel('Overseer opening question')).toBeVisible();
 
@@ -194,7 +148,7 @@ test.describe('overseer chat end to end', () => {
 
     const afterDeny = await listRunIds(request);
     expect(
-      [...afterDeny].filter((id) => !baselineRunIds?.has(id)),
+      [...afterDeny].filter((id) => !baselineRunIds.has(id)),
       'denying the queued dispatch must not create a run'
     ).toEqual([]);
 
@@ -233,7 +187,7 @@ test.describe('overseer chat end to end', () => {
     });
 
     const afterApprove = await listRunIds(request);
-    const created = [...afterApprove].filter((id) => !baselineRunIds?.has(id));
+    const created = [...afterApprove].filter((id) => !baselineRunIds.has(id));
     expect(created, 'approving must create exactly one run').toHaveLength(1);
     const dispatched = await getRun(request, created[0]);
     expect(dispatched.meta.taskId).toBe(taskId);

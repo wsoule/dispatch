@@ -1,0 +1,27 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'library'
+tags: ['tsdown', 'publishable']
+
+tasks:
+  # Regenerates spec/11-registries.md from registries/registries.json.
+  registries:
+    command: 'bun scripts/registries.ts'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  # Freezes a release under versions/<version>/ and updates the manifest:
+  # `moonx protocol-spec:snapshot -- <version>`.
+  snapshot:
+    command: 'bun scripts/snapshot.ts'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  # test/bin.test.ts runs `node dist/bin.js`, so the tests need this
+  # project's own build, not only its dependencies' (^:build).
+  test:
+    deps:
+      - 'build'

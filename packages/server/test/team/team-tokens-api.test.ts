@@ -202,6 +202,37 @@ describe('team tokens', () => {
     expect(res.status).toBe(404);
   });
 
+  it('refuses to add anyone while team.yml has a skipped entry, and leaves it as it was', async () => {
+    const file = join(root, '.dispatch', 'team.yml');
+    const yaml = `members:\n  - handle: ${'a'.repeat(64)}2\n    email: long@x.com\n  - handle: ok\n    email: ok@x.com\n`;
+    writeFileSync(file, yaml);
+
+    const res = await invite({ email: 'ada@example.com' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      '"long@x.com"'
+    );
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+    // Someone already on the roster needs no write, so they can still be issued a token.
+    expect((await invite({ handle: 'ok' })).status).toBe(201);
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+  });
+
+  it('refuses a re-invite that would rewrite the roster, saying so rather than that it adds anyone', async () => {
+    const file = join(root, '.dispatch', 'team.yml');
+    const yaml = `members:\n  - handle: ${'a'.repeat(64)}2\n    email: long@x.com\n  - handle: ok\n    email: ok@x.com\n`;
+    writeFileSync(file, yaml);
+
+    // A new display name changes ok's entry without adding anyone.
+    const res = await invite({ email: 'ok@x.com', displayName: 'Okay' });
+    expect(res.status).toBe(409);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain('"long@x.com"');
+    expect(error).toContain('this invite would rewrite team.yml');
+    expect(error).not.toContain('adding anyone');
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+  });
+
   it('rejects an unknown tier', async () => {
     const res = await invite({ email: 'ada@example.com', tier: 'admin' });
     expect(res.status).toBe(400);
@@ -500,6 +531,31 @@ describe('seats over the API', () => {
       body: JSON.stringify({ key }),
     });
   }
+
+  it("a pre-fix token for the operator's handle is unusable and takes no seat", async () => {
+    const holders = async () =>
+      (await (
+        await rawFetch(`${baseUrl}/api/team/tokens`, {
+          headers: headers(handle.tokens.appToken),
+        })
+      ).json()) as { handle: string; builtIn: boolean; unusable: boolean }[];
+    const operator = (await holders()).find((h) => h.builtIn)?.handle;
+    if (operator === undefined) throw new Error('no built-in holder');
+    // Written before issuing refused the operator's handle.
+    handle.team.teammates.issue(operator, 'decide');
+    const listed = await holders();
+    expect(listed.filter((h) => !h.builtIn)).toEqual([
+      expect.objectContaining({ handle: operator, unusable: true }),
+    ]);
+    expect(listed.filter((h) => h.builtIn).map((h) => h.unusable)).toEqual([
+      false,
+      false,
+    ]);
+    expect(await license()).toMatchObject({ seats: 3, used: 1 });
+    expect((await invite({ email: 'ada@example.com' })).status).toBe(201);
+    expect((await invite({ email: 'grace@example.com' })).status).toBe(201);
+    expect(await license()).toMatchObject({ used: 3 });
+  });
 
   it('the free plan fits three people, and a fourth is told why', async () => {
     expect(await license()).toMatchObject({ kind: 'free', seats: 3, used: 1 });

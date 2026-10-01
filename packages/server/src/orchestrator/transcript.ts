@@ -14,6 +14,7 @@ import {
 import { dirname } from 'node:path';
 
 import type {
+  MemoryMode,
   NormalizedEntry,
   ReviewFailure,
   RunMeta,
@@ -117,6 +118,8 @@ interface TranscriptStateLine {
   // dispatchd restart mid-stop would replay the run as if nobody had ever asked
   // it to stop, and the UI would offer Stop again on a run already winding down.
   stopRequestedAt?: string;
+  // Export mode's load check changing the run's memory mode mid-run.
+  memoryMode?: MemoryMode;
 }
 
 export type TranscriptLine =
@@ -190,6 +193,7 @@ export class Transcript {
       baseDiscardedReason?: string;
       survey?: RunSurvey;
       stopRequestedAt?: string;
+      memoryMode?: MemoryMode;
     }
   ): void {
     const line: TranscriptStateLine = { type: 'state', state, ts, ...finish };
@@ -336,6 +340,7 @@ export function replayTranscript(path: string): RunDetail | null {
           line.baseDiscardedReason ?? meta.baseDiscardedReason,
         survey: line.survey ?? meta.survey,
         stopRequestedAt: line.stopRequestedAt ?? meta.stopRequestedAt,
+        memoryMode: line.memoryMode ?? meta.memoryMode,
       };
     }
   }

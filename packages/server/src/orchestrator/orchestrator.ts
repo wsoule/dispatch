@@ -53,8 +53,6 @@ import type { JudgmentClient } from '../judgments/client.js';
 import { mapLimit } from '../judgments/client.js';
 import { judgeRunModel } from '../judgments/modelTier.js';
 import type { RunModelChoice } from '../judgments/modelTier.js';
-import { LedgerStore } from '../ledger.js';
-import type { LedgerStorePort } from '../ledger.js';
 import { statusModelFor } from '../statuses.js';
 import { dirSizeBytes } from './dirSize.js';
 import {
@@ -69,6 +67,7 @@ import type { RepoOrientation } from './orientation.js';
 import {
   diffSnapshotPath,
   runsDir,
+  runTokenPath,
   transcriptPath,
   worktreePath,
   worktreesDir,
@@ -79,26 +78,30 @@ import {
   buildTaskPrompt,
   renderContinuationPrompt,
   renderFreshSessionNotice,
-  renderScopeRequestsSection,
-  untrustedInline,
 } from './prompt.js';
 import { prNumberFromOrigin } from './prReviewTask.js';
 import type { PendingApproval } from './registry.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
-import type { RunScopeRequest } from './scopeRequests.js';
 import type { RunDetail } from './transcript.js';
 import { recentEntries, replayTranscript, Transcript } from './transcript.js';
 import type {
   ApprovalDecision,
+  ApprovalGatePort,
   BranchEntry,
   BranchEntryStatus,
+  DocsPromptPort,
   Executor,
   ExecutorEvents,
   ExecutorInfo,
+  ExecutorMemoryOptions,
   ExecutorProfile,
+  ExecutorRun,
   ExecutorStartOptions,
+  MemoryMode,
+  MemoryPromptPort,
   NormalizedEntry,
+  PreparedMemory,
   ReviewFailure,
   RunKind,
   RunMeta,
@@ -112,6 +115,8 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
   runKind,
+  runLineage,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './types.js';
 import type { RunUsage } from './usage.js';
@@ -121,9 +126,9 @@ import { WorktreeManager } from './worktree.js';
 /**
  * The slice of the database's evidence store the orchestrator writes to.
  * Structural rather than an import of `SqliteEvidenceStore`, matching how
- * `FindingStorePort` and `LedgerStorePort` are declared — a test can pass two
- * functions instead of a database. Not exported: callers pass an object
- * literal and never need to name the type.
+ * `FindingStorePort` is declared — a test can pass two functions instead of a
+ * database. Not exported: callers pass an object literal and never need to
+ * name the type.
  */
 interface EvidenceWriter {
   addCommand(runId: string, evidence: CommandEvidence): CommandEvidence;
@@ -141,14 +146,11 @@ export interface OrchestratorContext {
   // CommandRunner so that path can be exercised without a jj binary, which is
   // otherwise structurally untestable.
   jj?: JjManager;
-  // Ledger entries injected into dispatch prompts (see promptForTask below).
-  // Defaults to one over `rootDir`, same pattern as `jj`.
-  ledgerStore?: LedgerStorePort;
   // The task's comment thread, also injected into dispatch prompts. Absent,
   // prompts carry no comments.
   comments?: CommentStorePort;
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
-  // to one over `rootDir`, same pattern as `ledgerStore`.
+  // to one over `rootDir`, same pattern as `jj`.
   findingStore?: FindingStorePort;
   // The database's evidence tables, on the sqlite backend only; `null` (or
   // absent) on the file backend, where the run transcript is the only home
@@ -179,8 +181,8 @@ export interface OrchestratorContext {
   // back cannot wait out the real half-minute quiet window per attempt.
   autoResumeQuietMs?: number;
   autoResumeMaxAttempts?: number;
-  // The repo-map cache injected into run prompts (see promptForTask). Defaults
-  // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
+  // The repo-map cache injected into run prompts (see taskBrief). Defaults
+  // to one over `rootDir`, same pattern as `jj`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
   // How the orchestrator shells out to delete a retired PR review's head ref
@@ -188,19 +190,12 @@ export interface OrchestratorContext {
   // pre-existing synchronous Bun.spawnSync ones. Same seam PrManager /
   // MergeQueue / GitRepo share, so a test stubs git rather than running it.
   commandRunner?: CommandRunner;
-  // Where a run's out-of-fence requests live, so resumeRun can hand a
-  // predecessor's still-open (or decided-while-dead) requests to the successor
-  // it creates — see the `carry` call there. Optional: a test that never
-  // resumes across a restart has nothing to carry.
-  scopeRequests?: ScopeRequestCarrier;
   // The TypeSafe judgment client, or null/absent when none is configured —
   // only the fresh-dispatch model tier consults it (see modelForFreshRun).
   judgments?: JudgmentClient | null;
-}
-
-/** The one thing the orchestrator asks of the scope-request registry. */
-interface ScopeRequestCarrier {
-  carry(fromRunId: string, toRunId: string): RunScopeRequest[];
+  // Whether a task came in over A2A; such a task's runs act for no one.
+  // Absent means no task did.
+  isA2ATask?: (taskId: string) => boolean;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -256,6 +251,10 @@ const AUTO_RESUME_QUIET_MS = 30_000;
 // code leaves every crashed run — failed, unreviewed, resumable by hand — so
 // the ceiling costs nothing but bounds the retry loop.
 const AUTO_RESUME_MAX_ATTEMPTS = 20;
+
+// The opening turn of a run a wake continues; the held messages follow it.
+const WAKE_PROMPT =
+  'New messages arrived for this task; they follow. Read them and carry on.';
 
 // Branches the listing measures at once. Each is up to three git reads plus
 // a size walk, so this bounds how many processes one listing spawns.
@@ -343,6 +342,18 @@ function humanOwner(ref: string | undefined): string | undefined {
   return ref?.startsWith('human:') === true ? ref : undefined;
 }
 
+// A run's memory with auto memory off and no section, for when the port cannot say.
+const PROMPT_ONLY: PreparedMemory = {
+  text: null,
+  indexSection: null,
+  memory: { mode: 'prompt' },
+};
+
+// A caller-built prompt with a memory section after it; unchanged when there is none.
+function withSection(prompt: string, section: string | null): string {
+  return section === null ? prompt : `${prompt}\n\n${section}`;
+}
+
 // How a reviewed run was closed out, for refusal messages: a run merged by
 // hand and picked up by the external-merge reconciler reads "merged as
 // <sha>", which tells the operator why their resume was refused far better
@@ -400,9 +411,8 @@ export class Orchestrator {
   // constructing it is inert — it shells out to jj lazily, per call — so an
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
-  private readonly ledgerStore: LedgerStorePort;
   private readonly findingStore: FindingStorePort;
-  // The repo map injected into every run prompt (see promptForTask). Held on
+  // The repo map injected into every run prompt (see taskBrief). Held on
   // the orchestrator rather than built per dispatch so its single-flight
   // background refresh really is one refresh, not one per concurrent dispatch.
   private readonly digestCache: RepoDigestCache;
@@ -422,6 +432,25 @@ export class Orchestrator {
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.
   private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
+  // onRunStarted's callbacks, fired once a run's ExecutorRun is registered so
+  // messaging learns a run is live without polling.
+  private readonly runStartedListeners = new Set<(meta: RunMeta) => void>();
+  // Mints each run's messaging token at start (see setRunTokenMinter); null
+  // leaves runs without one, as in fixtures that never set it.
+  private mintRunToken: ((runId: string) => string) | null = null;
+  // Mints every new run's id; a synced board installs a longer one at boot.
+  private mintRunId: (now: string) => string = (now) => generateRunId(now);
+  // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
+  private approvalGate: ApprovalGatePort | null = null;
+  // Chooses each run's memory mode and prompt section (see setMemoryPort); null leaves both out.
+  private memoryPort: MemoryPromptPort | null = null;
+  // Renders each dispatch prompt's `## Docs` section (see setDocsPort); null leaves it out.
+  private docsPort: DocsPromptPort | null = null;
+  // Writes files a task needs into its new worktree (see setWorktreeSeed).
+  private worktreeSeed: ((taskId: string, worktree: string) => void) | null =
+    null;
+  // Why a task may not run right now, or null (see setDispatchGuard).
+  private dispatchGuard: ((task: TaskDoc) => string | null) | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -451,6 +480,9 @@ export class Orchestrator {
     ReturnType<typeof setTimeout>
   >();
   private readonly stopEscalationMs: number;
+  // Runs being cancelled, stopped or wound down after their result; they refuse
+  // messages until the terminal transition clears them, so mail waits.
+  private readonly stoppingRuns = new Set<string>();
   // In-flight boot auto-resume attempts, keyed by run — see
   // autoResumeSettled(), which is how a test waits one out instead of sleeping.
   private readonly scheduledAutoResumes = new Map<string, Promise<void>>();
@@ -460,13 +492,15 @@ export class Orchestrator {
   // see needsQuietProof, which is what stops a re-dispatch from resuming into
   // a checkout an orphaned agent may still own.
   private readonly observedQuiet = new Set<string>();
+  // Who a re-armed boot sweep resumes a run for: the caller whose dispatch
+  // re-armed it. Absent keeps the run's own operator.
+  private readonly autoResumeOperators = new Map<string, string | null>();
   // Set by shutdown(); see it for what this is protecting against.
   private stopped = false;
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
-    this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
     this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
     this.digestCache = ctx.digestCache ?? new RepoDigestCache(ctx.rootDir);
     this.claimsRefreshCooldownMs =
@@ -506,6 +540,186 @@ export class Orchestrator {
       const idx = this.reviewedHooks.indexOf(callback);
       if (idx !== -1) this.reviewedHooks.splice(idx, 1);
     };
+  }
+
+  // Called once at boot. startAndRegister writes each minted token to the run's
+  // token file (runTokenPath) and passes the executor only that path.
+  setRunTokenMinter(mint: (runId: string) => string): void {
+    this.mintRunToken = mint;
+  }
+
+  // Installed by the A2A bridge: a gated handoff draft never runs, whoever
+  // asks. A returned string refuses the run with that reason.
+  setDispatchGuard(guard: ((task: TaskDoc) => string | null) | null): void {
+    this.dispatchGuard = guard;
+  }
+
+  // A gated A2A draft never runs, whichever entry point is asked.
+  private refuseGuarded(task: TaskDoc): void {
+    const refusal = this.dispatchGuard?.(task) ?? null;
+    if (refusal !== null) throw new OrchestratorConflictError(refusal);
+  }
+
+  // Called once at boot, before any run starts, to change how run ids are minted.
+  setRunIdMinter(mint: (now: string) => string): void {
+    this.mintRunId = mint;
+  }
+
+  // Installed by messaging at boot: raises and settles the gate a parked tool call waits on.
+  setApprovalGate(port: ApprovalGatePort | null): void {
+    this.approvalGate = port;
+  }
+
+  // Installed by the memory service at boot; until then runs start with no memory mode.
+  setMemoryPort(port: MemoryPromptPort | null): void {
+    this.memoryPort = port;
+  }
+
+  // Installed by the docs service at boot; until then prompts carry no docs section.
+  setDocsPort(port: DocsPromptPort | null): void {
+    this.docsPort = port;
+  }
+
+  // Called right after a fresh dispatch adds its worktree, before the executor
+  // starts; a throw removes the worktree and fails the dispatch.
+  setWorktreeSeed(
+    hook: ((taskId: string, worktree: string) => void) | null
+  ): void {
+    this.worktreeSeed = hook;
+  }
+
+  // Subscribes to "a run just became live" (its ExecutorRun is registered), so
+  // messaging can start delivering to it. Returns an unsubscribe function.
+  onRunStarted(callback: (meta: RunMeta) => void): () => void {
+    this.runStartedListeners.add(callback);
+    return () => {
+      this.runStartedListeners.delete(callback);
+    };
+  }
+
+  // The task's running/awaiting-approval execute run, which is where task mail
+  // goes; null while it has none, or only a provisioning or review/verify run.
+  liveRunIdForTask(taskId: string): string | null {
+    const meta = this.registry.liveRunForTask(taskId);
+    if (meta === undefined || runKind(meta) !== 'execute') return null;
+    return meta.state === 'running' || meta.state === 'awaiting-approval'
+      ? meta.id
+      : null;
+  }
+
+  // The task an execute run works, for messaging's run-to-task mapping; null
+  // for an unknown run or a review/verify run, which only answers as itself.
+  taskIdOfRun(runId: string): string | null {
+    const meta = this.registry.get(runId);
+    return meta !== undefined && runKind(meta) === 'execute'
+      ? meta.taskId
+      : null;
+  }
+
+  // Whether a run can currently receive a message: registered, in a live
+  // state, and actually has an ExecutorRun handle (not a zombie).
+  isRunLive(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return false;
+    if (meta.state !== 'running' && meta.state !== 'awaiting-approval') {
+      return false;
+    }
+    return this.registry.getExecutorRun(runId) !== undefined;
+  }
+
+  // Whether a live run can take a message now: not stopping, on an executor
+  // that accepts mid-run messages (what requireDeliverableRun enforces).
+  runAcceptsMessages(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    return (
+      meta !== undefined &&
+      this.isRunLive(runId) &&
+      !this.stoppingRuns.has(runId) &&
+      this.executorProfile(meta.executor).acceptsMessages
+    );
+  }
+
+  // A live run with an ExecutorRun (a zombie is failed, which throws) that can
+  // take a message now; any throw makes the engine hold the message.
+  private requireDeliverableRun(runId: string): {
+    meta: RunMeta;
+    executorRun: ExecutorRun;
+  } {
+    const meta = this.requireRun(runId);
+    if (meta.state !== 'running' && meta.state !== 'awaiting-approval') {
+      throw new OrchestratorConflictError(`run is not live: ${runId}`);
+    }
+    const executorRun = this.registry.getExecutorRun(runId);
+    if (executorRun === undefined) {
+      this.healZombieRun(meta);
+    }
+    if (this.stoppingRuns.has(runId)) {
+      throw new OrchestratorConflictError(`run is stopping: ${runId}`);
+    }
+    if (!this.executorProfile(meta.executor).acceptsMessages) {
+      throw new OrchestratorConflictError(
+        `executor ${meta.executor} cannot take a mid-run message: ${runId}`
+      );
+    }
+    return { meta, executorRun };
+  }
+
+  // Logs a delivered message, tagged with its messageId, to the run's transcript
+  // and the bus, then hands it to the executor.
+  deliverToRun(
+    runId: string,
+    text: string,
+    from: { label: string; messageId: string; human: boolean }
+  ): void {
+    const { executorRun } = this.requireDeliverableRun(runId);
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: from.human ? 'user' : 'agent',
+      fromLabel: from.label,
+      text,
+      messageId: from.messageId,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    executorRun.send(text);
+  }
+
+  // A run's own message to a human, logged on its transcript.
+  logOutgoing(runId: string, message: { id: string; body: string }): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: 'agent',
+      fromLabel: `${meta.taskTitle} (${meta.id})`,
+      toUser: true,
+      text: message.body,
+      messageId: message.id,
+    };
+    this.bestEffort(`logging an outgoing message for run ${runId}`, () => {
+      this.transcriptFor(runId).appendEntry(entry);
+    });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+  }
+
+  // deliverToRun for a non-interrupting channel digest: logged the same way,
+  // handed to the executor's notify() for the agent's next step.
+  notifyRun(runId: string, digest: string, messageId?: string): void {
+    const { executorRun } = this.requireDeliverableRun(runId);
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: 'agent',
+      fromLabel: 'dispatch',
+      text: digest,
+      digest: true,
+      ...(messageId !== undefined ? { messageId } : {}),
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    executorRun.notify(digest);
   }
 
   registerExecutor(name: string, executor: Executor): void {
@@ -627,67 +841,21 @@ export class Orchestrator {
       }));
   }
 
-  // Every approval request currently waiting on a human, flattened into one
-  // row per run. The registry holds these per-run for approve()'s benefit;
-  // read surfaces (the overseer's status tools) need the whole list, and
-  // deriving it from `list()` alone is impossible — RunState only says
-  // `awaiting-approval`, never which tool call is being asked about.
-  //
-  // Filtered on that state because approve() is the ONLY thing that clears a
-  // run's pending approval: a run cancelled (or zombie-healed) while parked on
-  // a gate keeps its record forever. Nothing is listening for an answer to
-  // those any more, so listing them would only offer the human an action that
-  // approve() itself would then refuse.
-  pendingApprovals(): {
-    runId: string;
-    taskId: string;
-    taskTitle: string;
-    requestId: string;
-    toolName: string;
-    input: unknown;
-  }[] {
-    return this.registry
-      .listPendingApprovals()
-      .filter(({ meta }) => meta.state === 'awaiting-approval')
-      .map(({ meta, approval }) => ({
-        runId: meta.id,
-        taskId: meta.taskId,
-        taskTitle: meta.taskTitle,
-        requestId: approval.requestId,
-        toolName: approval.toolName,
-        input: approval.input,
-      }));
+  // One call a run is parked on, by requestId. Only an `awaiting-approval` run
+  // counts: a record left on a cancelled run is not an answerable request.
+  pendingApprovalFor(
+    runId: string,
+    requestId: string
+  ): PendingApproval | undefined {
+    if (this.registry.get(runId)?.state !== 'awaiting-approval')
+      return undefined;
+    return this.registry.getPendingApproval(runId, requestId);
   }
 
-  // The approval one run is parked on, if any. Lets a caller answer an
-  // approval by run id alone instead of having to carry the requestId it was
-  // told about earlier — see approve(), which still requires an explicit
-  // requestId so a stale answer can never resolve a newer request.
-  //
-  // Gated on the run's state for the same reason pendingApprovals() filters on
-  // it: a stale record left on a cancelled run is not an answerable request.
-  pendingApprovalFor(runId: string): PendingApproval | undefined {
-    const meta = this.registry.get(runId);
-    if (meta?.state !== 'awaiting-approval') return undefined;
-    return this.registry.getPendingApproval(runId);
-  }
-
-  /**
-   * Attaches each awaiting-approval run's pending request to its meta for API
-   * reads. The registry keeps approvals in memory and the `approval.requested`
-   * WS event carries the id live — but a client that connects afterwards (a
-   * reload, a relaunched app, the CLI) had no way to learn which request a
-   * parked run is waiting on, so it could see the run was stuck and still not
-   * answer it. Computed per request and never persisted: the record dies with
-   * the executor, exactly like the pause it describes.
-   */
-  decorateRunsWithPendingApproval<T extends RunMeta>(
-    runs: T[]
-  ): (T & { pendingApproval?: PendingApproval })[] {
-    return runs.map((run) => {
-      const pending = this.pendingApprovalFor(run.id);
-      return pending === undefined ? run : { ...run, pendingApproval: pending };
-    });
+  // Every call a run is parked on, oldest first.
+  pendingApprovalsFor(runId: string): PendingApproval[] {
+    if (this.registry.get(runId)?.state !== 'awaiting-approval') return [];
+    return this.registry.pendingApprovals(runId);
   }
 
   // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
@@ -813,12 +981,15 @@ export class Orchestrator {
     // `actor` credits who caused this dispatch: omitted (the API's manual
     // dispatch) defaults to the daemon's human, but an automatic caller
     // (EpicEngine's auto-fill) passes 'none' explicitly — no human pressed
-    // dispatch for that specific task. `dispatchedBy` names whom the run is
-    // for when the actor is nobody: a fan-out's runs are its starter's.
+    // dispatch for that specific task. `operator` is who the run acts for;
+    // absent means no one, never the actor or the daemon's human.
+    // `dispatchedBy` names whom the run is for when the actor is nobody: a
+    // fan-out's runs are its starter's.
     opts: {
       model?: string;
       effort?: EffortLevel;
       actor?: string;
+      operator?: string | null;
       dispatchedBy?: string;
       guard?: DispatchGuard;
     } = {}
@@ -828,6 +999,7 @@ export class Orchestrator {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
     }
     refuseExecuteOnDerivedTask(task);
+    this.refuseGuarded(task);
     checkGuard(task, opts.guard);
     const live = this.registry.liveRunForTask(taskId);
     if (live !== undefined) {
@@ -850,7 +1022,7 @@ export class Orchestrator {
       checkGuard(this.ctx.store.get(taskId) ?? task, opts.guard);
     }
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     // Suffixed with the run's own hex tag (stripping its `r-` prefix) so two
     // runs against the same task never collide on branch name — a task can
     // have several finished-but-unreviewed runs sitting in parallel until
@@ -861,6 +1033,24 @@ export class Orchestrator {
     const wtPath = worktreePath(this.ctx.rootDir, runId);
 
     this.worktrees.add(wtPath, branch, baseBranch);
+    if (this.worktreeSeed !== null) {
+      try {
+        this.worktreeSeed(taskId, wtPath);
+      } catch (err) {
+        // A failed cleanup is logged; the seed's reason is what the caller hears.
+        try {
+          this.worktrees.remove(wtPath, branch, runId);
+        } catch (removeErr) {
+          console.error(
+            `dispatchd: removing ${wtPath} after a failed seed failed`,
+            removeErr
+          );
+        }
+        throw new OrchestratorClientError(
+          `could not seed the worktree: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
 
     const dispatchedBy = humanOwner(
       opts.dispatchedBy ?? opts.actor ?? this.ctx.actorContext?.humanRef
@@ -882,6 +1072,8 @@ export class Orchestrator {
       // automatic caller says the run is nobody's, and crediting it to anyone
       // would be inventing an owner.
       ...(dispatchedBy === undefined ? {} : { dispatchedBy }),
+      operator: this.a2a(taskId) ? null : (opts.operator ?? null),
+      memoryLineage: runId,
       // Seeded from the task's own declared write-set — see RunMeta.claims.
       claims: [...task.meta.writes],
       // Spread in only for a genuinely stacked run, so an unblocked run's
@@ -894,8 +1086,7 @@ export class Orchestrator {
           }
         : {}),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta);
 
     this.ctx.store.update(
       taskId,
@@ -911,18 +1102,20 @@ export class Orchestrator {
 
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
+    const brief = this.taskBrief(task, executorName, runId);
     this.startAndRegister(
       runId,
       {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task, executorName),
+        prompt: brief(prepared?.text ?? null),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, brief),
       },
       executor
     );
@@ -942,12 +1135,17 @@ export class Orchestrator {
     model?: string;
     effort?: EffortLevel;
     buildPrompt: (ctx: { runId: string; worktreePath: string }) => string;
+    // Who the run acts for: the human who started it, or for a run the
+    // system starts after another run, that run's operator.
+    operator: string | null;
   }): Promise<RunMeta> {
     const task = this.ctx.store.get(opts.taskId);
     if (task === null) {
       throw new OrchestratorNotFoundError(`task not found: ${opts.taskId}`);
     }
     if (opts.kind === 'execute') refuseExecuteOnDerivedTask(task);
+    // Every kind: each one reads the draft's client-written description.
+    this.refuseGuarded(task);
     const live = this.registry.liveRunForTask(opts.taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(
@@ -963,7 +1161,7 @@ export class Orchestrator {
     );
 
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     const branch = `${DISPATCH_BRANCH_PREFIX}${opts.kind}-${opts.taskId}-${runId.slice(2)}`;
     const wtPath = worktreePath(this.ctx.rootDir, runId);
     this.worktrees.add(wtPath, branch, opts.head);
@@ -989,11 +1187,12 @@ export class Orchestrator {
       model: opts.model,
       ...this.effortField(opts.effort),
       kind: opts.kind,
+      operator: this.a2a(opts.taskId) ? null : opts.operator,
+      memoryLineage: runId,
       claims: [...task.meta.writes],
       ...(owner === undefined ? {} : { dispatchedBy: owner }),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta);
 
     // A throwing buildPrompt would otherwise strand this run in `provisioning`,
     // which counts as live: the task could never be dispatched again.
@@ -1005,6 +1204,7 @@ export class Orchestrator {
       this.transition(runId, 'failed', {
         error: `failed to prepare ${opts.kind} run: ${message}`,
       });
+      this.endRunMemory(runId);
       this.worktrees.remove(wtPath, branch, runId);
       throw new OrchestratorClientError(
         `failed to prepare ${opts.kind} run: ${message}`
@@ -1018,12 +1218,15 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt,
+        prompt: withSection(prompt, prepared?.text ?? null),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, (section) =>
+          withSection(prompt, section)
+        ),
       },
       executor
     );
@@ -1372,10 +1575,8 @@ export class Orchestrator {
     return candidates[0]?.branch ?? null;
   }
 
-  // Answers a pending approval request. Only valid while the run is
-  // `awaiting-approval` and `requestId` matches the one it's actually
-  // waiting on — both mismatches are 400s, not 404s, since the run itself
-  // does exist.
+  // Answers one parked call (a 400 when the run or call is not parked); the run
+  // stays awaiting-approval while any other call is.
   approve(
     runId: string,
     requestId: string,
@@ -1391,8 +1592,7 @@ export class Orchestrator {
         `run is not awaiting approval: ${runId}`
       );
     }
-    const pending = this.registry.getPendingApproval(runId);
-    if (pending === undefined || pending.requestId !== requestId) {
+    if (this.registry.getPendingApproval(runId, requestId) === undefined) {
       throw new OrchestratorClientError(
         `unknown approval request: ${requestId}`
       );
@@ -1407,9 +1607,11 @@ export class Orchestrator {
     if (executorRun === undefined) {
       this.healZombieRun(meta);
     }
-    this.registry.setPendingApproval(runId, undefined);
+    this.registry.removePendingApproval(runId, requestId);
     executorRun.approve(requestId, resolved);
-    this.transition(runId, 'running');
+    if (this.registry.pendingApprovals(runId).length === 0)
+      this.transition(runId, 'running');
+    this.approvalGate?.settle(runId, requestId, 'answered');
   }
 
   // `resume: true` is the request-changes path: valid on any run that has
@@ -1419,11 +1621,12 @@ export class Orchestrator {
   // `actor` (resume path only) credits who asked for the redispatch: the API
   // passes its caller, and omitted defaults to the daemon's human; FixLoop's
   // own automatic escalation passes 'none' explicitly — no one typed
-  // anything, the loop just moved to its next round.
+  // anything, the loop just moved to its next round. `operator` is who the
+  // follow-up acts for; absent means no one.
   sendMessage(
     runId: string,
     text: string,
-    opts: { resume?: boolean; actor?: string } = {}
+    opts: { resume?: boolean; actor?: string; operator?: string | null } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
 
@@ -1472,7 +1675,8 @@ export class Orchestrator {
       return this.requestChanges(
         meta,
         text,
-        opts.actor ?? this.ctx.actorContext?.humanRef
+        opts.actor ?? this.ctx.actorContext?.humanRef,
+        opts.operator ?? null
       );
     }
 
@@ -1497,98 +1701,6 @@ export class Orchestrator {
     this.transcriptFor(runId).appendEntry(entry);
     this.ctx.events.broadcast({ type: 'run.log', runId, entry });
     executorRun.send(text);
-    return meta;
-  }
-
-  // Resolves the label a `from: 'agent'` message entry should carry —
-  // the sender run's task title + id when `from.runId` names a run this
-  // orchestrator still knows about (live or terminal-but-registered), or
-  // an explicit `from.label` override, or the generic fallback that keeps
-  // `agent_message`'s pre-identity behavior (and its existing API test's
-  // exact prefix text) unchanged when the sender can't be resolved at all.
-  private resolveSenderLabel(from?: { runId?: string; label?: string }): {
-    fromLabel: string;
-  } {
-    if (from?.runId !== undefined) {
-      const senderMeta = this.registry.get(from.runId);
-      if (senderMeta !== undefined) {
-        return {
-          fromLabel: `${untrustedInline(senderMeta.taskTitle)} (${senderMeta.id})`,
-        };
-      }
-    }
-    if (from?.label !== undefined && from.label.trim() !== '') {
-      return { fromLabel: untrustedInline(from.label) };
-    }
-    return { fromLabel: 'another agent' };
-  }
-
-  // The messaging half of agent collaboration (spec's `agent_message`):
-  // injects a message from *another* agent into a live run's executor.
-  // Distinct from sendMessage's human-authored channel — this one always
-  // prefixes the text with the resolved SENDER's identity (see
-  // resolveSenderLabel) so the receiving agent can tell who's talking, and
-  // deliberately only accepts a run that's actively `running` (not
-  // provisioning, not awaiting-approval, not terminal): every other state
-  // 409s, since "another agent has something to say right now" is only
-  // unambiguous while the run is actually running. `resume`-style
-  // reactivation is sendMessage's job, not this one's.
-  inject(
-    runId: string,
-    text: string,
-    from?: { runId?: string; label?: string }
-  ): RunMeta {
-    const meta = this.requireRun(runId);
-    if (meta.state !== 'running') {
-      throw new OrchestratorConflictError(`run is not running: ${runId}`);
-    }
-    const executorRun = this.registry.getExecutorRun(runId);
-    // Same zombie self-heal as approve()/sendMessage() above — the state
-    // check just above guarantees `meta.state === 'running'` here, so a
-    // missing ExecutorRun means the executor died out from under a live run.
-    if (executorRun === undefined) {
-      this.healZombieRun(meta);
-    }
-    const { fromLabel } = this.resolveSenderLabel(from);
-    const prefixed = `[message from ${fromLabel}] ${text}`;
-    const entry: NormalizedEntry = {
-      ts: new Date().toISOString(),
-      kind: 'message',
-      from: 'agent',
-      fromLabel,
-      text,
-    };
-    this.transcriptFor(runId).appendEntry(entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
-    executorRun.send(prefixed);
-    return meta;
-  }
-
-  // The agent->human channel (spec's `message_user`): records a
-  // `from: 'agent'` message entry on the CALLING run's own transcript —
-  // labeled with that same run's task title + id — so an agent can flag a
-  // question or update to the human without waiting for its own assistant
-  // output to be read. Unlike `inject`, there is no separate recipient run
-  // to deliver text into; this only ever writes to `runId`'s own transcript
-  // and broadcasts it, so a connected Session tab badges it immediately.
-  // Same `running`-only liveness gate as `inject` — a run that isn't
-  // actively running has no reason to be raising anything to the user right
-  // now.
-  messageUser(runId: string, text: string): RunMeta {
-    const meta = this.requireRun(runId);
-    if (meta.state !== 'running') {
-      throw new OrchestratorConflictError(`run is not running: ${runId}`);
-    }
-    const entry: NormalizedEntry = {
-      ts: new Date().toISOString(),
-      kind: 'message',
-      from: 'agent',
-      fromLabel: `${meta.taskTitle} (${meta.id})`,
-      toUser: true,
-      text,
-    };
-    this.transcriptFor(runId).appendEntry(entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
     return meta;
   }
 
@@ -1639,20 +1751,6 @@ export class Orchestrator {
     return full;
   }
 
-  // Records the human's reply to an `ask_user` question on the run's own
-  // transcript. The agent gets it as its tool result, so nothing is injected.
-  recordAnswer(runId: string, text: string): void {
-    this.requireRun(runId);
-    const entry: NormalizedEntry = {
-      ts: new Date().toISOString(),
-      kind: 'message',
-      from: 'user',
-      text,
-    };
-    this.transcriptFor(runId).appendEntry(entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
-  }
-
   /**
    * Asks a live run to stop gracefully — the Stop button's server side, and the
    * counterpart to `cancel()` below.
@@ -1664,12 +1762,14 @@ export class Orchestrator {
    * terminal state through handleFinish and its work is committed and
    * reviewable like any other finished run.
    *
-   * That means this method changes no run state of its own. It records
+   * It changes no RunState of its own, but it adds the run to `stoppingRuns`,
+   * so messaging holds new mail for it (see requireDeliverableRun). It records
    * `stopRequestedAt` (a marker, so surfaces can show "Stopping…" and then
    * "Stopped", and so a daemon restart mid-stop doesn't forget), tells the
    * executor, and arms the escalation timer that catches an agent which ignores
    * the request. Idempotent: pressing Stop twice re-signals the executor but
-   * does not restart the clock or write a second marker.
+   * does not restart the clock or write a second marker. A run parked on a
+   * tool call leaves `awaiting-approval` here, and its gate closes.
    *
    * Deliberately synchronous with no `await` between reading the run's state
    * and appending its marker, for the same reason handleFinish is: an `await`
@@ -1693,10 +1793,12 @@ export class Orchestrator {
     // any non-terminal run it replays — so no caller can ever observe a
     // provisioning run whose executor simply has not been built yet.
     if (executorRun === undefined) this.healZombieRun(meta);
+    this.stoppingRuns.add(runId);
 
     if (meta.stopRequestedAt !== undefined) {
       executorRun.requestStop();
-      return meta;
+      this.releaseParkedApprovals(runId, 'the run is stopping');
+      return this.registry.get(runId)!;
     }
 
     const now = new Date().toISOString();
@@ -1722,6 +1824,7 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'run.changed' });
 
     executorRun.requestStop();
+    this.releaseParkedApprovals(runId, 'the run is stopping');
 
     // Same rule as cancel(): a task file this can't write costs the Activity
     // line, never the stop itself.
@@ -1741,6 +1844,17 @@ export class Orchestrator {
 
     this.scheduleStopEscalation(runId);
     return this.registry.get(runId)!;
+  }
+
+  // The executor answers every parked call itself when the run stops or winds
+  // down, so the run is running again and each call's own gate closes.
+  private releaseParkedApprovals(runId: string, reason: string): void {
+    const parked = this.registry.clearPendingApprovals(runId);
+    if (parked.length === 0) return;
+    if (this.registry.get(runId)?.state === 'awaiting-approval')
+      this.transition(runId, 'running');
+    for (const { requestId } of parked)
+      this.approvalGate?.settle(runId, requestId, reason);
   }
 
   /**
@@ -1799,7 +1913,11 @@ export class Orchestrator {
     // Before transition() below makes the run terminal, so it isn't a no-op.
     this.forceClaimsRefresh(runId);
     const executorRun = this.registry.getExecutorRun(runId);
-    if (executorRun !== undefined) await executorRun.interrupt();
+    if (executorRun !== undefined) {
+      // Set before the await: an interrupting executor drops what it is sent.
+      this.stoppingRuns.add(runId);
+      await executorRun.interrupt();
+    }
     this.transition(runId, 'cancelled');
 
     // M2: record the cancellation as a durable Activity line, same as every
@@ -2129,6 +2247,22 @@ export class Orchestrator {
     if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
     if (meta.prUrl !== undefined) return 'run has an open PR';
     if (meta.baseDiscarded === true) return "run's base needs a human";
+    return this.pickUpBlockReason(meta);
+  }
+
+  // Why a human cannot continue exactly this run, or null. A finished run, an
+  // open PR or a flagged base pass: the human chose it, and asking is the review.
+  continueBlockReason(meta: RunMeta): string | null {
+    if (!TERMINAL_RUN_STATES.has(meta.state)) {
+      return `run is ${meta.state}, not ended`;
+    }
+    if (runKind(meta) !== 'execute') return 'run is not an execute run';
+    if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
+    return this.pickUpBlockReason(meta);
+  }
+
+  // What stops any ended execute run being picked up in its own worktree.
+  private pickUpBlockReason(meta: RunMeta): string | null {
     if (meta.sessionId === undefined) return 'run never started a session';
     if (!existsSync(meta.worktreePath)) return 'run has no worktree left';
     if (this.registry.list().some((r) => r.resumedFrom === meta.id)) {
@@ -2191,6 +2325,8 @@ export class Orchestrator {
       effort?: EffortLevel;
       fresh?: boolean;
       actor?: string;
+      // Who the run acts for, fresh or resumed; absent means no one.
+      operator?: string | null;
       /** Whom the run is for, when not the actor (see dispatch()). */
       dispatchedBy?: string;
       defaults?: { executor?: string; model?: string };
@@ -2205,7 +2341,11 @@ export class Orchestrator {
     if (request.fresh !== true) {
       const resumable = this.resumableRunForTask(taskId);
       if (resumable !== null && this.resumeHonoursRequest(resumable, request)) {
-        return this.resumeForRedispatch(resumable, request);
+        return this.resumeForRedispatch(resumable, {
+          actor: request.actor,
+          dispatchedBy: request.dispatchedBy,
+          operator: request.operator ?? null,
+        });
       }
     }
     const executorName =
@@ -2221,6 +2361,7 @@ export class Orchestrator {
       model,
       effort: request.effort,
       actor: request.actor,
+      operator: request.operator,
       dispatchedBy: request.dispatchedBy,
       guard: request.guard,
     });
@@ -2236,6 +2377,63 @@ export class Orchestrator {
       });
     }
     return meta;
+  }
+
+  // A wake's next run, acting for `operator`. Only a human's wake may continue
+  // a finished run's session (request changes); anything else dispatches or resumes.
+  async wakeTask(
+    taskId: string,
+    opts: { actor: string; continueFinished: boolean; operator: string | null }
+  ): Promise<RunMeta> {
+    const task = this.ctx.store.get(taskId);
+    if (task !== null && isDoneStatus(task.meta.status, this.statuses())) {
+      throw new OrchestratorConflictError(`task is ${task.meta.status}`);
+    }
+    const latest = this.registry
+      .list()
+      .find((r) => r.taskId === taskId && runKind(r) === 'execute');
+    if (
+      opts.continueFinished &&
+      latest !== undefined &&
+      TERMINAL_RUN_STATES.has(latest.state) &&
+      latest.sessionId !== undefined &&
+      latest.sessionId !== '' &&
+      latest.reviewedAt === undefined &&
+      this.registry.liveRunForTask(taskId) === undefined &&
+      this.resumeBlockReason(latest) !== null
+    ) {
+      return this.requestChanges(
+        latest,
+        WAKE_PROMPT,
+        opts.actor,
+        opts.operator
+      );
+    }
+    return this.dispatchOrResume(taskId, {
+      actor: opts.actor,
+      operator: opts.operator,
+    });
+  }
+
+  // Whether a task came in over A2A; its runs act for no one.
+  private a2a(taskId: string): boolean {
+    return this.ctx.isA2ATask?.(taskId) ?? false;
+  }
+
+  // The same answer for memory, which keeps project scope from A2A runs.
+  isA2ATask(taskId: string): boolean {
+    return this.a2a(taskId);
+  }
+
+  // A human's wake of one ended execute run continues exactly that run, for `operator`.
+  wakeRun(
+    runId: string,
+    opts: { actor: string; operator: string | null }
+  ): RunMeta {
+    const meta = this.requireRun(runId);
+    const reason = this.continueBlockReason(meta);
+    if (reason !== null) throw new OrchestratorConflictError(reason);
+    return this.requestChanges(meta, WAKE_PROMPT, opts.actor, opts.operator);
   }
 
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
@@ -2311,9 +2509,11 @@ export class Orchestrator {
   // saying so in terms the caller can act on.
   private resumeForRedispatch(
     run: RunMeta,
-    who: { actor?: string; dispatchedBy?: string }
+    who: { actor?: string; dispatchedBy?: string; operator: string | null }
   ): RunMeta {
     if (this.needsQuietProof(run)) {
+      // The sweep's resume then acts for this caller, not the run's operator.
+      this.autoResumeOperators.set(run.id, who.operator);
       this.scheduleAutoResume(run.id);
       throw new OrchestratorConflictError(
         `run ${run.id} is still being recovered after a daemon restart — waiting for the agent it orphaned to stop writing to ${run.branch}. It will resume on its own; dispatch with fresh=true to start over instead.`
@@ -2322,6 +2522,7 @@ export class Orchestrator {
     return this.resumeRun(run.id, {
       actor: who.actor,
       dispatchedBy: who.dispatchedBy,
+      operator: who.operator,
     });
   }
 
@@ -2368,6 +2569,7 @@ export class Orchestrator {
       .finally(() => {
         if (this.scheduledAutoResumes.get(runId) === done) {
           this.scheduledAutoResumes.delete(runId);
+          this.autoResumeOperators.delete(runId);
         }
       });
     this.scheduledAutoResumes.set(runId, done);
@@ -2444,7 +2646,12 @@ export class Orchestrator {
     // hazard the quiet window upstream of here exists to prevent.
     if (meta === undefined || this.resumeBlockReason(meta) !== null) return;
     try {
-      this.resumeRun(runId, { auto: true });
+      this.resumeRun(runId, {
+        auto: true,
+        ...(this.autoResumeOperators.has(runId)
+          ? { operator: this.autoResumeOperators.get(runId) ?? null }
+          : {}),
+      });
     } catch (err) {
       console.error(
         `dispatchd: could not auto-resume run ${runId}: ${(err as Error).message}`
@@ -4065,6 +4272,7 @@ export class Orchestrator {
               error: BOOT_FORCE_FAIL_ERROR,
             };
             crashedRunIds.push(meta.id);
+            this.removeRunToken(meta.id);
           }
           this.registry.create(meta);
           bootRuns.push(meta);
@@ -4184,7 +4392,7 @@ export class Orchestrator {
   // already registered as 'running'). reconcileOnBoot() already heals this
   // exact shape of zombie once, at boot, for every run whose transcript is
   // non-terminal; this covers the same run going zombie *after* boot, lazily,
-  // the moment approve()/sendMessage()/inject() next tries to reach its
+  // the moment approve()/sendMessage()/deliverToRun() next tries to reach its
   // executor and finds nothing there.
   //
   // Reuses transition()'s state-line/registry-update/`run.changed` broadcast
@@ -4245,7 +4453,7 @@ export class Orchestrator {
 
   // Starts `executor` for a run that dispatch()/requestChanges() has already
   // registered and transitioned to 'running', then records its live
-  // ExecutorRun so approve()/sendMessage()/inject() can reach it.
+  // ExecutorRun so approve()/sendMessage()/deliverToRun() can reach it.
   //
   // If start() throws *synchronously* — most commonly the Claude Agent SDK
   // failing to locate its native CLI binary (a broken `--omit=optional`
@@ -4265,6 +4473,10 @@ export class Orchestrator {
   ): void {
     let executorRun;
     try {
+      if (this.mintRunToken !== null) {
+        const token = this.mintRunToken(runId);
+        opts = { ...opts, runTokenFile: this.writeRunToken(runId, token) };
+      }
       executorRun = executor.start(opts, this.makeEvents(runId));
     } catch (err) {
       const raw = (err as Error).message;
@@ -4279,6 +4491,36 @@ export class Orchestrator {
       return;
     }
     this.registry.setExecutorRun(runId, executorRun);
+    const meta = this.registry.get(runId);
+    if (meta !== undefined) {
+      for (const listener of this.runStartedListeners) {
+        // A listener throwing must never fail the dispatch that triggered it.
+        try {
+          listener(meta);
+        } catch (err) {
+          console.error(
+            `dispatchd: onRunStarted listener failed for ${runId}: ${(err as Error).message}`
+          );
+        }
+      }
+    }
+  }
+
+  // Writes a run's token to a fresh owner-only file and returns its path; a
+  // leftover file is replaced so its mode can never be wider than 0600.
+  private writeRunToken(runId: string, token: string): string {
+    const path = runTokenPath(this.ctx.rootDir, runId);
+    mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
+    rmSync(path, { force: true });
+    writeFileSync(path, token, { mode: 0o600, flag: 'wx' });
+    return path;
+  }
+
+  // A run's token file outlives nothing: removed once the run is terminal.
+  private removeRunToken(runId: string): void {
+    this.bestEffort(`removing run token file for run ${runId}`, () => {
+      rmSync(runTokenPath(this.ctx.rootDir, runId), { force: true });
+    });
   }
 
   // I4: once PrManager.openPr has pushed a run's branch and opened a PR
@@ -4456,7 +4698,12 @@ export class Orchestrator {
     // Whatever ended this run — winding down after a stop, its own finish, a
     // cancel, an escalation — there is nothing left for the stop backstop to
     // catch. This is the one point every terminal state passes through.
-    if (TERMINAL_RUN_STATES.has(state)) this.clearStopEscalation(runId);
+    if (TERMINAL_RUN_STATES.has(state)) {
+      this.clearStopEscalation(runId);
+      this.stoppingRuns.delete(runId);
+      this.removeRunToken(runId);
+      this.registry.clearPendingApprovals(runId);
+    }
     // A finish that reports no session must not erase the one recordSession
     // already stored: spreading `sessionId: undefined` over the meta did
     // exactly that, so a run whose agent reported its handle and then died
@@ -4505,7 +4752,18 @@ export class Orchestrator {
     if (meta === undefined) return;
     // Nothing will ever refresh a terminal run's claims again.
     this.lastClaimsCheck.delete(runId);
+    this.endRunMemory(runId);
     this.invokeHooksSafely(this.terminalHooks, meta);
+  }
+
+  // Tells the memory port a run ended, so it stops following the run's export.
+  private endRunMemory(runId: string): void {
+    const meta = this.registry.get(runId);
+    const port = this.memoryPort;
+    if (meta === undefined || port === null) return;
+    this.bestEffort(`ending memory for run ${runId}`, () => {
+      port.runEnded(meta);
+    });
   }
 
   // C2(b): runs every hook in `hooks` against `meta`, isolating each call —
@@ -4589,21 +4847,66 @@ export class Orchestrator {
         this.scheduleClaimsRefresh(runId);
       },
       onApprovalRequest: (request) => {
-        this.registry.setPendingApproval(runId, request);
-        this.transition(runId, 'awaiting-approval');
-        this.ctx.events.broadcast({
-          type: 'approval.requested',
-          runId,
-          requestId: request.requestId,
-          toolName: request.toolName,
-        });
+        this.registry.addPendingApproval(runId, request);
+        if (this.registry.get(runId)?.state !== 'awaiting-approval')
+          this.transition(runId, 'awaiting-approval');
+        const meta = this.registry.get(runId);
+        if (meta !== undefined) {
+          this.approvalGate?.raise({
+            runId,
+            taskId: meta.taskId,
+            taskTitle: meta.taskTitle,
+            requestId: request.requestId,
+            toolName: request.toolName,
+            input: request.input,
+          });
+        }
         // Awaiting-approval can sit for arbitrarily long — capture whatever
         // this run just did rather than letting the cooldown delay it.
         this.forceClaimsRefresh(runId);
       },
       onSession: (sessionId) => this.recordSession(runId, sessionId),
+      onEnding: () => {
+        this.stoppingRuns.add(runId);
+        this.releaseParkedApprovals(runId, 'the run ended');
+      },
+      onMemoryMode: (mode, detail) =>
+        this.recordMemoryMode(runId, mode, detail),
+      onMemoryRecall: (paths, via) => {
+        const meta = this.registry.get(runId);
+        if (meta === undefined || this.memoryPort === null) return;
+        const port = this.memoryPort;
+        this.bestEffort(`recording memory recalls for run ${runId}`, () => {
+          port.recall(runId, runLineage(meta), paths, via);
+        });
+      },
       onFinish: (finish) => this.handleFinish(runId, finish),
     };
+  }
+
+  // Export mode's load check moved the run to another memory mode: kept on a
+  // state line, with the executor's reason in the Session log.
+  private recordMemoryMode(
+    runId: string,
+    mode: MemoryMode,
+    detail: string
+  ): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return;
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { memoryMode: mode, updatedAt: now });
+    const entry: NormalizedEntry = {
+      ts: now,
+      kind: 'system',
+      text: `Memory mode ${mode}: ${detail}`,
+    };
+    this.bestEffort(`recording memory mode for run ${runId}`, () => {
+      const transcript = this.transcriptFor(runId);
+      transcript.appendState(meta.state, now, { memoryMode: mode });
+      transcript.appendEntry(entry);
+    });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
   // Keeps RunMeta.subagents current from the `agent` entries as they are
@@ -4642,12 +4945,10 @@ export class Orchestrator {
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.sessionId === sessionId) return;
     if (TERMINAL_RUN_STATES.has(meta.state)) return;
-    // A resumed run is born holding the session it was told to continue, so
-    // an executor reporting a DIFFERENT one has opened a conversation with
-    // none of the history this run claims. ClaudeExecutor fails the run
-    // itself before this can happen; for any executor that does not, the
-    // Session log at least says so, rather than letting the successor pass
-    // as a continuation while the agent underneath it starts from nothing.
+    // A resumed run is born holding the session it was told to continue, so a
+    // DIFFERENT one reported here has none of the history this run claims: an
+    // export fallback's fresh session, or a resume an executor did not refuse.
+    // The Session log says so rather than letting it pass as a continuation.
     if (meta.resumedFrom !== undefined && meta.sessionId !== undefined) {
       const notice: NormalizedEntry = {
         ts: new Date().toISOString(),
@@ -4736,7 +5037,7 @@ export class Orchestrator {
     }
 
     // Synchronous, no await before this — closes the window a concurrent
-    // approve()/sendMessage()/inject() could otherwise race (see below).
+    // approve()/sendMessage()/deliverToRun() could otherwise race (see below).
     this.transition(runId, effectiveFinish.state, {
       costUsd: effectiveFinish.costUsd,
       turns: effectiveFinish.turns,
@@ -4829,7 +5130,8 @@ export class Orchestrator {
   private requestChanges(
     oldMeta: RunMeta,
     text: string,
-    actor: string | undefined
+    actor: string | undefined,
+    operator: string | null
   ): RunMeta {
     const {
       executor,
@@ -4837,7 +5139,7 @@ export class Orchestrator {
       substituted,
     } = this.resolveExecutorForResume(oldMeta.executor);
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     // For the person who asked; the fix loop's rounds ('none') stay with
     // whomever the conversation was for.
     const owner = humanOwner(actor) ?? oldMeta.dispatchedBy;
@@ -4863,6 +5165,9 @@ export class Orchestrator {
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
       resumedFrom: oldMeta.id,
+      // Acts for whoever asked for it, never the predecessor's operator as such.
+      operator: this.a2a(oldMeta.taskId) ? null : operator,
+      memoryLineage: runLineage(oldMeta),
       ...(owner === undefined ? {} : { dispatchedBy: owner }),
       // The resumed run inherits the same worktree and the same BRANCH, so it
       // inherits the branch's stacking facts too. Dropping them here was how a
@@ -4880,8 +5185,7 @@ export class Orchestrator {
         ? { stackBaseCommit: oldMeta.stackBaseCommit }
         : {}),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta, true);
 
     // The user's feedback is this run's opening conversation turn — record
     // it on the NEW run's transcript (mirroring the live-run branch of
@@ -4931,6 +5235,9 @@ export class Orchestrator {
         maxBudgetUsd: caps.maxBudgetUsd,
         model: oldMeta.model,
         effort: oldMeta.effort,
+        ...this.memoryOption(prepared, (section) =>
+          this.freshPromptFor(oldMeta.taskId, executorName, runId, section)
+        ),
       },
       executor
     );
@@ -4961,9 +5268,17 @@ export class Orchestrator {
   // auto-fill, credits 'none' exactly as its dispatch does). The successor is
   // for `dispatchedBy` when given, else whoever pressed resume, else — the
   // boot sweep, an automatic caller — whomever its predecessor was for.
+  // `operator` is who the successor acts for, absent meaning no one; only the
+  // boot sweep (`auto`) with none named keeps the run's own, as no new
+  // principal is acting.
   resumeRun(
     runId: string,
-    opts: { auto?: boolean; actor?: string; dispatchedBy?: string } = {}
+    opts: {
+      auto?: boolean;
+      actor?: string;
+      dispatchedBy?: string;
+      operator?: string | null;
+    } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
@@ -4993,7 +5308,7 @@ export class Orchestrator {
       substituted,
     } = this.resolveExecutorForResume(meta.executor);
     const now = new Date().toISOString();
-    const newRunId = generateRunId(now);
+    const newRunId = this.mintRunId(now);
     const continuing = meta.sessionId !== undefined;
     const owner =
       humanOwner(opts.dispatchedBy) ??
@@ -5023,6 +5338,15 @@ export class Orchestrator {
       // its predecessor had already claimed.
       claims: meta.claims,
       resumedFrom: meta.id,
+      // A fresh session starts its own lineage.
+      operator: this.a2a(meta.taskId)
+        ? null
+        : opts.operator !== undefined
+          ? opts.operator
+          : opts.auto === true
+            ? runOperator(meta)
+            : null,
+      memoryLineage: continuing ? runLineage(meta) : newRunId,
       ...(owner === undefined ? {} : { dispatchedBy: owner }),
       ...(meta.stackParents !== undefined
         ? { stackParents: meta.stackParents }
@@ -5031,8 +5355,7 @@ export class Orchestrator {
         ? { stackBaseCommit: meta.stackBaseCommit }
         : {}),
     };
-    this.registry.create(newMeta);
-    this.transcriptFor(newRunId).writeHeader(newMeta);
+    const prepared = this.registerRun(newMeta, continuing);
 
     // A fresh start opens the successor's Session log with the reason, so a
     // reader of that log is never left inferring from an agent that orients
@@ -5056,43 +5379,23 @@ export class Orchestrator {
       });
     }
 
-    // The predecessor's scope requests follow it into the successor: an open
-    // one is still a card in front of a human, and it has to belong to the run
-    // whose agent can act on the answer. Carried BEFORE the prompt is built so
-    // the agent is told what it was waiting on; the re-broadcast is what moves
-    // the card to the new run in an open app.
-    const carried = this.ctx.scopeRequests?.carry(meta.id, newRunId) ?? [];
-    for (const request of carried) {
-      if (request.granted !== null) continue;
-      this.ctx.events.broadcast({
-        type: 'scope.requested',
-        runId: newRunId,
-        requestId: request.id,
-      });
-    }
-    // A reattached session already holds every ruling the agent was GIVEN,
-    // but not the one its dead request_scope poll never received — so the
-    // carried section goes on both prompt shapes.
-    const prompt = [
-      continuing
+    // A continuing session's prompt is the continuation, and its fallback the
+    // brief when that builds; a fresh one gets the brief with the notice.
+    const brief = continuing
+      ? null
+      : this.taskBrief(task, executorName, newRunId);
+    const briefing = (section: string | null): string | null =>
+      brief === null
+        ? this.freshPromptFor(meta.taskId, executorName, newRunId, section)
+        : `${brief(section)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
+    const prompt =
+      brief === null
         ? renderContinuationPrompt(meta, newRunId)
-        : `${this.promptForTask(task, executorName)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
-      renderScopeRequestsSection(carried),
-    ]
-      .filter((section): section is string => section !== null)
-      .join('\n\n');
+        : `${brief(prepared?.text ?? null)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
 
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
       : '';
-    const openCarried = carried.filter((r) => r.granted === null).length;
-    const carriedNote =
-      openCarried > 0
-        ? `; carried ${openCarried} undecided scope request${openCarried === 1 ? '' : 's'} (${carried
-            .filter((r) => r.granted === null)
-            .map((r) => r.id)
-            .join(', ')})`
-        : '';
     const how =
       opts.auto === true
         ? `auto-resumed after ${meta.state} (daemon restart)`
@@ -5104,7 +5407,7 @@ export class Orchestrator {
       meta.taskId,
       {
         status: this.statuses().roles.dispatched,
-        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}${carriedNote}`,
+        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.
         activityActor:
@@ -5131,6 +5434,7 @@ export class Orchestrator {
         maxBudgetUsd: caps.maxBudgetUsd,
         model: meta.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, briefing),
       },
       executor
     );
@@ -5160,7 +5464,13 @@ export class Orchestrator {
   // exact text is unit-testable independent of the orchestrator. A corrupt
   // parent epic file degrades to "no epic context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  private promptForTask(task: TaskDoc, executorName: string): string {
+  // The epic and orientation are read once; each call renders with its own
+  // memory section, so a run's prompt and its fallback share them.
+  private taskBrief(
+    task: TaskDoc,
+    executorName: string,
+    runId: string
+  ): (memorySection: string | null) => string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
       try {
@@ -5169,18 +5479,59 @@ export class Orchestrator {
         if (!(err instanceof TaskParseError)) throw err;
       }
     }
-    const ledgerEntries = this.ledgerStore.entriesFor(
-      task.meta.id,
-      task.meta.parent
-    );
-    return buildTaskPrompt(
-      task,
-      parentEpic,
-      ledgerEntries,
-      this.orientationFor(task.meta.id),
-      this.executorProfile(executorName).dispatchMcp !== false,
-      this.commentsFor(task.meta.id)
-    );
+    const dispatchTools =
+      this.executorProfile(executorName).dispatchMcp !== false;
+    const orientation = this.orientationFor(task.meta.id);
+    const humanRef = this.ctx.actorContext?.humanRef ?? null;
+    const docs = this.docsSection(task.meta.id, runId, dispatchTools);
+    const comments = this.commentsFor(task.meta.id);
+    return (memorySection) =>
+      buildTaskPrompt(
+        task,
+        parentEpic,
+        memorySection,
+        orientation,
+        dispatchTools,
+        humanRef,
+        docs,
+        comments
+      );
+  }
+
+  // The task's brief with `section` as its memory, for a restart that has only
+  // the brief to open with; null when the task is gone or will not read.
+  private freshPromptFor(
+    taskId: string,
+    executorName: string,
+    runId: string,
+    section: string | null
+  ): string | null {
+    try {
+      const task = this.ctx.store.get(taskId);
+      return task === null
+        ? null
+        : this.taskBrief(task, executorName, runId)(section);
+    } catch (err) {
+      console.error(
+        `dispatchd: no fallback prompt for task ${taskId}: ${(err as Error).message}`
+      );
+      return null;
+    }
+  }
+
+  // A failure here costs the section, never the dispatch (as orientation's does).
+  private docsSection(
+    taskId: string,
+    runId: string,
+    dispatchTools: boolean
+  ): string | null {
+    if (this.docsPort === null) return null;
+    try {
+      return this.docsPort.promptSection({ runId, taskId, dispatchTools });
+    } catch (err) {
+      console.error(`dispatchd: docs prompt section for ${taskId} failed`, err);
+      return null;
+    }
   }
 
   // A failed read costs the prompt its comments, never the dispatch.
@@ -5192,12 +5543,82 @@ export class Orchestrator {
     }
   }
 
+  // Records a new run, asks the memory port once how it carries memory, and
+  // writes its transcript header with the chosen mode.
+  private registerRun(meta: RunMeta, continues = false): PreparedMemory | null {
+    this.registry.create(meta);
+    const prepared = this.prepareMemory(meta, continues);
+    this.transcriptFor(meta.id).writeHeader(this.registry.get(meta.id) ?? meta);
+    return prepared;
+  }
+
+  // How a new run carries memory, recorded on it; null for a non-Claude run
+  // with no port. A missing or throwing port leaves auto memory off.
+  private prepareMemory(
+    meta: RunMeta,
+    continues: boolean
+  ): PreparedMemory | null {
+    const port = this.memoryPort;
+    const profile = this.executorProfile(meta.executor);
+    // Only the port may choose native, so a Claude run started without one gets prompt.
+    if (port === null && profile.autoMemory !== true) return null;
+    const prepared =
+      port === null
+        ? PROMPT_ONLY
+        : this.askMemoryPort(port, meta, profile, continues);
+    this.registry.updateMeta(meta.id, { memoryMode: prepared.memory.mode });
+    return prepared;
+  }
+
+  // The port's answer, or prompt mode with no section when it throws.
+  private askMemoryPort(
+    port: MemoryPromptPort,
+    meta: RunMeta,
+    profile: ExecutorProfile,
+    continues: boolean
+  ): PreparedMemory {
+    try {
+      return port.prepare({
+        runId: meta.id,
+        taskId: meta.taskId,
+        lineage: runLineage(meta),
+        runKind: runKind(meta),
+        isClaude: profile.autoMemory === true,
+        dispatchTools: profile.dispatchMcp !== false,
+        continues,
+      });
+    } catch (err) {
+      console.error(
+        `dispatchd: preparing memory for run ${meta.id} failed`,
+        err
+      );
+      return PROMPT_ONLY;
+    }
+  }
+
+  // The start option a prepared run passes; export mode adds the prompt a
+  // prompt-mode restart opens with, which carries the index section instead.
+  private memoryOption(
+    prepared: PreparedMemory | null,
+    fallbackPrompt: (section: string | null) => string | null
+  ): { memory?: ExecutorMemoryOptions } {
+    if (prepared === null) return {};
+    if (prepared.memory.mode !== 'export') return { memory: prepared.memory };
+    const fallback = fallbackPrompt(prepared.indexSection);
+    return {
+      memory:
+        fallback === null
+          ? prepared.memory
+          : { ...prepared.memory, fallbackPrompt: fallback },
+    };
+  }
+
   // The repo facts injected into this task's prompt (see orientation.ts): the
   // workspace map, skills index, root scripts, cross-run file hotspots, the
   // cached repo map, and who else is running right now. Collecting reads a
   // handful of small files and this project's own transcripts; a failure
   // anywhere in there costs the section, never the dispatch, because a
-  // throwing promptForTask strands the run in `provisioning`.
+  // throwing taskBrief strands the run in `provisioning`.
   private orientationFor(taskId: string): RepoOrientation | null {
     try {
       return collectOrientation({

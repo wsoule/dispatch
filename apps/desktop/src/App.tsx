@@ -59,12 +59,15 @@ import {
   TaskPageHostContext,
 } from './components/tasks/page/TaskPageHost';
 import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
+import { TaskThreadTab } from './components/tasks/TaskThreadTab';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter';
 import { useDispatchProject } from './hooks/useDispatchProject';
+import { useDocList } from './hooks/useDocs';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
+import { useThreadsNeedsYouCount } from './hooks/useThreads';
 import {
   type ActionFeedbackCache,
   withActionFeedback,
@@ -82,7 +85,8 @@ import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
 import { liveCeilingsOf, spendToday } from './lib/liveSpend';
-import { buildPaletteEntries } from './lib/paletteEntries';
+import { buildPaletteEntries, docHitEntries } from './lib/paletteEntries';
+import { PALETTE_SECTION_CAPS } from './lib/paletteSections';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
@@ -101,6 +105,7 @@ import {
   readTeamSession,
   signOutOfTeam,
 } from './lib/teamLocal';
+import { openRefWith } from './lib/threadSources';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -109,6 +114,7 @@ import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { CockpitView } from './views/CockpitView';
 import { DesignView } from './views/DesignView';
+import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
 import { FirstRunView } from './views/FirstRunView';
@@ -127,6 +133,7 @@ import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TerminalsView } from './views/TerminalsView';
+import { ThreadsView } from './views/ThreadsView';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
@@ -145,6 +152,9 @@ import { TooltipProvider } from '@/ui/tooltip';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
+// The Inbox's doc query: team docs whose head is conflicted.
+const CONFLICTED_TEAM_DOCS = { conflicted: true, scope: 'team' } as const;
+
 function SurfaceHosts({
   taskPage,
   flightPlan,
@@ -562,6 +572,39 @@ function App() {
     [openTaskView]
   );
 
+  // The Docs view on one doc, scrolled to `anchor`'s section when set.
+  const openDoc = useCallback(
+    (docId: string, anchor: string | null, merge?: string) =>
+      dispatchNav({ type: 'openDoc', docId, anchor, merge }),
+    []
+  );
+
+  // Where a ref chip or a sender name in a thread leads.
+  const openRef = useMemo(
+    () =>
+      openRefWith({
+        openTask: (taskId, tab, runId) => openTaskView(taskId, tab, runId),
+        openThread: (messageId) =>
+          dispatchNav({ type: 'openThread', messageId }),
+        openImpact: (subject) => dispatchNav({ type: 'openImpact', subject }),
+        openDoc,
+      }),
+    [openTaskView, openDoc]
+  );
+  const openThread = useCallback(
+    (messageId: string | null) =>
+      dispatchNav({ type: 'openThread', messageId }),
+    []
+  );
+
+  // The sidebar's Threads count, from queries the Threads view shares.
+  const threadsNeedsYou = useThreadsNeedsYouCount(
+    rawData.client,
+    rawData.port,
+    rawData.me,
+    rawData.messageAccess
+  );
+
   // The project's saved views and favorites, one instance shared through
   // `SavedViewsProvider` by the Tasks header's tabs, the task page's star and the rail.
   const savedViews = useSavedViews(activeProject?.path ?? null);
@@ -628,6 +671,12 @@ function App() {
   // task. See `buildInbox`; this one result also feeds the sidebar badge and the rail's
   // attention strip, so the three surfaces always agree.
   const statusModel = useStatusModelOf(data.config);
+  // Conflicted team docs are Inbox items until a save clears them.
+  const conflictedDocs = useDocList(
+    data.messageAccess.canMessage ? data.client : null,
+    data.port,
+    CONFLICTED_TEAM_DOCS
+  ).docs;
   const inboxData = useMemo(
     () =>
       buildInbox({
@@ -638,11 +687,14 @@ function App() {
         mergeQueue: data.mergeQueue,
         pendingApprovals: data.pendingApprovals,
         openQuestions: data.openQuestions,
+        openScopeRequests: data.pendingScopeRequests,
         fixLoops: data.fixLoops,
         me: data.me,
         model: statusModel,
+        conflictedDocs,
       }),
     [
+      conflictedDocs,
       data.runs,
       data.tasks,
       data.epics,
@@ -651,6 +703,7 @@ function App() {
       data.mergeQueue,
       data.pendingApprovals,
       data.openQuestions,
+      data.pendingScopeRequests,
       data.fixLoops,
       statusModel,
     ]
@@ -704,6 +757,7 @@ function App() {
       else if (command === 'goto-overseer') setGlobalView('overseer');
       else if (command === 'goto-home') selectProjectView('cockpit');
       else if (command === 'goto-inbox') selectProjectView('inbox');
+      else if (command === 'goto-threads') selectProjectView('threads');
       else if (command === 'goto-tasks') selectProjectView('board');
       else if (command === 'goto-projects') selectProjectView('projects');
       else if (command === 'goto-live') selectProjectView('live');
@@ -742,6 +796,19 @@ function App() {
             if (number !== null) dispatchNav({ type: 'openPr', number });
           },
           openImpact: (subject) => dispatchNav({ type: 'openImpact', subject }),
+          // Docs need a teammate or app token, as the Docs view does.
+          openDoc: data.messageAccess.canMessage ? openDoc : undefined,
+          // Threads need the same token; without it the page shows no Thread tab.
+          threadView: data.messageAccess.canMessage
+            ? (taskId) => (
+                <TaskThreadTab
+                  data={data}
+                  taskId={taskId}
+                  onOpenRef={openRef}
+                  onOpenOverseer={() => setGlobalView('overseer')}
+                />
+              )
+            : undefined,
         };
 
   // The Cockpit's `d`: dispatch without following the run (it moves into In flight in
@@ -906,6 +973,7 @@ function App() {
   const shellActions = useMemo<ShellActions>(
     () => ({
       openTask: openTaskView,
+      openThread,
       peekTask,
       openCreateTask,
       createPreset,
@@ -921,6 +989,7 @@ function App() {
     }),
     [
       openTaskView,
+      openThread,
       peekTask,
       openCreateTask,
       createPreset,
@@ -944,6 +1013,19 @@ function App() {
       dragRegion: true,
     }),
     [sidebarCollapsed, toggleSidebar, trafficLightInset]
+  );
+
+  // The palette's Docs rows for a query; none without a token that reads docs.
+  const docsClient = rawData.messageAccess.canMessage ? rawData.client : null;
+  const searchDocs = useMemo(
+    () =>
+      docsClient === null
+        ? undefined
+        : (query: string) =>
+            docsClient
+              .searchDocs(query, { limit: PALETTE_SECTION_CAPS.docs })
+              .then((r) => docHitEntries(r.hits, openDoc)),
+    [docsClient, openDoc]
   );
 
   const paletteEntries = useMemo(
@@ -1090,6 +1172,7 @@ function App() {
                           }
                           onNewTask={() => openCreateTask()}
                           inboxCount={inboxData.total}
+                          threadsNeedsYouCount={threadsNeedsYou}
                           overseerPendingCount={
                             (overseer.record?.pendingActions.length ?? 0) +
                             (overseer.record?.pendingApprovals.length ?? 0)
@@ -1339,6 +1422,24 @@ function App() {
                                       onOpenPr={(number) =>
                                         dispatchNav({ type: 'openPr', number })
                                       }
+                                      onOpenDoc={(id) => openDoc(id, null)}
+                                    />
+                                  )}
+                                  {navState.projectView === 'threads' && (
+                                    <ThreadsView
+                                      data={data}
+                                      projectName={activeProject?.name ?? null}
+                                      focus={navState.threadFocus}
+                                      onFocus={openThread}
+                                      onOpenRef={openRef}
+                                      overseer={{
+                                        thread: overseer.record?.thread ?? null,
+                                        busy:
+                                          overseer.sending ||
+                                          overseer.record?.state === 'running',
+                                        submit: overseer.reply,
+                                        open: () => setGlobalView('overseer'),
+                                      }}
                                     />
                                   )}
                                   {navState.projectView === 'landing' && (
@@ -1447,6 +1548,17 @@ function App() {
                                   )}
                                   {navState.projectView === 'files' && (
                                     <FilesView data={data} />
+                                  )}
+                                  {navState.projectView === 'docs' && (
+                                    <DocsView
+                                      data={data}
+                                      initialDoc={navState.activeDocId}
+                                      initialAnchor={navState.activeDocAnchor}
+                                      initialMerge={navState.activeDocMerge}
+                                      onSelectDoc={(docId) =>
+                                        openDoc(docId, null)
+                                      }
+                                    />
                                   )}
                                   {navState.projectView === 'terminals' && (
                                     <TerminalsView data={data} />
@@ -1614,6 +1726,7 @@ function App() {
                         isOpen={navState.paletteOpen}
                         entries={paletteEntries}
                         onClose={() => dispatchNav({ type: 'closePalette' })}
+                        searchDocs={searchDocs}
                       />
                     </div>
                   </SurfaceHosts>

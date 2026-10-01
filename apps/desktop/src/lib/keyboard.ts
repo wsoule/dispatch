@@ -56,12 +56,13 @@ export type GlobalKeyCommand =
   | 'new-task'
   /** Open the keyboard-shortcuts reference (`?`). */
   | 'open-shortcuts'
-  /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g t` Tasks, `g r` Projects
-   * (the roadmap), `g f` Live (work in flight), `g c` Control room, `g a` Overseer
-   * (Linear's "Agent"). */
+  /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g m` Threads (messages),
+   * `g t` Tasks, `g r` Projects (the roadmap), `g f` Live (work in flight), `g c` Control
+   * room, `g a` Overseer (Linear's "Agent"). */
   | 'goto-home'
   | 'goto-settings'
   | 'goto-inbox'
+  | 'goto-threads'
   | 'goto-tasks'
   | 'goto-projects'
   | 'goto-live'
@@ -75,6 +76,7 @@ const G_CHORDS: Record<string, GlobalKeyCommand> = {
   h: 'goto-home',
   s: 'goto-settings',
   i: 'goto-inbox',
+  m: 'goto-threads',
   t: 'goto-tasks',
   r: 'goto-projects',
   f: 'goto-live',

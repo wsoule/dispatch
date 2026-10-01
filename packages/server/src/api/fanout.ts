@@ -9,6 +9,7 @@ import {
   variantTaskInput,
 } from '../fanout.js';
 import type { RunMeta } from '../orchestrator/types.js';
+import { humanOperator } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 /**
@@ -22,7 +23,15 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 type FanoutRouteContext = Pick<
   ApiContext,
-  'store' | 'cache' | 'events' | 'orchestrator'
+  | 'store'
+  | 'cache'
+  | 'events'
+  | 'orchestrator'
+  | 'caller'
+  | 'viaAgentToken'
+  | 'ownerCredential'
+  | 'actorContext'
+  | 'a2a'
 >;
 
 interface FanoutResult {
@@ -45,6 +54,14 @@ export async function fanoutTask(
 ): Promise<Response> {
   const source = ctx.store.get(taskId);
   if (source === null) return errorResponse(404, `task not found: ${taskId}`);
+  // Clones of a gated draft would run its client-written text; the dispatch
+  // guard alone sees only the clones.
+  if (ctx.a2a?.proposalOpen(taskId) === true) {
+    return errorResponse(
+      409,
+      `${taskId} is an A2A proposal awaiting the owner; answer it in Needs you`
+    );
+  }
 
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -77,6 +94,9 @@ export async function fanoutTask(
         variant.executor,
         {
           ...(variant.model === undefined ? {} : { model: variant.model }),
+          // Each variant acts for whoever the caller's credential names, as a
+          // dispatch does.
+          operator: humanOperator(ctx),
         }
       );
       result.variants.push({

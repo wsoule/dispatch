@@ -13,6 +13,8 @@ import type { TaskTab } from './appNav';
 type DecisionKind =
   | 'approval'
   | 'scope-request'
+  | 'memory'
+  | 'doc'
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
@@ -77,11 +79,12 @@ export function pendingDecisionCount(items: DecisionItem[]): number {
 }
 
 /** Where clicking a decision lands: a task page on a specific tab (optionally
- * pinned to a run), or — when the item's run was never tied to a task the
- * feed could name — the run itself, routed by App's own run lookup. */
+ * pinned to a run), the run itself when the feed could name no task, or a
+ * gate message in Threads. */
 export type DecisionTarget =
   | { kind: 'task'; taskId: string; tab: TaskTab; runId: string | null }
-  | { kind: 'run'; runId: string };
+  | { kind: 'run'; runId: string }
+  | { kind: 'thread'; messageId: string };
 
 /**
  * Maps a feed item to the exact surface where its decision happens, so a
@@ -90,13 +93,18 @@ export type DecisionTarget =
  *
  * - approval / scope-request / question → the run's transcript, where the
  *   answer/approve cards render inline.
+ * - memory, doc → the gate message in Threads, whose card shows the
+ *   proposal. The item's id is `<kind>:<gate message id>`.
  * - fix-loop-capped → the task's review, where FixLoopSection takes the
  *   ruling.
  * - run-stalled → the run's review: the stranded work is the thing to look at.
  *
- * `null` only when the item names neither a task nor a run — nothing to open.
+ * `null` only when the item names neither a task, a run nor a gate.
  */
 export function decisionTarget(item: DecisionItem): DecisionTarget | null {
+  if (item.kind === 'memory' || item.kind === 'doc') {
+    return { kind: 'thread', messageId: item.id.slice(item.kind.length + 1) };
+  }
   const tab: TaskTab =
     item.kind === 'fix-loop-capped' || item.kind === 'run-stalled'
       ? 'review'

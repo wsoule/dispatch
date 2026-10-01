@@ -115,10 +115,8 @@ describe('connectEvents', () => {
     );
     created[0].emitMessage(
       JSON.stringify({
-        type: 'approval.requested',
-        runId: 'r-abc123',
-        requestId: 'req-1',
-        toolName: 'Bash',
+        type: 'message.new',
+        message: { id: 'm-1', kind: 'question', body: 'May I?' },
       })
     );
 
@@ -127,7 +125,7 @@ describe('connectEvents', () => {
       'task.changed',
       'run.changed',
       'run.log',
-      'approval.requested',
+      'message.new',
     ]);
     dispose();
   });

@@ -78,9 +78,10 @@ test('re-clicking the current stop does not save', () => {
 
 test('gate rows show the effective mode consultPolicy derives from the rung', () => {
   render(<PolicySection config={configAt(3)} onSave={noSave} client={null} />);
-  // Rung 3: scope, approval and verify-retry auto-decide, merge still blocks.
-  expect(screen.getAllByText('Automatic')).toHaveLength(3);
-  expect(screen.getAllByText('Waits for you')).toHaveLength(1);
+  // Rung 3: scope, approval, verify-retry and wake auto-decide; merge,
+  // memory and doc still block.
+  expect(screen.getAllByText('Automatic')).toHaveLength(4);
+  expect(screen.getAllByText('Waits for you')).toHaveLength(3);
 });
 
 test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
@@ -109,9 +110,44 @@ test('the irreversibility floor renders fixed rows with no control', () => {
   expect(screen.getAllByText('Always waits')).toHaveLength(6);
   expect(screen.getByText(/Force-push/)).toBeDefined();
   expect(screen.getByText(/Publishing packages/)).toBeDefined();
-  // Even at the top rung the floor never gains a select: only the four
+  // Even at the top rung the floor never gains a select: only the seven
   // policy gates have overrides.
-  expect(screen.getAllByRole('combobox')).toHaveLength(4);
+  expect(screen.getAllByRole('combobox')).toHaveLength(7);
+});
+
+test("the top stop says it accepts agents' shared memory, and memory has its own row", () => {
+  render(<PolicySection config={configAt(4)} onSave={noSave} client={null} />);
+  expect(
+    screen.getByRole('button', {
+      name: 'Merge and accept memory and doc edits on their own',
+    })
+  ).toBeDefined();
+  expect(screen.getByText('Shared memory from agents')).toBeDefined();
+  expect(
+    screen.getByRole('combobox', { name: 'Shared memory from agents override' })
+  ).toBeDefined();
+});
+
+test('the top stop covers doc edits, doc has its own row, and saving a rung never writes a doc pin', async () => {
+  const saved: unknown[] = [];
+  render(
+    <PolicySection
+      config={configAt(3)}
+      onSave={(patch) => Promise.resolve(void saved.push(patch))}
+      client={null}
+    />
+  );
+  const top = screen.getByRole('button', {
+    name: 'Merge and accept memory and doc edits on their own',
+  });
+  expect(screen.getByText('Edits to accepted docs')).toBeDefined();
+  expect(
+    screen.getByRole('combobox', { name: 'Edits to accepted docs override' })
+  ).toBeDefined();
+  fireEvent.click(top);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual({ policy: { rung: 4 } });
+  expect(JSON.stringify(saved[0])).not.toContain('"doc"');
 });
 
 test('receipts list only policy auto-decisions and click through to the task', async () => {
@@ -141,6 +177,21 @@ test('receipts list only policy auto-decisions and click through to the task', a
   expect(screen.queryByText(/A hazard/)).toBeNull();
   fireEvent.click(row);
   expect(opened).toEqual(['t-aaaaaa']);
+});
+
+// Lessons moved to memory; the receipts are the ledger's audit class alone.
+test('reads receipts from the ledger’s audit class', async () => {
+  const filters: unknown[] = [];
+  const client = {
+    fetchLedger: (filter?: unknown) => {
+      filters.push(filter);
+      return Promise.resolve([]);
+    },
+  } as unknown as ApiClient;
+  render(
+    <PolicySection config={configAt(2)} onSave={noSave} client={client} />
+  );
+  await waitFor(() => expect(filters).toEqual([{ class: 'audit' }]));
 });
 
 test('an empty ledger explains where receipts will land', async () => {

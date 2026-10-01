@@ -1,6 +1,5 @@
-import type { LedgerEntry, TaskComment, TaskDoc } from '@dispatch/core';
-import { appendActivity } from '@dispatch/core';
-import { defaultTaskFields } from '@dispatch/core';
+import type { TaskComment, TaskDoc } from '@dispatch/core';
+import { appendActivity, defaultTaskFields } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import type { RepoOrientation } from '../../src/orchestrator/orientation.js';
@@ -27,21 +26,6 @@ function fixtureOrientation(
     hotspots: [{ path: 'packages/server/src/api.ts', runs: 6 }],
     digest: null,
     concurrentRuns: [],
-    ...overrides,
-  };
-}
-
-function fixtureLedgerEntry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
-  return {
-    id: 'l-abc123',
-    epicId: 'e-def456',
-    sourceTaskId: 't-earlier1',
-    kind: 'hazard',
-    title: 'withActionFeedback swallows rejections',
-    detail: 'every catch downstream of it is dead code — check response.ok',
-    appliesTo: [],
-    createdAt: '2026-07-20T00:00:00.000Z',
-    authoredBy: '',
     ...overrides,
   };
 }
@@ -122,8 +106,24 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
     expect(prompt).toContain('run_list');
     expect(prompt).toContain('task_comment');
-    expect(prompt).toContain('ask_user');
+    expect(prompt).toContain('msg_send');
     expect(prompt).toContain('Commit your work');
+  });
+
+  it('names the messaging tools and the human to ask', () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      null,
+      null,
+      true,
+      'human:wyat'
+    );
+    expect(prompt).toContain('msg_send');
+    expect(prompt).toContain('"human:wyat"');
+    expect(prompt).toContain('choices: ["grant", "deny"]');
+    expect(prompt).not.toContain('ask_user');
+    expect(prompt).not.toContain('request_scope');
   });
 
   it('tells implementers to record evidence and mutation-test guards', () => {
@@ -154,34 +154,29 @@ describe('buildTaskPrompt', () => {
     expect(prompt).toContain('Only finish when the review comes back clean.');
   });
 
-  it('renders no ledger section at all when there are no entries', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+  it('renders no memory section when there is none', () => {
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
+    expect(prompt).not.toContain('## Memory');
     expect(prompt).not.toContain('Findings and decisions');
   });
 
-  it('renders each ledger entry as its kind, title, and detail', () => {
-    const entries = [
-      fixtureLedgerEntry(),
-      fixtureLedgerEntry({
-        id: 'l-def456',
-        kind: 'decision',
-        title: 'retry POSTs',
-        detail: 'up to 3 times on 5xx',
-      }),
-    ];
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), entries);
-    expect(prompt).toContain('## Findings and decisions from earlier work');
-    expect(prompt).toContain(
-      '- **hazard**: withActionFeedback swallows rejections — every catch ' +
-        'downstream of it is dead code — check response.ok'
+  it('renders the memory section after the parent epic and before orientation', () => {
+    const section = '## Memory\n- hazard: x (#AAAAAAAA)';
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      section,
+      fixtureOrientation()
     );
-    expect(prompt).toContain(
-      '- **decision**: retry POSTs — up to 3 times on 5xx'
-    );
+    const epicIdx = prompt.indexOf('## Parent epic');
+    const memoryIdx = prompt.indexOf(section);
+    expect(epicIdx).toBeGreaterThan(-1);
+    expect(memoryIdx).toBeGreaterThan(epicIdx);
+    expect(prompt.indexOf('## Repo orientation')).toBeGreaterThan(memoryIdx);
   });
 
   it('renders no orientation section when none was collected', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
     expect(prompt).not.toContain('## Repo orientation');
   });
 
@@ -189,7 +184,7 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation()
     );
     expect(prompt).toContain('## Repo orientation');
@@ -204,14 +199,14 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation(),
       false
     );
     for (const tool of [
       'run_list',
       'task_comment',
-      'ask_user',
+      'msg_send',
       'record_evidence',
       'record_mutation',
     ]) {
@@ -227,7 +222,7 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation({ skills: [] })
     );
     expect(prompt).toContain('## Repo orientation');
@@ -238,13 +233,13 @@ describe('buildTaskPrompt', () => {
   // The whole point of collecting orientation is to stop instructing agents to
   // go and re-derive what it already contains.
   it('drops the go-enumerate-the-skills instruction when orientation supplies the index', () => {
-    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
     expect(without).toContain('.agents/skills or');
 
     const withOrientation = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation()
     );
     expect(withOrientation).not.toContain('.agents/skills or');
@@ -254,13 +249,13 @@ describe('buildTaskPrompt', () => {
   });
 
   it('drops the opening run_list instruction when concurrency is already reported', () => {
-    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
     expect(without).toContain('before assuming you have exclusive access');
 
     const withOrientation = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation()
     );
     expect(withOrientation).not.toContain(
@@ -284,7 +279,7 @@ describe('buildTaskPrompt', () => {
       digest: null,
       concurrentRuns: [],
     };
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), [], empty);
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null, empty);
     expect(prompt).not.toContain('## Repo orientation');
     expect(prompt).toContain('.agents/skills or');
     expect(prompt).toContain('before assuming you have exclusive access');
@@ -353,10 +348,16 @@ describe('the comment thread in a dispatch prompt', () => {
   });
 
   it('carries the thread oldest first so the next run reads earlier notes', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), null, [], null, true, [
-      comment(1),
-      comment(2),
-    ]);
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      null,
+      null,
+      null,
+      true,
+      null,
+      null,
+      [comment(1), comment(2)]
+    );
     expect(prompt).toContain('## Comments');
     expect(prompt.indexOf('note 1')).toBeLessThan(prompt.indexOf('note 2'));
   });

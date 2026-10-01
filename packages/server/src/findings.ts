@@ -96,8 +96,8 @@ export class FindingStore implements FindingStorePort {
     );
   }
 
-  // Mirrors ScopeRequestRegistry.mintId: re-roll until the id is one no record
-  // in the file already uses, since a 6-hex-char space collides in practice.
+  // Re-rolls until the id is one no record in the file already uses, since a
+  // 6-hex-char space collides in practice.
   private mintId(now: string): string {
     const taken = new Set(this.read().map((f) => f.id));
     for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt += 1) {

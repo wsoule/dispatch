@@ -82,13 +82,12 @@ describe('bearer token on every API call', () => {
   it('sends the app token when the client was built with one', async () => {
     const fetches = stubFetch();
     try {
-      await createApiClient('http://d.test', 'app-tok').decideScopeRequest(
-        'r-1',
-        'sr-1',
-        true
-      );
+      await createApiClient('http://d.test', 'app-tok').replyToMessage('m-1', {
+        body: '',
+        choice: 'grant',
+      });
       expect(fetches.calls[0]?.url).toBe(
-        'http://d.test/api/runs/r-1/scope-requests/sr-1/decide'
+        'http://d.test/api/messages/m-1/reply'
       );
       expect(authOf(fetches.calls[0]?.init)).toBe('Bearer app-tok');
     } finally {
@@ -126,7 +125,7 @@ describe("the auth failure's stable code", () => {
     const restore = stubAuthError(403, 'auth_insufficient_tier');
     try {
       const err = await createApiClient('http://d.test', 'agent-tok')
-        .decideScopeRequest('r-1', 'sr-1', true)
+        .openDecisions()
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect((err as ApiError).status).toBe(403);

@@ -15,9 +15,9 @@ import type { RunUsage } from './usage.js';
 // human-to-agent or agent-to-agent chat turn that carries `from`/`fromLabel`
 // so the transcript/UI can tell who's talking, instead of the undifferentiated
 // `system` "user: ..." notes this used to be recorded as. `from: 'user'` is
-// the run's own human via the Session composer; `from: 'agent'` is either
-// another live run's `agent_message` (sender identified via `fromLabel`) or
-// this run's own `message_user` call flagging something to the human.
+// the run's own human via the Session composer; `from: 'agent'` is either a
+// message from another sender (named by `fromLabel`) or one this run sent to a
+// human.
 export interface NormalizedEntry {
   ts: string;
   kind:
@@ -46,18 +46,17 @@ export interface NormalizedEntry {
   // event, so the transcript can show what the sub-agent was asked to do.
   agent?: SubagentEvent;
   from?: 'user' | 'agent';
-  // Who sent a `from: 'agent'` message — e.g. the sender run's task title
-  // + id ("Fix login bug (r-abc123)"), or a generic fallback when the
-  // sender's identity couldn't be resolved. Never set for `from: 'user'`
-  // (the app renders that as "You" unconditionally).
+  // Who a message entry is from: the sender's address for a delivered
+  // message, or this run's task title + id for one it sent to a human.
   fromLabel?: string;
-  // Distinguishes the two `from: 'agent'` directions, which are otherwise
-  // shaped identically. `true` marks this run's own `message_user` call —
-  // the agent flagging something UP to the human — so the app can badge it
-  // as "To you" rather than rendering it like an inbound message from
-  // another agent (`inject`, where `toUser` is absent and `fromLabel` names
-  // a *different* run).
+  // `true` marks a message this run sent to a human (`logOutgoing`), so the
+  // app badges it "To you" instead of rendering it as inbound.
   toUser?: boolean;
+  // The id (`m-<ulid>`) of the message this entry delivered or sent.
+  messageId?: string;
+  // Set on entries delivered via `Orchestrator.notifyRun` — a non-interrupting
+  // channel digest rather than a message the agent must respond to.
+  digest?: boolean;
 }
 
 // A live handle to a running executor invocation — the orchestrator holds
@@ -82,6 +81,63 @@ export interface ApprovalDecision {
   reason?: string;
 }
 
+/** What the orchestrator tells messaging when a run parks on a tool call. */
+export interface ApprovalGateRequest {
+  runId: string;
+  taskId: string;
+  taskTitle: string;
+  requestId: string;
+  toolName: string;
+  input: unknown;
+}
+
+/** The tool-approval gate's lifecycle; installed by openMessaging. */
+export interface ApprovalGatePort {
+  raise(request: ApprovalGateRequest): void;
+  settle(runId: string, requestId: string, reason: string): void;
+}
+
+/** How a new run carries memory, decided once before it starts. */
+export interface PreparedMemory {
+  // The prompt's memory text: the `## Memory` section, the export line, or null.
+  text: string | null;
+  // The `## Memory` section a prompt-mode fallback carries in place of `text`.
+  indexSection: string | null;
+  memory: ExecutorMemoryOptions;
+}
+
+/** Chooses each run's memory mode and follows its export; installed by the memory service at boot. */
+export interface MemoryPromptPort {
+  prepare(input: {
+    runId: string;
+    taskId: string;
+    lineage: string;
+    runKind: RunKind;
+    isClaude: boolean;
+    dispatchTools: boolean;
+    // The run resumes a session, so its prompt is the continuation, not the index.
+    continues: boolean;
+  }): PreparedMemory;
+  // The agent read exported files; `lineage` names the export directory.
+  recall(
+    runId: string,
+    lineage: string,
+    paths: readonly string[],
+    via: 'read' | 'claude-recall'
+  ): void;
+  // A final scan of the run's export; the directory stays until its lineage closes.
+  runEnded(meta: RunMeta): void;
+}
+
+/** Where the `## Docs` prompt section comes from (docs/service.ts). */
+export interface DocsPromptPort {
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): string | null;
+}
+
 export interface ExecutorRun {
   interrupt(): Promise<void>;
   /**
@@ -98,6 +154,9 @@ export interface ExecutorRun {
   requestStop(): void;
   send(message: string): void;
   approve(requestId: string, decision: ApprovalDecision): void;
+  // Non-interrupting context for the agent's next step (a channel digest).
+  // Never throws; a no-op once the run has finished.
+  notify(text: string): void;
 }
 
 // Callbacks an Executor uses to report progress back to the orchestrator.
@@ -114,6 +173,13 @@ export interface ExecutorEvents {
   // onFinish's copy arrives too late to survive a daemon that dies mid-run.
   // Optional: not every executor has a resumable session.
   onSession?(sessionId: string): void;
+  // The session has its result and is winding down to onFinish; a message
+  // sent from here on is never read, so delivery waits for the next run.
+  onEnding?(): void;
+  // Export mode's load check changed the run's memory mode; `detail` says why.
+  onMemoryMode?(mode: MemoryMode, detail: string): void;
+  // The agent read exported memory files, by a Read call or Claude's own recall.
+  onMemoryRecall?(paths: string[], via: 'read' | 'claude-recall'): void;
   onFinish(finish: {
     state: 'finished' | 'failed';
     costUsd?: number;
@@ -153,12 +219,39 @@ export interface ExecutorStartOptions {
   projectRoot?: string;
   // This run's own id — ClaudeExecutor passes it through as `DISPATCH_RUN_ID`
   // in the dispatch MCP server's env (see claude.ts's
-  // buildDispatchMcpServerConfig) so `agent_message`/`message_user` know
-  // whose identity to attach to a message without the calling agent having
-  // to know or supply its own run id. Optional for the same reason
+  // buildDispatchMcpServerConfig) so the tools that record the calling run
+  // know which run it is without the calling agent having to know or supply
+  // its own run id. Optional for the same reason
   // `projectRoot` is: FakeExecutor fixtures that never touch messaging don't
   // need to pass it; every real Orchestrator call site always does.
   runId?: string;
+  // The 0600 file holding this run's messaging token. Only the path travels to
+  // the dispatch MCP server, since backends put MCP env on a process's argv.
+  runTokenFile?: string;
+  // How a Claude session carries memory; absent is `native`, today's behavior.
+  memory?: ExecutorMemoryOptions;
+}
+
+/** A run's memory mode, including the two outcomes of export's load check. */
+export type MemoryMode =
+  | 'export'
+  | 'native'
+  | 'prompt'
+  | 'export-fallback'
+  | 'export-unloaded';
+
+/** The memory mode a session starts in, and what export mode needs. */
+export interface ExecutorMemoryOptions {
+  mode: 'export' | 'native' | 'prompt';
+  // The absolute export directory Claude Code loads MEMORY.md from.
+  dir?: string;
+  // The oldest Claude Code version the live probe passed on.
+  probeVersion?: string;
+  // The task prompt, with the index, that a prompt-mode restart opens with. A
+  // resume needs it: its restart is a fresh session sent the run's prompt next.
+  fallbackPrompt?: string;
+  // Reaches the agent with its first tool result when nothing loaded.
+  unloadedNote?: string;
 }
 
 // What the orchestrator may assume about an executor beyond `start()`: which
@@ -171,11 +264,15 @@ export interface ExecutorProfile {
   reportsTurns: boolean;
   /** Whether the executor itself honours maxTurns/maxBudgetUsd. */
   enforcesCaps: boolean;
+  /** Whether a live run can take a mid-run message or note (send/notify). */
+  acceptsMessages: boolean;
   /** Why this executor cannot run under `permissionMode`, or null when it can. */
   permissionRefusal(permissionMode: string): string | null;
   /** False when runs never get the dispatch MCP server, so the task prompt
    * must not name its tools. Absent means they do. */
   dispatchMcp?: boolean;
+  /** True when the executor honours Claude Code's auto-memory settings. */
+  autoMemory?: boolean;
 }
 
 /** One registered executor as GET /api/executors reports it. */
@@ -190,6 +287,7 @@ export const DEFAULT_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: true,
   reportsTurns: true,
   enforcesCaps: true,
+  acceptsMessages: true,
   permissionRefusal: () => null,
 };
 
@@ -294,6 +392,15 @@ export interface RunMeta {
   // files it claims, and the decisions it parks on — someone's on a daemon
   // more than one person uses.
   dispatchedBy?: string;
+  // The human whose personal memory this run reads and writes (read it through
+  // runOperator). null = no one; absent = recorded before the field.
+  operator?: string | null;
+  // The run whose Claude memory export this one shares: itself, or a
+  // continuing predecessor's (read it through runLineage).
+  memoryLineage?: string;
+  // How the run carries memory: chosen at start, then changed by export's load
+  // check. Absent for runs started with no memory service.
+  memoryMode?: MemoryMode;
   // C2: once a run has been merged or discarded, review() must refuse any
   // further review/resume calls on it — this pair of fields, once set, is
   // that one-way marker. `state` itself stays whatever terminal value it
@@ -388,6 +495,46 @@ export interface RunMeta {
 // before `kind` existed.
 export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
   return meta.kind ?? 'execute';
+}
+
+// The human a run acts for; null means no one. Runs from before the field
+// fall back to dispatchedBy.
+export function runOperator(
+  meta: Pick<RunMeta, 'operator' | 'dispatchedBy'>
+): string | null {
+  return meta.operator !== undefined
+    ? meta.operator
+    : (meta.dispatchedBy ?? null);
+}
+
+// Who a run started, continued or woken by `actor` acts for: a human actor,
+// the owner only on the owner's app token; no one for an agent, run or system.
+export function actingOperator(
+  actor: string,
+  ownerCredential: boolean,
+  ownerRef: string
+): string | null {
+  if (!actor.startsWith('human:')) return null;
+  return actor !== ownerRef || ownerCredential ? actor : null;
+}
+
+/** Why `sender` may not message a live run acting for another human; null
+ *  when it may (decide tier, the run's own operator, or a run for no one). */
+export function runMessageRefusal(
+  run: Pick<RunMeta, 'id' | 'taskId' | 'operator'>,
+  sender: string | null,
+  canDecide: boolean
+): string | null {
+  const operator = run.operator ?? null;
+  if (canDecide || operator === null || sender === operator) return null;
+  return `run ${run.id} acts for ${operator}: message its task (task:${run.taskId}) or ${operator} instead`;
+}
+
+// The first run of a continuing resume chain: the key of its Claude memory export.
+export function runLineage(
+  meta: Pick<RunMeta, 'id' | 'memoryLineage'>
+): string {
+  return meta.memoryLineage ?? meta.id;
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

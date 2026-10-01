@@ -1,5 +1,5 @@
 import type { ExecutorPricing } from '@dispatch/core';
-import { CORE_VERSION, loadConfig } from '@dispatch/core';
+import { CORE_VERSION, DISPATCH_MCP_TOOLS, loadConfig } from '@dispatch/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
@@ -172,18 +172,21 @@ function buildCodexMcpServers(
   projectRoot: string,
   runId: string,
   cartoSpec: (projectRoot: string) => StdioServerSpec | null,
-  userServers: string[]
+  userServers: string[],
+  runTokenFile?: string
 ): { config: Record<string, unknown>; disabled: string[] } {
   const carto = cartoSpec(projectRoot);
   const ours: Record<string, unknown> = {
-    dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId), {
-      tools: {
-        task_comment: { approval_mode: 'approve' },
-        record_evidence: { approval_mode: 'approve' },
-        record_mutation: { approval_mode: 'approve' },
-        ask_user: { approval_mode: 'approve' },
-      },
-    }),
+    dispatch: toCodexMcp(
+      dispatchMcpSpec(cwd, projectRoot, runId, runTokenFile),
+      // Under untrusted Codex elicits approval for an unlisted MCP tool, and
+      // the transport rejects it; the run token already authorizes each call.
+      {
+        tools: Object.fromEntries(
+          DISPATCH_MCP_TOOLS.map((name) => [name, { approval_mode: 'approve' }])
+        ),
+      }
+    ),
     ...(carto === null ? {} : { carto: toCodexMcp(carto) }),
   };
   // A person's own servers (a Stripe or PostHog connector, say) have no
@@ -367,6 +370,7 @@ export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: false,
   reportsTurns: true,
   enforcesCaps: false,
+  acceptsMessages: true,
   permissionRefusal: (mode) => {
     const floorGap = CODEX_FLOOR_REFUSALS.get(mode);
     if (floorGap !== undefined) {
@@ -772,7 +776,8 @@ export class CodexExecutor implements Executor {
           opts.projectRoot ?? opts.cwd,
           opts.runId ?? '',
           this.cartoSpec,
-          this.userMcpServers()
+          this.userMcpServers(),
+          opts.runTokenFile
         );
         if (disabled.length > 0) {
           events.onEntry({
@@ -865,6 +870,11 @@ export class CodexExecutor implements Executor {
       },
       send(message: string): void {
         sendSteer(message);
+      },
+      // Codex has no separate note channel, so a note is a steer; as with
+      // send(), a rejected steer fails the run.
+      notify(text: string): void {
+        sendSteer(text);
       },
       approve(requestId: string, decision: ApprovalDecision): void {
         const approval = pendingApprovals.get(requestId);

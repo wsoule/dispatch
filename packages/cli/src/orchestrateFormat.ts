@@ -4,6 +4,7 @@ import type {
   EpicProgressChild,
   EpicSession,
   EpicSpend,
+  Message,
   NormalizedEntry,
   PlanProposal,
   PlanRecord,
@@ -63,26 +64,52 @@ function formatAgentEntry(entry: NormalizedEntry): string | null {
 }
 
 // Who a `kind: 'message'` entry is from, for the `[message …]` prefix.
-// `toUser` marks this run's own message_user call, addressed to the human.
+// `toUser` marks a message this run sent to a human.
 function messageSender(entry: NormalizedEntry): string {
   if (entry.toUser === true) return 'to you';
   if (entry.from === 'user') return 'from user';
   return `from ${entry.fromLabel ?? 'another agent'}`;
 }
 
-// Renders an `approval.requested` WS event prominently, with the exact command to copy
-// rather than making the user reconstruct the run/request ids.
+// The run tool call a gate asks about, as `dispatch approve` addresses it.
+export interface ToolApproval {
+  runId: string;
+  requestId: string;
+  tool: string;
+}
+
+// Reads a run's tool-approval gate off a message; null for anything else,
+// including an overseer conversation's approval, which has no run.
+export function toolApprovalOf(message: Message): ToolApproval | null {
+  const data = message.data;
+  if (typeof data !== 'object' || data === null) return null;
+  const gate = data as Record<string, unknown>;
+  if (
+    gate.type !== 'tool-approval' ||
+    typeof gate.runId !== 'string' ||
+    typeof gate.requestId !== 'string' ||
+    typeof gate.tool !== 'string'
+  ) {
+    return null;
+  }
+  return { runId: gate.runId, requestId: gate.requestId, tool: gate.tool };
+}
+
+// Renders a tool-approval gate prominently, with the exact commands to copy.
+// Given only the run, the commands let `dispatch approve` find the gate itself.
 export function formatApprovalRequest(
-  runId: string,
-  requestId: string,
-  toolName: string
+  approval: ToolApproval | { runId: string }
 ): string {
+  const named = 'requestId' in approval;
+  const target = named
+    ? `${approval.runId} ${approval.requestId}`
+    : approval.runId;
   return [
     '',
     '=== approval requested ===',
-    `tool:    ${toolName}`,
-    `approve: dispatch approve ${runId} ${requestId}`,
-    `deny:    dispatch approve ${runId} ${requestId} --deny`,
+    ...(named ? [`tool:    ${approval.tool}`] : []),
+    `approve: dispatch approve ${target}`,
+    `deny:    dispatch approve ${target} --deny`,
     'token:   needs the daemon app token (--token or DISPATCH_APP_TOKEN)',
     '===========================',
     '',

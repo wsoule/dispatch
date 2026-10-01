@@ -56,25 +56,34 @@ valid fallback — just keep the YAML frontmatter's required fields (\`id\`,
 
 ## Talking to other agents and the human
 
-Other dispatch runs may be working in parallel, and a human may be watching
-this run's Session tab. Four channels cover every direction:
+Everything goes through one message bus. Addresses are \`human:<handle>\`,
+\`task:<id>\` (its live run, else its next one), \`run:<id>\` (that session only)
+and \`channel:<name>\`.
 
-- **Agent -> agent**: call \`run_list\` to see who else is live right now
-  (id, task, state), then \`agent_message\` with exactly one of
-  \`runId\`/\`taskId\` to send that run a message. It's delivered prefixed
-  \`[message from <sender>]\` (your own task title + run id when this
-  server knows it) so the receiving agent can tell who's talking — both
-  your and their Session tabs show the exchange.
-- **App/user -> agent**: the human talks to you through this run's own
-  Session composer in the app — those messages just show up as your next
-  turn, no tool call needed on your end to receive them.
-- **Agent -> app/user**: call \`message_user\` with a short \`text\` to
-  flag a blocker or a notable update to the human beyond your normal
-  assistant output — it lands on your own Session tab, badged as coming
-  from you, and does not wait for a reply.
-- **Agent -> app/user, waiting for a reply**: call \`ask_user\` with a
-  \`question\` (and \`options\` for the answers you think likely) when a
-  decision would change the shape of your result and the task doesn't
-  specify it. Unlike \`message_user\` it blocks until the human answers and
-  returns their reply. Bundle everything you're unsure about into one call.
+- **Ask the human**: \`msg_send\` with \`kind: "question"\`, \`blocking: true\`
+  (and \`choices\` for a pick-one). It waits up to 30 minutes for the answer.
+  Inside a run, your human is named in your task prompt. Outside one, it is the
+  handle in your own address (\`agent:<handle>/<name>\` → \`human:<handle>\`).
+- **Ask for scope** (inside a dispatch run): \`msg_send(kind: "question",
+  blocking: true, choices: ["grant", "deny"], data: { type: "scope", paths,
+  reason })\`. Edit outside your fence only on \`grant\`. No decision in time
+  means denied.
+- **Tell someone**: \`kind: "notice"\` (FYI) or \`"message"\`, no blocking.
+- **Hear back**: messages arrive in your session. Answer with \`msg_reply\`,
+  catch up with \`inbox_read\`, and read a whole conversation with \`thread_read\`.
+
+## Memory
+
+Dispatch remembers lessons, conventions and preferences from earlier work. A
+dispatched run's prompt carries the top ones as a \`## Memory\` index, one line
+each with a \`#handle\`. Open one with \`memory_read("#handle")\` for its body,
+author and revisions, and use \`memory_search\` to find entries the index left
+out. A line marked \`unreviewed\` was written by an agent and no human has
+checked it yet.
+
+To remember something for later work, call \`memory_save\`: the title is the
+whole lesson in one line. \`scope: "personal"\` is your operator's own memory and
+saves at once; \`"project"\` and \`"team"\` become proposals a human approves,
+unless the project's autonomy policy accepts them. \`memory_forget\` retires an
+entry that is wrong or no longer true.
 `;

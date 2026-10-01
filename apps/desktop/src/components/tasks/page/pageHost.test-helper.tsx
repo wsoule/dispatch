@@ -93,6 +93,7 @@ export function fakeHost(
     comments = [],
     me = 'human:wyat',
     client: extra = {},
+    project: projectOverrides = {},
   }: {
     tasks: TaskListItem[];
     runs?: RunMeta[];
@@ -101,6 +102,8 @@ export function fakeHost(
     comments?: TaskComment[];
     me?: string;
     client?: Partial<ApiClient>;
+    /** Replaces the fake project's own fields. */
+    project?: Partial<TaskPageProject>;
   }
 ): TaskPageHost {
   const client = {
@@ -157,6 +160,7 @@ export function fakeHost(
     },
     handleEnrichTask: () => Promise.resolve(),
     handleDismissEnrich: () => {},
+    ...projectOverrides,
   } as unknown as TaskPageProject;
   return {
     projectName: 'demo',
@@ -177,8 +181,9 @@ export function fakeHost(
 }
 
 const noop = () => {};
-const SHELL: ShellActions = {
+export const SHELL: ShellActions = {
   openTask: noop,
+  openThread: noop,
   peekTask: noop,
   openCreateTask: noop,
   createPreset: null,
@@ -195,9 +200,12 @@ const SHELL: ShellActions = {
 
 export function PageProviders({
   host,
+  shell = SHELL,
   children,
 }: {
   host: TaskPageHost | null;
+  /** Replaces the default shell, whose verbs do nothing. */
+  shell?: ShellActions;
   children: ReactNode;
 }) {
   const [queryClient] = useState(
@@ -206,7 +214,7 @@ export function PageProviders({
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <ShellActionsProvider value={SHELL}>
+        <ShellActionsProvider value={shell}>
           <TaskPageHostContext.Provider value={host}>
             {children}
           </TaskPageHostContext.Provider>

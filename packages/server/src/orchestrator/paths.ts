@@ -23,17 +23,44 @@ function dispatchHome(): string {
 
 // Runs and worktrees are keyed by a short hash of the project's absolute
 // rootDir (same scheme as daemonfile.ts's `daemonFileKey`), so state for
-// multiple dispatch projects never collides under one DISPATCH_HOME.
-function rootHash(rootDir: string): string {
+// multiple dispatch projects never collides under one DISPATCH_HOME. Memory
+// entries narrowed to one project carry the same key.
+export function projectKeyOf(rootDir: string): string {
   return createHash('sha256').update(rootDir).digest('hex').slice(0, 12);
 }
 
 export function runsDir(rootDir: string): string {
-  return join(dispatchHome(), '.dispatch', 'runs', rootHash(rootDir));
+  return join(dispatchHome(), '.dispatch', 'runs', projectKeyOf(rootDir));
 }
 
 export function transcriptPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.jsonl`);
+}
+
+// A live run's messaging token (mode 0600), read by its dispatch MCP server
+// through DISPATCH_RUN_TOKEN_FILE and removed when the run ends.
+export function runTokenPath(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.token`);
+}
+
+// The project's memory.db, beside messages.db in machine-local run-state.
+export function memoryDbPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'memory.db');
+}
+
+// The Claude auto-memory export directories, one per session lineage.
+export function claudeMemoryRoot(rootDir: string): string {
+  return join(runsDir(rootDir), 'claude-memory');
+}
+
+// One lineage's export: `name` is a run lineage id or `o-<conversation>`.
+export function claudeMemoryDir(rootDir: string, name: string): string {
+  return join(claudeMemoryRoot(rootDir), name);
+}
+
+// Personal memory is cross-project, so it lives under DISPATCH_HOME, not a project's run-state.
+export function personalMemoryDir(): string {
+  return join(dispatchHome(), '.dispatch', 'memory');
 }
 
 // Where a run's diff snapshot (see Orchestrator.persistDiffSnapshot) lives —
@@ -107,6 +134,11 @@ export function epicSessionsPath(rootDir: string): string {
   return join(runsDir(rootDir), 'epic-sessions.json');
 }
 
+// Who created and last wrote each task (see TaskAuthorship), for epic auto-fill.
+export function taskAuthorshipPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'task-authorship.json');
+}
+
 // Where PrManager's epic-PR ledger lives: the PRs opened to land whole epic
 // branches on the default base (epicId -> PR url), persisted so a daemon
 // restart keeps polling them to merged instead of forgetting an epic mid-land.
@@ -151,7 +183,7 @@ export function verifyResultPath(rootDir: string, runId: string): string {
 }
 
 export function worktreesDir(rootDir: string): string {
-  return join(dispatchHome(), '.dispatch', 'worktrees', rootHash(rootDir));
+  return join(dispatchHome(), '.dispatch', 'worktrees', projectKeyOf(rootDir));
 }
 
 export function worktreePath(rootDir: string, runId: string): string {
@@ -163,7 +195,7 @@ export function worktreePath(rootDir: string, runId: string): string {
  * daemon exports OUTSIDE the project repo, so ledger and finding churn stops
  * showing up in the project's own diffs.
  *
- * Keyed by the same `rootHash` as runs and worktrees, but under `projects/`
+ * Keyed by the same `projectKeyOf` as runs and worktrees, but under `projects/`
  * rather than beside them: this is the one piece of per-project state a person
  * is expected to open, clone and read, so it gets a name that says what it
  * belongs to instead of sharing a directory with per-run scratch.
@@ -175,7 +207,7 @@ export function receiptsDir(rootDir: string): string {
     dispatchHome(),
     '.dispatch',
     'projects',
-    rootHash(rootDir),
+    projectKeyOf(rootDir),
     'receipts'
   );
 }
@@ -192,7 +224,7 @@ export function boardSyncDir(rootDir: string): string {
     dispatchHome(),
     '.dispatch',
     'projects',
-    rootHash(rootDir),
+    projectKeyOf(rootDir),
     'sync'
   );
 }
@@ -208,18 +240,9 @@ export function teamTokensPath(rootDir: string): string {
     dispatchHome(),
     '.dispatch',
     'projects',
-    rootHash(rootDir),
+    projectKeyOf(rootDir),
     'team-tokens.json'
   );
-}
-
-// Where open scope requests live across a daemon restart — see
-// ScopeRequestRegistry's persist()/hydrate(). Without it a request an agent
-// was parked on when dispatchd restarted vanished with the process, and the
-// human never saw the card again. One file per project, flat alongside
-// merge-queue.json for the same reason.
-export function scopeRequestsPath(rootDir: string): string {
-  return join(runsDir(rootDir), 'scope-requests.json');
 }
 
 // Where a project's terminal sessions keep their scrollback and index (see

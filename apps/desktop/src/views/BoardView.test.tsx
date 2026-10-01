@@ -194,6 +194,7 @@ function progress(sessionState: EpicSession['state'] | null): EpicProgress {
 const noop = () => {};
 const shellActions = {
   openTask: noop,
+  openThread: noop,
   peekTask: noop,
   openCreateTask: noop,
   createPreset: null,

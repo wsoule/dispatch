@@ -1,39 +1,53 @@
-import type { RunQuestion } from '@dispatch/client';
 import { SquareTerminal } from 'lucide-react';
+import { useMemo } from 'react';
 
 import { useRunDetail } from '../../../hooks/useRunData';
-import { useScopeRequest } from '../../../hooks/useScopeRequest';
+import type { RunQuestion } from '../../../lib/gates';
+import type { PendingApproval } from '../../../lib/pendingApprovals';
 import { deriveStopControl, isTerminalRunState } from '../../../lib/runState';
+import {
+  askRunIdsForChat,
+  newestScopeRequestOf,
+  questionsOfRuns,
+} from '../../../lib/taskAsks';
 import { RunLogView } from '../../runs/RunLogView';
+import { useShellActions } from '../../shell/ShellActionsContext';
 import { TabSkeleton } from '../TabSkeleton';
 import type { TaskPageModel } from './pageModel';
 import { FilesTouched, RunStrip } from './RunStrip';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 
-// Shared so a run with no open questions keeps one prop identity across renders.
+// Shared so a run with nothing open keeps one prop identity across renders.
 const NO_QUESTIONS: RunQuestion[] = [];
+const NO_APPROVALS: PendingApproval[] = [];
 
 /**
  * Run mode — an agent at work: the run's vitals (state, model, a ticking clock, spend,
  * turns) with Stop and Cancel while it is live, the files it has touched, then its
- * transcript streaming in with approvals, questions and scope requests inline, and the
- * message box at the foot to steer it (or, once it has finished, to request changes).
+ * transcript streaming in with approvals, questions and scope requests inline (an ended
+ * run's stay answerable), message links to their threads, and the message box at the
+ * foot to steer it (or, once it has finished, to request changes).
  */
 export function RunMode({ page }: { page: TaskPageModel }) {
   const { project } = page;
   const run = page.selectedRun;
   const runId = run?.id ?? null;
   const detail = useRunDetail(project.client, project.port, runId);
-  const scopeRequestId =
-    runId === null
-      ? undefined
-      : project.pendingScopeRequests.get(runId)?.requestId;
-  const { request: scopeRequest } = useScopeRequest(
-    project.client,
-    project.port,
-    runId ?? undefined,
-    scopeRequestId
+  const { openThread } = useShellActions();
+  // The run's open asks plus those of the task's ended execute runs, which stay
+  // open for the task whatever run is shown.
+  const askRunIds = useMemo(
+    () => (run === undefined ? [] : askRunIdsForChat(project.runs, run)),
+    [project.runs, run]
+  );
+  const questions = useMemo(() => {
+    const asked = questionsOfRuns(project.openQuestions, askRunIds);
+    return asked.length === 0 ? NO_QUESTIONS : asked;
+  }, [project.openQuestions, askRunIds]);
+  const scopeRequest = newestScopeRequestOf(
+    project.pendingScopeRequests,
+    askRunIds
   );
 
   if (run === undefined) {
@@ -96,27 +110,32 @@ export function RunMode({ page }: { page: TaskPageModel }) {
           <RunLogView
             meta={detail.meta}
             entries={detail.entries}
-            pendingApproval={project.pendingApprovals.get(run.id) ?? null}
+            pendingApprovals={
+              project.pendingApprovals.get(run.id) ?? NO_APPROVALS
+            }
             onApprove={(requestId, allow, opts) =>
               project.handleApprove(run.id, requestId, allow, opts)
             }
+            onLoadApprovalInput={(requestId) =>
+              project.fetchApprovalInput(run.id, requestId)
+            }
             onSendMessage={(text) => project.handleSendMessage(run.id, text)}
-            openQuestions={
-              // A dropped socket must not leave a dead run still asking.
-              terminal
-                ? NO_QUESTIONS
-                : (project.openQuestions.get(run.id) ?? NO_QUESTIONS)
-            }
+            openQuestions={questions}
             onAnswerQuestion={(questionId, answer) =>
-              project.handleAnswerQuestion(run.id, questionId, answer)
+              project.handleAnswerQuestion(
+                questions.find((q) => q.id === questionId)?.runId ?? run.id,
+                questionId,
+                answer
+              )
             }
-            pendingScopeRequest={terminal ? null : scopeRequest}
+            pendingScopeRequest={scopeRequest}
             onDecideScopeRequest={(granted) =>
-              scopeRequestId === undefined
+              // Null means it closed since this render: nothing to send.
+              scopeRequest === null
                 ? Promise.resolve()
                 : project.handleDecideScopeRequest(
-                    run.id,
-                    scopeRequestId,
+                    scopeRequest.runId,
+                    scopeRequest.id,
                     granted
                   )
             }
@@ -125,6 +144,9 @@ export function RunMode({ page }: { page: TaskPageModel }) {
             onRequestChanges={(text) =>
               project.handleRequestChanges(run.id, text)
             }
+            onOpenMessage={project.messageAccess.canMessage ? openThread : null}
+            me={project.me}
+            readsAllThreads={project.messageAccess.canDecide}
           />
         </div>
       )}

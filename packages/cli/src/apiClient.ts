@@ -67,10 +67,6 @@ export interface RunMeta {
   survey?: unknown;
   kind?: 'execute' | 'review' | 'verify';
   claims?: string[];
-  // The approval the run is parked on while `state` is 'awaiting-approval' —
-  // the daemon decorates run reads with it so `dispatch approve` can find the
-  // request id without having watched the run live.
-  pendingApproval?: { requestId: string; toolName: string; input?: unknown };
   // How many sub-agents the run's agent fanned out into and where they
   // stand — mirrors RunMeta.subagents server-side.
   subagents?: {
@@ -111,8 +107,8 @@ export interface NormalizedEntry {
     type?: string;
     summary?: string;
   };
-  // `kind: 'message'` only: this run's human (`user`), another run's
-  // agent_message (`fromLabel`), or this run's own message_user (`toUser`).
+  // `kind: 'message'` only: this run's human (`user`), another agent
+  // (`fromLabel`), or a message this run sent to a human (`toUser`).
   from?: 'user' | 'agent';
   fromLabel?: string;
   toUser?: boolean;
@@ -299,27 +295,42 @@ export type ServerEvent =
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
-  | {
-      type: 'approval.requested';
-      runId: string;
-      requestId: string;
-      toolName: string;
-    }
+  | { type: 'message.new'; message: Message }
   | { type: 'plan.changed'; planId: string }
   | { type: 'epic.changed'; epicId: string }
   | { type: 'epic.paused'; epicId: string; reason: EpicPauseReason };
 
-// Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
-// an out-of-fence edit an agent asked for, blocked until someone decides it.
-interface ScopeRequest {
+// Mirrors Message in packages/protocol/src/envelope.ts. A gate is a blocking
+// question whose `data.type` names what answering it decides.
+export interface Message {
   id: string;
-  runId: string;
-  paths: string[];
-  reason: string;
-  requestedAt: string;
-  granted: boolean | null;
-  decisionReason: string | null;
-  decidedAt: string | null;
+  thread: string;
+  replyTo: string | null;
+  from: string;
+  session?: string;
+  to: string[];
+  kind: string;
+  body: string;
+  refs: { type: string; id: string; at?: string }[];
+  data?: unknown;
+  urgent: boolean;
+  blocking: boolean;
+  choices?: string[];
+  choice?: string;
+  wake: 'none' | 'request';
+  createdAt: string;
+}
+
+// Mirrors SendResult in packages/protocol/src/engine.ts.
+interface SendResult {
+  message: Message;
+  deliveries: {
+    id: string;
+    recipient: string;
+    runId: string | null;
+    state: string;
+  }[];
+  downgraded: boolean;
 }
 
 /** Where a request goes and which daemon token it presents. */
@@ -665,12 +676,6 @@ export interface ApiClient {
   resumeRun(runId: string): Promise<RunMeta>;
   listRuns(): Promise<RunMeta[]>;
   getRun(id: string): Promise<RunDetail>;
-  approveRun(runId: string, requestId: string, allow: boolean): Promise<void>;
-  sendRunMessage(
-    runId: string,
-    text: string,
-    opts?: { resume?: boolean }
-  ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
   getRunDiff(runId: string): Promise<DiffResult>;
   /** Findings raised against one task. `dispatch share` folds them into a
@@ -700,14 +705,27 @@ export interface ApiClient {
   fetchExecutors(): Promise<ExecutorsResponse>;
   stopEpic(epicId: string): Promise<EpicSession>;
   getEpicProgress(epicId: string): Promise<EpicProgress>;
-  getScopeRequest(runId: string, requestId: string): Promise<ScopeRequest>;
-  // Decide-tier: only a client built on the app token can call this.
-  decideScopeRequest(
-    runId: string,
-    requestId: string,
-    granted: boolean,
-    reason: string
-  ): Promise<ScopeRequest>;
+  // The messaging routes refuse the daemon file's agent token: build the
+  // client on a human's token (the app token) to call these.
+  /** Open blocking questions and gates addressed to a human. */
+  openDecisions(): Promise<{ items: Message[] }>;
+  getMessage(id: string): Promise<Message>;
+  /** The answer to a question, or null while it is open. */
+  getAnswer(id: string): Promise<{ answer: Message | null }>;
+  replyToMessage(
+    id: string,
+    input: { body: string; choice?: string }
+  ): Promise<SendResult>;
+  sendMessage(input: {
+    to: string[];
+    kind: string;
+    body: string;
+    wake?: 'none' | 'request';
+  }): Promise<SendResult>;
+  /** The caller's own mail in the given delivery states. */
+  getMailbox(
+    states: string[]
+  ): Promise<{ items: { delivery: { id: string }; message: Message }[] }>;
   /** Decide-tier: build the client on the app token. */
   issueTeamToken(input: {
     email?: string;
@@ -729,6 +747,91 @@ export interface ApiClient {
   getLicense(): Promise<LicenseStatus>;
   /** Installs a license key (operator tier). */
   installLicense(key: string): Promise<LicenseStatus>;
+  /** Decide-tier: imports ledger lessons into memory and reports count
+   *  parity; `dryRun` reports without writing. */
+  importLedger(
+    dryRun: boolean
+  ): Promise<{ report: { outcome: string }; text: string }>;
+  /** The daemon's own human only: re-runs the import of their Claude notes;
+   *  `from` (absolute) or `none` answers an unconfirmed one. */
+  importClaude(opts: {
+    from?: string;
+    none?: boolean;
+    dryRun?: boolean;
+  }): Promise<{ report: ClaudeImportReport }>;
+  // Memory refuses the agent token, as messaging does: build the client on
+  // the app token or a teammate's token. `ref` is an id or a #handle.
+  listMemory(q: {
+    scope?: string;
+    kind?: string;
+    state?: string;
+    origin?: 'ledger' | 'claude';
+    trust?: 'agent';
+    limit?: number;
+  }): Promise<{ entries: MemoryEntry[] }>;
+  getMemory(
+    ref: string
+  ): Promise<{ entry: MemoryEntry; revisions: unknown[]; recallCount: number }>;
+  saveMemory(input: {
+    scope: string;
+    kind: string;
+    title: string;
+    body: string;
+    projectOnly?: boolean;
+  }): Promise<MemorySaveResult>;
+  retireMemory(ref: string, reason: string): Promise<MemorySaveResult>;
+  undoMemory(ref: string): Promise<MemoryEntry>;
+  confirmMemory(ref: string): Promise<MemoryEntry>;
+  pinMemory(ref: string, pinned: boolean): Promise<MemoryEntry>;
+  promoteMemory(ref: string, scope: string): Promise<MemorySaveResult>;
+  deleteMemory(ref: string): Promise<void>;
+  listMemoryProposals(state?: string): Promise<{ proposals: MemoryProposal[] }>;
+  startMemoryLink(opts: {
+    fresh?: boolean;
+  }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
+  completeMemoryLink(code: string): Promise<{ identity: string }>;
+}
+
+/** The fields of @dispatch/memory's entry view the CLI prints. */
+export interface MemoryEntry {
+  id: string;
+  handle: string;
+  kind: string;
+  scope: string;
+  state: string;
+  title: string;
+  body: string;
+  trust: string;
+  author: string;
+  rev: number;
+}
+
+/** Mirrors ClaudeImportReport in packages/server/src/memory/claudeImport.ts. */
+export interface ClaudeImportReport {
+  state: 'complete' | 'failed' | 'unconfirmed';
+  source: string | null;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  duplicates: number;
+  tombstoned: number;
+  problems: string[];
+  candidates: string[];
+}
+
+/** Mirrors SaveResult in packages/memory/src/engine.ts. */
+export type MemorySaveResult =
+  | { status: 'active' | 'retired'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+/** The fields of @dispatch/memory's proposal the CLI prints. */
+export interface MemoryProposal {
+  id: string;
+  state: string;
+  action: string;
+  scope: string;
+  target: string | null;
+  content: { kind: string; title: string } | null;
 }
 
 /** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts.
@@ -783,11 +886,11 @@ interface TeamTokenHolder {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  unusable?: boolean;
 }
 
-// `token` is the credential every call presents — the agent token from the
-// daemon file for ordinary commands, and only for `dispatch scope decide` an
-// app token the user supplied explicitly.
+// `token` is the credential every call presents: the agent token from the
+// daemon file, or an app token the user supplied for gates and messages.
 export function createApiClient(baseUrl: string, token: string): ApiClient {
   const target: ApiTarget = { baseUrl, token };
   return {
@@ -803,14 +906,6 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     listRuns: () => request(target, '/api/runs'),
     getRun: (id) => request(target, `/api/runs/${id}`),
-    approveRun: (runId, requestId, allow) =>
-      request(target, `/api/runs/${runId}/approval`, {
-        ...jsonBody({ requestId, allow }),
-      }),
-    sendRunMessage: (runId, text, opts = {}) =>
-      request(target, `/api/runs/${runId}/message`, {
-        ...jsonBody({ text, resume: opts.resume }),
-      }),
     cancelRun: (runId) =>
       request(target, `/api/runs/${runId}/cancel`, { ...jsonBody({}) }),
     getRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
@@ -900,13 +995,22 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/browser/${encodeURIComponent(id)}/pick`),
     getEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
-    getScopeRequest: (runId, requestId) =>
-      request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
-    decideScopeRequest: (runId, requestId, granted, reason) =>
+    openDecisions: () => request(target, '/api/decisions/open'),
+    getMessage: (id) =>
+      request(target, `/api/messages/${encodeURIComponent(id)}`),
+    getAnswer: (id) =>
+      request(target, `/api/messages/${encodeURIComponent(id)}/answer`),
+    replyToMessage: (id, input) =>
       request(
         target,
-        `/api/runs/${runId}/scope-requests/${requestId}/decide`,
-        jsonBody({ granted, reason })
+        `/api/messages/${encodeURIComponent(id)}/reply`,
+        jsonBody(input)
+      ),
+    sendMessage: (input) => request(target, '/api/messages', jsonBody(input)),
+    getMailbox: (states) =>
+      request(
+        target,
+        `/api/mailbox?${new URLSearchParams({ state: states.join(',') }).toString()}`
       ),
     issueTeamToken: (input) =>
       request(target, '/api/team/tokens', jsonBody(input)),
@@ -924,5 +1028,162 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         method: 'DELETE',
       });
     },
+    importLedger: (dryRun) =>
+      request(target, `/api/memory/import/ledger${dryRun ? '?dryRun=1' : ''}`, {
+        method: 'POST',
+      }),
+    importClaude: (opts) =>
+      request(
+        target,
+        `/api/memory/import/claude${memoryQuery({
+          from: opts.from,
+          none: opts.none === true ? 1 : undefined,
+          dryRun: opts.dryRun === true ? 1 : undefined,
+        })}`,
+        { method: 'POST' }
+      ),
+    listMemory: (q) => request(target, `/api/memory${memoryQuery(q)}`),
+    getMemory: (ref) => request(target, memoryPath(ref)),
+    saveMemory: (input) => request(target, '/api/memory', jsonBody(input)),
+    retireMemory: (ref, reason) =>
+      request(target, `${memoryPath(ref)}/retire`, jsonBody({ reason })),
+    undoMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/undo`, { method: 'POST' }),
+    confirmMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/confirm`, { method: 'POST' }),
+    pinMemory: (ref, pinned) =>
+      request(target, `${memoryPath(ref)}/${pinned ? 'pin' : 'unpin'}`, {
+        method: 'POST',
+      }),
+    promoteMemory: (ref, scope) =>
+      request(target, `${memoryPath(ref)}/promote`, jsonBody({ scope })),
+    deleteMemory: (ref) =>
+      request(target, memoryPath(ref), { method: 'DELETE' }),
+    listMemoryProposals: (state) =>
+      request(target, `/api/memory/proposals${memoryQuery({ state })}`),
+    startMemoryLink: (opts) =>
+      request(
+        target,
+        '/api/memory/link',
+        jsonBody(opts.fresh === true ? { fresh: true } : {})
+      ),
+    completeMemoryLink: (code) =>
+      request(target, `/api/memory/link/${encodeURIComponent(code)}`, {
+        method: 'POST',
+      }),
+  };
+}
+
+// An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
+function memoryPath(ref: string): string {
+  return `/api/memory/${encodeURIComponent(ref)}`;
+}
+
+// `?k=v&…` from the defined values in order; '' when none is defined.
+function memoryQuery(
+  params: Record<string, string | number | undefined>
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params))
+    if (value !== undefined) search.set(key, String(value));
+  return search.size > 0 ? `?${search.toString()}` : '';
+}
+
+// The A2A control surface. Mirrors packages/server/src/a2a/routes.ts and its
+// settings.ts; keep the two in step.
+interface A2AListenerSettings {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  publicUrl: string | null;
+  tls: { certPath: string; keyPath: string } | null;
+  trustForwardedFor: boolean;
+  standalone: boolean;
+}
+
+export interface A2AListenerStatus {
+  enabled: boolean;
+  listening: boolean;
+  url: string | null;
+  error: string | null;
+  warnings: string[];
+  legacyClients: string[];
+}
+
+export interface A2AClientSummary {
+  address: string;
+  name: string;
+  recipients: string[];
+  status: 'pending' | 'approved' | 'revoked';
+  createdBy: string;
+  createdAt: string;
+}
+
+interface A2ATaskSummary {
+  id: string;
+  client: string;
+  contextId: string;
+  skill: 'ask' | 'handoff';
+  state: string;
+  statusAt: string;
+  dispatchTask: string | null;
+}
+
+// Separate from ApiClient so its test fakes need not grow the A2A routes.
+export interface A2AApiClient {
+  listenerStatus(): Promise<A2AListenerStatus>;
+  setListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
+  disableListener(): Promise<A2AListenerStatus>;
+  card(): Promise<unknown>;
+  clients(): Promise<{ clients: A2AClientSummary[] }>;
+  addClient(input: {
+    name: string;
+    to?: string[];
+    approve?: boolean;
+  }): Promise<{ address: string; token: string; status: string }>;
+  rotateClient(name: string): Promise<{ token: string }>;
+  revokeAgent(address: string): Promise<unknown>;
+  tasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
+  declineTask(id: string, reason?: string): Promise<unknown>;
+}
+
+export function createA2AApiClient(
+  baseUrl: string,
+  token: string
+): A2AApiClient {
+  const target: ApiTarget = { baseUrl, token };
+  return {
+    listenerStatus: () => request(target, '/api/a2a/listener'),
+    setListener: (settings) =>
+      request(target, '/api/a2a/listener', {
+        ...jsonBody(settings),
+        method: 'PUT',
+      }),
+    disableListener: () =>
+      request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    card: () => request(target, '/api/a2a/card'),
+    clients: () => request(target, '/api/a2a/clients'),
+    addClient: (input) => request(target, '/api/a2a/clients', jsonBody(input)),
+    rotateClient: (name) =>
+      request(target, `/api/a2a/clients/${encodeURIComponent(name)}/rotate`, {
+        method: 'POST',
+      }),
+    revokeAgent: (address) =>
+      request(target, `/api/agents/${encodeURIComponent(address)}/revoke`, {
+        method: 'POST',
+      }),
+    tasks: (client) =>
+      request(
+        target,
+        client === undefined
+          ? '/api/a2a/tasks'
+          : `/api/a2a/tasks?${new URLSearchParams({ client }).toString()}`
+      ),
+    declineTask: (id, reason) =>
+      request(
+        target,
+        `/api/a2a/tasks/${encodeURIComponent(id)}/decline`,
+        jsonBody(reason === undefined ? {} : { reason })
+      ),
   };
 }

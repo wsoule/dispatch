@@ -27,9 +27,8 @@ export interface DaemonFileInfo {
   pid: number;
   rootDir: string;
   startedAt: string;
-  // Request tier, and the only credential this package ever holds. The app
-  // token that decides scope requests is never written to disk, so there is
-  // nothing here for an MCP tool to pick up.
+  // The shared request-tier token. The app token, which can answer gates, is
+  // never written to disk, so no MCP tool can pick it up.
   agentToken?: string;
 }
 
@@ -75,11 +74,8 @@ export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
 // check is the one request that must never be the slow thing.
 const HEALTH_TIMEOUT_MS = 2000;
 
-// The ceiling on any one ordinary daemon request from this process. Every
-// tool here is a loopback call the daemon answers from memory or SQLite;
-// the long-polls (ask_user, request_scope) bring their own signal. Anything
-// slower than this is a daemon that has stopped serving, and the answer the
-// agent needs is "unreachable", not a silent wait.
+// The ceiling on one ordinary daemon request; msg_send's blocking long-poll
+// brings its own signal. Anything slower is a daemon that stopped serving.
 export const REQUEST_TIMEOUT_MS = 30_000;
 
 /** The abort signal every bare daemon `fetch` in this package should carry. */

@@ -1,16 +1,30 @@
-import { isDoneStatus, untrustedInline } from '@dispatch/core';
+import {
+  isDoneStatus,
+  notificationKindForMessage,
+  untrustedInline,
+  untrustedVerbatim,
+} from '@dispatch/core';
 import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
+import { MEMORY_KINDS } from '@dispatch/memory';
+import type { MemoryKind, SharedScope } from '@dispatch/memory';
+import type { Message } from '@dispatch/protocol';
+import { gateOf } from '@dispatch/protocol';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
 import type { TaskCache } from '../cache.js';
+import type { DocsService } from '../docs/service.js';
 import type { LedgerStorePort } from '../ledger.js';
+import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import { statusModelFor } from '../statuses.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
-import type { QuestionRegistry, RunQuestion } from './questions.js';
 import type { RunMeta } from './types.js';
-import { TERMINAL_RUN_STATES } from './types.js';
+import {
+  actingOperator,
+  runMessageRefusal,
+  TERMINAL_RUN_STATES,
+} from './types.js';
 
 /**
  * The overseer's private tool surface: read-only status tools over everything
@@ -44,22 +58,51 @@ export class OverseerToolError extends Error {}
  * Everything the tools read and write through.
  *
  * Shaped like OrchestratorContext (store/cache) but bundling the peers the
- * status tools need, because the merge queue, question registry and ledger are
+ * status tools need, because the merge queue, the open gates and the ledger are
  * NOT owned by the Orchestrator — they are assembled alongside it in api.ts's
  * ApiContext. Taking them explicitly is what keeps this constructible in a
  * test without booting an HTTP server.
  *
  * There is deliberately no `events` here: every mutation below goes through
- * Orchestrator or MergeQueue, both of which broadcast their own events, so a
- * bus on this context would only be a second, easily-desynced way to do it.
+ * Orchestrator, MergeQueue or the message bus, each of which broadcasts its own
+ * events, so an event bus here would only be a second way to do it.
  */
 export interface OverseerToolContext {
   store: TaskStorePort;
   cache: TaskCache;
   orchestrator: Orchestrator;
   mergeQueue: MergeQueue;
-  questions: QuestionRegistry;
+  /** Open blocking questions addressed to a human (see openHumanDecisions). */
+  openGates: () => Message[];
   ledgerStore: LedgerStorePort;
+  /** Project and team memory reads; the overseer has no personal scope. */
+  memory?: {
+    search(input: {
+      query: string;
+      scope?: SharedScope;
+      kind?: MemoryKind;
+      limit?: number;
+    }): unknown;
+    read(ref: string): unknown;
+  };
+  /** The message bus, for the tools that answer a run's tool-approval gate or
+   *  message a run, as the human who confirmed the action (`actor`). */
+  messaging: {
+    answerRunApproval(
+      runId: string,
+      requestId: string,
+      answer: { choice: 'approve' | 'approve-session' | 'deny'; body: string },
+      actor: string
+    ): Promise<void>;
+    sendAsHuman(to: string, text: string, actor: string): Promise<void>;
+  };
+  /** The daemon's human: the overseer acts for them, so its runs do too. */
+  ownerRef: string;
+  /** Team docs, read as the owner; absent or null when the docs service is not wired. */
+  docs?: Pick<
+    DocsService,
+    'available' | 'overseerActor' | 'list' | 'search' | 'read'
+  > | null;
   /**
    * Executor `dispatch_task` uses when the overseer doesn't name one. Matches
    * api.ts's own fallback rather than being configurable per call site, so
@@ -88,19 +131,35 @@ export interface OverseerStatusTool<Input = unknown, Output = unknown> {
   read(ctx: OverseerToolContext, input: Input): Output;
 }
 
+/** Who confirmed an action, and whether with the owner's app token. */
+export interface ConfirmedBy {
+  actor: string;
+  ownerCredential?: boolean;
+  /** Whether whoever confirmed holds decide tier; absent means they do not. */
+  canDecide?: boolean;
+}
+
 /**
  * A tool whose call produces a *proposal*, not an effect.
  *
  * `describe` runs at call time: it validates that the target exists and
  * returns the sentence a human reads before confirming. `apply` runs only from
- * OverseerToolRegistry.applyAction, after that confirmation.
+ * OverseerToolRegistry.applyAction, after that confirmation; `meta.actor` is
+ * the human who confirmed it.
  */
 export interface OverseerMutatingTool<Input = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<Input>;
+  /** Fills in at call time what the input leaves to the live state, so
+   *  `apply` acts on exactly what `describe` showed the human. */
+  pin?(ctx: OverseerToolContext, input: Input): Input;
   describe(ctx: OverseerToolContext, input: Input): string;
-  apply(ctx: OverseerToolContext, input: Input): Promise<void> | void;
+  apply(
+    ctx: OverseerToolContext,
+    input: Input,
+    meta: ConfirmedBy
+  ): Promise<void> | void;
 }
 
 /** A mutating tool call awaiting (or past) human confirmation. */
@@ -304,8 +363,28 @@ const pendingApprovalsTool: OverseerStatusTool<NoInput> = {
     'Tool calls that live runs are parked on, waiting for a human to allow or deny.',
   inputSchema: noInput,
   read(ctx) {
-    const pending = ctx.orchestrator.pendingApprovals();
-    return { approvals: pending, total: pending.length };
+    const runs = new Map(ctx.orchestrator.list().map((run) => [run.id, run]));
+    const approvals = ctx.openGates().flatMap((message) => {
+      const gate = gateOf(message);
+      if (gate?.type !== 'tool-approval' || gate.runId === undefined) return [];
+      const run = runs.get(gate.runId);
+      return [
+        {
+          messageId: message.id,
+          runId: gate.runId,
+          taskId: run?.taskId ?? null,
+          taskTitle: run?.taskTitle ?? null,
+          requestId: gate.requestId,
+          toolName: gate.tool,
+          // At most an 8 KiB preview; `truncated` says when it was cut, and
+          // `floor` whether the full call is an irreversible act.
+          input: gate.input,
+          truncated: gate.truncated === true,
+          floor: gate.floor === true,
+        },
+      ];
+    });
+    return { approvals, total: approvals.length };
   },
 };
 
@@ -318,16 +397,6 @@ const openQuestionsInput = z.object({
     ),
 });
 
-function questionFields(question: RunQuestion) {
-  return {
-    id: question.id,
-    runId: question.runId,
-    question: question.question,
-    options: question.options,
-    askedAt: question.askedAt,
-  };
-}
-
 const openQuestionsTool: OverseerStatusTool<
   z.infer<typeof openQuestionsInput>
 > = {
@@ -336,8 +405,22 @@ const openQuestionsTool: OverseerStatusTool<
     'Questions run agents have asked and are still blocked waiting on an answer to.',
   inputSchema: openQuestionsInput,
   read(ctx, input) {
-    const open = ctx.questions.listOpen(input.runId);
-    return { questions: open.map(questionFields), total: open.length };
+    const questions = ctx.openGates().flatMap((message) => {
+      if (notificationKindForMessage(message) !== 'question') return [];
+      if (!message.from.startsWith('run:')) return [];
+      const runId = message.from.slice('run:'.length);
+      if (input.runId !== undefined && runId !== input.runId) return [];
+      return [
+        {
+          messageId: message.id,
+          runId,
+          question: message.body,
+          options: message.choices ?? [],
+          askedAt: message.createdAt,
+        },
+      ];
+    });
+    return { questions, total: questions.length };
   },
 };
 
@@ -370,16 +453,143 @@ function ledgerFields(entry: LedgerEntry) {
 
 const ledgerTool: OverseerStatusTool<z.infer<typeof ledgerInput>> = {
   name: 'ledger_entries',
-  description:
-    'Findings and decisions earlier runs recorded for later ones to build on.',
+  description: 'Audit receipts: policy decisions, holds, grants.',
   inputSchema: ledgerInput,
   read(ctx, input) {
-    const entries = ctx.ledgerStore.list(
-      input.epicId === undefined ? {} : { epicId: input.epicId }
-    );
+    const entries = ctx.ledgerStore
+      .list(input.epicId === undefined ? {} : { epicId: input.epicId })
+      .filter((e) => classifyLedgerEntry(e).to === 'audit');
     const limited =
       input.limit === undefined ? entries : entries.slice(0, input.limit);
     return { entries: limited.map(ledgerFields), total: entries.length };
+  },
+};
+
+// The memory port, or the error a context without one gives the model.
+function requireMemory(
+  ctx: OverseerToolContext
+): NonNullable<OverseerToolContext['memory']> {
+  if (ctx.memory === undefined)
+    throw new OverseerToolError('memory is not available in this session');
+  return ctx.memory;
+}
+
+const memorySearchInput = z.object({
+  query: z
+    .string()
+    .describe('Words to search for. Empty returns the top entries.'),
+  scope: z.enum(['project', 'team']).optional(),
+  kind: z.enum(MEMORY_KINDS).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+
+const memorySearchTool: OverseerStatusTool<z.infer<typeof memorySearchInput>> =
+  {
+    name: 'memory_search',
+    description:
+      'Search the project and team lessons, conventions and preferences Dispatch remembers, stale ones included.',
+    inputSchema: memorySearchInput,
+    read(ctx, input) {
+      return requireMemory(ctx).search(input);
+    },
+  };
+
+const memoryReadInput = z.object({
+  id: z.string().describe('A #handle from a search, or a full memory id.'),
+});
+
+const memoryReadTool: OverseerStatusTool<z.infer<typeof memoryReadInput>> = {
+  name: 'memory_read',
+  description:
+    'Open one project or team memory: its body, who wrote it, and its revisions.',
+  inputSchema: memoryReadInput,
+  read(ctx, input) {
+    // Handles are stored upper-case; the model may type one in any case.
+    const id = input.id.trim();
+    return requireMemory(ctx).read(id.startsWith('#') ? id.toUpperCase() : id);
+  },
+};
+
+const docListInput = z.object({
+  query: z
+    .string()
+    .optional()
+    .describe('Search section text instead of listing.'),
+  taskId: z
+    .string()
+    .optional()
+    .describe("A task id (t-… or e-…) to list that task's linked docs."),
+  limit: z.number().int().positive().max(100).optional(),
+});
+
+const docListTool: OverseerStatusTool<z.infer<typeof docListInput>> = {
+  name: 'doc_list',
+  description:
+    "The project's team docs: all of them, a task's linked docs, or search hits.",
+  inputSchema: docListInput,
+  read(ctx, input) {
+    if (ctx.docs === undefined || ctx.docs === null || !ctx.docs.available)
+      return { available: false };
+    const actor = ctx.docs.overseerActor();
+    if (input.query !== undefined) {
+      return {
+        hits: ctx.docs
+          .search(actor, { query: input.query, limit: input.limit })
+          .map((h) => ({
+            ...h,
+            heading: untrustedInline(h.heading),
+            snippet: untrustedInline(h.snippet),
+            title: untrustedInline(h.title),
+          })),
+      };
+    }
+    const { docs, total } = ctx.docs.list(actor, {
+      taskId: input.taskId,
+      limit: input.limit ?? 20,
+    });
+    return {
+      total,
+      docs: docs.map((d) => ({
+        handle: d.handle,
+        title: untrustedInline(d.title),
+        status: d.status,
+        unreviewed: d.unreviewed,
+        rev: d.head.n,
+        rel: d.rel,
+      })),
+    };
+  },
+};
+
+const docReadInput = z.object({
+  doc: z.string().describe('A handle or doc- id.'),
+  section: z.string().optional(),
+  offset: z.number().int().nonnegative().optional(),
+});
+
+const docReadTool: OverseerStatusTool<z.infer<typeof docReadInput>> = {
+  name: 'doc_read',
+  description:
+    'One page (32 KiB) of a team doc, or one section of it, fenced as untrusted text.',
+  inputSchema: docReadInput,
+  read(ctx, input) {
+    if (ctx.docs === undefined || ctx.docs === null || !ctx.docs.available)
+      return { available: false };
+    const r = ctx.docs.read(ctx.docs.overseerActor(), input.doc, {
+      section: input.section,
+      offset: input.offset,
+      page: true,
+    });
+    return {
+      handle: r.doc.handle,
+      title: untrustedInline(r.doc.title),
+      rev: r.rev.n,
+      nextOffset: r.nextOffset,
+      text: untrustedVerbatim(
+        `doc ${r.doc.handle} rev ${r.rev.n ?? r.rev.id}`,
+        r.text
+      ),
+    };
   },
 };
 
@@ -391,6 +601,10 @@ export const OVERSEER_STATUS_TOOLS: readonly OverseerStatusTool[] = [
   pendingApprovalsTool,
   openQuestionsTool,
   ledgerTool,
+  memorySearchTool,
+  memoryReadTool,
+  docListTool,
+  docReadTool,
 ] as OverseerStatusTool[];
 
 // ---------------------------------------------------------------------------
@@ -413,6 +627,19 @@ const dispatchInput = z.object({
     ),
 });
 
+// The human a confirmed dispatch runs for: whoever confirmed it, the owner
+// only with the owner's app token, no one for the system or a stand-in.
+function confirmedOperator(
+  ctx: OverseerToolContext,
+  meta: ConfirmedBy
+): string | null {
+  return actingOperator(
+    meta.actor,
+    meta.ownerCredential === true,
+    ctx.ownerRef
+  );
+}
+
 const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   name: 'dispatch_task',
   description:
@@ -429,12 +656,12 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     const model = input.model === undefined ? '' : ` on model ${input.model}`;
     return `Dispatch ${doc.meta.id} "${safeTitle(doc.meta.title)}" with the ${executorFor(ctx, input.executor)} executor${model}`;
   },
-  async apply(ctx, input) {
-    // `actor` is deliberately omitted here and in message_run: the
-    // orchestrator's default credits the daemon's human, and a human
-    // confirming the action in the chat UI is precisely who caused it. The
-    // explicit 'none' actor is for callers with no human behind them at all
-    // (EpicEngine's auto-fill), which the overseer never is.
+  async apply(ctx, input, meta) {
+    // `actor` is deliberately omitted here: the orchestrator's default credits
+    // the daemon's human, and a human confirming the action is precisely who
+    // caused it. The explicit 'none' actor is for callers with no human behind
+    // them at all (EpicEngine's auto-fill), which the overseer never is.
+    // The run, fresh or resumed, acts for whoever confirmed it.
     // dispatchOrResume, not dispatch: a task whose last run a daemon restart
     // left recoverable is picked back up rather than started over. `executor`
     // and `model` carry what the overseer's caller actually NAMED — the daemon's
@@ -443,28 +670,53 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     await ctx.orchestrator.dispatchOrResume(input.taskId, {
       executor: input.executor,
       model: input.model,
+      operator: confirmedOperator(ctx, meta),
       defaults: { executor: executorFor(ctx) },
     });
   },
 };
 
-// Both approve_run and deny_run resolve the requestId from the run itself
-// rather than making the overseer carry one: the requestId it saw in a
-// pending_approvals result may already be stale by confirmation time, and
-// answering the wrong request is worse than refusing. Resolved twice on
-// purpose — once in `describe` so the summary can name the tool being
-// approved, once in `apply` so a request that rotated in between is caught.
-function requireApproval(ctx: OverseerToolContext, runId: string) {
+// The parked call approve_run and deny_run act on: the named one, else the
+// run's oldest, which `pin` then names so the confirm answers that call.
+function requireApproval(
+  ctx: OverseerToolContext,
+  runId: string,
+  requestId: string | undefined
+) {
   const meta = requireRun(ctx, runId);
-  const pending = ctx.orchestrator.pendingApprovalFor(runId);
+  const pending =
+    requestId === undefined
+      ? ctx.orchestrator.pendingApprovalsFor(runId)[0]
+      : ctx.orchestrator.pendingApprovalFor(runId, requestId);
   if (pending === undefined) {
-    throw new OverseerToolError(`run is not awaiting approval: ${runId}`);
+    throw new OverseerToolError(
+      requestId === undefined
+        ? `run is not awaiting approval: ${runId}`
+        : `run ${runId} is not parked on ${requestId}`
+    );
   }
   return { meta, pending };
 }
 
+// A proposal's parked call, named even when the overseer left it to default.
+function pinParkedCall<Input extends { runId: string; requestId?: string }>(
+  ctx: OverseerToolContext,
+  input: Input
+): Input {
+  const { pending } = requireApproval(ctx, input.runId, input.requestId);
+  return { ...input, requestId: pending.requestId };
+}
+
+const REQUEST_ID_INPUT = z
+  .string()
+  .optional()
+  .describe(
+    "The parked call's requestId, from pending_approvals; defaults to the run's oldest parked call."
+  );
+
 const approveInput = z.object({
   runId: z.string().describe('The run (r-…) parked on a tool call.'),
+  requestId: REQUEST_ID_INPUT,
   scope: z
     .enum(['once', 'session'])
     .optional()
@@ -475,26 +727,36 @@ const approveInput = z.object({
 
 const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
   name: 'approve_run',
-  description:
-    'Allow the tool call a run is currently parked on, letting it continue.',
+  description: 'Allow a tool call a run is parked on, letting it continue.',
   inputSchema: approveInput,
+  pin: pinParkedCall,
   describe(ctx, input) {
-    const { meta, pending } = requireApproval(ctx, input.runId);
+    const { meta, pending } = requireApproval(
+      ctx,
+      input.runId,
+      input.requestId
+    );
     const scope =
       input.scope === 'session' ? ' for the rest of the session' : '';
     return `Approve ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${scope}`;
   },
-  apply(ctx, input) {
-    const { pending } = requireApproval(ctx, input.runId);
-    ctx.orchestrator.approve(input.runId, pending.requestId, {
-      allow: true,
-      scope: input.scope ?? 'once',
-    });
+  async apply(ctx, input, meta) {
+    const { pending } = requireApproval(ctx, input.runId, input.requestId);
+    await ctx.messaging.answerRunApproval(
+      input.runId,
+      pending.requestId,
+      {
+        choice: input.scope === 'session' ? 'approve-session' : 'approve',
+        body: '',
+      },
+      meta.actor
+    );
   },
 };
 
 const denyInput = z.object({
   runId: z.string().describe('The run (r-…) parked on a tool call.'),
+  requestId: REQUEST_ID_INPUT,
   reason: z
     .string()
     .optional()
@@ -504,21 +766,28 @@ const denyInput = z.object({
 const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
   name: 'deny_run',
   description:
-    'Refuse the tool call a run is currently parked on. This ends the run as ' +
+    'Refuse a tool call a run is parked on. This ends the run as ' +
     'failed — the reason, if given, is what it reports as the failure.',
   inputSchema: denyInput,
+  pin: pinParkedCall,
   describe(ctx, input) {
-    const { meta, pending } = requireApproval(ctx, input.runId);
+    const { meta, pending } = requireApproval(
+      ctx,
+      input.runId,
+      input.requestId
+    );
     const why =
       input.reason === undefined ? '' : `: ${safeTitle(input.reason)}`;
     return `Deny ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${why}`;
   },
-  apply(ctx, input) {
-    const { pending } = requireApproval(ctx, input.runId);
-    ctx.orchestrator.approve(input.runId, pending.requestId, {
-      allow: false,
-      reason: input.reason,
-    });
+  async apply(ctx, input, meta) {
+    const { pending } = requireApproval(ctx, input.runId, input.requestId);
+    await ctx.messaging.answerRunApproval(
+      input.runId,
+      pending.requestId,
+      { choice: 'deny', body: input.reason ?? '' },
+      meta.actor
+    );
   },
 };
 
@@ -588,8 +857,18 @@ const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {
     }
     return `Message run ${meta.id} ("${safeTitle(meta.taskTitle)}"): ${safeTitle(input.text)}`;
   },
-  apply(ctx, input) {
-    ctx.orchestrator.sendMessage(input.runId, input.text);
+  async apply(ctx, input, meta) {
+    const refusal = runMessageRefusal(
+      requireRun(ctx, input.runId),
+      meta.actor,
+      meta.canDecide === true
+    );
+    if (refusal !== null) throw new OverseerToolError(refusal);
+    await ctx.messaging.sendAsHuman(
+      `run:${input.runId}`,
+      input.text,
+      meta.actor
+    );
   },
 };
 
@@ -687,7 +966,8 @@ export class OverseerToolRegistry {
     if (tool === undefined) {
       throw new OverseerToolError(`unknown mutating tool: ${name}`);
     }
-    const input = this.parse(tool, raw);
+    const parsed = this.parse(tool, raw);
+    const input = tool.pin?.(this.ctx, parsed) ?? parsed;
     // Throws on a target that doesn't exist or isn't in a state this tool can
     // act on, so the overseer finds out while it can still say something useful
     // — rather than the human confirming an action that was never going to work.
@@ -714,14 +994,14 @@ export class OverseerToolRegistry {
   }
 
   /**
-   * Performs a confirmed action's real effect. The one path in this module
-   * that mutates anything.
+   * Performs a confirmed action's real effect, as `meta.actor`, the human who
+   * confirmed it. The one path in this module that mutates anything.
    *
    * An action can only be applied once: a second call finds it no longer
    * `pending` and refuses, so a double-confirm (two clicks, a retried request)
    * can't dispatch two runs or cancel a run twice.
    */
-  async applyAction(id: string): Promise<OverseerAction> {
+  async applyAction(id: string, meta: ConfirmedBy): Promise<OverseerAction> {
     const action = this.requirePending(id, 'apply');
     const tool = this.mutatingByName.get(action.tool);
     // Only reachable if the tool list changed under a still-pending action.
@@ -734,7 +1014,7 @@ export class OverseerToolRegistry {
     // double-click this guard exists to stop.
     action.status = 'applied';
     try {
-      await tool.apply(this.ctx, action.input);
+      await tool.apply(this.ctx, action.input, meta);
     } catch (err) {
       // Back to `pending` because the effect did not happen: leaving it
       // `applied` would lie, and `denied` would discard an action the human

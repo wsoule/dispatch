@@ -140,6 +140,43 @@ below, so that multiplayer never ships free inside the open client (decided
   for people who never install the app.
 - **Audit** — server-native append-only log, exported as receipts (§4).
 
+Memory (`docs/specs/2026-09-25-memory-design.md`) has two limits in team
+projects as of v1, both accepted:
+
+- **Personal memory reaches run logs.** A run reads its operator's personal
+  memory (its index is in the prompt, and `memory_read` returns a body), so the
+  run can quote it in its log. On a shared host every teammate can read every
+  run's log. Keep what must stay private out of personal memory there, or run
+  your own daemon.
+- **Files-backend teams pause shared lessons until v2.** Lessons used to live in
+  `ledger.jsonl`, which git carried to every teammate. They now live in the
+  daemon's `memory.db`, which stays on its machine, and team entries only
+  replicate between daemons once federation carries them (v2). Until then a
+  lesson one teammate's run learns does not reach the others. Teammates who
+  share one daemon share its memory as usual.
+
+Docs (`docs/specs/2026-09-25-docs-design.md`) have three limits in team projects
+as of v1, all accepted:
+
+- **A personal doc a run reads reaches its transcript.** A run's `doc_read` of
+  its operator's personal doc is tool output in the run's transcript, which
+  teammates on a shared host can read. Keep what must stay private out of
+  personal docs there, or run your own daemon.
+- **Files-backend projects have no restorable copy of docs.** Team docs live in
+  the daemon's `docs.db`, not in git. The receipt log carries them for database
+  projects. `dispatch docs export <dir>` writes a readable copy of every doc,
+  not a backup: importing it back makes new docs with new ids, without their
+  history, reviews or links. Back up `docs.db` itself.
+- **Moving the checkout orphans `docs.db`.** Docs are keyed to the checkout's
+  path, so a moved checkout starts empty. `GET /api/docs/health` lists, to
+  decide tier, the `runs/*/docs.db` files whose recorded root no longer exists.
+  To recover: stop the daemon, move the orphaned `docs.db` (with its `-wal` and
+  `-shm` files, and its `docs-assets/` directory) into the new checkout's key
+  directory under `runs/`, and start the daemon again.
+- **The publish risk guard protects only its own replica.** A synced change
+  cannot lower a publish task's risk on the replica that owns the publish; a
+  teammate's replica keeps whatever its own board says.
+
 ## 7. Phasing
 
 0. **Storage spine (solo, no server)** — epic `e-99e113`. Extract the

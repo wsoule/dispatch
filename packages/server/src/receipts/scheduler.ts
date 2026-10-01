@@ -10,7 +10,7 @@ import type { PushTarget } from '../gitTarget.js';
 import { resolvePushTarget } from '../gitTarget.js';
 import type { AsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';
-import type { ReceiptsResult } from './exporter.js';
+import type { ReceiptsResult, ReceiptsStep } from './exporter.js';
 import {
   receiptsEnabled,
   ReceiptsExporter,
@@ -39,6 +39,8 @@ export interface ReceiptsSchedulerDeps {
    * DEFAULT_SWEEP_MS; tests pass something large enough never to fire.
    */
   sweepMs?: number;
+  /** Writers of more of the log (team docs), run after the core records. */
+  steps?: readonly ReceiptsStep[];
 }
 
 // Matches BoardSyncScheduler's debounce, and for the same reason: long enough
@@ -73,8 +75,9 @@ const RECEIPT_EVENTS: ReadonlySet<ServerEvent['type']> = new Set([
   'ledger.changed',
 ]);
 
-/** Whether this event should schedule an export. */
+/** Whether this event should schedule an export; of memory, only team entries reach the log. */
 export function isReceiptEvent(event: ServerEvent): boolean {
+  if (event.type === 'memory.changed') return event.scope === 'team';
   return RECEIPT_EVENTS.has(event.type);
 }
 
@@ -123,7 +126,12 @@ export class ReceiptsScheduler {
   private lastDir: string | null = null;
 
   constructor(private readonly deps: ReceiptsSchedulerDeps) {
-    this.exporter = new ReceiptsExporter(deps.stores, deps.actor, deps.run);
+    this.exporter = new ReceiptsExporter(
+      deps.stores,
+      deps.actor,
+      deps.run,
+      deps.steps
+    );
     // Runs unconditionally; runPending re-reads the config, so a project with
     // receipts off generates no export traffic despite the timer ticking, and
     // switching it back on takes effect without a restart.

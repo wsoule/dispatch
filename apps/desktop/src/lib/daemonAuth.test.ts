@@ -3,13 +3,17 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   assertCanDecide,
+  assertCanMessage,
   ATTACHED_DAEMON_EXPLANATION,
+  ATTACHED_DAEMON_MESSAGING_EXPLANATION,
   credentialTier,
   daemonBaseUrl,
   daemonRestartReadiness,
+  DECIDE_TIER_EXPLANATION,
   decideAvailability,
   isInsufficientTier,
   isMissingOrInvalidToken,
+  messageAccess,
   resolveDaemonAuth,
   RESTART_FOR_APPROVALS,
 } from './daemonAuth';
@@ -22,45 +26,49 @@ describe('resolveDaemonAuth', () => {
   test('a spawned daemon hands over the app token and decide tier', () => {
     expect(
       resolveDaemonAuth({ port: 45999, appToken: 'app', agentToken: 'agent' })
-    ).toEqual({ token: 'app', canDecide: true });
+    ).toEqual({ token: 'app', canDecide: true, canMessage: true });
   });
 
+  // Messaging refuses the shared agent token outright, so this window can
+  // neither decide nor send.
   test('an attached daemon falls back to the agent token without decide tier', () => {
     expect(
       resolveDaemonAuth({ port: 45999, appToken: null, agentToken: 'agent' })
-    ).toEqual({ token: 'agent', canDecide: false });
+    ).toEqual({ token: 'agent', canDecide: false, canMessage: false });
   });
 
   test('a daemon predating token auth yields no credential at all', () => {
     expect(
       resolveDaemonAuth({ port: 45999, appToken: null, agentToken: null })
-    ).toEqual({ token: undefined, canDecide: false });
+    ).toEqual({ token: undefined, canDecide: false, canMessage: false });
   });
 
   test('an empty-string token is treated as absent, never sent', () => {
     expect(
       resolveDaemonAuth({ port: 45999, appToken: '', agentToken: '' })
-    ).toEqual({ token: undefined, canDecide: false });
+    ).toEqual({ token: undefined, canDecide: false, canMessage: false });
   });
 
   test('a team-local session presents no token — the cookie is sent by the browser', () => {
     const base = { port: 0, appToken: null, agentToken: null, baseUrl: '' };
+    // A request-tier teammate is a human principal, so it may still send.
     expect(
       resolveDaemonAuth({ ...base, session: { tier: 'request' } })
-    ).toEqual({ token: undefined, canDecide: false });
+    ).toEqual({ token: undefined, canDecide: false, canMessage: true });
     // Decide and operator both reach the Approve buttons.
     expect(resolveDaemonAuth({ ...base, session: { tier: 'decide' } })).toEqual(
-      { token: undefined, canDecide: true }
+      { token: undefined, canDecide: true, canMessage: true }
     );
     expect(
       resolveDaemonAuth({ ...base, session: { tier: 'operator' } })
-    ).toEqual({ token: undefined, canDecide: true });
+    ).toEqual({ token: undefined, canDecide: true, canMessage: true });
   });
 
   test('no connection yet means no credential and no decide tier', () => {
     expect(resolveDaemonAuth(undefined)).toEqual({
       token: undefined,
       canDecide: false,
+      canMessage: false,
     });
   });
 });
@@ -116,20 +124,31 @@ describe('credentialTier', () => {
 describe('assertCanDecide', () => {
   test('passes through when the app token is held', () => {
     expect(() =>
-      assertCanDecide({ token: 'app', canDecide: true })
+      assertCanDecide({ token: 'app', canDecide: true, canMessage: true })
     ).not.toThrow();
   });
 
   test('refuses locally rather than sending a request that can only 403', () => {
-    expect(() => assertCanDecide({ token: 'agent', canDecide: false })).toThrow(
-      ATTACHED_DAEMON_EXPLANATION
-    );
+    expect(() =>
+      assertCanDecide({ token: 'agent', canDecide: false, canMessage: false })
+    ).toThrow(ATTACHED_DAEMON_EXPLANATION);
   });
 
   test('refuses with no credential at all', () => {
     expect(() =>
-      assertCanDecide({ token: undefined, canDecide: false })
+      assertCanDecide({ token: undefined, canDecide: false, canMessage: false })
     ).toThrow();
+  });
+});
+
+describe('assertCanMessage', () => {
+  test('a request-tier teammate may send; the shared agent token may not', () => {
+    expect(() =>
+      assertCanMessage({ token: undefined, canDecide: false, canMessage: true })
+    ).not.toThrow();
+    expect(() =>
+      assertCanMessage({ token: 'agent', canDecide: false, canMessage: false })
+    ).toThrow(ATTACHED_DAEMON_MESSAGING_EXPLANATION);
   });
 });
 
@@ -230,7 +249,9 @@ describe('daemonBaseUrl', () => {
 describe('decideAvailability', () => {
   test('an app-token session enables the surface with no notice', () => {
     expect(
-      decideAvailability({ token: 'app', canDecide: true }, [run('running')])
+      decideAvailability({ token: 'app', canDecide: true, canMessage: true }, [
+        run('running'),
+      ])
     ).toEqual({
       enabled: true,
       notice: null,
@@ -241,7 +262,7 @@ describe('decideAvailability', () => {
 
   test('an attached session disables the surface and offers the restart', () => {
     const availability = decideAvailability(
-      { token: 'agent', canDecide: false },
+      { token: 'agent', canDecide: false, canMessage: false },
       []
     );
     expect(availability.enabled).toBe(false);
@@ -252,10 +273,38 @@ describe('decideAvailability', () => {
 
   test('an attached session with live runs disables the restart too', () => {
     const availability = decideAvailability(
-      { token: 'agent', canDecide: false },
+      { token: 'agent', canDecide: false, canMessage: false },
       [run('running')]
     );
     expect(availability.enabled).toBe(false);
     expect(availability.restart?.safe).toBe(false);
+  });
+});
+
+describe('messageAccess', () => {
+  test('the app token decides and messages', () => {
+    expect(
+      messageAccess({ token: 'app', canDecide: true, canMessage: true })
+    ).toEqual({ canDecide: true, canMessage: true, explanation: null });
+  });
+
+  test('a request-tier teammate messages but cannot decide, and is told why', () => {
+    expect(
+      messageAccess({ token: undefined, canDecide: false, canMessage: true })
+    ).toEqual({
+      canDecide: false,
+      canMessage: true,
+      explanation: DECIDE_TIER_EXPLANATION,
+    });
+  });
+
+  test('the shared agent token does neither', () => {
+    expect(
+      messageAccess({ token: 'agent', canDecide: false, canMessage: false })
+    ).toEqual({
+      canDecide: false,
+      canMessage: false,
+      explanation: ATTACHED_DAEMON_MESSAGING_EXPLANATION,
+    });
   });
 });

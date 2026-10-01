@@ -1,7 +1,7 @@
-import { RotateCw } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
+import { DecideUnavailableNotice } from './DecideUnavailableNotice';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import type { ApprovalCardOption } from '@/ui/ai/approval-card';
 import { ApprovalCard as AiApprovalCard } from '@/ui/ai/approval-card';
@@ -12,10 +12,12 @@ import { Textarea } from '@/ui/textarea';
 
 interface ApprovalCardProps {
   toolName: string;
-  /** The pending tool call's input, when this window saw the `approval.requested` WS event
-   * and could still find the matching log entry — see RunLogView's doc comment on
-   * `pendingApproval` for why this can legitimately be `null` (e.g. after a reload). */
+  /** The pending tool call's input, as its gate previews it. */
   toolInput: unknown;
+  /** True when `toolInput` was cut short of the full call; the card says so. */
+  truncated?: boolean;
+  /** Reads a truncated call's full input, which a deciding window shows instead. */
+  loadFullInput?: () => Promise<unknown>;
   /** When the run went into `awaiting-approval`, so the header can say how long it has been
    * stuck. A frozen run looks identical to a busy one without it. */
   frozenSince?: string;
@@ -50,6 +52,51 @@ function formatInput(toolInput: unknown): string {
   }
 }
 
+// A truncated preview is the cut JSON text itself, so it reads best unquoted.
+function formatPreview(toolInput: unknown, truncated: boolean): string {
+  return truncated && typeof toolInput === 'string'
+    ? `${toolInput}…`
+    : formatInput(toolInput);
+}
+
+// Loads a truncated call's full input once per mount (each card is keyed by
+// its request), and again on `retry`, so the human judges the whole call.
+function useFullInput(load: (() => Promise<unknown>) | undefined): {
+  full: { input: unknown } | null;
+  error: string | null;
+  retry: () => void;
+} {
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const shouldLoad = load !== undefined;
+  const [full, setFull] = useState<{ input: unknown } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const current = loadRef.current;
+    if (!shouldLoad || current === undefined) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const input = await current();
+        if (!cancelled) setFull({ input });
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shouldLoad, attempt]);
+  const retry = () => {
+    setError(null);
+    setAttempt((n) => n + 1);
+  };
+  return { full, error, retry };
+}
+
 const DENY_ID = 'deny';
 const SESSION_ID = 'session';
 const ONCE_ID = 'once';
@@ -66,13 +113,23 @@ const ONCE_ID = 'once';
 export function ApprovalCard({
   toolName,
   toolInput,
+  truncated = false,
+  loadFullInput,
   frozenSince,
   onDecide,
   availability = ALWAYS_AVAILABLE,
   onRestartDaemon,
 }: ApprovalCardProps) {
+  // Only a deciding window may read the full call; any other keeps the preview.
+  const {
+    full,
+    error: fullInputError,
+    retry: retryFullInput,
+  } = useFullInput(
+    truncated && availability.enabled ? loadFullInput : undefined
+  );
+  const showsPreview = truncated && full === null;
   const [deciding, setDeciding] = useState(false);
-  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   // Denying opens a reason box rather than firing immediately. The button says "tell it why",
@@ -95,19 +152,6 @@ export function ApprovalCard({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeciding(false);
-    }
-  }
-
-  async function restart() {
-    if (onRestartDaemon === undefined) return;
-    setRestarting(true);
-    setError(null);
-    try {
-      await onRestartDaemon();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRestarting(false);
     }
   }
 
@@ -157,35 +201,36 @@ export function ApprovalCard({
       />
       <ScrollArea className="rounded-control border-border-chip bg-surface-quaternary max-h-40 border-[0.5px]">
         <pre className="text-muted-foreground p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
-          {formatInput(toolInput)}
+          {full !== null
+            ? formatInput(full.input)
+            : formatPreview(toolInput, truncated)}
         </pre>
       </ScrollArea>
-      {/* Same block the scope card shows: this window attached to a daemon it did not start,
-          so it never saw the app token approving needs. */}
-      {!availability.enabled && (
-        <div className="rounded-control border-border-chip bg-surface-quaternary flex flex-col gap-1.5 border-[0.5px] px-2.5 py-2">
-          <span className="text-[13px] font-medium">{availability.notice}</span>
-          <span className="font-book text-muted-foreground text-[12px]">
-            {availability.explanation}
-          </span>
-          {availability.restart?.safe === true &&
-          onRestartDaemon !== undefined ? (
-            <Button
-              variant="secondary"
-              className="self-start"
-              disabled={restarting}
-              onClick={() => void restart()}
-            >
-              <RotateCw className="size-3" />
-              {restarting ? 'Restarting…' : 'Restart daemon'}
-            </Button>
-          ) : (
-            <span className="font-book text-muted-foreground text-[12px]">
-              {availability.restart?.blockedReason}
-            </span>
+      {showsPreview && (
+        <div
+          data-slot="approval-input-truncated"
+          className="text-state-waiting font-book text-[12px]"
+        >
+          Preview truncated: the full call is longer than shown.
+          {fullInputError !== null && (
+            <>
+              {` The full call could not be loaded (${fullInputError}). `}
+              <Button
+                variant="link"
+                size="xs"
+                className="h-auto px-0 text-[12px]"
+                onClick={retryFullInput}
+              >
+                Load the full call
+              </Button>
+            </>
           )}
         </div>
       )}
+      <DecideUnavailableNotice
+        availability={availability}
+        onRestartDaemon={onRestartDaemon}
+      />
       {error !== null && <div className="text-red text-[12px]">{error}</div>}
       {/* `denying` drives a real Collapsible rather than a plain conditional — no chevron
           here, just the reveal/animate-in behavior for the reason box. */}

@@ -1,0 +1,625 @@
+import {
+  A2A_VERSION_HEADER,
+  AgentCard,
+  formatSSEEvent,
+  HTTP_EXTENSION_HEADER,
+  SendMessageRequest,
+  SSE_HEADERS,
+} from '@a2a-js/sdk';
+import { MessagingError } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch/protocol';
+import { randomUUID } from 'node:crypto';
+
+import { buildCard, cardEtag } from '../card.js';
+import { decodeInbound, outputTextType } from '../codec.js';
+import {
+  A2AError,
+  authFailure,
+  errorResponse,
+  HttpFailure,
+  rateLimited,
+} from '../errors.js';
+import { activatedExtensions, utf8Bytes } from '../ext.js';
+import type {
+  A2APolicy,
+  BridgePort,
+  Caller,
+  OpenResult,
+  TaskFacts,
+} from '../port.js';
+import { decideState, project, withReask } from '../projection.js';
+import type { ProjectionView } from '../projection.js';
+import { stateFromWire, TERMINAL_STATES } from '../states.js';
+import { ENVELOPE_URI } from '../uris.js';
+import type { ExtensionUri } from '../uris.js';
+import type { MessageJson, PartJson, TaskJson } from '../wire.js';
+import type { IpLimiter } from './limits.js';
+import { taskEventStream } from './sse.js';
+import { waitForSettled } from './wait.js';
+
+export interface HandleOptions {
+  basePath: '/a2a/v1';
+  policy: A2APolicy;
+  // The host resolves X-Forwarded-For.
+  clientIp: string | null;
+  // One per listener, so per-IP state outlives a request.
+  limiter: IpLimiter;
+  // The daemon's srv.timeout(req, s).
+  setRequestTimeout?: (seconds: number) => void;
+  now?: () => Date;
+}
+
+export type Route =
+  | { op: 'send' | 'stream' | 'list' | 'extendedCard' }
+  | { op: 'get' | 'cancel' | 'subscribe' | 'push'; id: string };
+
+interface Op {
+  req: Request;
+  url: URL;
+  port: BridgePort;
+  options: HandleOptions;
+  caller: Caller;
+  bearer: string;
+}
+
+const MAX_BODY_BYTES = 256 * 1024;
+const CARD_PATH = '/.well-known/agent-card.json';
+const QUERY_CREDENTIALS = [
+  'token',
+  'access_token',
+  'api_key',
+  'apikey',
+  'key',
+  'authorization',
+  'bearer',
+];
+const TASK_PATH =
+  /^\/tasks\/([^/:]+)(:cancel|:subscribe|\/pushNotificationConfigs(?:\/[^/]+)?)?$/;
+
+function decodeId(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
+// Maps a method and a path under basePath to an operation; null is a 404.
+export function matchRoute(method: string, path: string): Route | null {
+  if (method === 'POST' && path === '/message:send') return { op: 'send' };
+  if (method === 'POST' && path === '/message:stream') return { op: 'stream' };
+  if (method === 'GET' && path === '/tasks') return { op: 'list' };
+  if (method === 'GET' && path === '/extendedAgentCard')
+    return { op: 'extendedCard' };
+  const m = TASK_PATH.exec(path);
+  const id = m === null ? null : decodeId(m[1]);
+  if (m === null || id === null) return null;
+  if (m[2] === undefined) return method === 'GET' ? { op: 'get', id } : null;
+  if (m[2] === ':cancel')
+    return method === 'POST' ? { op: 'cancel', id } : null;
+  if (m[2] === ':subscribe')
+    return method === 'GET' || method === 'POST'
+      ? { op: 'subscribe', id }
+      : null;
+  return ['GET', 'POST', 'DELETE'].includes(method) ? { op: 'push', id } : null;
+}
+
+// Names the activated extensions on a response, as A2A-Extensions.
+function withExtensions(
+  res: Response,
+  extensions: ReadonlySet<string>
+): Response {
+  if (extensions.size > 0)
+    res.headers.set(HTTP_EXTENSION_HEADER, [...extensions].join(', '));
+  return res;
+}
+
+function json(body: unknown, extensions: ReadonlySet<string>): Response {
+  return withExtensions(
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+    extensions
+  );
+}
+
+// An empty header or query value counts as absent.
+function present(value: string | null): string | null {
+  return value === '' ? null : value;
+}
+
+// A2A 1.0 with any patch, from the header or the query; missing means 0.3.
+function checkVersion(req: Request, url: URL): void {
+  const raw =
+    present(req.headers.get(A2A_VERSION_HEADER)) ??
+    url.searchParams.get(A2A_VERSION_HEADER) ??
+    '';
+  const [major, minor] = raw.trim().split('.');
+  if (major !== '1' || minor !== '0') {
+    throw new A2AError(
+      'VERSION_NOT_SUPPORTED',
+      'this agent speaks A2A 1.0; send A2A-Version: 1.0'
+    );
+  }
+}
+
+// Resolves the bearer through the port. Only failing requests count toward
+// the per-IP lockout, so a valid bearer behind a shared tunnel IP always passes.
+async function authenticate(
+  req: Request,
+  url: URL,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<{ caller: Caller; bearer: string } | Response> {
+  const queryKeys = [...url.searchParams.keys()].map((k) => k.toLowerCase());
+  if (queryKeys.some((k) => QUERY_CREDENTIALS.includes(k))) {
+    throw new MessagingError(
+      'invalid',
+      'send the token in the Authorization header, never in the query string',
+      'query'
+    );
+  }
+  const header = req.headers.get('authorization') ?? '';
+  const bearer = /^Bearer[ ]+(\S+)$/i.exec(header.trim())?.[1] ?? null;
+  const fail = (code: 401 | 403, reason: string, message: string): Response => {
+    options.limiter.authFailed(options.clientIp);
+    const locked = options.limiter.lockedFor(options.clientIp);
+    return locked === null
+      ? authFailure(code, reason, message)
+      : rateLimited(locked);
+  };
+  if (bearer === null)
+    return fail(
+      401,
+      'AUTH_MISSING_TOKEN',
+      'send Authorization: Bearer <token>'
+    );
+  const result = await port.authenticate(bearer);
+  if (!result.ok) return fail(result.status, result.reason, result.message);
+  return { caller: result.caller, bearer };
+}
+
+async function readJson(req: Request): Promise<unknown> {
+  const type = (req.headers.get('content-type') ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  if (type !== 'application/json' && type !== 'application/a2a+json') {
+    throw new HttpFailure(
+      new Response('send application/json', { status: 415 })
+    );
+  }
+  const tooLarge = () =>
+    new HttpFailure(new Response('request body over 256 KiB', { status: 413 }));
+  if (Number(req.headers.get('content-length') ?? '0') > MAX_BODY_BYTES)
+    throw tooLarge();
+  const text = await req.text();
+  if (utf8Bytes(text) > MAX_BODY_BYTES) throw tooLarge();
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new A2AError('INVALID_PARAMS', 'the request body is not JSON');
+  }
+}
+
+function parseSendRequest(body: unknown): SendMessageRequest {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new A2AError(
+      'INVALID_PARAMS',
+      'expected a SendMessageRequest object'
+    );
+  }
+  try {
+    return SendMessageRequest.fromJSON(body);
+  } catch {
+    throw new A2AError('INVALID_PARAMS', 'not a valid SendMessageRequest');
+  }
+}
+
+// A non-empty query parameter in camelCase or snake_case, since HTTP+JSON
+// gateways send either.
+function param(url: URL, camel: string): string | null {
+  const snake = camel.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+  return (
+    present(url.searchParams.get(camel)) ?? present(url.searchParams.get(snake))
+  );
+}
+
+function intParam(url: URL, name: string): number | null {
+  const raw = param(url, name);
+  if (raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new MessagingError(
+      'invalid',
+      `${name}: expected a non-negative integer`,
+      `query.${name}`
+    );
+  }
+  return n;
+}
+
+function taskView(
+  op: Op,
+  extensions: ReadonlySet<ExtensionUri>,
+  historyLength: number | null,
+  includeArtifacts: boolean,
+  textMediaType: ProjectionView['textMediaType'] = 'text/markdown'
+): ProjectionView {
+  return {
+    client: op.caller.address,
+    extensions,
+    textMediaType,
+    historyLength,
+    includeArtifacts,
+  };
+}
+
+async function mustFacts(op: Op, id: string): Promise<TaskFacts> {
+  const facts = await op.port.facts(op.caller, id);
+  if (facts === null) throw new A2AError('TASK_NOT_FOUND', 'task not found');
+  return facts;
+}
+
+// A send that opened no task, as one agent message about what was delivered.
+function directReply(
+  result: Extract<OpenResult, { kind: 'reply' }>,
+  view: ProjectionView
+): MessageJson {
+  const parts: PartJson[] = [
+    { text: result.text, mediaType: view.textMediaType },
+  ];
+  if (result.data !== undefined)
+    parts.push({ data: result.data, mediaType: 'application/json' });
+  const out: MessageJson = {
+    messageId:
+      result.about === undefined
+        ? `reply-${randomUUID()}`
+        : `${result.about.id}~delivered`,
+    role: 'ROLE_AGENT',
+    parts,
+  };
+  if (result.about !== undefined) {
+    out.contextId = result.about.thread;
+    if (view.extensions.has(ENVELOPE_URI)) {
+      out.metadata = {
+        [ENVELOPE_URI]: {
+          id: result.about.id,
+          thread: result.about.thread,
+        } as JsonValue,
+      };
+      out.extensions = [ENVELOPE_URI];
+    }
+  }
+  return out;
+}
+
+// A blocking send waits for a settled task, at most blockingWaitSec, and
+// keeps the request alive a little past that.
+async function settle(op: Op, taskId: string): Promise<TaskFacts> {
+  const waitSec = op.options.policy.blockingWaitSec;
+  op.options.setRequestTimeout?.(waitSec + 5);
+  const facts = await waitForSettled(op.port, op.caller, taskId, {
+    maxMs: waitSec * 1000,
+    signal: op.req.signal,
+  });
+  if (facts === null) throw new A2AError('TASK_NOT_FOUND', 'task not found');
+  return facts;
+}
+
+// Takes one of the caller's stream slots; the function it returns frees it.
+async function admitStream(op: Op): Promise<(() => void) | Response> {
+  const admitted = await op.port.admit(op.caller, 'stream');
+  if (!admitted.ok) return rateLimited(admitted.retryAfterSec);
+  return admitted.release ?? (() => {});
+}
+
+// Streams the task on the admitted slot (freed here if the stream cannot
+// start); a streamed send also ends at INPUT_REQUIRED, a subscription does not.
+function openStream(
+  op: Op,
+  release: () => void,
+  taskId: string,
+  view: ProjectionView,
+  reask: string | null,
+  untilTerminal: boolean
+): Response {
+  op.options.setRequestTimeout?.(0);
+  let released = false;
+  const releaseOnce = () => {
+    if (released) return;
+    released = true;
+    release();
+  };
+  try {
+    return withExtensions(
+      taskEventStream({
+        port: op.port,
+        caller: op.caller,
+        bearer: op.bearer,
+        taskId,
+        view,
+        reask,
+        untilTerminal,
+        release: releaseOnce,
+        signal: op.req.signal,
+      }),
+      view.extensions
+    );
+  } catch (err) {
+    releaseOnce();
+    throw err;
+  }
+}
+
+// SendMessage and SendStreamingMessage: a taskId continues that open task,
+// anything else opens one. A stream is admitted before anything is sent.
+async function send(op: Op, streaming: boolean): Promise<Response> {
+  const request = parseSendRequest(await readJson(op.req));
+  if (request.message === undefined)
+    throw new MessagingError('invalid', 'message: required', 'message');
+  const extensions = activatedExtensions(
+    op.req.headers.get(HTTP_EXTENSION_HEADER),
+    request.message.extensions
+  );
+  const view = taskView(
+    op,
+    extensions,
+    request.configuration?.historyLength ?? null,
+    true,
+    outputTextType(request.configuration?.acceptedOutputModes ?? [])
+  );
+  const inbound = decodeInbound(request.message);
+  let release: (() => void) | null = null;
+  if (streaming) {
+    const admitted = await admitStream(op);
+    if (admitted instanceof Response) return admitted;
+    release = admitted;
+  }
+  let taskId: string;
+  let reask: string | null = null;
+  try {
+    if (inbound.kind === 'continue') {
+      const before = await mustFacts(op, inbound.input.taskId);
+      if (TERMINAL_STATES.has(decideState(before).state)) {
+        throw new A2AError(
+          'UNSUPPORTED_OPERATION',
+          'this task is finished; start a new one'
+        );
+      }
+      if (
+        inbound.input.contextId !== null &&
+        inbound.input.contextId !== before.contextId
+      ) {
+        throw new MessagingError(
+          'invalid',
+          'unknown contextId',
+          'message.contextId'
+        );
+      }
+      reask = (await op.port.continue(op.caller, inbound.input)).reask;
+      taskId = inbound.input.taskId;
+    } else {
+      const opened = await op.port.open(op.caller, inbound.input);
+      if (opened.kind === 'reply') {
+        const message = directReply(opened, view);
+        if (release === null) return json({ message }, extensions);
+        release();
+        return withExtensions(
+          new Response(formatSSEEvent({ message }), { headers: SSE_HEADERS }),
+          extensions
+        );
+      }
+      taskId = opened.taskId;
+    }
+  } catch (err) {
+    release?.();
+    throw err;
+  }
+  if (release !== null)
+    return openStream(op, release, taskId, view, reask, false);
+  const facts =
+    request.configuration?.returnImmediately === true
+      ? await mustFacts(op, taskId)
+      : await settle(op, taskId);
+  return json(
+    { task: withReask(project(facts, view), reask, view) },
+    extensions
+  );
+}
+
+// SubscribeToTask, by GET or POST: a stream of an unfinished task.
+async function subscribe(op: Op, id: string): Promise<Response> {
+  const facts = await mustFacts(op, id);
+  if (TERMINAL_STATES.has(decideState(facts).state)) {
+    throw new A2AError(
+      'UNSUPPORTED_OPERATION',
+      'this task is finished; there is nothing to subscribe to'
+    );
+  }
+  const extensions = activatedExtensions(
+    op.req.headers.get(HTTP_EXTENSION_HEADER)
+  );
+  const admitted = await admitStream(op);
+  if (admitted instanceof Response) return admitted;
+  return openStream(
+    op,
+    admitted,
+    id,
+    taskView(op, extensions, null, true),
+    null,
+    true
+  );
+}
+
+async function getTask(op: Op, id: string): Promise<Response> {
+  const extensions = activatedExtensions(
+    op.req.headers.get(HTTP_EXTENSION_HEADER)
+  );
+  const view = taskView(
+    op,
+    extensions,
+    intParam(op.url, 'historyLength'),
+    true
+  );
+  return json(project(await mustFacts(op, id), view), extensions);
+}
+
+// ListTasks over the caller's own tasks; the port pages, this projects each.
+async function listTasks(op: Op): Promise<Response> {
+  const extensions = activatedExtensions(
+    op.req.headers.get(HTTP_EXTENSION_HEADER)
+  );
+  // Absent or 0 means the default page.
+  const asked = intParam(op.url, 'pageSize');
+  const pageSize = asked === null || asked === 0 ? 50 : Math.min(asked, 100);
+  const statusRaw = param(op.url, 'status');
+  const state =
+    statusRaw === null ? undefined : (stateFromWire(statusRaw) ?? undefined);
+  if (statusRaw !== null && state === undefined)
+    throw new MessagingError(
+      'invalid',
+      'status: not a task state',
+      'query.status'
+    );
+  const afterRaw = param(op.url, 'statusTimestampAfter');
+  let after: string | undefined;
+  if (afterRaw !== null) {
+    const t = Date.parse(afterRaw);
+    if (Number.isNaN(t)) {
+      throw new MessagingError(
+        'invalid',
+        'statusTimestampAfter: not a timestamp',
+        'query.statusTimestampAfter'
+      );
+    }
+    after = new Date(t).toISOString();
+  }
+  const contextId = param(op.url, 'contextId') ?? undefined;
+  const pageToken = param(op.url, 'pageToken') ?? undefined;
+  const page = await op.port.list(op.caller, {
+    pageSize,
+    ...(contextId === undefined ? {} : { contextId }),
+    ...(state === undefined ? {} : { state }),
+    ...(after === undefined ? {} : { after }),
+    ...(pageToken === undefined ? {} : { pageToken }),
+  });
+  const view = taskView(
+    op,
+    extensions,
+    intParam(op.url, 'historyLength'),
+    param(op.url, 'includeArtifacts') === 'true'
+  );
+  const tasks: TaskJson[] = [];
+  for (const id of page.ids) {
+    const facts = await op.port.facts(op.caller, id);
+    if (facts !== null) tasks.push(project(facts, view));
+  }
+  return json(
+    {
+      tasks,
+      nextPageToken: page.nextPageToken,
+      pageSize,
+      totalSize: page.totalSize,
+    },
+    extensions
+  );
+}
+
+async function cancelTask(op: Op, id: string): Promise<Response> {
+  await mustFacts(op, id);
+  await op.port.cancel(op.caller, id);
+  const extensions = activatedExtensions(
+    op.req.headers.get(HTTP_EXTENSION_HEADER)
+  );
+  return json(
+    project(await mustFacts(op, id), taskView(op, extensions, null, true)),
+    extensions
+  );
+}
+
+// The public card: unauthenticated, rate limited per IP, cacheable by ETag.
+async function serveCard(
+  req: Request,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<Response> {
+  if (req.method !== 'GET' && req.method !== 'HEAD')
+    return new Response(null, { status: 405 });
+  const wait = options.limiter.allowCard(options.clientIp);
+  if (wait !== null) return rateLimited(wait);
+  const card = buildCard(await port.card());
+  const etag = cardEtag(card);
+  const headers = {
+    'content-type': 'application/json',
+    'cache-control': 'public, max-age=300',
+    etag,
+  };
+  if (req.headers.get('if-none-match') === etag)
+    return new Response(null, { status: 304, headers });
+  return new Response(JSON.stringify(AgentCard.toJSON(card)), {
+    status: 200,
+    headers,
+  });
+}
+
+// The HTTP+JSON binding of A2A 1.0 over a BridgePort: version, then auth,
+// then the port's per-client admission, then the operation.
+export async function handleA2A(
+  req: Request,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<Response> {
+  const url = new URL(req.url);
+  try {
+    if (url.pathname === CARD_PATH) return await serveCard(req, port, options);
+    if (!url.pathname.startsWith(`${options.basePath}/`))
+      return new Response('not found', { status: 404 });
+    if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
+    const route = matchRoute(
+      req.method,
+      url.pathname.slice(options.basePath.length)
+    );
+    if (route === null) return new Response('not found', { status: 404 });
+    checkVersion(req, url);
+    const auth = await authenticate(req, url, port, options);
+    if (auth instanceof Response) return auth;
+    const admitted = await port.admit(auth.caller, 'request');
+    if (!admitted.ok) return rateLimited(admitted.retryAfterSec);
+    const op: Op = {
+      req,
+      url,
+      port,
+      options,
+      caller: auth.caller,
+      bearer: auth.bearer,
+    };
+    switch (route.op) {
+      case 'send':
+        return await send(op, false);
+      case 'stream':
+        return await send(op, true);
+      case 'subscribe':
+        return await subscribe(op, route.id);
+      case 'get':
+        return await getTask(op, route.id);
+      case 'list':
+        return await listTasks(op);
+      case 'cancel':
+        return await cancelTask(op, route.id);
+      case 'push':
+        throw new A2AError(
+          'PUSH_NOTIFICATION_NOT_SUPPORTED',
+          'push notifications are not supported'
+        );
+      case 'extendedCard':
+        throw new A2AError(
+          'UNSUPPORTED_OPERATION',
+          'this agent has no extended card'
+        );
+    }
+  } catch (err) {
+    return errorResponse(err);
+  }
+}

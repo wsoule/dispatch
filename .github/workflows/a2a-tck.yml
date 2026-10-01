@@ -1,0 +1,48 @@
+name: A2A TCK
+
+# The official A2A TCK's MUST level against handleA2A, on changes to the
+# package. Outside moon ci: it needs Python 3.11, uv and a clone of the TCK.
+on:
+  pull_request:
+    paths:
+      - 'packages/a2a/**'
+      - '.github/workflows/a2a-tck.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/a2a/**'
+
+permissions:
+  contents: read
+
+env:
+  NO_COLOR: 1
+
+jobs:
+  tck:
+    name: A2A TCK (MUST)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up moon and caches
+        uses: ./.github/actions/setup
+
+      - name: Install uv and Python 3.11
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Run the TCK
+        run: moonx a2a:tck --ignore-ci-checks
+
+      - name: Upload the compatibility report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: a2a-tck-report
+          path: .agents/ignore/a2a-tck-compatibility.json
+          # The report sits under .agents/, which the action skips by default.
+          include-hidden-files: true

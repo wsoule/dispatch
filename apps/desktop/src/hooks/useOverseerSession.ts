@@ -10,6 +10,12 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { isFakeOverseerDevToolEnabled } from '../lib/devTools';
 import {
+  approvalReply,
+  findOverseerActionGate,
+  findOverseerApprovalGate,
+  openGatesKey,
+} from '../lib/gates';
+import {
   DEFAULT_EFFORT_ID,
   effortFromId,
   readRoleModelOverride,
@@ -17,8 +23,8 @@ import {
   storeRoleModelOverride,
 } from '../lib/models';
 
-/** What the human answered to a parked built-in tool call — the body of
- * `decideOverseerApproval`. */
+/** What the human answered to a parked built-in tool call, sent as the answer
+ * to its `tool-approval` gate. */
 export interface OverseerApprovalDecision {
   allow: boolean;
   /** 'session' also pre-approves the same tool for the rest of the conversation. */
@@ -76,6 +82,9 @@ export interface OverseerSession {
    * the outcome is readable on `sending` and `sendError`.
    */
   submit: (text: string) => Promise<void>;
+  /** Posts `text` for a surface with its own draft (a Threads reply): raises
+   *  `sending`, leaves `draft` and `sendError` alone, and rejects on failure. */
+  reply: (text: string) => Promise<void>;
   /**
    * A submit is in flight. Session-held for the same reason `draft` is: the
    * rail unmounts the chat's whole panel on a tab flip, and a component-local
@@ -92,9 +101,10 @@ export interface OverseerSession {
    */
   sendError: string | null;
   /**
-   * Decides one queued mutating action: approving runs the real effect before
-   * resolving, denying never runs it. Allowed mid-turn — the server accepts a
-   * decision while the assistant is still answering.
+   * Decides one queued mutating action by answering its `overseer-action`
+   * gate: approving runs the real effect before resolving, denying never runs
+   * it. Allowed mid-turn — the server accepts a decision while the assistant
+   * is still answering.
    *
    * Owns the whole decide cycle — the lock, the failure, and the re-entrancy
    * guard — for the same reason `submit` owns the send cycle. Never rejects:
@@ -104,10 +114,11 @@ export interface OverseerSession {
   confirmAction: (actionId: string, approve: boolean) => Promise<void>;
   /**
    * Decides one built-in tool call the running turn is parked on (see
-   * `OverseerRecord.pendingApprovals`). Allowing runs the call at once and
-   * the turn continues; denying hands the reason to the model. Owns the
-   * lock and the failure exactly as `confirmAction` does, and never rejects:
-   * the outcome is readable on `decidingRequestId` and `decideError`.
+   * `OverseerRecord.pendingApprovals`) by answering its `tool-approval` gate.
+   * Allowing runs the call at once and the turn continues; denying hands the
+   * reason to the model. Owns the lock and the failure exactly as
+   * `confirmAction` does, and never rejects: the outcome is readable on
+   * `decidingRequestId` and `decideError`.
    */
   decideApproval: (
     requestId: string,
@@ -182,17 +193,18 @@ export interface OverseerSession {
  * rather than another field on it — the overseer is one surface's data, and the
  * god-hook is already 2400 lines.
  *
- * Every mutation writes its returned record straight into the query cache: the
- * server responds with the full post-mutation record, so the transcript updates
- * the moment the call resolves rather than waiting a round-trip for the
- * `overseer.changed` refetch. Each write is followed by an invalidation of the
- * same key: a turn can settle — and broadcast `overseer.changed` — while the
- * mutation's own response is still in flight, in which case that event either
- * found no mounted query to invalidate (start) or its refetch result is about
- * to be overwritten by the staler mutation response (sendMessage). Marking the
- * key stale right after writing lets a refetch reconcile whatever was missed;
- * with a real LLM backend the window is milliseconds wide, but the scripted
- * fake backend settles inside it every time.
+ * Starting and sending write their returned record straight into the query
+ * cache: the server responds with the full post-mutation record, so the
+ * transcript updates the moment the call resolves rather than waiting a
+ * round-trip for the `overseer.changed` refetch. Each write is followed by an
+ * invalidation of the same key: a turn can settle — and broadcast
+ * `overseer.changed` — while the mutation's own response is still in flight,
+ * in which case that event either found no mounted query to invalidate
+ * (start) or its refetch result is about to be overwritten by the staler
+ * mutation response (sendMessage). Marking the key stale right after writing
+ * lets a refetch reconcile whatever was missed; with a real LLM backend the
+ * window is milliseconds wide, but the scripted fake backend settles inside it
+ * every time.
  */
 export function useOverseerSession(
   client: ApiClient | null,
@@ -342,6 +354,30 @@ export function useOverseerSession(
     [conversationId, sendMessage, start]
   );
 
+  const reply = useCallback(
+    async (text: string) => {
+      setSending(true);
+      try {
+        await sendMessage(text);
+      } finally {
+        setSending(false);
+      }
+    },
+    [sendMessage]
+  );
+
+  // The open gates, read fresh rather than from cache: a gate answered
+  // elsewhere (another window, the CLI) must not be answered twice.
+  const fetchOpenGates = useCallback(async () => {
+    if (client === null) throw new Error('dispatchd client not ready');
+    const { items } = await queryClient.fetchQuery({
+      queryKey: openGatesKey(port),
+      queryFn: () => client.openDecisions(),
+      staleTime: 0,
+    });
+    return items;
+  }, [client, port, queryClient]);
+
   const confirmAction = useCallback(
     async (actionId: string, approve: boolean) => {
       // The re-entrancy guard belongs here rather than on the cards: every
@@ -359,27 +395,40 @@ export function useOverseerSession(
       setDecidingActionId(actionId);
       setDecideError(null);
       try {
-        const rec = await client.confirmOverseerAction(
+        const gate = findOverseerActionGate(
+          await fetchOpenGates(),
           conversationId,
-          actionId,
-          approve
+          actionId
         );
-        queryClient.setQueryData(overseerKey(port, conversationId), rec);
-        // Confirming is allowed mid-turn, so the same in-flight-settle race as
-        // sendMessage applies here.
+        if (gate === null) {
+          throw new Error('This action is no longer waiting for you.');
+        }
+        await client.replyToMessage(gate.id, {
+          body: '',
+          choice: approve ? 'confirm' : 'cancel',
+        });
+        void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
+        // The effect has run by the time the answer is accepted; the refetch
+        // shows it, and the lock holds until then.
         await queryClient.invalidateQueries({
           queryKey: overseerKey(port, conversationId),
         });
       } catch (err) {
-        // An approved-but-failed effect comes back as a record with a failure
-        // row on the card, so this only ever reports a transport-level failure
-        // where no record came back at all.
+        // An approved-but-failed effect shows as a failure row on the card, so
+        // this reports a gate that is gone or a transport-level failure.
         setDecideError(err instanceof Error ? err.message : String(err));
       } finally {
         setDecidingActionId(null);
       }
     },
-    [client, conversationId, decidingActionId, port, queryClient]
+    [
+      client,
+      conversationId,
+      decidingActionId,
+      fetchOpenGates,
+      port,
+      queryClient,
+    ]
   );
 
   // The same cycle as confirmAction, for a parked built-in call. One lock per
@@ -396,14 +445,20 @@ export function useOverseerSession(
       setDecidingRequestId(requestId);
       setDecideError(null);
       try {
-        const rec = await client.decideOverseerApproval(
+        const gate = findOverseerApprovalGate(
+          await fetchOpenGates(),
           conversationId,
-          requestId,
-          decision
+          requestId
         );
-        queryClient.setQueryData(overseerKey(port, conversationId), rec);
-        // Allowing unblocks the turn, which can settle before this response
-        // lands — the same in-flight-settle race sendMessage reconciles.
+        if (gate === null) {
+          throw new Error('This approval is no longer waiting for you.');
+        }
+        await client.replyToMessage(
+          gate.id,
+          approvalReply(decision.allow, decision)
+        );
+        void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
+        // Allowing unblocks the turn, which can settle before this refetch.
         await queryClient.invalidateQueries({
           queryKey: overseerKey(port, conversationId),
         });
@@ -413,7 +468,14 @@ export function useOverseerSession(
         setDecidingRequestId(null);
       }
     },
-    [client, conversationId, decidingRequestId, port, queryClient]
+    [
+      client,
+      conversationId,
+      decidingRequestId,
+      fetchOpenGates,
+      port,
+      queryClient,
+    ]
   );
 
   const reset = useCallback(() => {
@@ -439,6 +501,7 @@ export function useOverseerSession(
     record: recordGone ? undefined : record,
     recordError: error instanceof Error ? error.message : null,
     submit,
+    reply,
     sending,
     sendError,
     confirmAction,

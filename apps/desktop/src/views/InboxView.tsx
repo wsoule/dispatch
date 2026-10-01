@@ -1,4 +1,5 @@
-import type { RepoPr, RunQuestion } from '@dispatch/client';
+import type { ApiClient, RepoPr } from '@dispatch/client';
+import { useQuery } from '@tanstack/react-query';
 import {
   AtSign,
   Check,
@@ -12,8 +13,10 @@ import {
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
+import { MemoryActivityList } from '../components/memory/MemoryActivityList';
 import { ApprovalCard } from '../components/runs/ApprovalCard';
 import { QuestionCard } from '../components/runs/QuestionCard';
+import { ScopeRequestCard } from '../components/runs/ScopeRequestCard';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useNotificationInbox } from '../components/shell/NotificationInboxContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
@@ -48,6 +51,7 @@ import {
   unreadInboxCount,
 } from '../lib/inboxQueue';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { activityItems, memoryQueryKey } from '../lib/memory';
 import { latestFailedAttemptByRunId } from '../lib/queueHistory';
 import { cn } from '@/lib/utils';
 import { GroupHeader } from '@/ui/ai/group-header';
@@ -89,23 +93,14 @@ interface InboxViewProps {
   onOpenTask?: (taskId: string, tab: TaskTab, runId?: string) => void;
   /** Opens the full-window review page for one repo pull request. */
   onOpenPr: (number: number) => void;
+  /** Opens a doc in the Docs view (a conflicted doc's row). */
+  onOpenDoc?: (id: string) => void;
 }
 
 /** Which task mode a row's click lands on: asks about the diff go to the review;
  * everything else lands in the run's transcript. */
 function tabFor(state: FeedState): TaskTab {
   return state === 'review' || state === 'ruling' ? 'review' : 'run';
-}
-
-// The question an answer row surfaces: the oldest still-unanswered one, or — if every
-// question already carries an answer (a stale render between the answer landing and the
-// run leaving the feed) — the first of those, so the pane never silently drops back to the
-// plain state mid-transition.
-function firstOpenQuestion(
-  questions: RunQuestion[] | undefined
-): RunQuestion | undefined {
-  if (questions === undefined || questions.length === 0) return undefined;
-  return questions.find((q) => q.answer === null) ?? questions[0];
 }
 
 /** The live rows' read keys, tagged with the project they were loaded for so a project
@@ -153,6 +148,7 @@ export function InboxView({
   projectRoot,
   onOpenTask,
   onOpenPr,
+  onOpenDoc,
 }: InboxViewProps) {
   const {
     portLoading,
@@ -271,6 +267,9 @@ export function InboxView({
         return;
       case 'pr':
         onOpenPr(item.pr.number);
+        return;
+      case 'doc':
+        onOpenDoc?.(item.doc.id);
         return;
       case 'notification':
         inbox.navigate(item.entry.target);
@@ -539,6 +538,7 @@ export function InboxView({
               ))
             )}
           </div>
+          <YourMemory client={client} port={project.port} />
         </div>
         <div
           data-slot="inbox-detail-pane"
@@ -565,6 +565,46 @@ export function InboxView({
         </div>
       </div>
     </div>
+  );
+}
+
+/** The caller's own personal-memory activity from the last day, each entry's
+ *  latest change with an Undo. Hidden when there is none, or when the daemon
+ *  answers no activity for this caller (no memory, or no human behind the window). */
+function YourMemory({
+  client,
+  port,
+}: {
+  client: Pick<ApiClient, 'memoryActivity' | 'undoMemory'>;
+  port: number | undefined;
+}) {
+  const { data } = useQuery({
+    queryKey: memoryQueryKey(port, 'activity'),
+    queryFn: () => client.memoryActivity(),
+    retry: false,
+  });
+  const items = activityItems(data?.activity ?? []);
+  if (items.length === 0) return null;
+  return (
+    <section
+      aria-label="Your memory"
+      className="shadow-hairline-top flex max-h-[40%] min-h-0 shrink-0 flex-col overflow-y-auto px-2 py-1"
+    >
+      <GroupHeader name="Your memory" count={items.length} />
+      <MemoryActivityList items={items} client={client} />
+      <p className="font-book text-muted-foreground px-2 py-1 text-[12px]">
+        Showing the last day. Undo reverts an entry’s latest change. For one
+        changed earlier, run{' '}
+        <code className="font-mono text-[12px]">
+          dispatch memory undo &lt;handle&gt;
+        </code>
+        ;{' '}
+        <code className="font-mono text-[12px]">
+          dispatch memory list --scope personal --state all
+        </code>{' '}
+        lists handles.
+      </p>
+    </section>
   );
 }
 
@@ -697,7 +737,7 @@ function DetailPane({
         </span>
         <PillButton onClick={onOpen}>Open</PillButton>
       </div>
-      <DetailBody item={item} project={project} />
+      <DetailBody item={item} project={project} onOpen={onOpen} />
     </>
   );
 }
@@ -705,52 +745,78 @@ function DetailPane({
 function DetailBody({
   item,
   project,
+  onOpen,
 }: {
   item: InboxItem;
   project: DispatchProjectData;
+  onOpen: () => void;
 }) {
   switch (item.kind) {
     case 'ask': {
       const { row } = item;
       if (row.state === 'answer') {
-        const question = firstOpenQuestion(
-          project.openQuestions?.get(row.runId)
-        );
-        if (question !== undefined) {
+        const questions = project.openQuestions?.get(row.runId) ?? [];
+        const scope = project.pendingScopeRequests?.get(row.runId);
+        if (questions.length > 0 || scope !== undefined) {
           return (
-            <div className="p-4">
-              <QuestionCard
-                question={question.question}
-                options={question.options}
-                askedAt={question.askedAt}
-                onAnswer={(answer) =>
-                  project.handleAnswerQuestion(row.runId, question.id, answer)
-                }
-              />
+            <div className="flex flex-col gap-3 p-4">
+              {questions.map((question) => (
+                <QuestionCard
+                  key={question.id}
+                  question={question.question}
+                  options={question.options}
+                  askedAt={question.askedAt}
+                  onAnswer={(answer) =>
+                    project.handleAnswerQuestion(row.runId, question.id, answer)
+                  }
+                />
+              ))}
+              {scope !== undefined && (
+                <ScopeRequestCard
+                  paths={scope.paths}
+                  reason={scope.reason}
+                  onDecide={(granted) =>
+                    project.handleDecideScopeRequest(
+                      row.runId,
+                      scope.id,
+                      granted
+                    )
+                  }
+                  availability={project.scopeDecide}
+                  onRestartDaemon={project.handleRestartDaemon}
+                />
+              )}
             </div>
           );
         }
       }
       if (row.state === 'approve') {
-        const pending = project.pendingApprovals?.get(row.runId);
-        if (pending !== undefined) {
+        const calls = project.pendingApprovals?.get(row.runId) ?? [];
+        if (calls.length > 0) {
           return (
-            <div className="p-4">
-              <ApprovalCard
-                toolName={pending.toolName}
-                toolInput={pending.input}
-                frozenSince={row.since}
-                onDecide={(allow, opts) =>
-                  project.handleApprove(
-                    row.runId,
-                    pending.requestId,
-                    allow,
-                    opts
-                  )
-                }
-                availability={project.scopeDecide}
-                onRestartDaemon={project.handleRestartDaemon}
-              />
+            <div className="flex flex-col gap-3 p-4">
+              {calls.map((call) => (
+                <ApprovalCard
+                  key={call.requestId}
+                  toolName={call.toolName}
+                  toolInput={call.input}
+                  truncated={call.truncated}
+                  loadFullInput={() =>
+                    project.fetchApprovalInput(row.runId, call.requestId)
+                  }
+                  frozenSince={row.since}
+                  onDecide={(allow, opts) =>
+                    project.handleApprove(
+                      row.runId,
+                      call.requestId,
+                      allow,
+                      opts
+                    )
+                  }
+                  availability={project.scopeDecide}
+                  onRestartDaemon={project.handleRestartDaemon}
+                />
+              ))}
             </div>
           );
         }
@@ -761,6 +827,19 @@ function DetailBody({
       return <TaskSummary taskId={item.row.taskId} project={project} />;
     case 'pr':
       return <PrSummary pr={item.pr} />;
+    case 'doc':
+      return (
+        <div className="flex flex-col gap-3 p-4">
+          <p className="font-book text-foreground text-[15px] leading-6">
+            {`${item.doc.title} (${item.doc.handle}) holds conflict markers. Resolve them in the doc's merge view and save; this item goes once its head is clean.`}
+          </p>
+          <div>
+            <Button size="sm" onClick={onOpen}>
+              Open doc
+            </Button>
+          </div>
+        </div>
+      );
     case 'notification':
       return (
         <div className="flex flex-col gap-2 p-4">

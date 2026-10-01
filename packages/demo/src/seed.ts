@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 
 import { writeBoard } from './board.js';
 import { git } from './git.js';
+import { writeMessages } from './messages.js';
 import type { DemoActor } from './paths.js';
 import { writeRecords } from './records.js';
 import {
@@ -76,6 +77,7 @@ export function seedSession(dir: string): SessionPaths {
 
   clearRunHistory(paths.root, paths.home);
   writeRuns(paths.root, paths.home, VISITOR.handle);
+  writeMessages(paths.root, paths.home, VISITOR.handle);
   // A visitor can dispatch any todo task, including one blocked on an
   // in-review task — the orchestrator then bases the new worktree on that
   // blocker's most recent run branch (see ensureRunBranchesExist's doc

@@ -418,15 +418,23 @@ export function attachDispatchDb(dbPath: string): SqliteDatabase | null {
   return openDispatchDb(dbPath);
 }
 
-export function openDispatchDb(dbPath: string): SqliteDatabase {
+/**
+ * Opens (creating if needed) a SQLite file with Dispatch's pragmas and no
+ * schema, for packages that own their own tables (e.g. @dispatch/protocol).
+ */
+export function openSqliteDb(dbPath: string): SqliteDatabase {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const DatabaseClass = databaseCtor();
   const db = new DatabaseClass(dbPath);
   // WAL lets the desktop read while the daemon writes; NORMAL syncing is the
-  // usual pairing — a crash can lose the last commit, and orchestration state
-  // is re-derivable, but corruption is not on the table.
+  // usual pairing — a crash can lose the last commit, never corrupt.
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
+  return db;
+}
+
+export function openDispatchDb(dbPath: string): SqliteDatabase {
+  const db = openSqliteDb(dbPath);
   // A database a newer Dispatch wrote may hold columns and tables this build
   // knows nothing about. Applying the older DDL over it and stamping
   // user_version back down would leave it looking current while this build

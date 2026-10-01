@@ -3,6 +3,21 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocProposal,
+  DocProposalView,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocScope,
+  DocsHealth,
+  DocStatus,
+  DocSummary,
   EffortLevel,
   Finding,
   FindingRecommendation,
@@ -10,11 +25,12 @@ import type {
   FindingVerdict,
   LabelDefinition,
   LedgerEntry,
-  LedgerKind,
+  LinkRel,
   ModelConfig,
   MutationEvidence,
   Person,
   Priority,
+  ProposalState,
   RunStep,
   TaskComment,
   TaskDoc,
@@ -169,12 +185,6 @@ export interface RunMeta {
   /** ActorRef of the human the run is for (who dispatched it, or started its
    *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
-  // The approval this run is parked on while `state` is 'awaiting-approval',
-  // so a client that connects after the `approval.requested` event fired (a
-  // reload, a relaunched app, the CLI) can still answer it. The daemon
-  // decorates it onto run reads from its in-memory registry; it is never
-  // persisted and is absent in every other state.
-  pendingApproval?: { requestId: string; toolName: string; input?: unknown };
   // How many sub-agents this run's agent has fanned out into and where they
   // stand, kept live by the daemon from the run's `agent` entries and rebuilt
   // from them on replay. Absent until the first sub-agent is spawned. Mirrors
@@ -311,10 +321,8 @@ export interface BranchEntry {
 
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the
 // one log-entry shape every executor streams, real or fake. `kind: 'message'`
-// is the agent-comms identified chat channel: `from: 'user'` is the run's own
-// human via the Session composer, `from: 'agent'` is either another live
-// run's `agent_message` (sender named in `fromLabel`) or this run's own
-// `message_user` call raised to the human.
+// is a message delivered to the run (`from` names a human or an agent) or one
+// the run sent to a human (`toUser`).
 export interface NormalizedEntry {
   ts: string;
   kind:
@@ -340,11 +348,14 @@ export interface NormalizedEntry {
   agent?: SubagentEvent;
   from?: 'user' | 'agent';
   fromLabel?: string;
-  // Set on this run's own `message_user` call — the agent flagging something
-  // UP to the human — so the app can badge it distinctly from an inbound
-  // `agent_message` (which has no `toUser` and whose `fromLabel` names a
-  // different run). See the server-side NormalizedEntry for the full note.
+  // Set on a message this run sent to a human, so the app badges it "To you"
+  // instead of rendering it as inbound.
   toUser?: boolean;
+  // The messaging-core message id (`m-<ulid>`) this entry delivered or sent.
+  messageId?: string;
+  // Set on entries delivered via the orchestrator's `notifyRun` — a
+  // non-interrupting channel digest rather than a message to respond to.
+  digest?: boolean;
 }
 
 // The body of `GET /api/runs/:id`.
@@ -636,15 +647,6 @@ export interface StartReviewInput {
   runId?: string;
 }
 
-export interface CreateLedgerInput {
-  epicId?: string | null;
-  sourceTaskId?: string | null;
-  kind: LedgerKind;
-  title: string;
-  detail: string;
-  appliesTo?: string[];
-}
-
 // Mirrors GET /api/people: everyone pickers offer, and the caller's own ref
 // (what the legacy bare `human` assignee means).
 export interface PeopleSnapshot {
@@ -703,6 +705,460 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
+// The ref types @dispatch/protocol registers; mirrors its RefType.
+export type RefType = 'task' | 'run' | 'file' | 'commit' | 'message' | 'doc';
+
+// What a message points at; mirrors @dispatch/protocol's Ref. A message
+// received from a peer may carry any other identifier as its type.
+export interface Ref {
+  type: RefType | (string & {});
+  id: string;
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
+  at?: string;
+}
+
+// Structural mirror of @dispatch/protocol's Message, so the client needs no
+// runtime dependency on the protocol package.
+export interface Message {
+  id: string;
+  thread: string;
+  replyTo: string | null;
+  from: string;
+  session?: string;
+  to: string[];
+  kind: string;
+  body: string;
+  refs: Ref[];
+  data?: unknown;
+  urgent: boolean;
+  blocking: boolean;
+  choices?: string[];
+  choice?: string;
+  wake: 'none' | 'request';
+  createdAt: string;
+}
+
+export type DeliveryState =
+  | 'held'
+  | 'sending'
+  | 'pushed'
+  | 'notified'
+  | 'read'
+  | 'answered';
+
+export type DeliveryVia = 'direct' | 'channel';
+
+// One recipient's copy of a message, carrying that recipient's read state;
+// mirrors @dispatch/protocol's Delivery.
+export interface Delivery {
+  id: string;
+  messageId: string;
+  recipient: string;
+  runId: string | null;
+  via: DeliveryVia;
+  state: DeliveryState;
+  updatedAt: string;
+}
+
+// Body of POST /api/messages — structural mirror of @dispatch/protocol's
+// SendInput.
+export interface SendInput {
+  to: string[];
+  kind: string;
+  body: string;
+  refs?: Ref[];
+  data?: unknown;
+  urgent?: boolean;
+  blocking?: boolean;
+  choices?: string[];
+  choice?: string;
+  replyTo?: string | null;
+  wake?: 'none' | 'request';
+  session?: string;
+}
+
+// Body of POST /api/messages/:id/reply — the server fills in `to`/`kind`/
+// `replyTo` from the target message, so only these survive from SendInput.
+export interface ReplyInput {
+  body: string;
+  choice?: string;
+  refs?: Ref[];
+  data?: unknown;
+  session?: string;
+}
+
+// Response of both a send and a reply — structural mirror of
+// @dispatch/protocol's SendResult.
+export interface SendResult {
+  message: Message;
+  deliveries: Delivery[];
+  /** True when `urgent` was dropped because the sender hit its quota. */
+  downgraded: boolean;
+}
+
+// Gate payloads dispatchd puts in `Message.data` (mirrors the protocol's
+// GateData). Unvalidated here: narrow on `type` before reading the rest.
+export type GateData =
+  | {
+      type: 'tool-approval';
+      requestId: string;
+      runId?: string;
+      conversation?: string;
+      tool: string;
+      input: unknown;
+      truncated?: true; // set when `input` was cut to fit
+      floor: boolean; // the irreversibility floor holds the call, judged on its full input
+    }
+  | { type: 'scope'; paths: string[]; reason: string }
+  | { type: 'wake'; target: string; message: string }
+  | {
+      type: 'agent-registration';
+      agent: string;
+      client: string;
+      // The human who asked; the agent registers under their handle.
+      requestedBy?: string;
+    }
+  | {
+      type: 'overseer-action';
+      conversation: string;
+      actionId: string;
+      summary: string;
+    }
+  | {
+      type: 'memory';
+      proposalId: string; // the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: MemoryKind;
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: string;
+      message: string;
+    }
+  | {
+      type: 'doc';
+      // A proposed edit to an accepted doc; the text stays in docs.db (system-only gate).
+      doc: string; // doc-<ulid>
+      proposal: string; // rev-<ulid>
+      taskId?: string;
+      runId?: string;
+    };
+
+// Structural mirrors of @dispatch/memory's views and the memory routes'
+// bodies (packages/server/src/memory/routes.ts).
+export type MemoryKind =
+  | 'preference'
+  | 'convention'
+  | 'constraint'
+  | 'hazard'
+  | 'decision'
+  | 'fact'
+  | 'reference';
+export type MemoryScope = 'personal' | 'project' | 'team';
+export type MemoryTrust = 'human' | 'confirmed' | 'agent';
+/** Retired when retired or expired; what agents and the UI see. */
+export type MemoryState = 'active' | 'stale' | 'retired';
+
+export interface MemoryEntryView {
+  id: string;
+  handle: string;
+  scope: MemoryScope;
+  kind: MemoryKind;
+  title: string;
+  body: string;
+  refs: Ref[];
+  epic: string | null;
+  appliesTo: string[];
+  projectKey: string | null;
+  author: string;
+  trust: MemoryTrust;
+  status: 'active' | 'retired';
+  statusReason: 'forgotten' | 'superseded' | 'undone' | null;
+  decay: 'fresh' | 'stale' | 'expired';
+  pinned: boolean;
+  supersedes: string | null;
+  supersededBy: string | null;
+  origin: string | null;
+  proposal: string | null;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  rev: number;
+  createdAt: string;
+  updatedAt: string;
+  lastRecalledAt: string | null;
+  recallCount: number;
+  state: MemoryState;
+}
+
+export interface MemorySearchHit {
+  id: string;
+  handle: string;
+  title: string;
+  kind: MemoryKind;
+  scope: MemoryScope;
+  trust: MemoryTrust;
+  state: MemoryState;
+  updatedAt: string;
+  snippet: string;
+}
+
+export interface MemoryReadResult {
+  entry: MemoryEntryView;
+  revisions: {
+    memoryId: string;
+    rev: number;
+    by: string;
+    cause: string;
+    at: string;
+  }[];
+  recallCount: number;
+}
+
+export interface MemoryIndexResult {
+  text: string | null;
+  /** Handles of the entries the index shows, in rank order. */
+  included: string[];
+  omitted: number;
+  pinnedOverflow: boolean;
+}
+
+export interface LedgerImportReport {
+  outcome: 'ok' | 'MISMATCH' | 'dry-run';
+  read: number;
+  byKind: Record<string, number>;
+  memory: {
+    total: number;
+    imported: number;
+    proposed: number;
+    truncated: number;
+    alreadyImported: number;
+    alreadyDeleted: number;
+  };
+  audit: Record<string, number>;
+  damaged: number;
+  memoryRows: { before: number; after: number };
+  openProposals: { before: number; after: number };
+  mismatches: string[];
+  at: string;
+}
+
+/** Mirrors ClaudeImportReport in packages/server/src/memory/claudeImport.ts. */
+export interface ClaudeImportReport {
+  state: 'complete' | 'failed' | 'unconfirmed';
+  /** The directory read, or null when nothing was. */
+  source: string | null;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  duplicates: number;
+  tombstoned: number;
+  problems: string[];
+  /** Where the notes may be, when none were found. */
+  candidates: string[];
+}
+
+export interface MemoryHealth {
+  available: boolean;
+  /** Why memory.db would not open, when it did not. */
+  reason: string | null;
+  search: 'fts5' | 'like' | null;
+  entries: number;
+  openProposals: number;
+  ledgerImport: LedgerImportReport | null;
+  /** The last import's parity block, as the CLI prints it. */
+  ledgerImportText: string | null;
+  configWarnings: { key: string; message: string }[];
+  lastDecayAt: string | null;
+  /** The caller's own personal store; null when the caller acts for no one. */
+  personal: { available: boolean; reason: string | null } | null;
+  /** The caller's pinned entries alone exceed the index budget. */
+  pinnedOverflow: boolean;
+  /** Why runs cannot use the Claude export (its preflight failed), or null. */
+  exportBlocked: string | null;
+  /** The last receipt-log restore this daemon applied, or null. */
+  restore?: {
+    restored: number;
+    skipped: number;
+    /** Files left staged past the per-boot limit, for the next boot. */
+    deferred: number;
+    problems: { file: string; detail: string }[];
+    pending: string | null;
+    at: string;
+  } | null;
+  /** The owner's Claude-notes import; null for anyone but the daemon's own human. */
+  claudeImport: {
+    state: 'complete' | 'failed' | 'unconfirmed' | 'running' | null;
+    source: string | null;
+    candidates: string[];
+    /** Why the last import failed or skipped files. */
+    problems: string[];
+  } | null;
+}
+
+/** `proposed` waits on a decision; `active` or `retired` took effect. */
+export type MemorySaveResult =
+  | { status: 'active' | 'retired'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+export type MemoryProposalState = 'open' | 'approved' | 'rejected' | 'expired';
+
+export interface MemoryProposalView {
+  id: string;
+  action: 'add' | 'supersede' | 'retire';
+  scope: 'project' | 'team';
+  target: string | null;
+  baseRev: number | null;
+  content: {
+    kind: MemoryKind;
+    title: string;
+    body: string;
+    refs: Ref[];
+    epic: string | null;
+    appliesTo: string[];
+  } | null;
+  reason: string | null;
+  author: string;
+  authorTrust: 'human' | 'agent';
+  operator: string | null;
+  runId: string | null;
+  taskId: string | null;
+  origin: string | null;
+  contentHash: string | null;
+  gate: string | null;
+  state: MemoryProposalState;
+  matchedPersonal: boolean;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  decisionReason: string | null;
+  result: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+/** One line of the caller's personal activity, which the Inbox lists with an Undo. */
+export interface MemoryActivityRow {
+  id: string;
+  at: string;
+  kind:
+    | 'saved'
+    | 'edited'
+    | 'retired'
+    | 'ingested'
+    | 'throttled'
+    | 'ingest-problem';
+  memoryId: string | null;
+  runId: string | null;
+  summary: string;
+}
+
+/** A Claude memory file a scan skipped, without its kept content. */
+export interface MemoryIngestProblem {
+  id: string;
+  lineage: string;
+  file: string;
+  reason: string;
+  size: number;
+  at: string;
+}
+
+export type AgentStatus = 'pending' | 'approved' | 'revoked';
+
+// An agent roster entry with its token hash stripped — structural mirror of
+// the server's own AgentSummary (Omit<AgentRecord, 'tokenHash'>).
+export interface AgentSummary {
+  address: string;
+  displayName: string;
+  client: string;
+  status: AgentStatus;
+  muted: boolean;
+  approvedBy: string | null;
+  createdAt: string;
+}
+
+// One entry of GET /api/channels.
+export interface ChannelSummary {
+  name: string;
+  auto: boolean;
+  members: string[];
+}
+
+// One thread's most recent state, as GET /api/threads?limit=N lists them.
+export interface ThreadSummary {
+  thread: string;
+  root: Message;
+  last: Message;
+  count: number;
+}
+
+// GET /api/threads/:id's body: every message in the thread and their
+// deliveries, enough to render the conversation from one fetch.
+export interface ThreadDetail {
+  messages: Message[];
+  deliveries: Delivery[];
+}
+
+// One row of GET /api/mailbox: a delivery paired with the message it
+// delivers, so a mailbox view never needs a second fetch per row.
+export interface MailboxItem {
+  delivery: Delivery;
+  message: Message;
+}
+
+// Docs: @dispatch/core defines the wire types packages/server/src/docs/routes.ts
+// serves; these three are the client's own framing of its answers.
+export type {
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocProposal,
+  DocProposalView,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocSummary,
+  DocsHealth,
+} from '@dispatch/core';
+
+/** POST /api/docs/:ref/publish: the publish task, and its run unless not dispatched. */
+export interface DocPublishResult {
+  task: string;
+  doc: DocRecord;
+  run: string | null;
+  dispatchError: string | null;
+}
+
+/** A whole-body save: the new head, or the 409's merge conflict as a value. */
+export type DocSaveOutcome =
+  | { ok: true; result: DocSaveResult }
+  | { ok: false; conflict: DocConflict };
+
+/** GET /api/docs/:ref/diff; `spent` when the line diff ran out of budget. */
+export interface DocDiff {
+  from: DocRevisionInfo;
+  to: DocRevisionInfo;
+  chunks: { equal: boolean; a: string[]; b: string[] }[];
+  spent: boolean;
+}
+
+/** GET /api/docs's filters; `q` matches within titles. */
+export interface DocListParams {
+  taskId?: string;
+  scope?: DocScope;
+  status?: DocStatus;
+  unreviewed?: boolean;
+  conflicted?: boolean;
+  q?: string;
+  includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
 export type ServerEvent =
   // `ids`, when set, names every task the change touched; absent means
   // "anything may have changed" — refetch the list.
@@ -712,12 +1168,6 @@ export type ServerEvent =
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
-  | {
-      type: 'approval.requested';
-      runId: string;
-      requestId: string;
-      toolName: string;
-    }
   // Phase 5 P2: a plan's state (running -> ready|failed) changed, or it was
   // just confirmed. Same "go refetch" contract as the other *.changed events
   // — mirrors packages/server/src/events.ts exactly.
@@ -759,22 +1209,19 @@ export type ServerEvent =
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' }
-  // A run agent's question was asked, answered, or withdrawn. Mirrors
-  // packages/server/src/events.ts.
-  | { type: 'question.asked'; runId: string; questionId: string }
-  | { type: 'question.answered'; runId: string; questionId: string }
-  | { type: 'question.closed'; runId: string }
-  // A run agent asked to edit outside its scope, or that request was
-  // granted/denied. Mirrors packages/server/src/events.ts.
-  | { type: 'scope.requested'; runId: string; requestId: string }
-  | { type: 'scope.decided'; runId: string; requestId: string }
   // The repo's git state changed via one of the `/api/git/*` mutation
   // routes. Mirrors packages/server/src/events.ts.
   | { type: 'git.changed' }
   // A finding's verdict/ruling changed, or a review run raised a new one.
   | { type: 'finding.changed' }
-  // A decision/hazard/constraint/handoff was added to the ledger.
+  // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
+  // Memory changed: a bare refetch signal, with no id for a personal change.
+  | {
+      type: 'memory.changed';
+      scope: 'personal' | 'project' | 'team';
+      id?: string;
+    }
   // A task's fix loop moved between states, or stopped. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'fixloop.changed'; taskId: string }
@@ -830,33 +1277,73 @@ export type ServerEvent =
   // packages/server/src/events.ts exactly.
   | { type: 'landing.changed' }
   // Someone arrived or left; refetch GET /api/presence.
-  | { type: 'presence.changed' };
+  | { type: 'presence.changed' }
+  // A message was stored. Carries it inline: every client renders it at once.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'message.new'; message: Message }
+  // A delivery changed state (pushed, read, answered…) — refetch the thread.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // A doc changed; a bare refetch signal, never an id for personal docs.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
+  // The A2A bridge's clients, tasks or listener changed; go refetch.
+  | { type: 'a2a.changed' };
 
-// Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
-// question an agent is blocked on until the human answers it.
-export interface RunQuestion {
-  id: string;
-  runId: string;
-  question: string;
-  /** Suggested answers rendered as one-click chips; free text always allowed. */
-  options: string[];
-  askedAt: string;
-  answer: string | null;
-  answeredAt: string | null;
+// The A2A listener's machine-local settings, the body of PUT /api/a2a/listener.
+// Mirrors ListenerSettings in packages/server/src/a2a/settings.ts.
+export interface A2AListenerSettings {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  publicUrl: string | null;
+  tls: { certPath: string; keyPath: string } | null;
+  trustForwardedFor: boolean;
+  standalone: boolean;
 }
 
-// Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
-// an out-of-scope edit an agent asked for, blocked until it is decided.
-export interface RunScopeRequest {
+// GET /api/a2a/listener's body. Mirrors ListenerStatus in
+// packages/server/src/a2a/bridge.ts.
+export interface A2AListenerStatus {
+  enabled: boolean;
+  listening: boolean;
+  url: string | null;
+  error: string | null;
+  // config.yml `a2a:` keys that fell back to their defaults.
+  warnings: string[];
+  // Approved a2a.* agents with no clients row, registered before the bridge.
+  legacyClients: string[];
+  // What the listener opens from: the file plus any one-boot flags.
+  settings: A2AListenerSettings;
+  // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
+  teamTls: { certPath: string; keyPath: string } | null;
+  // A free port for a listener whose settings name none; null once they do.
+  suggestedPort: number | null;
+}
+
+// One row of GET /api/a2a/clients: the clients row plus its agent's status.
+export interface A2AClientSummary {
+  address: string;
+  name: string;
+  recipients: string[];
+  createdBy: string;
+  createdAt: string;
+  status: AgentStatus;
+}
+
+// One row of GET /api/a2a/tasks. Mirrors TaskRow in @dispatch/a2a's store.
+export interface A2ATaskSummary {
   id: string;
-  runId: string;
-  paths: string[];
-  reason: string;
-  requestedAt: string;
-  granted: boolean | null;
-  decisionReason: string | null;
-  decidedAt: string | null;
-  decidedBy: 'app' | 'api' | null;
+  client: string;
+  contextId: string;
+  skill: 'ask' | 'handoff';
+  dispatchTask: string | null;
+  gate: string | null;
+  state: string;
+  statusAt: string;
+  canceledAt: string | null;
+  declinedAt: string | null;
+  createdAt: string;
 }
 
 // The body of `GET /api/runs/claims` — one entry per live run.
@@ -1048,14 +1535,16 @@ export interface OverseerMessage {
    * can be retried. `allowed` is an approval's yes; `applied` an action's.
    */
   outcome?: 'pending' | 'applied' | 'allowed' | 'denied' | 'failed';
+  /** `user` and `assistant` entries posted to the bus: the message there. */
+  messageId?: string;
 }
 
 // Mirrors OverseerApproval in packages/server/src/orchestrator/overseer.ts —
 // a built-in tool call (Bash, Edit, a project MCP tool) the overseer's running
-// turn is blocked on until a human decides it through
-// `decideOverseerApproval`. Allowing runs the call at once.
+// turn is blocked on until a human answers its `tool-approval` gate. Allowing
+// runs the call at once.
 export interface OverseerApproval {
-  /** The backend's handle for the call; what `decideOverseerApproval` names. */
+  /** The backend's handle for the call; what its gate's `requestId` names. */
   requestId: string;
   toolName: string;
   /** The call's input, exactly as the tool will receive it if allowed. */
@@ -1111,6 +1600,8 @@ export interface OverseerRecord {
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
   sessionId?: string;
+  /** The bus thread this conversation's lines are posted to, once one is. */
+  thread?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -1184,6 +1675,9 @@ export interface EpicSession {
   scope: 'plan' | 'direct';
   updatedAt: string;
   completedAt?: string;
+  /** The human its auto-fill runs act for; absent when the shared agentToken
+   *  started it. */
+  operator?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -1611,6 +2105,9 @@ export interface TeamTokenHolder {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  /** A token for the operator's handle, issued before that was refused; it
+   *  authenticates no one. Absent from older daemons. */
+  unusable?: boolean;
 }
 
 /** A just-issued teammate credential: the only response that carries one. */
@@ -1944,7 +2441,10 @@ export class ApiError extends Error {
      * `auth_invalid_token`, `auth_insufficient_tier`. Key on this rather than
      * the message, which is prose and will be reworded.
      */
-    public readonly code?: string
+    public readonly code?: string,
+    /** The messaging routes' `field`: which input was bad (`to[0]`,
+     *  `choice`, `about`). */
+    public readonly field?: string
   ) {
     super(message);
     this.name = 'ApiError';
@@ -2000,11 +2500,12 @@ async function request<T>(
 // request, body or not, so the gate can be a blanket rule rather than one the
 // body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
 // A FormData body is left without one so fetch writes the multipart boundary
-// itself.
+// itself. Statuses in `allowed` come back as responses instead of throwing.
 async function send(
   target: ApiTarget,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  allowed: readonly number[] = []
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
   if (
@@ -2018,18 +2519,28 @@ async function send(
     headers.set('authorization', `Bearer ${target.token}`);
   }
   const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      code?: string;
-    };
-    throw new ApiError(
-      body.error ?? `request failed: ${res.status}`,
-      res.status,
-      body.code
-    );
+  if (!res.ok && !allowed.includes(res.status)) {
+    throw apiError(res.status, await res.json().catch(() => null));
   }
   return res;
+}
+
+// The ApiError for a failed response's `{ error, code, field }` body.
+function apiError(status: number, body: unknown): ApiError {
+  const b = body as { error?: string; code?: string; field?: string } | null;
+  return new ApiError(
+    b?.error ?? `request failed: ${status}`,
+    status,
+    b?.code,
+    b?.field
+  );
+}
+
+// Only a whole-body save's merge conflict carries these reasons; other 409s,
+// such as an archived doc's, are a plain error body.
+function isDocConflict(body: unknown): body is DocConflict {
+  const reason = (body as { reason?: unknown } | null)?.reason;
+  return reason === 'merge-conflict' || reason === 'base-changed';
 }
 
 // request() for a binary body: same auth and error handling, the response
@@ -2038,11 +2549,21 @@ async function requestBlob(target: ApiTarget, path: string): Promise<Blob> {
   return (await send(target, path)).blob();
 }
 
+// An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
+function memoryPath(ref: string): string {
+  return `/api/memory/${encodeURIComponent(ref)}`;
+}
+
 function jsonBody(value: unknown): RequestInit {
   return {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(value),
   };
+}
+
+// A doc's route: ids and team handles as they are, a personal handle keeps its '~'.
+function docPath(ref: string): string {
+  return `/api/docs/${encodeURIComponent(ref).replace(/^%7E/, '~')}`;
 }
 
 // A daemon older than `?fields=id` ignores it and sends whole docs, which
@@ -2066,6 +2587,22 @@ function reviewTargetPath(reviewTarget: ReviewTarget): string {
   return reviewTarget.kind === 'run'
     ? `/api/runs/${encodeURIComponent(reviewTarget.runId)}`
     : `/api/prs/${reviewTarget.number}`;
+}
+
+// `?k=v&…` from the defined values in insertion order, booleans as 1/0;
+// '' when none is defined.
+function queryString(
+  params: Record<string, string | number | boolean | undefined>
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    search.set(
+      key,
+      typeof value === 'boolean' ? (value ? '1' : '0') : String(value)
+    );
+  }
+  return search.size > 0 ? `?${search.toString()}` : '';
 }
 
 // Pure helper (no fetch involved) so the query-string shape is unit
@@ -2143,12 +2680,8 @@ export interface ConnectEventsOptions {
   // Defaults to 1000ms. Overridden in tests so reconnect assertions don't
   // have to wait a full second.
   reconnectDelayMs?: number;
-  // Called for every successfully parsed ServerEvent, including
-  // `task.changed` and `hello` — the orchestrator UI (Phase 4 Slice O3) needs
-  // `run.changed`/`run.log`/`approval.requested` too, which `onChange` alone
-  // can't carry (it fires only for `task.changed`, unchanged from Phase 2R,
-  // so existing callers keep their exact behavior). A malformed frame never
-  // reaches this callback — see the `try/catch` around `JSON.parse` below.
+  // Called for every parsed ServerEvent, where `onChange` hears only
+  // `task.changed`; a malformed frame never reaches it (see JSON.parse below).
   onEvent?: (event: ServerEvent) => void;
   // Daemon token for the upgrade, since the guard covers `/ws` too. Defaults
   // to whatever the daemon injected into the page it served.
@@ -2457,19 +2990,6 @@ export interface ApiClient {
   fetchAgentSessions(): Promise<AgentSessionMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
   fetchRunClaims(): Promise<RunClaim[]>;
-  /** `scope: 'session'` also pre-approves the same tool for the rest of this run; `reason`
-   * is passed to the model as the denial message, so a refusal explains itself. */
-  approveRun(
-    runId: string,
-    requestId: string,
-    allow: boolean,
-    opts?: { scope?: 'once' | 'session'; reason?: string }
-  ): Promise<void>;
-  sendRunMessage(
-    runId: string,
-    text: string,
-    opts?: { resume?: boolean }
-  ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
   /**
    * Asks a live run to stop gracefully: the agent finishes its current
@@ -2532,6 +3052,12 @@ export interface ApiClient {
   stopRunPreview(runId: string): Promise<void>;
   /** The run's requirement checklist; 404s until the finish hook wrote one. */
   fetchRunChecklist(runId: string): Promise<RunChecklist>;
+  /** The full input of a call the run is parked on, which its tool-approval
+   *  gate may carry only a preview of. Decide-tier; 404s once it is settled. */
+  fetchRunApproval(
+    runId: string,
+    requestId: string
+  ): Promise<{ tool: string; input: unknown }>;
   reviewRun(
     runId: string,
     action: 'merge' | 'discard' | 'pr'
@@ -2773,37 +3299,6 @@ export interface ApiClient {
    * poll with `fetchPlan`, whose proposal is confirmed through the ordinary
    * `confirmPlan` (which also links the note to the task it writes). */
   enrichNote(id: string): Promise<{ planId: string }>;
-  // Phase 5 P2: the messaging half (`agent_message`'s daemon-side landing
-  // spot) — injects a message into a *running* run, prefixed
-  // `[message from <sender>]` server-side (a generic "another agent" label
-  // when `fromRunId` is omitted or doesn't resolve to a known run). 409s
-  // when the run isn't currently `running`.
-  injectRun(runId: string, text: string, fromRunId?: string): Promise<RunMeta>;
-  // agent-comms: the agent->human channel (`message_user`'s daemon-side
-  // landing spot) — records a `from: 'agent'` message on the run's OWN
-  // transcript rather than delivering into any executor. 409s when the run
-  // isn't currently `running`.
-  messageUser(runId: string, text: string): Promise<RunMeta>;
-  // The blocking agent→human channel (`ask_user`'s landing spot):
-  // every unanswered question, and the call that unblocks the agent on one.
-  fetchOpenQuestions(): Promise<RunQuestion[]>;
-  answerQuestion(
-    runId: string,
-    questionId: string,
-    answer: string
-  ): Promise<RunQuestion>;
-  // The blocking agent->orchestrator channel (`request_scope`'s landing
-  // spot): the run's still-open requests (what survives a daemon restart —
-  // the only way to find one without having seen its `scope.requested`
-  // event live), one request by id, and the call that decides it.
-  listScopeRequests(runId: string): Promise<RunScopeRequest[]>;
-  fetchScopeRequest(runId: string, requestId: string): Promise<RunScopeRequest>;
-  decideScopeRequest(
-    runId: string,
-    requestId: string,
-    granted: boolean,
-    reason?: string
-  ): Promise<RunScopeRequest>;
   // Phase 5 P2: the big-prompt plan flow. `startPlan` returns immediately
   // (202) with the plan's id — poll `fetchPlan`/watch `plan.changed` over WS
   // for it to move to `ready`/`failed`. `confirmPlan` sends the (possibly
@@ -2842,25 +3337,6 @@ export interface ApiClient {
   sendOverseerMessage(
     conversationId: string,
     text: string
-  ): Promise<OverseerRecord>;
-  // Decides one queued mutating action. Approving runs the real effect before
-  // resolving, so the returned record already reflects the outcome; denying
-  // never runs it at all. 404s an unknown conversation or an action that
-  // isn't pending on it.
-  confirmOverseerAction(
-    conversationId: string,
-    actionId: string,
-    approve: boolean
-  ): Promise<OverseerRecord>;
-  // Decides one built-in tool call the overseer's running turn is parked on
-  // (see OverseerRecord.pendingApprovals). Same body as `approveRun`: allowing
-  // runs the call at once, `scope: 'session'` also pre-approves the tool for
-  // the rest of the conversation, and `reason` reaches the model on a deny.
-  // 404s an unknown conversation or a request that isn't parked on it.
-  decideOverseerApproval(
-    conversationId: string,
-    requestId: string,
-    decision: { allow: boolean; scope?: 'once' | 'session'; reason?: string }
   ): Promise<OverseerRecord>;
   // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
   // server-side to the project's `orchestrator.epicConcurrency` config;
@@ -2960,8 +3436,11 @@ export interface ApiClient {
     input: AdjudicateFindingInput
   ): Promise<AdjudicateFindingResult>;
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
-  fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
-  createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  // `class: 'audit'` keeps only receipts; the lessons live in memory.
+  fetchLedger(filter?: {
+    epicId?: string | null;
+    class?: 'audit';
+  }): Promise<LedgerEntry[]>;
   /** Every message on a subject. `subject` is `run:…`, `worktree:…` or `pr:…`. */
   fetchConversation(subject: string): Promise<ChatMessage[]>;
   addChatMessage(input: {
@@ -2974,6 +3453,263 @@ export interface ApiClient {
   // The blast radius of a file, a run's diff, or a task's declared writes —
   // `GET /api/impact?subject=<kind>&id=<id>`.
   getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
+
+  // Messaging; the server's messaging/routes.ts defines these shapes.
+  /** Sends a message. A retry with the same `opts.idempotencyKey` replays the
+   *  first attempt's result (200) instead of sending twice (201). */
+  sendMessage(
+    input: SendInput,
+    opts?: { idempotencyKey?: string }
+  ): Promise<SendResult>;
+  getMessage(id: string): Promise<Message>;
+  /** An answer if the target is a question or handoff, a plain message
+   *  otherwise — the server decides which. */
+  replyToMessage(id: string, input: ReplyInput): Promise<SendResult>;
+  /** `wait: true` long-polls up to the server's timeout for an answer;
+   *  omitted, it checks once and returns immediately. */
+  waitForAnswer(
+    id: string,
+    opts?: { wait?: boolean }
+  ): Promise<{ answer: Message | null }>;
+  getThread(id: string): Promise<ThreadDetail>;
+  /** The most recently active threads project-wide (deciding humans only);
+   *  `about: 'task:<id>'` keeps those the task or its runs took part in. */
+  listRecentThreads(
+    limit?: number,
+    opts?: { about?: string }
+  ): Promise<{ threads: ThreadSummary[] }>;
+  /** `address` defaults to the caller's own mailbox; `states` filters by
+   *  delivery state. */
+  getMailbox(
+    address?: string,
+    states?: DeliveryState[]
+  ): Promise<{ items: MailboxItem[] }>;
+  markDeliveryRead(id: string): Promise<Delivery>;
+  listChannels(): Promise<{ channels: ChannelSummary[] }>;
+  /** `member` defaults to the caller (a run defaults to its task). */
+  joinChannel(name: string, member?: string): Promise<void>;
+  /** `member` defaults to the caller (a run defaults to its task), same as
+   *  `joinChannel`. */
+  leaveChannel(name: string, member?: string): Promise<void>;
+  listAgentRoster(): Promise<{ agents: AgentSummary[] }>;
+  approveAgent(address: string): Promise<AgentSummary>;
+  revokeAgent(address: string): Promise<AgentSummary>;
+  /** `muted: true` mutes, `false` unmutes. */
+  muteAgent(address: string, muted: boolean): Promise<AgentSummary>;
+  /** Open blocking questions addressed to a human (deciding humans only). */
+  openDecisions(): Promise<{ items: Message[] }>;
+  /** The caller's visible entries; `state` defaults to active and stale. */
+  listMemory(q?: {
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    state?: MemoryState | 'all';
+    taskId?: string;
+    /** Entries imported from that source (their origin's prefix). */
+    origin?: 'ledger' | 'claude' | 'amendment';
+    trust?: MemoryTrust;
+    limit?: number;
+  }): Promise<{ entries: MemoryEntryView[] }>;
+  searchMemory(q: {
+    query: string;
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    includeStale?: boolean;
+    includeRetired?: boolean;
+    limit?: number;
+  }): Promise<{ hits: MemorySearchHit[]; search: 'fts5' | 'like' }>;
+  /** `ref` is an entry id or a `#handle`. */
+  getMemory(ref: string): Promise<MemoryReadResult>;
+  /** The caller's index for a task, or the index a run got (the run itself
+   *  or a deciding human only). */
+  memoryIndex(
+    q: { taskId: string } | { runId: string }
+  ): Promise<MemoryIndexResult>;
+  memoryRecalls(runId: string): Promise<{
+    recalls: {
+      memoryId: string;
+      handle: string | null;
+      via: string;
+      at: string;
+    }[];
+  }>;
+  memoryHealth(): Promise<MemoryHealth>;
+  /** Deciding humans only; `dryRun` reports without writing. */
+  importLedger(opts?: {
+    dryRun?: boolean;
+  }): Promise<{ report: LedgerImportReport; text: string }>;
+  /** The daemon's own human only: re-runs the import of their Claude notes;
+   *  `from` (absolute) or `none` answers an unconfirmed one. */
+  importClaude(opts?: {
+    from?: string;
+    none?: boolean;
+    dryRun?: boolean;
+  }): Promise<{ report: ClaudeImportReport }>;
+  /** A save to shared memory by anyone but a deciding human is a proposal.
+   *  A retry with the same `opts.idempotencyKey` replays the first result. */
+  saveMemory(
+    input: {
+      scope: MemoryScope;
+      kind: MemoryKind;
+      title: string;
+      body: string;
+      refs?: Ref[];
+      epic?: string | null;
+      appliesTo?: string[];
+      supersedes?: string;
+      projectOnly?: boolean;
+    },
+    opts?: { idempotencyKey?: string }
+  ): Promise<MemorySaveResult>;
+  retireMemory(ref: string, reason: string): Promise<MemorySaveResult>;
+  /** Restores the entry's previous revision. */
+  undoMemory(ref: string): Promise<MemoryEntryView>;
+  /** Raises an agent-trust entry to confirmed. */
+  confirmMemory(ref: string): Promise<MemoryEntryView>;
+  pinMemory(ref: string, pinned: boolean): Promise<MemoryEntryView>;
+  /** Copies a personal entry into shared memory; the personal one stays. */
+  promoteMemory(
+    ref: string,
+    scope: 'project' | 'team'
+  ): Promise<MemorySaveResult>;
+  /** The entry and its history, for good. */
+  deleteMemory(ref: string): Promise<void>;
+  /** Deciding humans see every proposal; anyone else their own. */
+  listMemoryProposals(
+    state?: MemoryProposalState
+  ): Promise<{ proposals: MemoryProposalView[] }>;
+  /** A proposal with its target as proposed against (`base`) and as it is now. */
+  getMemoryProposal(id: string): Promise<{
+    proposal: MemoryProposalView;
+    base: MemoryEntryView | null;
+    current: MemoryEntryView | null;
+  }>;
+  /** The caller's own personal activity, oldest first; the last day when `since` is absent. */
+  memoryActivity(since?: string): Promise<{ activity: MemoryActivityRow[] }>;
+  memoryIdentity(): Promise<{
+    identity: string;
+    aliases: { projectKey: string; handle: string }[];
+    placeholderEmail: boolean;
+  }>;
+  /** A one-time code for linking another project, or with `fresh` a new, empty identity. */
+  startMemoryLink(opts?: {
+    fresh?: boolean;
+  }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
+  completeMemoryLink(code: string): Promise<{ identity: string }>;
+  listIngestProblems(): Promise<{ problems: MemoryIngestProblem[] }>;
+  /** Saves a skipped file's kept content to the caller's memory with agent trust. */
+  acceptIngestProblem(id: string): Promise<MemorySaveResult>;
+
+  // Docs; the server's docs/routes.ts defines these routes. `ref` is a doc id,
+  // a team handle or a personal `~handle`; `rev` a revision number or rev- id.
+  listDocs(
+    params?: DocListParams
+  ): Promise<{ docs: DocSummary[]; total: number }>;
+  /** `section` reads one heading's section; `page` pages from `offset`. */
+  getDoc(
+    ref: string,
+    opts?: {
+      rev?: string | number;
+      section?: string;
+      offset?: number;
+      page?: boolean;
+    }
+  ): Promise<DocRead>;
+  createDoc(input: {
+    title: string;
+    body: string;
+    slug?: string;
+    scope?: DocScope;
+    links?: { target: string; rel: LinkRel }[];
+  }): Promise<DocSaveResult>;
+  /** A merge conflict comes back as `{ ok: false, conflict }`; other
+   *  failures throw, including a 409 such as an archived doc's. */
+  saveDocBody(
+    ref: string,
+    input: {
+      baseRev: string | number;
+      baseHash?: string;
+      body: string;
+      title?: string;
+    }
+  ): Promise<DocSaveOutcome>;
+  editDoc(
+    ref: string,
+    input: { ops: DocOp[]; baseRev?: string | number }
+  ): Promise<DocSaveResult>;
+  renameDoc(ref: string, slug: string): Promise<DocRecord>;
+  setDocStatus(ref: string, status: DocStatus): Promise<DocRecord>;
+  markDocReviewed(ref: string): Promise<DocRecord>;
+  sealDoc(ref: string): Promise<DocRecord>;
+  revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
+  /** Copies a personal doc's head into a new team draft (its owner only). */
+  promoteDoc(ref: string): Promise<DocSaveResult>;
+  /** Stores an image for a doc (png, jpeg, gif or webp, typed by its bytes; ≤ 25 MiB). */
+  uploadDocAsset(
+    ref: string,
+    bytes: Blob | Uint8Array
+  ): Promise<{ name: string; markdown: string }>;
+  /** One of a doc's stored images, for a blob URL. */
+  fetchDocAsset(ref: string, name: string): Promise<Blob>;
+  /** Writes a reviewed or accepted team doc into the repo through an elevated task (humans only). */
+  publishDoc(
+    ref: string,
+    input: { path: string; dispatch?: boolean }
+  ): Promise<DocPublishResult>;
+  deleteDoc(ref: string): Promise<void>;
+  listDocRevisions(
+    ref: string,
+    page?: { before?: number; limit?: number }
+  ): Promise<{ revisions: DocRevisionInfo[] }>;
+  getDocRevision(
+    ref: string,
+    rev: string | number
+  ): Promise<DocRevisionInfo & { body: string }>;
+  diffDoc(
+    ref: string,
+    from: string | number,
+    to: string | number
+  ): Promise<DocDiff>;
+  /** `target` is `type:id` (`task:t-1`); `replace` takes the spec link over
+   *  from the task's current spec instead of answering 409. */
+  linkDoc(
+    ref: string,
+    input: { target: string; rel: LinkRel; replace?: boolean }
+  ): Promise<{ links: DocLink[] }>;
+  unlinkDoc(ref: string, target: string): Promise<{ links: DocLink[] }>;
+  /** The docs linked to `target`, a `type:id` string. */
+  docsLinking(target: string): Promise<{ docs: DocLinking[] }>;
+  searchDocs(
+    q: string,
+    opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
+  ): Promise<{ hits: DocHit[] }>;
+  docsHealth(): Promise<DocsHealth>;
+  /** Proposals to accepted docs the caller may see; `doc` narrows to one doc. */
+  listDocProposals(params?: {
+    doc?: string;
+    state?: ProposalState[];
+  }): Promise<{ proposals: DocProposal[] }>;
+  /** A proposal's text, its diff against its base, and whether it merges onto the head. */
+  getDocProposal(rev: string): Promise<DocProposalView>;
+  a2aListener(): Promise<A2AListenerStatus>;
+  /** Writes the listener settings and (re)opens it (operator tier). */
+  setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
+  /** Closes the listener, keeping its other settings (operator tier). */
+  disableA2AListener(): Promise<A2AListenerStatus>;
+  /** The agent card exactly as the listener serves it. */
+  a2aCard(): Promise<Record<string, unknown>>;
+  a2aClients(): Promise<{ clients: A2AClientSummary[] }>;
+  /** `approve` needs the decide tier; the token is returned only here. */
+  addA2AClient(input: {
+    name: string;
+    to?: string[];
+    approve?: boolean;
+  }): Promise<{ address: string; token: string; status: string }>;
+  /** `name` is the client's address, `a2a.` name, or name as typed. */
+  rotateA2AClient(name: string): Promise<{ token: string }>;
+  a2aTasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
+  /** Closes an unanswered ask; the client sees REJECTED with the reason. */
+  declineA2ATask(id: string, reason?: string): Promise<unknown>;
+
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
   fetchWorkspaceTree(
@@ -3041,10 +3777,9 @@ export interface ApiClient {
 // dispatchd on some other port.
 //
 // `token` is the daemon token every call presents. Pass the app token to reach
-// the decide-tier calls (`decideScopeRequest`, `approveRun`,
-// `confirmOverseerAction`); the agent token reaches everything else. Omitting it
-// falls back to the token the daemon injected into the page it served, which
-// is how the browser UI gets one at all.
+// the decide-tier calls and to answer gates; the agent token reaches
+// everything else. Omitting it falls back to the token the daemon injected
+// into the page it served, which is how the browser UI gets one at all.
 export function createApiClient(baseUrl: string, token?: string): ApiClient {
   const target: ApiTarget = { baseUrl, token: token ?? injectedDaemonToken() };
   return {
@@ -3170,17 +3905,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchAgentSessions: () => request(target, '/api/agents'),
     fetchRun: (id) => request(target, `/api/runs/${id}`),
     fetchRunClaims: () => request(target, '/api/runs/claims'),
-    approveRun: async (runId, requestId, allow, opts = {}) => {
-      await request(target, `/api/runs/${runId}/approval`, {
-        method: 'POST',
-        ...jsonBody({ requestId, allow, ...opts }),
-      });
-    },
-    sendRunMessage: (runId, text, opts = {}) =>
-      request(target, `/api/runs/${runId}/message`, {
-        method: 'POST',
-        ...jsonBody({ text, ...opts }),
-      }),
     cancelRun: async (runId) => {
       await request(target, `/api/runs/${runId}/cancel`, { method: 'POST' });
     },
@@ -3226,6 +3950,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     },
     fetchRunChecklist: (runId) =>
       request(target, `/api/runs/${runId}/checklist`),
+    fetchRunApproval: (runId, requestId) =>
+      request(target, `/api/runs/${runId}/approvals/${requestId}`),
     reviewRun: (runId, action) =>
       request(target, `/api/runs/${runId}/review`, {
         method: 'POST',
@@ -3503,31 +4229,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/notes/${id}/promote`, { method: 'POST' }),
     enrichNote: (id) =>
       request(target, `/api/notes/${id}/enrich`, { method: 'POST' }),
-    injectRun: (runId, text, fromRunId) =>
-      request(target, `/api/runs/${runId}/inject`, {
-        method: 'POST',
-        ...jsonBody(fromRunId !== undefined ? { text, fromRunId } : { text }),
-      }),
-    messageUser: (runId, text) =>
-      request(target, `/api/runs/${runId}/message-user`, {
-        method: 'POST',
-        ...jsonBody({ text }),
-      }),
-    fetchOpenQuestions: () => request(target, '/api/questions'),
-    answerQuestion: (runId, questionId, answer) =>
-      request(target, `/api/runs/${runId}/questions/${questionId}/answer`, {
-        method: 'POST',
-        ...jsonBody({ answer }),
-      }),
-    listScopeRequests: (runId) =>
-      request(target, `/api/runs/${runId}/scope-requests`),
-    fetchScopeRequest: (runId, requestId) =>
-      request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
-    decideScopeRequest: (runId, requestId, granted, reason) =>
-      request(target, `/api/runs/${runId}/scope-requests/${requestId}/decide`, {
-        method: 'POST',
-        ...jsonBody({ granted, reason }),
-      }),
     startPlan: (prompt, opts = {}) =>
       request(target, '/api/plan', {
         method: 'POST',
@@ -3564,24 +4265,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ text }),
       }),
-    confirmOverseerAction: (conversationId, actionId, approve) =>
-      request(
-        target,
-        `/api/overseer/${conversationId}/actions/${actionId}/confirm`,
-        {
-          method: 'POST',
-          ...jsonBody({ approve }),
-        }
-      ),
-    decideOverseerApproval: (conversationId, requestId, decision) =>
-      request(
-        target,
-        `/api/overseer/${conversationId}/approvals/${requestId}`,
-        {
-          method: 'POST',
-          ...jsonBody(decision),
-        }
-      ),
     startEpic: (epicId, opts = {}) =>
       request(target, `/api/epics/${epicId}/dispatch`, {
         method: 'POST',
@@ -3704,11 +4387,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       if (filter.epicId !== undefined) {
         params.set('epicId', filter.epicId ?? '');
       }
+      if (filter.class !== undefined) params.set('class', filter.class);
       const query = params.size > 0 ? `?${params.toString()}` : '';
       return request(target, `/api/ledger${query}`);
     },
-    createLedgerEntry: (input) =>
-      request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
     fetchConversation: (subject) =>
       request(
         target,
@@ -3724,6 +4406,345 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         target,
         `/api/impact?${new URLSearchParams({ subject, id }).toString()}`
       ),
+    // Agent-communication bus — packages/server/src/messaging/routes.ts is
+    // the source of truth for these request/response shapes.
+    sendMessage: (input, opts) => {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+      };
+      if (opts?.idempotencyKey !== undefined) {
+        headers['Idempotency-Key'] = opts.idempotencyKey;
+      }
+      return request(target, '/api/messages', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(input),
+      });
+    },
+    getMessage: (id) => request(target, `/api/messages/${id}`),
+    replyToMessage: (id, input) =>
+      request(target, `/api/messages/${id}/reply`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    waitForAnswer: (id, opts = {}) =>
+      request(
+        target,
+        `/api/messages/${id}/answer${opts.wait === true ? '?wait=1' : ''}`
+      ),
+    getThread: (id) => request(target, `/api/threads/${id}`),
+    listRecentThreads: (limit, opts = {}) => {
+      const params = new URLSearchParams();
+      if (limit !== undefined) params.set('limit', String(limit));
+      if (opts.about !== undefined) params.set('about', opts.about);
+      const qs = params.size > 0 ? `?${params.toString()}` : '';
+      return request(target, `/api/threads${qs}`);
+    },
+    getMailbox: (address, states) => {
+      const params = new URLSearchParams();
+      if (address !== undefined) params.set('address', address);
+      if (states !== undefined && states.length > 0) {
+        params.set('state', states.join(','));
+      }
+      const qs = params.size > 0 ? `?${params.toString()}` : '';
+      return request(target, `/api/mailbox${qs}`);
+    },
+    markDeliveryRead: (id) =>
+      request(target, `/api/deliveries/${id}/read`, { method: 'POST' }),
+    listChannels: () => request(target, '/api/channels'),
+    // Uses send(), not request(): the server answers 204 with no JSON body,
+    // which request() would fail to parse.
+    joinChannel: async (name, member) => {
+      await send(target, `/api/channels/${encodeURIComponent(name)}/members`, {
+        method: 'POST',
+        ...jsonBody(member !== undefined ? { member } : {}),
+      });
+    },
+    leaveChannel: async (name, member) => {
+      const path =
+        member !== undefined
+          ? `/api/channels/${encodeURIComponent(name)}/members/${encodeURIComponent(member)}`
+          : `/api/channels/${encodeURIComponent(name)}/members`;
+      await send(target, path, { method: 'DELETE' });
+    },
+    listAgentRoster: () => request(target, '/api/agents/roster'),
+    approveAgent: (address) =>
+      request(target, `/api/agents/${encodeURIComponent(address)}/approve`, {
+        method: 'POST',
+      }),
+    revokeAgent: (address) =>
+      request(target, `/api/agents/${encodeURIComponent(address)}/revoke`, {
+        method: 'POST',
+      }),
+    muteAgent: (address, muted) =>
+      request(
+        target,
+        `/api/agents/${encodeURIComponent(address)}/${muted ? 'mute' : 'unmute'}`,
+        { method: 'POST' }
+      ),
+    openDecisions: () => request(target, '/api/decisions/open'),
+    listMemory: (q = {}) =>
+      request(
+        target,
+        `/api/memory${queryString({ scope: q.scope, kind: q.kind, state: q.state, taskId: q.taskId, origin: q.origin, trust: q.trust, limit: q.limit })}`
+      ),
+    searchMemory: (q) =>
+      request(
+        target,
+        `/api/memory/search${queryString({ q: q.query, scope: q.scope, kind: q.kind, includeStale: q.includeStale, includeRetired: q.includeRetired, limit: q.limit })}`
+      ),
+    getMemory: (ref) =>
+      request(target, `/api/memory/${encodeURIComponent(ref)}`),
+    memoryIndex: (q) =>
+      request(
+        target,
+        `/api/memory/index${queryString('taskId' in q ? { taskId: q.taskId } : { runId: q.runId })}`
+      ),
+    memoryRecalls: (runId) =>
+      request(target, `/api/memory/recalls${queryString({ runId })}`),
+    memoryHealth: () => request(target, '/api/memory/health'),
+    importLedger: (opts = {}) =>
+      request(
+        target,
+        `/api/memory/import/ledger${opts.dryRun === true ? '?dryRun=1' : ''}`,
+        { method: 'POST' }
+      ),
+    importClaude: (opts = {}) =>
+      request(
+        target,
+        `/api/memory/import/claude${queryString({
+          from: opts.from,
+          none: opts.none === true ? true : undefined,
+          dryRun: opts.dryRun === true ? true : undefined,
+        })}`,
+        { method: 'POST' }
+      ),
+    saveMemory: (input, opts) =>
+      request(target, '/api/memory', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(opts?.idempotencyKey === undefined
+            ? {}
+            : { 'Idempotency-Key': opts.idempotencyKey }),
+        },
+        body: JSON.stringify(input),
+      }),
+    retireMemory: (ref, reason) =>
+      request(target, `${memoryPath(ref)}/retire`, {
+        method: 'POST',
+        ...jsonBody({ reason }),
+      }),
+    undoMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/undo`, { method: 'POST' }),
+    confirmMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/confirm`, { method: 'POST' }),
+    pinMemory: (ref, pinned) =>
+      request(target, `${memoryPath(ref)}/${pinned ? 'pin' : 'unpin'}`, {
+        method: 'POST',
+      }),
+    promoteMemory: (ref, scope) =>
+      request(target, `${memoryPath(ref)}/promote`, {
+        method: 'POST',
+        ...jsonBody({ scope }),
+      }),
+    deleteMemory: async (ref) => {
+      await send(target, memoryPath(ref), { method: 'DELETE' });
+    },
+    listMemoryProposals: (state) =>
+      request(target, `/api/memory/proposals${queryString({ state })}`),
+    getMemoryProposal: (id) =>
+      request(target, `/api/memory/proposals/${encodeURIComponent(id)}`),
+    memoryActivity: (since) =>
+      request(target, `/api/memory/activity${queryString({ since })}`),
+    memoryIdentity: () => request(target, '/api/memory/identity'),
+    startMemoryLink: (opts = {}) =>
+      request(target, '/api/memory/link', {
+        method: 'POST',
+        ...jsonBody(opts.fresh === true ? { fresh: true } : {}),
+      }),
+    completeMemoryLink: (code) =>
+      request(target, `/api/memory/link/${encodeURIComponent(code)}`, {
+        method: 'POST',
+      }),
+    listIngestProblems: () => request(target, '/api/memory/ingest-problems'),
+    acceptIngestProblem: (id) =>
+      request(
+        target,
+        `/api/memory/ingest-problems/${encodeURIComponent(id)}/accept`,
+        { method: 'POST' }
+      ),
+    // Docs — packages/server/src/docs/routes.ts. Flags go as `1` only when
+    // true, since the routes read anything else as false.
+    listDocs: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.taskId !== undefined) q.set('taskId', params.taskId);
+      if (params.scope !== undefined) q.set('scope', params.scope);
+      if (params.status !== undefined) q.set('status', params.status);
+      if (params.unreviewed === true) q.set('unreviewed', '1');
+      if (params.conflicted === true) q.set('conflicted', '1');
+      if (params.q !== undefined && params.q !== '') q.set('q', params.q);
+      if (params.includeArchived === true) q.set('includeArchived', '1');
+      if (params.limit !== undefined) q.set('limit', String(params.limit));
+      if (params.offset !== undefined) q.set('offset', String(params.offset));
+      const qs = q.toString();
+      return request(target, `/api/docs${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDoc: (ref, opts = {}) => {
+      const q = new URLSearchParams();
+      if (opts.rev !== undefined) q.set('rev', String(opts.rev));
+      if (opts.section !== undefined) q.set('section', opts.section);
+      if (opts.offset !== undefined) q.set('offset', String(opts.offset));
+      if (opts.page === true) q.set('page', '1');
+      const qs = q.toString();
+      return request(target, `${docPath(ref)}${qs === '' ? '' : `?${qs}`}`);
+    },
+    createDoc: (input) =>
+      request(target, '/api/docs', { method: 'POST', ...jsonBody(input) }),
+    saveDocBody: async (ref, input) => {
+      const res = await send(
+        target,
+        `${docPath(ref)}/body`,
+        { method: 'PUT', ...jsonBody(input) },
+        [409]
+      );
+      if (res.status !== 409) {
+        return { ok: true, result: (await res.json()) as DocSaveResult };
+      }
+      const body: unknown = await res.json().catch(() => null);
+      if (isDocConflict(body)) return { ok: false, conflict: body };
+      throw apiError(409, body);
+    },
+    editDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/edit`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    renameDoc: (ref, slug) =>
+      request(target, docPath(ref), { method: 'PATCH', ...jsonBody({ slug }) }),
+    setDocStatus: (ref, status) =>
+      request(target, `${docPath(ref)}/status`, {
+        method: 'POST',
+        ...jsonBody({ status }),
+      }),
+    markDocReviewed: (ref) =>
+      request(target, `${docPath(ref)}/reviewed`, { method: 'POST' }),
+    sealDoc: (ref) =>
+      request(target, `${docPath(ref)}/seal`, { method: 'POST' }),
+    revertDoc: (ref, rev) =>
+      request(target, `${docPath(ref)}/revert`, {
+        method: 'POST',
+        ...jsonBody({ rev }),
+      }),
+    promoteDoc: (ref) =>
+      request(target, `${docPath(ref)}/promote`, { method: 'POST' }),
+    uploadDocAsset: (ref, bytes) =>
+      request(target, `${docPath(ref)}/assets`, {
+        method: 'POST',
+        // The daemon takes images only as raw octet-stream bytes.
+        headers: { 'content-type': 'application/octet-stream' },
+        // A copy, so its buffer is a plain ArrayBuffer fetch accepts.
+        body: bytes instanceof Blob ? bytes : new Uint8Array(bytes),
+      }),
+    fetchDocAsset: (ref, name) =>
+      requestBlob(target, `${docPath(ref)}/assets/${encodeURIComponent(name)}`),
+    publishDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/publish`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    // send(), not request(): the server answers 204 with no body.
+    deleteDoc: async (ref) => {
+      await send(target, docPath(ref), { method: 'DELETE' });
+    },
+    listDocRevisions: (ref, page = {}) => {
+      const q = new URLSearchParams();
+      if (page.before !== undefined) q.set('before', String(page.before));
+      if (page.limit !== undefined) q.set('limit', String(page.limit));
+      const qs = q.toString();
+      return request(
+        target,
+        `${docPath(ref)}/revisions${qs === '' ? '' : `?${qs}`}`
+      );
+    },
+    getDocRevision: (ref, rev) =>
+      request(
+        target,
+        `${docPath(ref)}/revisions/${encodeURIComponent(String(rev))}`
+      ),
+    diffDoc: (ref, from, to) =>
+      request(
+        target,
+        `${docPath(ref)}/diff?from=${encodeURIComponent(String(from))}&to=${encodeURIComponent(String(to))}`
+      ),
+    linkDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/links`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    // The route takes the target's type and id as two path segments.
+    unlinkDoc: (ref, link) => {
+      const colon = link.indexOf(':');
+      return request(
+        target,
+        `${docPath(ref)}/links/${encodeURIComponent(link.slice(0, colon))}/${encodeURIComponent(link.slice(colon + 1))}`,
+        { method: 'DELETE' }
+      );
+    },
+    docsLinking: (link) =>
+      request(
+        target,
+        `/api/docs/links?${new URLSearchParams({ target: link }).toString()}`
+      ),
+    searchDocs: (q, opts = {}) => {
+      const params = new URLSearchParams({ q });
+      if (opts.scope !== undefined) params.set('scope', opts.scope);
+      if (opts.includeArchived === true) params.set('includeArchived', '1');
+      if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+      return request(target, `/api/docs/search?${params.toString()}`);
+    },
+    docsHealth: () => request(target, '/api/docs/health'),
+    listDocProposals: (params = {}) => {
+      const query = new URLSearchParams();
+      if (params.doc !== undefined) query.set('doc', params.doc);
+      if (params.state !== undefined)
+        query.set('state', params.state.join(','));
+      const qs = query.toString();
+      return request(target, `/api/docs/proposals${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDocProposal: (rev) =>
+      request(target, `/api/docs/proposals/${encodeURIComponent(rev)}`),
+    a2aListener: () => request(target, '/api/a2a/listener'),
+    setA2AListener: (settings) =>
+      request(target, '/api/a2a/listener', {
+        method: 'PUT',
+        ...jsonBody(settings),
+      }),
+    disableA2AListener: () =>
+      request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    a2aCard: () => request(target, '/api/a2a/card'),
+    a2aClients: () => request(target, '/api/a2a/clients'),
+    addA2AClient: (input) =>
+      request(target, '/api/a2a/clients', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    rotateA2AClient: (name) =>
+      request(target, `/api/a2a/clients/${encodeURIComponent(name)}/rotate`, {
+        method: 'POST',
+      }),
+    a2aTasks: (client) =>
+      request(
+        target,
+        client === undefined
+          ? '/api/a2a/tasks'
+          : `/api/a2a/tasks?${new URLSearchParams({ client }).toString()}`
+      ),
+    declineA2ATask: (id, reason) =>
+      request(target, `/api/a2a/tasks/${encodeURIComponent(id)}/decline`, {
+        method: 'POST',
+        ...jsonBody(reason === undefined ? {} : { reason }),
+      }),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

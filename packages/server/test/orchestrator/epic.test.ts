@@ -940,6 +940,7 @@ describe('EpicEngine fill serialization', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });

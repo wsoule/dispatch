@@ -1,4 +1,5 @@
 import type { ApiContext } from '../api.js';
+import { humanOperator } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 import { refusePrHeadRef } from './prHead.js';
 
@@ -23,6 +24,7 @@ export async function startTaskVerification(
   const result = await ctx.verificationRunner.startVerification({
     taskId,
     head: body.head,
+    operator: humanOperator(ctx),
   });
   if (result.skipped) {
     return jsonResponse({ skipped: true, reason: result.reason });

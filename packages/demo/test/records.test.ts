@@ -101,10 +101,11 @@ test('raisedBy round-trips through the real ActorRef parser', () => {
   }
 });
 
-test('the ledger covers all four kinds', () => {
+// Handoffs are messages, never ledger entries, so the seeded ledger holds none.
+test('the ledger covers every writable kind and holds no handoff', () => {
   const ledger = lines(build(), 'ledger.jsonl');
   expect(new Set(ledger.map((l) => l.kind))).toEqual(
-    new Set(['constraint', 'hazard', 'decision', 'handoff'])
+    new Set(['constraint', 'hazard', 'decision'])
   );
 });
 
@@ -186,7 +187,7 @@ test('written findings and ledger entries parse as their real interface shape', 
   const findings = lines(root, 'findings.jsonl') as unknown as Finding[];
   const ledger = lines(root, 'ledger.jsonl') as unknown as LedgerEntry[];
   expect(findings.length).toBeGreaterThanOrEqual(6);
-  expect(ledger.length).toBe(4);
+  expect(ledger.length).toBe(3);
 });
 
 test('regenerating writes byte-identical output', () => {

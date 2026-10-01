@@ -51,6 +51,7 @@ const controllable: Executor = {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     } satisfies ExecutorRun;
   },
 };
@@ -131,9 +132,7 @@ function postComment(
   });
 }
 
-// The pre-thread route older MCP servers' task_comment still proxies to —
-// mirrors ledger-attribution.test.ts's coverage of the same
-// runId-resolves-to-an-agent-or-none shape for POST /api/ledger.
+// The pre-thread route older MCP servers' task_comment still proxies to.
 describe('a legacy task note records who left it, in the thread', () => {
   it('credits the agent running the run named by runId', async () => {
     const taskId = await createTask('mid-run note');

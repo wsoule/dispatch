@@ -344,6 +344,25 @@ describe('getImpact', () => {
   });
 });
 
+describe('fetchRunApproval', () => {
+  it("GETs the parked call's full input by run and request id", async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').fetchRunApproval(
+        'r-1',
+        'req-1'
+      );
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/runs/r-1/approvals/req-1'
+      );
+      expect(stub.calls[0].init?.method ?? 'GET').toBe('GET');
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
 // Narrows a stubbed call's body to the JSON string request() always sends and
 // parses it, so tests can assert on the exact payload a method built.
 function sentJson(call: { init?: RequestInit }): unknown {
@@ -425,27 +444,6 @@ describe('overseer methods', () => {
     }
   });
 
-  it('confirmOverseerAction POSTs /api/overseer/:id/actions/:actionId/confirm with { approve }', async () => {
-    const stub = stubFetch();
-    try {
-      await createApiClient('http://example.test').confirmOverseerAction(
-        'wc-1',
-        'wa-9',
-        false
-      );
-      expect(stub.calls).toHaveLength(1);
-      expect(stub.calls[0].url).toBe(
-        'http://example.test/api/overseer/wc-1/actions/wa-9/confirm'
-      );
-      expect(stub.calls[0].init?.method).toBe('POST');
-      expect(sentJson(stub.calls[0])).toEqual({
-        approve: false,
-      });
-    } finally {
-      stub.restore();
-    }
-  });
-
   it('startOverseer includes model when the caller picks one', async () => {
     const stub = stubFetch();
     try {
@@ -455,28 +453,6 @@ describe('overseer methods', () => {
       expect(sentJson(stub.calls[0])).toEqual({
         prompt: 'hi',
         model: 'claude-fable-5-1',
-      });
-    } finally {
-      stub.restore();
-    }
-  });
-
-  it('decideOverseerApproval POSTs /api/overseer/:id/approvals/:requestId with the decision', async () => {
-    const stub = stubFetch();
-    try {
-      await createApiClient('http://example.test').decideOverseerApproval(
-        'wc-1',
-        'req-3',
-        { allow: false, reason: 'not that file' }
-      );
-      expect(stub.calls).toHaveLength(1);
-      expect(stub.calls[0].url).toBe(
-        'http://example.test/api/overseer/wc-1/approvals/req-3'
-      );
-      expect(stub.calls[0].init?.method).toBe('POST');
-      expect(sentJson(stub.calls[0])).toEqual({
-        allow: false,
-        reason: 'not that file',
       });
     } finally {
       stub.restore();

@@ -4,11 +4,11 @@ import type {
   MergeQueueSnapshot,
   PlanRecord,
   RunMeta,
-  RunQuestion,
   RunState,
 } from '@dispatch/client';
 import { useEffect, useRef } from 'react';
 
+import type { RunQuestion } from '../lib/gates';
 import type { InboxEntryDraft } from '../lib/inbox';
 import {
   diffQuestionNotifications,
