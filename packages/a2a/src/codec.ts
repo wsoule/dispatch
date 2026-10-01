@@ -57,7 +57,7 @@ function invalid(field: string, why: string): never {
 }
 
 // A url part as one markdown link line; Dispatch never fetches it.
-function linkLine(filename: string, url: string): string {
+export function linkLine(filename: string, url: string): string {
   const label = (filename === '' ? url : filename)
     .replace(/[[\]\r\n]/g, ' ')
     .trim();
