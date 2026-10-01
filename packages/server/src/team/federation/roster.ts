@@ -179,6 +179,12 @@ export class RosterService {
     );
     if (chosen === undefined)
       throw new RosterError('invalid', `no founding with fingerprint ${fp}`);
+    const invite = this.pendingInvite();
+    if (invite !== null && chosen.hash.slice(0, 32) !== invite.teamId)
+      throw new RosterError(
+        'conflict',
+        `this machine joined with an invite to team ${invite.teamId}; trust that team's founding, or join again with a new invite`
+      );
     const founder = this.fed.meta('founder');
     if (founder === chosen.replica) return;
     if (founder === this.me) {
@@ -549,7 +555,7 @@ export class RosterService {
         JSON.stringify(entry.body)
       );
     if (inserted.changes === 0) return 'applied';
-    if (isFound(entry.body)) this.onFoundSeen(entry, hash);
+    if (isFound(entry.body)) this.onFoundSeen();
     this.refresh();
     this.auditOp(entry, hash);
     return 'applied';
@@ -599,11 +605,14 @@ export class RosterService {
     for (const subject of this.recorded)
       if (!now.has(subject)) this.fed.clearProblem(subject);
     this.recorded = now;
-    // An automatic pin firms up once this machine is admitted under it.
+    // An automatic pin firms up once this machine is admitted under it, never
+    // against an invite this machine holds for another team.
+    const invite = this.pendingInvite();
     if (
       view !== null &&
       this.fed.meta('founder_pin') === 'auto' &&
-      view.members.has(this.me)
+      view.members.has(this.me) &&
+      (invite === null || invite.teamId === view.teamId)
     )
       this.fed.setMeta('founder_pin', 'firm');
     if (view !== null)
@@ -632,12 +641,17 @@ export class RosterService {
 
   // A second founding seen before this machine was admitted under an automatic
   // pin unpins it: two foundings seen at once pin neither, until trust picks.
-  private onFoundSeen(entry: FederatedOp, hash: string): void {
+  // While an invite is held, only the founding of its team is a candidate
+  // (FW-R22(4)): a hostile founding seen first never captures the joiner.
+  private onFoundSeen(): void {
     const pin = this.fed.meta('founder_pin');
     if (this.founded() && pin === 'firm') return;
-    const seen = this.foundings();
-    if (seen.length === 1 && !this.founded())
-      this.pinFounder(founding({ ...entry, hash }), 'auto');
+    const invite = this.pendingInvite();
+    const seen = this.foundings().filter(
+      (f) => invite === null || f.hash.slice(0, 32) === invite.teamId
+    );
+    const only = seen.length === 1 ? seen[0] : undefined;
+    if (only !== undefined && !this.founded()) this.pinFounder(only, 'auto');
     else if (seen.length > 1 && pin === 'auto') this.unpinFounder();
   }
 
@@ -651,14 +665,6 @@ export class RosterService {
       'founded_at',
       new Date(hlcWallMs(f.hlc) ?? this.deps.now().getTime()).toISOString()
     );
-    const pending = this.pendingInvite();
-    if (pending !== null && pending.teamId !== teamId) {
-      this.fed.setMeta('pending_invite', null);
-      this.fed.problem(
-        'team',
-        'the invite this machine joined with is for another team than the founding it follows; ask for a new invite'
-      );
-    }
     this.refresh();
     if (f.replica !== this.me) this.onFounderPinned();
   }

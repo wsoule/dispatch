@@ -175,6 +175,29 @@ describe('joining and admission', () => {
   });
 });
 
+describe('an invite binds which founding a joiner follows (FW-R22 I3)', () => {
+  it('ignores a hostile founding seen first, follows the invite’s team, and keeps the invite', () => {
+    const ada = make('ada');
+    const hal = make('hal');
+    const bob = make('bob');
+    ada.roster.found('acme');
+    hal.roster.found('acme');
+    const { code } = ada.roster.invite('bob');
+    bob.roster.join(code);
+    feed(hal, bob);
+    expect(bob.roster.founded()).toBe(false);
+    expect(() => bob.roster.trust(fp(hal))).toThrow(
+      expect.objectContaining({ code: 'conflict' })
+    );
+    feed(ada, bob);
+    expect(bob.roster.view()?.founder).toBe(ada.fed.replica);
+    expect(bob.roster.teamId()).toBe(ada.roster.teamId());
+    expect(bob.fed.meta('pending_invite')).not.toBeNull();
+    feed(bob, ada);
+    expect(ada.roster.view()?.invitedBy.get(bob.fed.replica)).toBe('ada');
+  });
+});
+
 describe('revocation, roles and recovery', () => {
   it('revokes with the cut taken from the cursor, and protects the last admin', () => {
     const ada = make('ada');
