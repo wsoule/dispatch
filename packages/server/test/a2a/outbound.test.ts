@@ -249,6 +249,24 @@ describe('failures', () => {
     }
   });
 
+  it('tells the app when a refresh the worker started disables the peer', async () => {
+    // Each broadcast records the peer's status as the app would read it.
+    const seen: (string | undefined)[] = [];
+    const off = f.events.subscribe((event) => {
+      if (event.type === 'a2a.changed')
+        seen.push(f.store.getPeer('fixture')?.status);
+    });
+    try {
+      peer.versionNotSupported = true;
+      peer.cardPublicUrl = 'http://127.0.0.2:9';
+      await ask();
+      await waitFor(() => f.store.getPeer('fixture')?.status === 'disabled');
+      await waitFor(() => seen.includes('disabled'));
+    } finally {
+      off();
+    }
+  });
+
   it('refreshes the card when the peer answers VERSION_NOT_SUPPORTED, and gives up on that delivery', async () => {
     const before = peer.cardFetches;
     peer.versionNotSupported = true;

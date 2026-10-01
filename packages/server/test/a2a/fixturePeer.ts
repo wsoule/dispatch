@@ -59,6 +59,8 @@ export class FixturePeer implements BridgePort {
   status = 200;
   /** Answer every A2A call (never the card) as a peer that no longer accepts A2A 1.0. */
   versionNotSupported = false;
+  /** The interface URL the card names, when not its own (an origin move). */
+  cardPublicUrl: string | null = null;
   /** How many times the card was fetched (a refresh adds one). */
   cardFetches = 0;
   /** HTTP message sends and task reads received, deduped or not. */
@@ -187,7 +189,7 @@ export class FixturePeer implements BridgePort {
     return Promise.resolve({
       name: 'Fixture peer',
       description: null,
-      publicUrl: this.url,
+      publicUrl: this.cardPublicUrl ?? this.url,
       version: 'fixture',
       skills: ['ask'],
       blockingWaitSec: 1,
