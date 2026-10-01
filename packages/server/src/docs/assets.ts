@@ -105,11 +105,11 @@ export function storeAssetFile(
     if (!st.isFile()) throw symlinkError(`docs-assets/${docId}/${name}`);
     // Content-addressed: a file whose bytes still match its name is kept; a
     // damaged one is written again below.
-    if (
-      st.nlink === 1 &&
-      hashOf(readAssetFile(root, docId, name)) === name.slice(0, 64)
-    )
+    if (st.nlink === 1) {
+      // Throws, and so falls through to the rewrite, when the bytes differ.
+      readAssetFile(root, docId, name);
       return;
+    }
   } catch (err) {
     // Missing, damaged, linked elsewhere or a symlink: replaced below, since a
     // rename swaps the directory entry and never writes through it.
@@ -159,8 +159,9 @@ export function assetFilePath(
 const hashOf = (bytes: Uint8Array): string =>
   createHash('sha256').update(bytes).digest('hex');
 
-/** A stored asset's bytes, read without following a symlink (O_NOFOLLOW) and
- *  only from a regular file no other hard link reaches. */
+/** A stored asset's bytes, read without following a symlink (O_NOFOLLOW),
+ *  only from a regular file no other hard link reaches, and only when their
+ *  sha256 is the one its name records. */
 export function readAssetFile(
   root: string,
   docId: string,
@@ -182,7 +183,13 @@ export function readAssetFile(
         'invalid',
         `docs-assets/${docId}/${name} is not a single-link regular file`
       );
-    return new Uint8Array(readFileSync(fd));
+    const bytes = new Uint8Array(readFileSync(fd));
+    if (hashOf(bytes) !== name.slice(0, 64))
+      throw new DocsError(
+        'invalid',
+        `docs-assets/${docId}/${name} does not match its name`
+      );
+    return bytes;
   } finally {
     closeSync(fd);
   }

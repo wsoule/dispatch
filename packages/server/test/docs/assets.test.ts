@@ -171,6 +171,15 @@ describe('the asset store', () => {
     expect(() => service.assetBytes(as(OWNER), 'img', name)).toThrow('link');
   });
 
+  it('refuses to serve an asset file whose bytes no longer match its name', () => {
+    const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    const { name } = service.putAsset(as(OWNER), 'img', PNG);
+    writeFileSync(join(dir, 'docs-assets', made.doc.id, name), 'tampered');
+    expect(() => service.assetBytes(as(OWNER), 'img', name)).toThrow(
+      'does not match'
+    );
+  });
+
   it('rewrites an existing asset file whose bytes no longer match its name', () => {
     const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
     const { name } = service.putAsset(as(OWNER), 'img', PNG);
