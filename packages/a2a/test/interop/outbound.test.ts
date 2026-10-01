@@ -224,11 +224,20 @@ describe('an HTTP+JSON peer (handleA2A)', () => {
       `${base}/.well-known/agent-card.json`,
       { allowHttp: false }
     );
+    // A REST JSON error, which the SDK reads into err.message.
     const noisy = (() =>
       Promise.resolve(
-        new Response(`bad\u0000\r\n\u001b[31m${'x'.repeat(5_000_000)}`, {
-          status: 500,
-        })
+        Response.json(
+          {
+            error: {
+              code: 400,
+              status: 'INVALID_ARGUMENT',
+              message: `bad\u0000\r\n\u001b[31m${'x'.repeat(5000)}`,
+              details: [],
+            },
+          },
+          { status: 400 }
+        )
       )) as unknown as typeof fetch;
     const err = await new PeerClient({
       iface: { url: `${base}/a2a/v1`, binding: 'HTTP+JSON' },
@@ -238,9 +247,12 @@ describe('an HTTP+JSON peer (handleA2A)', () => {
     })
       .getTask('m-root')
       .catch((e: unknown) => e);
-    expect(err).toMatchObject({ status: 500 });
+    expect(err).toMatchObject({ status: 400 });
     const message = (err as Error).message;
-    expect(message.length).toBeLessThanOrEqual(320);
+    // The peer's text did reach the message, cut and cleaned.
+    expect(message).toContain('bad');
+    expect(message).toContain('xxxx');
+    expect(message.length).toBeLessThanOrEqual(300);
     const codes = Array.from({ length: message.length }, (_, i) =>
       message.charCodeAt(i)
     );

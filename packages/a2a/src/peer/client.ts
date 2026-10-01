@@ -118,17 +118,15 @@ export class PeerClient {
       return await fn(await this.sdk(box));
     } catch (err) {
       if (err instanceof PeerHttpError) throw err;
-      const message = shortMessage(
-        err instanceof Error ? err.message : String(err)
-      );
-      if (box.network) throw new PeerHttpError(null, message);
+      const raw = err instanceof Error ? err.message : String(err);
+      if (box.network) throw new PeerHttpError(null, shortMessage(raw));
       const status =
         box.status !== null && box.status >= 400 ? box.status : 400;
       // The one A2A reason the worker acts on: a peer that no longer speaks 1.0 gets its card refreshed.
       const reason = versionNotSupported(err) ? 'VERSION_NOT_SUPPORTED' : null;
       throw new PeerHttpError(
         status,
-        `HTTP ${status}: ${message}`,
+        shortMessage(`HTTP ${status}: ${raw}`),
         box.retryAfterSec,
         reason
       );
