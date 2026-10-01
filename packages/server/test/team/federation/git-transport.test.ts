@@ -305,7 +305,7 @@ describe('the writer and the republish, against what the branch holds', () => {
         .readOwn()
         .filter((e) => e.sig !== 'junk')
         .map((e) => e.seq)
-        .sort()
+        .sort((x, y) => x - y)
     ).toEqual([1, 2, 3]);
   });
 
@@ -328,7 +328,7 @@ describe('the writer and the republish, against what the branch holds', () => {
           .split('\n')
       )
       .map((line) => (JSON.parse(line) as { seq: number }).seq);
-    expect(own.sort()).toEqual([1, 2]);
+    expect(own.sort((x, y) => x - y)).toEqual([1, 2]);
   });
 });
 
