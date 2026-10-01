@@ -169,6 +169,10 @@ function ListenerGroup({
     message: string;
   } | null>(null);
   const [pending, setPending] = useState(false);
+  const [standalonePending, setStandalonePending] = useState(false);
+  const [standaloneProblem, setStandaloneProblem] = useState<string | null>(
+    null
+  );
 
   const group = (children: ReactNode) => (
     <SettingsGroup
@@ -237,6 +241,27 @@ function ListenerGroup({
       });
     } finally {
       setPending(false);
+    }
+  }
+
+  // Applies at once, apart from Save: the switch the port routes check.
+  async function setStandalone(enabled: boolean) {
+    if (client === null || standalonePending) return;
+    setStandalonePending(true);
+    setStandaloneProblem(null);
+    try {
+      const { standalone } = await client.setA2AStandalone(enabled);
+      queryClient.setQueryData(a2aQueryKey(client.baseUrl, 'listener'), {
+        ...current,
+        settings: { ...current.settings, standalone },
+      });
+      if (draft !== null) setDraft({ ...draft, standalone });
+    } catch (err) {
+      setStandaloneProblem(
+        isInsufficientTier(err) ? OPERATOR_HINT : errorText(err)
+      );
+    } finally {
+      setStandalonePending(false);
     }
   }
 
@@ -401,6 +426,21 @@ function ListenerGroup({
               : null
           }
         />
+      </SettingsRow>
+      <SettingsRow
+        title="Standalone hosts"
+        htmlFor="a2a-standalone"
+        subtitle="Lets hosts added with dispatch a2a hosts add serve this project from another machine. Applies at once."
+        control={
+          <SettingsSwitch
+            id="a2a-standalone"
+            checked={current.settings.standalone}
+            disabled={locked || standalonePending}
+            onCheckedChange={(enabled) => void setStandalone(enabled)}
+          />
+        }
+      >
+        <FieldProblem message={standaloneProblem} />
       </SettingsRow>
     </>
   );
@@ -1015,6 +1055,20 @@ function PeersGroup({
                   />
                   <Button type="submit" size="sm" disabled={busy !== null}>
                     Enable a2a:{row.alias}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Enable a2a:${row.alias} with the same credential`}
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void act(row.alias, (api) =>
+                        api.setA2APeerEnabled(row.alias, true, undefined)
+                      )
+                    }
+                  >
+                    Same credential
                   </Button>
                 </form>
               )}
