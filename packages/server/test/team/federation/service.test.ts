@@ -141,6 +141,74 @@ describe('FederationService', () => {
     expect(auditKinds(ada)).toContain('bad-signature');
   });
 
+  // A verification problem clears once the log reads again, and a replica
+  // that keeps failing writes one audit row per window, not one per op.
+  it('clears a verification problem when the cursor moves, and rate-limits its audit rows', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const forgeNext = async (name: string) => {
+      const id = bob.store.create({ title: name }).meta.id;
+      await bob.service.syncNow();
+      const seq = bob.fed.head()?.seq ?? 0;
+      const log = remote.logs.get(bob.fed.replica) ?? [];
+      const honest = log.find((e) => e.seq === seq) as FederatedOp;
+      remote.tamper(
+        bob.fed.replica,
+        seq,
+        (e) =>
+          ({
+            ...e,
+            body: { task: id, kind: 'put', fields: { title: 'x' } },
+          }) as typeof e
+      );
+      await ada.service.syncNow();
+      return { id, honest };
+    };
+    const verifyProblem = () =>
+      ada.fed.problems().some((p) => p.message.includes('fails verification'));
+    const first = await forgeNext('one');
+    expect(verifyProblem()).toBe(true);
+    // The owner's republish puts the honest op back on the branch.
+    remote.logs.get(bob.fed.replica)?.push(first.honest);
+    await ada.service.syncNow();
+    expect(title(ada, first.id)).toBe('one');
+    expect(verifyProblem()).toBe(false);
+    await forgeNext('two');
+    expect(verifyProblem()).toBe(true);
+    expect(auditKinds(ada).filter((k) => k === 'bad-signature')).toHaveLength(
+      1
+    );
+  });
+
+  // fed_seen_ops keeps a window of seqs behind each head, plus a live cut's.
+  it('prunes seen-op hashes to a window behind the head', async () => {
+    const remote = new MemoryRemote();
+    const v1 = new MemoryV1();
+    const ada = serviceReplica('ada', remote, v1, { seenOpsKept: 2 });
+    const bob = serviceReplica('bob', remote, v1);
+    open.push(ada, bob);
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    for (const n of [1, 2, 3, 4, 5]) bob.store.create({ title: `t${n}` });
+    await settle(bob, ada);
+    const head = ada.fed.cursor(bob.fed.replica).head?.seq ?? 0;
+    const seqs = ada.fed.db
+      .query<{ seq: number }, [string]>(
+        'SELECT seq FROM fed_seen_ops WHERE replica = ? ORDER BY seq'
+      )
+      .all(bob.fed.replica)
+      .map((r) => r.seq);
+    expect(seqs).toEqual([head - 2, head - 1, head]);
+  });
+
   // FW-R23: a reader follows the prev chain, so a junk line with a high seq
   // and a duplicate of a real op neither halt a log nor hide later ops.
   it('follows the chain past a junk high seq and a duplicate', async () => {

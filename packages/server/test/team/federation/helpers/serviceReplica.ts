@@ -83,7 +83,11 @@ export function serviceReplica(
   handle: string,
   remote: MemoryRemote,
   v1: MemoryV1,
-  opts: { licenseKey?: string; licensePublicKey?: string | null } = {}
+  opts: {
+    licenseKey?: string;
+    licensePublicKey?: string | null;
+    seenOpsKept?: number;
+  } = {}
 ): ServiceReplica {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), `fed-svc-${handle}-`)));
   const clock = { now: new Date('2026-09-26T10:00:00.000Z') };
@@ -152,6 +156,9 @@ export function serviceReplica(
     // Every pass in these tests is asked for; a debounced one never fires.
     debounceMs: 60 * 60 * 1000,
     now,
+    ...(opts.seenOpsKept === undefined
+      ? {}
+      : { seenOpsKept: opts.seenOpsKept }),
   });
   return {
     dir,

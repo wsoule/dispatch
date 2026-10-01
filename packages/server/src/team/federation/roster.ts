@@ -60,6 +60,8 @@ export interface RosterDeps {
 }
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// A retried invite for the same handle within this window gets the same code.
+const INVITE_RETRY_MS = 2 * 60 * 1000;
 const SEED_BYTES = 32;
 const RECOVERY_GROUPS = 13;
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -95,6 +97,11 @@ export class RosterService {
   private cached: RosterView | null | undefined;
   /** Problem subjects the last fold recorded, cleared when they go away. */
   private recorded = new Set<string>();
+  /** Invites issued here lately, by handle, for a retried request. */
+  private recentInvites = new Map<
+    string,
+    { code: string; expires: string; at: number }
+  >();
 
   constructor(private readonly deps: RosterDeps) {}
 
@@ -215,11 +222,13 @@ export class RosterService {
         'forbidden',
         'a member may invite only for their own handle'
       );
+    const at = this.deps.now().getTime();
+    const recent = this.recentInvites.get(handle);
+    if (recent !== undefined && at - recent.at < INVITE_RETRY_MS)
+      return { code: recent.code, expires: recent.expires };
     const seed = randomBytes(SEED_BYTES);
     const pub = ed25519FromSeed(seed).signPub;
-    const expires = new Date(
-      this.deps.now().getTime() + INVITE_TTL_MS
-    ).toISOString();
+    const expires = new Date(at + INVITE_TTL_MS).toISOString();
     this.publish({
       rv: 1,
       action: 'invite',
@@ -233,6 +242,7 @@ export class RosterService {
       seed,
       relay: this.deps.relayUrl?.() ?? null,
     });
+    this.recentInvites.set(handle, { code, expires, at });
     return { code, expires };
   }
 

@@ -186,6 +186,18 @@ describe('joining and admission', () => {
       expect.objectContaining({ code: 'conflict' })
     );
   });
+
+  // A route that answered pending may be retried: the same handle's invite
+  // within a short window is the same invite, not a second op.
+  it('answers a retried invite for the same handle with the same code', () => {
+    const ada = make('ada');
+    ada.roster.found('acme');
+    const before = ada.fed.head()?.seq ?? 0;
+    const first = ada.roster.invite('bob');
+    expect(ada.roster.invite('bob')).toEqual(first);
+    expect(ada.fed.head()?.seq).toBe(before + 1);
+    expect(ada.roster.invite('cy').code).not.toBe(first.code);
+  });
 });
 
 describe('an invite binds which founding a joiner follows (FW-R22 I3)', () => {

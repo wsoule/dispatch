@@ -10,6 +10,7 @@ import {
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
 import type { FedStore } from './store.js';
+import { OpTooLargeError } from './store.js';
 import { assembleTeamKeys } from './teamKeys.js';
 
 /** What api.ts's context carries once federation is wired (index.ts). */
@@ -92,6 +93,30 @@ export function isFederationRoute(segments: readonly string[]): boolean {
 
 type Body = Record<string, unknown>;
 
+// Caps on what a route signs: a name, reason or handle, and a hosts list; an
+// invite code carries a relay URL, so it gets more room.
+const MAX_INPUT_CHARS = 256;
+const MAX_CODE_CHARS = 4096;
+const MAX_LIST_ITEMS = 64;
+
+// The first input over its cap, named, or null.
+function oversized(body: Body): string | null {
+  for (const [key, value] of Object.entries(body)) {
+    const cap = key === 'code' ? MAX_CODE_CHARS : MAX_INPUT_CHARS;
+    if (typeof value === 'string' && value.length > cap)
+      return `${key} is longer than ${cap} characters`;
+    if (Array.isArray(value)) {
+      if (value.length > MAX_LIST_ITEMS)
+        return `${key} has more than ${MAX_LIST_ITEMS} entries`;
+      if (
+        value.some((v) => typeof v === 'string' && v.length > MAX_INPUT_CHARS)
+      )
+        return `an entry in ${key} is longer than ${MAX_INPUT_CHARS} characters`;
+    }
+  }
+  return null;
+}
+
 // The /api/team federation routes (spec "Daemon routes, CLI and MCP"): reads
 // at the decide tier and roster changes at the operator tier (api.ts).
 export async function handleFederationRoute(
@@ -110,6 +135,9 @@ export async function handleFederationRoute(
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;
+  const tooBig = oversized(body);
+  if (tooBig !== null)
+    return jsonResponse({ error: tooBig, code: 'invalid' }, 400);
   try {
     const answer = await act(ctx, fedCtx, service, segments, body);
     return answer instanceof Response
@@ -121,6 +149,8 @@ export async function handleFederationRoute(
         { error: err.message, code: err.code },
         STATUS[err.code]
       );
+    if (err instanceof OpTooLargeError)
+      return jsonResponse({ error: err.message, code: 'too_large' }, 413);
     throw err;
   }
 }

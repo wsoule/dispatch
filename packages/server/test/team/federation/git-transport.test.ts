@@ -262,6 +262,37 @@ describe('segments hold storage, never order (FW-R23)', () => {
   });
 });
 
+describe('the read budget (FW-R23 hint)', () => {
+  const seqs = (entries: { seq: number }[]) =>
+    [...new Set(entries.map((e) => e.seq))].sort((x, y) => x - y);
+
+  it('reads from the segment named for cursor + 1 first, within a per-pass budget, and the rest on later passes', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(9), { ops: 3, bytes: 1024 * 1024 });
+    // A budget of one byte still reads one new segment per pass.
+    expect(seqs(a.readV2(new Map([[A, 4]]), 1))).toEqual([5, 6]);
+    expect(seqs(a.readV2(new Map([[A, 4]]), 1))).toEqual([5, 6, 7, 8, 9]);
+    // A reader from the start, with nothing cached, works forward the same way.
+    const fresh = clone('a', A);
+    expect(seqs(fresh.readV2(new Map(), 1))).toEqual([1, 2, 3]);
+    expect(seqs(fresh.readV2(new Map(), 1))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(seqs(fresh.readV2(new Map(), 1))).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9,
+    ]);
+  });
+
+  it('sees an append to a segment it already read', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(4);
+    await a.writeV2(ops.slice(0, 3));
+    expect(seqs(a.readV2(new Map()))).toEqual([1, 2, 3]);
+    await a.writeV2(ops.slice(3));
+    expect(seqs(a.readV2(new Map()))).toEqual([1, 2, 3, 4]);
+  });
+});
+
 describe('the writer and the republish, against what the branch holds', () => {
   const transport = (a: SyncRepo, own: () => FederatedOp[]) =>
     new GitFederationTransport({
@@ -288,6 +319,38 @@ describe('the writer and the republish, against what the branch holds', () => {
       'utf8'
     );
     expect(seg.trim().split('\n')).toHaveLength(5);
+  });
+
+  it('writes a fresh segment under the first name no file uses', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(5);
+    await a.writeV2(ops.slice(0, 4), { ops: 4, bytes: 1024 * 1024 });
+    const seg = (n: string) => join(dir, 'a', 'fed', A, `${n}.jsonl`);
+    writeFileSync(seg('000000000005'), 'junk\n');
+    writeFileSync(seg('000000000006'), 'junk\n');
+    await a.writeV2([ops[4]], { ops: 4, bytes: 1024 * 1024 });
+    expect(readFileSync(seg('000000000005'), 'utf8')).toBe('junk\n');
+    expect(readFileSync(seg('000000000006'), 'utf8')).toBe('junk\n');
+    expect(JSON.parse(readFileSync(seg('000000000007'), 'utf8')).seq).toBe(5);
+  });
+
+  it('reads only its own segments, and only its own lines in them (M-g)', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(2);
+    await a.writeV2([ops[0]]);
+    const other = 'bob-0000000b';
+    mkdirSync(join(dir, 'a', 'fed', other), { recursive: true });
+    writeFileSync(
+      join(dir, 'a', 'fed', other, '000000000002.jsonl'),
+      `${JSON.stringify(ops[1])}\n`
+    );
+    writeFileSync(
+      join(dir, 'a', 'fed', A, '000000000009.jsonl'),
+      `${JSON.stringify({ ...ops[1], replica: other })}\n`
+    );
+    expect(a.readOwn().map((e) => e.seq)).toEqual([1]);
   });
 
   it('republishes an op its own files hold only as junk at that seq (by hash, M-g)', async () => {

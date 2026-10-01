@@ -47,6 +47,11 @@ const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
 const FAST_PASS_MS = 10_000;
 /** fed_applied rows kept for the revocation race (F-D34). */
 const APPLIED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** Seqs behind a head whose hashes stay for fork and cut checks; older ones
+ *  go, except a live revocation's afterSeq. */
+const SEEN_OPS_KEPT = 10_000;
+// One bad-signature or halt audit row per replica in this window.
+const AUDIT_WINDOW_MS = 10 * 60 * 1000;
 
 /** What `GET /api/board-sync` reports. */
 interface SyncStatus {
@@ -140,12 +145,16 @@ export interface FederationServiceOptions {
   seatMessage: (seats: number) => string;
   debounceMs?: number;
   now?: () => Date;
+  /** Seqs behind each head whose hashes fed_seen_ops keeps (SEEN_OPS_KEPT). */
+  seenOpsKept?: number;
 }
 
 // One replica's verified entries, and how its log ended this read.
 interface Verified {
   entries: { entry: LogEntry; hash: string }[];
   halted: string | null;
+  /** A halt or stall was recorded for this log on this pass. */
+  flagged: boolean;
 }
 
 export class FederationService {
@@ -508,7 +517,7 @@ export class FederationService {
       if (rival !== null) {
         const reason = `${replica}'s log fails verification at seq ${rival}: two ops share this seq; revoke it, or have it push again`;
         this.recordHalt(replica, reason);
-        out.set(replica, { entries: [], halted: reason });
+        out.set(replica, { entries: [], halted: reason, flagged: true });
         continue;
       }
       const { chain, stalled } = chainFrom(
@@ -531,7 +540,11 @@ export class FederationService {
       }
       const halted = kept.length === r.accepted.length ? r.cursor.halted : null;
       if (halted !== null) this.recordHalt(replica, halted);
-      out.set(replica, { entries: kept, halted });
+      out.set(replica, {
+        entries: kept,
+        halted,
+        flagged: halted !== null || stalled !== null,
+      });
     }
     this.checkCuts(out);
     return out;
@@ -557,6 +570,7 @@ export class FederationService {
       const reason = `${replica}'s log fails verification at seq ${cut.afterSeq}: it shows another history than the one its revocation names; revoke it, or have it push again`;
       v.entries = v.entries.filter(({ entry }) => entry.seq < cut.afterSeq);
       v.halted = reason;
+      v.flagged = true;
       this.recordHalt(replica, reason);
     }
   }
@@ -578,7 +592,34 @@ export class FederationService {
     )
       return;
     fed.problem(subject, reason);
-    fed.audit(kind, subject, { replica, reason });
+    // A fork is always written; a replica that keeps failing writes one row a window.
+    const last = fed.db
+      .query<{ at: string }, [string, string]>(
+        'SELECT at FROM fed_audit WHERE subject = ? AND kind = ? ORDER BY at DESC LIMIT 1'
+      )
+      .get(subject, kind);
+    if (
+      kind === 'fork' ||
+      last === null ||
+      this.now().getTime() - Date.parse(last.at) >= AUDIT_WINDOW_MS
+    )
+      fed.audit(kind, subject, { replica, reason });
+  }
+
+  // Clears the replica's problem when it is a verification one; an observer's
+  // problem shares the subject and stays.
+  private clearHaltProblem(replica: string): void {
+    const subject = `replica:${replica}`;
+    const { fed } = this.opts;
+    if (
+      fed
+        .problems()
+        .some(
+          (p) =>
+            p.subject === subject && p.message.includes('fails verification')
+        )
+    )
+      fed.clearProblem(subject);
   }
 
   // The races a new fold reveals: a revocation cutting below ops applied here
@@ -654,6 +695,18 @@ export class FederationService {
         const halted = blocked.has(replica) ? null : v.halted;
         if (heads.has(replica) || halted !== null)
           fed.setCursor(replica, { head, halted });
+        // The log reads again: its verification problem is over.
+        if (heads.has(replica) && !v.flagged) this.clearHaltProblem(replica);
+        if (head !== null && heads.has(replica))
+          fed.db
+            .query(
+              'DELETE FROM fed_seen_ops WHERE replica = ? AND seq < ? AND seq != ?'
+            )
+            .run(
+              replica,
+              head.seq - (this.opts.seenOpsKept ?? SEEN_OPS_KEPT),
+              view.revoked.get(replica)?.afterSeq ?? -1
+            );
       }
       if (this.applyV1Filtered(v1Ops)) changed = true;
       fed.db

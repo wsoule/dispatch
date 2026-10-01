@@ -130,6 +130,15 @@ describe('a hostile sync branch and the filesystem', () => {
     expect(repo.readV2(new Map())).toEqual([]);
   });
 
+  // M-a: an acks.json has no regular-file check before its read, so the open
+  // itself must not block on a FIFO (O_NONBLOCK, then the fd's type).
+  it('never blocks on a FIFO named acks.json', async () => {
+    const repo = await clone();
+    mkdirSync(join(dir, 'clone', 'fed', B), { recursive: true });
+    Bun.spawnSync(['mkfifo', join(dir, 'clone', 'fed', B, 'acks.json')]);
+    expect(repo.readAcks().has(B)).toBe(false);
+  });
+
   it('never writes its v1 log through a symlink, nor reads another one', async () => {
     const repo = await clone();
     symlinkSync(outside, join(dir, 'clone', 'ops', `${A}.jsonl`));
@@ -236,6 +245,26 @@ describe('a hostile sync branch and the filesystem', () => {
     await repo.write([op]);
     await repo.write([op, { ...op, seq: 2 }]);
     expect(repo.readV1(A).map((o) => o.seq)).toEqual([1, 2]);
+  });
+
+  // B3: a line someone else put at this machine's seq does not stand in for it.
+  it('writes its own op even when the branch holds another line at that seq', async () => {
+    const repo = await clone();
+    const op: BoardOp = {
+      v: 1,
+      replica: A,
+      seq: 1,
+      hlc: `0000000001000.0000.${A}`,
+      task: 't-00000a01',
+      kind: 'put',
+    };
+    mkdirSync(join(dir, 'clone', 'ops'), { recursive: true });
+    writeFileSync(
+      join(dir, 'clone', 'ops', `${A}.jsonl`),
+      `${JSON.stringify({ ...op, task: 't-0000bad1' })}\n`
+    );
+    await repo.write([op]);
+    expect(repo.readV1(A).some((o) => o.task === 't-00000a01')).toBe(true);
   });
 });
 

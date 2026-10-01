@@ -37,6 +37,15 @@ describe('/api/team federation routes', () => {
         (await ada.asAgent('/api/team/found', { method: 'POST', body: '{}' }))
           .status
       ).toBe(403);
+      // Inputs are capped before anything is signed.
+      expect(
+        (
+          await ada.api('/api/team/found', {
+            method: 'POST',
+            body: JSON.stringify({ name: 'n'.repeat(2000) }),
+          })
+        ).status
+      ).toBe(400);
       const founded = await ada.api('/api/team/found', {
         method: 'POST',
         body: JSON.stringify({ name: 'acme' }),
