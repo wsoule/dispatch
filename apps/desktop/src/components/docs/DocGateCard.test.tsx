@@ -87,6 +87,18 @@ describe('DocGateCard', () => {
     );
   });
 
+  it('rejects a conflicting proposal with the reason typed rather than the fixed one', async () => {
+    const { onDecide } = renderCard(view({ clean: false, headN: 4 }));
+    await screen.findByText('conflicts with rev 4');
+    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
+      target: { value: 'superseded by rev 4' },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: 'Reject' }));
+    await waitFor(() =>
+      expect(onDecide).toHaveBeenCalledWith('reject', 'superseded by rev 4')
+    );
+  });
+
   it('rejects with the reason typed, when one is', async () => {
     const { onDecide } = renderCard(view({ clean: true, headN: 3 }));
     await screen.findByText('Auth spec');

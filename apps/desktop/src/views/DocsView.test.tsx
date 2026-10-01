@@ -828,3 +828,36 @@ test('offers no Publish on an unreviewed draft', async () => {
   await screen.findByLabelText('Editing auth');
   expect(screen.queryByRole('button', { name: 'Publish to repo' })).toBeNull();
 });
+
+test('a named proposal opens the doc on its marked merge', async () => {
+  const getDocProposal = mock((_rev: string) =>
+    Promise.resolve({
+      proposal: { rev: 'rev-p', author: 'run:r-1', state: 'open' },
+      title: 'Auth refactor',
+      body: '# Auth\nrun\n',
+      chunks: [],
+      mergeable: { clean: false, headN: 1, headRev: 'rev-1', headHash: 'h1' },
+      marked: '# Auth\n<<<<<<< rev-1\nbody\n=======\nrun\n>>>>>>> rev-p\n',
+    })
+  );
+  const client = {
+    listDocs: () => Promise.resolve({ docs: [summary], total: 1 }),
+    getDoc: () => Promise.resolve(read),
+    getDocProposal,
+    listDocRevisions: () => Promise.resolve({ revisions: [] }),
+  } as unknown as ApiClient;
+  const data = {
+    client,
+    port: 1,
+    messageAccess: { canDecide: true, canMessage: true, explanation: null },
+  } as unknown as DispatchProjectData;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DocsView data={data} initialDoc="doc-1" initialMerge="rev-p" />
+    </QueryClientProvider>
+  );
+  expect(
+    await screen.findByRole('region', { name: 'Conflict 1 of 1' })
+  ).toBeDefined();
+  expect(getDocProposal).toHaveBeenCalledWith('rev-p');
+});
