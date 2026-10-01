@@ -266,7 +266,8 @@ export class FederationService {
       if (!roster.founded()) {
         await this.v1Pass();
         await this.discoverFounding();
-        return;
+        // A founding pinned just now: this replica's key op goes out this pass.
+        if (!roster.founded()) return;
       }
       const now = this.now();
       if (!this.coveredHere()) {

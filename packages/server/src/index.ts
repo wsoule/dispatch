@@ -24,7 +24,7 @@ import type {
 } from '@dispatch/core';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -151,6 +151,7 @@ import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import type { Federation } from './team/federation/daemon.js';
 import { buildFederation } from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
+import type { FederationContext } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
 import type { Team } from './team/index.js';
 import { createTeam } from './team/index.js';
@@ -963,6 +964,7 @@ async function bootServer(
   // change for the other replicas; the board it writes to is the same one.
   let boardSync: FederationService | null = null;
   let federation: Federation | null = null;
+  let federationContext: FederationContext | null = null;
   const federationNow = (): Date =>
     new Date(opts.federationNow?.() ?? Date.now());
   // A key file lost with state.db kept: start over as a new replica id (F-D35).
@@ -1127,6 +1129,25 @@ async function bootServer(
           : { debounceMs: opts.federationDebounceMs }),
       });
       boardSync = federation.service;
+      const { roster, fed } = federation;
+      federationContext = {
+        roster,
+        fed,
+        handle: actorContext.member.handle,
+        device: hostname().split('.')[0] ?? 'machine',
+        now: federationNow,
+        // The origin warning names the code remote only when sync.repo is unset.
+        remote: syncConfig.repo === undefined ? remoteUrl : null,
+        label: (replica) => roster.label(replica),
+        observer: () => {
+          const watcher = [...(roster.view()?.members.values() ?? [])].find(
+            (m) => m.observer
+          );
+          if (watcher === undefined) return null;
+          const device = fed.pinned(watcher.replica)?.device ?? watcher.replica;
+          return `${watcher.handle}'s ${device}`;
+        },
+      };
       const published = syncedStore.bootstrap();
       if (published > 0) {
         console.log(
@@ -1775,6 +1796,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    federation: federationContext,
     team,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
