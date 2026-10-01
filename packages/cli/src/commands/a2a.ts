@@ -1,14 +1,19 @@
+import { startStandalone } from '@dispatch/a2a';
 import type { Command } from 'commander';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type {
   A2AApiClient,
   A2AClientSummary,
   A2AListenerStatus,
+  A2APeerSummary,
 } from '../apiClient.js';
 import { createA2AApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
+import type { ServeCommandOptions } from './a2aServe.js';
+import { resolveServe } from './a2aServe.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 
 const TOKEN_HELP = 'the daemon app token (or DISPATCH_APP_TOKEN)';
@@ -50,6 +55,32 @@ function clientNamed(clients: A2AClientSummary[], arg: string): string {
     );
   }
   return matches[0].address;
+}
+
+// Reads all of stdin; refuses a terminal, where nothing was piped in.
+function readAllStdin(): Promise<string> {
+  if (process.stdin.isTTY === true)
+    return Promise.reject(
+      new CliError(
+        '--token-stdin reads a piped credential; stdin is a terminal'
+      )
+    );
+  return Promise.resolve(readFileSync(0, 'utf8'));
+}
+
+// A peer credential only ever comes from stdin, so it never lands in shell history.
+async function tokenFromStdin(ctx: CliContext): Promise<string> {
+  const raw = await (ctx.readStdin ?? readAllStdin)();
+  const token = raw.trim();
+  if (token === '')
+    throw new CliError(
+      '--token-stdin read nothing: pipe the peer credential in, e.g. `pbpaste | dispatch a2a peers add …`'
+    );
+  return token;
+}
+
+function printPeer(ctx: CliContext, p: A2APeerSummary): void {
+  ctx.log(`a2a:${p.alias} · ${p.status} · ${p.name} · ${p.interfaceUrl}`);
 }
 
 function printToken(ctx: CliContext, token: string): void {
@@ -299,4 +330,221 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       await client.declineTask(id, o.reason);
       ctx.log(`declined ${id}`);
     });
+
+  const peers = a2a
+    .command('peers')
+    .description(
+      'Outbound A2A peers: agents this project may message as a2a:<alias>'
+    );
+
+  peers
+    .command('list', { isDefault: true })
+    .description('List peers')
+    .action(async () => {
+      const { peers: list } = await (await withAgentToken()).peers();
+      if (list.length === 0)
+        ctx.log(
+          'No A2A peers. Add one with: dispatch a2a peers add <alias> <card-url> --token-stdin'
+        );
+      for (const p of list) printPeer(ctx, p);
+    });
+
+  peers
+    .command('add <alias> <cardUrl>')
+    .description(
+      'Register a peer from its agent card (a deciding human; private URLs, --allow-http and --allow-origin need the operator)'
+    )
+    .option('--token-stdin', "read the peer's credential from stdin")
+    .option(
+      '--api-key-header <name>',
+      'send the credential in this header instead of the card’s'
+    )
+    .option('--allow-http', 'allow a plain-http card URL (operator)')
+    .option(
+      '--allow-origin',
+      'allow an interface on another origin than the card (operator)'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(
+      async (
+        alias: string,
+        cardUrl: string,
+        o: {
+          tokenStdin?: boolean;
+          apiKeyHeader?: string;
+          allowHttp?: boolean;
+          allowOrigin?: boolean;
+          token?: string;
+        }
+      ) => {
+        // The app token first, so a missing one fails before stdin is read.
+        const client = await withAppToken(o.token, 'dispatch a2a peers add');
+        const token =
+          o.tokenStdin === true ? await tokenFromStdin(ctx) : undefined;
+        const added = await client.addPeer({
+          alias,
+          cardUrl,
+          ...(token === undefined ? {} : { token }),
+          ...(o.apiKeyHeader === undefined
+            ? {}
+            : { apiKeyHeader: o.apiKeyHeader }),
+          ...(o.allowHttp === true ? { allowHttp: true } : {}),
+          ...(o.allowOrigin === true ? { allowOrigin: true } : {}),
+        });
+        printPeer(ctx, added);
+      }
+    );
+
+  for (const verb of ['refresh', 'disable', 'remove'] as const) {
+    peers
+      .command(`${verb} <alias>`)
+      .description(
+        verb === 'refresh'
+          ? "Re-fetch a peer's card (needs the daemon app token)"
+          : verb === 'disable'
+            ? 'Stop sending to a peer; its messages wait (needs the daemon app token)'
+            : 'Remove a peer and its credential (needs the daemon app token)'
+      )
+      .option('--token <token>', TOKEN_HELP)
+      .action(async (alias: string, o: { token?: string }) => {
+        const client = await withAppToken(
+          o.token,
+          `dispatch a2a peers ${verb}`
+        );
+        if (verb === 'remove') {
+          await client.removePeer(alias);
+          ctx.log(`Removed a2a:${alias} and its credential.`);
+        } else {
+          printPeer(
+            ctx,
+            verb === 'refresh'
+              ? await client.refreshPeer(alias)
+              : await client.setPeerEnabled(alias, false)
+          );
+        }
+      });
+  }
+
+  peers
+    .command('enable <alias>')
+    .description(
+      'Send to a peer again, optionally with a new credential (needs the daemon app token)'
+    )
+    .option('--token-stdin', 'replace the credential from stdin')
+    .option('--token <token>', TOKEN_HELP)
+    .action(
+      async (alias: string, o: { tokenStdin?: boolean; token?: string }) => {
+        const client = await withAppToken(o.token, 'dispatch a2a peers enable');
+        const token =
+          o.tokenStdin === true ? await tokenFromStdin(ctx) : undefined;
+        printPeer(ctx, await client.setPeerEnabled(alias, true, token));
+      }
+    );
+
+  a2a
+    .command('serve')
+    .description(
+      'Run a standalone A2A listener that reaches this daemon with a host token (a relay or hosted setup)'
+    )
+    .option(
+      '--port <n>',
+      'the listener port (required: the card needs a stable one)'
+    )
+    .option('--host <addr>', '127.0.0.1 (default) or a wildcard with --public')
+    .option(
+      '--public',
+      'allow binding every network interface (needs TLS and --public-url)'
+    )
+    .option(
+      '--public-url <url>',
+      'what the card advertises (https unless loopback)'
+    )
+    .option('--tls-cert <file>', 'serve over HTTPS (PEM)')
+    .option('--tls-key <file>', 'the private key for --tls-cert')
+    .option(
+      '--daemon <url>',
+      "the daemon to reach (default: this project's); a remote one over https"
+    )
+    .option(
+      '--host-token-file <file>',
+      'a 0600 file holding the host token (default: DISPATCH_A2A_HOST_TOKEN)'
+    )
+    .option(
+      '--trust-forwarded-for',
+      'behind a tunnel on loopback: key per-IP limits on X-Forwarded-For'
+    )
+    .action(async (o: ServeCommandOptions) => {
+      const standalone = await startStandalone(await resolveServe(ctx, o));
+      ctx.log(
+        `A2A standalone host listening at ${standalone.url} (card: ${standalone.url}/.well-known/agent-card.json). Ctrl-C to stop.`
+      );
+      await new Promise<void>((resolve) =>
+        process.once('SIGINT', () => resolve())
+      );
+      await standalone.stop();
+    });
+
+  const hosts = a2a
+    .command('hosts')
+    .description(
+      'Standalone A2A hosts allowed to reach this daemon (needs the daemon app token)'
+    );
+  hosts
+    .command('list', { isDefault: true })
+    .description('List hosts and whether standalone hosts are allowed')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a hosts list');
+      const { standalone, hosts: list } = await client.hosts();
+      ctx.log(
+        `standalone hosts: ${standalone ? 'allowed' : 'not allowed (dispatch a2a hosts allow)'}`
+      );
+      for (const h of list)
+        ctx.log(
+          `${h.id} · ${h.name} · ${h.revokedAt === null ? 'active' : `revoked ${h.revokedAt}`} · added by ${h.createdBy}`
+        );
+    });
+  hosts
+    .command('add <name>')
+    .description('Mint a host token, shown once')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (name: string, o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a hosts add');
+      const added = await client.addHost(name);
+      ctx.log(`${added.id} · ${added.name}`);
+      ctx.log(`host token: ${added.token}`);
+      ctx.log(
+        'This token is shown once. Put it in a chmod 600 file on the relay machine and pass --host-token-file, or set DISPATCH_A2A_HOST_TOKEN.'
+      );
+    });
+  hosts
+    .command('remove <id>')
+    .description('Revoke a host token at once')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (id: string, o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a hosts remove');
+      await client.removeHost(id);
+      ctx.log(`Revoked host ${id}.`);
+    });
+  for (const [verb, enabled] of [
+    ['allow', true],
+    ['deny', false],
+  ] as const) {
+    hosts
+      .command(verb)
+      .description(
+        enabled
+          ? 'Let standalone hosts reach /api/a2a/port'
+          : 'Close /api/a2a/port to every standalone host'
+      )
+      .option('--token <token>', TOKEN_HELP)
+      .action(async (o: { token?: string }) => {
+        const client = await withAppToken(
+          o.token,
+          `dispatch a2a hosts ${verb}`
+        );
+        const { standalone } = await client.setStandalone(enabled);
+        ctx.log(`standalone hosts: ${standalone ? 'allowed' : 'not allowed'}`);
+      });
+  }
 }

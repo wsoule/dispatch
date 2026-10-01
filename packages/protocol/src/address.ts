@@ -16,7 +16,11 @@ export type ParsedAddress =
   | { kind: 'agent'; handle: string; operator: string | null; address: Address }
   | { kind: 'task'; id: string; address: Address }
   | { kind: 'run'; id: string; address: Address }
-  | { kind: 'channel'; name: string; address: Address };
+  | { kind: 'channel'; name: string; address: Address }
+  | { kind: 'a2a'; alias: string; address: Address };
+
+/** An outbound A2A peer's alias: the handle grammar, at most 40 characters. */
+export const PEER_ALIAS_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 
 const RUN_ID = /^r-[0-9a-f]{6,12}$/;
 const CHANNEL_NAME = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*$/;
@@ -83,13 +87,27 @@ export function parseAddress(raw: string, field = 'to'): ParsedAddress {
       return CHANNEL_NAME.test(rest)
         ? { kind: 'channel', name: rest, address: raw }
         : bad('not a channel name');
+    case 'a2a':
+      segment(rest, 'alias');
+      return PEER_ALIAS_PATTERN.test(rest)
+        ? { kind: 'a2a', alias: rest, address: raw }
+        : bad('not an A2A peer alias (a-z, 0-9, ".", "_", "-"; at most 40)');
     default:
       return bad(`unknown kind ${JSON.stringify(scheme)}`);
   }
 }
 
-/** True for senders the ping-pong breaker counts: runs and agents, not the system. */
+/** An outbound A2A peer (`a2a:<alias>`); every message it sends is recorded by the daemon. */
+export function isPeerAddress(address: Address): boolean {
+  return address.startsWith('a2a:');
+}
+
+/** True for senders the ping-pong breaker counts: runs, agents and A2A peers, not the system. */
 export function isAgentAuthored(address: Address): boolean {
   if (address === SYSTEM_ADDRESS) return false;
-  return address.startsWith('run:') || address.startsWith('agent:');
+  return (
+    address.startsWith('run:') ||
+    address.startsWith('agent:') ||
+    isPeerAddress(address)
+  );
 }

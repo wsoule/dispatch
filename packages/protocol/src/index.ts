@@ -1,4 +1,10 @@
-export { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
+export {
+  isAgentAuthored,
+  isPeerAddress,
+  parseAddress,
+  PEER_ALIAS_PATTERN,
+  SYSTEM_ADDRESS,
+} from './address.js';
 export type { Address, ParsedAddress } from './address.js';
 export {
   ADDRESS_SCHEMES,

@@ -17,6 +17,8 @@ beforeAll(() => {
         path: `${url.pathname}${url.search}`,
         body: text === '' ? null : (JSON.parse(text) as unknown),
       });
+      if (url.pathname === '/api/a2a/peers/acme' && req.method === 'DELETE')
+        return new Response(null, { status: 204 });
       if (url.pathname === '/api/a2a/clients' && req.method === 'POST') {
         return Response.json(
           {
@@ -107,5 +109,42 @@ it('reads the listener, card, clients and tasks, and writes the listener', async
     { method: 'GET', path: '/api/a2a/tasks', body: null },
     { method: 'GET', path: '/api/a2a/tasks?client=a2a.acme', body: null },
     { method: 'POST', path: '/api/a2a/tasks/m%2F2/decline', body: {} },
+  ]);
+});
+
+it('speaks the /api/a2a/peers routes with the bodies the daemon reads', async () => {
+  seen.length = 0;
+  const client = createApiClient(`http://127.0.0.1:${server.port}`);
+  await client.a2aPeers();
+  await client.addA2APeer({
+    alias: 'acme',
+    cardUrl: 'https://agent.example.com/card',
+    token: 't',
+    allowOrigin: true,
+  });
+  await client.refreshA2APeer('acme');
+  await client.setA2APeerEnabled('acme', true, 't');
+  await client.setA2APeerEnabled('acme', false);
+  expect(await client.removeA2APeer('acme')).toBeUndefined();
+  expect(seen).toEqual([
+    { method: 'GET', path: '/api/a2a/peers', body: null },
+    {
+      method: 'POST',
+      path: '/api/a2a/peers',
+      body: {
+        alias: 'acme',
+        cardUrl: 'https://agent.example.com/card',
+        token: 't',
+        allowOrigin: true,
+      },
+    },
+    { method: 'POST', path: '/api/a2a/peers/acme/refresh', body: null },
+    {
+      method: 'POST',
+      path: '/api/a2a/peers/acme/enable',
+      body: { token: 't' },
+    },
+    { method: 'POST', path: '/api/a2a/peers/acme/disable', body: {} },
+    { method: 'DELETE', path: '/api/a2a/peers/acme', body: null },
   ]);
 });

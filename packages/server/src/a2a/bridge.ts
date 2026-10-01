@@ -1,4 +1,9 @@
-import type { A2AStore, HandoffStatuses, TaskRow } from '@dispatch/a2a';
+import type {
+  A2AStore,
+  HandoffStatuses,
+  PeerStatus,
+  TaskRow,
+} from '@dispatch/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
@@ -30,8 +35,14 @@ import {
 } from './guards.js';
 import { handleProposal } from './handoff.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
+import type { OutboundWorker } from './outbound.js';
+import { startOutbound } from './outbound.js';
+import type { PeerService } from './peers.js';
+import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
+import { PortLeases } from './portRoutes.js';
+import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
 import type { ListenerOverrides, ListenerSettings } from './settings.js';
 import {
@@ -40,6 +51,7 @@ import {
   resolveListener,
   writeListenerSettings,
 } from './settings.js';
+import { CardSigner, loadOrCreateSigningKey } from './signing.js';
 import { BridgeWatch } from './watch.js';
 
 interface ListenerStatus {
@@ -64,6 +76,17 @@ export interface A2ABridge {
   readonly port: DaemonBridgePort | null;
   readonly store: A2AStore | null;
   readonly watch: BridgeWatch | null;
+  // Outbound peers; null when a2a.db is down.
+  readonly peers: PeerService | null;
+  // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
+  readonly outbound: OutboundWorker | null;
+  // Whether standalone hosts may use /api/a2a/port/* (the settings file).
+  standalone(): boolean;
+  // Changes only that flag in the settings file; the listener is untouched.
+  setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+  // Stream slots standalone hosts hold.
+  readonly leases: PortLeases;
+  peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
   // Opens the listener from the settings file plus the one-boot overrides.
   start(): Promise<void>;
@@ -173,8 +196,15 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let watch: BridgeWatch | null = null;
   let stopWatch: (() => void) | null = null;
   let listener: A2AListener | null = null;
+  let peers: PeerService | null = null;
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
+  const leases = new PortLeases();
+  // Loaded on the first card; null (with the reason) when it cannot be.
+  let signer: CardSigner | null | undefined;
+  let signerError: string | null = null;
   if (store === null) {
-    messaging.setExternalPolicy(bridgeExternalPolicy(null));
+    messaging.setExternalPolicy(bridgeExternalPolicy(null, null));
   } else {
     const bridgeDeps: BridgeDeps = {
       rootDir,
@@ -207,15 +237,59 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       },
       prOpen: deps.prOpen,
       runResults: new RunResultsMemo(),
+      signer: () => {
+        if (signer !== undefined) return signer;
+        try {
+          signer = new CardSigner(loadOrCreateSigningKey(rootDir));
+        } catch (err) {
+          // The message names the problem, never the key.
+          signerError = err instanceof Error ? err.message : 'unknown error';
+          console.error(`dispatchd: A2A card signing is off: ${signerError}`);
+          signer = null;
+        }
+        return signer;
+      },
     };
+    // Push delivery returns at once and runs on its own chains, so a slow
+    // webhook never delays the watch, its streams or the broadcast.
+    const push = new PushWorker({
+      store,
+      now: () => new Date(),
+      clientActive: (client) =>
+        messaging.store.getAgent(client)?.status === 'approved',
+    });
     const hub = new BridgeWatch({
       ...bridgeDeps,
       events: deps.events,
-      onChanged: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      onChanged: (row, facts) => {
+        deps.events.broadcast({ type: 'a2a.changed' });
+        try {
+          push.onChanged(row, facts);
+        } catch (err) {
+          console.error(
+            `dispatchd: A2A push for ${row.id} failed: ${err instanceof Error ? err.name : 'error'}`
+          );
+        }
+      },
     });
     watch = hub;
     stopWatch = hub.start();
-    messaging.setExternalPolicy(bridgeExternalPolicy(bridgeDeps));
+    const peerService = createPeerService(bridgeDeps);
+    peers = peerService;
+    messaging.setExternalPolicy(
+      bridgeExternalPolicy(bridgeDeps, peerService.notices)
+    );
+    // The 24 h card refresh, checked hourly.
+    refreshTimer = setInterval(() => {
+      void refreshDuePeers(peerService.deps, peerService.notices).then(
+        (n) => {
+          if (n > 0) deps.events.broadcast({ type: 'a2a.changed' });
+        },
+        (err: unknown) =>
+          console.error('dispatchd: A2A peer refresh failed', err)
+      );
+    }, 3_600_000);
+    refreshTimer.unref();
     messaging.gates.register('task-proposal', (question, answer) =>
       handleProposal(bridgeDeps, hub, question, answer)
     );
@@ -231,6 +305,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       reconcileA2A(bridgeDeps, hub);
     } catch (err) {
       console.error('dispatchd: A2A boot reconciliation failed', err);
+    }
+    // After reconciliation, before any listener opens: relays what boot found held.
+    try {
+      outbound = startOutbound(peerService);
+    } catch (err) {
+      console.error('dispatchd: the A2A outbound worker did not start', err);
     }
   }
   try {
@@ -296,7 +376,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       listening: url() !== null,
       url: url(),
       error: dbError ?? settingsError ?? openError,
-      warnings: a2aConfig(rootDir).warnings,
+      warnings: [
+        ...a2aConfig(rootDir).warnings,
+        ...(signerError === null
+          ? []
+          : [`card signing is off: ${signerError}`]),
+      ],
       legacyClients,
       settings,
       teamTls: deps.teamTls ?? null,
@@ -313,6 +398,29 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     },
     get watch() {
       return watch;
+    },
+    get peers() {
+      return peers;
+    },
+    get outbound() {
+      return outbound?.worker ?? null;
+    },
+    leases,
+    standalone: () => readListenerSettings(rootDir).settings.standalone,
+    setStandalone: (enabled) =>
+      serial(() => {
+        const file = readListenerSettings(rootDir).settings;
+        writeListenerSettings(rootDir, { ...file, standalone: enabled });
+        settings = { ...settings, standalone: enabled };
+        return Promise.resolve({ standalone: enabled });
+      }),
+    peerStatus(alias) {
+      try {
+        return store?.getPeer(alias)?.status ?? null;
+      } catch (err) {
+        console.error(`dispatchd: could not read A2A peer ${alias}`, err);
+        return null;
+      }
     },
     status,
     start: () =>
@@ -361,6 +469,15 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     // Never throws: the revocation has already happened, and one task that
     // cannot close is logged without stopping the others.
     clientRevoked(address) {
+      // First, so closing its asks below pushes nothing to its webhooks.
+      try {
+        store?.deletePushConfigsOf(address);
+      } catch (err) {
+        console.error(
+          `dispatchd: could not delete ${address}'s push configs`,
+          err
+        );
+      }
       let rows: TaskRow[] = [];
       try {
         rows = store?.tasksOf(address) ?? [];
@@ -387,8 +504,13 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
+        outbound?.stop();
+        outbound = null;
+        leases.closeAll();
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
+        if (refreshTimer !== null) clearInterval(refreshTimer);
+        refreshTimer = null;
         stopWatch?.();
         stopWatch = null;
         await listener?.close();

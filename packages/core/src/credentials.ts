@@ -11,10 +11,24 @@ import { resolve } from 'node:path';
 
 import { normalizeProjectPath } from './projectPath.js';
 
+/** How a daemon authenticates to one outbound A2A peer (the peer card's scheme). */
+export interface PeerCredential {
+  scheme: 'bearer' | 'api-key';
+  token: string;
+  /** The API key's header name; bearer tokens go in Authorization. */
+  header?: string;
+}
+
 /** One project's secrets, one key per integration. */
 export interface ProjectCredentials {
   linear?: { apiKey: string };
   typesafe?: { apiKey: string };
+  /** Outbound A2A peers' credentials by alias, and the key that signs this
+   *  project's agent card; never in config.yml or a2a.db. */
+  a2a?: {
+    peers?: Record<string, PeerCredential>;
+    signingKey?: Record<string, string>;
+  };
 }
 
 /** User-level secrets. Never written to a project's `.dispatch/`. */
@@ -27,9 +41,9 @@ export interface CredentialsFile {
   projects?: Record<string, ProjectCredentials>;
 }
 
-// The integration name space, e.g. `'linear'` — not `keyof CredentialsFile`,
-// which would also admit `'projects'`.
-export type CredentialName = keyof ProjectCredentials;
+// The { apiKey } integrations, e.g. `'linear'`: not `'projects'`, and not
+// `'a2a'`, which has its own writers below.
+export type CredentialName = Exclude<keyof ProjectCredentials, 'a2a'>;
 
 // Same `DISPATCH_HOME`-or-homedir rule as registry.ts and daemonfile.ts; an
 // empty string counts as unset.
@@ -42,24 +56,39 @@ export function credentialsPath(): string {
   return resolve(credentialsHome(), '.dispatch', 'credentials.json');
 }
 
+/** The credentials file exists but cannot be read as JSON; nothing may write
+ *  over it, since it holds every project's secrets. Never quotes the file. */
+export class CredentialsUnreadableError extends Error {
+  constructor() {
+    super(
+      `${credentialsPath()} cannot be parsed; fix or move it before Dispatch stores another secret`
+    );
+    this.name = 'CredentialsUnreadableError';
+  }
+}
+
+// What the file holds: absent, a JSON object, or something unreadable.
+function loadCredentials():
+  | { kind: 'absent' }
+  | { kind: 'ok'; file: CredentialsFile }
+  | { kind: 'unreadable' } {
+  const path = credentialsPath();
+  if (!existsSync(path)) return { kind: 'absent' };
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+      return { kind: 'unreadable' };
+    return { kind: 'ok', file: parsed as CredentialsFile };
+  } catch {
+    return { kind: 'unreadable' };
+  }
+}
+
 // A missing or corrupt file reads as "no credentials stored" rather than throwing,
 // so a damaged file degrades to "not connected" instead of breaking every read.
 export function readCredentials(): CredentialsFile {
-  const path = credentialsPath();
-  if (!existsSync(path)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      return {};
-    }
-    return parsed as CredentialsFile;
-  } catch {
-    return {};
-  }
+  const loaded = loadCredentials();
+  return loaded.kind === 'ok' ? loaded.file : {};
 }
 
 // Writes to a sibling temp file and renames it onto the live path, so a crash or
@@ -69,6 +98,10 @@ export function readCredentials(): CredentialsFile {
 // is set on both the create and the overwrite path — writeFileSync's `mode` is
 // ignored when the file already exists, so the chmod is explicit.
 function writeCredentials(file: CredentialsFile): void {
+  // Every writer comes through here: a file that cannot be parsed is never
+  // replaced, or every project's secrets would be lost to one write.
+  if (loadCredentials().kind === 'unreadable')
+    throw new CredentialsUnreadableError();
   const path = credentialsPath();
   mkdirSync(resolve(path, '..'), { recursive: true });
   const tmpPath = `${path}.${process.pid}.tmp`;
@@ -125,14 +158,131 @@ export function clearProjectCredential(
 
   const remaining: ProjectCredentials = { ...entry };
   delete remaining[name];
+  writeProjectEntry(file, key, remaining);
+}
 
+// Writes one project's entry, dropping it (and an emptied `projects`) when it
+// holds nothing, so the file never accumulates empty objects.
+function writeProjectEntry(
+  file: CredentialsFile,
+  key: string,
+  entry: ProjectCredentials
+): void {
   const projects = { ...file.projects };
-  if (Object.keys(remaining).length === 0) delete projects[key];
-  else projects[key] = remaining;
-
+  if (Object.keys(entry).length === 0) delete projects[key];
+  else projects[key] = entry;
   const next: CredentialsFile = { ...file, projects };
   if (Object.keys(projects).length === 0) delete next.projects;
   writeCredentials(next);
+}
+
+// The stored peers map as an own-keys record, or empty when the slot is malformed.
+function peersOf(
+  entry: ProjectCredentials | undefined
+): Record<string, unknown> {
+  const peers: unknown = entry?.a2a?.peers;
+  return typeof peers === 'object' && peers !== null && !Array.isArray(peers)
+    ? (peers as Record<string, unknown>)
+    : {};
+}
+
+function isPeerCredential(value: unknown): value is PeerCredential {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    (v.scheme === 'bearer' || v.scheme === 'api-key') &&
+    typeof v.token === 'string' &&
+    v.token !== '' &&
+    (v.header === undefined || typeof v.header === 'string')
+  );
+}
+
+/** One peer's stored credential, or null when it is absent or malformed. */
+export function readPeerCredential(
+  rootDir: string,
+  alias: string
+): PeerCredential | null {
+  const peers = peersOf(
+    readCredentials().projects?.[normalizeProjectPath(rootDir)]
+  );
+  if (!Object.hasOwn(peers, alias)) return null;
+  const raw = peers[alias];
+  if (!isPeerCredential(raw)) return null;
+  return {
+    scheme: raw.scheme,
+    token: raw.token,
+    ...(raw.header === undefined ? {} : { header: raw.header }),
+  };
+}
+
+export function writePeerCredential(
+  rootDir: string,
+  alias: string,
+  credential: PeerCredential
+): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const entry = file.projects?.[key] ?? {};
+  const peers = { ...peersOf(entry), [alias]: credential } as Record<
+    string,
+    PeerCredential
+  >;
+  writeProjectEntry(file, key, { ...entry, a2a: { ...entry.a2a, peers } });
+}
+
+export function clearPeerCredential(rootDir: string, alias: string): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const entry = file.projects?.[key];
+  const peers = { ...peersOf(entry) } as Record<string, PeerCredential>;
+  if (entry === undefined || !Object.hasOwn(peers, alias)) return;
+  delete peers[alias];
+  const a2a: NonNullable<ProjectCredentials['a2a']> = { ...entry.a2a, peers };
+  if (Object.keys(peers).length === 0) delete a2a.peers;
+  const next: ProjectCredentials = { ...entry, a2a };
+  if (Object.keys(a2a).length === 0) delete next.a2a;
+  writeProjectEntry(file, key, next);
+}
+
+export type SigningKeyRead =
+  | { status: 'absent' }
+  | { status: 'ok'; jwk: Record<string, string> }
+  // The slot holds something that is not a JWK of strings.
+  | { status: 'malformed' }
+  // The credentials file itself cannot be parsed.
+  | { status: 'unreadable' };
+
+/** The project's card-signing key. Only 'absent' means a new key may be made. */
+export function readA2ASigningKey(rootDir: string): SigningKeyRead {
+  const loaded = loadCredentials();
+  if (loaded.kind === 'unreadable') return { status: 'unreadable' };
+  if (loaded.kind === 'absent') return { status: 'absent' };
+  const raw: unknown =
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.signingKey;
+  if (raw === undefined) return { status: 'absent' };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return { status: 'malformed' };
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0 || entries.some(([, v]) => typeof v !== 'string'))
+    return { status: 'malformed' };
+  return {
+    status: 'ok',
+    jwk: Object.fromEntries(entries) as Record<string, string>,
+  };
+}
+
+/** Stores the project's card-signing key in the 0600 credentials file. */
+export function writeA2ASigningKey(
+  rootDir: string,
+  jwk: Record<string, string>
+): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const entry = file.projects?.[key] ?? {};
+  writeProjectEntry(file, key, {
+    ...entry,
+    a2a: { ...entry.a2a, signingKey: { ...jwk } },
+  });
 }
 
 /** Where a resolved key came from — in precedence order — or `null` when there is none. */

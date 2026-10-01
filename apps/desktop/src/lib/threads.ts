@@ -43,6 +43,8 @@ export interface KnownAddresses {
   agents: string[];
   /** Human addresses; a bare handle gets the `human:` scheme. */
   humans: string[];
+  /** Active A2A peers as `a2a:<alias>`; a bare alias gets the scheme. */
+  peers?: string[];
 }
 
 export interface AddressCompletion {
@@ -57,6 +59,7 @@ const UNREAD_STATES: ReadonlySet<DeliveryState> = new Set([
 ]);
 const CHANNEL = 'channel:';
 const TASK = 'task:';
+const PEER = 'a2a:';
 const NO_TASKS: ReadonlySet<string> = new Set();
 const NO_ADDRESSES: ReadonlySet<string> = new Set();
 
@@ -214,7 +217,7 @@ export function appendToThread(
   return [...current.slice(0, at), incoming, ...current.slice(at)];
 }
 
-type CompletionKind = 'task' | 'channel' | 'agent' | 'human';
+type CompletionKind = 'task' | 'channel' | 'agent' | 'human' | 'peer';
 
 interface Candidate extends AddressCompletion {
   /** Lowercased text a query can match: a task's id and title, else the name. */
@@ -228,12 +231,14 @@ const SCOPES: readonly [string, CompletionKind][] = [
   [TASK, 'task'],
   ['agent:', 'agent'],
   ['human:', 'human'],
+  [PEER, 'peer'],
 ];
 const KIND_ORDER: readonly CompletionKind[] = [
   'task',
   'channel',
   'agent',
   'human',
+  'peer',
 ];
 const BARE_LIMIT = 5;
 const SCOPED_LIMIT = 20;
@@ -259,6 +264,15 @@ function candidates(kind: CompletionKind, known: KnownAddresses): Candidate[] {
         const name = address.slice(CHANNEL.length);
         return { address, label: `#${name}`, keys: [name.toLowerCase()] };
       });
+    case 'peer':
+      return (known.peers ?? []).map((raw) => {
+        const address = withScheme(PEER, raw);
+        return {
+          address,
+          label: address,
+          keys: [address.slice(PEER.length).toLowerCase()],
+        };
+      });
     case 'agent':
     case 'human':
       return (kind === 'agent' ? known.agents : known.humans).map((raw) => {
@@ -279,7 +293,7 @@ function matchRank(keys: string[], query: string): number | null {
 
 /**
  * Suggests addresses for what follows an `@`. `#`, `channel:`, `task:`,
- * `agent:` and `human:` narrow to that kind (twenty at most); anything else
+ * `agent:`, `human:` and `a2a:` narrow to that kind (twenty at most); anything else
  * searches all kinds, five at most of each. An id or name typed in full leads
  * every kind, then start-of-id or name matches.
  */
@@ -301,7 +315,9 @@ export function completeAddress(
     const ranked: { candidate: Candidate; rank: number }[] = [];
     for (const candidate of candidates(kind, known)) {
       const rank = matchRank(candidate.keys, query);
-      if (rank !== null) ranked.push({ candidate, rank });
+      // A peer alias completes from its start only.
+      if (rank !== null && !(kind === 'peer' && rank > 0))
+        ranked.push({ candidate, rank });
     }
     // Array sort is stable, so equal ranks keep the order `known` gave.
     ranked.sort((a, b) => a.rank - b.rank);

@@ -1,4 +1,9 @@
-import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
+import {
+  isAgentAuthored,
+  isPeerAddress,
+  parseAddress,
+  SYSTEM_ADDRESS,
+} from './address.js';
 import type { Address } from './address.js';
 import { gateTypeOf, hasGateData, isDecidingAuthor } from './constants.js';
 import {
@@ -295,6 +300,7 @@ export class DeliveryEngine {
         return { ...base, runId: null, state: 'notified' };
       case 'agent':
       case 'channel':
+      case 'a2a':
         return { ...base, runId: null, state: 'held' };
       case 'task': {
         const run = this.host.liveRunFor(parsed.id);
@@ -953,6 +959,27 @@ export class DeliveryEngine {
       )
     )
       return this.store.getDelivery(d.id) ?? d;
+    this.emit({ type: 'delivery', delivery: next });
+    return next;
+  }
+
+  // The outbound worker handed a held peer delivery to the peer: held → pushed,
+  // once. Null when it is not a held peer delivery (already relayed, or gone).
+  markRelayed(deliveryId: string): Delivery | null {
+    const d = this.store.getDelivery(deliveryId);
+    if (d === null || d.state !== 'held' || !isPeerAddress(d.recipient))
+      return null;
+    const next: Delivery = { ...d, state: 'pushed', updatedAt: this.nowIso() };
+    if (
+      !this.store.setDelivery(
+        next.id,
+        next.state,
+        next.runId,
+        next.updatedAt,
+        'held'
+      )
+    )
+      return null;
     this.emit({ type: 'delivery', delivery: next });
     return next;
   }

@@ -49,6 +49,10 @@ behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced
 - **Responses are `application/json`**, not `application/a2a+json` (§11.1). The
   TCK's `HTTP_JSON-SVC-001` requires `application/json`. Requests may send
   either.
+- **Push configs are read back without their secrets.** Create, get and list
+  return a config's `id`, `taskId`, `url` and `authentication.scheme`, never its
+  `token` or `authentication.credentials`, so a leaked client token cannot read
+  back a webhook's credentials. The TCK's push tests compare no returned fields.
 - **No SHOULD requirement is marked expected-to-fail.** Any that is gets its
   reason here.
 
@@ -66,6 +70,53 @@ behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced
 - A stream coalesces a task's changes over one second. An `artifactUpdate`
   always carries the whole artifact (`append: false`, `lastChunk: true`), so
   replace your copy of it rather than appending.
+
+## Signed card
+
+dispatchd signs its card with an ES256 key kept per project in the 0600
+`~/.dispatch/credentials.json`, and serves the public key at
+`/.well-known/jwks.json`; the signature's `kid` is the key's RFC 7638
+thumbprint. A key is made only when none is stored. A stored key that is
+malformed or does not work, or a credentials file that cannot be parsed, turns
+signing off with a warning in the listener status, and nothing is written.
+Losing the credentials file makes a new key, so the `kid` changes and clients
+that pinned the old key must fetch the JWKS again.
+
+## Standalone host
+
+Use `dispatch a2a serve` when the public A2A listener should run on another
+machine than the owner's (a relay or hosted box), reaching the owner's daemon
+over its team-local TLS listener.
+
+On the owner's machine (the operator):
+
+```bash
+dispatch a2a hosts allow          # open /api/a2a/port to standalone hosts
+dispatch a2a hosts add relay      # mint a host token, shown once
+```
+
+Put the token in a file only its owner can read (`chmod 600`) on the relay
+machine, then:
+
+```bash
+dispatch a2a serve --host 0.0.0.0 --public --port 443 \
+  --public-url https://agent.example.com \
+  --tls-cert cert.pem --tls-key key.pem \
+  --daemon https://<daemon>:<tls port> --host-token-file ./host-token
+```
+
+- The listener binds `127.0.0.1` unless `--public` is given; every network
+  interface also needs TLS and `--public-url`.
+- A remote daemon is reached over https only. A self-signed team-local
+  certificate is trusted through `NODE_EXTRA_CA_CERTS=<cert.pem>`, read when the
+  process starts.
+- A host token opens only `/api/a2a/port/*`, and only while hosts are allowed;
+  `dispatch a2a hosts remove <id>` revokes one at once. The app, agent, run and
+  teammate tokens never open those routes, and an A2A client's token never works
+  on `/api` at all.
+- The card is built for the host's configured public URL, never from a request's
+  `Host` or `X-Forwarded-*` headers.
+- A standalone host offers no push configs; push is the daemon's own.
 
 ## Running the TCK
 

@@ -19,6 +19,22 @@ const STATUS = {
   legacyClients: [],
 };
 
+const PEER = {
+  alias: 'acme',
+  cardUrl: 'https://agent.example.com/.well-known/agent-card.json',
+  interfaceUrl: 'https://agent.example.com/a2a/v1',
+  binding: 'HTTP+JSON',
+  status: 'active',
+  name: 'Acme Planner',
+  description: 'Plans.',
+  skills: [],
+  streaming: true,
+  addedBy: 'human:wyat',
+  addedTier: 'decide',
+  fetchedAt: '2026-09-25T00:00:00Z',
+  createdAt: '2026-09-25T00:00:00Z',
+};
+
 let root: string;
 let home: string;
 // What the fake daemon answers a listener write with.
@@ -113,6 +129,41 @@ function startFakeDaemon() {
           ],
         });
       }
+      if (url.pathname === '/api/a2a/peers' && req.method === 'GET')
+        return Response.json({ peers: [PEER] });
+      if (url.pathname === '/api/a2a/peers' && req.method === 'POST')
+        return Response.json(PEER, { status: 201 });
+      if (url.pathname === '/api/a2a/peers/acme' && req.method === 'DELETE')
+        return new Response(null, { status: 204 });
+      if (url.pathname.startsWith('/api/a2a/peers/acme/'))
+        return Response.json({
+          ...PEER,
+          status: url.pathname.endsWith('/disable') ? 'disabled' : 'active',
+        });
+      if (url.pathname === '/api/a2a/hosts' && req.method === 'GET')
+        return Response.json({
+          standalone: false,
+          hosts: [
+            {
+              id: 'h-1',
+              name: 'relay',
+              createdBy: 'human:wyat',
+              createdAt: '2026-09-25T00:00:00Z',
+              revokedAt: null,
+            },
+          ],
+        });
+      if (url.pathname === '/api/a2a/hosts' && req.method === 'POST')
+        return Response.json(
+          { id: 'h-1', name: 'relay', token: 'h'.repeat(64) },
+          { status: 201 }
+        );
+      if (url.pathname === '/api/a2a/hosts/h-1' && req.method === 'DELETE')
+        return new Response(null, { status: 204 });
+      if (url.pathname === '/api/a2a/listener/standalone')
+        return Response.json({
+          standalone: (body as { enabled?: boolean } | null)?.enabled === true,
+        });
       if (url.pathname === '/api/a2a/tasks/m-1/decline') {
         return Response.json({ id: 'm-1' });
       }
@@ -390,5 +441,158 @@ describe('dispatch serve', () => {
     expect(() => serveArgs('/r', { a2aTlsCert: 'c.pem' })).toThrow(
       /--a2a-tls-cert and --a2a-tls-key go together/
     );
+  });
+});
+
+describe('dispatch a2a peers', () => {
+  it('adds a peer with the credential read from stdin, never from argv', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    ctx.readStdin = () => Promise.resolve('peer-secret\n');
+    await run(
+      'a2a',
+      'peers',
+      'add',
+      'acme',
+      'https://agent.example.com/.well-known/agent-card.json',
+      '--token-stdin',
+      '--api-key-header',
+      'X-API-Key'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/peers',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: {
+        alias: 'acme',
+        cardUrl: 'https://agent.example.com/.well-known/agent-card.json',
+        token: 'peer-secret',
+        apiKeyHeader: 'X-API-Key',
+      },
+    });
+    expect(lines.join('\n')).toContain('a2a:acme');
+    expect(lines.join('\n')).not.toContain('peer-secret');
+  });
+
+  it('has no option that takes the credential on the command line', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(
+      run(
+        'a2a',
+        'peers',
+        'add',
+        'acme',
+        'https://x.example.com/card',
+        '--peer-token',
+        'peer-secret'
+      )
+    ).rejects.toThrow();
+    expect(a2aCalls()).toEqual([]);
+  });
+
+  it('refuses an empty --token-stdin and never falls back to the agent token', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    ctx.readStdin = () => Promise.resolve('  \n');
+    await expect(
+      run(
+        'a2a',
+        'peers',
+        'add',
+        'acme',
+        'https://x.example.com/card',
+        '--token-stdin'
+      )
+    ).rejects.toThrow(/stdin/);
+    delete process.env.DISPATCH_APP_TOKEN;
+    await expect(
+      run('a2a', 'peers', 'add', 'acme', 'https://x.example.com/card')
+    ).rejects.toThrow(CliError);
+    expect(a2aCalls()).toEqual([]);
+  });
+
+  it('passes --allow-http and --allow-origin through for the daemon to check the tier', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'peers',
+      'add',
+      'intra',
+      'http://10.0.0.5/card',
+      '--allow-http',
+      '--allow-origin'
+    );
+    expect(a2aCalls()[0].body).toMatchObject({
+      alias: 'intra',
+      allowHttp: true,
+      allowOrigin: true,
+    });
+  });
+
+  it('lists with the agent token, and refreshes, disables, enables with a new token and removes', async () => {
+    await run('a2a', 'peers', 'list');
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'GET',
+      auth: `Bearer ${AGENT_TOKEN}`,
+    });
+    expect(lines.join('\n')).toContain(
+      'a2a:acme · active · Acme Planner · https://agent.example.com/a2a/v1'
+    );
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    ctx.readStdin = () => Promise.resolve('new-secret');
+    await run('a2a', 'peers', 'refresh', 'acme');
+    await run('a2a', 'peers', 'disable', 'acme');
+    await run('a2a', 'peers', 'enable', 'acme', '--token-stdin');
+    await run('a2a', 'peers', 'remove', 'acme');
+    expect(
+      a2aCalls()
+        .slice(1)
+        .map((c) => `${c.method} ${c.path}`)
+    ).toEqual([
+      'POST /api/a2a/peers/acme/refresh',
+      'POST /api/a2a/peers/acme/disable',
+      'POST /api/a2a/peers/acme/enable',
+      'DELETE /api/a2a/peers/acme',
+    ]);
+    expect(a2aCalls()[3].body).toEqual({ token: 'new-secret' });
+    expect(lines.join('\n')).not.toContain('new-secret');
+  });
+});
+
+describe('dispatch a2a hosts', () => {
+  it('adds a host with the app token and prints its token once', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'hosts', 'add', 'relay');
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/hosts',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { name: 'relay' },
+    });
+    expect(lines.filter((l) => l.includes('h'.repeat(64)))).toHaveLength(1);
+  });
+
+  it('allows and denies standalone hosts, lists and removes them', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'hosts', 'allow');
+    await run('a2a', 'hosts', 'deny');
+    await run('a2a', 'hosts', 'list');
+    await run('a2a', 'hosts', 'remove', 'h-1');
+    expect(a2aCalls().map((c) => [c.method, c.path, c.body])).toEqual([
+      ['PUT', '/api/a2a/listener/standalone', { enabled: true }],
+      ['PUT', '/api/a2a/listener/standalone', { enabled: false }],
+      ['GET', '/api/a2a/hosts', null],
+      ['DELETE', '/api/a2a/hosts/h-1', null],
+    ]);
+    expect(lines.join('\n')).toContain('h-1 · relay · active');
+  });
+
+  it('never runs a hosts command on the agent token', async () => {
+    for (const argv of [
+      ['a2a', 'hosts', 'list'],
+      ['a2a', 'hosts', 'add', 'relay'],
+      ['a2a', 'hosts', 'allow'],
+      ['a2a', 'hosts', 'remove', 'h-1'],
+    ])
+      await expect(run(...argv)).rejects.toThrow(CliError);
+    expect(a2aCalls()).toEqual([]);
   });
 });

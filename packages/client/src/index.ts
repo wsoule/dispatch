@@ -17,6 +17,8 @@ export type {
   A2AClientSummary,
   A2AListenerSettings,
   A2AListenerStatus,
+  A2APeerInput,
+  A2APeerSummary,
   A2ATaskSummary,
   AdjudicateFindingInput,
   AdjudicateFindingResult,
