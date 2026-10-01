@@ -231,9 +231,15 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
         400,
         `only http and https are fetched, not ${protocol}`
       );
-    const headers = new Headers(init?.headers);
-    for (const [name, value] of Object.entries(o.headers))
-      headers.set(name, value);
+    let headers: Headers;
+    try {
+      headers = new Headers(init?.headers);
+      for (const [name, value] of Object.entries(o.headers))
+        headers.set(name, value);
+    } catch {
+      // The runtime's message can quote the value, which may be a credential.
+      throw new PeerHttpError(400, 'a request header could not be sent');
+    }
     const stream = (headers.get('accept') ?? '').includes('text/event-stream');
     const ac = new AbortController();
     const abort = () => ac.abort();

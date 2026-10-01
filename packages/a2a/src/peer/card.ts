@@ -46,6 +46,9 @@ const RESERVED_HEADERS = new Set([
   'connection',
 ]);
 
+// A token as one header value: visible ASCII only (RFC 9110 visible characters, no space).
+const VISIBLE_ASCII = /^[\x21-\x7e]+$/;
+
 type Json = Record<string, JsonValue>;
 const obj = (v: JsonValue | undefined): Json | null =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? v : null;
@@ -193,8 +196,12 @@ export function authHeaders(
       'token',
       'this peer needs a credential; pass one with --token-stdin'
     );
-  if (['\r', '\n', '\0'].some((c) => secret.token.includes(c)))
-    invalid('token', 'the credential holds a line break');
+  // Never echoes the value: an error message may reach logs or a client.
+  if (!VISIBLE_ASCII.test(secret.token))
+    invalid(
+      'token',
+      'the credential must be visible ASCII (0x21-0x7E), with no spaces'
+    );
   if (auth.kind === 'bearer')
     return { authorization: `Bearer ${secret.token}` };
   const header = secret.header ?? auth.header;

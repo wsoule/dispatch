@@ -189,6 +189,33 @@ describe('reading a peer card', () => {
     }
   );
 
+  it.each([
+    'SECRET with space',
+    'SECRET\twith-tab',
+    'SECRET-é',
+    'SECRET\u007f',
+    'SECRET\u0000',
+    'SECRET\r\n',
+  ])(
+    'refuses a token outside visible ASCII, never echoing it (%j)',
+    (token) => {
+      for (const auth of [
+        { kind: 'bearer' } as const,
+        { kind: 'api-key', header: 'X-API-Key' } as const,
+      ]) {
+        let message = '';
+        try {
+          authHeaders(auth, { scheme: auth.kind, token });
+        } catch (err) {
+          expect(err).toMatchObject({ code: 'invalid', field: 'token' });
+          message = (err as Error).message;
+        }
+        expect(message).not.toBe('');
+        expect(message).not.toContain('SECRET');
+      }
+    }
+  );
+
   it('summarizes name, description, skills and streaming', () => {
     expect(summarizeCard(CARD)).toEqual({
       name: 'Acme Planner',

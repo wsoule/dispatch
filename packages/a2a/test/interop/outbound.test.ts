@@ -219,6 +219,34 @@ describe('an HTTP+JSON peer (handleA2A)', () => {
     ).rejects.toMatchObject({ reason: 'BODY_TOO_LARGE' });
   });
 
+  it('keeps a peer error message short and on one line', async () => {
+    const { json } = await fetchPeerCard(
+      `${base}/.well-known/agent-card.json`,
+      { allowHttp: false }
+    );
+    const noisy = (() =>
+      Promise.resolve(
+        new Response(`bad\u0000\r\n\u001b[31m${'x'.repeat(5_000_000)}`, {
+          status: 500,
+        })
+      )) as unknown as typeof fetch;
+    const err = await new PeerClient({
+      iface: { url: `${base}/a2a/v1`, binding: 'HTTP+JSON' },
+      card: json,
+      headers: {},
+      fetchImpl: noisy,
+    })
+      .getTask('m-root')
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ status: 500 });
+    const message = (err as Error).message;
+    expect(message.length).toBeLessThanOrEqual(320);
+    const codes = Array.from({ length: message.length }, (_, i) =>
+      message.charCodeAt(i)
+    );
+    expect(codes.some((c) => c < 0x20 || c === 0x7f)).toBe(false);
+  });
+
   it('with a guard, never connects to an interface that resolves privately', async () => {
     const { json } = await fetchPeerCard(
       `${base}/.well-known/agent-card.json`,

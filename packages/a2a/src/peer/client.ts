@@ -49,6 +49,22 @@ function versionNotSupported(err: unknown): boolean {
   );
 }
 
+const MAX_MESSAGE_CHARS = 300;
+
+// A peer-supplied error text as one short line: control characters become
+// spaces and the rest is cut, since an SDK error can carry the whole body.
+function shortMessage(text: string): string {
+  let out = '';
+  for (const ch of text.slice(0, MAX_MESSAGE_CHARS * 2)) {
+    const code = ch.codePointAt(0) ?? 0;
+    out += code < 0x20 || (code >= 0x7f && code < 0xa0) ? ' ' : ch;
+  }
+  out = out.replace(/ {2,}/g, ' ').trim();
+  return out.length > MAX_MESSAGE_CHARS
+    ? `${out.slice(0, MAX_MESSAGE_CHARS - 1)}…`
+    : out;
+}
+
 // The daemon's client for one peer: the SDK client pinned to the checked
 // interface, the peer's auth header, A2A-Version 1.0, no redirects, and a 30 s
 // headers timeout. Every failure surfaces as a PeerHttpError.
@@ -102,7 +118,9 @@ export class PeerClient {
       return await fn(await this.sdk(box));
     } catch (err) {
       if (err instanceof PeerHttpError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = shortMessage(
+        err instanceof Error ? err.message : String(err)
+      );
       if (box.network) throw new PeerHttpError(null, message);
       const status =
         box.status !== null && box.status >= 400 ? box.status : 400;

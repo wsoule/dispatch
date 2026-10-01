@@ -169,6 +169,15 @@ describe('peerFetch', () => {
     await expect(res.text()).rejects.toMatchObject({ status: null });
   });
 
+  it('fails a request header it cannot send without echoing the value', async () => {
+    const err = await peerFetch({
+      headers: { authorization: 'Bearer SECRET\nX: 1' },
+      timeoutMs: 1000,
+    })(`${base}/ok`).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PeerHttpError);
+    expect((err as Error).message).not.toContain('SECRET');
+  });
+
   it('hands a 304 back as a response, not a redirect', async () => {
     const res = await peerFetch({ headers: {}, timeoutMs: 1000 })(
       `${base}/not-modified`
