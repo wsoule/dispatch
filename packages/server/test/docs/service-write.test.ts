@@ -545,6 +545,28 @@ describe('review state, revert and lifecycle', () => {
     expect(service.read(as(OWNER), 'a').text).toBe('agent\n');
   });
 
+  it('refuses to accept a head holding conflict markers, or a conflicted doc', () => {
+    service.create(as(OWNER), {
+      title: 'Marked',
+      body: '# M\n<<<<<<< rev-a\nx\n=======\ny\n>>>>>>> rev-b\n',
+    });
+    expect(() => service.setStatus(as(OWNER), 'marked', 'accepted')).toThrow(
+      'conflict markers'
+    );
+    const made = service.create(as(OWNER), { title: 'Clean', body: 'x\n' });
+    const row = store.doc(made.doc.id);
+    if (row === null) throw new Error('no doc');
+    store.putDoc({ ...row, conflicted: true });
+    expect(() => service.setStatus(as(OWNER), 'clean', 'accepted')).toThrow(
+      'conflicted'
+    );
+    // A line that only looks like a marker inside prose does not block.
+    service.create(as(OWNER), { title: 'Prose', body: 'a <<<<<<< b\n' });
+    expect(service.setStatus(as(OWNER), 'prose', 'accepted').status).toBe(
+      'accepted'
+    );
+  });
+
   it('archives read-only, hides from the default list, and restores', () => {
     service.create(as(OWNER), { title: 'A', body: 'x\n' });
     expect(code(() => service.setStatus(as(TEAMMATE), 'a', 'archived'))).toBe(

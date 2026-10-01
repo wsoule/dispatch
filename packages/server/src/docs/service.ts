@@ -332,6 +332,17 @@ function toLink(l: LinkRow): DocLink {
   };
 }
 
+// Whether `body` holds a diff3 conflict: a `<<<<<<< ` line, then `=======`, then `>>>>>>> `.
+function hasConflictMarkers(body: string): boolean {
+  let stage = 0;
+  for (const line of body.split('\n')) {
+    if (stage === 0 && line.startsWith('<<<<<<< ')) stage = 1;
+    else if (stage === 1 && line === '=======') stage = 2;
+    else if (stage === 2 && line.startsWith('>>>>>>> ')) return true;
+  }
+  return false;
+}
+
 export class DocsService {
   private outbox: DocChange[] = [];
   // Attached once the daemon builds live notices.
@@ -1971,6 +1982,7 @@ export class DocsService {
     const restored = doc.restoredStatus !== null;
     if (status === doc.status && !(status === 'accepted' && restored))
       return this.record(doc);
+    if (status === 'accepted') this.requireAcceptable(doc);
     const at = this.nowIso();
     let reason: string | null = null;
     if (status === 'archived') reason = 'the doc was archived';
@@ -1985,6 +1997,22 @@ export class DocsService {
     });
     if (reason !== null) this.afterWithdraw(withdrawn, doc, reason);
     return out;
+  }
+
+  // An accepted head is what every linked run reads: never one with unresolved conflicts.
+  private requireAcceptable(doc: DocRow): void {
+    if (doc.conflicted)
+      throw new DocsError(
+        'conflict',
+        'the doc is conflicted; resolve it in the merge view before accepting',
+        'status'
+      );
+    if (hasConflictMarkers(this.headOf(doc).body))
+      throw new DocsError(
+        'conflict',
+        'the text holds conflict markers; resolve them before accepting',
+        'status'
+      );
   }
 
   // Reviews the (sealed) head as the accepting human and drops a restored mark.
