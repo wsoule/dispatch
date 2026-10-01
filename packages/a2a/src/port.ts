@@ -19,6 +19,9 @@ import type { ArtifactJson } from './wire.js';
 export interface Caller {
   address: Address;
   name: string;
+  // The client's own bearer, which a standalone host forwards to the daemon;
+  // opaque to handleA2A.
+  credential?: string;
 }
 
 export type AuthResult =

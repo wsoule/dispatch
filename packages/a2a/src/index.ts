@@ -116,6 +116,12 @@ export type {
   PushConfigPort,
   TaskFacts,
 } from './port.js';
+export {
+  PORT_CLIENT_HEADER,
+  portErrorFrom,
+  portErrorJson,
+} from './http/wire.js';
+export type { PortError } from './http/wire.js';
 export * from './peer/index.js';
 export {
   decideState,
@@ -166,6 +172,7 @@ export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
 export type {
   A2AStore,
   ClientRow,
+  HostRow,
   OutboundRow,
   OutboundState,
   PeerRow,

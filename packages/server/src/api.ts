@@ -4565,6 +4565,16 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Opening the A2A listener exposes this machine on a network port and
   // points the daemon at TLS files on disk; closing it is paired.
   { method: 'PUT', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Standalone A2A hosts put this project on another machine's network
+  // (spec:1656); minting, listing and revoking them is the owner's call.
+  { method: 'GET', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'POST', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'hosts', '*'], tier: 'operator' },
+  {
+    method: 'PUT',
+    segments: ['a2a', 'listener', 'standalone'],
+    tier: 'operator',
+  },
   { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
@@ -4727,6 +4737,9 @@ function requiredTier(
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
   // this ladder — returning null here just opens the gate for them.
   if (isSelfAuthenticated(segments, method)) return null;
+  // A standalone host's routes accept its host token only, checked in
+  // a2a/portRoutes.ts; A2A client tokens were already refused above.
+  if (segments[0] === 'a2a' && segments[1] === 'port') return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
       return route.tier;

@@ -41,6 +41,7 @@ import type { PeerService } from './peers.js';
 import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
+import { PortLeases } from './portRoutes.js';
 import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
 import type { ListenerOverrides, ListenerSettings } from './settings.js';
@@ -79,6 +80,12 @@ export interface A2ABridge {
   readonly peers: PeerService | null;
   // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
   readonly outbound: OutboundWorker | null;
+  // Whether standalone hosts may use /api/a2a/port/* (the settings file).
+  standalone(): boolean;
+  // Changes only that flag in the settings file; the listener is untouched.
+  setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+  // Stream slots standalone hosts hold.
+  readonly leases: PortLeases;
   peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
   // Opens the listener from the settings file plus the one-boot overrides.
@@ -192,6 +199,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let peers: PeerService | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
+  const leases = new PortLeases();
   // Loaded on the first card; null (with the reason) when it cannot be.
   let signer: CardSigner | null | undefined;
   let signerError: string | null = null;
@@ -397,6 +405,15 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     get outbound() {
       return outbound?.worker ?? null;
     },
+    leases,
+    standalone: () => readListenerSettings(rootDir).settings.standalone,
+    setStandalone: (enabled) =>
+      serial(() => {
+        const file = readListenerSettings(rootDir).settings;
+        writeListenerSettings(rootDir, { ...file, standalone: enabled });
+        settings = { ...settings, standalone: enabled };
+        return Promise.resolve({ standalone: enabled });
+      }),
     peerStatus(alias) {
       try {
         return store?.getPeer(alias)?.status ?? null;
@@ -489,6 +506,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       serial(async () => {
         outbound?.stop();
         outbound = null;
+        leases.closeAll();
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
         if (refreshTimer !== null) clearInterval(refreshTimer);

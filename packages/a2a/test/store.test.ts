@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { openA2ADb, SqliteA2AStore } from '../src/store/sqlite.js';
 import type {
+  HostRow,
   OutboundRow,
   PeerRow,
   PushConfigRow,
@@ -370,5 +371,33 @@ describe('push_configs', () => {
     expect(
       store.recordPushResult('m-1', 'a', true, '2026-09-25T12:00:00.000Z')
     ).toBeNull();
+  });
+});
+
+describe('hosts', () => {
+  const host = (id: string, over: Partial<HostRow> = {}): HostRow => ({
+    id,
+    name: 'relay',
+    tokenHash: `hash-${id}`,
+    createdBy: 'human:wyat',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    revokedAt: null,
+    ...over,
+  });
+
+  it('stores, finds by token hash, revokes once, and keeps the revoked row', () => {
+    store.putHost(host('h-1'));
+    store.putHost(host('h-2', { createdAt: '2026-09-25T11:00:00.000Z' }));
+    expect(store.hostByTokenHash('hash-h-1')?.id).toBe('h-1');
+    expect(store.hostByTokenHash('nope')).toBeNull();
+    expect(store.revokeHost('h-1', '2026-09-25T12:00:00.000Z')).toBe(true);
+    expect(store.revokeHost('h-1', '2026-09-25T13:00:00.000Z')).toBe(false);
+    expect(store.revokeHost('h-missing', '2026-09-25T13:00:00.000Z')).toBe(
+      false
+    );
+    expect(store.hosts().map((h) => [h.id, h.revokedAt])).toEqual([
+      ['h-1', '2026-09-25T12:00:00.000Z'],
+      ['h-2', null],
+    ]);
   });
 });

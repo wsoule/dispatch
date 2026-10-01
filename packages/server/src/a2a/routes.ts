@@ -27,6 +27,7 @@ import { tierAllows } from '../tiers.js';
 import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
+import { isHostName, mintHost } from './hosts.js';
 import type { PeerAddInput, PeerChange } from './peers.js';
 import {
   addPeer,
@@ -36,6 +37,7 @@ import {
   setPeerEnabled,
 } from './peers.js';
 import type { DaemonBridgePort } from './port.js';
+import { handlePortRoute } from './portRoutes.js';
 import { parseSettings } from './settings.js';
 
 const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -378,6 +380,55 @@ async function peerRoute(
   }
 }
 
+// Standalone hosts and the switch that lets them in; tiers are in
+// ELEVATED_ROUTES (operator). A host's token is shown once, never listed.
+async function hostRoute(
+  req: Request,
+  ctx: ApiContext,
+  segments: string[],
+  method: string
+): Promise<Response | null> {
+  const b = bridge(ctx);
+  if (!b.ok) return b.response;
+  if (segments[0] === 'listener' && segments.length === 2 && method === 'PUT') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const enabled = (parsed.value as { enabled?: unknown }).enabled;
+    if (typeof enabled !== 'boolean')
+      return invalid('enabled', 'enabled must be true or false');
+    const result = await b.a2a.setStandalone(enabled);
+    changed(ctx);
+    return jsonResponse(result);
+  }
+  if (segments[0] !== 'hosts') return null;
+  if (segments.length === 1 && method === 'GET')
+    return jsonResponse({
+      standalone: b.a2a.standalone(),
+      hosts: b.store.hosts().map(({ tokenHash: _hash, ...row }) => row),
+    });
+  if (segments.length === 1 && method === 'POST') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const name = (parsed.value as { name?: unknown }).name;
+    if (typeof name !== 'string' || !isHostName(name.trim()))
+      return invalid(
+        'name',
+        'name: letters, digits, spaces, ".", "_" and "-", at most 64'
+      );
+    const { row, token } = mintHost(b.store, name.trim(), humanActor(ctx));
+    changed(ctx);
+    return jsonResponse({ id: row.id, name: row.name, token }, 201);
+  }
+  if (segments.length === 2 && method === 'DELETE') {
+    const id = decodeURIComponent(segments[1]);
+    if (!b.store.revokeHost(id, new Date().toISOString()))
+      return errorResponse(404, `no live A2A host ${id}`);
+    changed(ctx);
+    return new Response(null, { status: 204 });
+  }
+  return null;
+}
+
 // `/api/a2a/*` after the `a2a` segment; null for anything it does not serve,
 // so handleApi's 404 applies. Tiers are enforced in ELEVATED_ROUTES.
 export async function handleA2ARoute(
@@ -388,6 +439,13 @@ export async function handleA2ARoute(
 ): Promise<Response | null> {
   if (segments[0] === 'peers')
     return peerRoute(req, ctx, segments.slice(1), method);
+  if (segments[0] === 'port')
+    return handlePortRoute(req, ctx, segments.slice(1), method);
+  if (
+    segments[0] === 'hosts' ||
+    (segments[0] === 'listener' && segments[1] === 'standalone')
+  )
+    return hostRoute(req, ctx, segments, method);
   const withId = segments.length === 3;
   const key = withId
     ? `${method} ${segments[0]}/*/${segments[2]}`

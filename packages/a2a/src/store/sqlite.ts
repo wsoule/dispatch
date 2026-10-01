@@ -100,6 +100,17 @@ export interface PushConfigRow {
   createdAt: string;
 }
 
+// An operator-issued credential for one standalone host; the token is kept
+// only as its sha256.
+export interface HostRow {
+  id: string;
+  name: string;
+  tokenHash: string;
+  createdBy: Address;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
 // The bridge's own records: registered clients, the A2A tasks they opened,
 // the outbound peers and what was relayed to them, and push configs.
 export interface A2AStore {
@@ -162,6 +173,12 @@ export interface A2AStore {
   // Disables a config at once (a refused address). Disabling, here or at ten
   // failures, also drops the config's token and credentials.
   disablePushConfig(taskId: string, id: string, at: string): void;
+  putHost(row: HostRow): void;
+  // Oldest first, revoked rows included.
+  hosts(): HostRow[];
+  hostByTokenHash(hash: string): HostRow | null;
+  // True when a live host was revoked.
+  revokeHost(id: string, at: string): boolean;
   close(): void;
 }
 
@@ -198,6 +215,10 @@ CREATE TABLE IF NOT EXISTS push_configs (
   PRIMARY KEY (task_id, id)
 );
 CREATE INDEX IF NOT EXISTS push_client ON push_configs (client);
+CREATE TABLE IF NOT EXISTS hosts (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
+);
 `;
 
 // Created 0600 before SQLite opens it, so it never exists world-readable;
@@ -353,6 +374,26 @@ function toPush(r: PushDbRow): PushConfigRow {
     failures: Number(r.failures),
     disabledAt: r.disabled_at,
     createdAt: r.created_at,
+  };
+}
+
+interface HostDbRow {
+  id: string;
+  name: string;
+  token_hash: string;
+  created_by: string;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+function toHost(r: HostDbRow): HostRow {
+  return {
+    id: r.id,
+    name: r.name,
+    tokenHash: r.token_hash,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    revokedAt: r.revoked_at,
   };
 }
 
@@ -789,6 +830,42 @@ export class SqliteA2AStore implements A2AStore {
         'UPDATE push_configs SET disabled_at = ?, token = NULL, auth_credentials = NULL WHERE task_id = ? AND id = ? AND disabled_at IS NULL'
       )
       .run(at, taskId, id);
+  }
+
+  putHost(h: HostRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO hosts (id, name, token_hash, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?)'
+      )
+      .run(h.id, h.name, h.tokenHash, h.createdBy, h.createdAt, h.revokedAt);
+  }
+
+  hosts(): HostRow[] {
+    return queryAll<HostDbRow>(
+      this.db,
+      'SELECT * FROM hosts ORDER BY created_at, id'
+    ).map(toHost);
+  }
+
+  hostByTokenHash(hash: string): HostRow | null {
+    const r = queryOne<HostDbRow>(
+      this.db,
+      'SELECT * FROM hosts WHERE token_hash = ?',
+      [hash]
+    );
+    return r === undefined ? null : toHost(r);
+  }
+
+  revokeHost(id: string, at: string): boolean {
+    return (
+      Number(
+        this.db
+          .prepare(
+            'UPDATE hosts SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL'
+          )
+          .run(at, id).changes
+      ) > 0
+    );
   }
 
   close(): void {
