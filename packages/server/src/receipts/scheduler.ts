@@ -38,6 +38,8 @@ export interface ReceiptsSchedulerDeps {
    * DEFAULT_SWEEP_MS; tests pass something large enough never to fire.
    */
   sweepMs?: number;
+  /** Passed to the exporter: writers of files beside the materialized ones. */
+  appendices?: readonly ((dir: string) => void)[];
 }
 
 // Matches BoardSyncScheduler's debounce, and for the same reason: long enough
@@ -99,7 +101,12 @@ export class ReceiptsScheduler {
   private lastPushValue: ReceiptsPush | null = null;
 
   constructor(private readonly deps: ReceiptsSchedulerDeps) {
-    this.exporter = new ReceiptsExporter(deps.stores, deps.actor, deps.run);
+    this.exporter = new ReceiptsExporter(
+      deps.stores,
+      deps.actor,
+      deps.run,
+      deps.appendices
+    );
     // Runs unconditionally; runOnce re-reads the config, so a project with
     // receipts off generates no export traffic despite the timer ticking, and
     // switching it back on takes effect without a restart.

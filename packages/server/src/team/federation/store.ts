@@ -58,6 +58,7 @@ export type FedMetaKey =
   | 'transport'
   | 'transport_url'
   | 'pending_invite'
+  | 'audit_exported'
   | 'device';
 
 interface KeyRow {

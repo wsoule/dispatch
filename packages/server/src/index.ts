@@ -148,6 +148,7 @@ import {
 } from './sync/worktree.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
+import { appendAuditToReceipts } from './team/federation/audit.js';
 import type { Federation } from './team/federation/daemon.js';
 import { buildFederation } from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
@@ -1078,6 +1079,13 @@ async function bootServer(
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
+          // The federation audit log, once board sync built it (Task 24).
+          appendices: [
+            (dir) => {
+              if (federation !== null)
+                appendAuditToReceipts(federation.fed, dir);
+            },
+          ],
         });
   // One export before the server serves anything: it creates the log on a
   // project turning receipts on for the first time, and reconciles one left
