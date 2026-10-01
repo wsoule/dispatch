@@ -159,7 +159,8 @@ export interface A2AStore {
     at: string,
     disableAt?: number
   ): PushConfigRow | null;
-  // Disables a config at once (a refused address).
+  // Disables a config at once (a refused address). Disabling, here or at ten
+  // failures, also drops the config's token and credentials.
   disablePushConfig(taskId: string, id: string, at: string): void;
   close(): void;
 }
@@ -776,7 +777,7 @@ export class SqliteA2AStore implements A2AStore {
       .run(ok ? 1 : 0, taskId, id);
     this.db
       .prepare(
-        'UPDATE push_configs SET disabled_at = ? WHERE task_id = ? AND id = ? AND disabled_at IS NULL AND failures >= ?'
+        'UPDATE push_configs SET disabled_at = ?, token = NULL, auth_credentials = NULL WHERE task_id = ? AND id = ? AND disabled_at IS NULL AND failures >= ?'
       )
       .run(at, taskId, id, disableAt);
     return this.getPushConfig(taskId, id);
@@ -785,7 +786,7 @@ export class SqliteA2AStore implements A2AStore {
   disablePushConfig(taskId: string, id: string, at: string): void {
     this.db
       .prepare(
-        'UPDATE push_configs SET disabled_at = ? WHERE task_id = ? AND id = ? AND disabled_at IS NULL'
+        'UPDATE push_configs SET disabled_at = ?, token = NULL, auth_credentials = NULL WHERE task_id = ? AND id = ? AND disabled_at IS NULL'
       )
       .run(at, taskId, id);
   }

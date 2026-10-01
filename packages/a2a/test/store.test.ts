@@ -353,12 +353,18 @@ describe('push_configs', () => {
         '2026-09-25T11:00:00.000Z'
       );
     expect(last?.disabledAt).toBe('2026-09-25T11:00:00.000Z');
+    // A disabled config keeps no secrets.
+    expect(last).toMatchObject({ token: null, authCredentials: null });
     expect(store.pushConfigsOf('m-1').map((c) => c.id)).toEqual(['b']);
     expect(store.countPushConfigs(CLIENT)).toBe(1);
     store.updateTask('m-1', { state: 'COMPLETED' });
     expect(store.countPushConfigs(CLIENT)).toBe(0);
     store.disablePushConfig('m-1', 'b', '2026-09-25T12:00:00.000Z');
     expect(store.pushConfigsOf('m-1')).toEqual([]);
+    expect(store.getPushConfig('m-1', 'b')).toMatchObject({
+      token: null,
+      authCredentials: null,
+    });
     expect(store.deletePushConfig('m-1', 'a')).toBe(true);
     expect(store.deletePushConfig('m-1', 'a')).toBe(false);
     expect(
