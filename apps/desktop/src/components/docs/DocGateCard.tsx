@@ -1,6 +1,6 @@
 import type { ApiClient, DocProposalView } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { docsKey } from '../../hooks/useDocs';
 import type { DecideAvailability } from '../../lib/daemonAuth';
@@ -8,8 +8,12 @@ import { DecideUnavailableNotice } from '../runs/DecideUnavailableNotice';
 import type { ApprovalCardOption } from '@/ui/ai/approval-card';
 import { ApprovalCard } from '@/ui/ai/approval-card';
 import { Button } from '@/ui/button';
+import { Input } from '@/ui/input';
 
 type Choice = 'approve' | 'reject';
+
+// The reject body when a conflict was resolved in the doc and no reason was typed.
+const RESOLVED_IN_DOC = 'resolved in the doc';
 
 interface DocGateCardProps {
   doc: string;
@@ -18,9 +22,10 @@ interface DocGateCardProps {
   client: Pick<ApiClient, 'getDocProposal'>;
   /** Keys the read under the docs queries, so doc.changed refetches it. */
   port: number | undefined;
-  onDecide: (choice: Choice) => Promise<void>;
-  /** Opens the doc, whose merge view resolves a conflicting proposal. */
-  onOpenDoc: (doc: string) => void;
+  /** Answers the gate; `body` is the reject reason (empty for approve). */
+  onDecide: (choice: Choice, body: string) => Promise<void>;
+  /** Opens the doc on this proposal's marked merge, to resolve it there. */
+  onOpenDoc: (doc: string, proposal: string) => void;
   /** Whether this window holds the app token deciding requires. */
   availability: DecideAvailability;
   onRestartDaemon: () => Promise<void>;
@@ -46,6 +51,8 @@ export function DocGateCard({
   const [pending, setPending] = useState<Choice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [reason, setReason] = useState('');
+  const reasonId = useId();
 
   const view = read.data ?? null;
   const clean = view?.mergeable.clean ?? true;
@@ -59,8 +66,15 @@ export function DocGateCard({
   async function decide(choice: Choice) {
     setPending(choice);
     setError(null);
+    const typed = reason.trim();
+    const body =
+      choice === 'approve'
+        ? ''
+        : typed !== '' || clean
+          ? typed
+          : RESOLVED_IN_DOC;
     try {
-      await onDecide(choice);
+      await onDecide(choice, body);
     } catch (err) {
       setSelectedId(undefined);
       setError(err instanceof Error ? err.message : String(err));
@@ -97,7 +111,10 @@ export function DocGateCard({
         question="Apply this edit to an accepted doc?"
         detail={
           view !== null ? (
-            <ProposalDetail view={view} onOpenDoc={() => onOpenDoc(doc)} />
+            <ProposalDetail
+              view={view}
+              onOpenDoc={() => onOpenDoc(doc, proposal)}
+            />
           ) : read.error !== null && !read.isFetching ? (
             <span className="flex flex-wrap items-center gap-x-1.5">
               <span role="alert" className="text-red">
@@ -121,6 +138,19 @@ export function DocGateCard({
         selectedId={selectedId}
         disabled={!decidable}
       />
+      {view !== null && view.proposal.state === 'open' && (
+        <div className="flex items-center gap-2 text-[12px]">
+          <label htmlFor={reasonId} className="text-muted-foreground shrink-0">
+            Reason (optional)
+          </label>
+          <Input
+            id={reasonId}
+            value={reason}
+            disabled={!decidable}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+      )}
       <DecideUnavailableNotice
         availability={availability}
         onRestartDaemon={onRestartDaemon}
@@ -175,7 +205,7 @@ function ProposalDetail({
             className="h-auto px-0 text-[12px]"
             onClick={onOpenDoc}
           >
-            Open the doc
+            Open merge view
           </Button>
         </span>
       )}

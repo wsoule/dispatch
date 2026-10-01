@@ -866,19 +866,22 @@ describe('refs and labels', () => {
       openTask: (...args) => calls.push(['task', ...args]),
       openThread: (id) => calls.push(['thread', id]),
       openImpact: (subject) => calls.push(['impact', subject]),
-      openDoc: (docId, anchor) => calls.push(['doc', docId, anchor]),
+      openDoc: (docId, anchor, merge) =>
+        calls.push(['doc', docId, anchor, merge]),
     });
     open({ kind: 'task', taskId: 't-000001' });
     open({ kind: 'run', taskId: 't-000001', runId: 'r-000001' });
     open({ kind: 'file', path: 'src/a.ts' });
     open({ kind: 'message', messageId: 'm-01' });
     open({ kind: 'doc', docId: 'doc-01K', anchor: 'api' });
+    open({ kind: 'doc', docId: 'doc-01K', anchor: null, merge: 'rev-p' });
     expect(calls).toEqual([
       ['task', 't-000001', 'auto'],
       ['task', 't-000001', 'run', 'r-000001'],
       ['impact', { kind: 'file', id: 'src/a.ts' }],
       ['thread', 'm-01'],
-      ['doc', 'doc-01K', 'api'],
+      ['doc', 'doc-01K', 'api', undefined],
+      ['doc', 'doc-01K', null, 'rev-p'],
     ]);
   });
 

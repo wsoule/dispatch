@@ -299,8 +299,10 @@ function Control({
           port={port}
           availability={availability}
           onRestartDaemon={onRestartDaemon}
-          onDecide={(choice) => answer({ body: '', choice })}
-          onOpenDoc={(docId) => onOpen({ kind: 'doc', docId, anchor: null })}
+          onDecide={(choice, body) => answer({ body, choice })}
+          onOpenDoc={(docId, merge) =>
+            onOpen({ kind: 'doc', docId, anchor: null, merge })
+          }
         />
       );
     case 'choices':

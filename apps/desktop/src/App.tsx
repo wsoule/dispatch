@@ -570,8 +570,8 @@ function App() {
 
   // The Docs view on one doc, scrolled to `anchor`'s section when set.
   const openDoc = useCallback(
-    (docId: string, anchor: string | null) =>
-      dispatchNav({ type: 'openDoc', docId, anchor }),
+    (docId: string, anchor: string | null, merge?: string) =>
+      dispatchNav({ type: 'openDoc', docId, anchor, merge }),
     []
   );
 
@@ -1541,6 +1541,7 @@ function App() {
                                       data={data}
                                       initialDoc={navState.activeDocId}
                                       initialAnchor={navState.activeDocAnchor}
+                                      initialMerge={navState.activeDocMerge}
                                       onSelectDoc={(docId) =>
                                         openDoc(docId, null)
                                       }

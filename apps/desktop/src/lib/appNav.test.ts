@@ -64,7 +64,25 @@ describe('navReducer', () => {
       projectView: 'docs',
       activeDocId: 'doc-1',
       activeDocAnchor: 'api',
+      activeDocMerge: null,
     });
+  });
+
+  test('openDoc can name a proposal whose merge the doc opens on', () => {
+    const next = navReducer(initialNavState, {
+      type: 'openDoc',
+      docId: 'doc-1',
+      anchor: null,
+      merge: 'rev-p',
+    });
+    expect(next).toMatchObject({
+      activeDocId: 'doc-1',
+      activeDocMerge: 'rev-p',
+    });
+    expect(
+      navReducer(next, { type: 'openDoc', docId: 'doc-2', anchor: null })
+        .activeDocMerge
+    ).toBeNull();
   });
 
   test('openDoc from a task peek closes the peek, and back returns to the task', () => {

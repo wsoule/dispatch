@@ -15,11 +15,14 @@ export function DocsView({
   data,
   initialDoc = null,
   initialAnchor = null,
+  initialMerge = null,
   onSelectDoc,
 }: {
   data: DispatchProjectData;
   initialDoc?: string | null;
   initialAnchor?: string | null;
+  /** A conflicting proposal whose marked merge the named doc opens on. */
+  initialMerge?: string | null;
   onSelectDoc?: (docId: string) => void;
 }) {
   const { client, port, messageAccess } = data;
@@ -31,21 +34,29 @@ export function DocsView({
   });
   const [open, setOpen] = useState<string | null>(initialDoc);
   const [anchor, setAnchor] = useState<string | null>(initialAnchor);
+  const [merge, setMerge] = useState<string | null>(initialMerge);
   // A doc named while the view is up (a ref, a palette hit) replaces the open one.
   const [named, setNamed] = useState({
     doc: initialDoc,
     anchor: initialAnchor,
+    merge: initialMerge,
   });
-  if (named.doc !== initialDoc || named.anchor !== initialAnchor) {
-    setNamed({ doc: initialDoc, anchor: initialAnchor });
+  if (
+    named.doc !== initialDoc ||
+    named.anchor !== initialAnchor ||
+    named.merge !== initialMerge
+  ) {
+    setNamed({ doc: initialDoc, anchor: initialAnchor, merge: initialMerge });
     if (initialDoc !== null) {
       setOpen(initialDoc);
       setAnchor(initialAnchor);
+      setMerge(initialMerge);
     }
   }
   const select = (id: string): void => {
     setOpen(id);
     setAnchor(null);
+    setMerge(null);
     onSelectDoc?.(id);
   };
   const { docs, error } = useDocList(
@@ -99,6 +110,7 @@ export function DocsView({
             refId={open}
             canDecide={messageAccess.canDecide}
             anchor={anchor}
+            mergeProposal={merge}
           />
         )}
       </main>

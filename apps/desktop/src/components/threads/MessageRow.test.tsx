@@ -415,16 +415,17 @@ test("shows a decider a doc gate's proposal, answers it, and opens the doc", asy
   });
   await screen.findByText('Auth spec');
   expect(getDocProposal).toHaveBeenCalledWith('rev-p');
-  fireEvent.click(screen.getByRole('button', { name: 'Open the doc' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open merge view' }));
   expect(onOpen).toHaveBeenCalledWith({
     kind: 'doc',
     docId: 'doc-1',
     anchor: null,
+    merge: 'rev-p',
   });
   fireEvent.click(screen.getByRole('radio', { name: 'Reject' }));
   await waitFor(() =>
     expect(onAnswer).toHaveBeenCalledWith(docGate, {
-      body: '',
+      body: 'resolved in the doc',
       choice: 'reject',
     })
   );

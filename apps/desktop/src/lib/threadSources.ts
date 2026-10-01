@@ -441,7 +441,8 @@ export type RefAction =
   | { kind: 'run'; taskId: string; runId: string }
   | { kind: 'file'; path: string }
   | { kind: 'message'; messageId: string }
-  | { kind: 'doc'; docId: string; anchor: string | null };
+  /** `merge` names a conflicting proposal whose marked merge the doc opens on. */
+  | { kind: 'doc'; docId: string; anchor: string | null; merge?: string };
 
 /** Where a ref chip leads, or null for one with no page: a commit, a run no longer listed, or a
  *  type this build does not register, which a peer's newer version may send. */
@@ -490,7 +491,7 @@ export interface RefNavigation {
   openThread: (messageId: string) => void;
   openImpact: (subject: { kind: 'file'; id: string }) => void;
   /** The Docs view on one doc, scrolled to `anchor`'s section when set. */
-  openDoc: (docId: string, anchor: string | null) => void;
+  openDoc: (docId: string, anchor: string | null, merge?: string) => void;
 }
 
 export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
@@ -501,7 +502,7 @@ export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
     } else if (action.kind === 'file') {
       nav.openImpact({ kind: 'file', id: action.path });
     } else if (action.kind === 'doc') {
-      nav.openDoc(action.docId, action.anchor);
+      nav.openDoc(action.docId, action.anchor, action.merge);
     } else nav.openThread(action.messageId);
   };
 }

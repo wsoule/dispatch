@@ -31,8 +31,10 @@ function view(
 
 function renderCard(read: DocProposalView) {
   const load = mock((_rev: string) => Promise.resolve(read));
-  const onDecide = mock((_choice: 'approve' | 'reject') => Promise.resolve());
-  const onOpenDoc = mock((_doc: string) => undefined);
+  const onDecide = mock((_choice: 'approve' | 'reject', _body: string) =>
+    Promise.resolve()
+  );
+  const onOpenDoc = mock((_doc: string, _proposal: string) => undefined);
   render(
     <QueryClientProvider
       client={
@@ -68,7 +70,7 @@ describe('DocGateCard', () => {
     expect(screen.getByText('+new')).toBeTruthy();
     expect(screen.queryByText(/same/)).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: 'Approve' }));
-    await waitFor(() => expect(onDecide).toHaveBeenCalledWith('approve'));
+    await waitFor(() => expect(onDecide).toHaveBeenCalledWith('approve', ''));
   });
 
   it('offers only Reject and the merge view when the proposal conflicts', async () => {
@@ -77,10 +79,24 @@ describe('DocGateCard', () => {
     );
     expect(await screen.findByText('conflicts with rev 4')).toBeTruthy();
     expect(screen.queryByRole('radio', { name: 'Approve' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Open the doc' }));
-    expect(onOpenDoc).toHaveBeenCalledWith('doc-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Open merge view' }));
+    expect(onOpenDoc).toHaveBeenCalledWith('doc-1', 'rev-p');
     fireEvent.click(screen.getByRole('radio', { name: 'Reject' }));
-    await waitFor(() => expect(onDecide).toHaveBeenCalledWith('reject'));
+    await waitFor(() =>
+      expect(onDecide).toHaveBeenCalledWith('reject', 'resolved in the doc')
+    );
+  });
+
+  it('rejects with the reason typed, when one is', async () => {
+    const { onDecide } = renderCard(view({ clean: true, headN: 3 }));
+    await screen.findByText('Auth spec');
+    fireEvent.change(screen.getByLabelText('Reason (optional)'), {
+      target: { value: 'out of scope' },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: 'Reject' }));
+    await waitFor(() =>
+      expect(onDecide).toHaveBeenCalledWith('reject', 'out of scope')
+    );
   });
 
   it('says a proposal that is no longer open was decided, and offers nothing', async () => {

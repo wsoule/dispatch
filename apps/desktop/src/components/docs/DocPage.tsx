@@ -1,5 +1,5 @@
 import type { ApiClient, DocRevisionInfo } from '@dispatch/client';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -49,6 +49,8 @@ interface DocPageProps {
   canDecide: boolean;
   /** The section a link named, whose heading the editor opens on. */
   anchor?: string | null;
+  /** A conflicting proposal whose marked merge the page opens on. */
+  mergeProposal?: string | null;
 }
 
 // The most saves one flush sends; a 409 on the way marks the text against the
@@ -71,6 +73,7 @@ export function DocPage({
   refId,
   canDecide,
   anchor = null,
+  mergeProposal = null,
 }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
@@ -91,6 +94,16 @@ export function DocPage({
   // What a Mark reviewed would cover, shown before it acts.
   const [confirming, setConfirming] = useState<ReviewCover | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // A proposal's marked merge the merge view shows in place of the buffer's text.
+  const [mergeText, setMergeText] = useState<string | null>(null);
+  const [mergeNote, setMergeNote] = useState<string | null>(null);
+  const proposalMerge = useQuery({
+    queryKey: [...docsKey(port), 'proposal', mergeProposal],
+    enabled: mergeProposal !== null,
+    queryFn: () => client.getDocProposal(mergeProposal ?? ''),
+    retry: false,
+  });
+  const appliedMerge = useRef<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   // What the last publish from this page started, shown under the header.
   const [publishNote, setPublishNote] = useState<string | null>(null);
@@ -229,10 +242,32 @@ export function DocPage({
     [text]
   );
 
+  // A named proposal's marked merge opens the merge view once, when it loads.
+  useEffect(() => {
+    const view = proposalMerge.data;
+    if (view === undefined || appliedMerge.current === view.proposal.rev)
+      return;
+    appliedMerge.current = view.proposal.rev;
+    if (view.marked === null || view.proposal.state !== 'open') {
+      setMergeNote(
+        `Proposal ${view.proposal.rev} has nothing to resolve here (${view.proposal.state}).`
+      );
+      return;
+    }
+    setMergeText(view.marked);
+    setPanel('merge');
+  }, [proposalMerge.data]);
+
   // The merge view's resolution replaces the text and goes out at once.
   const saveResolution = (resolved: string): void => {
     update((b) => editDocBuffer(b, resolved));
     setPanel('editor');
+    if (mergeText !== null) {
+      setMergeText(null);
+      setMergeNote(
+        'Resolution saved. Now reject the proposal as resolved in its gate.'
+      );
+    }
     void flush();
   };
 
@@ -331,7 +366,7 @@ export function DocPage({
         >
           History
         </Button>
-        {!archived && (marked || panel === 'merge') && (
+        {!archived && (marked || mergeText !== null || panel === 'merge') && (
           <Button
             size="sm"
             variant="ghost"
@@ -439,6 +474,14 @@ export function DocPage({
           }}
         />
       )}
+      {mergeNote !== null && (
+        <p
+          role="status"
+          className="border-b border-[var(--color-border)] px-3 py-1 text-xs"
+        >
+          {mergeNote}
+        </p>
+      )}
       {actionError !== null && (
         <p
           role="alert"
@@ -539,10 +582,13 @@ export function DocPage({
               client={client}
               port={port}
               refId={refId}
-              text={buf.buffer.text}
+              text={mergeText ?? buf.buffer.text}
               name={fileName}
               onSave={saveResolution}
-              onClose={() => setPanel('editor')}
+              onClose={() => {
+                setMergeText(null);
+                setPanel('editor');
+              }}
             />
           )}
           {/* Hidden, not unmounted, under the other panels: the textarea keeps

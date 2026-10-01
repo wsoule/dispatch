@@ -137,6 +137,8 @@ export interface NavState {
    * Not kept in history, like `threadFocus`: the view keeps its own selection. */
   activeDocId: string | null;
   activeDocAnchor: string | null;
+  /** A conflicting proposal whose marked merge the open doc starts on, or `null`. */
+  activeDocMerge: string | null;
   /** Task id shown in the task full-window view, or `null` when it's not the current view. */
   activeTaskId: string | null;
   /** The current tab within the task view. */
@@ -194,6 +196,7 @@ export const initialNavState: NavState = {
   threadFocus: null,
   activeDocId: null,
   activeDocAnchor: null,
+  activeDocMerge: null,
   activeTaskId: null,
   taskTab: 'auto',
   newTaskReturnView: 'board',
@@ -263,7 +266,7 @@ export type NavAction =
   | { type: 'openThread'; messageId: string | null }
   /** Routes to Docs with one doc open, scrolled to `anchor`'s section when set —
    * a task page's Docs row, a `doc:` ref chip, or a palette hit. */
-  | { type: 'openDoc'; docId: string; anchor: string | null }
+  | { type: 'openDoc'; docId: string; anchor: string | null; merge?: string }
   /** Routes to the task full-window view with a specific task, tab, and optional run. */
   | { type: 'openTask'; taskId: string; tab?: TaskTab; runId?: string | null }
   /** Switches the tab within the task view without adding a history entry. */
@@ -304,6 +307,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         threadFocus: null,
         activeDocId: null,
         activeDocAnchor: null,
+        activeDocMerge: null,
       };
     case 'setProjectView': {
       const view = normalizeProjectView(action.view);
@@ -458,6 +462,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           projectView: 'docs',
           activeDocId: action.docId,
           activeDocAnchor: action.anchor,
+          activeDocMerge: action.merge ?? null,
           peekTaskId: null,
         },
         {
