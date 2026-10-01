@@ -14,6 +14,8 @@ export interface CliContext {
   // <productName>`, and tests inject a stub to assert on the root without
   // actually launching anything.
   openApp?: (rootDir: string) => void;
+  // Reads all of stdin (a secret piped in with --token-stdin); tests inject it.
+  readStdin?: () => Promise<string>;
 }
 
 export class CliError extends Error {

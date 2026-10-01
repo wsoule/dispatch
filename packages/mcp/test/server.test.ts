@@ -74,6 +74,7 @@ describe('server identity', () => {
       'memory_search',
       'msg_reply',
       'msg_send',
+      'peer_list',
       'record_evidence',
       'record_mutation',
       'run_list',
