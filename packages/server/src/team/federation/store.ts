@@ -137,6 +137,9 @@ export class FedStore {
       if (head !== null && input.type === 'key')
         throw new Error('a log has one key op');
       const stamp = this.ledger.nextStamp(head?.seq ?? 0);
+      // The v1 history before this replica's key op is attested, never re-issued.
+      if (input.type === 'key')
+        this.db.query('DELETE FROM fed_v1_minted WHERE seq < ?').run(stamp.seq);
       input.onStamp?.(stamp);
       const sealedPart = input.seal?.(stamp);
       const op = buildOp(

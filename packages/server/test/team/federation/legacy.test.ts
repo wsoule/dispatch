@@ -245,6 +245,53 @@ describe('an older build on the same root', () => {
     );
   });
 
+  // FW-R22 I2: the branch is not this root's record. An older build's op
+  // already sent (gone from the outbox) is re-issued from this root's own
+  // copy, and a line someone wrote into this replica's v1 file is never signed.
+  it('re-issues only what this root minted, never a branch line', () => {
+    const log = new MemoryV1();
+    const { ada, legacy } = founded(log);
+    ada.roster.found('acme', legacy.attestAll());
+    const sent = ada.ledger.commitLocal(
+      { task: 't-00000a03', kind: 'put', fields: { title: 'really minted' } },
+      () => {}
+    );
+    // The older build pushed it and cleared its outbox; the branch was then edited.
+    ada.ledger.sent(sent.seq);
+    log.files.set(ada.fed.replica, [
+      { ...sent, fields: { title: 'forged on the branch' } },
+      {
+        ...sent,
+        seq: sent.seq + 1,
+        task: 't-00000bad',
+        fields: { title: 'never minted' },
+      },
+    ]);
+    const reissued = legacy.reissue();
+    expect(
+      reissued.map(
+        (o) => (o.body as { fields: { title: string } }).fields.title
+      )
+    ).toEqual(['really minted']);
+  });
+
+  it('re-issues an older build’s op even when an op of this build was minted first', () => {
+    const { ada, legacy } = founded(new MemoryV1());
+    ada.roster.found('acme', legacy.attestAll());
+    ada.ledger.commitLocal(
+      { task: 't-00000a04', kind: 'put', fields: { title: 'between passes' } },
+      () => {}
+    );
+    // An admin action through the API mints an op before the pass re-issues.
+    ada.roster.invite('bob');
+    expect(
+      legacy
+        .reissue()
+        .map((o) => (o.body as { fields: { title: string } }).fields.title)
+    ).toEqual(['between passes']);
+    expect(legacy.reissue()).toEqual([]);
+  });
+
   it("re-issues an older build's oversized field without it, with a problem, and the rest signed", () => {
     const { ada, legacy } = founded(new MemoryV1());
     ada.roster.found('acme', legacy.attestAll());

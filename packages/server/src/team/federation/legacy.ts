@@ -91,6 +91,10 @@ export class LegacyWindow {
       hlc: op.hlc,
       ...piece,
     });
+    // This build's own copy of a signed op: never one to re-issue.
+    this.deps.fed.db
+      .query('DELETE FROM fed_v1_minted WHERE seq = ?')
+      .run(op.seq);
   }
 
   // Which v1 lines from other replicas to apply, refuse, or leave waiting
@@ -165,25 +169,26 @@ export class LegacyWindow {
   }
 
   // Re-issues, as signed task ops, what an older build on this root recorded
-  // after this build's last op: seqs past seq_seen that no v2 op took.
+  // since this replica's key op. Read only from this root's own record of what
+  // it minted (fed_v1_minted, less this build's own v1 copies), never the
+  // branch (FW-R22(3)): anyone can write lines into this replica's v1 file.
   reissue(): FederatedOp[] {
-    const { ledger, fed } = this.deps;
-    const seen = fed.meta('seq_seen');
-    if (seen === null) return [];
-    const from = Number(seen);
-    const top = ledger.lastSeq();
-    if (top <= from) return [];
-    const bySeq = new Map<number, BoardOp>();
-    for (const op of this.deps.log.readV1(this.me)) bySeq.set(op.seq, op);
-    for (const op of ledger.outbox()) bySeq.set(op.seq, op);
+    const { fed } = this.deps;
+    if (fed.head() === null) return [];
+    const minted = fed.db
+      .query<{ seq: number; op_json: string }, []>(
+        'SELECT seq, op_json FROM fed_v1_minted ORDER BY seq'
+      )
+      .all();
+    if (minted.length === 0) return [];
     const out: FederatedOp[] = [];
-    for (let seq = from + 1; seq <= top; seq++) {
-      const op = bySeq.get(seq);
-      if (op === undefined) continue;
-      out.push(...this.deps.signer().commit(changeOf(op)));
+    for (const row of minted) {
+      const op = JSON.parse(row.op_json) as BoardOp;
+      if (op.replica === this.me)
+        out.push(...this.deps.signer().commit(changeOf(op)));
     }
-    if (Number(fed.meta('seq_seen') ?? '0') < top)
-      fed.setMeta('seq_seen', String(top));
+    const last = minted.at(-1)?.seq ?? 0;
+    fed.db.query('DELETE FROM fed_v1_minted WHERE seq <= ?').run(last);
     return out;
   }
 
