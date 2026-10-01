@@ -202,6 +202,24 @@ export function cutMemoryBody(
 const PLAIN_MARKER = (n: number): string =>
   `\n[truncated by Dispatch: ${n} bytes; long-form belongs in Docs]`;
 
+const DOC_MARKER =
+  /\n\[truncated by Dispatch: (\d+) bytes; full text in doc (doc-[0-9A-Z]{26}) of project [^\]\n]+\]$/;
+
+/** A personal entry's body and refs as a shared copy may carry them: an
+ *  overflow marker naming its human's personal doc becomes the plain one, and
+ *  that doc's ref is dropped, so a shared entry never points at a personal doc. */
+export function withoutPersonalDoc<R extends { type: string; id: string }>(
+  body: string,
+  refs: readonly R[]
+): { body: string; refs: R[] } {
+  const m = DOC_MARKER.exec(body);
+  if (m === null) return { body, refs: [...refs] };
+  return {
+    body: body.slice(0, m.index) + PLAIN_MARKER(Number(m[1])),
+    refs: refs.filter((r) => !(r.type === 'doc' && r.id === m[2])),
+  };
+}
+
 // Title and body as ingest reads them: frontmatter is informational, the
 // provenance line and untrustedBlock's escapes are removed. A MEMORY.md link's
 // text titles the file before Claude's `name`, a filename slug.
