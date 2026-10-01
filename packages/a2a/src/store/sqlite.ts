@@ -85,8 +85,23 @@ export interface OutboundRow {
   updatedAt: string;
 }
 
+// A client's push config on one of its tasks; token and credentials are
+// secrets a client handed us to send back, so a2a.db must hold them.
+export interface PushConfigRow {
+  id: string;
+  taskId: string;
+  client: Address;
+  url: string;
+  token: string | null;
+  authScheme: string | null;
+  authCredentials: string | null;
+  failures: number;
+  disabledAt: string | null;
+  createdAt: string;
+}
+
 // The bridge's own records: registered clients, the A2A tasks they opened,
-// the outbound peers and what was relayed to them.
+// the outbound peers and what was relayed to them, and push configs.
 export interface A2AStore {
   putClient(row: ClientRow): void;
   getClient(address: Address): ClientRow | null;
@@ -125,6 +140,25 @@ export interface A2AStore {
   contextFor(alias: string, thread: string): string | null;
   // Open or done rows first attempted since `sinceIso`: the channel quota.
   relayedSince(alias: string, sinceIso: string): number;
+  // Upsert on (task_id, id).
+  putPushConfig(row: PushConfigRow): void;
+  getPushConfig(taskId: string, id: string): PushConfigRow | null;
+  // Enabled configs only, oldest first.
+  pushConfigsOf(taskId: string): PushConfigRow[];
+  // Enabled configs only.
+  countPushConfigs(client: Address): number;
+  deletePushConfig(taskId: string, id: string): boolean;
+  // A success resets the failure count; a failure adds one and disables the
+  // config at `disableAt` in a row. Null when the config is gone.
+  recordPushResult(
+    taskId: string,
+    id: string,
+    ok: boolean,
+    at: string,
+    disableAt?: number
+  ): PushConfigRow | null;
+  // Disables a config at once (a refused address).
+  disablePushConfig(taskId: string, id: string, at: string): void;
   close(): void;
 }
 
@@ -155,6 +189,12 @@ CREATE TABLE IF NOT EXISTS outbound (
 );
 CREATE INDEX IF NOT EXISTS outbound_state ON outbound (state, alias);
 CREATE INDEX IF NOT EXISTS outbound_thread ON outbound (alias, thread, updated_at);
+CREATE TABLE IF NOT EXISTS push_configs (
+  id TEXT NOT NULL, task_id TEXT NOT NULL, client TEXT NOT NULL, url TEXT NOT NULL, token TEXT,
+  auth_scheme TEXT, auth_credentials TEXT, failures INTEGER NOT NULL, disabled_at TEXT, created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
+CREATE INDEX IF NOT EXISTS push_client ON push_configs (client);
 `;
 
 // Created 0600 before SQLite opens it, so it never exists world-readable;
@@ -282,6 +322,34 @@ function toOutbound(r: OutboundDbRow): OutboundRow {
     nextAttemptAt: r.next_attempt_at,
     lastError: r.last_error,
     updatedAt: r.updated_at,
+  };
+}
+
+interface PushDbRow {
+  id: string;
+  task_id: string;
+  client: string;
+  url: string;
+  token: string | null;
+  auth_scheme: string | null;
+  auth_credentials: string | null;
+  failures: number;
+  disabled_at: string | null;
+  created_at: string;
+}
+
+function toPush(r: PushDbRow): PushConfigRow {
+  return {
+    id: r.id,
+    taskId: r.task_id,
+    client: r.client,
+    url: r.url,
+    token: r.token,
+    authScheme: r.auth_scheme,
+    authCredentials: r.auth_credentials,
+    failures: Number(r.failures),
+    disabledAt: r.disabled_at,
+    createdAt: r.created_at,
   };
 }
 
@@ -622,6 +690,94 @@ export class SqliteA2AStore implements A2AStore {
         [alias, sinceIso]
       )?.n ?? 0
     );
+  }
+
+  putPushConfig(r: PushConfigRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO push_configs (id, task_id, client, url, token, auth_scheme, auth_credentials, failures, disabled_at, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT (task_id, id) DO UPDATE SET client = excluded.client, url = excluded.url, token = excluded.token,
+           auth_scheme = excluded.auth_scheme, auth_credentials = excluded.auth_credentials, failures = excluded.failures,
+           disabled_at = excluded.disabled_at, created_at = excluded.created_at`
+      )
+      .run(
+        r.id,
+        r.taskId,
+        r.client,
+        r.url,
+        r.token,
+        r.authScheme,
+        r.authCredentials,
+        r.failures,
+        r.disabledAt,
+        r.createdAt
+      );
+  }
+
+  getPushConfig(taskId: string, id: string): PushConfigRow | null {
+    const r = queryOne<PushDbRow>(
+      this.db,
+      'SELECT * FROM push_configs WHERE task_id = ? AND id = ?',
+      [taskId, id]
+    );
+    return r === undefined ? null : toPush(r);
+  }
+
+  pushConfigsOf(taskId: string): PushConfigRow[] {
+    return queryAll<PushDbRow>(
+      this.db,
+      'SELECT * FROM push_configs WHERE task_id = ? AND disabled_at IS NULL ORDER BY created_at, id',
+      [taskId]
+    ).map(toPush);
+  }
+
+  countPushConfigs(client: Address): number {
+    return Number(
+      queryOne<{ n: number }>(
+        this.db,
+        'SELECT COUNT(*) AS n FROM push_configs WHERE client = ? AND disabled_at IS NULL',
+        [client]
+      )?.n ?? 0
+    );
+  }
+
+  deletePushConfig(taskId: string, id: string): boolean {
+    return (
+      Number(
+        this.db
+          .prepare('DELETE FROM push_configs WHERE task_id = ? AND id = ?')
+          .run(taskId, id).changes
+      ) > 0
+    );
+  }
+
+  recordPushResult(
+    taskId: string,
+    id: string,
+    ok: boolean,
+    at: string,
+    disableAt = 10
+  ): PushConfigRow | null {
+    this.db
+      .prepare(
+        `UPDATE push_configs SET failures = CASE WHEN ? THEN 0 ELSE failures + 1 END WHERE task_id = ? AND id = ?`
+      )
+      .run(ok ? 1 : 0, taskId, id);
+    this.db
+      .prepare(
+        'UPDATE push_configs SET disabled_at = ? WHERE task_id = ? AND id = ? AND disabled_at IS NULL AND failures >= ?'
+      )
+      .run(at, taskId, id, disableAt);
+    return this.getPushConfig(taskId, id);
+  }
+
+  disablePushConfig(taskId: string, id: string, at: string): void {
+    this.db
+      .prepare(
+        'UPDATE push_configs SET disabled_at = ? WHERE task_id = ? AND id = ? AND disabled_at IS NULL'
+      )
+      .run(at, taskId, id);
   }
 
   close(): void {

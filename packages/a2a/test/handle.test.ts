@@ -458,3 +458,105 @@ describe('IpLimiter', () => {
     expect(auth.lockedFor('198.51.100.1')).toBeNull();
   });
 });
+
+describe('push-notification configs (P4)', () => {
+  const path = '/a2a/v1/tasks/m-root/pushNotificationConfigs';
+  const body = {
+    url: 'https://hooks.example.com/a2a',
+    token: 'SECRET-TOKEN',
+    authentication: { scheme: 'Bearer', credentials: 'SECRET-CRED' },
+  };
+
+  it('creates, gets, lists and deletes, and deleting twice succeeds', async () => {
+    port.enablePush();
+    const created = (await (
+      await call(path, { body: { ...body, id: 'cfg-1' } })
+    ).json()) as { id: string; taskId: string; url: string };
+    expect(created).toMatchObject({
+      id: 'cfg-1',
+      taskId: 'm-root',
+      url: 'https://hooks.example.com/a2a',
+    });
+    expect(await (await call(`${path}/cfg-1`)).json()).toMatchObject({
+      id: 'cfg-1',
+      authentication: { scheme: 'Bearer' },
+    });
+    expect(await (await call(path)).json()).toEqual({
+      configs: [expect.objectContaining({ id: 'cfg-1' })],
+      nextPageToken: '',
+    });
+    for (const _ of [1, 2])
+      expect((await call(`${path}/cfg-1`, { method: 'DELETE' })).status).toBe(
+        200
+      );
+  });
+
+  it('never echoes the token or credentials back', async () => {
+    port.enablePush();
+    const texts = [
+      await (await call(path, { body: { ...body, id: 'cfg-1' } })).text(),
+      await (await call(`${path}/cfg-1`)).text(),
+      await (await call(path)).text(),
+    ];
+    for (const text of texts) {
+      expect(text).not.toContain('SECRET');
+      expect(text).toContain('cfg-1');
+    }
+  });
+
+  it('answers an unknown config and a foreign task as TASK_NOT_FOUND', async () => {
+    port.enablePush();
+    const missing = await call(`${path}/nope`);
+    expect(missing.status).toBe(404);
+    expect(await reason(missing)).toBe('TASK_NOT_FOUND');
+    const foreign = await call(path, {
+      body,
+      headers: { authorization: 'Bearer other' },
+    });
+    expect(await reason(foreign)).toBe('TASK_NOT_FOUND');
+  });
+
+  it('creates an inline config from a send, validating it before anything is sent', async () => {
+    const configs = port.enablePush();
+    await call('/a2a/v1/message:send', {
+      body: {
+        ...ask(),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: body,
+        },
+      },
+    });
+    expect([...configs.configs.values()]).toEqual([
+      expect.objectContaining({ taskId: 'm-root', url: body.url }),
+    ]);
+    const bad = await call('/a2a/v1/message:send', {
+      body: {
+        ...ask({ messageId: 'c-9' }),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: { url: 'nope' },
+        },
+      },
+    });
+    expect(bad.status).toBe(400);
+    expect(port.calls.filter((c) => c.method === 'open')).toHaveLength(1);
+  });
+
+  it('refuses push routes and an inline config when the port has no push support', async () => {
+    const res = await call('/a2a/v1/message:send', {
+      body: {
+        ...ask(),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: body,
+        },
+      },
+    });
+    expect(await reason(res)).toBe('PUSH_NOTIFICATION_NOT_SUPPORTED');
+    expect(port.calls.some((c) => c.method === 'open')).toBe(false);
+    expect(await reason(await call(path))).toBe(
+      'PUSH_NOTIFICATION_NOT_SUPPORTED'
+    );
+  });
+});

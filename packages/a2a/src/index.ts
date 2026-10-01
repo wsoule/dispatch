@@ -106,6 +106,7 @@ export type {
   OpenInput,
   OpenKind,
   OpenResult,
+  PushConfigPort,
   TaskFacts,
 } from './port.js';
 export * from './peer/index.js';
@@ -123,12 +124,26 @@ export {
   wrapExternalData,
 } from './sanitize.js';
 export type { ExternalContent, SanitizedContent } from './sanitize.js';
+export {
+  deliverPush,
+  parsePushConfig,
+  PUSH_LIMITS,
+  PUSH_TOKEN_HEADER,
+  pushConfigJson,
+  pushHeaders,
+} from './push.js';
+export type {
+  PushAuth,
+  PushConfigInput,
+  PushConfigJson,
+  PushResult,
+} from './push.js';
 export { handleA2A, matchRoute } from './server/handle.js';
 export type { HandleOptions, Route } from './server/handle.js';
 export { IpLimiter } from './server/limits.js';
 export { decodePageToken, encodePageToken } from './server/paging.js';
-export { taskEventStream } from './server/sse.js';
-export type { StreamOptions } from './server/sse.js';
+export { eventsBetween, snapshotOf, taskEventStream } from './server/sse.js';
+export type { Snapshot, StreamOptions } from './server/sse.js';
 export {
   INTERRUPTED_STATES,
   stateFromWire,
@@ -147,6 +162,7 @@ export type {
   OutboundState,
   PeerRow,
   PeerStatus,
+  PushConfigRow,
   TaskListQuery,
   TaskPatch,
   TaskRow,

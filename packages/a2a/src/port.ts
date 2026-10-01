@@ -8,6 +8,7 @@ import type {
 } from '@dispatch/protocol';
 
 import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
+import type { PushConfigInput, PushConfigJson } from './push.js';
 import type { TaskStateName } from './states.js';
 import type { HandoffPhase } from './statuses.js';
 import type { ArtifactJson } from './wire.js';
@@ -139,6 +140,24 @@ export interface CardInputs {
 
 export type A2APolicy = A2AConfig;
 
+/** A host's push configs; every method answers only for the caller's own tasks. */
+export interface PushConfigPort {
+  // A2AError TASK_NOT_FOUND; MessagingError limited, or invalid on 'url'.
+  create(
+    caller: Caller,
+    taskId: string,
+    input: PushConfigInput
+  ): Promise<PushConfigJson>;
+  get(
+    caller: Caller,
+    taskId: string,
+    id: string
+  ): Promise<PushConfigJson | null>;
+  list(caller: Caller, taskId: string): Promise<PushConfigJson[]>;
+  // Idempotent: deleting an unknown id succeeds.
+  delete(caller: Caller, taskId: string, id: string): Promise<void>;
+}
+
 export interface BridgePort {
   authenticate(bearer: string): Promise<AuthResult>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
@@ -151,4 +170,6 @@ export interface BridgePort {
   // Throws A2AError('TASK_NOT_CANCELABLE', …) when the task cannot be canceled.
   cancel(caller: Caller, taskId: string): Promise<void>;
   watch(caller: Caller, taskId: string, onChange: () => void): () => void;
+  // Absent: push routes answer PUSH_NOTIFICATION_NOT_SUPPORTED.
+  readonly pushConfigs?: PushConfigPort;
 }

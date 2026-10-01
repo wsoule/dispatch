@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { openA2ADb, SqliteA2AStore } from '../src/store/sqlite.js';
-import type { OutboundRow, PeerRow, TaskRow } from '../src/store/sqlite.js';
+import type {
+  OutboundRow,
+  PeerRow,
+  PushConfigRow,
+  TaskRow,
+} from '../src/store/sqlite.js';
 
 const CLIENT = 'agent:wyat/a2a.acme';
 let dir: string;
@@ -293,5 +298,57 @@ describe('outbound', () => {
     expect(store.contextFor('acme', 'm-thread')).toBe('pc-new');
     expect(store.contextFor('acme', 'm-other')).toBeNull();
     expect(store.relayedSince('acme', '2026-09-25T10:30:00.000Z')).toBe(1);
+  });
+});
+
+function push(id: string, over: Partial<PushConfigRow> = {}): PushConfigRow {
+  return {
+    id,
+    taskId: 'm-1',
+    client: CLIENT,
+    url: 'https://hooks.example.com/a2a',
+    token: 'tok',
+    authScheme: 'Bearer',
+    authCredentials: 'cred',
+    failures: 0,
+    disabledAt: null,
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
+}
+
+describe('push_configs', () => {
+  it('counts, records results, disables at ten failures and deletes once', () => {
+    store.putPushConfig(push('a'));
+    store.putPushConfig(push('b'));
+    expect(store.countPushConfigs(CLIENT)).toBe(2);
+    expect(store.getPushConfig('m-1', 'a')).toMatchObject({
+      token: 'tok',
+      authCredentials: 'cred',
+    });
+    for (let i = 0; i < 5; i++)
+      store.recordPushResult('m-1', 'a', false, '2026-09-25T10:00:00.000Z');
+    expect(
+      store.recordPushResult('m-1', 'a', true, '2026-09-25T10:00:00.000Z')
+        ?.failures
+    ).toBe(0);
+    let row: PushConfigRow | null = null;
+    for (let i = 0; i < 10; i++)
+      row = store.recordPushResult(
+        'm-1',
+        'a',
+        false,
+        '2026-09-25T11:00:00.000Z'
+      );
+    expect(row?.disabledAt).toBe('2026-09-25T11:00:00.000Z');
+    expect(store.pushConfigsOf('m-1').map((c) => c.id)).toEqual(['b']);
+    expect(store.countPushConfigs(CLIENT)).toBe(1);
+    store.disablePushConfig('m-1', 'b', '2026-09-25T12:00:00.000Z');
+    expect(store.pushConfigsOf('m-1')).toEqual([]);
+    expect(store.deletePushConfig('m-1', 'a')).toBe(true);
+    expect(store.deletePushConfig('m-1', 'a')).toBe(false);
+    expect(
+      store.recordPushResult('m-1', 'a', true, '2026-09-25T12:00:00.000Z')
+    ).toBeNull();
   });
 });

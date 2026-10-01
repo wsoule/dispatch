@@ -29,6 +29,8 @@ import type {
 } from '../port.js';
 import { decideState, project, withReask } from '../projection.js';
 import type { ProjectionView } from '../projection.js';
+import { parsePushConfig, pushConfigJson } from '../push.js';
+import type { PushConfigInput } from '../push.js';
 import { stateFromWire, TERMINAL_STATES } from '../states.js';
 import { ENVELOPE_URI } from '../uris.js';
 import type { ExtensionUri } from '../uris.js';
@@ -51,7 +53,12 @@ export interface HandleOptions {
 
 export type Route =
   | { op: 'send' | 'stream' | 'list' | 'extendedCard' }
-  | { op: 'get' | 'cancel' | 'subscribe' | 'push'; id: string };
+  | { op: 'get' | 'cancel' | 'subscribe'; id: string }
+  | PushRoute;
+
+type PushRoute =
+  | { op: 'pushCreate' | 'pushList'; id: string }
+  | { op: 'pushGet' | 'pushDelete'; id: string; configId: string };
 
 interface Op {
   req: Request;
@@ -74,7 +81,7 @@ const QUERY_CREDENTIALS = [
   'bearer',
 ];
 const TASK_PATH =
-  /^\/tasks\/([^/:]+)(:cancel|:subscribe|\/pushNotificationConfigs(?:\/[^/]+)?)?$/;
+  /^\/tasks\/([^/:]+)(:cancel|:subscribe|\/pushNotificationConfigs(?:\/([^/]+))?)?$/;
 
 function decodeId(raw: string): string | null {
   try {
@@ -101,7 +108,19 @@ export function matchRoute(method: string, path: string): Route | null {
     return method === 'GET' || method === 'POST'
       ? { op: 'subscribe', id }
       : null;
-  return ['GET', 'POST', 'DELETE'].includes(method) ? { op: 'push', id } : null;
+  if (m[3] === undefined)
+    return method === 'POST'
+      ? { op: 'pushCreate', id }
+      : method === 'GET'
+        ? { op: 'pushList', id }
+        : null;
+  const configId = decodeId(m[3]);
+  if (configId === null) return null;
+  return method === 'GET'
+    ? { op: 'pushGet', id, configId }
+    : method === 'DELETE'
+      ? { op: 'pushDelete', id, configId }
+      : null;
 }
 
 // Names the activated extensions on a response, as A2A-Extensions.
@@ -371,6 +390,16 @@ async function send(op: Op, streaming: boolean): Promise<Response> {
     outputTextType(request.configuration?.acceptedOutputModes ?? [])
   );
   const inbound = decodeInbound(request.message);
+  // An inline push config is checked before anything is sent, and created
+  // for the task once it exists.
+  const inline = request.configuration?.taskPushNotificationConfig;
+  const pushInput: PushConfigInput | null =
+    inline === undefined || inline.url === '' ? null : parsePushConfig(inline);
+  if (pushInput !== null && op.port.pushConfigs === undefined)
+    throw new A2AError(
+      'PUSH_NOTIFICATION_NOT_SUPPORTED',
+      'push notifications are not supported'
+    );
   let release: (() => void) | null = null;
   if (streaming) {
     const admitted = await admitStream(op);
@@ -417,6 +446,14 @@ async function send(op: Op, streaming: boolean): Promise<Response> {
     release?.();
     throw err;
   }
+  if (pushInput !== null) {
+    try {
+      await op.port.pushConfigs?.create(op.caller, taskId, pushInput);
+    } catch (err) {
+      release?.();
+      throw err;
+    }
+  }
   if (release !== null)
     return openStream(op, release, taskId, view, reask, false);
   const facts =
@@ -427,6 +464,50 @@ async function send(op: Op, streaming: boolean): Promise<Response> {
     { task: withReask(project(facts, view), reask, view) },
     extensions
   );
+}
+
+// The four push-config operations on one of the caller's tasks. A config is
+// read back without its token or credentials.
+async function push(op: Op, route: PushRoute): Promise<Response> {
+  const configs = op.port.pushConfigs;
+  if (configs === undefined)
+    throw new A2AError(
+      'PUSH_NOTIFICATION_NOT_SUPPORTED',
+      'push notifications are not supported'
+    );
+  await mustFacts(op, route.id);
+  const none = new Set<ExtensionUri>();
+  switch (route.op) {
+    case 'pushCreate': {
+      const input = parsePushConfig(await readJson(op.req));
+      return json(
+        pushConfigJson(await configs.create(op.caller, route.id, input)),
+        none
+      );
+    }
+    case 'pushList':
+      return json(
+        {
+          configs: (await configs.list(op.caller, route.id)).map(
+            pushConfigJson
+          ),
+          nextPageToken: '',
+        },
+        none
+      );
+    case 'pushGet': {
+      const found = await configs.get(op.caller, route.id, route.configId);
+      if (found === null)
+        throw new A2AError(
+          'TASK_NOT_FOUND',
+          'push notification config not found'
+        );
+      return json(pushConfigJson(found), none);
+    }
+    case 'pushDelete':
+      await configs.delete(op.caller, route.id, route.configId);
+      return json({}, none);
+  }
 }
 
 // SubscribeToTask, by GET or POST: a stream of an unfinished task.
@@ -608,11 +689,11 @@ export async function handleA2A(
         return await listTasks(op);
       case 'cancel':
         return await cancelTask(op, route.id);
-      case 'push':
-        throw new A2AError(
-          'PUSH_NOTIFICATION_NOT_SUPPORTED',
-          'push notifications are not supported'
-        );
+      case 'pushCreate':
+      case 'pushList':
+      case 'pushGet':
+      case 'pushDelete':
+        return await push(op, route);
       case 'extendedCard':
         throw new A2AError(
           'UNSUPPORTED_OPERATION',

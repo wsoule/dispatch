@@ -13,8 +13,15 @@ import type {
   ListQuery,
   OpenInput,
   OpenResult,
+  PushConfigPort,
   TaskFacts,
 } from '../../src/port.js';
+import { decideState, project } from '../../src/projection.js';
+import type { ProjectionView } from '../../src/projection.js';
+import { deliverPush } from '../../src/push.js';
+import type { PushConfigInput, PushConfigJson } from '../../src/push.js';
+import type { Snapshot } from '../../src/server/sse.js';
+import { eventsBetween, snapshotOf } from '../../src/server/sse.js';
 import type { ArtifactJson } from '../../src/wire.js';
 
 const CALLER: Caller = { address: 'agent:tck/a2a.tck', name: 'a2a.tck' };
@@ -55,6 +62,75 @@ const DATA: ArtifactJson = {
   parts: [{ data: { key: 'value', count: 42 }, mediaType: 'application/json' }],
 };
 
+const PUSH_VIEW: ProjectionView = {
+  client: CALLER.address,
+  extensions: new Set(),
+  textMediaType: 'text/markdown',
+  historyLength: 0,
+  includeArtifacts: true,
+};
+
+// Push configs for the SUT, keyed by task. The TCK's webhook listens on its
+// own local host, so delivery here is unguarded: never point it elsewhere.
+class TckPushConfigs implements PushConfigPort {
+  readonly configs = new Map<string, Map<string, PushConfigJson>>();
+  readonly last = new Map<string, Snapshot>();
+  constructor(private readonly exists: (taskId: string) => boolean) {}
+
+  private of(taskId: string): Map<string, PushConfigJson> {
+    if (!this.exists(taskId))
+      throw new A2AError('TASK_NOT_FOUND', 'task not found');
+    const found = this.configs.get(taskId) ?? new Map<string, PushConfigJson>();
+    this.configs.set(taskId, found);
+    return found;
+  }
+
+  create(
+    _caller: Caller,
+    taskId: string,
+    input: PushConfigInput
+  ): Promise<PushConfigJson> {
+    const configs = this.of(taskId);
+    const config: PushConfigJson = {
+      id: input.id ?? `cfg-${configs.size + 1}`,
+      taskId,
+      url: input.url,
+      ...(input.token === undefined ? {} : { token: input.token }),
+      ...(input.authentication === undefined
+        ? {}
+        : { authentication: input.authentication }),
+    };
+    configs.set(config.id, config);
+    return Promise.resolve(config);
+  }
+
+  get(_caller: Caller, taskId: string, id: string) {
+    return Promise.resolve(this.of(taskId).get(id) ?? null);
+  }
+
+  list(_caller: Caller, taskId: string) {
+    return Promise.resolve([...this.of(taskId).values()]);
+  }
+
+  delete(_caller: Caller, taskId: string, id: string) {
+    this.of(taskId).delete(id);
+    return Promise.resolve();
+  }
+
+  // Sends each config of the task what changed since that config last heard.
+  deliver(f: TaskFacts): void {
+    for (const config of this.configs.get(f.id)?.values() ?? []) {
+      const key = `${f.id} ${config.id}`;
+      const next = snapshotOf(project(f, PUSH_VIEW), decideState(f).state);
+      const events = eventsBetween(this.last.get(key) ?? null, next);
+      this.last.set(key, next);
+      void (async () => {
+        for (const event of events) await deliverPush(config, event);
+      })();
+    }
+  }
+}
+
 let seq = 0;
 function message(over: Partial<Message>): Message {
   seq += 1;
@@ -82,6 +158,7 @@ export class TckBridgePort implements BridgePort {
   publicUrl = 'http://127.0.0.1';
   private readonly tasks = new Map<string, TaskFacts>();
   private readonly watchers = new Map<string, Set<() => void>>();
+  readonly pushConfigs = new TckPushConfigs((id) => this.tasks.has(id));
 
   authenticate(): Promise<AuthResult> {
     return Promise.resolve({ ok: true, caller: CALLER });
@@ -97,13 +174,14 @@ export class TckBridgePort implements BridgePort {
       version: 'tck',
       skills: ['ask'],
       blockingWaitSec: 60,
-      pushNotifications: false,
+      pushNotifications: true,
     });
   }
 
   private put(f: TaskFacts): void {
     this.tasks.set(f.id, f);
     for (const fn of this.watchers.get(f.id) ?? []) fn();
+    this.pushConfigs.deliver(f);
   }
 
   private current(id: string): TaskFacts {

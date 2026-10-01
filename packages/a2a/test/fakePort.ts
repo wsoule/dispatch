@@ -1,3 +1,4 @@
+import { A2AError } from '../src/errors.js';
 import type {
   Admission,
   AuthResult,
@@ -10,12 +11,63 @@ import type {
   ListQuery,
   OpenInput,
   OpenResult,
+  PushConfigPort,
   TaskFacts,
 } from '../src/port.js';
+import type { PushConfigInput, PushConfigJson } from '../src/push.js';
 import { CLIENT, facts } from './facts.js';
+
+// In-memory push configs over a FakePort's tasks.
+export class MemoryPushConfigs implements PushConfigPort {
+  readonly configs = new Map<string, PushConfigJson>();
+  constructor(private readonly port: FakePort) {}
+
+  private owned(caller: Caller, taskId: string): void {
+    if (this.port.tasks.get(taskId)?.client !== caller.address)
+      throw new A2AError('TASK_NOT_FOUND', 'task not found');
+  }
+
+  create(
+    caller: Caller,
+    taskId: string,
+    input: PushConfigInput
+  ): Promise<PushConfigJson> {
+    this.owned(caller, taskId);
+    const config: PushConfigJson = {
+      id: input.id ?? `cfg-${this.configs.size + 1}`,
+      taskId,
+      url: input.url,
+      ...(input.token === undefined ? {} : { token: input.token }),
+      ...(input.authentication === undefined
+        ? {}
+        : { authentication: input.authentication }),
+    };
+    this.configs.set(`${taskId} ${config.id}`, config);
+    return Promise.resolve(config);
+  }
+
+  get(caller: Caller, taskId: string, id: string) {
+    this.owned(caller, taskId);
+    return Promise.resolve(this.configs.get(`${taskId} ${id}`) ?? null);
+  }
+
+  list(caller: Caller, taskId: string) {
+    this.owned(caller, taskId);
+    return Promise.resolve(
+      [...this.configs.values()].filter((c) => c.taskId === taskId)
+    );
+  }
+
+  delete(caller: Caller, taskId: string, id: string) {
+    this.owned(caller, taskId);
+    this.configs.delete(`${taskId} ${id}`);
+    return Promise.resolve();
+  }
+}
 
 // A recording BridgePort whose world is plain maps; tests script its answers.
 export class FakePort implements BridgePort {
+  pushConfigs?: MemoryPushConfigs;
   calls: { method: string; args: unknown[] }[] = [];
   tokens = new Map<string, AuthResult>([
     ['good', { ok: true, caller: { address: CLIENT, name: 'a2a.acme' } }],
@@ -143,6 +195,12 @@ export class FakePort implements BridgePort {
     return [...this.watchers.values()].reduce((n, s) => n + s.size, 0);
   }
   // Replaces a task's facts and fires its watchers, as the daemon's watch does.
+  enablePush(): MemoryPushConfigs {
+    this.pushConfigs = new MemoryPushConfigs(this);
+    this.cardInputs = { ...this.cardInputs, pushNotifications: true };
+    return this.pushConfigs;
+  }
+
   change(taskId: string, next: TaskFacts): void {
     this.tasks.set(taskId, next);
     for (const fn of this.watchers.get(taskId) ?? []) fn();
