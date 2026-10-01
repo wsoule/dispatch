@@ -1,7 +1,12 @@
 import type { JsonValue, Message, SendInput } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
 
-import { linkLine } from '../codec.js';
+import {
+  isLinkUrl,
+  isTextMediaType,
+  linkLine,
+  MAX_URL_PARTS,
+} from '../codec.js';
 import { matchChoice } from '../policy.js';
 import { sanitizeExternal } from '../sanitize.js';
 import type { SanitizedContent } from '../sanitize.js';
@@ -62,8 +67,9 @@ const record = (v: unknown): Record<string, unknown> | null =>
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const text = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
-// A peer's parts as text, data and links; anything not in those shapes is skipped,
-// since a peer's JSON is untrusted whatever its declared type.
+// A peer's parts as text, data and links; anything not in those shapes, text
+// in another media type, and urls that are not http(s) (or past 20) are
+// skipped, since a peer's JSON is untrusted whatever its declared type.
 function textOf(
   parts: unknown,
   messageId: string | null,
@@ -77,9 +83,11 @@ function textOf(
     if (p === null) continue;
     const t = text(p.text);
     const url = text(p.url);
-    if (t !== null) texts.push(t);
-    else if (p.data !== undefined) data.push(p.data as JsonValue);
-    else if (url !== null) links.push(linkLine(text(p.filename) ?? '', url));
+    if (t !== null) {
+      if (isTextMediaType(text(p.mediaType) ?? '')) texts.push(t);
+    } else if (p.data !== undefined) data.push(p.data as JsonValue);
+    else if (url !== null && links.length < MAX_URL_PARTS && isLinkUrl(url))
+      links.push(linkLine(text(p.filename) ?? '', url));
   }
   const envelope = record(record(metadata)?.[ENVELOPE_URI]);
   const choices = Array.isArray(envelope?.choices)
@@ -143,15 +151,21 @@ export function peerEventKey(alias: string, event: PeerEvent): string {
   return `a2a:${alias}:${digest}`;
 }
 
-// Status text, then artifact text, then links, each trimmed; data wrapped (spec:1501).
+// Status text, then artifact text, then links, each trimmed; data wrapped
+// (spec:1501). A prefix goes on before the size rules, so it counts too.
 export function peerContent(
   texts: readonly PeerText[],
-  choices?: readonly string[]
+  choices?: readonly string[],
+  prefix?: string
 ): SanitizedContent {
-  const body = [...texts.map((t) => t.body), ...texts.flatMap((t) => t.links)]
+  const joined = [...texts.map((t) => t.body), ...texts.flatMap((t) => t.links)]
     .map((s) => s.trim())
     .filter((s) => s !== '')
     .join('\n\n');
+  const body =
+    prefix === undefined
+      ? joined
+      : `${prefix}${joined === '' ? '(no text)' : joined}`;
   return sanitizeExternal(
     {
       body,
@@ -226,15 +240,17 @@ export function mapPeerEvent(
         }),
       ];
     }
-    case 'AUTH_REQUIRED': {
-      const c = peerContent(texts);
+    case 'AUTH_REQUIRED':
       return [
-        send('notice', {
-          ...c,
-          body: `${peer} is waiting on its own authorization: ${c.body}`,
-        }),
+        send(
+          'notice',
+          peerContent(
+            texts,
+            undefined,
+            `${peer} is waiting on its own authorization: `
+          )
+        ),
       ];
-    }
     case 'WORKING': {
       const acts: PeerAction[] = [];
       if (handoff && open)

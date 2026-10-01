@@ -118,6 +118,50 @@ describe('reading untrusted peer shapes', () => {
   });
 });
 
+describe('peer parts as text', () => {
+  const statusWith = (parts: object[]) =>
+    peerEventFromTask(
+      task('TASK_STATE_COMPLETED', undefined, {
+        status: {
+          state: 'TASK_STATE_COMPLETED',
+          message: {
+            messageId: 'pm',
+            role: 'ROLE_AGENT',
+            parts: parts as MessageJson['parts'],
+          },
+        },
+      })
+    );
+
+  it('links only http(s) urls, at most 20 of them, none over 2048 bytes', () => {
+    const e = statusWith([
+      { url: 'javascript:alert(1)' },
+      { url: 'data:text/html,x' },
+      { url: `https://example.com/${'a'.repeat(2100)}` },
+      ...Array.from({ length: 25 }, (_, i) => ({
+        url: `https://example.com/${i}`,
+      })),
+    ]);
+    const links = e?.kind === 'task' ? (e.status?.links ?? []) : [];
+    expect(links).toHaveLength(20);
+    expect(links.join('\n')).not.toContain('javascript:');
+    expect(links.join('\n')).not.toContain('data:');
+    expect(links[0]).toBe('[https://example.com/0](https://example.com/0)');
+  });
+
+  it('reads only plain and markdown text parts', () => {
+    const e = statusWith([
+      { text: 'kept' },
+      { text: 'also kept', mediaType: 'text/markdown' },
+      { text: '<script>x</script>', mediaType: 'text/html' },
+      { text: 'AAAA', mediaType: 'application/octet-stream' },
+    ]);
+    expect(e?.kind === 'task' ? e.status?.body : null).toBe(
+      'kept\n\nalso kept'
+    );
+  });
+});
+
 describe('mapPeerEvent (spec:1498-1506)', () => {
   it('answers a direct question on COMPLETED, matching a choice', () => {
     const [act] = mapPeerEvent(
@@ -266,6 +310,20 @@ describe('mapPeerEvent (spec:1498-1506)', () => {
     const input = (act as { input: { body: string; data: unknown } }).input;
     expect(gateOf({ data: input.data as never })).toBeNull();
     expect(input.body.endsWith('[… truncated by Dispatch]')).toBe(true);
+  });
+
+  it('keeps an AUTH_REQUIRED notice within 64 KiB, prefix included', () => {
+    const [act] = mapPeerEvent(
+      event(task('TASK_STATE_AUTH_REQUIRED', 'a'.repeat(70_000))),
+      ctx()
+    );
+    const body = (act as { input: { body: string } }).input.body;
+    expect(
+      body.startsWith('a2a:acme is waiting on its own authorization')
+    ).toBe(true);
+    expect(new TextEncoder().encode(body).byteLength).toBeLessThanOrEqual(
+      64 * 1024
+    );
   });
 
   it('keeps a close reason to one short line', () => {

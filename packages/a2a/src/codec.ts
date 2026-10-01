@@ -47,8 +47,25 @@ export interface MessageView {
 }
 
 const TEXT_TYPES = new Set(['', 'text/plain', 'text/markdown']);
-const MAX_URL_PARTS = 20;
+export const MAX_URL_PARTS = 20;
 const MAX_URL_BYTES = 2048;
+
+/** A text part's media type Dispatch reads as text: none, plain or markdown. */
+export function isTextMediaType(mediaType: string): boolean {
+  return TEXT_TYPES.has(mediaType);
+}
+
+// A url part Dispatch may render as a link: http(s) only, at most 2048 bytes,
+// so a `javascript:` or `data:` href never reaches markdown.
+export function isLinkUrl(url: string): boolean {
+  if (utf8Bytes(url) > MAX_URL_BYTES) return false;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
 const MAX_MESSAGE_ID_BYTES = 200;
 const LINE_BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 
@@ -112,6 +129,8 @@ export function decodeMessage(message: A2AMessage): DecodedMessage {
           invalid('message.parts', `at most ${MAX_URL_PARTS} url parts`);
         if (utf8Bytes(content.value) > MAX_URL_BYTES)
           invalid(`message.parts[${i}].url`, `at most ${MAX_URL_BYTES} bytes`);
+        if (!isLinkUrl(content.value))
+          invalid(`message.parts[${i}].url`, 'only http and https urls');
         links.push(linkLine(part.filename, content.value));
         break;
     }
