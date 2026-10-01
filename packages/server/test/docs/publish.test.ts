@@ -18,10 +18,17 @@ import {
   seedFile,
   validatePublishPath,
 } from '../../src/docs/publish.js';
-import type { DocsService } from '../../src/docs/service.js';
+import { DocsService } from '../../src/docs/service.js';
 import type { SqliteDocStore } from '../../src/docs/store.js';
-import type { FakeDocsHost } from './fakeHost.js';
-import { AGENT, makeService, OWNER, RUN, TEAMMATE } from './fakeHost.js';
+import {
+  AGENT,
+  DEFAULT_TEST_CONFIG,
+  FakeDocsHost,
+  makeService,
+  OWNER,
+  RUN,
+  TEAMMATE,
+} from './fakeHost.js';
 
 const dirs: string[] = [];
 function tempDir(prefix: string): string {
@@ -134,6 +141,23 @@ describe('seedFile', () => {
   it('refuses a path the publish rules refuse', () => {
     expect(() => seedFile(root, '../x.md', 'x')).toThrow();
     expect(() => seedFile(root, '.github/x.md', 'x')).toThrow();
+  });
+});
+
+describe('publishing with docs.db closed', () => {
+  it('fails closed: every task may be publishing, and nothing seeds or syncs', () => {
+    const { service } = makeService();
+    const closed = new DocsService({
+      store: null,
+      unavailable: 'docs.db did not open',
+      host: new FakeDocsHost(),
+      ownerRef: 'human:wyat',
+      config: () => ({ config: DEFAULT_TEST_CONFIG, warnings: [] }),
+    });
+    expect(closed.publishing('t-any')).toBe(true);
+    expect(closed.syncPublishes()).toBe(0);
+    expect(() => closed.seedFor('t-any', root)).not.toThrow();
+    expect(service.publishing('t-any')).toBe(false);
   });
 });
 
