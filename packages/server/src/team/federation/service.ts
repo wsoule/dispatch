@@ -4,8 +4,15 @@ import {
   hlcWallMs,
   isStub,
   MAX_CLOCK_LEAD_MS,
+  opHash,
+  verifyEntry,
+  ZERO_HASH,
 } from '@dispatch/protocol/federation';
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+import type {
+  ChainHead,
+  FederatedOp,
+  LogEntry,
+} from '@dispatch/protocol/federation';
 
 import type { BoardOp } from '../boardSync/engine.js';
 import type { SyncLedger, SyncProblem } from '../boardSync/ledger.js';
@@ -351,7 +358,12 @@ export class FederationService {
     }
     for (const [replica, list] of byReplica(entries)) {
       if (replica === this.opts.fed.replica) continue;
-      const r = verifyLog(replica, list, { head: null, halted: null }, null);
+      const r = verifyLog(
+        replica,
+        chainFrom(list, null, null).chain,
+        { head: null, halted: null },
+        null
+      );
       for (const { entry, hash } of r.accepted) {
         if (isStub(entry) || (entry.type !== 'key' && entry.type !== 'roster'))
           continue;
@@ -425,7 +437,18 @@ export class FederationService {
       if (replica === fed.replica) continue;
       const cursor = fed.cursor(replica);
       if (cursor.halted !== null) continue;
-      const r = verifyLog(replica, list, cursor, fed.pinned(replica));
+      const pinned = fed.pinned(replica);
+      const { chain, stalled } = chainFrom(
+        list,
+        cursor.head,
+        pinned?.signPub ?? null
+      );
+      if (stalled !== null)
+        this.recordHalt(
+          replica,
+          `${replica}'s log fails verification at seq ${stalled.seq}: ${stalled.reason}; it waits for an op that verifies, or revoke it`
+        );
+      const r = verifyLog(replica, chain, cursor, pinned);
       const kept: Verified['entries'] = [];
       for (const item of r.accepted) {
         const { entry, hash } = item;
@@ -763,4 +786,64 @@ function byReplica(entries: LogEntry[]): Map<string, LogEntry[]> {
     else list.push(e);
   }
   return out;
+}
+
+// FW-R23: one replica's log, rebuilt from its head by following prev links
+// across whatever files held its lines. Copies of one op collapse, and a line
+// that does not chain is dropped, unless it is a validly signed rival of the
+// next op: a fork, which verifyLog halts on.
+function chainFrom(
+  entries: readonly LogEntry[],
+  head: ChainHead | null,
+  signPub: string | null
+): { chain: LogEntry[]; stalled: { seq: number; reason: string } | null } {
+  const byPrev = new Map<string, Map<string, LogEntry>>();
+  for (const e of entries) {
+    let hash: string;
+    try {
+      hash = opHash(e);
+    } catch {
+      continue;
+    }
+    const next = byPrev.get(e.prev) ?? new Map<string, LogEntry>();
+    next.set(hash, e);
+    byPrev.set(e.prev, next);
+  }
+  const out: LogEntry[] = [];
+  let at = head;
+  let key = signPub;
+  for (;;) {
+    const candidates = [...(byPrev.get(at?.hash ?? ZERO_HASH)?.values() ?? [])];
+    const valid = candidates.filter((c) => {
+      const k = key ?? keyOpSignPub(c);
+      return k !== null && verifyEntry(at, c, k).ok;
+    });
+    const [first] = valid;
+    if (first === undefined) {
+      // Something claims to follow the head and none of it verifies: the log
+      // waits there, named, for the op that does.
+      const bad = candidates[0];
+      if (bad === undefined) return { chain: out, stalled: null };
+      const k = key ?? keyOpSignPub(bad);
+      const checked = k === null ? null : verifyEntry(at, bad, k);
+      const reason =
+        checked === null
+          ? 'no key'
+          : checked.ok
+            ? 'out of order'
+            : checked.reason;
+      return { chain: out, stalled: { seq: bad.seq, reason } };
+    }
+    out.push(...valid);
+    if (valid.length > 1) return { chain: out, stalled: null };
+    key ??= keyOpSignPub(first);
+    at = { seq: first.seq, hash: opHash(first), hlc: first.hlc };
+  }
+}
+
+// The signing key a log's key op carries, which verifies the op itself.
+function keyOpSignPub(e: LogEntry): string | null {
+  if (e.type !== 'key' || isStub(e)) return null;
+  const body = e.body as { signPub?: unknown } | undefined;
+  return typeof body?.signPub === 'string' ? body.signPub : null;
 }

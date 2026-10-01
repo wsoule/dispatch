@@ -223,22 +223,18 @@ export class SyncRepo {
     if (entries.length === 0) return;
     const rel = (name: string) => `${FED_DIR}/${this.replica}/${name}`;
     const path = (name: string) => ownFile(this.dir, rel(name));
-    // Appends only to the segment whose last line is this replica's head (the
-    // first new op's prev), never to whatever segment sorts last (FW-R22 N1).
+    // FW-R23: never truncate or overwrite a file. Append only to one that ends
+    // cleanly on this replica's head (the first new op's prev); else write a
+    // fresh file under the next unused name.
     const head = entries[0]?.prev;
     let current =
       this.segments(this.replica).find((name) => {
+        const text = readCapped(path(name), MAX_SEGMENT_READ) ?? '';
+        if (!text.endsWith('\n')) return false;
         const last = completeLines(path(name)).at(-1);
         const entry = last === undefined ? null : parseEntry(last);
         return entry !== null && opHash(entry) === head;
       }) ?? null;
-    // A write that died partway left a torn line; drop it before appending (M3).
-    if (current !== null) {
-      const file = path(current);
-      const text = readCapped(file, MAX_SEGMENT_READ) ?? '';
-      if (!text.endsWith('\n'))
-        writeFileSync(file, text.slice(0, text.lastIndexOf('\n') + 1));
-    }
     let count = current === null ? 0 : completeLines(path(current)).length;
     let size = current === null ? 0 : statSync(path(current)).size;
     for (const e of entries) {
@@ -249,12 +245,9 @@ export class SyncRepo {
         count >= limits.ops ||
         size + bytes > limits.bytes
       ) {
-        current = segmentName(e.seq);
+        current = this.unusedName(e.seq);
         count = 0;
         size = 0;
-        // A new segment of this replica's own: whatever a branch writer left
-        // under that name is replaced.
-        writeFileSync(path(current), '');
       }
       appendFileSync(path(current), line);
       count += 1;
@@ -266,26 +259,24 @@ export class SyncRepo {
     );
   }
 
-  /** Every replica's v2 entries past its watermark, reading only from the
-   *  segment holding watermark + 1 onward. Torn last lines are skipped. */
+  /** Every replica's v2 entries past its watermark, from all of its segment
+   *  files, identical lines once. Files are storage, never order (FW-R23): the
+   *  pass rebuilds each log by its prev chain. Torn last lines are skipped. */
   readV2(since: Watermarks): LogEntry[] {
     const root = join(this.dir, FED_DIR);
     const out: LogEntry[] = [];
     for (const replica of listDir(root)) {
       if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
       const cursor = since.get(replica) ?? 0;
-      const segments = this.segments(replica);
-      let start = 0;
-      segments.forEach((name, i) => {
-        if (Number(name.slice(0, 12)) <= cursor + 1) start = i;
-      });
-      for (const name of segments.slice(start)) {
+      const seen = new Set<string>();
+      for (const name of this.segments(replica))
         for (const line of completeLines(join(root, replica, name))) {
+          if (seen.has(line)) continue;
+          seen.add(line);
           const entry = parseEntry(line);
           if (entry !== null && entry.replica === replica && entry.seq > cursor)
             out.push(entry);
         }
-      }
     }
     return out;
   }
@@ -368,26 +359,22 @@ export class SyncRepo {
     );
   }
 
-  // One replica's segments, sorted by their first seq. A name is only a hint
-  // (FW-R22(2)): a segment counts when its first line is that replica's op at
-  // the seq the name says, and its range starts past the last segment kept, so
-  // a copy of an op an earlier segment holds never starts a reader there.
+  // One replica's segment files, by name. A name orders nothing (FW-R23);
+  // only regular files under the segment pattern are read.
   private segments(replica: string): string[] {
     const dir = join(this.dir, FED_DIR, replica);
-    const kept: string[] = [];
-    let last = 0;
-    for (const f of listDir(dir)
+    return listDir(dir)
       .filter((name) => SEGMENT.test(name) && regularFile(join(dir, name)))
-      .sort()) {
-      const entries = completeLines(join(dir, f)).map(parseEntry);
-      const first = entries[0];
-      if (first?.replica !== replica || first.seq !== Number(f.slice(0, 12)))
-        continue;
-      if (first.seq <= last) continue;
-      kept.push(f);
-      last = Math.max(...entries.map((e) => e?.seq ?? 0));
-    }
-    return kept;
+      .sort();
+  }
+
+  // The first segment name from `seq` up that no file of this replica uses.
+  private unusedName(seq: number): string {
+    const dir = join(this.dir, FED_DIR, this.replica);
+    let n = seq;
+    // A link or other non-file in the way is not a file: ownFile replaces it.
+    while (regularFile(join(dir, segmentName(n)))) n += 1;
+    return segmentName(n);
   }
 
   /**

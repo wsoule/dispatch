@@ -192,17 +192,72 @@ describe('segment names are hints (FW-R22 I1)', () => {
     ]);
   });
 
-  it('repairs a torn tail of its own segment before appending (M3)', async () => {
+  it('never rewrites a torn segment: it writes the next op to a fresh file (M3, FW-R23)', async () => {
     const a = clone('a', A);
     await a.ensure();
     const ops = chain(3);
     await a.writeV2(ops.slice(0, 2));
-    appendFileSync(
-      join(dir, 'a', 'fed', A, '000000000001.jsonl'),
-      '{"v":2,"repl'
-    );
+    const seg = join(dir, 'a', 'fed', A, '000000000001.jsonl');
+    appendFileSync(seg, '{"v":2,"repl');
+    const torn = readFileSync(seg, 'utf8');
     await a.writeV2(ops.slice(2));
+    expect(readFileSync(seg, 'utf8')).toBe(torn);
     expect(a.readV2(new Map()).map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+});
+
+describe('segments hold storage, never order (FW-R23)', () => {
+  const twoSegments = async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(10);
+    await a.writeV2(ops.slice(0, 5), { ops: 5, bytes: 1024 * 1024 });
+    await a.writeV2(ops.slice(5), { ops: 5, bytes: 1024 * 1024 });
+    const seg = (n: string) => join(dir, 'a', 'fed', A, `${n}.jsonl`);
+    return { a, ops, seg1: seg('000000000001'), seg6: seg('000000000006') };
+  };
+  const seqs = (entries: { seq: number }[]) =>
+    [...new Set(entries.map((e) => e.seq))].sort((x, y) => x - y);
+
+  it('reads past a byte-identical copy of a later op, and a republish destroys no real file', async () => {
+    const { a, ops, seg1, seg6 } = await twoSegments();
+    appendFileSync(seg1, `${JSON.stringify(ops[9])}\n`);
+    expect(seqs(a.readV2(new Map([[A, 5]])))).toEqual([6, 7, 8, 9, 10]);
+    const before = readFileSync(seg6, 'utf8');
+    const ta = new GitFederationTransport({
+      repo: a,
+      replica: A,
+      signPriv: keys.signPriv,
+      verifyAcks: () => true,
+      acknowledgedBy: () => false,
+      ownLog: () => ops,
+      now: () => new Date(),
+    });
+    await ta.publish([]);
+    expect(readFileSync(seg6, 'utf8')).toBe(before);
+    expect(seqs(a.readV2(new Map()))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it('reads past a junk line with a high seq, and appends only where the last line is its head', async () => {
+    const { a, ops, seg1, seg6 } = await twoSegments();
+    const junk = { ...ops[4], seq: 999, sig: 'junk' };
+    appendFileSync(seg1, `${JSON.stringify(junk)}\n`);
+    const junked = readFileSync(seg1, 'utf8');
+    expect(seqs(a.readV2(new Map([[A, 5]])))).toEqual([6, 7, 8, 9, 10, 999]);
+    const next = buildOp(
+      {
+        replica: A,
+        seq: 11,
+        prev: opHash(ops[9]),
+        hlc: hlc(1011),
+        type: 'task',
+        body: { task: 't-00000a01', kind: 'put', fields: { n: 11 } },
+      },
+      keys.signPriv
+    );
+    await a.writeV2([next]);
+    expect(readFileSync(seg1, 'utf8')).toBe(junked);
+    expect(readFileSync(seg6, 'utf8').trim().split('\n')).toHaveLength(6);
   });
 });
 

@@ -140,6 +140,33 @@ describe('FederationService', () => {
     expect(auditKinds(ada)).toContain('bad-signature');
   });
 
+  // FW-R23: a reader follows the prev chain, so a junk line with a high seq
+  // and a duplicate of a real op neither halt a log nor hide later ops.
+  it('follows the chain past a junk high seq and a duplicate', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const first = bob.store.create({ title: 'before the junk' }).meta.id;
+    await bob.service.syncNow();
+    const log = remote.logs.get(bob.fed.replica) ?? [];
+    const last = log.at(-1) as FederatedOp;
+    remote.logs.set(bob.fed.replica, [
+      ...log,
+      last,
+      { ...last, seq: 999, sig: 'junk' },
+    ]);
+    const later = bob.store.create({ title: 'after the junk' }).meta.id;
+    await settle(bob, ada);
+    expect(title(ada, first)).toBe('before the junk');
+    expect(title(ada, later)).toBe('after the junk');
+    expect(ada.fed.cursor(bob.fed.replica).halted).toBeNull();
+  });
+
   it('audits a fork as a fork and halts the log there', async () => {
     const {
       remote,
