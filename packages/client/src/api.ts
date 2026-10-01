@@ -3717,6 +3717,8 @@ export interface ApiClient {
   ): Promise<A2APeerSummary>;
   /** Removes the peer and its stored credential. */
   removeA2APeer(alias: string): Promise<void>;
+  /** Operator tier: lets standalone hosts reach /api/a2a/port, or closes it. */
+  setA2AStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -4715,6 +4717,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     disableA2AListener: () =>
       request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    setA2AStandalone: (enabled) =>
+      request(target, '/api/a2a/listener/standalone', {
+        method: 'PUT',
+        ...jsonBody({ enabled }),
+      }),
     a2aCard: () => request(target, '/api/a2a/card'),
     a2aClients: () => request(target, '/api/a2a/clients'),
     addA2AClient: (input) =>
