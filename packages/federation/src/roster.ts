@@ -271,7 +271,7 @@ const NO_ADMIN = 'would leave the team with no admin; void';
 
 // The most contested removals one search decides; a larger component takes
 // the FW-R7 rank fallback.
-const MAX_CONTESTED = 18;
+const MAX_CONTESTED = 16;
 
 const NEWER_ROSTER =
   "a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue";

@@ -113,7 +113,7 @@ describe('the no-admin excuse, judged after the cascade', () => {
 });
 
 // One more contested removal than a component search decides.
-const RING = 19;
+const RING = 17;
 const ringOf = (at: number): string[] =>
   Array.from(
     { length: RING },
@@ -136,8 +136,8 @@ describe('a component too large to search', () => {
     ...cuts,
   ];
 
-  // Rank picks go r00, r02, ..., r16, each voiding the next one's cut, then
-  // r18, whose cut of r00 stands as FW-R7 has it.
+  // Rank picks go r00, r02, ..., r14, each voiding the next one's cut, then
+  // r16, whose cut of r00 stands as FW-R7 has it.
   it('takes the rank fallback and pauses nothing', () => {
     const v = w.fold(ops);
     expect(v.unknown).toBeNull();
@@ -181,7 +181,7 @@ describe('a component too large to search', () => {
     ]);
     expect(v.unknown).toBeNull();
     expect(contests(v)).toBe(false);
-    expect(v.revoked.size).toBe(10);
+    expect(v.revoked.size).toBe(9);
   });
 });
 
