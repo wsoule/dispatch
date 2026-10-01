@@ -24,9 +24,10 @@ export function compareHlc(a: ParsedHlc, b: ParsedHlc): number {
   return 0;
 }
 
-// FW-R21: how far ahead of the local wall clock a reading may be and still be
-// adopted; an op stamped further ahead waits until the clock catches up.
-export const MAX_CLOCK_LEAD_MS = 10 * 60 * 1000;
+// The one clock rule (FW-R21, spec "the clock guard"): how far ahead of the
+// local wall clock a reading may be and still be applied or adopted; an op
+// stamped further ahead waits until the clock catches up.
+export const MAX_CLOCK_LEAD_MS = 5 * 60 * 1000;
 
 /** Whether a reading's wall time is past the bound for the wall time `nowMs`. */
 export function aheadOfClock(hlc: string, nowMs: number): boolean {

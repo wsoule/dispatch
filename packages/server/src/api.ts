@@ -221,7 +221,7 @@ import {
 } from './session.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
-import type { BoardSyncService } from './team/boardSync/service.js';
+import type { FederationService } from './team/federation/service.js';
 import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
@@ -356,7 +356,7 @@ export interface ApiContext {
   /** Teammates' way into previews, in team-local mode; null on loopback. */
   previewGateway: PreviewGateway | null;
   /** Board sync between replicas (team/boardSync/); null when it is off. */
-  boardSync: BoardSyncService | null;
+  boardSync: FederationService | null;
   /** Teammates' credentials and the license that says how many people may
    *  use this project together — team/, under the Elastic License 2.0. */
   team: Team;

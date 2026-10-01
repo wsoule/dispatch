@@ -1,0 +1,433 @@
+import {
+  buildOp,
+  fingerprint,
+  MAX_CLOCK_LEAD_MS,
+  sealPayload,
+  stubOf,
+} from '@dispatch/protocol/federation';
+import type { FederatedOp } from '@dispatch/protocol/federation';
+import { afterEach, describe, expect, it } from 'bun:test';
+
+import { CLOCK_GUARD_MS } from '../../../src/team/federation/service.js';
+import { licenseFor, testKeys } from '../licenseKeys.js';
+import { MemoryRemote } from './helpers/memoryTransport.js';
+import {
+  auditKinds,
+  MemoryV1,
+  serviceReplica,
+  settle,
+} from './helpers/serviceReplica.js';
+import type { ServiceReplica } from './helpers/serviceReplica.js';
+
+const open: ServiceReplica[] = [];
+afterEach(() => {
+  for (const r of open.splice(0)) r.close();
+});
+function team(...handles: string[]) {
+  const remote = new MemoryRemote();
+  const v1 = new MemoryV1();
+  const rs = handles.map((h) => serviceReplica(h, remote, v1));
+  open.push(...rs);
+  return { remote, v1, rs };
+}
+const fp = (r: ServiceReplica) =>
+  fingerprint(r.fed.keys.signPub, r.fed.keys.sealPub);
+const title = (r: ServiceReplica, id: string) => r.store.get(id)?.meta.title;
+
+describe('FederationService', () => {
+  it('before founding runs the v1 pass and touches no v2 transport', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    const id = ada.store.create({ title: 'plain v1' }).meta.id;
+    await settle(ada, bob);
+    expect(title(bob, id)).toBe('plain v1');
+    expect(remote.logs.size).toBe(0);
+  });
+
+  it('founds, admits by fingerprint and converges the board over signed task ops', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const id = bob.store.create({ title: 'from bob, signed' }).meta.id;
+    await settle(ada, bob);
+    expect(title(ada, id)).toBe('from bob, signed');
+    expect(
+      (remote.logs.get(bob.fed.replica) ?? []).map((e) => e.type)
+    ).toContain('task');
+  });
+
+  it("holds an unadmitted replica's ops with its cursor unmoved, then applies them on admission", async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    const id = bob.store.create({ title: 'waiting' }).meta.id;
+    await settle(ada, bob);
+    expect(title(ada, id)).toBeUndefined();
+    expect(ada.fed.cursor(bob.fed.replica).head).toBeNull();
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    expect(title(ada, id)).toBe('waiting');
+  });
+
+  it('halts a forged log with a problem and keeps applying everyone else', async () => {
+    const {
+      remote,
+      rs: [ada, bob, cy],
+    } = team('ada', 'bob', 'cy');
+    ada.roster.found('acme');
+    await settle(ada, bob, cy);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    ada.roster.admit(cy.fed.replica, { fingerprint: fp(cy) });
+    await settle(ada, bob, cy);
+    const forged = bob.store.create({ title: 'honest' }).meta.id;
+    await bob.service.syncNow();
+    const seq = bob.fed.head()?.seq ?? 0;
+    remote.tamper(
+      bob.fed.replica,
+      seq,
+      (e) =>
+        ({
+          ...e,
+          body: { task: forged, kind: 'put', fields: { title: 'forged' } },
+        }) as typeof e
+    );
+    const fromCy = cy.store.create({ title: 'from cy' }).meta.id;
+    await settle(ada, cy);
+    expect(title(ada, forged)).toBeUndefined();
+    expect(title(ada, fromCy)).toBe('from cy');
+    expect(
+      ada.fed
+        .problems()
+        .some((p) =>
+          p.message.includes(
+            `${bob.fed.replica}'s log fails verification at seq ${seq}`
+          )
+        )
+    ).toBe(true);
+    expect(auditKinds(ada)).toContain('bad-signature');
+  });
+
+  it('audits a fork as a fork and halts the log there', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    bob.store.create({ title: 'one history' });
+    await bob.service.syncNow();
+    const log = remote.logs.get(bob.fed.replica) ?? [];
+    const last = log.at(-1) as FederatedOp;
+    // A restored backup: a second, validly signed op at the same seq.
+    const other = buildOp(
+      {
+        replica: last.replica,
+        seq: last.seq,
+        prev: last.prev,
+        hlc: last.hlc,
+        type: 'task',
+        body: {
+          task: 't-00000f0f',
+          kind: 'put',
+          fields: { title: 'other history' },
+        },
+      },
+      bob.fed.keys.signPriv
+    );
+    remote.logs.set(bob.fed.replica, [...log, other]);
+    await ada.service.syncNow();
+    expect(ada.fed.cursor(bob.fed.replica).halted).toContain(
+      'two ops share this seq'
+    );
+    expect(auditKinds(ada)).toContain('fork');
+  });
+
+  it('drops ops above a revocation cut', async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    ada.roster.revoke(bob.fed.replica, 'lost laptop');
+    const late = bob.store.create({ title: 'after the cut' }).meta.id;
+    await settle(bob, ada);
+    expect(title(ada, late)).toBeUndefined();
+  });
+
+  it('has one clock rule: the guard is the clock backstop, five minutes', () => {
+    expect(CLOCK_GUARD_MS).toBe(MAX_CLOCK_LEAD_MS);
+    expect(CLOCK_GUARD_MS).toBe(5 * 60 * 1000);
+  });
+
+  it('holds ops more than five minutes ahead until this clock catches up, and flags an hour', async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    bob.clock.now = new Date(bob.clock.now.getTime() + 10 * 60 * 1000);
+    const id = bob.store.create({ title: 'from the future' }).meta.id;
+    await settle(bob, ada);
+    expect(title(ada, id)).toBeUndefined();
+    ada.clock.now = new Date(ada.clock.now.getTime() + 10 * 60 * 1000);
+    await settle(ada);
+    expect(title(ada, id)).toBe('from the future');
+    bob.clock.now = new Date(bob.clock.now.getTime() + 2 * 60 * 60 * 1000);
+    bob.store.create({ title: 'far future' });
+    await settle(bob, ada);
+    expect(
+      ada.fed
+        .problems()
+        .some(
+          (p) =>
+            p.subject === `replica:${bob.fed.replica}` &&
+            p.message.includes('ahead')
+        )
+    ).toBe(true);
+    expect(auditKinds(ada)).toContain('clock-hold');
+  });
+
+  it('keeps an op of an unknown type in fed_unknown and moves on', async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    bob.fed.append({
+      type: 'widget' as never,
+      body: { from: 'a newer build' },
+    });
+    const id = bob.store.create({ title: 'after the widget' }).meta.id;
+    await settle(bob, ada);
+    expect(title(ada, id)).toBe('after the widget');
+    expect(
+      ada.fed.db.query('SELECT COUNT(*) AS n FROM fed_unknown').get()
+    ).toEqual({ n: 1 });
+  });
+
+  it('pauses a replica past the seats: it publishes nothing and applies nothing', async () => {
+    const lk = testKeys();
+    const license = licenseFor(lk.privateKey, {
+      seats: 4,
+      expiresAt: '2026-09-28T00:00:00.000Z',
+    });
+    const remote = new MemoryRemote();
+    const v1 = new MemoryV1();
+    const rs = ['ada', 'bob', 'cy', 'dee'].map((h) =>
+      serviceReplica(h, remote, v1, {
+        licenseKey: h === 'ada' ? license : undefined,
+        licensePublicKey: lk.publicKey,
+      })
+    );
+    open.push(...rs);
+    const [ada, bob, cy, dee] = rs as [
+      ServiceReplica,
+      ServiceReplica,
+      ServiceReplica,
+      ServiceReplica,
+    ];
+    ada.roster.found('acme');
+    await settle(ada, bob, cy, dee);
+    for (const o of [bob, cy, dee])
+      ada.roster.admit(o.fed.replica, { fingerprint: fp(o) });
+    await settle(ada, bob, cy, dee);
+    expect(dee.service.status().paused).toBeNull();
+    // The shared license expires: three seats again, and dee is the fourth person.
+    for (const r of rs) r.clock.now = new Date('2026-09-29T10:00:00.000Z');
+    const id = dee.store.create({ title: 'past the seats' }).meta.id;
+    await settle(ada, bob, cy, dee);
+    expect(dee.service.status().paused).not.toBeNull();
+    expect(title(ada, id)).toBeUndefined();
+  });
+
+  it('keeps the outbox and says why when the transport cannot be reached', async () => {
+    const {
+      remote,
+      rs: [ada],
+    } = team('ada');
+    ada.roster.found('acme');
+    remote.offline = true;
+    await ada.service.syncNow();
+    expect(ada.service.status().transport).toBe('git');
+    expect(ada.service.status().transportHealth.lastError).toBe(
+      'the remote is unreachable'
+    );
+    expect(remote.logs.size).toBe(0);
+    remote.offline = false;
+    await ada.service.syncNow();
+    expect((remote.logs.get(ada.fed.replica) ?? []).length).toBeGreaterThan(0);
+  });
+
+  it("drops an observer's board ops: an observer publishes only keys, presence and acks", async () => {
+    const {
+      rs: [ada, ops],
+    } = team('ada', 'ops');
+    ada.roster.found('acme');
+    await settle(ada, ops);
+    ada.roster.admit(ops.fed.replica, {
+      fingerprint: fp(ops),
+      observer: true,
+    });
+    await settle(ada, ops);
+    // Bypasses the observer's own refusal: a hostile observer signs a task op anyway.
+    ops.fed.append({
+      type: 'task',
+      body: {
+        task: 't-0000000b',
+        kind: 'put',
+        origin: '2026-09-26T10:00:00.000Z',
+        fields: { title: 'from an observer' },
+      },
+    });
+    await settle(ops, ada);
+    expect(title(ada, 't-0000000b')).toBeUndefined();
+    expect(
+      ada.fed
+        .problems()
+        .some(
+          (p) =>
+            p.subject === `replica:${ops.fed.replica}` &&
+            p.message.includes('an observer publishes only')
+        )
+    ).toBe(true);
+    expect(auditKinds(ada)).toContain('speaks-for');
+  });
+
+  it('lists the tasks a revoked replica touched above the cut on a replica that already applied them', async () => {
+    const {
+      rs: [ada, bob, cy],
+    } = team('ada', 'bob', 'cy');
+    ada.roster.found('acme');
+    await settle(ada, bob, cy);
+    for (const o of [bob, cy])
+      ada.roster.admit(o.fed.replica, { fingerprint: fp(o) });
+    await settle(ada, bob, cy);
+    const id = bob.store.create({ title: 'raced' }).meta.id;
+    await bob.service.syncNow();
+    await cy.service.syncNow();
+    expect(title(cy, id)).toBe('raced');
+    // Ada has not pulled bob's op, so her cut sits below it.
+    ada.roster.revoke(bob.fed.replica, 'lost laptop');
+    await ada.service.syncNow();
+    await cy.service.syncNow();
+    expect(title(ada, id)).toBeUndefined();
+    expect(title(cy, id)).toBe('raced');
+    expect(
+      cy.fed
+        .problems()
+        .some(
+          (p) =>
+            p.subject === `team:race:${bob.fed.replica}` &&
+            p.message.includes(id)
+        )
+    ).toBe(true);
+    expect(
+      ada.fed
+        .problems()
+        .some((p) => p.subject === `team:race:${bob.fed.replica}`)
+    ).toBe(false);
+  });
+
+  it('runs the closing race check when a close-legacy op folds here', async () => {
+    const {
+      v1,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    const origin = '2026-09-26T09:00:00.000Z';
+    v1.files.set('old-00000099', [
+      {
+        v: 1,
+        replica: 'old-00000099',
+        seq: 1,
+        hlc: '1758880000001.0000.old-00000099',
+        task: 't-00000c01',
+        kind: 'put',
+        origin,
+        fields: { title: 'v1' },
+      },
+    ]);
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    // Ada closes the window (attesting through seq 1) but has not published yet.
+    ada.roster.closeLegacy();
+    // The legacy replica writes seq 2; bob applies it while the window is open in his view.
+    v1.files.get('old-00000099')?.push({
+      v: 1,
+      replica: 'old-00000099',
+      seq: 2,
+      hlc: '1758880000002.0000.old-00000099',
+      task: 't-00000c02',
+      kind: 'put',
+      origin,
+      fields: { title: 'late' },
+    });
+    await bob.service.syncNow();
+    expect(title(bob, 't-00000c02')).toBe('late');
+    await ada.service.syncNow();
+    await bob.service.syncNow();
+    expect(
+      bob.fed
+        .problems()
+        .some(
+          (p) =>
+            p.subject === 'team:race:old-00000099' &&
+            p.message.includes('t-00000c02')
+        )
+    ).toBe(true);
+    expect(title(ada, 't-00000c02')).toBeUndefined();
+  });
+
+  it('records a problem for mail addressed here that was pruned before this machine read it', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const op = ada.fed.append({
+      type: 'mail',
+      seal: (stamp) =>
+        sealPayload({
+          replica: ada.fed.replica,
+          seq: stamp.seq,
+          type: 'mail',
+          payload: { n: 1 },
+          recipients: new Map([[bob.fed.replica, bob.fed.keys.sealPub]]),
+        }),
+    });
+    await ada.service.syncNow();
+    remote.tamper(ada.fed.replica, op.seq, (e) => stubOf(e as FederatedOp));
+    await bob.service.syncNow();
+    expect(
+      bob.fed
+        .problems()
+        .some(
+          (p) =>
+            p.message ===
+            `mail from ${ada.fed.replica} seq ${op.seq} was pruned before this machine read it`
+        )
+    ).toBe(true);
+    expect(bob.fed.cursor(ada.fed.replica).halted).toBeNull();
+  });
+});

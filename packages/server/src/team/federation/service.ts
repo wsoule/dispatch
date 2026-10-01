@@ -1,0 +1,734 @@
+import { comparePositions, isCovered, verifyLog } from '@dispatch/federation';
+import type { LogCursor, RosterView } from '@dispatch/federation';
+import {
+  hlcWallMs,
+  isStub,
+  MAX_CLOCK_LEAD_MS,
+} from '@dispatch/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+
+import type { BoardOp } from '../boardSync/engine.js';
+import type { SyncLedger, SyncProblem } from '../boardSync/ledger.js';
+import type { RepoSyncResult } from '../boardSync/repo.js';
+import { personOf } from '../boardSync/repo.js';
+import type { SyncedTaskStore } from '../boardSync/syncedStore.js';
+import type { AuditKind } from './audit.js';
+import type { LegacyWindow, V1Log } from './legacy.js';
+import type { RosterService } from './roster.js';
+import type { FedStore } from './store.js';
+import { TransportOffline } from './transport.js';
+import type {
+  FederationTransport,
+  TransportHealth,
+  Watermarks,
+} from './transport.js';
+
+// When board sync runs, and what it reports. Before a team is founded a pass
+// is today's v1 pass step for step; once founded it exchanges signed ops
+// through one transport seam (spec "A pass"). Passes run soon after a local
+// change (debounced) and on an interval otherwise, never two at once.
+//
+// Licensed under the Elastic License 2.0 (../LICENSE). A board is shared by
+// as many people as the license covers, earliest first; someone past the seats
+// pauses: nothing of theirs goes out, nobody applies theirs, nothing is deleted.
+
+/** The one clock rule: an op stamped further ahead than this waits (FW-R21). */
+export const CLOCK_GUARD_MS = MAX_CLOCK_LEAD_MS;
+/** An op this far ahead also names its machine's clock as wrong. */
+export const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
+/** How soon the next pass runs while an asker waits (fastUntil). */
+export const FAST_PASS_MS = 10_000;
+/** fed_applied rows kept for the revocation race (F-D34). */
+export const APPLIED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** What `GET /api/board-sync` reports. */
+export interface SyncStatus {
+  enabled: true;
+  replica: string;
+  remote: string;
+  branch: string;
+  lastSyncAt: string | null;
+  /** Why the last pass could not reach the remote, if it could not. Local
+   *  work carries on either way; this is only ever about the exchange. */
+  lastError: string | null;
+  /** Changes made here and not yet pushed. */
+  pending: number;
+  /** Changes from others applied since the daemon started. */
+  applied: number;
+  problems: SyncProblem[];
+  /** People sharing the branch, and how many the license covers. */
+  people: number;
+  seats: number;
+  /** Why this machine is not syncing although the remote is fine: it is
+   *  past the license's seats. Null while it syncs. */
+  paused: string | null;
+}
+
+export interface FederationStatus extends SyncStatus {
+  teamId: string | null;
+  founded: boolean;
+  legacyUntil: string | null;
+  /** The transport's kind, for the request tier (F-D29). */
+  transport: 'git' | 'relay';
+  /** The transport's health, for the decide tier. */
+  transportHealth: TransportHealth;
+  federationProblems: { subject: string; message: string; at: string }[];
+}
+
+/** Run and agent evidence from this pull's verified ops (Task 14 fills it). */
+export interface Evidence {
+  runs: Map<string, string>;
+  agents: Map<string, string>;
+}
+
+export interface StageContext {
+  view: RosterView;
+  now: Date;
+  evidence: Evidence;
+}
+
+export interface OpHandler {
+  readonly type: string;
+  /** Inside the state.db transaction; 'parked' keeps the op for a later pass. */
+  stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped';
+}
+
+/** Queues ops into fed_outbox before publishing (spec "Collect"). */
+export interface Collector {
+  readonly order: number;
+  collect(now: Date): void;
+}
+
+export interface InboxDrainer {
+  drain(now: Date): Promise<void>;
+  waiting(replica: string): number;
+}
+
+/** The v1 side of the sync branch, which SyncRepo satisfies. */
+export interface V1Branch extends V1Log {
+  ensure(): Promise<void>;
+  exchange(): Promise<RepoSyncResult>;
+  write(ops: BoardOp[]): Promise<void>;
+  readOthers(cursor: (replica: string) => number): BoardOp[];
+  people(): Map<string, string>;
+}
+
+export interface FederationServiceOptions {
+  store: SyncedTaskStore;
+  ledger: SyncLedger;
+  v1: V1Branch;
+  fed: FedStore;
+  roster: RosterService;
+  legacy: LegacyWindow;
+  transport: FederationTransport;
+  remote: string;
+  branch: string;
+  intervalMs: number;
+  /** Called when a pass changed the board, so the daemon can rebuild its
+   *  cache and tell every client — the same as a local edit does. */
+  onBoardChanged: () => void;
+  /** How many people the license covers, asked on every pass. */
+  seats: () => number;
+  /** The sentence to pause with when this machine is past the seats. */
+  seatMessage: (seats: number) => string;
+  debounceMs?: number;
+  now?: () => Date;
+}
+
+// One replica's verified entries, and how its log ended this read.
+interface Verified {
+  entries: { entry: LogEntry; hash: string }[];
+  halted: string | null;
+}
+
+export class FederationService {
+  private lastSyncAt: string | null = null;
+  private lastError: string | null = null;
+  private paused: string | null = null;
+  private people = 0;
+  private applied = 0;
+  private running: Promise<void> | null = null;
+  private again = false;
+  private debounce: ReturnType<typeof setTimeout> | null = null;
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private ready: Promise<void> | null = null;
+  private stopped = false;
+  private readonly handlers = new Map<string, OpHandler>();
+  private readonly collectors: Collector[] = [];
+  private inbox: InboxDrainer | null = null;
+  private fast: Date | null = null;
+
+  constructor(private readonly opts: FederationServiceOptions) {}
+
+  /** Starts the interval and runs a first pass. */
+  start(): void {
+    this.interval = setInterval(() => {
+      void this.syncNow();
+    }, this.opts.intervalMs);
+    void this.syncNow();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.interval !== null) clearInterval(this.interval);
+    if (this.debounce !== null) clearTimeout(this.debounce);
+  }
+
+  /** A local change happened: sync shortly, once the burst is over. */
+  notifyLocalChange(): void {
+    this.schedule(this.opts.debounceMs ?? 2000);
+  }
+
+  // One pending pass, `ms` from now, replacing any earlier one.
+  private schedule(ms: number): void {
+    if (this.stopped) return;
+    if (this.debounce !== null) clearTimeout(this.debounce);
+    this.debounce = setTimeout(() => {
+      this.debounce = null;
+      void this.syncNow();
+    }, ms);
+  }
+
+  /** Runs a pass now, or right after the one in flight. Resolves when the
+   *  pass this call asked for has finished. */
+  async syncNow(): Promise<void> {
+    if (this.stopped) return;
+    if (this.running !== null) {
+      this.again = true;
+      await this.running;
+      if (this.running !== null) await this.running;
+      return;
+    }
+    this.running = this.pass().finally(() => {
+      this.running = null;
+    });
+    await this.running;
+    if (this.again) {
+      this.again = false;
+      await this.syncNow();
+    }
+  }
+
+  register(handler: OpHandler): void {
+    this.handlers.set(handler.type, handler);
+  }
+
+  addCollector(collector: Collector): void {
+    this.collectors.push(collector);
+    this.collectors.sort((a, b) => a.order - b.order);
+  }
+
+  setInbox(inbox: InboxDrainer): void {
+    this.inbox = inbox;
+  }
+
+  /** Task 16: shorter passes while an asker waits, until `when`. */
+  fastUntil(when: Date): void {
+    this.fast = when;
+  }
+
+  status(): FederationStatus {
+    const { ledger, fed, roster, transport } = this.opts;
+    const view = roster.view();
+    return {
+      enabled: true,
+      replica: ledger.replica,
+      remote: this.opts.remote,
+      branch: this.opts.branch,
+      lastSyncAt: this.lastSyncAt,
+      lastError: this.lastError,
+      pending: ledger.outbox().length + fed.outbox().length,
+      applied: this.applied,
+      problems: ledger.problems(),
+      people: view?.people.length ?? this.people,
+      seats: this.opts.seats(),
+      paused: this.paused,
+      teamId: roster.teamId(),
+      founded: roster.founded(),
+      legacyUntil: fed.meta('legacy_until'),
+      transport: transport.kind,
+      transportHealth: transport.health(),
+      federationProblems: fed.problems(),
+    };
+  }
+
+  private now(): Date {
+    return this.opts.now?.() ?? new Date();
+  }
+
+  private async pass(): Promise<void> {
+    const { v1, roster, fed, transport, legacy } = this.opts;
+    try {
+      this.ready ??= v1.ensure();
+      await this.ready;
+      // The fold reads the clock (license expiry, the legacy deadline).
+      roster.reload();
+      if (!roster.founded()) {
+        await this.v1Pass();
+        await this.discoverFounding();
+        return;
+      }
+      const now = this.now();
+      if (!this.coveredHere()) {
+        this.paused = this.opts.seatMessage(roster.seats());
+        this.lastSyncAt = now.toISOString();
+        return;
+      }
+      this.paused = null;
+      // An older build's ops first, before any op this pass mints passes them.
+      legacy.reissue();
+      try {
+        legacy.maybeClose();
+      } catch (err) {
+        console.warn(
+          `dispatchd: could not close the legacy window: ${(err as Error).message}`
+        );
+      }
+      for (const c of this.collectors) c.collect(now);
+      // Offline keeps both outboxes; the pull below says why.
+      try {
+        await this.publish();
+      } catch (err) {
+        if (!(err instanceof TransportOffline)) throw err;
+      }
+      const entries = await transport.pull(this.watermarks());
+      this.lastError = null;
+      const v1Ops = v1.readOthers((r) => this.opts.ledger.cursor(r));
+      const before = roster.view();
+      const verified = this.verify(entries);
+      this.afterFold(before);
+      const changed = this.stage(verified, v1Ops, now);
+      if (this.inbox !== null) await this.inbox.drain(now);
+      await transport.ack(this.watermarks());
+      if (fed.outbox().length > 0) this.notifyLocalChange();
+      this.lastSyncAt = now.toISOString();
+      if (changed) this.opts.onBoardChanged();
+      if (this.fast !== null && now < this.fast) this.schedule(FAST_PASS_MS);
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // Today's pass, step for step, until a team is founded.
+  private async v1Pass(): Promise<void> {
+    const { ledger, v1 } = this.opts;
+    const outbox = ledger.outbox();
+    const seats = this.opts.seats();
+    if (!this.coveredV1(seats, outbox[0]?.hlc).has(this.person())) {
+      this.paused = this.opts.seatMessage(seats);
+      this.lastSyncAt = this.now().toISOString();
+      return;
+    }
+    this.paused = null;
+    if (outbox.length > 0) {
+      await v1.write(outbox);
+      ledger.sent(outbox.at(-1)?.seq ?? 0);
+    }
+    const exchanged = await v1.exchange();
+    this.lastError = exchanged.offline ?? null;
+    const covered = this.coveredV1(seats);
+    const incoming = v1
+      .readOthers((replica) => ledger.cursor(replica))
+      .filter((op) => covered.has(personOf(op.replica)))
+      .sort((a, b) => (a.hlc < b.hlc ? -1 : a.hlc > b.hlc ? 1 : 0));
+    let changed = false;
+    ledger.atomically(() => {
+      changed = this.applyV1(incoming);
+    });
+    this.lastSyncAt = this.now().toISOString();
+    if (changed) this.opts.onBoardChanged();
+  }
+
+  // Before a founder is pinned, every verified key and roster op goes to the
+  // roster, so a pass pins a founding and announces this replica's key.
+  private async discoverFounding(): Promise<void> {
+    let entries: LogEntry[];
+    try {
+      entries = await this.opts.transport.pull(new Map());
+    } catch {
+      return;
+    }
+    for (const [replica, list] of byReplica(entries)) {
+      if (replica === this.opts.fed.replica) continue;
+      const r = verifyLog(replica, list, { head: null, halted: null }, null);
+      for (const { entry, hash } of r.accepted) {
+        if (isStub(entry) || (entry.type !== 'key' && entry.type !== 'roster'))
+          continue;
+        if (this.opts.roster.applyVerified(entry, hash) === 'held') break;
+      }
+    }
+    if (this.opts.fed.outbox().length > 0) this.notifyLocalChange();
+  }
+
+  // The people the license covers on the v1 branch, as BoardSyncService did.
+  private coveredV1(seats: number, pendingHlc?: string): Set<string> {
+    const people = this.opts.v1.people();
+    const me = this.person();
+    if (!people.has(me)) people.set(me, pendingHlc ?? '￿');
+    this.people = people.size;
+    return new Set(
+      [...people.entries()]
+        .sort((a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))
+        .slice(0, seats)
+        .map(([person]) => person)
+    );
+  }
+
+  private person(): string {
+    return personOf(this.opts.ledger.replica);
+  }
+
+  // A pending replica must publish its key op to be admitted; only an
+  // admitted replica past the seats pauses.
+  private coveredHere(): boolean {
+    const view = this.opts.roster.view();
+    if (view === null || !view.members.has(this.opts.fed.replica)) return true;
+    return isCovered(view, this.opts.fed.replica);
+  }
+
+  // Signed ops through the transport, then the v1 outbox (copies while the
+  // window is open, and an older build's own lines).
+  private async publish(): Promise<void> {
+    const { fed, ledger, v1, transport } = this.opts;
+    const ops = fed.outbox();
+    const last = ops.at(-1);
+    if (last !== undefined) {
+      await transport.publish(ops);
+      fed.published(last.seq);
+    }
+    const outbox = ledger.outbox();
+    const lastV1 = outbox.at(-1);
+    if (lastV1 !== undefined) {
+      await v1.write(outbox);
+      ledger.sent(lastV1.seq);
+    }
+  }
+
+  private watermarks(): Watermarks {
+    const out = new Map<string, number>();
+    for (const row of this.opts.fed.db
+      .query<{ replica: string; seq: number | null }, []>(
+        'SELECT replica, seq FROM fed_cursors'
+      )
+      .all())
+      if (row.seq !== null) out.set(row.replica, row.seq);
+    return out;
+  }
+
+  // Verifies each replica's log from its cursor and hands key and roster ops
+  // to the roster at once; cursors move only in staging.
+  private verify(entries: LogEntry[]): Map<string, Verified> {
+    const { fed, roster } = this.opts;
+    const out = new Map<string, Verified>();
+    for (const [replica, list] of byReplica(entries)) {
+      if (replica === fed.replica) continue;
+      const cursor = fed.cursor(replica);
+      if (cursor.halted !== null) continue;
+      const r = verifyLog(replica, list, cursor, fed.pinned(replica));
+      const kept: Verified['entries'] = [];
+      for (const item of r.accepted) {
+        const { entry, hash } = item;
+        if (!isStub(entry) && (entry.type === 'key' || entry.type === 'roster'))
+          if (roster.applyVerified(entry, hash) === 'held') break;
+        kept.push(item);
+      }
+      const halted = kept.length === r.accepted.length ? r.cursor.halted : null;
+      if (halted !== null) this.recordHalt(replica, halted);
+      out.set(replica, { entries: kept, halted });
+    }
+    return out;
+  }
+
+  // A halt's problem and audit row, by its reason (F-D38).
+  private recordHalt(replica: string, reason: string): void {
+    const kind: AuditKind =
+      reason.includes('two ops share this seq') ||
+      reason.includes('prev does not match')
+        ? 'fork'
+        : reason.includes('bad signature') || reason.includes('bodyHash')
+          ? 'bad-signature'
+          : 'halt';
+    const subject = `replica:${replica}`;
+    const { fed } = this.opts;
+    // Re-read while blocked ops wait before it: one audit row per halt.
+    if (
+      fed.problems().some((p) => p.subject === subject && p.message === reason)
+    )
+      return;
+    fed.problem(subject, reason);
+    fed.audit(kind, subject, { replica, reason });
+  }
+
+  // The races a new fold reveals: a revocation cutting below ops applied here
+  // (F-D34), and a close-legacy that folded here (Task 9b).
+  private afterFold(before: RosterView | null): void {
+    const { fed, roster, legacy } = this.opts;
+    const view = roster.view();
+    if (view === null) return;
+    for (const [replica, cut] of view.revoked) {
+      if (before?.revoked.has(replica) === true) continue;
+      const read = fed.cursor(replica).head?.seq ?? 0;
+      if (read <= cut.afterSeq) continue;
+      const tasks = fed.db
+        .query<{ task: string }, [string, number]>(
+          'SELECT DISTINCT task FROM fed_applied WHERE replica = ? AND seq > ? ORDER BY task'
+        )
+        .all(replica, cut.afterSeq)
+        .map((row) => row.task);
+      if (tasks.length === 0) continue;
+      fed.problem(
+        `team:race:${replica}`,
+        `${roster.label(replica)} was revoked after this machine applied its changes to ${tasks.join(', ')}; they stay until someone edits them`
+      );
+    }
+    if (before?.legacy.closed === null && view.legacy.closed !== null)
+      legacy.onClosed();
+  }
+
+  // Applies verified ops in (hlc, replica, seq) order in one state.db
+  // transaction, each replica's cursor moving past what it consumed.
+  private stage(
+    verified: Map<string, Verified>,
+    v1Ops: BoardOp[],
+    now: Date
+  ): boolean {
+    const { ledger, fed, roster } = this.opts;
+    let changed = false;
+    ledger.atomically(() => {
+      const view = roster.view();
+      if (view === null) return;
+      const ctx: StageContext = {
+        view,
+        now,
+        evidence: { runs: new Map(), agents: new Map() },
+      };
+      this.restage(ctx);
+      const blocked = new Set<string>();
+      // An op this build cannot read, from someone who stands, pauses applying.
+      if (view.unknown !== null)
+        for (const replica of verified.keys()) blocked.add(replica);
+      const heads = new Map<string, LogCursor['head']>();
+      const walk = [...verified]
+        .flatMap(([, v]) => v.entries)
+        .sort((a, b) => comparePositions(a.entry, b.entry));
+      for (const { entry, hash } of walk) {
+        const r = entry.replica;
+        if (blocked.has(r)) continue;
+        const outcome = this.stageOne(entry, view, ctx, now);
+        if (outcome === 'block') {
+          blocked.add(r);
+          continue;
+        }
+        if (outcome === 'changed') changed = true;
+        heads.set(r, { seq: entry.seq, hash, hlc: entry.hlc });
+      }
+      for (const [replica, v] of verified) {
+        const head = heads.get(replica) ?? fed.cursor(replica).head;
+        const halted = blocked.has(replica) ? null : v.halted;
+        if (heads.has(replica) || halted !== null)
+          fed.setCursor(replica, { head, halted });
+      }
+      if (this.applyV1Filtered(v1Ops)) changed = true;
+      fed.db
+        .query('DELETE FROM fed_applied WHERE at < ?')
+        .run(new Date(now.getTime() - APPLIED_RETENTION_MS).toISOString());
+    });
+    return changed;
+  }
+
+  // One op: 'block' keeps it and the rest of its replica's ops for a later
+  // pass; anything else moves the cursor past it.
+  private stageOne(
+    entry: LogEntry,
+    view: RosterView,
+    ctx: StageContext,
+    now: Date
+  ): 'block' | 'changed' | 'moved' {
+    const { fed, roster, store } = this.opts;
+    const r = entry.replica;
+    // A revoked replica's ops above its cut are dropped; those below stand.
+    const cut = view.revoked.get(r);
+    if (cut !== undefined && entry.seq > cut.afterSeq) return 'moved';
+    const member = view.members.get(r);
+    // A pending replica, or one past the seats, waits with its cursor unmoved.
+    if (cut === undefined && (member === undefined || !isCovered(view, r)))
+      return 'block';
+    // Key and roster ops were applied when they verified.
+    if (entry.type === 'key' || entry.type === 'roster') return 'moved';
+    const observer = member?.observer ?? cut?.observer ?? false;
+    if (observer && entry.type !== 'presence') {
+      fed.problem(
+        `replica:${r}`,
+        `${roster.label(r)} is an observer; an observer publishes only keys, presence and acks`
+      );
+      fed.audit('speaks-for', `op:${r}:${entry.seq}`, {
+        replica: r,
+        seq: entry.seq,
+        type: entry.type,
+      });
+      return 'moved';
+    }
+    const ahead = (hlcWallMs(entry.hlc) ?? 0) - now.getTime();
+    if (ahead > CLOCK_GUARD_MS) {
+      if (ahead > CLOCK_PROBLEM_MS) this.clockProblem(r, ahead);
+      return 'block';
+    }
+    if (isStub(entry)) {
+      if (entry.to?.includes(fed.replica) === true)
+        fed.problem(
+          `op:${r}:${entry.seq}`,
+          `${entry.type} from ${r} seq ${entry.seq} was pruned before this machine read it`
+        );
+      return 'moved';
+    }
+    if (entry.type === 'task') {
+      const body = entry.body as unknown as Omit<
+        BoardOp,
+        'v' | 'replica' | 'seq' | 'hlc'
+      >;
+      const result = store.applyRemote({
+        v: 1,
+        replica: r,
+        seq: entry.seq,
+        hlc: entry.hlc,
+        ...body,
+      });
+      if (result.held === true) return 'block';
+      if (result.problem !== undefined)
+        this.opts.ledger.recordProblem(
+          body.task,
+          result.problem,
+          now.toISOString()
+        );
+      fed.db
+        .query(
+          'INSERT OR IGNORE INTO fed_applied (replica, seq, task, at) VALUES (?, ?, ?, ?)'
+        )
+        .run(r, entry.seq, body.task, now.toISOString());
+      if (!result.changed) return 'moved';
+      this.applied += 1;
+      return 'changed';
+    }
+    const handler = this.handlers.get(entry.type);
+    if (handler !== undefined) {
+      if (handler.stage(entry, ctx) === 'parked') this.park(entry, 'parked');
+      return 'moved';
+    }
+    fed.db
+      .query(
+        'INSERT OR IGNORE INTO fed_unknown (replica, seq, op_json) VALUES (?, ?, ?)'
+      )
+      .run(r, entry.seq, JSON.stringify(entry));
+    return 'moved';
+  }
+
+  // "<handle>'s <device> runs N minutes ahead", once per message, with an
+  // audit row when it is new.
+  private clockProblem(replica: string, ahead: number): void {
+    const { fed, roster } = this.opts;
+    const subject = `replica:${replica}`;
+    const device = fed.pinned(replica)?.device ?? replica;
+    const message = `${roster.label(replica)}'s ${device} runs ${Math.round(ahead / 60_000)} minutes ahead; fix its clock`;
+    if (
+      fed.problems().some((p) => p.subject === subject && p.message === message)
+    )
+      return;
+    fed.problem(subject, message);
+    fed.audit('clock-hold', subject, { replica, aheadMs: ahead });
+  }
+
+  private park(op: FederatedOp, reason: string): void {
+    this.opts.fed.db
+      .query(
+        'INSERT OR REPLACE INTO fed_parked (replica, seq, op_json, reason, first_at) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(
+        op.replica,
+        op.seq,
+        JSON.stringify(op),
+        reason,
+        this.now().toISOString()
+      );
+  }
+
+  // Parked ops and ops of a type now registered get their handler again.
+  private restage(ctx: StageContext): void {
+    const { db } = this.opts.fed;
+    const rows = [
+      ...db
+        .query<{ replica: string; seq: number; op_json: string }, []>(
+          'SELECT replica, seq, op_json FROM fed_parked'
+        )
+        .all()
+        .map((row) => ({ ...row, table: 'fed_parked' })),
+      ...db
+        .query<{ replica: string; seq: number; op_json: string }, []>(
+          'SELECT replica, seq, op_json FROM fed_unknown'
+        )
+        .all()
+        .map((row) => ({ ...row, table: 'fed_unknown' })),
+    ];
+    for (const row of rows) {
+      const op = JSON.parse(row.op_json) as FederatedOp;
+      const handler = this.handlers.get(op.type);
+      if (handler === undefined) continue;
+      const parked = handler.stage(op, ctx) === 'parked';
+      if (parked && row.table === 'fed_parked') continue;
+      db.query(`DELETE FROM ${row.table} WHERE replica = ? AND seq = ?`).run(
+        row.replica,
+        row.seq
+      );
+      if (parked) this.park(op, 'parked');
+    }
+  }
+
+  // v1 lines once founded: the legacy window decides which apply, which are
+  // refused, and whose wait (cursor unmoved).
+  private applyV1Filtered(ops: BoardOp[]): boolean {
+    const { apply, refused } = this.opts.legacy.filterV1(ops);
+    const changed = this.applyV1(
+      [...apply].sort((a, b) => (a.hlc < b.hlc ? -1 : a.hlc > b.hlc ? 1 : 0))
+    );
+    for (const op of refused)
+      if (op.seq > this.opts.ledger.cursor(op.replica))
+        this.opts.ledger.setCursor(op.replica, op.seq);
+    return changed;
+  }
+
+  // Applies v1 changes and advances each replica's cursor; a held change
+  // stops its replica there (FW-R21).
+  private applyV1(ops: BoardOp[]): boolean {
+    const { ledger, store } = this.opts;
+    let changed = false;
+    const reached = new Map<string, number>();
+    const held = new Set<string>();
+    for (const op of ops) {
+      if (held.has(op.replica)) continue;
+      const result = store.applyRemote(op);
+      if (result.problem !== undefined)
+        ledger.recordProblem(op.task, result.problem, new Date().toISOString());
+      if (result.held === true) {
+        held.add(op.replica);
+        continue;
+      }
+      if (result.changed) {
+        changed = true;
+        this.applied += 1;
+      }
+      reached.set(op.replica, Math.max(reached.get(op.replica) ?? 0, op.seq));
+    }
+    for (const [replica, seq] of reached)
+      if (seq > ledger.cursor(replica)) ledger.setCursor(replica, seq);
+    return changed;
+  }
+}
+
+function byReplica(entries: LogEntry[]): Map<string, LogEntry[]> {
+  const out = new Map<string, LogEntry[]>();
+  for (const e of entries) {
+    const list = out.get(e.replica);
+    if (list === undefined) out.set(e.replica, [e]);
+    else list.push(e);
+  }
+  return out;
+}

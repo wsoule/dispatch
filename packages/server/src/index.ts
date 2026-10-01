@@ -147,11 +147,13 @@ import {
   SyncWorktree,
 } from './sync/worktree.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
-import { SyncRepo } from './team/boardSync/repo.js';
-import { BoardSyncService } from './team/boardSync/service.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
+import type { Federation } from './team/federation/daemon.js';
+import { buildFederation } from './team/federation/daemon.js';
+import { rekeyIfKeysLost } from './team/federation/keys.js';
+import type { FederationService } from './team/federation/service.js';
 import type { Team } from './team/index.js';
-import { createTeam, syncSeats } from './team/index.js';
+import { createTeam } from './team/index.js';
 import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
@@ -286,6 +288,11 @@ export interface StartServerOptions {
   // autoCommit: true and every startServer()-based test would otherwise boot
   // a live interval.
   boardSyncPeriodicMs?: number;
+  // The clock board sync reads (the ledger's hybrid clock, the clock guard,
+  // license expiry); test-only, like boardSyncDebounceMs.
+  federationNow?: () => number;
+  // Debounce for a board sync pass after a local change; test-only.
+  federationDebounceMs?: number;
   // Debounce for the receipts exporter's response to a task change. Defaults
   // to ReceiptsScheduler's own multi-second default; tests pass something much
   // shorter. There is no periodic counterpart: the export has no remote to
@@ -954,7 +961,22 @@ async function bootServer(
   }
   // With sync on, everything gets the store that records each write as a
   // change for the other replicas; the board it writes to is the same one.
-  let boardSync: BoardSyncService | null = null;
+  let boardSync: FederationService | null = null;
+  let federation: Federation | null = null;
+  const federationNow = (): Date =>
+    new Date(opts.federationNow?.() ?? Date.now());
+  // A key file lost with state.db kept: start over as a new replica id (F-D35).
+  if (syncConfig !== null) {
+    const rekeyed = rekeyIfKeysLost(
+      boardSyncDir(rootDir),
+      join(boardSyncDir(rootDir), 'state.db'),
+      actorContext.member.handle
+    );
+    if (rekeyed !== null)
+      console.warn(
+        `dispatchd: keys/replica.json was missing; this machine is a new replica and must be admitted again (was ${rekeyed})`
+      );
+  }
   const syncLedger =
     syncConfig === null
       ? null
@@ -964,7 +986,8 @@ async function bootServer(
           // every write is attributed to — not the OS login, which two
           // people on stock cloud machines share and one person can have
           // two of. The license counts sync seats by it.
-          actorContext.member.handle
+          actorContext.member.handle,
+          () => federationNow().getTime()
         );
   const syncedStore =
     syncLedger === null || !(stores.tasks instanceof SqliteTaskStore)
@@ -1079,27 +1102,31 @@ async function bootServer(
         `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
-      boardSync = new BoardSyncService({
-        store: syncedStore,
+      // Only here are the federation's store and roster built; the team
+      // routes read them from `federation`.
+      federation = buildFederation({
+        syncDir: boardSyncDir(rootDir),
         ledger: syncLedger,
-        repo: new SyncRepo(
-          join(boardSyncDir(rootDir), 'repo'),
-          remoteUrl,
-          syncConfig.branch,
-          syncLedger.replica,
-          defaultAsyncGitRunner
-        ),
-        remote: remoteUrl,
+        store: syncedStore,
+        team,
+        handle: actorContext.member.handle,
+        build: packageJson.version,
+        remoteUrl,
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
-        ...syncSeats(team),
+        git: defaultAsyncGitRunner,
         // A teammate's change lands like a local edit: the cache is rebuilt
         // and every client told, so boards refresh without anyone reloading.
         onBoardChanged: () => {
           safeRebuild(store, cache);
           events.broadcast({ type: 'task.changed' });
         },
+        now: federationNow,
+        ...(opts.federationDebounceMs === undefined
+          ? {}
+          : { debounceMs: opts.federationDebounceMs }),
       });
+      boardSync = federation.service;
       const published = syncedStore.bootstrap();
       if (published > 0) {
         console.log(

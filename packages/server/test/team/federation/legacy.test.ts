@@ -11,6 +11,7 @@ import {
 } from '../../../src/team/federation/taskOps.js';
 import { exchange, testReplica } from './helpers/replica.js';
 import type { TestReplica } from './helpers/replica.js';
+import { MemoryV1 } from './helpers/serviceReplica.js';
 
 const open: TestReplica[] = [];
 afterEach(() => {
@@ -18,16 +19,6 @@ afterEach(() => {
 });
 const DAY = 24 * 60 * 60 * 1000;
 
-// A v1 branch in memory: replica -> its lines, in file order.
-class MemoryV1 implements V1Log {
-  files = new Map<string, BoardOp[]>();
-  readV1(replica: string): BoardOp[] {
-    return [...(this.files.get(replica) ?? [])];
-  }
-  v1Replicas(): string[] {
-    return [...this.files.keys()];
-  }
-}
 const v1 = (replica: string, seq: number, task = 't-00000a01'): BoardOp => ({
   v: 1,
   replica,

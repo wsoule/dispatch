@@ -15,6 +15,7 @@ import {
   fingerprint,
   fromB64u,
   hlcWallMs,
+  MAX_CLOCK_LEAD_MS,
   opHash,
   sha256Hex,
   signText,
@@ -109,6 +110,11 @@ export class RosterService {
   view(): RosterView | null {
     if (this.cached === undefined) this.cached = this.fold();
     return this.cached;
+  }
+
+  /** Re-folds, since the fold reads the clock: a license expires, a deadline passes. */
+  reload(): void {
+    this.refresh();
   }
 
   founded(): boolean {
@@ -520,7 +526,7 @@ export class RosterService {
     if (this.fed.ahead(entry.hlc)) {
       this.fed.problem(
         subject,
-        `${entry.replica}'s op at seq ${entry.seq} is stamped ${entry.hlc}, more than 10 minutes ahead of this machine's clock; it waits until the clock catches up`
+        `${entry.replica}'s op at seq ${entry.seq} is stamped ${entry.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ahead of this machine's clock; it waits until the clock catches up`
       );
       return 'held';
     }

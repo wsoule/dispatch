@@ -8,6 +8,7 @@ import type {
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
+import { MAX_CLOCK_LEAD_MS } from '@dispatch/protocol/federation';
 
 import type { TaskOpSigner } from '../federation/taskOps.js';
 import { oversizedField, TaskTooLargeError } from '../federation/taskOps.js';
@@ -117,7 +118,7 @@ export class SyncedTaskStore implements TaskStorePort {
         changed: false,
         doc: null,
         held: true,
-        problem: `a change from ${op.replica} (seq ${op.seq}) is stamped ${op.hlc}, more than 10 minutes ahead of this machine's clock; it waits until the clock catches up`,
+        problem: `a change from ${op.replica} (seq ${op.seq}) is stamped ${op.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ahead of this machine's clock; it waits until the clock catches up`,
       };
     this.ledger.observe(op.hlc);
     const result = applyOp(op, this.inner.get(op.task), this.ledger.state);
