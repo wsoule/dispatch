@@ -22,18 +22,25 @@ const REFUSED_PUBLISH_DIRS: readonly string[] = [
   '.claude',
   '.github',
 ];
-const INSTRUCTION_FILES = new Set(['agents.md', 'claude.md']);
+// Files every future run reads as instructions, in any case.
+const INSTRUCTION_FILES = new Set([
+  'agents.md',
+  'agents.override.md',
+  'claude.md',
+  'claude.local.md',
+]);
 const MAX_PATH_BYTES = 1024;
 // A task's writes are globs, so a path with a glob metacharacter would claim more than itself.
 const GLOB_METACHARS = /[*?[\]{}()+@|!]/;
 
-// Whether `text` holds a C0 control character or DEL.
-function hasControl(text: string): boolean {
+// Whether `text` is printable ASCII only: no controls, DEL or non-ASCII, which
+// a case-folding file system (APFS folds `ſ` to `s`) could map onto a refused name.
+function printableAscii(text: string): boolean {
   for (let i = 0; i < text.length; i += 1) {
     const code = text.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return true;
+    if (code < 0x20 || code > 0x7e) return false;
   }
-  return false;
+  return true;
 }
 
 const bad = (why: string): DocsError =>
@@ -45,7 +52,10 @@ function checkShape(path: string): void {
   if (typeof path !== 'string' || path === '') throw bad('required');
   if (Buffer.byteLength(path) > MAX_PATH_BYTES)
     throw bad(`longer than ${MAX_PATH_BYTES} bytes`);
-  if (hasControl(path)) throw bad('control characters are not allowed');
+  if (!printableAscii(path))
+    throw bad('only printable ASCII characters are allowed');
+  // A leading `:` is git pathspec magic.
+  if (path.startsWith(':')) throw bad('must not start with :');
   if (path.startsWith('/') || path.includes('\\') || isAbsolute(path))
     throw bad('must be a repo-relative POSIX path');
   const parts = path.split('/');
@@ -57,9 +67,8 @@ function checkShape(path: string): void {
       'glob characters such as * ? [ ] { } ( ) + @ | ! are not allowed'
     );
   const folded = parts.map((p) => p.toLowerCase());
-  if (REFUSED_PUBLISH_DIRS.includes(folded[0]))
-    throw bad(`${parts[0]}/ is not a publish target`);
-  if (folded.includes('.git')) throw bad('.git/ is not a publish target');
+  const refused = folded.findIndex((p) => REFUSED_PUBLISH_DIRS.includes(p));
+  if (refused !== -1) throw bad(`${parts[refused]}/ is not a publish target`);
   if (INSTRUCTION_FILES.has(folded[folded.length - 1]))
     throw bad('agent-instruction files change through ordinary tasks');
 }
