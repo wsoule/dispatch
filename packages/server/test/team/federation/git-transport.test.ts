@@ -11,6 +11,7 @@ import {
   appendFileSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -154,6 +155,36 @@ describe('the fed/ tree', () => {
       'stub',
     ]);
     expect(read.map((e) => opHash(e))).toEqual(ops.map((o) => opHash(o)));
+  });
+});
+
+describe('segment names are hints (FW-R22 I1)', () => {
+  it('ignores a segment whose first line is not its op at the named seq, and never appends into it', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(6);
+    await a.writeV2(ops.slice(0, 5));
+    // An empty file named for seq 3 would make a reader at seq 2 skip segment 1.
+    writeFileSync(join(dir, 'a', 'fed', A, '000000000003.jsonl'), '');
+    expect(a.readV2(new Map([[A, 2]])).map((e) => e.seq)).toEqual([3, 4, 5]);
+    await a.writeV2(ops.slice(5));
+    expect(
+      readFileSync(join(dir, 'a', 'fed', A, '000000000003.jsonl'), 'utf8')
+    ).toBe('');
+    expect(a.readV2(new Map([[A, 2]])).map((e) => e.seq)).toEqual([3, 4, 5, 6]);
+  });
+
+  it('repairs a torn tail of its own segment before appending (M3)', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(3);
+    await a.writeV2(ops.slice(0, 2));
+    appendFileSync(
+      join(dir, 'a', 'fed', A, '000000000001.jsonl'),
+      '{"v":2,"repl'
+    );
+    await a.writeV2(ops.slice(2));
+    expect(a.readV2(new Map()).map((e) => e.seq)).toEqual([1, 2, 3]);
   });
 });
 

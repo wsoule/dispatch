@@ -181,6 +181,13 @@ export class SyncRepo {
     const rel = (name: string) => `${FED_DIR}/${this.replica}/${name}`;
     let current = this.segments(this.replica).at(-1) ?? null;
     const path = (name: string) => ownFile(this.dir, rel(name));
+    // A write that died partway left a torn line; drop it before appending (M3).
+    if (current !== null) {
+      const file = path(current);
+      const text = readCapped(file, MAX_SEGMENT_READ) ?? '';
+      if (!text.endsWith('\n'))
+        writeFileSync(file, text.slice(0, text.lastIndexOf('\n') + 1));
+    }
     let count = current === null ? 0 : completeLines(path(current)).length;
     let size = current === null ? 0 : statSync(path(current)).size;
     for (const e of entries) {
@@ -299,11 +306,20 @@ export class SyncRepo {
     );
   }
 
-  // One replica's segment names, sorted by their first seq.
+  // One replica's segments, sorted by their first seq. A name is only a hint
+  // (FW-R22(2)): a segment counts when its first line is that replica's op
+  // at the seq the name says.
   private segments(replica: string): string[] {
     const dir = join(this.dir, FED_DIR, replica);
     return listDir(dir)
       .filter((f) => SEGMENT.test(f) && regularFile(join(dir, f)))
+      .filter((f) => {
+        const first = completeLines(join(dir, f))[0];
+        const entry = first === undefined ? null : parseEntry(first);
+        return (
+          entry?.replica === replica && entry.seq === Number(f.slice(0, 12))
+        );
+      })
       .sort();
   }
 
