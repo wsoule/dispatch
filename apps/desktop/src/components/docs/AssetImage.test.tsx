@@ -103,3 +103,34 @@ test('a new name drops the old image and its failure, and shows the new one', as
     URL.revokeObjectURL = originalRevoke;
   }
 });
+
+test('links a remote image only over http or https, never another scheme', () => {
+  const fetchDocAsset = mock(() => Promise.resolve(new Blob()));
+  for (const [src, alt] of [
+    ['javascript:alert(1)', 'js'],
+    ['  JAVASCRIPT:alert(1)', 'upper'],
+    ['data:image/png;base64,AAAA', 'inline'],
+  ] as const) {
+    render(
+      <AssetImage
+        client={{ fetchDocAsset }}
+        docId="doc-1"
+        src={src}
+        alt={alt}
+      />
+    );
+    expect(screen.getByText(`[image: ${alt}]`).closest('a')).toBeNull();
+  }
+  render(
+    <AssetImage
+      client={{ fetchDocAsset }}
+      docId="doc-1"
+      src="https://example.com/ok.png"
+      alt="safe"
+    />
+  );
+  expect(
+    screen.getByRole('link', { name: '[image: safe]' }).getAttribute('href')
+  ).toBe('https://example.com/ok.png');
+  expect(fetchDocAsset).not.toHaveBeenCalled();
+});
