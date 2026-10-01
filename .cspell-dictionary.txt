@@ -263,6 +263,7 @@ mergedsha
 metacharacter
 METACHARS
 misdescribe
+mkfifo
 mktemp
 modelcontextprotocol
 mojibake
