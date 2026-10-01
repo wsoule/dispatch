@@ -491,6 +491,77 @@
           { "ok": false, "error": { "code": "invalid", "field": "work" } }
         ]
       }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-multi-line-criterion",
+      "title": "An acceptance criterion with a line break is refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["1.4", "8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "acceptance": ["ok", "Returns 429\nand logs it"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.acceptance[1]" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-write-over-512-bytes",
+      "title": "A write over 512 bytes is refused on its slot; one of exactly 512 is accepted",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "writes": [
+              "src/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/x.ts"
+            ]
+          }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "writes": [
+              "src/ok.ts",
+              "src/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/ab/x.tsx"
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.writes[1]" }
+          }
+        ]
+      }
     }
   ]
 }

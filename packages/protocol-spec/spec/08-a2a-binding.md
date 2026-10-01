@@ -254,7 +254,7 @@ absence means `ask`:
 type WorkRequestV1 =
   | {
       skill: 'handoff';
-      title: string; // required; one line, at most 200 bytes
+      title: string; // required; one line, not blank, at most 200 bytes
       acceptance?: string[]; // at most 20 entries, each one line of at most 500 bytes
       writes?: string[]; // at most 50 repo-relative paths or globs, each at most 512 bytes
       priority?: 'urgent' | 'high' | 'medium' | 'low' | 'none'; // capped at 'medium'
@@ -276,8 +276,10 @@ Vectors: `a2a.work-ext.accepts-a-handoff-with-every-field`,
 `a2a.work-ext.refuses-a-multi-line-title`,
 `a2a.work-ext.refuses-more-than-20-acceptance-criteria`,
 `a2a.work-ext.refuses-a-criterion-over-500-bytes`,
+`a2a.work-ext.refuses-a-multi-line-criterion`,
 `a2a.work-ext.refuses-more-than-50-writes`,
 `a2a.work-ext.refuses-a-write-outside-the-repository`,
+`a2a.work-ext.refuses-a-write-over-512-bytes`,
 `a2a.work-ext.refuses-an-unknown-priority`,
 `a2a.work-ext.refuses-more-than-10-labels`,
 `a2a.work-ext.refuses-a-request-that-is-not-an-object`.
