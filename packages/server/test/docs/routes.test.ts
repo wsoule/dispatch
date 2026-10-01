@@ -509,6 +509,42 @@ describe('publish route', () => {
     expect(refused.status).toBe(403);
   });
 
+  it("runs a publish for the human who asked: a teammate's for them, the owner's app token for the owner", async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    await post('/docs', { title: 'Plan', body: '# Plan\n' });
+    const operatorOf = (runId: string | null) =>
+      handle.orchestrator.list().find((r) => r.id === runId)?.operator;
+    const mine = await json<Published>(
+      await post('/docs/spec/publish', { path: 'docs/spec.md' })
+    );
+    const ownerRun = handle.orchestrator.list().find((r) => r.id === mine.run);
+    expect(ownerRun?.operator).toBe(ownerRun?.dispatchedBy);
+    expect(ownerRun?.operator).toMatch(/^human:/);
+    const teammate = await teammateToken();
+    const theirs = await json<Published>(
+      await rawFetch(`${base}/docs/plan/publish`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${teammate}`,
+        },
+        body: JSON.stringify({ path: 'docs/plan.md' }),
+      })
+    );
+    expect(theirs.dispatchError).toBeNull();
+    expect(operatorOf(theirs.run)).toBe('human:alice');
+    // The shared agent token never reaches the docs routes, so it starts no publish run.
+    const viaAgent = await rawFetch(`${base}/docs/plan/publish`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ path: 'docs/plan2.md' }),
+    });
+    expect(viaAgent.status).toBe(403);
+  });
+
   it("keeps a publish task's risk at decide tier: a teammate and the agent token are refused", async () => {
     await post('/docs', { title: 'Spec', body: '# Spec\n' });
     const out = await json<Published>(
