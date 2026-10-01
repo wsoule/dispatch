@@ -117,6 +117,14 @@ export function DocPage({
   const [placeAt, setPlaceAt] = useState<{ line: number } | null>(null);
   const placedFor = useRef<string | null>(null);
 
+  // Stable across rerenders, so the preview keeps its images (and fetches each once).
+  const renderImage = useCallback(
+    ({ src, alt }: { src?: string; alt?: string }) => (
+      <AssetImage client={client} docId={refId} src={src} alt={alt} />
+    ),
+    [client, refId]
+  );
+
   const update = useCallback((next: (b: DocBuffer) => DocBuffer): void => {
     if (bufRef.current === null) return;
     bufRef.current = next(bufRef.current);
@@ -648,14 +656,7 @@ export function DocPage({
               readOnly={archived}
               onChange={(next) => update((b) => editDocBuffer(b, next))}
               placeAt={placeAt}
-              renderImage={({ src, alt }) => (
-                <AssetImage
-                  client={client}
-                  docId={doc.id}
-                  src={src}
-                  alt={alt}
-                />
-              )}
+              renderImage={renderImage}
               onImages={uploadImages}
             />
           </div>

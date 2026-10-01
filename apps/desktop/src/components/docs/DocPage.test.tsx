@@ -290,3 +290,22 @@ test('saves a proposal resolution against the head its merge was computed from',
     })
   );
 });
+
+test('a preview image is fetched once across the page rerendering', async () => {
+  const name = `${'a'.repeat(64)}.png`;
+  const fetchDocAsset = mock((_doc: string, _name: string) =>
+    Promise.resolve(new Blob([new Uint8Array([1])], { type: 'image/png' }))
+  );
+  renderPage({
+    text: `![shot](asset:${name})\n`,
+    client: { fetchDocAsset } as unknown as Partial<ApiClient>,
+  });
+  await screen.findByLabelText('Editing auth');
+  fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+  await screen.findByRole('img', { name: 'shot' });
+  // Opening and closing History rerenders the page around the hidden preview.
+  fireEvent.click(screen.getByRole('button', { name: 'History' }));
+  fireEvent.click(screen.getByRole('button', { name: 'History' }));
+  await screen.findByRole('img', { name: 'shot' });
+  expect(fetchDocAsset).toHaveBeenCalledTimes(1);
+});

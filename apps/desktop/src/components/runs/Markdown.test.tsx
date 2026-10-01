@@ -1,6 +1,7 @@
 import { untrustedFenced } from '@dispatch/core/browser';
 import { render } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
+import { useEffect } from 'react';
 
 import { Markdown } from './Markdown';
 
@@ -83,5 +84,20 @@ describe('Markdown', () => {
     );
     expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).toContain('![b](https://evil/b.gif)');
+  });
+
+  test('keeps a custom image mounted across rerenders with the same renderer', () => {
+    let mounts = 0;
+    function Probe({ src }: { src?: string }) {
+      useEffect(() => {
+        mounts += 1;
+      }, []);
+      return <span>{src}</span>;
+    }
+    const img = ({ src }: { src?: string }) => <Probe src={src} />;
+    const { rerender } = render(<Markdown content="![x](a.png)" img={img} />);
+    rerender(<Markdown content="![x](a.png)" img={img} />);
+    rerender(<Markdown content="![x](a.png)" img={img} />);
+    expect(mounts).toBe(1);
   });
 });

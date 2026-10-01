@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { useMemo } from 'react';
+import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -113,6 +115,15 @@ export function Markdown({
   /** Renders images; the docs preview resolves `asset:` through the API. */
   img?: (props: { src?: string; alt?: string }) => ReactNode;
 }) {
+  // One component per `img`, so a rerender keeps each image mounted (and fetched once).
+  const imgComponent = useMemo<Components['img']>(
+    () =>
+      img === undefined
+        ? undefined
+        : ({ src, alt }) =>
+            img({ src: typeof src === 'string' ? src : undefined, alt }),
+    [img]
+  );
   return (
     <div
       data-slot="markdown"
@@ -127,15 +138,7 @@ export function Markdown({
         remarkPlugins={[remarkGfm]}
         {...(urlTransform === undefined ? {} : { urlTransform })}
         components={{
-          ...(img === undefined
-            ? {}
-            : {
-                img: ({ src, alt }) =>
-                  img({
-                    src: typeof src === 'string' ? src : undefined,
-                    alt,
-                  }),
-              }),
+          ...(imgComponent === undefined ? {} : { img: imgComponent }),
           a: ({ children, href }) => (
             <a href={href} target="_blank" rel="noreferrer">
               {children}
