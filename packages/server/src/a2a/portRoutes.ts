@@ -1,15 +1,12 @@
-import type {
-  AuthResult,
-  ContinueInput,
-  ListQuery,
-  OpenInput,
-  TaskStateName,
-} from '@dispatch/a2a';
+import type { AuthResult, ListQuery, TaskStateName } from '@dispatch/a2a';
 import {
   isLoopbackHost,
+  parsePortContinue,
+  parsePortOpen,
   PORT_CLIENT_HEADER,
   portErrorJson,
 } from '@dispatch/a2a';
+import { MessagingError } from '@dispatch/protocol';
 import { randomUUID } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
@@ -266,13 +263,29 @@ export async function handlePortRoute(
     );
   const caller = auth.caller;
   try {
-    const body = async <T>(): Promise<T> => {
+    // Every refusal crosses as a PortError, so the host rebuilds it as a 400.
+    const raw = async (): Promise<unknown> => {
       const parsed = await readJsonBody(req);
-      if (!parsed.ok) throw parsed.response;
-      return parsed.value as T;
+      if (!parsed.ok)
+        throw new MessagingError(
+          'invalid',
+          'body: expected a JSON object',
+          'body'
+        );
+      return parsed.value;
+    };
+    const body = async (): Promise<Record<string, unknown>> => {
+      const value = await raw();
+      if (Array.isArray(value))
+        throw new MessagingError(
+          'invalid',
+          'body: expected a JSON object',
+          'body'
+        );
+      return value as Record<string, unknown>;
     };
     if (rest[0] === 'admit' && rest.length === 1 && method === 'POST') {
-      const { what } = await body<{ what?: unknown }>();
+      const { what } = await body();
       const admitted = await port.admit(
         caller,
         what === 'stream' ? 'stream' : 'request'
@@ -288,13 +301,13 @@ export async function handlePortRoute(
       );
     }
     if (rest[0] === 'open' && rest.length === 1 && method === 'POST')
-      return jsonResponse(await port.open(caller, await body<OpenInput>()));
+      return jsonResponse(await port.open(caller, parsePortOpen(await raw())));
     if (rest[0] === 'continue' && rest.length === 1 && method === 'POST')
       return jsonResponse(
-        await port.continue(caller, await body<ContinueInput>())
+        await port.continue(caller, parsePortContinue(await raw()))
       );
     if (rest[0] === 'cancel' && rest.length === 1 && method === 'POST') {
-      const { taskId } = await body<{ taskId?: unknown }>();
+      const { taskId } = await body();
       if (typeof taskId !== 'string') return taskNotFound();
       await port.cancel(caller, taskId);
       return new Response(null, { status: 204 });

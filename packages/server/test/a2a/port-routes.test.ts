@@ -402,6 +402,41 @@ describe('the /api/a2a/port routes (daemon)', () => {
     expect(await endsWithin(watch, 1000)).toBe(true);
   });
 
+  it('answers malformed open and continue bodies with 400, never a 500', async () => {
+    await allowStandalone();
+    const a = await mint();
+    const { token: client } = await approvedClient('acme');
+    const post = (path: string, body: string) =>
+      hostCall(a.token, path, { method: 'POST', client, body });
+    const ask = {
+      clientMessageId: 'm-x',
+      contextId: null,
+      kind: 'ask',
+      to: null,
+      replyTo: null,
+      body: 'hi',
+      refs: [],
+    };
+    for (const [path, body] of [
+      ['/open', 'null'],
+      ['/open', '"ask"'],
+      ['/open', JSON.stringify({ ...ask, kind: 'x-breaker' })],
+      ['/open', JSON.stringify({ ...ask, kind: 'handoff' })],
+      ['/open', JSON.stringify({ ...ask, refs: 'nope' })],
+      ['/open', JSON.stringify({ ...ask, body: { text: 'hi' } })],
+      ['/continue', '[]'],
+      ['/continue', JSON.stringify({ clientMessageId: 'm-y', body: 'x' })],
+      ['/admit', 'null'],
+      ['/cancel', '7'],
+    ] as const) {
+      const res = await post(path, body);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        error: { kind: 'messaging', code: 'invalid' },
+      });
+    }
+  });
+
   it('never logs a host token', async () => {
     const logged: string[] = [];
     const spies = (['log', 'error', 'warn'] as const).map((level) =>

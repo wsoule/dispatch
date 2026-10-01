@@ -116,6 +116,7 @@ export type {
   PushConfigPort,
   TaskFacts,
 } from './port.js';
+export { parsePortContinue, parsePortOpen } from './http/input.js';
 export { HttpBridgePort } from './http/port.js';
 export { checkStandalone, startStandalone } from './http/serve.js';
 export type { StandaloneCheck, StandaloneOptions } from './http/serve.js';
