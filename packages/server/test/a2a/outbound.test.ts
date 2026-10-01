@@ -337,6 +337,23 @@ describe('the URL guard at every contact', () => {
   });
 });
 
+describe('tracking limits and load', () => {
+  it('stops tracking at the 7-day limit even while the peer keeps streaming events', async () => {
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'open');
+    const later = Date.now() + 8 * 86_400_000;
+    f.deps.now = () => new Date(later);
+    peer.ask(peer.latest(), 'Still there?');
+    await waitFor(() => row(q.id)?.state === 'failed');
+    expect(row(q.id)?.lastError).toBe('no result in 7 days');
+    expect(engine().answerOf(q.id)).toMatchObject({
+      from: 'agent:dispatch',
+      body: expect.stringContaining('7 days'),
+    });
+    await waitFor(() => f.outbound.trackerCount('fixture') === 0);
+  });
+});
+
 describe('removing or disabling a peer mid-flight', () => {
   it('removing a peer closes the run’s open question and stops tracking', async () => {
     const q = await ask();

@@ -86,6 +86,19 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+// The next stream event as 'tick', or 'done' when the stream ends or fails.
+function nextTick(ticks: AsyncGenerator<void>): Promise<'tick' | 'done'> {
+  return ticks.next().then(
+    (r) => (r.done === true ? 'done' : 'tick'),
+    () => 'done'
+  );
+}
+
+// Resolves 'timeout' after `ms`, or at once when `signal` aborts.
+function delay(ms: number, signal: AbortSignal): Promise<'timeout'> {
+  return sleep(ms, signal).then(() => 'timeout');
+}
+
 const errorText = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
 
@@ -549,6 +562,24 @@ export class OutboundWorker {
 
   // Follows one peer task: SSE when the card streams, else GetTask every 5 s
   // backing off to 60 s; every signal re-reads the task.
+  // Ends a row that has had no result for TRACK_LIMIT_MS; true when it did.
+  private async expired(row: OutboundRow): Promise<boolean> {
+    if (this.now().getTime() - Date.parse(row.firstAttemptAt) < TRACK_LIMIT_MS)
+      return false;
+    this.finish(row, 'failed', 'no result in 7 days');
+    const original = this.deps.engine.getMessage(row.messageId);
+    if (original !== null)
+      await this.giveUp(
+        original,
+        this.viaOf(row),
+        `no result from a2a:${row.alias} in 7 days`,
+        false
+      );
+    return true;
+  }
+
+  // Follows one peer task: SSE when the card streams, else GetTask every 5 s
+  // backing off to 60 s; every signal re-reads the task.
   private async follow(row: OutboundRow, signal: AbortSignal): Promise<void> {
     let polls = 0;
     while (!signal.aborted) {
@@ -562,21 +593,7 @@ export class OutboundWorker {
         peer.status !== 'active'
       )
         return;
-      if (
-        this.now().getTime() - Date.parse(current.firstAttemptAt) >=
-        TRACK_LIMIT_MS
-      ) {
-        this.finish(current, 'failed', 'no result in 7 days');
-        const original = this.deps.engine.getMessage(current.messageId);
-        if (original !== null)
-          await this.giveUp(
-            original,
-            this.viaOf(current),
-            `no result from a2a:${current.alias} in 7 days`,
-            false
-          );
-        return;
-      }
+      if (await this.expired(current)) return;
       let client: PeerClient;
       try {
         client = this.deps.clientFor(peer);
@@ -596,21 +613,54 @@ export class OutboundWorker {
         polls += 1;
         continue;
       }
-      if (summarizeCard(this.cardOf(peer)).streaming) {
-        try {
-          for await (const _tick of client.changes(
-            current.remoteTaskId,
-            signal
-          )) {
-            if (await this.poll(client, current, signal)) return;
-          }
-        } catch {
-          // The stream failed or ended: poll below, then resubscribe.
-        }
-      }
+      if (
+        summarizeCard(this.cardOf(peer)).streaming &&
+        (await this.stream(client, current, signal))
+      )
+        return;
       if (signal.aborted || (await this.poll(client, current, signal))) return;
       await sleep(this.deps.pollMs?.(polls) ?? pollDelayMs(polls), signal);
       polls += 1;
+    }
+  }
+
+  // Follows the peer's SSE stream: each event re-reads the task, at most once
+  // per poll floor (a burst becomes one read, the last event never lost), and
+  // the 7-day limit holds even while events keep arriving. True when tracking
+  // ends; false when the stream ended or failed and polling should take over.
+  private async stream(
+    client: PeerClient,
+    row: OutboundRow,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    if (row.remoteTaskId === null) return true;
+    const floor = this.deps.pollMs?.(0) ?? pollDelayMs(0);
+    const idleCheck = this.deps.pollMs?.(4) ?? pollDelayMs(4);
+    const ticks = client.changes(row.remoteTaskId, signal);
+    let next: Promise<'tick' | 'done'> = nextTick(ticks);
+    let lastRead = 0;
+    let pending = false;
+    try {
+      while (!signal.aborted) {
+        if (await this.expired(row)) return true;
+        const wait = pending
+          ? Math.max(0, lastRead + floor - Date.now())
+          : idleCheck;
+        const got = await Promise.race([next, delay(wait, signal)]);
+        if (got === 'done') return false;
+        if (got === 'tick') {
+          next = nextTick(ticks);
+          pending = true;
+        }
+        if (pending && Date.now() - lastRead >= floor) {
+          pending = false;
+          lastRead = Date.now();
+          if (await this.poll(client, row, signal)) return true;
+        }
+      }
+      return true;
+    } finally {
+      void ticks.return(undefined).catch(() => undefined);
     }
   }
 
