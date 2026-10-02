@@ -83,13 +83,16 @@ export const defaultGitRunner: GitRunner = (cwd, args) => {
  */
 export type AsyncGitRunner = (
   cwd: string,
-  args: string[]
+  args: string[],
+  /** Set over the runner's own environment for this command. */
+  env?: Record<string, string>
 ) => Promise<{ status: number; stdout: string; stderr: string }>;
 
-export const defaultAsyncGitRunner: AsyncGitRunner = (cwd, args) =>
+export const defaultAsyncGitRunner: AsyncGitRunner = (cwd, args, env = {}) =>
   spawnWithDeadline(['git', ...args], cwd, GIT_TIMEOUT_MS, {
     ...process.env,
     ...NO_PROMPT_ENV,
+    ...env,
   });
 
 /**

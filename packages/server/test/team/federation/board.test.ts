@@ -364,6 +364,39 @@ describe('board convergence over signed ops', () => {
     SLOW
   );
 
+  // FW-R25 (the final review's R6): the branch's own .gitattributes and
+  // .lfsconfig never change how the clone reads or writes its files.
+  it(
+    'keeps converging when the branch carries hostile .gitattributes and .lfsconfig',
+    async () => {
+      const c = await team(['ada', 'bob']);
+      const [ada, bob] = c.members as [Member, Member];
+      editRemote(c.remote, (dir) => {
+        // The attacker's own clone leaves its files as they are.
+        writeFileSync(
+          join(dir, '.git', 'info', 'attributes'),
+          '* -text -eol -filter -merge -diff -working-tree-encoding\n'
+        );
+        writeFileSync(
+          join(dir, '.gitattributes'),
+          '* filter=lfs diff=lfs merge=lfs -text\nfed/** working-tree-encoding=UTF-16LE text\nops/** eol=crlf\n'
+        );
+        writeFileSync(
+          join(dir, '.lfsconfig'),
+          '[lfs]\n\turl = http://127.0.0.1:9/nowhere\n'
+        );
+      });
+      await quiesce(c.members);
+      const fromBob = await bob.handle.create('after the attributes');
+      const fromAda = await ada.handle.create('from ada too');
+      await quiesce(c.members);
+      expect(await ada.handle.title(fromBob)).toBe('after the attributes');
+      expect(await bob.handle.title(fromAda)).toBe('from ada too');
+      await expectConverged(c.members, [boardProjection]);
+    },
+    SLOW
+  );
+
   it(
     'keeps a v1 daemon seeing the board through the window, both ways',
     async () => {

@@ -28,6 +28,8 @@ export interface GitTransportDeps {
   onPruned?: (seqs: number[]) => void;
   /** What orders a pull's segment reads: cursor heads and signature checks. */
   readHints?: () => ReadHints;
+  /** Each publish's commit: null when it landed, else why it failed. */
+  onCommit?: (failed: string | null) => void;
   /** A merge reset the clone to the remote tree; own files were written back. */
   onReset?: (why: string) => void;
   /** Replicas whose reads the budget cut short on consecutive pulls. */
@@ -62,8 +64,14 @@ export class GitFederationTransport implements FederationTransport {
   constructor(private readonly deps: GitTransportDeps) {}
 
   async publish(ops: FederatedOp[]): Promise<void> {
+    try {
+      await this.republish(ops);
+    } catch (err) {
+      this.deps.onCommit?.((err as Error).message);
+      throw err;
+    }
     this.unpublished += ops.length;
-    await this.republish(ops);
+    this.deps.onCommit?.(null);
   }
 
   // Writes `fresh`, and first any of this replica's own ops the branch lacks

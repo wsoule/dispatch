@@ -128,6 +128,14 @@ export function buildFederation(deps: FederationDeps): Federation {
       onPruned: (seqs) => fed.stubLog(seqs),
       readHints: () => readHints(fed),
       onStarved: (replicas) => starvedProblems(fed, replicas),
+      onCommit: (failed) => {
+        if (failed === null) fed.clearProblem('transport:commit');
+        else
+          fed.problem(
+            'transport:commit',
+            `this machine could not commit to its sync clone, so its changes wait here: ${failed.slice(0, 300)}`
+          );
+      },
       onReset: (why) =>
         fed.problem(
           'transport:merge',

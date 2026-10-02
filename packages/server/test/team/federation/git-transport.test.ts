@@ -544,6 +544,31 @@ describe('GitFederationTransport', () => {
     expect([...new Set(seen)].sort((x, y) => x - y)).toEqual([1, 2, 3, 4]);
   });
 
+  // FW-R25: a commit the clone cannot make is named, and cleared once one is.
+  it('reports a failed commit, and clears it on the next that lands', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const commits: (string | null)[] = [];
+    const ta = new GitFederationTransport({
+      repo: a,
+      replica: A,
+      signPriv: keys.signPriv,
+      verifyAcks: () => true,
+      acknowledgedBy: () => false,
+      ownLog: () => [],
+      onCommit: (failed) => commits.push(failed),
+      now: () => new Date(),
+    });
+    const ops = chain(2);
+    writeFileSync(join(dir, 'a', '.git', 'index.lock'), '');
+    await expect(ta.publish(ops.slice(0, 1))).rejects.toThrow(
+      'could not commit'
+    );
+    rmSync(join(dir, 'a', '.git', 'index.lock'));
+    await ta.publish(ops.slice(1));
+    expect(commits.map((c) => c === null)).toEqual([false, true]);
+  });
+
   // FW-R22 M6: a merge that removes this replica's segments loses nothing;
   // its next publish writes back what its own log holds.
   it('re-publishes its own ops a merge removed from the branch', async () => {

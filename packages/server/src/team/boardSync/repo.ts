@@ -44,6 +44,13 @@ const ACKS = 'acks.json';
 const SEGMENT_MAX_OPS = 1000;
 const SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
 const SEGMENT = /^\d{12}\.jsonl$/;
+// FW-R25: overrides every .gitattributes on the branch.
+const ATTRIBUTES =
+  '* -text -eol -filter -merge -diff -ident -working-tree-encoding\n';
+const ISOLATED_GIT_ENV = {
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+};
 // Reads are size-capped: a segment never grows past one op over its limit, an
 // acks.json is one small map, and a v1 log is read whole.
 const MAX_SEGMENT_READ = SEGMENT_MAX_BYTES + MAX_OP_BYTES;
@@ -121,7 +128,37 @@ export interface ReadHints {
 
 export class SyncRepo {
   private readonly segmentCache = new Map<string, CachedSegment>();
+  private credentials: Promise<string[]> | null = null;
   private readonly segmentInfo = new Map<string, SegmentInfo>();
+  // The person's credential helpers and sshCommand, read once from their own
+  // git config, as `-c` options for fetch and push.
+  private credentialArgs(): Promise<string[]> {
+    this.credentials ??= (async () => {
+      const out: string[] = [];
+      for (const key of ['credential.helper', 'core.sshCommand']) {
+        const res = await this.git(this.dir, [
+          'config',
+          '--global',
+          '--get-all',
+          key,
+        ]);
+        for (const value of res.stdout.split('\n'))
+          if (value.trim() !== '') out.push('-c', `${key}=${value.trim()}`);
+      }
+      const system = await this.git(this.dir, [
+        'config',
+        '--system',
+        '--get-all',
+        'credential.helper',
+      ]);
+      for (const value of system.stdout.split('\n'))
+        if (value.trim() !== '')
+          out.unshift('-c', `credential.helper=${value.trim()}`);
+      return out;
+    })();
+    return this.credentials;
+  }
+
   /** Merges given up for the remote tree since the last takeResets(). */
   private resets: string[] = [];
   /** Per replica, passes in a row whose reads the budget cut short. */
@@ -135,8 +172,16 @@ export class SyncRepo {
     private readonly git: AsyncGitRunner
   ) {}
 
+  // FW-R25: the sync clone is hostile. git runs with no global or system
+  // config, so nothing the branch names (a filter, a merge driver) has a
+  // definition; only fetch and push get the person's credential helpers.
   private async run(args: string[]): Promise<{ ok: boolean; out: string }> {
-    const res = await this.git(this.dir, args);
+    const network = args[0] === 'fetch' || args[0] === 'push';
+    const res = await this.git(
+      this.dir,
+      network ? [...(await this.credentialArgs()), ...args] : args,
+      ISOLATED_GIT_ENV
+    );
     return { ok: res.status === 0, out: `${res.stdout}${res.stderr}`.trim() };
   }
 
@@ -149,6 +194,9 @@ export class SyncRepo {
     if (!existsSync(join(this.dir, '.git'))) {
       mkdirSync(this.dir, { recursive: true });
       await this.run(['init', '-q']);
+      // Before anything is checked out: no branch .gitattributes applies.
+      mkdirSync(join(this.dir, '.git', 'info'), { recursive: true });
+      writeFileSync(join(this.dir, '.git', 'info', 'attributes'), ATTRIBUTES);
       // Before anything is checked out: a symlink on the branch arrives as a
       // plain file naming its target (FW-R22 N2).
       await this.run(['config', 'core.symlinks', 'false']);
@@ -182,6 +230,9 @@ export class SyncRepo {
     }
     // A symlink on the branch checks out as a plain file naming its target.
     await this.run(['config', 'core.symlinks', 'false']);
+    // The branch's .gitattributes never filters, converts or merges a file.
+    mkdirSync(join(this.dir, '.git', 'info'), { recursive: true });
+    writeFileSync(join(this.dir, '.git', 'info', 'attributes'), ATTRIBUTES);
     if (!realDir(join(this.dir, OPS_DIR)))
       ownFile(this.dir, `${OPS_DIR}/.keep`);
   }
