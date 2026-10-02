@@ -76,6 +76,15 @@ describe('/api/team federation routes', () => {
           })
         ).status
       ).toBe(400);
+      // M1: a handle off the grammar is refused before anything is signed.
+      expect(
+        (
+          await ada.api('/api/team/invite', {
+            method: 'POST',
+            body: JSON.stringify({ handle: 'Bad\u001bHandle' }),
+          })
+        ).status
+      ).toBe(400);
       const founded = await ada.api('/api/team/found', {
         method: 'POST',
         body: JSON.stringify({ name: 'acme' }),

@@ -1,3 +1,4 @@
+import { printable } from '@dispatch/federation';
 import type { PinnedKey, RosterView } from '@dispatch/federation';
 import { hlcWallMs } from '@dispatch/protocol/federation';
 
@@ -99,8 +100,9 @@ export function assembleTeamKeys(input: TeamKeysInput): TeamKeys {
       return {
         replica: m.replica,
         handle: m.handle,
-        device: pin?.device ?? '',
-        build: pin?.build ?? '',
+        // Clean at claim time; printed through printable all the same (M1).
+        device: printable(pin?.device ?? ''),
+        build: printable(pin?.build ?? ''),
         role: m.role,
         rank: m.rank,
         hosts: [...m.hosts],
@@ -119,7 +121,7 @@ export function assembleTeamKeys(input: TeamKeysInput): TeamKeys {
       {
         replica: r,
         handle: pin.handle,
-        device: pin.device,
+        device: printable(pin.device),
         fingerprint: pin.fingerprint,
         invitedBy: view?.invitedBy.get(r) ?? null,
       },

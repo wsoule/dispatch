@@ -22,6 +22,7 @@ import type {
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
+import { printable } from '@dispatch/federation';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
@@ -1152,7 +1153,9 @@ async function bootServer(
             (m) => m.observer
           );
           if (watcher === undefined) return null;
-          const device = fed.pinned(watcher.replica)?.device ?? watcher.replica;
+          const device = printable(
+            fed.pinned(watcher.replica)?.device ?? watcher.replica
+          );
           return `${watcher.handle}'s ${device}`;
         },
       };

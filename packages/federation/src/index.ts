@@ -26,5 +26,5 @@ export type {
   RosterOpRef,
   RosterView,
 } from './roster.js';
-export { verifyLog } from './verify.js';
+export { HANDLE, keyFieldsProblem, printable, verifyLog } from './verify.js';
 export type { LogCursor, LogResult, PinnedKey } from './verify.js';

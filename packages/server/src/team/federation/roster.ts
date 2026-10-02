@@ -2,7 +2,9 @@ import {
   foldRoster,
   FREE_SEATS,
   isCovered,
+  keyFieldsProblem,
   KNOWN_ROSTER_PAIRS,
+  printable,
   readLicenseKey,
   speaksForHandle,
 } from '@dispatch/federation';
@@ -813,8 +815,9 @@ export class RosterService {
     const pending = this.pendingInvite();
     const body: KeyBody = {
       handle: this.deps.handle,
-      device: this.deps.device,
-      build: this.deps.build,
+      // Every other machine refuses a key op it could not print (M1).
+      device: labelOf(this.deps.device),
+      build: labelOf(this.deps.build),
       signPub: this.fed.keys.signPub,
       sealPub: this.fed.keys.sealPub,
       legacy: this.deps.ownV1Attestation(),
@@ -831,6 +834,14 @@ export class RosterService {
 
   private pinKey(entry: FederatedOp): void {
     const body = entry.body as unknown as KeyBody;
+    // M1: a label nobody could print safely makes no claim.
+    if (
+      typeof body.handle !== 'string' ||
+      typeof body.device !== 'string' ||
+      typeof body.build !== 'string' ||
+      keyFieldsProblem(body.handle, body.device, body.build) !== null
+    )
+      return;
     const claimed = this.fed.claim({
       replica: entry.replica,
       handle: body.handle,
@@ -1137,4 +1148,10 @@ function keyInfos(keys: ReadonlyMap<string, PinnedKey>): Map<string, KeyInfo> {
       ...(pin.invite === undefined ? {} : { invite: pin.invite }),
     });
   return out;
+}
+
+// This machine's device or build as its key op carries it: printable, never empty.
+function labelOf(value: string): string {
+  const clean = printable(value);
+  return clean === '' ? 'unknown' : clean;
 }

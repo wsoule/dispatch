@@ -1,4 +1,9 @@
-import { comparePositions, isCovered, verifyLog } from '@dispatch/federation';
+import {
+  comparePositions,
+  isCovered,
+  printable,
+  verifyLog,
+} from '@dispatch/federation';
 import type { LogCursor, RosterView } from '@dispatch/federation';
 import {
   hlcWallMs,
@@ -867,7 +872,7 @@ export class FederationService {
   private clockProblem(replica: string, ahead: number): void {
     const { fed, roster } = this.opts;
     const subject = `replica:${replica}`;
-    const device = fed.pinned(replica)?.device ?? replica;
+    const device = printable(fed.pinned(replica)?.device ?? replica);
     const message = `${roster.label(replica)}'s ${device} runs ${Math.round(ahead / 60_000)} minutes ahead; fix its clock`;
     if (
       fed.problems().some((p) => p.subject === subject && p.message === message)

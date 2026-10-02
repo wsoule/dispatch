@@ -1,3 +1,4 @@
+import { HANDLE, printable } from '@dispatch/federation';
 import { fingerprint } from '@dispatch/protocol/federation';
 import { basename } from 'node:path';
 
@@ -148,6 +149,18 @@ const MAX_INPUT_CHARS = 256;
 const MAX_CODE_CHARS = 4096;
 const MAX_LIST_ITEMS = 64;
 
+// A handle or hosts entry that is not a handle (M1), named, or null.
+function offGrammar(body: Body): string | null {
+  const handles = [
+    ...(body.handle === undefined ? [] : [body.handle]),
+    ...(Array.isArray(body.hosts) ? body.hosts : []),
+  ];
+  const bad = handles.find((h) => typeof h !== 'string' || !HANDLE.test(h));
+  return bad === undefined
+    ? null
+    : `${JSON.stringify(printable(String(bad), 64))} is not a handle: lowercase letters, digits, dot, dash and underscore`;
+}
+
 // The first input over its cap, named, or null.
 function oversized(body: Body): string | null {
   for (const [key, value] of Object.entries(body)) {
@@ -184,7 +197,7 @@ export async function handleFederationRoute(
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;
-  const tooBig = oversized(body);
+  const tooBig = oversized(body) ?? offGrammar(body);
   if (tooBig !== null)
     return jsonResponse({ error: tooBig, code: 'invalid' }, 400);
   try {

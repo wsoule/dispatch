@@ -33,7 +33,12 @@ const fp = (r: ServiceReplica) =>
 const title = (r: ServiceReplica, id: string) => r.store.get(id)?.meta.title;
 
 // Puts a rival key op for `replica` at the front of its log on the branch.
-function claim(remote: MemoryRemote, replica: string, ms: number): void {
+function claim(
+  remote: MemoryRemote,
+  replica: string,
+  ms: number,
+  fields: { handle?: string; device?: string } = {}
+): void {
   const k = generateReplicaKeys();
   const op = buildOp(
     {
@@ -43,8 +48,8 @@ function claim(remote: MemoryRemote, replica: string, ms: number): void {
       hlc: `${String(ms).padStart(13, '0')}.0000.${replica}`,
       type: 'key',
       body: {
-        handle: 'mallory',
-        device: 'x',
+        handle: fields.handle ?? 'mallory',
+        device: fields.device ?? 'x',
         build: '0',
         signPub: k.signPub,
         sealPub: k.sealPub,
@@ -152,5 +157,28 @@ describe('rival key claims (FW-R24)', () => {
     await settle(ada);
     expect(title(ada, 't-00000a01')).toBe('line 2');
     expect(ada.roster.view()?.members.has(old)).toBe(false);
+  });
+
+  // M1: a key op whose handle or device is not printable is never a claim.
+  it('ignores a key op with an off-grammar handle or a control character', async () => {
+    const {
+      remote,
+      make,
+      rs: [ada],
+    } = team('ada');
+    ada.roster.found('acme');
+    await ada.service.syncNow();
+    claim(remote, 'eve-0000000e', ada.clock.now.getTime(), {
+      device: 'desk\u001b]0;pwned\u0007',
+    });
+    claim(remote, 'zed-0000000f', ada.clock.now.getTime(), {
+      handle: 'Zed Shaw',
+    });
+    const cy = make('cy');
+    await settle(ada, cy);
+    for (const r of [ada, cy]) {
+      expect(r.fed.claims('eve-0000000e')).toEqual([]);
+      expect(r.fed.claims('zed-0000000f')).toEqual([]);
+    }
   });
 });
