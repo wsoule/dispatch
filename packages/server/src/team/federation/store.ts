@@ -21,7 +21,10 @@ import type { Database } from 'bun:sqlite';
 import type { SyncLedger } from '../boardSync/ledger.js';
 import type { AuditKind } from './audit.js';
 import { AUDIT_KINDS } from './audit.js';
-import { FED_SCHEMA } from './schema.js';
+import { FED_MIGRATE_KEYS, FED_SCHEMA } from './schema.js';
+
+/** Key claims kept per replica id; more are refused with a problem (FW-R24). */
+export const MAX_KEY_CLAIMS = 4;
 
 /** A signed op over MAX_OP_BYTES, refused before it reaches the outbox. */
 export class OpTooLargeError extends Error {
@@ -93,7 +96,18 @@ export class FedStore {
     private readonly now: () => Date = () => new Date()
   ) {
     this.replica = ledger.replica;
-    ledger.database.exec(FED_SCHEMA);
+    const db = ledger.database;
+    const legacyRoster = db
+      .query<{ name: string }, []>(
+        "SELECT name FROM pragma_table_info('fed_roster')"
+      )
+      .all();
+    db.exec(FED_SCHEMA);
+    if (
+      legacyRoster.length > 0 &&
+      !legacyRoster.some((c) => c.name === 'sign_pub')
+    )
+      db.transaction(() => db.exec(FED_MIGRATE_KEYS))();
   }
 
   get db(): Database {
@@ -253,13 +267,53 @@ export class FedStore {
     this.db.query('DELETE FROM fed_outbox WHERE seq <= ?').run(throughSeq);
   }
 
-  /** Pins a replica's key the first time; keys never rotate in place. */
-  pin(key: PinnedKey): 'pinned' | 'same' | 'conflict' {
-    const held = this.pinned(key.replica);
-    if (held !== null) return samePin(held, key) ? 'same' : 'conflict';
+  /** Records a self-signed key op as a claim on its replica id: 'full' when
+   *  the id already holds MAX_KEY_CLAIMS others. */
+  claim(key: PinnedKey): 'new' | 'same' | 'full' {
+    const held = this.claims(key.replica);
+    if (held.some((c) => c.signPub === key.signPub)) return 'same';
+    if (held.length >= MAX_KEY_CLAIMS) return 'full';
+    this.insertKey('fed_key_claims', key);
+    return 'new';
+  }
+
+  /** A replica id's claims, or every claim, oldest first. */
+  claims(replica?: string): PinnedKey[] {
+    const rows =
+      replica === undefined
+        ? this.db
+            .query<KeyRow, []>(
+              'SELECT * FROM fed_key_claims ORDER BY replica, first_seen_at, sign_pub'
+            )
+            .all()
+        : this.db
+            .query<KeyRow, [string]>(
+              'SELECT * FROM fed_key_claims WHERE replica = ? ORDER BY first_seen_at, sign_pub'
+            )
+            .all(replica);
+    return rows.map(pinOf);
+  }
+
+  /** Replaces the decided keys; the replicas whose key changed from another. */
+  setDecided(keys: readonly PinnedKey[]): string[] {
+    const before = new Map(this.pins().map((k) => [k.replica, k.signPub]));
+    this.db.query('DELETE FROM fed_keys').run();
+    for (const key of keys) this.insertKey('fed_keys', key);
+    return keys
+      .filter((k) => {
+        const was = before.get(k.replica);
+        return was !== undefined && was !== k.signPub;
+      })
+      .map((k) => k.replica);
+  }
+
+  private insertKey(
+    table: 'fed_keys' | 'fed_key_claims',
+    key: PinnedKey
+  ): void {
     this.db
       .query(
-        `INSERT INTO fed_keys (replica, handle, device, build, sign_pub, seal_pub, fingerprint, key_seq,
+        `INSERT INTO ${table} (replica, handle, device, build, sign_pub, seal_pub, fingerprint, key_seq,
            legacy_through, legacy_digest, invite_json, first_seen_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
@@ -277,9 +331,9 @@ export class FedStore {
         key.invite === undefined ? null : JSON.stringify(key.invite),
         this.now().toISOString()
       );
-    return 'pinned';
   }
 
+  /** The key the roster decided this replica speaks with (FW-R24). */
   pinned(replica: string): PinnedKey | null {
     const row = this.db
       .query<KeyRow, [string]>('SELECT * FROM fed_keys WHERE replica = ?')
@@ -375,22 +429,4 @@ function pinOf(row: KeyRow): PinnedKey {
   if (row.invite_json !== null)
     pin.invite = JSON.parse(row.invite_json) as { id: string; sig: string };
   return pin;
-}
-
-// Whether two pins carry the same key op's fields, every one of them.
-function samePin(a: PinnedKey, b: PinnedKey): boolean {
-  return (
-    a.replica === b.replica &&
-    a.handle === b.handle &&
-    a.device === b.device &&
-    a.build === b.build &&
-    a.signPub === b.signPub &&
-    a.sealPub === b.sealPub &&
-    a.fingerprint === b.fingerprint &&
-    a.keySeq === b.keySeq &&
-    a.legacy?.throughSeq === b.legacy?.throughSeq &&
-    a.legacy?.digest === b.legacy?.digest &&
-    a.invite?.id === b.invite?.id &&
-    a.invite?.sig === b.invite?.sig
-  );
 }

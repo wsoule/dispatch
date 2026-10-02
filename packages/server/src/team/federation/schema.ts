@@ -9,15 +9,26 @@ CREATE TABLE IF NOT EXISTS fed_log (seq INTEGER PRIMARY KEY, op_json TEXT NOT NU
 -- The hash of every op this machine applied, per replica and seq: a cut or a
 -- rival is checked against it once the cursor has moved on (FW-R23).
 CREATE TABLE IF NOT EXISTS fed_seen_ops (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (replica, seq));
+-- The key each replica speaks with, as the roster decides it (FW-R24): the
+-- founder's from the trusted found, others' from an accepted admit or recover.
 CREATE TABLE IF NOT EXISTS fed_keys (
   replica TEXT PRIMARY KEY, handle TEXT NOT NULL, device TEXT NOT NULL, build TEXT NOT NULL,
   sign_pub TEXT NOT NULL, seal_pub TEXT NOT NULL, fingerprint TEXT NOT NULL, key_seq INTEGER NOT NULL,
   legacy_through INTEGER, legacy_digest TEXT, invite_json TEXT, first_seen_at TEXT NOT NULL
 );
+-- Every self-signed key op seen per replica id, a few per id: rival claims
+-- until the roster decides one (FW-R24).
+CREATE TABLE IF NOT EXISTS fed_key_claims (
+  replica TEXT NOT NULL, handle TEXT NOT NULL, device TEXT NOT NULL, build TEXT NOT NULL,
+  sign_pub TEXT NOT NULL, seal_pub TEXT NOT NULL, fingerprint TEXT NOT NULL, key_seq INTEGER NOT NULL,
+  legacy_through INTEGER, legacy_digest TEXT, invite_json TEXT, first_seen_at TEXT NOT NULL,
+  PRIMARY KEY (replica, sign_pub)
+);
 -- The head columns are null for a log halted before its first op verified.
 CREATE TABLE IF NOT EXISTS fed_cursors (replica TEXT PRIMARY KEY, seq INTEGER, hash TEXT, hlc TEXT, halted TEXT);
--- Every verified roster op, whatever its action, as the fold reads them.
-CREATE TABLE IF NOT EXISTS fed_roster (replica TEXT NOT NULL, seq INTEGER NOT NULL, hlc TEXT NOT NULL, hash TEXT NOT NULL, body_json TEXT NOT NULL, PRIMARY KEY (replica, seq));
+-- Every verified roster op, whatever its action, with the key that signed it:
+-- the fold reads only those on each replica's decided key (FW-R24).
+CREATE TABLE IF NOT EXISTS fed_roster (replica TEXT NOT NULL, sign_pub TEXT NOT NULL, seq INTEGER NOT NULL, hlc TEXT NOT NULL, hash TEXT NOT NULL, body_json TEXT NOT NULL, PRIMARY KEY (replica, sign_pub, seq));
 CREATE TABLE IF NOT EXISTS fed_runs (run TEXT PRIMARY KEY, replica TEXT NOT NULL, task TEXT, run_kind TEXT NOT NULL, live INTEGER NOT NULL, waiting_on TEXT, hlc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_replicas (replica TEXT PRIMARY KEY, build TEXT NOT NULL, device TEXT NOT NULL, last_hlc TEXT NOT NULL, skew_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_members (channel TEXT NOT NULL, member TEXT NOT NULL, joined INTEGER NOT NULL, hlc TEXT NOT NULL, PRIMARY KEY (channel, member));
@@ -39,4 +50,16 @@ CREATE TABLE IF NOT EXISTS fed_v1_minted (seq INTEGER PRIMARY KEY, op_json TEXT 
 CREATE TRIGGER IF NOT EXISTS fed_v1_minted_keep AFTER INSERT ON outbox BEGIN
   INSERT OR REPLACE INTO fed_v1_minted (seq, op_json) VALUES (NEW.seq, NEW.op);
 END;
+`;
+
+/** Brings a state.db from before FW-R24 forward: roster rows gain the key
+ *  that signed them, and every pinned key becomes a claim. */
+export const FED_MIGRATE_KEYS = `
+ALTER TABLE fed_roster RENAME TO fed_roster_v0;
+CREATE TABLE fed_roster (replica TEXT NOT NULL, sign_pub TEXT NOT NULL, seq INTEGER NOT NULL, hlc TEXT NOT NULL, hash TEXT NOT NULL, body_json TEXT NOT NULL, PRIMARY KEY (replica, sign_pub, seq));
+INSERT INTO fed_roster (replica, sign_pub, seq, hlc, hash, body_json)
+  SELECT r.replica, COALESCE(k.sign_pub, ''), r.seq, r.hlc, r.hash, r.body_json
+  FROM fed_roster_v0 r LEFT JOIN fed_keys k ON k.replica = r.replica;
+DROP TABLE fed_roster_v0;
+INSERT OR IGNORE INTO fed_key_claims SELECT * FROM fed_keys;
 `;

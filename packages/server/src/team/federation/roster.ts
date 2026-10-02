@@ -6,7 +6,7 @@ import {
   readLicenseKey,
   speaksForHandle,
 } from '@dispatch/federation';
-import type { KeyInfo, RosterOpRef, RosterView } from '@dispatch/federation';
+import type { KeyInfo, PinnedKey, RosterView } from '@dispatch/federation';
 import type { JsonValue } from '@dispatch/protocol';
 import {
   b64u,
@@ -32,7 +32,9 @@ import { randomBytes } from 'node:crypto';
 
 import { seatLimitMessage } from '../license.js';
 import type { AuditKind } from './audit.js';
+import { signedEntry } from './git.js';
 import type { FedStore } from './store.js';
+import { MAX_KEY_CLAIMS } from './store.js';
 
 /** Why a roster action was refused; the routes map each code to a status. */
 export class RosterError extends Error {
@@ -70,6 +72,7 @@ const NO_ADMIN = 'would leave the team with no admin';
 
 interface RosterRow {
   replica: string;
+  sign_pub: string;
   seq: number;
   hlc: string;
   hash: string;
@@ -81,6 +84,8 @@ interface Founding {
   seq: number;
   hash: string;
   hlc: string;
+  /** The key that signed it, one of its replica id's claims. */
+  signPub: string;
 }
 
 interface PendingInvite {
@@ -143,17 +148,17 @@ export class RosterService {
   foundingsSeen(): { replica: string; fingerprint: string }[] {
     return this.foundings().map((f) => ({
       replica: f.replica,
-      fingerprint: this.fed.pinned(f.replica)?.fingerprint ?? '',
+      fingerprint: this.claimOf(f.replica, f.signPub)?.fingerprint ?? '',
     }));
   }
 
   /** The op hash of a roster op this replica holds, for naming it in a dismiss. */
   opHashOf(replica: string, seq: number): string | null {
     const row = this.fed.db
-      .query<{ hash: string }, [string, number]>(
-        'SELECT hash FROM fed_roster WHERE replica = ? AND seq = ?'
+      .query<{ hash: string }, [string, number, string]>(
+        'SELECT hash FROM fed_roster WHERE replica = ? AND seq = ? AND sign_pub = ?'
       )
-      .get(replica, seq);
+      .get(replica, seq, this.fed.pinned(replica)?.signPub ?? '');
     return row?.hash ?? null;
   }
 
@@ -179,7 +184,7 @@ export class RosterService {
         legacy,
         recoveryPub: recovery.signPub,
       });
-      this.pinFounder(founding(found), 'firm');
+      this.pinFounder(founding(found, this.fed.keys.signPub), 'firm');
       const key = this.deps.installedLicense();
       if (key !== null && this.licenseVerifies(key))
         this.publish({ rv: 1, action: 'license', key });
@@ -189,7 +194,7 @@ export class RosterService {
 
   trust(fp: string): void {
     const chosen = this.foundings().find(
-      (f) => this.fed.pinned(f.replica)?.fingerprint === fp
+      (f) => this.claimOf(f.replica, f.signPub)?.fingerprint === fp
     );
     if (chosen === undefined)
       throw new RosterError('invalid', `no founding with fingerprint ${fp}`);
@@ -363,16 +368,18 @@ export class RosterService {
     }
   ): void {
     const view = this.member();
-    const pinned = this.fed.pinned(replica);
-    if (pinned === null)
+    // Any claim on the id may be the one admitted: the fingerprint picks it.
+    const claims = this.fed.claims(replica);
+    if (claims.length === 0)
       throw new RosterError(
         'conflict',
         `${replica} has published no key op this machine has read`
       );
-    if (pinned.fingerprint !== opts.fingerprint)
+    const pinned = claims.find((c) => c.fingerprint === opts.fingerprint);
+    if (pinned === undefined)
       throw new RosterError(
         'conflict',
-        `${replica}'s key has fingerprint ${pinned.fingerprint}, not ${opts.fingerprint}`
+        `${replica}'s key has fingerprint ${claims.map((c) => c.fingerprint).join(' or ')}, not ${opts.fingerprint}`
       );
     if (view.revoked.has(replica))
       throw new RosterError(
@@ -482,10 +489,10 @@ export class RosterService {
   /** FW-R8: takes an op no build reads out of every fold, when this admin may. */
   dismiss(replica: string, seq: number, hash: string): void {
     const row = this.fed.db
-      .query<RosterRow, [string, number]>(
-        'SELECT * FROM fed_roster WHERE replica = ? AND seq = ?'
+      .query<RosterRow, [string, number, string]>(
+        'SELECT * FROM fed_roster WHERE replica = ? AND seq = ? AND hash = ?'
       )
-      .get(replica, seq);
+      .get(replica, seq, hash);
     if (row === null || row.hash !== hash)
       throw new RosterError(
         'invalid',
@@ -581,12 +588,15 @@ export class RosterService {
       return 'applied';
     }
     if (entry.type !== 'roster') return 'applied';
+    const signer = this.signerOf(entry);
+    if (signer === null) return 'applied';
     const inserted = this.fed.db
       .query(
-        'INSERT OR IGNORE INTO fed_roster (replica, seq, hlc, hash, body_json) VALUES (?, ?, ?, ?, ?)'
+        'INSERT OR IGNORE INTO fed_roster (replica, sign_pub, seq, hlc, hash, body_json) VALUES (?, ?, ?, ?, ?, ?)'
       )
       .run(
         entry.replica,
+        signer,
         entry.seq,
         entry.hlc,
         hash,
@@ -601,33 +611,81 @@ export class RosterService {
 
   // ---- internals ----
 
+  // FW-R24: each replica's key is decided from the op set, never from which
+  // key op this machine happened to see first. The founder's is the key that
+  // signed the trusted found; any other id with one claim speaks with it, and
+  // an id with rival claims with the one an accepted admit or recover names.
+  // The fold reads only roster ops signed by each replica's decided key.
+  /** The keys the last fold decided, by replica (FW-R24). */
+  private decided = new Map<string, PinnedKey>();
+
   private fold(): RosterView | null {
+    const claims = new Map<string, PinnedKey[]>();
+    for (const c of this.fed.claims()) {
+      const list = claims.get(c.replica);
+      if (list === undefined) claims.set(c.replica, [c]);
+      else list.push(c);
+    }
+    const decided = new Map<string, PinnedKey>();
+    const disputed: string[] = [];
+    for (const [replica, list] of claims) {
+      const [only] = list;
+      if (list.length === 1 && only !== undefined) decided.set(replica, only);
+      else disputed.push(replica);
+    }
+    this.decided = decided;
     const founder = this.fed.meta('founder');
-    const founderSeq = this.fed.meta('founder_seq');
-    if (founder === null || founderSeq === null) return null;
-    const ops: RosterOpRef[] = this.rows().map((r) => ({
-      replica: r.replica,
-      seq: r.seq,
-      hlc: r.hlc,
-      hash: r.hash,
-      body: JSON.parse(r.body_json) as RosterBody,
-    }));
-    const keys = new Map<string, KeyInfo>();
-    for (const pin of this.fed.pins())
-      keys.set(pin.replica, {
-        replica: pin.replica,
-        handle: pin.handle,
-        signPub: pin.signPub,
-        fingerprint: pin.fingerprint,
-        ...(pin.invite === undefined ? {} : { invite: pin.invite }),
+    const founderSeq = Number(this.fed.meta('founder_seq'));
+    const teamId = this.fed.meta('team_id');
+    if (founder === null || teamId === null) return null;
+    const rows = this.rows();
+    const found = rows.find(
+      (r) =>
+        r.replica === founder &&
+        r.seq === founderSeq &&
+        r.hash.startsWith(teamId)
+    );
+    const founderKey = claims
+      .get(founder)
+      ?.find((c) => c.signPub === found?.sign_pub);
+    if (found === undefined || founderKey === undefined) return null;
+    decided.set(founder, founderKey);
+    const run = (keys: ReadonlyMap<string, PinnedKey>): RosterView =>
+      foldRoster({
+        founder: { replica: founder, seq: founderSeq },
+        ops: rows
+          .filter((r) => keys.get(r.replica)?.signPub === r.sign_pub)
+          .map((r) => ({
+            replica: r.replica,
+            seq: r.seq,
+            hlc: r.hlc,
+            hash: r.hash,
+            body: JSON.parse(r.body_json) as RosterBody,
+          })),
+        keys: keyInfos(keys),
+        now: this.deps.now(),
+        licensePublicKey: this.deps.licensePublicKey,
       });
-    return foldRoster({
-      founder: { replica: founder, seq: Number(founderSeq) },
-      ops,
-      keys,
-      now: this.deps.now(),
-      licensePublicKey: this.deps.licensePublicKey,
-    });
+    let view = run(decided);
+    for (const replica of disputed.filter((r) => r !== founder).sort()) {
+      const list = [...(claims.get(replica) ?? [])].sort((a, b) =>
+        a.fingerprint.localeCompare(b.fingerprint)
+      );
+      for (const c of list) {
+        const trial = new Map(decided).set(replica, c);
+        const v = run(trial);
+        // Admitted under this key, even if revoked since.
+        const held =
+          v.members.has(replica) ||
+          (v.revoked.get(replica)?.handle ?? null) !== null;
+        if (held) {
+          decided.set(replica, c);
+          view = v;
+          break;
+        }
+      }
+    }
+    return view;
   }
 
   // Re-folds, records the fold's problems under their own subjects, and drops
@@ -637,6 +695,19 @@ export class RosterService {
     const view = this.cached;
     const now = new Set<string>();
     for (const p of view?.problems ?? []) {
+      this.fed.problem(p.subject, p.message);
+      now.add(p.subject);
+    }
+    for (const replica of this.fed.setDecided([...this.decided.values()])) {
+      // Read again from the start on the key now decided.
+      this.fed.db
+        .query('DELETE FROM fed_cursors WHERE replica = ?')
+        .run(replica);
+      this.fed.db
+        .query('DELETE FROM fed_seen_ops WHERE replica = ?')
+        .run(replica);
+    }
+    for (const p of this.claimProblems()) {
       this.fed.problem(p.subject, p.message);
       now.add(p.subject);
     }
@@ -674,8 +745,13 @@ export class RosterService {
   private foundings(): Founding[] {
     return this.rows()
       .filter((r) => isFound(JSON.parse(r.body_json) as unknown))
-      .filter((r) => this.fed.pinned(r.replica) !== null)
-      .map(({ replica, seq, hash, hlc }) => ({ replica, seq, hash, hlc }));
+      .map(({ replica, seq, hash, hlc, sign_pub }) => ({
+        replica,
+        seq,
+        hash,
+        hlc,
+        signPub: sign_pub,
+      }));
   }
 
   private ownRosterOps(): number {
@@ -755,7 +831,7 @@ export class RosterService {
 
   private pinKey(entry: FederatedOp): void {
     const body = entry.body as unknown as KeyBody;
-    this.fed.pin({
+    const claimed = this.fed.claim({
       replica: entry.replica,
       handle: body.handle,
       device: body.device,
@@ -767,7 +843,47 @@ export class RosterService {
       legacy: body.legacy,
       ...(body.invite === undefined ? {} : { invite: body.invite }),
     });
-    if (this.founded()) this.refresh();
+    if (claimed === 'full')
+      this.fed.problem(
+        `key:${entry.replica}`,
+        `more than ${MAX_KEY_CLAIMS} keys claim replica ${entry.replica}; later claims are ignored`
+      );
+    if (claimed === 'new') this.refresh();
+  }
+
+  /** The claim on `replica` with this signing key. */
+  private claimOf(replica: string, signPub: string): PinnedKey | undefined {
+    return this.fed.claims(replica).find((c) => c.signPub === signPub);
+  }
+
+  // The claim whose key signed a roster op; this machine's own ops are its own.
+  private signerOf(entry: FederatedOp): string | null {
+    if (entry.replica === this.me) return this.fed.keys.signPub;
+    return (
+      this.fed.claims(entry.replica).find((c) => signedEntry(entry, c.signPub))
+        ?.signPub ?? null
+    );
+  }
+
+  // A problem per replica id with rival claims, naming what decides it.
+  private claimProblems(): { subject: string; message: string }[] {
+    const out: { subject: string; message: string }[] = [];
+    const byId = new Map<string, PinnedKey[]>();
+    for (const c of this.fed.claims())
+      byId.set(c.replica, [...(byId.get(c.replica) ?? []), c]);
+    for (const [replica, list] of byId) {
+      if (list.length < 2) continue;
+      const chosen = this.decided.get(replica);
+      const fps = list.map((c) => c.fingerprint).join(', ');
+      out.push({
+        subject: `key:${replica}`,
+        message:
+          chosen === undefined
+            ? `${list.length} keys claim replica ${replica} (${fps}) and none is admitted; an admin admits the one whose fingerprint its owner confirms, and the others are ignored`
+            : `${list.length} keys claim replica ${replica} (${fps}); this team follows ${chosen.fingerprint}, which it admitted, and ignores the others. Someone with push access published the others: check who.`,
+      });
+    }
+    return out;
   }
 
   private pendingInvite(): PendingInvite | null {
@@ -930,12 +1046,13 @@ function isFound(body: unknown): boolean {
   return b.action === 'found' && b.rv === 1;
 }
 
-function founding(op: FederatedOp & { hash?: string }): Founding {
+function founding(op: FederatedOp, signPub: string): Founding {
   return {
     replica: op.replica,
     seq: op.seq,
-    hash: op.hash ?? opHash(op),
+    hash: opHash(op),
     hlc: op.hlc,
+    signPub,
   };
 }
 
@@ -1006,4 +1123,18 @@ function fromCrockford32(text: string, bytes: number): Buffer | null {
   const seed = Buffer.from(out);
   if (seed.length !== bytes || crockford32(seed) !== text) return null;
   return seed;
+}
+
+// The fold's view of each decided key.
+function keyInfos(keys: ReadonlyMap<string, PinnedKey>): Map<string, KeyInfo> {
+  const out = new Map<string, KeyInfo>();
+  for (const [replica, pin] of keys)
+    out.set(replica, {
+      replica,
+      handle: pin.handle,
+      signPub: pin.signPub,
+      fingerprint: pin.fingerprint,
+      ...(pin.invite === undefined ? {} : { invite: pin.invite }),
+    });
+  return out;
 }

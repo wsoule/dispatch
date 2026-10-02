@@ -1,6 +1,13 @@
-import { opHash } from '@dispatch/protocol/federation';
+import {
+  buildOp,
+  generateReplicaKeys,
+  opHash,
+  ZERO_HASH,
+} from '@dispatch/protocol/federation';
 import type { FederatedOp } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   advance,
@@ -265,6 +272,60 @@ describe('board convergence over signed ops', () => {
         expect(auditKindsOf(m)).toContain('dismiss');
       }
       await expectConverged([ada, cy], [boardProjection, rosterProjection]);
+    },
+    SLOW
+  );
+
+  // FW-R24 (the final review's R1): a key op under each member's id, signed
+  // by a key its publisher made, halts nobody and splits no roster.
+  it(
+    'reads past rival key ops for existing ids, and a later joiner converges',
+    async () => {
+      const c = await team(['ada', 'bob']);
+      const [ada, bob] = c.members as [Member, Member];
+      const ids = [await ada.handle.replica(), await bob.handle.replica()];
+      editRemote(c.remote, (dir) => {
+        for (const r of ids) {
+          const k = generateReplicaKeys();
+          const op = buildOp(
+            {
+              replica: r,
+              seq: 1,
+              prev: ZERO_HASH,
+              hlc: `${String(ada.clock.ms).padStart(13, '0')}.0000.${r}`,
+              type: 'key',
+              body: {
+                handle: 'mallory',
+                device: 'x',
+                build: '0',
+                signPub: k.signPub,
+                sealPub: k.sealPub,
+                legacy: null,
+              },
+            },
+            k.signPriv
+          );
+          mkdirSync(join(dir, 'fed', r), { recursive: true });
+          writeFileSync(
+            join(dir, 'fed', r, '000000000900.jsonl'),
+            `${JSON.stringify(op)}\n`
+          );
+        }
+      });
+      await quiesce([ada, bob]);
+      const cy = await c.add('cy');
+      await quiesce(c.members);
+      await ada.handle.admit(cy.handle);
+      await quiesce(c.members);
+      const id = await bob.handle.create('seen by cy');
+      await quiesce(c.members);
+      expect(await cy.handle.title(id)).toBe('seen by cy');
+      for (const m of c.members)
+        for (const r of ids)
+          expect((await halted(m, r)).includes('fails verification')).toBe(
+            false
+          );
+      await expectConverged(c.members, [boardProjection, rosterProjection]);
     },
     SLOW
   );

@@ -26,6 +26,7 @@ import {
 } from '../../../src/team/federation/keys.js';
 import {
   FedStore,
+  MAX_KEY_CLAIMS,
   OpTooLargeError,
 } from '../../../src/team/federation/store.js';
 
@@ -270,7 +271,7 @@ describe('older-build ops of another id (FW-R22 M-d(2))', () => {
 });
 
 describe('pins, cursors, problems and the audit log', () => {
-  it('pins a key once and reports a conflicting one', () => {
+  it('keeps a few rival claims per id, and the decided keys apart (FW-R24)', () => {
     const ledger = new SyncLedger(join(dir, 'state.db'), 'ada');
     const fed = new FedStore(ledger, generateReplicaKeys());
     const pin = {
@@ -284,22 +285,41 @@ describe('pins, cursors, problems and the audit log', () => {
       keySeq: 1,
       legacy: null,
     };
-    expect(fed.pin(pin)).toBe('pinned');
-    expect(fed.pin(pin)).toBe('same');
-    expect(fed.pin({ ...pin, signPub: 'T' })).toBe('conflict');
-    expect(fed.pin({ ...pin, invite: { id: 'i-1', sig: 's' } })).toBe(
-      'conflict'
-    );
-    expect(fed.pinned('bob-0000000b')?.signPub).toBe('S');
-    expect(fed.pinned('cy-0000000c')).toBeNull();
+    expect(fed.claim(pin)).toBe('new');
+    expect(fed.claim(pin)).toBe('same');
+    for (const k of ['T', 'U', 'V'])
+      expect(fed.claim({ ...pin, signPub: k })).toBe('new');
+    expect(fed.claim({ ...pin, signPub: 'W' })).toBe('full');
+    expect(fed.claims('bob-0000000b')).toHaveLength(MAX_KEY_CLAIMS);
+    expect(fed.pinned('bob-0000000b')).toBeNull();
     const withHistory = {
       ...pin,
       replica: 'cy-0000000c',
       legacy: { throughSeq: 4, digest: 'd'.repeat(64) },
       invite: { id: 'i-2', sig: 'sig' },
     };
-    expect(fed.pin(withHistory)).toBe('pinned');
+    expect(fed.setDecided([pin, withHistory])).toEqual([]);
     expect(fed.pins()).toEqual([pin, withHistory]);
+    expect(fed.setDecided([{ ...pin, signPub: 'T' }])).toEqual([
+      'bob-0000000b',
+    ]);
+    ledger.close();
+  });
+
+  it('carries a pre-FW-R24 state.db forward: roster rows gain their signer', () => {
+    const path = join(dir, 'state.db');
+    const ledger = new SyncLedger(path, 'ada');
+    ledger.database.exec(`
+      CREATE TABLE fed_keys (replica TEXT PRIMARY KEY, handle TEXT NOT NULL, device TEXT NOT NULL, build TEXT NOT NULL, sign_pub TEXT NOT NULL, seal_pub TEXT NOT NULL, fingerprint TEXT NOT NULL, key_seq INTEGER NOT NULL, legacy_through INTEGER, legacy_digest TEXT, invite_json TEXT, first_seen_at TEXT NOT NULL);
+      CREATE TABLE fed_roster (replica TEXT NOT NULL, seq INTEGER NOT NULL, hlc TEXT NOT NULL, hash TEXT NOT NULL, body_json TEXT NOT NULL, PRIMARY KEY (replica, seq));
+      INSERT INTO fed_keys VALUES ('bob-0000000b', 'bob', 'desk', '0.40.0', 'S', 'X', 'FP', 1, NULL, NULL, NULL, '2026-09-26T10:00:00.000Z');
+      INSERT INTO fed_roster VALUES ('bob-0000000b', 2, 'h', 'a', '{}');
+    `);
+    const fed = new FedStore(ledger, generateReplicaKeys());
+    expect(
+      fed.db.query('SELECT replica, sign_pub, seq FROM fed_roster').all()
+    ).toEqual([{ replica: 'bob-0000000b', sign_pub: 'S', seq: 2 }]);
+    expect(fed.claims('bob-0000000b').map((c) => c.signPub)).toEqual(['S']);
     ledger.close();
   });
 
@@ -377,7 +397,7 @@ describe('pins, cursors, problems and the audit log', () => {
     };
     fed.db
       .query(
-        'INSERT INTO fed_roster (replica, seq, hlc, hash, body_json) VALUES (?, ?, ?, ?, ?)'
+        "INSERT INTO fed_roster (replica, sign_pub, seq, hlc, hash, body_json) VALUES (?, 'k', ?, ?, ?, ?)"
       )
       .run(
         'ada-0000000a',
@@ -481,7 +501,7 @@ describe('a lost key file', () => {
     const fed = new FedStore(ledger, loadOrCreateKeys(dir, old));
     fed.append({ type: 'key', body: keyBody(fed.keys) });
     const insertRoster = fed.db.query(
-      'INSERT INTO fed_roster (replica, seq, hlc, hash, body_json) VALUES (?, ?, ?, ?, ?)'
+      "INSERT INTO fed_roster (replica, sign_pub, seq, hlc, hash, body_json) VALUES (?, 'k', ?, ?, ?, ?)"
     );
     const roster = (target: string) => {
       const op = fed.append({

@@ -137,7 +137,7 @@ export class LegacyWindow {
     if (!view.members.has(this.me)) return false;
     if (this.deps.now().getTime() < view.legacy.deadlineMs) return false;
     const entries = this.attestAll().filter(
-      (a) => this.deps.fed.pinned(a.replica) === null
+      (a) => !view.members.has(a.replica)
     );
     this.deps.roster.closeLegacy(entries);
     return true;
@@ -263,11 +263,9 @@ export class LegacyWindow {
       out.apply.push(...lines.filter((o) => o.seq <= bound));
       return;
     }
-    if (pinned !== null) {
-      if (!view.members.has(replica)) {
-        out.waiting.add(replica);
-        return;
-      }
+    // FW-R24(3): upgraded only once its key is admitted; a key op on its id
+    // that no admit names leaves its v1 lines to the window.
+    if (pinned !== null && view.members.has(replica)) {
       const bound = pinned.legacy?.throughSeq ?? 0;
       out.apply.push(...lines.filter((o) => o.seq <= bound));
       return;

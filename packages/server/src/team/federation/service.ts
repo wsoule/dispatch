@@ -50,6 +50,8 @@ const APPLIED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /** Seqs behind a head whose hashes stay for fork and cut checks; older ones
  *  go, except a live revocation's afterSeq. */
 const SEEN_OPS_KEPT = 10_000;
+// The most of a disputed id's claimed chain read before one is decided.
+const CLAIM_PREFIX_OPS = 8;
 // One bad-signature or halt audit row per replica in this window.
 const AUDIT_WINDOW_MS = 10 * 60 * 1000;
 
@@ -393,16 +395,22 @@ export class FederationService {
     }
     for (const [replica, list] of byReplica(entries)) {
       if (replica === this.opts.fed.replica) continue;
-      const r = verifyLog(
-        replica,
-        chainFrom(list, null, null).chain,
-        { head: null, halted: null },
-        null
-      );
-      for (const { entry, hash } of r.accepted) {
-        if (isStub(entry) || (entry.type !== 'key' && entry.type !== 'roster'))
-          continue;
-        if (this.opts.roster.applyVerified(entry, hash) === 'held') break;
+      // Each key op's chain on its own: a rival claim never hides a founding.
+      for (const k of keyOps(list)) {
+        const r = verifyLog(
+          replica,
+          chainFrom(list, null, keyOpSignPub(k)).chain,
+          { head: null, halted: null },
+          null
+        );
+        for (const { entry, hash } of r.accepted) {
+          if (
+            isStub(entry) ||
+            (entry.type !== 'key' && entry.type !== 'roster')
+          )
+            continue;
+          if (this.opts.roster.applyVerified(entry, hash) === 'held') break;
+        }
       }
     }
     if (this.opts.fed.outbox().length > 0) this.notifyLocalChange();
@@ -515,9 +523,18 @@ export class FederationService {
     const out = new Map<string, Verified>();
     for (const [replica, list] of byReplica(entries)) {
       if (replica === fed.replica) continue;
+      // FW-R24: every self-signed key op claims the id; the roster decides
+      // which key it speaks with, and only that key's chain is read.
+      for (const k of keyOps(list))
+        if (roster.applyVerified(k, opHash(k)) === 'held') break;
       const cursor = fed.cursor(replica);
       if (cursor.halted !== null) continue;
       const pinned = fed.pinned(replica);
+      if (pinned === null) {
+        this.readClaims(replica, list);
+        out.set(replica, { entries: [], halted: null, flagged: false });
+        continue;
+      }
       const rival = this.rivalOf(
         replica,
         list,
@@ -558,6 +575,23 @@ export class FederationService {
     }
     this.checkCuts(out);
     return out;
+  }
+
+  // An id with rival claims and none decided: each claimed chain is read only
+  // through its first roster op after the key op, which may be its recover.
+  private readClaims(replica: string, list: readonly LogEntry[]): void {
+    for (const claim of this.opts.fed.claims(replica)) {
+      const chain = chainFrom(list, null, claim.signPub).chain;
+      const firstRoster = chain.findIndex((e) => e.type === 'roster');
+      const prefix = chain.slice(
+        0,
+        firstRoster < 0 ? 1 : Math.min(firstRoster + 1, CLAIM_PREFIX_OPS)
+      );
+      const r = verifyLog(replica, prefix, { head: null, halted: null }, claim);
+      for (const { entry, hash } of r.accepted)
+        if (!isStub(entry) && entry.type === 'roster')
+          if (this.opts.roster.applyVerified(entry, hash) === 'held') break;
+    }
   }
 
   // A revoked replica's op at afterSeq must hash to afterHash: the cut names
@@ -997,6 +1031,15 @@ function chainFrom(
     key ??= keyOpSignPub(first);
     at = { seq: first.seq, hash: opHash(first), hlc: first.hlc };
   }
+}
+
+// The log's key ops that verify with the key each carries: its claims.
+function keyOps(list: readonly LogEntry[]): FederatedOp[] {
+  return list.filter((e): e is FederatedOp => {
+    if (e.type !== 'key' || isStub(e)) return false;
+    const k = keyOpSignPub(e);
+    return k !== null && verifyEntry(null, e, k).ok;
+  });
 }
 
 // The signing key a log's key op carries, which verifies the op itself.
