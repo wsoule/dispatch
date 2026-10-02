@@ -128,6 +128,11 @@ export function buildFederation(deps: FederationDeps): Federation {
       onPruned: (seqs) => fed.stubLog(seqs),
       readHints: () => readHints(fed),
       onStarved: (replicas) => starvedProblems(fed, replicas),
+      onReset: (why) =>
+        fed.problem(
+          'transport:merge',
+          `someone with push access changed this machine's files on the sync branch, so its changes could not merge; Dispatch took the branch as the remote holds it and wrote this machine's changes back. Check who can push to the sync branch. (${why.slice(0, 200)})`
+        ),
       now,
     }),
     remote: deps.remoteUrl,

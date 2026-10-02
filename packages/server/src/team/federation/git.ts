@@ -28,6 +28,8 @@ export interface GitTransportDeps {
   onPruned?: (seqs: number[]) => void;
   /** What orders a pull's segment reads: cursor heads and signature checks. */
   readHints?: () => ReadHints;
+  /** A merge reset the clone to the remote tree; own files were written back. */
+  onReset?: (why: string) => void;
   /** Replicas whose reads the budget cut short on consecutive pulls. */
   onStarved?: (replicas: string[]) => void;
   now: () => Date;
@@ -78,7 +80,14 @@ export class GitFederationTransport implements FederationTransport {
   }
 
   async pull(since: Watermarks): Promise<LogEntry[]> {
-    const exchanged = await this.deps.repo.exchange();
+    let exchanged = await this.deps.repo.exchange();
+    const resets = this.deps.repo.takeResets();
+    if (resets.length > 0 && exchanged.offline === undefined) {
+      // Own ops the reset dropped go back out before this pull reads.
+      await this.republish();
+      exchanged = await this.deps.repo.exchange();
+      for (const why of resets) this.deps.onReset?.(why);
+    }
     if (exchanged.offline !== undefined) {
       this.lastError = exchanged.offline;
       throw new TransportOffline(exchanged.offline);

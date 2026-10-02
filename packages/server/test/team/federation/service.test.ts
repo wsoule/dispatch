@@ -604,6 +604,23 @@ describe('FederationService', () => {
     expect((remote.logs.get(ada.fed.replica) ?? []).length).toBeGreaterThan(0);
   });
 
+  // FW-R25: pending counts what never reached the remote, not the outbox.
+  it('counts ops written but never pushed as pending', async () => {
+    const {
+      remote,
+      rs: [ada],
+    } = team('ada');
+    ada.roster.found('acme');
+    await ada.service.syncNow();
+    remote.rejectPush = true;
+    ada.store.create({ title: 'stuck' });
+    await ada.service.syncNow();
+    expect(ada.service.status().pending).toBeGreaterThan(0);
+    remote.rejectPush = false;
+    await ada.service.syncNow();
+    expect(ada.service.status().pending).toBe(0);
+  });
+
   it("drops an observer's board ops: an observer publishes only keys, presence and acks", async () => {
     const {
       rs: [ada, ops],

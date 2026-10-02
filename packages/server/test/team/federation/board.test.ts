@@ -6,7 +6,7 @@ import {
 } from '@dispatch/protocol/federation';
 import type { FederatedOp } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -326,6 +326,40 @@ describe('board convergence over signed ops', () => {
             false
           );
       await expectConverged(c.members, [boardProjection, rosterProjection]);
+    },
+    SLOW
+  );
+
+  // FW-R25 (the final review's R2): a line appended to a member's segment
+  // must not lock it out of publishing.
+  it(
+    'publishes again after someone appends to its segment on the branch',
+    async () => {
+      const c = await team(['ada', 'bob']);
+      const [ada, bob] = c.members as [Member, Member];
+      const bobId = await bob.handle.replica();
+      await bob.handle.create('local one');
+      editRemote(c.remote, (dir) => {
+        const d = join(dir, 'fed', bobId);
+        const last =
+          readdirSync(d)
+            .filter((n) => n.endsWith('.jsonl'))
+            .sort()
+            .at(-1) ?? '';
+        appendFileSync(join(d, last), '{"junk":1}\n');
+      });
+      const id = await bob.handle.create('after the append');
+      await quiesce(c.members);
+      expect(await ada.handle.title(id)).toBe('after the append');
+      const status = (await bob.handle.api('/api/board-sync')).body as {
+        pending: number;
+        lastError: string | null;
+      };
+      expect(status).toMatchObject({ pending: 0, lastError: null });
+      expect(
+        (await problemsOf(bob)).some((p) => p.subject === 'transport:merge')
+      ).toBe(true);
+      await expectConverged(c.members, [boardProjection]);
     },
     SLOW
   );

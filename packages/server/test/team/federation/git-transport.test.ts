@@ -489,6 +489,61 @@ describe('GitFederationTransport', () => {
     expect(ta.health().acks['bob-0000000b']).toBe('2026-09-26T10:00:00.000Z');
   });
 
+  // FW-R25 (the final review's R2): a line someone appended to this
+  // replica's segment makes its next merge conflict. The clone resets to the
+  // remote tree, writes back what its own log holds, and says so.
+  it('recovers from a merge conflict on its own segment and publishes again', async () => {
+    const a = clone('a', A);
+    const b = clone('b', 'bob-0000000b');
+    const ops = chain(4);
+    let published: FederatedOp[] = [];
+    const resets: string[] = [];
+    const make = (repo: SyncRepo, replica: string, own: () => FederatedOp[]) =>
+      new GitFederationTransport({
+        repo,
+        replica,
+        signPriv: keys.signPriv,
+        verifyAcks: () => true,
+        acknowledgedBy: () => false,
+        ownLog: own,
+        onReset: (why) => resets.push(why),
+        now: () => new Date(),
+      });
+    const ta = make(a, A, () => published);
+    const tb = make(b, 'bob-0000000b', () => []);
+    await a.ensure();
+    await b.ensure();
+    published = ops.slice(0, 2);
+    await ta.publish(published);
+    await ta.pull(new Map());
+    await tb.pull(new Map());
+    const seg = join(dir, 'b', 'fed', A, '000000000001.jsonl');
+    appendFileSync(seg, '{"junk":1}\n');
+    runGitSync(join(dir, 'b'), ['add', '-A']);
+    runGitSync(join(dir, 'b'), [
+      '-c',
+      'user.name=x',
+      '-c',
+      'user.email=x@example.com',
+      'commit',
+      '-q',
+      '-m',
+      'junk',
+    ]);
+    runGitSync(join(dir, 'b'), ['push', '-q', 'origin', 'HEAD:dispatch-sync']);
+    published = ops;
+    await ta.publish(ops.slice(2));
+    expect(ta.health().unpublished).toBe(2);
+    await ta.pull(new Map());
+    expect(ta.health().lastError).toBeNull();
+    expect(ta.health().unpublished).toBe(0);
+    expect(resets).toHaveLength(1);
+    const seen = (await tb.pull(new Map()))
+      .filter((e) => e.replica === A)
+      .map((e) => e.seq);
+    expect([...new Set(seen)].sort((x, y) => x - y)).toEqual([1, 2, 3, 4]);
+  });
+
   // FW-R22 M6: a merge that removes this replica's segments loses nothing;
   // its next publish writes back what its own log holds.
   it('re-publishes its own ops a merge removed from the branch', async () => {

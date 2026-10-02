@@ -122,6 +122,8 @@ export interface ReadHints {
 export class SyncRepo {
   private readonly segmentCache = new Map<string, CachedSegment>();
   private readonly segmentInfo = new Map<string, SegmentInfo>();
+  /** Merges given up for the remote tree since the last takeResets(). */
+  private resets: string[] = [];
   /** Per replica, passes in a row whose reads the budget cut short. */
   private readonly cutPasses = new Map<string, number>();
 
@@ -434,6 +436,11 @@ export class SyncRepo {
     }
   }
 
+  /** Why each merge since the last call reset to the remote tree. */
+  takeResets(): string[] {
+    return this.resets.splice(0);
+  }
+
   /** Replicas whose reads the budget cut short on two or more passes in a
    *  row: their directories may hold files that crowd out the real log. */
   starvedReplicas(): string[] {
@@ -587,10 +594,20 @@ export class SyncRepo {
       `origin/${this.branch}`,
     ]);
     if (!merged.ok) {
-      // Cannot happen while every replica writes only its own file; if it
-      // does, leave the clone as it was rather than half-merged.
+      // FW-R25: someone wrote into this replica's files, so its commits
+      // conflict for good. Take the remote tree (never force-push it) and
+      // write this replica's own lines back on top.
       await this.run(['merge', '--abort']);
-      return `could not merge the sync branch: ${merged.out}`;
+      const ownV1 = this.readV1(this.replica);
+      const reset = await this.run([
+        'reset',
+        '-q',
+        '--hard',
+        `origin/${this.branch}`,
+      ]);
+      if (!reset.ok) return `could not merge the sync branch: ${merged.out}`;
+      await this.write(ownV1);
+      this.resets.push(merged.out);
     }
     return null;
   }

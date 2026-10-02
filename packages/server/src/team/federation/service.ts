@@ -258,7 +258,11 @@ export class FederationService {
       branch: this.opts.branch,
       lastSyncAt: this.lastSyncAt,
       lastError: this.lastError,
-      pending: ledger.outbox().length + fed.outbox().length,
+      // Written to the clone but not yet pushed counts too (FW-R25).
+      pending:
+        ledger.outbox().length +
+        fed.outbox().length +
+        transport.health().unpublished,
       applied: this.applied,
       problems: ledger.problems(),
       people: view?.people.length ?? this.people,
