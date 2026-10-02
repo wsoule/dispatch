@@ -236,6 +236,7 @@ Lamport
 landable
 lede
 Lesk
+lfsconfig
 libc
 libsodium
 libvips
