@@ -6,6 +6,7 @@ import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { readSecret } from './secret.js';
 
 const TIERS: readonly TeamTier[] = ['request', 'decide', 'operator'];
 
@@ -288,10 +289,14 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
     });
 
   team
-    .command('join <code>')
-    .description('Ask to join a team with an invite code')
+    .command('join')
+    .description(
+      'Ask to join a team with an invite code, read from stdin or a prompt'
+    )
     .option(tokenOption, tokenHelp)
-    .action(async (code: string, opts: { token?: string }) => {
+    .allowExcessArguments(false)
+    .action(async (opts: { token?: string }) => {
+      const code = await readSecret(ctx, 'Invite code: ');
       await (await client(opts, 'dispatch team join')).joinTeam(code);
       ctx.log(
         'Asked to join. An admin admits this machine once they compare its fingerprint (dispatch team keys).'
@@ -312,10 +317,14 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
     });
 
   team
-    .command('recover <code>')
-    .description('Rejoin as an admin with the recovery code')
+    .command('recover')
+    .description(
+      'Rejoin as an admin with the recovery code, read from stdin or a prompt'
+    )
     .option(tokenOption, tokenHelp)
-    .action(async (code: string, opts: { token?: string }) => {
+    .allowExcessArguments(false)
+    .action(async (opts: { token?: string }) => {
+      const code = await readSecret(ctx, 'Recovery code: ');
       await (await client(opts, 'dispatch team recover')).recoverTeam(code);
       ctx.log('Recovered: this machine is an admin, ranked after every other.');
     });

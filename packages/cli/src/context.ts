@@ -14,6 +14,10 @@ export interface CliContext {
   // <productName>`, and tests inject a stub to assert on the root without
   // actually launching anything.
   openApp?: (rootDir: string) => void;
+  // Reads a secret (an invite or recovery code) without it reaching argv:
+  // tests inject a stub; real usage falls back to stdin or a muted prompt
+  // (`readSecret` in commands/secret.ts).
+  readSecret?: (prompt: string) => Promise<string>;
 }
 
 export class CliError extends Error {
