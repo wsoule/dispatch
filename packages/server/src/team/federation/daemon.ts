@@ -164,8 +164,12 @@ function readHints(fed: FedStore): ReadHints {
     )
     .all())
     if (row.hash !== null) heads.set(row.replica, row.hash);
+  // Read in full: every id with a key claim or a cursor, and this machine.
+  const known = new Set<string>([fed.replica, ...heads.keys()]);
+  for (const c of fed.claims()) known.add(c.replica);
   return {
     heads,
+    known,
     signedBy: (e) => {
       const pin = fed.pinned(e.replica);
       return pin !== null && signedEntry(e, pin.signPub);

@@ -77,6 +77,7 @@ export class MemoryTransport implements FederationTransport {
       lastError: this.lastError,
       unpublished: this.held.length,
       sizeBytes: null,
+      readBytes: 0,
       acks: {},
     };
   }

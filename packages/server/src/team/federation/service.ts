@@ -385,37 +385,43 @@ export class FederationService {
   // Before a founder is pinned, every verified key and roster op goes to the
   // roster, so a pass pins a founding and announces this replica's key.
   private async discoverFounding(): Promise<void> {
-    let entries: LogEntry[];
-    try {
-      entries = await this.opts.transport.pull(new Map());
-      this.opts.fed.clearProblem('team:founding');
-    } catch (err) {
-      // B7: say why no founding can be seen, instead of waiting silently.
-      this.opts.fed.problem(
-        'team:founding',
-        `this machine could not read the sync branch for a founding: ${(err as Error).message}`
-      );
-      return;
-    }
-    for (const [replica, list] of byReplica(entries)) {
-      if (replica === this.opts.fed.replica) continue;
-      // Each key op's chain on its own: a rival claim never hides a founding.
-      for (const k of keyOps(list)) {
-        const r = verifyLog(
-          replica,
-          chainFrom(list, null, keyOpSignPub(k)).chain,
-          { head: null, halted: null },
-          null
+    // An id first seen is read only to its key op (FW-R25), so a read that
+    // claims new ids reads once more, in full, for their foundings.
+    for (let round = 0; round < 2 && !this.opts.roster.founded(); round++) {
+      let entries: LogEntry[];
+      try {
+        entries = await this.opts.transport.pull(new Map());
+        this.opts.fed.clearProblem('team:founding');
+      } catch (err) {
+        // B7: say why no founding can be seen, instead of waiting silently.
+        this.opts.fed.problem(
+          'team:founding',
+          `this machine could not read the sync branch for a founding: ${(err as Error).message}`
         );
-        for (const { entry, hash } of r.accepted) {
-          if (
-            isStub(entry) ||
-            (entry.type !== 'key' && entry.type !== 'roster')
-          )
-            continue;
-          if (this.opts.roster.applyVerified(entry, hash) === 'held') break;
+        return;
+      }
+      const claims = this.opts.fed.claims().length;
+      for (const [replica, list] of byReplica(entries)) {
+        if (replica === this.opts.fed.replica) continue;
+        // Each key op's chain on its own: a rival claim never hides a founding.
+        for (const k of keyOps(list)) {
+          const r = verifyLog(
+            replica,
+            chainFrom(list, null, keyOpSignPub(k)).chain,
+            { head: null, halted: null },
+            null
+          );
+          for (const { entry, hash } of r.accepted) {
+            if (
+              isStub(entry) ||
+              (entry.type !== 'key' && entry.type !== 'roster')
+            )
+              continue;
+            if (this.opts.roster.applyVerified(entry, hash) === 'held') break;
+          }
         }
       }
+      if (this.opts.fed.claims().length === claims) break;
     }
     if (this.opts.fed.outbox().length > 0) this.notifyLocalChange();
   }

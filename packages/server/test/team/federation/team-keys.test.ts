@@ -66,6 +66,7 @@ const health = (
   lastError: null,
   unpublished: 0,
   sizeBytes: 1024,
+  readBytes: 0,
   acks: {},
   ...over,
 });

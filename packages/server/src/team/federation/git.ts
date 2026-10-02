@@ -146,6 +146,7 @@ export class GitFederationTransport implements FederationTransport {
       lastError: this.lastError,
       unpublished: this.unpublished,
       sizeBytes: this.deps.repo.sizeBytes(),
+      readBytes: this.deps.repo.lastPassBytes(),
       acks: { ...this.lastAcks },
     };
   }

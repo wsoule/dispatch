@@ -7,6 +7,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
   rmSync,
 } from 'node:fs';
@@ -44,6 +45,27 @@ export function readCapped(path: string, cap: number): string | null {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > cap) return null;
     return readFileSync(fd, 'utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Up to the first `bytes` of a regular file, opened as readCapped opens it. */
+export function readHead(path: string, bytes: number): string | null {
+  let fd: number;
+  try {
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    );
+  } catch {
+    return null;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return null;
+    const buf = Buffer.alloc(bytes);
+    const n = readSync(fd, buf, 0, bytes, 0);
+    return buf.subarray(0, n).toString('utf8');
   } finally {
     closeSync(fd);
   }

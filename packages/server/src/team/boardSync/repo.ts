@@ -24,6 +24,7 @@ import {
   listDir,
   ownFile,
   readCapped,
+  readHead,
   realDir,
   regularFile,
 } from './safeFs.js';
@@ -57,6 +58,15 @@ const MAX_SEGMENT_READ = SEGMENT_MAX_BYTES + MAX_OP_BYTES;
 const MAX_ACKS_READ = 1024 * 1024;
 // FW-R23: fresh segment bytes one pass reads per replica; the rest wait.
 const READ_BUDGET_BYTES = 2 * MAX_SEGMENT_READ;
+// FW-R25: fresh bytes a pass reads across all replicas, the unknown ids it
+// probes for a key op, and how much of each file a probe reads.
+const TOTAL_READ_BYTES = 32 * 1024 * 1024;
+const MAX_UNKNOWN_IDS = 8;
+const KEY_PROBE_BYTES = 64 * 1024;
+// Files of an unknown id whose first line a probe reads, and the key ops it
+// keeps (an id's honest key op may sit behind junk files named before it).
+const MAX_KEY_PROBES = 16;
+const MAX_PROBED_KEYS = 4;
 // The whole read cache, across replicas.
 const MAX_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_V1_READ = 256 * 1024 * 1024;
@@ -124,11 +134,19 @@ export interface ReadHints {
   heads?: ReadonlyMap<string, string>;
   /** Whether an entry carries its replica's valid signature. */
   signedBy?: (e: LogEntry) => boolean;
+  /** Replicas read in full, first; any other id is read only as far as its
+   *  key op. Absent, every replica is known. */
+  known?: ReadonlySet<string>;
+  /** Fresh bytes one pass reads across every replica (TOTAL_READ_BYTES). */
+  totalBudget?: number;
+  /** Unknown ids probed for a key op per pass (MAX_UNKNOWN_IDS). */
+  maxUnknown?: number;
 }
 
 export class SyncRepo {
   private readonly segmentCache = new Map<string, CachedSegment>();
   private credentials: Promise<string[]> | null = null;
+  private passBytes = 0;
   private readonly segmentInfo = new Map<string, SegmentInfo>();
   // The person's credential helpers and sshCommand, read once from their own
   // git config, as `-c` options for fetch and push.
@@ -363,11 +381,23 @@ export class SyncRepo {
   readV2(since: Watermarks, hints: ReadHints = {}): LogEntry[] {
     const budget = hints.budget ?? READ_BUDGET_BYTES;
     const signed = hints.signedBy ?? (() => true);
+    const total = hints.totalBudget ?? TOTAL_READ_BYTES;
+    const isKnown = (r: string) => hints.known?.has(r) ?? true;
     const root = join(this.dir, FED_DIR);
     const out: LogEntry[] = [];
     const live = new Set<string>();
-    for (const replica of listDir(root)) {
-      if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
+    let unknown = 0;
+    this.passBytes = 0;
+    const ids = listDir(root)
+      .filter((r) => REPLICA_ID.test(r) && realDir(join(root, r)))
+      .sort((x, y) => Number(isKnown(y)) - Number(isKnown(x)));
+    for (const replica of ids) {
+      if (!isKnown(replica)) {
+        if (unknown >= (hints.maxUnknown ?? MAX_UNKNOWN_IDS)) continue;
+        unknown += 1;
+        out.push(...this.probeKeyOps(root, replica, total));
+        continue;
+      }
       const cursor = since.get(replica) ?? 0;
       const head = hints.heads?.get(replica);
       const files: { file: string; stamp: string; size: number }[] = [];
@@ -409,11 +439,13 @@ export class SyncRepo {
       let spent = 0;
       let cut = false;
       for (const [n, f] of order.entries()) {
-        if (n > 0 && spent + f.size > budget) {
+        const over = spent + f.size > budget || this.passBytes + f.size > total;
+        if (over && (n > 0 || this.passBytes > 0)) {
           cut = true;
           continue;
         }
         spent += f.size;
+        this.passBytes += f.size;
         this.readSegment(f.file, f.stamp, replica, cursor, signed);
       }
       this.cutPasses.set(
@@ -444,6 +476,32 @@ export class SyncRepo {
     for (const map of [this.segmentCache, this.segmentInfo])
       for (const file of map.keys()) if (!live.has(file)) map.delete(file);
     this.capCache();
+    return out;
+  }
+
+  /** Fresh segment bytes the last readV2 read. */
+  lastPassBytes(): number {
+    return this.passBytes;
+  }
+
+  // An unknown id's key ops: the first complete line of each of its first
+  // MAX_KEY_PROBES files, read no further than KEY_PROBE_BYTES each.
+  private probeKeyOps(
+    root: string,
+    replica: string,
+    total: number
+  ): LogEntry[] {
+    const out: LogEntry[] = [];
+    for (const name of this.segments(replica).slice(0, MAX_KEY_PROBES)) {
+      if (this.passBytes + KEY_PROBE_BYTES > total) break;
+      const head = readHead(join(root, replica, name), KEY_PROBE_BYTES);
+      if (head === null) continue;
+      this.passBytes += Buffer.byteLength(head);
+      const end = head.indexOf('\n');
+      const entry = end < 0 ? null : parseEntry(head.slice(0, end));
+      if (entry?.replica === replica && entry.type === 'key') out.push(entry);
+      if (out.length >= MAX_PROBED_KEYS) break;
+    }
     return out;
   }
 

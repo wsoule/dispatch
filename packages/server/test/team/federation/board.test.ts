@@ -397,6 +397,38 @@ describe('board convergence over signed ops', () => {
     SLOW
   );
 
+  // FW-R25 (the final review's R4): many junk replica directories cost a
+  // pass no more than its global read budget, and convergence carries on.
+  it(
+    'reads no more than its pass budget past junk replica directories',
+    async () => {
+      const c = await team(['ada', 'bob']);
+      const [ada, bob] = c.members as [Member, Member];
+      const junk = `${'x'.repeat(1023)}\n`.repeat(1024);
+      editRemote(c.remote, (dir) => {
+        for (let n = 0; n < 40; n++) {
+          const id = `mal-${String(n).padStart(8, '0')}`;
+          mkdirSync(join(dir, 'fed', id), { recursive: true });
+          writeFileSync(join(dir, 'fed', id, '000000000001.jsonl'), junk);
+        }
+      });
+      // The first pass after the junk lands is the one that would read it all.
+      const first = (await ada.handle.sync()).body as {
+        transportHealth: { readBytes: number };
+      };
+      expect(first.transportHealth.readBytes).toBeLessThan(4 * 1024 * 1024);
+      const id = await bob.handle.create('past the junk');
+      await quiesce(c.members);
+      expect(await ada.handle.title(id)).toBe('past the junk');
+      expect(
+        (await ada.handle.keys()).waiting.some((w) =>
+          w.replica.startsWith('mal-')
+        )
+      ).toBe(false);
+    },
+    SLOW
+  );
+
   it(
     'keeps a v1 daemon seeing the board through the window, both ways',
     async () => {

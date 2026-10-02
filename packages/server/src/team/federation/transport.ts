@@ -11,6 +11,8 @@ export interface TransportHealth {
   lastError: string | null;
   unpublished: number;
   sizeBytes: number | null;
+  /** Fresh bytes the last pull read from the branch (git; FW-R25). */
+  readBytes: number;
   /** Replica → `at` of its last verified acks.json (git); {} on the relay (F-D39). */
   acks: Record<string, string>;
 }

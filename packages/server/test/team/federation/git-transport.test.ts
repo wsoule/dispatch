@@ -346,6 +346,69 @@ describe('the read budget (FW-R23 hint)', () => {
     expect(a.starvedReplicas()).toEqual([A]);
   });
 
+  // FW-R25 (the final review's R4): junk directories under many ids cost a
+  // pass no more than its global budget; known replicas are read first, and an
+  // unknown id only as far as its key op.
+  it('bounds a pass across replica directories, known ones first', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(3));
+    const junk = `${'x'.repeat(1000)}\n`.repeat(1000);
+    for (let n = 0; n < 40; n++) {
+      const id = `mal-${String(n).padStart(8, '0')}`;
+      mkdirSync(join(dir, 'a', 'fed', id), { recursive: true });
+      writeFileSync(join(dir, 'a', 'fed', id, '000000000001.jsonl'), junk);
+    }
+    const stranger = 'eve-0000000e';
+    const k = generateReplicaKeys();
+    const keyOp = buildOp(
+      {
+        replica: stranger,
+        seq: 1,
+        prev: ZERO_HASH,
+        hlc: `0000000002000.0000.${stranger}`,
+        type: 'key',
+        body: {
+          handle: 'eve',
+          device: 'x',
+          build: '0',
+          signPub: k.signPub,
+          sealPub: k.sealPub,
+          legacy: null,
+        },
+      },
+      k.signPriv
+    );
+    const second = buildOp(
+      {
+        replica: stranger,
+        seq: 2,
+        prev: opHash(keyOp),
+        hlc: `0000000002001.0000.${stranger}`,
+        type: 'task',
+        body: { task: 't-00000a01', kind: 'put', fields: {} },
+      },
+      k.signPriv
+    );
+    mkdirSync(join(dir, 'a', 'fed', stranger), { recursive: true });
+    writeFileSync(
+      join(dir, 'a', 'fed', stranger, '000000000001.jsonl'),
+      `${JSON.stringify(keyOp)}\n${JSON.stringify(second)}\n`
+    );
+    const total = 2 * 1024 * 1024;
+    const read = a.readV2(new Map(), {
+      known: new Set([A]),
+      totalBudget: total,
+      maxUnknown: 50,
+    });
+    expect(a.lastPassBytes()).toBeLessThanOrEqual(total);
+    expect(seqs(read.filter((e) => e.replica === A))).toEqual([1, 2, 3]);
+    expect(
+      read.filter((e) => e.replica === stranger).map((e) => e.seq)
+    ).toEqual([1]);
+    expect(read.some((e) => e.replica.startsWith('mal-'))).toBe(false);
+  });
+
   it('sees an append to a segment it already read', async () => {
     const a = clone('a', A);
     await a.ensure();
