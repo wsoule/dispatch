@@ -1195,11 +1195,20 @@ describe('GitFederationTransport', () => {
   describe('the git-verified append path', () => {
     // One shared clone of 100 committed segment files, read once, with a
     // runner that logs every git command it spawns.
-    const hundred = async () => {
+    const hundred = async (shrink = false) => {
       const calls: string[][] = [];
-      const counted: typeof defaultAsyncGitRunner = (cwd, args, env) => {
+      const caps: Array<number | undefined> = [];
+      const counted: typeof defaultAsyncGitRunner = (
+        cwd,
+        args,
+        env,
+        maxOut
+      ) => {
         calls.push(args);
-        return defaultAsyncGitRunner(cwd, args, env);
+        caps.push(maxOut);
+        // A test cap under the real one stands in for a diff over 16 MiB.
+        const cap = shrink && maxOut !== undefined ? 1024 : maxOut;
+        return defaultAsyncGitRunner(cwd, args, env, cap);
       };
       const r = new SyncRepo(
         join(dir, 'r'),
@@ -1238,7 +1247,7 @@ describe('GitFederationTransport', () => {
         });
       await commit();
       read();
-      return { r, calls, files, commit, read };
+      return { r, calls, caps, files, commit, read };
     };
 
     it('diffs 100 changed files with a handful of git processes', async () => {
@@ -1250,6 +1259,21 @@ describe('GitFederationTransport', () => {
       read();
       // Every file resumed: only the appended lines were read.
       expect(r.lastPassBytes()).toBe(100 * 209);
+    }, 60_000);
+
+    it('kills a diff past its output cap and re-reads in full', async () => {
+      const { r, calls, caps, files, commit, read } = await hundred(true);
+      for (const f of files) appendFileSync(f, `{"j":"${'y'.repeat(200)}"}\n`);
+      calls.length = 0;
+      caps.length = 0;
+      await commit();
+      // Every diff ran under the 16 MiB cap.
+      calls.forEach((c, n) => {
+        if (c[0] === 'diff') expect(caps[n]).toBe(16 * 1024 * 1024);
+      });
+      read();
+      // Killed past the cap: every file read again from byte 0.
+      expect(r.lastPassBytes()).toBe(100 * (20 * 209 + 209));
     }, 60_000);
 
     it('falls back to full re-reads past 16 MiB of diff in a pass', async () => {

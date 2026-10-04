@@ -97,7 +97,8 @@ const KEY_PROBE_BYTES = 64 * 1024;
 // The whole read cache, across replicas.
 const MAX_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_V1_READ = 256 * 1024 * 1024;
-// The most diff verifyAppends asks git for in one pass.
+// The most diff verifyAppends asks git for in one pass, and the stdout past
+// which one diff is killed, whatever the estimate said.
 // A cached file whose stat changed since it was read, as it is now.
 interface Changed {
   held: CachedSegment;
@@ -258,11 +259,14 @@ export class SyncRepo {
   // driver) has a definition. FW-R26(5): fetch and push alone run with the
   // person's own config (credentials, url, http, includes), with hooks and
   // LFS filters off.
-  private async run(args: string[]): Promise<{ ok: boolean; out: string }> {
+  private async run(
+    args: string[],
+    maxOut?: number
+  ): Promise<{ ok: boolean; out: string }> {
     const network = args[0] === 'fetch' || args[0] === 'push';
     const res = network
       ? await this.git(this.dir, [...NETWORK_ARGS, ...args])
-      : await this.git(this.dir, args, ISOLATED_GIT_ENV);
+      : await this.git(this.dir, args, ISOLATED_GIT_ENV, maxOut);
     return { ok: res.status === 0, out: `${res.stdout}${res.stderr}`.trim() };
   }
 
@@ -874,15 +878,10 @@ export class SyncRepo {
     start: number
   ): Promise<number> {
     let room = start;
-    const counts = await this.run([
-      ...DIFF_ARGS,
-      '--numstat',
-      '-z',
-      base,
-      commit,
-      '--',
-      ...chunk,
-    ]);
+    const counts = await this.run(
+      [...DIFF_ARGS, '--numstat', '-z', base, commit, '--', ...chunk],
+      MAX_DIFF_BYTES
+    );
     if (!counts.ok) return room;
     const wanted: string[] = [];
     for (const [added, removed, rel] of numstat(counts.out)) {
@@ -895,14 +894,10 @@ export class SyncRepo {
       wanted.push(rel);
     }
     if (wanted.length === 0) return room;
-    const diff = await this.run([
-      ...DIFF_ARGS,
-      '--unified=0',
-      base,
-      commit,
-      '--',
-      ...wanted,
-    ]);
+    const diff = await this.run(
+      [...DIFF_ARGS, '--unified=0', base, commit, '--', ...wanted],
+      MAX_DIFF_BYTES
+    );
     if (!diff.ok) return room;
     const sections = splitDiff(diff.out, wanted);
     for (const rel of wanted) {
