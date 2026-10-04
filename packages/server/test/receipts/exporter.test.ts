@@ -815,7 +815,9 @@ describe('ReceiptsScheduler', () => {
     expect(taskFiles(dir)).toHaveLength(2);
     expect(tracked(dir)).toContain('README.md');
     await scheduler.stop();
-  });
+    // A whole rebuild under load can outlast the 5 s default; waitForCommits
+    // polls for 10 s on its own.
+  }, 20_000);
 
   it('writes the whole board when receipts.dir points back at an older log', async () => {
     const s = stores();
