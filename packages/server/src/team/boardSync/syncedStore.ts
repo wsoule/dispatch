@@ -8,7 +8,10 @@ import type {
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
+import { MAX_CLOCK_LEAD_MS } from '@dispatch/protocol/federation';
 
+import type { TaskOpSigner } from '../federation/taskOps.js';
+import { oversizedField, TaskTooLargeError } from '../federation/taskOps.js';
 import type { ApplyResult, BoardOp } from './engine.js';
 import { applyOp, diffTask, recordLocal } from './engine.js';
 import type { SyncLedger } from './ledger.js';
@@ -36,6 +39,7 @@ interface RiskGuard {
 
 export class SyncedTaskStore implements TaskStorePort {
   private riskGuard: RiskGuard | null = null;
+  private signer: TaskOpSigner | null = null;
 
   constructor(
     private readonly inner: SqliteTaskStore,
@@ -43,6 +47,11 @@ export class SyncedTaskStore implements TaskStorePort {
     /** Called after each local change, so the scheduler can sync soon. */
     private readonly onLocalChange: () => void = () => {}
   ) {}
+
+  /** Once a team is founded, changes are signed v2 ops instead of v1 lines. */
+  setSigner(signer: TaskOpSigner): void {
+    this.signer = signer;
+  }
 
   get rootDir(): string {
     return this.inner.rootDir;
@@ -65,12 +74,14 @@ export class SyncedTaskStore implements TaskStorePort {
   }
 
   create(input: CreateInput, now?: string): TaskDoc {
+    this.checkSize(input);
     const doc = this.inner.create(input, now);
     this.capture(null, doc, doc.meta.id);
     return doc;
   }
 
   update(id: string, patch: UpdatePatch, now?: string): TaskDoc {
+    this.checkSize(patch);
     const before = this.inner.get(id);
     const after = this.inner.update(id, patch, now);
     this.capture(before, after, id);
@@ -78,6 +89,7 @@ export class SyncedTaskStore implements TaskStorePort {
   }
 
   amend(id: string, input: Omit<Amendment, 'date'>, now?: string): TaskDoc {
+    this.checkSize(input);
     const before = this.inner.get(id);
     const after = this.inner.amend(id, input, now);
     this.capture(before, after, id);
@@ -100,7 +112,7 @@ export class SyncedTaskStore implements TaskStorePort {
     if (this.ledger.isBootstrapped()) return 0;
     const tasks = this.inner.list();
     this.ledger.atomically(() => {
-      for (const doc of tasks) this.capture(null, doc, doc.meta.id, false);
+      for (const doc of tasks) this.capture(null, doc, doc.meta.id, true);
       this.ledger.markBootstrapped();
     });
     if (tasks.length > 0) this.onLocalChange();
@@ -115,6 +127,13 @@ export class SyncedTaskStore implements TaskStorePort {
 
   /** Folds a change from another replica into this board. */
   applyRemote(remote: BoardOp): ApplyResult {
+    if (this.ledger.ahead(remote.hlc))
+      return {
+        changed: false,
+        doc: null,
+        held: true,
+        problem: `a change from ${remote.replica} (seq ${remote.seq}) is stamped ${remote.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ahead of this machine's clock; it waits until the clock catches up`,
+      };
     this.ledger.observe(remote.hlc);
     const op = this.withoutGuardedRisk(remote);
     const result = applyOp(op, this.inner.get(op.task), this.ledger.state);
@@ -144,11 +163,22 @@ export class SyncedTaskStore implements TaskStorePort {
     before: TaskDoc | null,
     after: TaskDoc | null,
     id: string,
-    notify = true
+    bootstrapping = false
   ): void {
     const change = diffTask(before, after);
     if (change === null) return;
-    this.ledger.commitLocal({ task: id, ...change }, recordLocal);
-    if (notify) this.onLocalChange();
+    // bootstrap() stays v1: it runs once, when sync is first turned on.
+    if (!bootstrapping && this.signer?.active() === true)
+      this.signer.commit({ task: id, ...change });
+    else this.ledger.commitLocal({ task: id, ...change }, recordLocal);
+    if (!bootstrapping) this.onLocalChange();
+  }
+
+  // Refused before the inner write, since the inner store writes first and
+  // capture runs after: a refusal there would leave the board changed but unsynced.
+  private checkSize(input: object): void {
+    if (this.signer?.active() !== true) return;
+    const hit = oversizedField(input as Record<string, unknown>);
+    if (hit !== null) throw new TaskTooLargeError(hit.field, hit.bytes);
   }
 }

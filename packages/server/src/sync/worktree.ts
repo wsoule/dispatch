@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -83,31 +84,45 @@ export const defaultGitRunner: GitRunner = (cwd, args) => {
  */
 export type AsyncGitRunner = (
   cwd: string,
-  args: string[]
+  args: string[],
+  /** Set over the runner's own environment for this command. */
+  env?: Record<string, string>,
+  /** Kill the command once its stdout passes this many bytes. */
+  maxOut?: number
 ) => Promise<{ status: number; stdout: string; stderr: string }>;
 
-export const defaultAsyncGitRunner: AsyncGitRunner = (cwd, args) =>
-  spawnWithDeadline(['git', ...args], cwd, GIT_TIMEOUT_MS, {
-    ...process.env,
-    ...NO_PROMPT_ENV,
-  });
+export const defaultAsyncGitRunner: AsyncGitRunner = (
+  cwd,
+  args,
+  env = {},
+  maxOut
+) =>
+  spawnWithDeadline(
+    ['git', ...args],
+    cwd,
+    GIT_TIMEOUT_MS,
+    { ...process.env, ...NO_PROMPT_ENV, ...env },
+    maxOut
+  );
 
 /**
  * Runs `cmd` asynchronously and SIGKILLs it at `timeoutMs`. A killed command
  * reports status -1 with the reason appended to stderr, so every caller's
  * `status !== 0` check reads a stall the same way it reads a failure.
+ * Past `maxOut` bytes of stdout it is killed the same way.
  */
 export async function spawnWithDeadline(
   cmd: string[],
   cwd: string,
   timeoutMs: number,
-  env?: Record<string, string | undefined>
+  env?: Record<string, string | undefined>,
+  maxOut = Infinity
 ): Promise<{ status: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(cmd, {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    ...(env !== undefined ? { env } : {}),
+    env: env ?? childEnv(),
   });
   // The pipes are read through cancellable readers rather than awaited to
   // EOF: a killed `git` can leave an `ssh` grandchild holding both ends open,
@@ -116,24 +131,30 @@ export async function spawnWithDeadline(
   const outReader: PipeReader = proc.stdout.getReader();
   const errReader: PipeReader = proc.stderr.getReader();
   const readers = [outReader, errReader];
-  let killed = false;
-  const deadline = setTimeout(() => {
-    killed = true;
+  // Why the command was killed; an object, as the closures set it.
+  const kill: { why: string | null } = { why: null };
+  const stop = (why: string) => {
+    kill.why ??= why;
     proc.kill('SIGKILL');
     for (const reader of readers) void reader.cancel();
+  };
+  const deadline = setTimeout(() => {
+    stop(`killed after ${String(timeoutMs)}ms`);
   }, timeoutMs);
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
-      readAll(outReader),
+      readAll(outReader, maxOut, () => {
+        stop(`killed: output over ${String(maxOut)} bytes`);
+      }),
       readAll(errReader),
       proc.exited,
     ]);
-    if (killed) {
+    if (kill.why !== null) {
       const separator = stderr === '' || stderr.endsWith('\n') ? '' : '\n';
       return {
         status: -1,
         stdout,
-        stderr: `${stderr}${separator}${cmd[0] ?? ''} killed after ${String(timeoutMs)}ms\n`,
+        stderr: `${stderr}${separator}${cmd[0] ?? ''} ${kill.why}\n`,
       };
     }
     return { status: exitCode, stdout, stderr };
@@ -152,13 +173,23 @@ interface PipeReader {
 }
 
 // Drains one pipe to text; a cancelled reader ends the loop with what was
-// read so far.
-async function readAll(reader: PipeReader): Promise<string> {
+// read so far. Past `limit` bytes it keeps none of the chunk and calls `over`.
+async function readAll(
+  reader: PipeReader,
+  limit = Infinity,
+  over?: () => void
+): Promise<string> {
   const decoder = new TextDecoder();
   let text = '';
+  let bytes = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
+    bytes += value?.length ?? 0;
+    if (bytes > limit) {
+      over?.();
+      break;
+    }
     text += decoder.decode(value, { stream: true });
   }
   return text + decoder.decode();

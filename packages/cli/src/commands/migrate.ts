@@ -1,4 +1,5 @@
 import {
+  childEnv,
   dispatchDbPath,
   formatMigrationReport,
   formatMilestoneMigrationReport,
@@ -42,7 +43,11 @@ import { databaseBacked, requireStore } from './task.js';
 // remote", which retireLegacySources treats as not-shared.
 function makeGitReader(cwd: string) {
   return (args: string[]): string | null => {
-    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const result = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: childEnv(),
+    });
     return result.status === 0 ? result.stdout.trim() : null;
   };
 }

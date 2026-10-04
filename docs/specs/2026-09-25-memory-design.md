@@ -565,6 +565,9 @@ decay (local to each machine, only while active):
     re-imported on every `ledger.changed`. Without the tombstone, a deleted
     imported entry would come back at the next policy receipt
     (`policyEngine.ts:592`, `:618`).
+  - A hard delete of a team entry removes its receipt file at the next export,
+    but does not scrub git history: earlier versions stay in the receipt log,
+    and on any remote it was pushed to, until that history is rewritten.
 
 ### Tables
 
@@ -1914,9 +1917,39 @@ interface MemoryOp {
   `add` proposal with `origin: sync:<replica>`, and later ops for it update the
   proposal until it is decided. On approval, the entry keeps its replicated id.
 - **Seats.** Replication pauses past the license's seats, like task ops.
-- **Receipts.** v2 also exports team entries as `memory/<id>.md` into the
-  receipt log (`packages/core/src/receipts.ts:265`,
-  `packages/server/src/receipts/exporter.ts`). They are never read back.
+- **Receipts.** v2 also exports team entries, active and retired, as
+  `.dispatch/memory/<id>.md` into the receipt log (the layout in
+  `packages/core/src/receipts.ts`; the export is a receipts step,
+  `packages/server/src/memory/receipts.ts`). The export never reads the log
+  back: editing a file changes nothing in `memory.db`. A file is pruned only
+  when this `memory.db` exported its id (meta `receipts_exported`), or when an
+  entry, or an approved or rejected proposal, holds a `receipts:<id>` origin. An
+  expired proposal owns nothing, so its file stays. Pruning continues while a
+  restore is staged. A hard delete does not scrub git history.
+- **Restore (ruling MEM-R9).** Restore is an explicit owner action,
+  `dispatch receipts restore`, at parity with docs. The log is untrusted input
+  from anyone with push rights:
+  - **Staging.** The CLI stages only regular files named `mem-<ULID>.md`, within
+    32 KiB (`MEMORY_RECEIPT_FILE_BYTES`), refusing symlinks, into run-state
+    `memory-restore/` (0700).
+  - **Validation.** At boot, after `messaging.recover()`, each staged file is
+    checked again: its name, `lstat`, size, and a body within 8 KiB. The
+    frontmatter is read strictly (a duplicated key is a problem) and only
+    suggests the kind. The `status` must be one string, compared trimmed and
+    lower-cased.
+  - **Always gated.** Each file becomes an `add` proposal by `agent:dispatch`
+    with `agent` trust and origin `receipts:<id>` (`receipts:<id>/2`, `/3` after
+    an attempt expired undecided), exempt from the hourly proposal limit. A
+    `receipts:` proposal always raises a gate, whatever the auto policy, as a
+    personal-entry match does, and the gate says the lesson came from the
+    receipt log. Nothing restored goes live without a human.
+  - **Skipped.** A receipt whose `status` begins with `retired`, after trimming
+    and lower-casing, is skipped, as are ids or origins already held and content
+    conflicts.
+  - **At most 50 per pass.** Handled files leave the staging directory, which is
+    removed only once empty. The rest are proposed by further passes a minute
+    apart, and problem files stay with a hint.
+  - **Health.** The last report is served as `restore` in `/api/memory/health`.
 
 ## Failure handling
 

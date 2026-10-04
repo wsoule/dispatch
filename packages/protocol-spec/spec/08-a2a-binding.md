@@ -167,6 +167,8 @@ message, and MUST apply these rules on top of [§4.5](04-messages.md#s4.5):
 - Each `to` entry is one line of at most 512 bytes, at most 50 of them; each
   choice and the choice are one line of at most 200 bytes, at most 20 choices;
   `blocking` is a boolean. A violation is `invalid` on the field or its slot.
+- An `a2a:` entry is how a peer host names this host
+  ([§8.9](08-a2a-binding.md#s8.9)), so it reads as the owner, once.
 - A client may address only the humans on its recipient list, which is the owner
   unless a deciding principal named others when approving the client, and the
   work items of its own approved handoffs. Anything else is `forbidden` on
@@ -195,6 +197,7 @@ Vectors: `a2a.envelope-ext.accepts-recipients-choices-and-message-refs`,
 `a2a.external.the-host-sets-id-thread-and-from`,
 `a2a.external.defaults-to-a-blocking-question-to-the-owner`,
 `a2a.external.a-client-reaches-only-the-owner`,
+`a2a.external.an-a2a-recipient-reads-as-the-owner`,
 `a2a.external.an-opening-answer-or-handoff-is-refused`,
 `a2a.external.an-answer-from-a-client-is-never-a-close`.
 
@@ -238,16 +241,14 @@ body. The Dispatch profile's sentences:
 
 Vectors: `a2a.projection.row-8-an-open-gate-needs-authorization`,
 `a2a.projection.row-8-gate-v1-lists-id-type-and-time`,
+`a2a.projection.row-8-a-handoff-waits-on-its-proposal`,
 `a2a.egress.gate-data-never-reaches-a-client`,
 `a2a.egress.a-reply-to-a-gate-never-reaches-a-client`.
 
 ## 8.6 work/v1
 
 `https://dispatch.foo/a2a/ext/work/v1` is a profile plus a sub-state of
-`TASK_STATE_WORKING`. It is registered as provisional
-([§11.10](11-registries.md#s11.10)) until the `task-proposal` gate it relies on
-is permanent, and until then no vector tests it or the rows of
-[§8.7](08-a2a-binding.md#s8.7) that concern handoffs.
+`TASK_STATE_WORKING`.
 
 A client sends a request on `Message.metadata`; it selects the skill, and its
 absence means `ask`:
@@ -256,7 +257,7 @@ absence means `ask`:
 type WorkRequestV1 =
   | {
       skill: 'handoff';
-      title: string; // required; one line, at most 200 bytes
+      title: string; // required; one line, not blank, at most 200 bytes
       acceptance?: string[]; // at most 20 entries, each one line of at most 500 bytes
       writes?: string[]; // at most 50 repo-relative paths or globs, each at most 512 bytes
       priority?: 'urgent' | 'high' | 'medium' | 'low' | 'none'; // capped at 'medium'
@@ -268,7 +269,23 @@ type WorkRequestV1 =
 A host MUST refuse a request that breaks these limits as `invalid` on the field
 or its slot, under `work.` (`work.title`, `work.writes[1]`). Lengths are UTF-8
 bytes. A write is relative to the repository: an absolute path, a drive letter,
-a backslash or a `..` segment is refused.
+a backslash or a `..` segment is refused. A request that is not an object is
+refused on `work`, and a skill other than `handoff` or `status` on `work.skill`.
+Vectors: `a2a.work-ext.accepts-a-handoff-with-every-field`,
+`a2a.work-ext.accepts-a-status-request`,
+`a2a.work-ext.refuses-an-unknown-skill`,
+`a2a.work-ext.refuses-a-handoff-without-a-title`,
+`a2a.work-ext.refuses-a-title-over-200-bytes`,
+`a2a.work-ext.refuses-a-multi-line-title`,
+`a2a.work-ext.refuses-more-than-20-acceptance-criteria`,
+`a2a.work-ext.refuses-a-criterion-over-500-bytes`,
+`a2a.work-ext.refuses-a-multi-line-criterion`,
+`a2a.work-ext.refuses-more-than-50-writes`,
+`a2a.work-ext.refuses-a-write-outside-the-repository`,
+`a2a.work-ext.refuses-a-write-over-512-bytes`,
+`a2a.work-ext.refuses-an-unknown-priority`,
+`a2a.work-ext.refuses-more-than-10-labels`,
+`a2a.work-ext.refuses-a-request-that-is-not-an-object`.
 
 **Handoffs.** A handoff becomes a draft work item that a deciding principal
 approves before anything runs. The host raises a `task-proposal` gate for it
@@ -278,7 +295,9 @@ the client that proposed it and the handoff message. Approving it promotes the
 draft; declining it drops the draft. A handoff starts at the host's highest
 risk, so none of its own gates decides itself; a client chooses no risk, its
 priority is capped at `medium`, and its labels are stored under an `a2a/`
-prefix.
+prefix. Vectors: `core.gates.task-proposal-is-raised-only-by-the-system`,
+`core.gates.task-proposal-needs-a-deciding-answer`,
+`core.gates.task-proposal-is-answered-with-approve-or-decline`.
 
 The host tells the client its handoff's state on `Task.metadata` and on
 `status.message.metadata`:
@@ -355,20 +374,30 @@ The fixed sentences are the Dispatch profile's and are not normative.
 
 Rows 4, 6, 9 and 10, and row 2 for a handoff, concern handoffs, which exist only
 through `work/v1` and its `task-proposal` gate ([§8.6](08-a2a-binding.md#s8.6)).
-A host that takes no handoffs never meets them, and no vector tests them while
-`work/v1` is provisional.
+A host that takes no handoffs never meets them. Row 10 needs the proposal
+approved: an unapproved draft with no open gate matches row 12.
 
 Vectors: `a2a.projection.row-1-a-canceled-task`,
 `a2a.projection.row-2-an-ask-the-owner-declined`,
+`a2a.projection.row-2-a-declined-handoff`,
+`a2a.projection.row-2-a-handoff-dropped-by-the-owner`,
 `a2a.projection.row-3-a-system-close-fails-an-ask`,
 `a2a.projection.row-3-a-close-from-anyone-else-is-an-answer`,
 `a2a.projection.row-3-a-dropped-recipient-fails-an-ask`,
+`a2a.projection.row-4-a-deleted-handoff`,
 `a2a.projection.row-5-an-answered-ask-completes`,
+`a2a.projection.row-6-a-landed-handoff`,
 `a2a.projection.row-7-an-open-question-needs-input`,
 `a2a.projection.row-7-never-a-question-with-gate-data`,
 `a2a.projection.row-8-an-open-gate-needs-authorization`,
 `a2a.projection.row-8-gate-v1-lists-id-type-and-time`,
 `a2a.projection.row-8-an-open-question-comes-first`,
+`a2a.projection.row-8-a-handoff-waits-on-its-proposal`,
+`a2a.projection.row-9-a-working-handoff`,
+`a2a.projection.row-9-a-handoff-in-review-has-a-stage`,
+`a2a.projection.row-9-a-status-of-the-hosts-own`,
+`a2a.projection.row-10-an-approved-draft-is-submitted`,
+`a2a.projection.row-10-needs-approval`,
 `a2a.projection.row-11-an-ask-held-in-a-mailbox`,
 `a2a.projection.row-11-needs-every-root-delivery-held`,
 `a2a.projection.row-12-otherwise-working`.
@@ -476,14 +505,12 @@ rendered headers so they know.
 
 ## 8.9 Outbound peers
 
-This subsection is provisional: the scheme `a2a` is registered as provisional
-([§11.1](11-registries.md#s11.1)), and no vector tests it yet.
-
 A peer is another A2A agent the host sends to, addressed as `a2a:<alias>`. The
 alias follows the handle grammar of [§3.1](03-addresses.md#s3.1)
 (`[a-z0-9][a-z0-9._-]*`), at most 40 characters. An `a2a:` address is valid in
 `to` and as a channel member; it is `from` only on a message the host records
-from that peer, which never decides. No principal ever sends as one.
+from that peer, which never decides. No principal ever sends as one. Vectors:
+`a2a.peers.parses-an-alias`, `a2a.peers.an-alias-is-at-most-40-characters`.
 
 **Adding a peer.** Only a deciding principal adds a peer, by naming its card's
 URL. The host then:
@@ -523,10 +550,13 @@ the DMP message id (so a peer that deduplicates never processes a retry twice),
 whose parts are the body and the data, and whose `envelope/v1` carries `from`,
 `to` reduced to the peer, `kind`, `replyTo`, `choices`, `choice` and `refs`. A
 handoff to a peer also carries `work/v1` with the handoff's first line as its
-title. On acceptance the delivery moves from `held` to `pushed`. A network error
-or a 5xx is retried with backoff; after 24 hours the host gives up, closing a
-question and sending the sender of any other kind a notice. A 4xx is not
-retried: the sender gets the peer's error as a notice, and a question is closed.
+title. On acceptance the delivery moves from `held` to `pushed`. Vector:
+`a2a.peers.a-delivery-to-a-peer-is-held`. A network error or a 5xx is retried
+with backoff; after 24 hours the host gives up, closing a question and sending
+the sender of any other kind a notice. A 4xx is not retried: the sender gets the
+peer's error as a notice, and a question is closed. Only a 401, or a 403 whose
+`ErrorInfo` reason starts with `AUTH_`, marks the peer failed; any other 403
+fails the one message like any 4xx.
 
 **Replies.** The host follows each open task of a peer, by stream or by polling,
 and records each peer event as at most one message from the peer, through the

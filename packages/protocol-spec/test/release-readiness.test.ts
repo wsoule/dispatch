@@ -16,15 +16,13 @@ const readme = readFileSync(
   'utf8'
 ).replace(/\s+/g, ' ');
 
-it('has no skeleton placeholder left, except an App. A stub', () => {
+it('has no skeleton placeholder or stub left', () => {
   for (const f of files) {
     const text = readFileSync(new URL(f, SPEC_DIR), 'utf8');
-    if (
-      f === 'appendix-a-daemon-api.md' &&
-      text.includes('Appendix A lands in a later draft')
-    )
-      continue;
-    expect({ f, placeholder: /Written in Task \d/.test(text) }).toEqual({
+    expect({
+      f,
+      placeholder: /Written in Task \d|lands in a later draft/.test(text),
+    }).toEqual({
       f,
       placeholder: false,
     });

@@ -353,7 +353,7 @@ export function registerDocTools(server: McpServer, rootDir: string): void {
     {
       title: 'Create or change a doc',
       description:
-        'Three modes. No doc: create one from title and body (scope team by default; inside a run it links to your task). doc and ops: anchored edits (replace_section, replace with a unique find, insert before a heading, append, set_title) applied to the newest text, so they survive a human editing elsewhere in the doc — prefer these. doc, body and baseRev: a whole-body save, merged with any newer edits; a real conflict comes back with the hunks. Every revision is attributed and can be reverted; an edit to an accepted doc is proposed for review.',
+        'Three modes. No doc: create one from title and body (scope team by default; inside a run it links to your task). doc and ops: anchored edits (replace_section swaps what is under a heading, and the heading line stays; replace with a unique find, insert before a heading, append, set_title) applied to the newest text, so they survive a human editing elsewhere in the doc — prefer these. doc, body and baseRev: a whole-body save, merged with any newer edits; a real conflict comes back with the hunks. Every revision is attributed and can be reverted; an edit to an accepted doc is proposed for review.',
       inputSchema: {
         doc: z.string().optional(),
         ops: z.array(opSchema).optional(),

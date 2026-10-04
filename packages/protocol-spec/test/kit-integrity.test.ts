@@ -77,12 +77,12 @@ describe('the kit', () => {
   });
 
   // A handoff exists only through work/v1 (§8.6), so while that extension is
-  // provisional no vector validates a work/v1 request or projects a handoff.
-  it('tests no handoff while work/v1 is provisional', () => {
+  // provisional no vector validates a work/v1 request or projects a handoff;
+  // once it is permanent, vectors do both.
+  it('tests handoffs exactly when work/v1 is permanent', () => {
     const work = loadRegistry()['extension-uris'].find((e) =>
       e.value.endsWith('/a2a/ext/work/v1')
     );
-    expect(work?.status).toBe('provisional');
     const handoffs = vectors.filter((v) =>
       v.when.some(
         (s) =>
@@ -92,7 +92,21 @@ describe('the kit', () => {
             s['facts']['skill'] === 'handoff')
       )
     );
-    expect(handoffs.map((v) => v.id)).toEqual([]);
+    const ops = new Set(handoffs.flatMap((v) => v.when.map((s) => s.op)));
+    expect({ status: work?.status, ops: [...ops].sort() }).toEqual(
+      work?.status === 'permanent'
+        ? { status: 'permanent', ops: ['a2a.project', 'a2a.validate'] }
+        : { status: 'provisional', ops: [] }
+    );
+  });
+
+  // §12.3: the literal system address makes a vector dispatch; core ones write $system.
+  it('writes no core vector with the literal agent:dispatch', () => {
+    const literal = vectors
+      .filter((v) => v.profile === 'core')
+      .filter((v) => JSON.stringify(v).includes('agent:dispatch'))
+      .map((v) => v.id);
+    expect(literal).toEqual([]);
   });
 
   // Raw, these three are invisible in a diff and some editors strip them.

@@ -25,6 +25,8 @@ function teamClient(holders: TeamTokenHolder[], origins: string[] = []) {
   return {
     baseUrl: 'http://127.0.0.1:1',
     fetchTeamTokens: mock(() => Promise.resolve(holders)),
+    // Board sync is off in these tests, so the Machines group stays away.
+    getTeamKeys: mock(() => Promise.reject(new Error('board sync is not on'))),
     fetchTeamAddress: mock(() =>
       Promise.resolve({ shared: origins.length > 0, origins })
     ),

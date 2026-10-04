@@ -128,6 +128,9 @@ export const MessageRow = memo(function MessageRow({
                 {sender}
               </button>
             )}
+            {isFromA2A(message) && (
+              <Pill title="Sent from outside this machine over A2A">A2A</Pill>
+            )}
             {badge !== undefined && <Pill>{badge}</Pill>}
             {message.urgent && <Pill>Urgent</Pill>}
             {status !== null && (

@@ -15,8 +15,9 @@ import {
 } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
-import { humanActor, humanOperator } from '../api/caller.js';
+import { humanOperator, requestActor } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
+import { retryWhileBusy } from '../api/storageErrors.js';
 import { MAX_ASSET_BYTES } from './assets.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
 import { readBoundedBytes, readBoundedJson } from './http.js';
@@ -312,14 +313,15 @@ async function once(
 // operator is theirs, the owner only with the owner credential). The task
 // stands either way, so a failed dispatch is reported rather than thrown.
 async function dispatchPublish(
-  ctx: ApiContext,
-  task: string
+  ctx: Pick<ApiContext, 'orchestrator'>,
+  task: string,
+  as: { actor: string; operator: string | null }
 ): Promise<{ run: string | null; dispatchError: string | null }> {
   try {
     const run = await ctx.orchestrator.dispatch(
       task,
       ctx.orchestrator.defaultExecutorName(),
-      { actor: humanActor(ctx), operator: humanOperator(ctx) }
+      as
     );
     return { run: run.id, dispatchError: null };
   } catch (err) {
@@ -327,6 +329,26 @@ async function dispatchPublish(
       run: null,
       dispatchError: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+// Boot, after reconcileOnBoot: an open publish that asked for a run and has
+// none (a crash between its row and its dispatch) starts as who asked.
+export async function redispatchPublishes(
+  docs: DocsService,
+  orchestrator: ApiContext['orchestrator']
+): Promise<void> {
+  const ran = new Set(orchestrator.list().map((r) => r.taskId));
+  for (const p of docs.publishesToDispatch()) {
+    if (ran.has(p.task)) continue;
+    const out = await dispatchPublish({ orchestrator }, p.task, {
+      actor: p.actor,
+      operator: p.operator,
+    });
+    if (out.dispatchError !== null)
+      console.error(
+        `dispatchd: publish ${p.task} did not start again: ${out.dispatchError}`
+      );
   }
 }
 
@@ -345,13 +367,19 @@ export async function handleDocsRoute(
   const method = req.method;
   try {
     const actor = docs.actorFor(principal);
-    const body = async (): Promise<Record<string, unknown>> => {
-      const parsed = await readBoundedJson(req);
-      if (!parsed.ok) throw new BodyRefused(parsed.response);
-      return parsed.value;
+    // Read once and kept, so a write retried on a busy docs.db sees it again.
+    let parsedBody: Promise<Record<string, unknown>> | null = null;
+    const body = (): Promise<Record<string, unknown>> => {
+      parsedBody ??= readBoundedJson(req).then((parsed) => {
+        if (!parsed.ok) throw new BodyRefused(parsed.response);
+        return parsed.value;
+      });
+      return parsedBody;
     };
     const write = (fn: () => Promise<Response>): Promise<Response> =>
-      once(req, docs, actor, `${method} ${url.pathname}`, fn);
+      once(req, docs, actor, `${method} ${url.pathname}`, () =>
+        retryWhileBusy(fn)
+      );
 
     if (rest.length === 0) {
       if (method === 'GET') {
@@ -493,15 +521,36 @@ export async function handleDocsRoute(
             const b = await body();
             if (b.dispatch !== undefined && typeof b.dispatch !== 'boolean')
               throw invalid('dispatch', 'expected a boolean');
-            const out = docs.publish(actor, ref, { path: str(b.path, 'path') });
+            const out = docs.publish(actor, ref, {
+              path: str(b.path, 'path'),
+              idempotencyKey: req.headers.get('idempotency-key') ?? undefined,
+              ...(b.dispatch === false
+                ? {}
+                : {
+                    dispatchAs: {
+                      actor: requestActor(ctx),
+                      operator: humanOperator(ctx),
+                    },
+                  }),
+            });
+            const ran = ctx.orchestrator
+              .list()
+              .filter((r) => r.taskId === out.task)
+              .at(-1);
+            const { existing, ...rest } = out;
             return jsonResponse(
               {
-                ...out,
-                ...(b.dispatch === false
-                  ? { run: null, dispatchError: null }
-                  : await dispatchPublish(ctx, out.task)),
+                ...rest,
+                ...(ran !== undefined
+                  ? { run: ran.id, dispatchError: null }
+                  : b.dispatch === false
+                    ? { run: null, dispatchError: null }
+                    : await dispatchPublish(ctx, out.task, {
+                        actor: requestActor(ctx),
+                        operator: humanOperator(ctx),
+                      })),
               },
-              201
+              existing ? 200 : 201
             );
           });
         case 'reviewed':

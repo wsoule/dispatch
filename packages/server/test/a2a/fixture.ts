@@ -1,3 +1,4 @@
+import type { LookupAll } from '@dispatch/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   openA2ADb,
@@ -10,8 +11,12 @@ import { RunResultsMemo } from '../../src/a2a/artifacts.js';
 import { tokenHash } from '../../src/a2a/auth.js';
 import { bridgeExternalPolicy } from '../../src/a2a/external.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
+import { startOutbound } from '../../src/a2a/outbound.js';
+import type { PeerDeps } from '../../src/a2a/peers.js';
+import { createPeerService } from '../../src/a2a/peers.js';
 import type { BridgeDeps } from '../../src/a2a/port.js';
 import { DaemonBridgePort } from '../../src/a2a/port.js';
+import { PushWorker } from '../../src/a2a/push.js';
 import { BridgeWatch } from '../../src/a2a/watch.js';
 import { validateTaskInput } from '../../src/api.js';
 import { TaskCache } from '../../src/cache.js';
@@ -19,9 +24,17 @@ import type { RunMeta } from '../../src/orchestrator/types.js';
 import { makeOrchestrator, openRecovered } from '../messaging/harness.js';
 
 // A bridge over a real engine and task store, with one approved client.
+// `outbound` starts the outbound worker (polling every 20 ms); peers then get
+// real fetches, so a test that opts in must point them at a local fixture.
 export async function bridgeFixture(
   root: string,
-  policy: Partial<A2AConfig> = {}
+  policy: Partial<A2AConfig> = {},
+  opts: {
+    outbound?: boolean;
+    // Push seams: the webhook fetch and the resolver behind the push guard.
+    pushFetch?: typeof fetch;
+    lookup?: LookupAll;
+  } = {}
 ) {
   const { orchestrator, store: tasks, events } = makeOrchestrator(root);
   const messaging = await openRecovered(root, orchestrator, tasks, events);
@@ -35,7 +48,7 @@ export async function bridgeFixture(
     events.broadcast({ type: 'task.changed' });
     return out;
   };
-  const deps: BridgeDeps = {
+  const deps: BridgeDeps & Pick<PeerDeps, 'fetchImpl' | 'lookup'> = {
     rootDir: root,
     engine: messaging.engine,
     messages: messaging.store,
@@ -53,16 +66,41 @@ export async function bridgeFixture(
     runPatch: () => null,
     prOpen: () => false,
     runResults: new RunResultsMemo(),
+    ...(opts.lookup === undefined ? {} : { lookup: opts.lookup }),
   };
+  const push = new PushWorker({
+    store,
+    clientActive: (client) =>
+      messaging.store.getAgent(client)?.status === 'approved',
+    lookup: (host) =>
+      (deps.lookup ?? (() => Promise.resolve([] as string[])))(host),
+    delaysMs: [5, 5, 5],
+    ...(opts.pushFetch === undefined ? {} : { fetchImpl: opts.pushFetch }),
+  });
   const changed: string[] = [];
   const watch = new BridgeWatch({
     ...deps,
     events,
     coalesceMs: 5,
-    onChanged: (row) => changed.push(row.id),
+    onChanged: (row, facts) => {
+      changed.push(row.id);
+      push.onChanged(row, facts);
+    },
   });
   const stopWatch = watch.start();
-  messaging.setExternalPolicy(bridgeExternalPolicy(deps));
+  const peers = createPeerService(deps);
+  const notices = peers.notices;
+  const peerDeps = (over: Partial<PeerDeps> = {}): PeerDeps => ({
+    ...deps,
+    ...over,
+  });
+  messaging.setExternalPolicy(bridgeExternalPolicy(deps, notices));
+  const startWorker = () =>
+    startOutbound(peers, {
+      pollMs: () => 20,
+      changed: () => events.broadcast({ type: 'a2a.changed' }),
+    });
+  let outbound = opts.outbound === true ? startWorker() : null;
   messaging.gates.register('task-proposal', (q, a) =>
     handleProposal(deps, watch, q, a)
   );
@@ -103,7 +141,25 @@ export async function bridgeFixture(
     caller,
     addClient,
     changed,
+    peers,
+    notices,
+    peerDeps,
+    push,
+    get outbound() {
+      if (outbound === null)
+        throw new Error('started without the outbound worker');
+      return outbound.worker;
+    },
+    outboundStop() {
+      outbound?.stop();
+      outbound = null;
+    },
+    restartOutbound() {
+      outbound?.stop();
+      outbound = startWorker();
+    },
     close() {
+      outbound?.stop();
       stopWatch();
       messaging.close();
       store.close();

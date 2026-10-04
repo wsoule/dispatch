@@ -19,11 +19,13 @@ import type {
 } from '@dispatch/protocol';
 
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
-import { actingOperator } from '../orchestrator/types.js';
+import { actingOperator, runOperator } from '../orchestrator/types.js';
 import { consultProjectPolicy } from '../policyEngine.js';
 import { statusModelFor } from '../statuses.js';
 import type { GateHandlers } from './gates.js';
 import { answeredWithOwnerCredential } from './gates.js';
+
+const HOUR_MS = 60 * 60 * 1000;
 
 // Who caused a wake, and whether with the owner's app token: the sender of a
 // direct wake, or the human who approved a gated one.
@@ -43,6 +45,7 @@ export interface DaemonHostDeps {
     | 'notifyRun'
     | 'wakeTask'
     | 'wakeRun'
+    | 'list'
   >;
   // Read-only: task parent/kind/status/risk lookups for wake policy and
   // epic channel membership.
@@ -237,6 +240,27 @@ export class DaemonMessagingHost implements MessagingHost {
 
   owner(): Address {
     return this.deps.ownerRef;
+  }
+
+  // XH-R2: every run acting for the same operator (no one counting as one)
+  // shares one urgent quota, so fanning out runs cannot multiply it. Only runs
+  // live now or touched within the hour can have sent inside the window.
+  quotaGroup(sender: Address): Address[] {
+    if (!sender.startsWith('run:')) return [sender];
+    const runs = this.deps.orchestrator.list();
+    const self = runs.find((r) => `run:${r.id}` === sender);
+    if (self === undefined) return [sender];
+    const key = runOperator(self);
+    const since = this.now().getTime() - HOUR_MS;
+    const group = runs
+      .filter(
+        (r) =>
+          runOperator(r) === key &&
+          (Date.parse(r.updatedAt) >= since ||
+            this.deps.orchestrator.isRunLive(r.id))
+      )
+      .map((r) => `run:${r.id}`);
+    return group.includes(sender) ? group : [sender, ...group];
   }
 
   // Only `epic/<id>` channels have implicit members: the epic's child tasks,

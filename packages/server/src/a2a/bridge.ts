@@ -1,4 +1,9 @@
-import type { A2AStore, HandoffStatuses, TaskRow } from '@dispatch/a2a';
+import type {
+  A2AStore,
+  HandoffStatuses,
+  PeerStatus,
+  TaskRow,
+} from '@dispatch/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
@@ -8,7 +13,13 @@ import {
   TERMINAL_STATES,
 } from '@dispatch/a2a';
 import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
-import { DEFAULT_A2A, loadConfig, statusModelOf } from '@dispatch/core';
+import {
+  credentialsPath,
+  credentialsUnreadable,
+  DEFAULT_A2A,
+  loadConfig,
+  statusModelOf,
+} from '@dispatch/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -20,6 +31,7 @@ import { replayTranscript } from '../orchestrator/transcript.js';
 import type { AuthTier } from '../tiers.js';
 import { RunResultsMemo } from './artifacts.js';
 import { bridgeExternalPolicy } from './external.js';
+import { gatherFacts } from './facts.js';
 import type { GuardDeps, PatchGuard } from './guards.js';
 import {
   dispatchRefusal,
@@ -29,9 +41,17 @@ import {
   ProposalGuard,
 } from './guards.js';
 import { handleProposal } from './handoff.js';
+import { A2ALineage } from './lineage.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
+import type { OutboundWorker } from './outbound.js';
+import { startOutbound } from './outbound.js';
+import type { PeerService } from './peers.js';
+import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
+import type { WatchLimits } from './portRoutes.js';
+import { PortLeases, PortWatches } from './portRoutes.js';
+import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
 import type { ListenerOverrides, ListenerSettings } from './settings.js';
 import {
@@ -40,6 +60,7 @@ import {
   resolveListener,
   writeListenerSettings,
 } from './settings.js';
+import { CardSigner, loadOrCreateSigningKey } from './signing.js';
 import { BridgeWatch } from './watch.js';
 
 interface ListenerStatus {
@@ -64,7 +85,23 @@ export interface A2ABridge {
   readonly port: DaemonBridgePort | null;
   readonly store: A2AStore | null;
   readonly watch: BridgeWatch | null;
+  // Outbound peers; null when a2a.db is down.
+  readonly peers: PeerService | null;
+  // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
+  readonly outbound: OutboundWorker | null;
+  // Whether standalone hosts may use /api/a2a/port/* (the settings file).
+  standalone(): boolean;
+  // Changes only that flag in the settings file; the listener is untouched.
+  setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+  // Stream slots and task-watch streams standalone hosts hold.
+  readonly leases: PortLeases;
+  readonly watches: PortWatches;
+  // Ends a revoked host's leases and watch streams.
+  hostRevoked(hostId: string): void;
+  peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
+  // Lines for GET /api/health: an unreadable credentials file, an unsigned card.
+  problems(): string[];
   // Opens the listener from the settings file plus the one-boot overrides.
   start(): Promise<void>;
   // The key that would keep `next` closed, before anything is written;
@@ -76,8 +113,8 @@ export interface A2ABridge {
   applySettings(next: ListenerSettings): Promise<ListenerStatus>;
   disable(): Promise<ListenerStatus>;
   listening(): boolean;
-  // Closes a revoked client's unanswered asks as the system ("client
-  // revoked"); its handoff gates stay open for the owner.
+  // Closes a revoked client's unanswered asks and open task-proposal gates
+  // as the system ("client revoked").
   clientRevoked(address: string): void;
   // The proposal guards; each works with a2a.db down.
   guardTaskPatch(
@@ -86,9 +123,15 @@ export interface A2ABridge {
     caller: { tier: AuthTier; ref: string }
   ): Promise<PatchGuard>;
   proposalOpen(taskId: string): boolean;
-  // 'a2a' when a client handed the task off: its runs act for no one and
-  // read team memory only.
+  // 'a2a' when a client handed the task off, or an A2A run made, edited or
+  // dispatched it: its runs act for no one and read team memory only.
   taskOrigin(taskId: string): 'a2a' | null;
+  // Records that `taskId` was made from the A2A task `sourceTaskId`.
+  markDerived(taskId: string, sourceTaskId: string): void;
+  // XH-R2: marks `taskId` A2A-origin when run `runId` is; call it whenever a
+  // run creates, edits or dispatches a task.
+  inherit(runId: string, taskId: string): void;
+  readonly lineage: A2ALineage;
   // Puts every gated draft something moved back in Draft; returns how many.
   recheckProposals(): number;
   close(): Promise<void>;
@@ -112,6 +155,8 @@ interface OpenBridgeDeps {
   daemonPorts: () => number[];
   overrides?: ListenerOverrides;
   teamTls?: { certPath: string; keyPath: string };
+  // Standalone hosts' watch-stream limits over the defaults (tests).
+  watchLimits?: Partial<WatchLimits>;
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -153,6 +198,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     console.error(`dispatchd: ${dbError}`);
   }
 
+  const lineage = new A2ALineage(join(runsDir(rootDir), 'a2a-lineage.log'));
   // Installed before the a2a.db branch: a gated draft stays held either way.
   const guardDeps: GuardDeps = {
     engine: messaging.engine,
@@ -162,6 +208,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     updateTask: deps.updateTask,
     statuses: () => a2aConfig(rootDir).statuses,
     store,
+    lineage,
   };
   deps.orchestrator.setDispatchGuard((task) =>
     dispatchRefusal(guardDeps, task)
@@ -173,8 +220,16 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let watch: BridgeWatch | null = null;
   let stopWatch: (() => void) | null = null;
   let listener: A2AListener | null = null;
+  let peers: PeerService | null = null;
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
+  const leases = new PortLeases();
+  const watches = new PortWatches(deps.watchLimits);
+  // Loaded on the first card; null (with the reason) when it cannot be.
+  let signer: CardSigner | null | undefined;
+  let signerError: string | null = null;
   if (store === null) {
-    messaging.setExternalPolicy(bridgeExternalPolicy(null));
+    messaging.setExternalPolicy(bridgeExternalPolicy(null, null));
   } else {
     const bridgeDeps: BridgeDeps = {
       rootDir,
@@ -207,15 +262,59 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       },
       prOpen: deps.prOpen,
       runResults: new RunResultsMemo(),
+      signer: () => {
+        if (signer !== undefined) return signer;
+        try {
+          signer = new CardSigner(loadOrCreateSigningKey(rootDir));
+        } catch (err) {
+          // The message names the problem, never the key.
+          signerError = err instanceof Error ? err.message : 'unknown error';
+          console.error(`dispatchd: A2A card signing is off: ${signerError}`);
+          signer = null;
+        }
+        return signer;
+      },
     };
+    // Push delivery returns at once and runs on its own chains, so a slow
+    // webhook never delays the watch, its streams or the broadcast.
+    const push = new PushWorker({
+      store,
+      now: () => new Date(),
+      clientActive: (client) =>
+        messaging.store.getAgent(client)?.status === 'approved',
+    });
     const hub = new BridgeWatch({
       ...bridgeDeps,
       events: deps.events,
-      onChanged: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      onChanged: (row, facts) => {
+        deps.events.broadcast({ type: 'a2a.changed' });
+        try {
+          push.onChanged(row, facts);
+        } catch (err) {
+          console.error(
+            `dispatchd: A2A push for ${row.id} failed: ${err instanceof Error ? err.name : 'error'}`
+          );
+        }
+      },
     });
     watch = hub;
     stopWatch = hub.start();
-    messaging.setExternalPolicy(bridgeExternalPolicy(bridgeDeps));
+    const peerService = createPeerService(bridgeDeps);
+    peers = peerService;
+    messaging.setExternalPolicy(
+      bridgeExternalPolicy(bridgeDeps, peerService.notices)
+    );
+    // The 24 h card refresh, checked hourly.
+    refreshTimer = setInterval(() => {
+      void refreshDuePeers(peerService.deps, peerService.notices).then(
+        (n) => {
+          if (n > 0) deps.events.broadcast({ type: 'a2a.changed' });
+        },
+        (err: unknown) =>
+          console.error('dispatchd: A2A peer refresh failed', err)
+      );
+    }, 3_600_000);
+    refreshTimer.unref();
     messaging.gates.register('task-proposal', (question, answer) =>
       handleProposal(bridgeDeps, hub, question, answer)
     );
@@ -227,10 +326,23 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       ...(deps.track === undefined ? {} : { track: deps.track }),
     });
     try {
+      push.resume((row) => gatherFacts(bridgeDeps, row));
+    } catch (err) {
+      console.error('dispatchd: A2A push resume failed', err);
+    }
+    try {
       // Its gate sends finish in the background and log their own failures.
       reconcileA2A(bridgeDeps, hub);
     } catch (err) {
       console.error('dispatchd: A2A boot reconciliation failed', err);
+    }
+    // After reconciliation, before any listener opens: relays what boot found held.
+    try {
+      outbound = startOutbound(peerService, {
+        changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      });
+    } catch (err) {
+      console.error('dispatchd: the A2A outbound worker did not start', err);
     }
   }
   try {
@@ -296,7 +408,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       listening: url() !== null,
       url: url(),
       error: dbError ?? settingsError ?? openError,
-      warnings: a2aConfig(rootDir).warnings,
+      warnings: [
+        ...a2aConfig(rootDir).warnings,
+        ...(signerError === null
+          ? []
+          : [`card signing is off: ${signerError}`]),
+      ],
       legacyClients,
       settings,
       teamTls: deps.teamTls ?? null,
@@ -314,7 +431,55 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     get watch() {
       return watch;
     },
+    get peers() {
+      return peers;
+    },
+    get outbound() {
+      return outbound?.worker ?? null;
+    },
+    leases,
+    watches,
+    hostRevoked: (hostId) => {
+      leases.endHost(hostId);
+      watches.closeHost(hostId);
+    },
+    standalone: () => readListenerSettings(rootDir).settings.standalone,
+    setStandalone: (enabled) =>
+      serial(() => {
+        const file = readListenerSettings(rootDir).settings;
+        writeListenerSettings(rootDir, { ...file, standalone: enabled });
+        settings = { ...settings, standalone: enabled };
+        if (!enabled) {
+          leases.closeAll();
+          watches.closeAll();
+        }
+        return Promise.resolve({ standalone: enabled });
+      }),
+    peerStatus(alias) {
+      try {
+        return store?.getPeer(alias)?.status ?? null;
+      } catch (err) {
+        console.error(`dispatchd: could not read A2A peer ${alias}`, err);
+        return null;
+      }
+    },
     status,
+    problems() {
+      const out: string[] = [];
+      let peered = false;
+      try {
+        peered = (store?.peers().length ?? 0) > 0;
+      } catch {
+        // a2a.db trouble shows in the listener status instead.
+      }
+      if ((peered || settings.enabled) && credentialsUnreadable())
+        out.push(
+          `${credentialsPath()} cannot be parsed: A2A peer sends wait and the agent card goes unsigned until it is fixed`
+        );
+      if (signerError !== null)
+        out.push(`A2A card signing is off: ${signerError}`);
+      return out;
+    },
     start: () =>
       serial(async () => {
         const read = readListenerSettings(rootDir);
@@ -361,6 +526,15 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     // Never throws: the revocation has already happened, and one task that
     // cannot close is logged without stopping the others.
     clientRevoked(address) {
+      // First, so closing its asks below pushes nothing to its webhooks.
+      try {
+        store?.deletePushConfigsOf(address);
+      } catch (err) {
+        console.error(
+          `dispatchd: could not delete ${address}'s push configs`,
+          err
+        );
+      }
       let rows: TaskRow[] = [];
       try {
         rows = store?.tasksOf(address) ?? [];
@@ -368,10 +542,13 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         console.error(`dispatchd: could not list ${address}'s A2A tasks`, err);
       }
       for (const row of rows) {
-        if (row.skill !== 'ask' || TERMINAL_STATES.has(row.state)) continue;
+        if (TERMINAL_STATES.has(row.state)) continue;
+        // An ask closes its root question; a handoff, its open proposal gate.
+        const question = row.skill === 'ask' ? row.id : row.gate;
+        if (question === null) continue;
         try {
           // False when an answer got there first; the recompute shows which.
-          closeGate(messaging.engine, row.id, 'client revoked');
+          closeGate(messaging.engine, question, 'client revoked');
           watch?.recompute(row.id);
         } catch (err) {
           console.error(`dispatchd: could not close A2A task ${row.id}`, err);
@@ -384,11 +561,25 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
     // The guards' evidence: a2a.db's row, else a handoff messages.db ties to the task.
     taskOrigin: (taskId) => (isA2ATask(guardDeps, taskId) ? 'a2a' : null),
+    markDerived: (taskId, sourceTaskId) =>
+      store?.markDerived(taskId, sourceTaskId, new Date().toISOString()),
+    inherit(runId, taskId) {
+      const parent = deps.orchestrator.taskIdOfRun(runId);
+      if (parent !== null && parent !== taskId && isA2ATask(guardDeps, parent))
+        lineage.mark(taskId, runId);
+    },
+    lineage,
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
+        outbound?.stop();
+        outbound = null;
+        leases.closeAll();
+        watches.closeAll();
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
+        if (refreshTimer !== null) clearInterval(refreshTimer);
+        refreshTimer = null;
         stopWatch?.();
         stopWatch = null;
         await listener?.close();

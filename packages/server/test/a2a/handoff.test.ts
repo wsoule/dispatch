@@ -167,6 +167,17 @@ describe('a handoff', () => {
     });
   });
 
+  // A clock that jumped forward and back leaves rows dated ahead of now;
+  // they must not hold the day's window shut.
+  it('does not count handoffs dated after now', async () => {
+    const base = f.deps.policy();
+    f.deps.policy = () => ({ ...base, handoffsPerDay: 1 });
+    await open();
+    const yearAgo = new Date(Date.now() - 365 * 24 * 3_600_000);
+    f.deps.now = () => yearAgo;
+    await expect(open({ clientMessageId: 'c-h2' })).resolves.toBeDefined();
+  });
+
   // A handoff is checked against every opener limit, not only handoffsPerDay.
   it('counts open tasks per client, asks and handoffs together', async () => {
     const base = f.deps.policy();
@@ -188,6 +199,14 @@ describe('a handoff', () => {
     await expect(f.port.open(f.caller, ask)).rejects.toMatchObject({
       code: 'limited',
     });
+  });
+
+  it('does not count sends dated after now against sendsPerHour', async () => {
+    const base = f.deps.policy();
+    f.deps.policy = () => ({ ...base, sendsPerHour: 1 });
+    await open();
+    f.deps.now = () => new Date(Date.now() - 365 * 86_400_000);
+    await expect(open({ clientMessageId: 'c-h2' })).resolves.toBeDefined();
   });
 
   it('counts a handoff against the durable sendsPerHour', async () => {

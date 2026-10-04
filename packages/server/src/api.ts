@@ -3,6 +3,7 @@ import {
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
+  CredentialsUnreadableError,
   describeValue,
   EFFORT_LEVELS,
   getSection,
@@ -12,6 +13,7 @@ import {
   loadConfig,
   PRIORITIES,
   TaskParseError,
+  untrustedFenced,
   updateConfig,
 } from '@dispatch/core';
 import type {
@@ -33,7 +35,7 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
-import { MemoryError } from '@dispatch/memory';
+import { MemoryBusyError, MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -43,6 +45,13 @@ import { isA2AClientToken } from './a2a/auth.js';
 import type { A2ABridge } from './a2a/bridge.js';
 import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
+import type { A2ARunScope } from './api/a2aRunScope.js';
+import {
+  a2aRunAllows,
+  a2aRunScope,
+  bodyTaskId,
+  lineageStore,
+} from './api/a2aRunScope.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
 import {
@@ -63,7 +72,12 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor, humanOperator } from './api/caller.js';
+import {
+  humanActor,
+  humanOperator,
+  requestActor,
+  runActorFor,
+} from './api/caller.js';
 import {
   addComment,
   addLegacyTaskNote,
@@ -109,10 +123,17 @@ import {
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
+import {
+  a2aParentRefusal,
+  decidingHuman,
+  markA2AChild,
+  proposalWriteRefusal,
+} from './api/proposalFence.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import {
   closeTerminal,
   createTerminal,
@@ -127,7 +148,11 @@ import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
 import { checkDaemonIdentity } from './daemonfile.js';
-import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
+import type {
+  DecisionDisposition,
+  DecisionFeed,
+  DecisionItem,
+} from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
 import { handleDocsRoute } from './docs/routes.js';
 import type { DocsService } from './docs/service.js';
@@ -246,6 +271,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
   runMessageRefusal,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -271,7 +297,15 @@ import {
 import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
-import type { BoardSyncService } from './team/boardSync/service.js';
+import type { FederationContext } from './team/federation/routes.js';
+import {
+  boardSyncNow,
+  handleFederationRoute,
+  isFederationRoute,
+  statusFor,
+} from './team/federation/routes.js';
+import type { FederationService } from './team/federation/service.js';
+import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
   getLicense,
@@ -416,7 +450,9 @@ export interface ApiContext {
   /** Teammates' way into previews, in team-local mode; null on loopback. */
   previewGateway: PreviewGateway | null;
   /** Board sync between replicas (team/boardSync/); null when it is off. */
-  boardSync: BoardSyncService | null;
+  boardSync: FederationService | null;
+  /** The signed roster and its store, once board sync is on (Task 10b). */
+  federation: FederationContext | null;
   /** Teammates' credentials and the license that says how many people may
    *  use this project together — team/, under the Elastic License 2.0. */
   team: Team;
@@ -439,6 +475,14 @@ export interface ApiContext {
   /** True when the request presented the owner's app token. Set per request
    *  by handleApi. */
   ownerCredential?: boolean;
+  /** The live run whose own token made this request (XH-R2). `caller` is then
+   *  the agent token's identity and `viaAgentToken` is true. */
+  viaRun?: string;
+  /** What `viaRun`'s writes are credited as (api/caller.ts runActorFor). */
+  runActor?: string;
+  /** Set when `viaRun` is A2A-origin: it reaches only the XH-R8 allowlist
+   *  (api/a2aRunScope.ts), and its task writes inherit its provenance. */
+  a2aRun?: A2ARunScope;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -661,6 +705,12 @@ function validateTaskFields(
   return null;
 }
 
+/** XH-R2: a task a run dispatches through its own token inherits that run's
+ *  A2A provenance; creates and edits inherit it through lineageStore. */
+function inheritLineage(ctx: ApiContext, taskId: string): void {
+  if (ctx.viaRun !== undefined) ctx.a2a?.inherit(ctx.viaRun, taskId);
+}
+
 // The title and field checks POST /api/tasks runs, shared with A2A handoffs.
 export function validateTaskInput(
   rootDir: string,
@@ -677,7 +727,8 @@ export function validateTaskInput(
 // Creates a task as POST /api/tasks does: checked, a legacy `milestone`
 // resolved to a parent, stored, cached and broadcast as task.changed.
 export function createTaskChecked(
-  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'>,
+  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'> &
+    Partial<Pick<ApiContext, 'a2a'>>,
   input: CreateInput
 ): { ok: true; doc: TaskDoc } | { ok: false; error: string } {
   const error = validateTaskInput(ctx.rootDir, { ...input });
@@ -694,6 +745,7 @@ export function createTaskChecked(
     // Omitted, a task starts in the project's ready role.
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
   });
+  markA2AChild(ctx, doc.meta.id, doc.meta.parent);
   ctx.cache.refresh(ctx.store, [doc.meta.id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
   return { ok: true, doc };
@@ -703,20 +755,16 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const input = parsed.value as CreateInput;
-  // Credit whoever made the request unless the caller names a creator (a
-  // sync importing someone else's issue).
+  const refused = a2aParentRefusal(ctx, input.parent);
+  if (refused !== null) return refused;
+  // Credited to whoever made the request; a body `creator` is ignored, since
+  // imports (Linear, A2A) write through the store in-process (XH-R2).
   const created = createTaskChecked(ctx, {
     ...input,
-    creator: input.creator ?? humanActor(ctx),
+    creator: requestActor(ctx),
   });
   if (!created.ok) return errorResponse(400, created.error);
-  // A task imported on someone else's behalf is not the caller's writing.
-  ctx.taskAuthorship?.created(
-    created.doc,
-    input.creator === undefined || input.creator === humanActor(ctx)
-      ? humanOperator(ctx)
-      : null
-  );
+  ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
   return jsonResponse(created.doc, 201);
 }
 
@@ -834,10 +882,16 @@ async function updateTask(
       ref: humanActor(ctx),
     };
     const guard = await ctx.a2a.guardTaskPatch(id, patch, {
-      tier: caller.tier,
+      tier: decidingHuman(ctx) ? caller.tier : 'request',
       ref: caller.ref,
     });
     if (!guard.ok) return errorResponse(guard.status, guard.error);
+  }
+
+  // Moving a task under an A2A task makes it one: a decider's call.
+  if (patch.parent !== undefined && patch.parent !== existing.meta.parent) {
+    const refused = a2aParentRefusal(ctx, patch.parent);
+    if (refused !== null) return refused;
   }
 
   // A publish task's elevated risk is what keeps a human on its merge, so only
@@ -846,11 +900,7 @@ async function updateTask(
     patch.risk !== undefined &&
     patch.risk !== existing.meta.risk &&
     ctx.docs.publishing(id) &&
-    !(
-      ctx.viaAgentToken !== true &&
-      ctx.caller !== undefined &&
-      tierAllows(ctx.caller.tier, 'decide')
-    )
+    !decidingHuman(ctx)
   ) {
     return errorResponse(
       403,
@@ -863,10 +913,11 @@ async function updateTask(
   // credited to the human whose credential made the call, never whatever the
   // client sent (an untrusted body must not be able to forge attribution).
   if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
-    patch.activityActor = humanActor(ctx);
+    patch.activityActor = requestActor(ctx);
   }
 
   const doc = ctx.store.update(id, patch);
+  markA2AChild(ctx, id, doc.meta.parent);
   ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
@@ -934,6 +985,8 @@ async function createRun(
   if (freshField !== undefined && typeof freshField !== 'boolean') {
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
+  // Before dispatch, so a run an A2A run starts is A2A-origin from its start.
+  if (task !== null) inheritLineage(ctx, taskId);
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
   // the raw fields go through untouched; the orchestrator resolves the
   // executor's own default model for a fresh run.
@@ -944,7 +997,7 @@ async function createRun(
     fresh: freshField === true,
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
-    actor: humanActor(ctx),
+    actor: requestActor(ctx),
     // Who the run acts for: the credential's own human (the owner only on
     // the app token), never the shared agentToken.
     operator: humanOperator(ctx),
@@ -1448,6 +1501,14 @@ interface ReceiptsStatus {
   lastExportedAt: string | null;
   /** The last push to `receipts.remote`; absent or null when there is none. */
   lastPush?: ReceiptsPush | null;
+}
+
+// The last receipt export, as a health problem when it failed.
+function receiptsProblems(ctx: ApiContext): string[] {
+  const last = ctx.receiptsScheduler?.lastResult() ?? null;
+  return last?.state === 'failed'
+    ? [`receipt log export failed: ${last.detail}`]
+    : [];
 }
 
 // Reads the exporter's retained last result. Its own null-vs-result
@@ -2060,7 +2121,7 @@ function sendReviewToAgent(
     resume
       ? {
           resume: true,
-          actor: humanActor(ctx),
+          actor: requestActor(ctx),
           operator: humanOperator(ctx),
         }
       : {}
@@ -3804,7 +3865,7 @@ async function startEpic(
   const operator = humanOperator(ctx);
   const session = await ctx.epicEngine.start(epicId, {
     ...checked.body,
-    startedBy: humanActor(ctx),
+    startedBy: requestActor(ctx),
     ...(operator === null ? {} : { operator }),
   });
   return jsonResponse(session, 201);
@@ -4175,6 +4236,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
         ...(description === '' ? {} : { description }),
         ...(parent === null ? {} : { parent }),
       });
+      markA2AChild(ctx, task.meta.id, parent);
       links.push({ id, taskId: task.meta.id });
       results.push({
         id,
@@ -4346,7 +4408,8 @@ function getInboxTriage(ctx: ApiContext): Response {
  * failure mode to avoid is an agent helpfully rewriting a carefully-worded acceptance criterion
  * into something vaguer.
  */
-function buildTaskEnrichPrompt(task: TaskDoc): string {
+// An A2A task's spec (a2a) is fenced as a client's words.
+export function buildTaskEnrichPrompt(task: TaskDoc, a2a = false): string {
   // The two spec sections only — `task.body` verbatim would carry the template's empty
   // headings (so no task ever looks empty) and the agent-written Activity log.
   const existing = [
@@ -4361,7 +4424,7 @@ function buildTaskEnrichPrompt(task: TaskDoc): string {
     `Title: ${task.meta.title}`,
     existing === ''
       ? 'It currently has no description at all.'
-      : `Its current description and criteria:\n\n${existing}`,
+      : `Its current description and criteria:\n\n${a2a ? untrustedFenced('an A2A client wrote this', existing) : existing}`,
     'Read enough of this repository to ground it: which files and functions are actually ' +
       'involved, what the code does today, and what would have to change. Then propose exactly ' +
       "ONE task, and no epic, keeping this task's title and intent. " +
@@ -4383,7 +4446,7 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     return errorResponse(404, `task not found: ${id}`);
   }
   const record = ctx.planManager.startPlan(
-    buildTaskEnrichPrompt(task),
+    buildTaskEnrichPrompt(task, ctx.a2a?.taskOrigin(id) === 'a2a'),
     'claude',
     undefined,
     'enrich',
@@ -4519,6 +4582,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // listing holders tells it whose to go looking for. team/routes.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
+  { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
@@ -4536,6 +4601,34 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
+  // Roster changes are signed with this machine's key, so they need its owner.
+  { method: 'POST', segments: ['team', 'found'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'trust'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'invite'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'join'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'recover'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'recovery-key'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'license'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'close-legacy'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'admit'],
+    tier: 'operator',
+  },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'revoke'],
+    tier: 'operator',
+  },
+  { method: 'POST', segments: ['team', 'keys', '*', 'role'], tier: 'operator' },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'hosts'],
+    tier: 'operator',
+  },
   // Approving, revoking or (un)muting an agent is an adjudication: on the
   // request tier the shared agentToken could approve itself onto the roster.
   { method: 'POST', segments: ['agents', '*', 'approve'], tier: 'decide' },
@@ -4555,6 +4648,25 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     segments: ['a2a', 'tasks', '*', 'decline'],
     tier: 'decide',
   },
+  // Registering or changing a peer decides where this machine sends mail;
+  // private URLs and --allow-http/--allow-origin need the operator, checked in addPeer.
+  { method: 'POST', segments: ['a2a', 'peers'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'refresh'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'enable'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'disable'],
+    tier: 'decide',
+  },
+  { method: 'DELETE', segments: ['a2a', 'peers', '*'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
@@ -4564,6 +4676,16 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Opening the A2A listener exposes this machine on a network port and
   // points the daemon at TLS files on disk; closing it is paired.
   { method: 'PUT', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Standalone A2A hosts put this project on another machine's network
+  // (spec:1656); minting, listing and revoking them is the owner's call.
+  { method: 'GET', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'POST', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'hosts', '*'], tier: 'operator' },
+  {
+    method: 'PUT',
+    segments: ['a2a', 'listener', 'standalone'],
+    tier: 'operator',
+  },
   { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
@@ -4726,6 +4848,9 @@ function requiredTier(
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
   // this ladder — returning null here just opens the gate for them.
   if (isSelfAuthenticated(segments, method)) return null;
+  // A standalone host's routes accept its host token only, checked in
+  // a2a/portRoutes.ts; A2A client tokens were already refused above.
+  if (segments[0] === 'a2a' && segments[1] === 'port') return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
       return route.tier;
@@ -4826,6 +4951,53 @@ export function rejectUnauthorized(
   return null;
 }
 
+/**
+ * XH-R4: which decision feed items the caller may see. A deciding human sees
+ * all of them; anyone else only the items they take part in: a gate whose
+ * message they can read, a stalled run they are or act for, a capped fix loop
+ * on a task they created.
+ */
+function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
+  const agent = ctx.viaAgentToken === true;
+  if (!agent && tierAllows(ctx.caller?.tier ?? 'request', 'decide'))
+    return () => true;
+  const address =
+    ctx.viaRun !== undefined ? `run:${ctx.viaRun}` : requestActor(ctx);
+  // The bare agent token takes part in no conversation, so it reads none.
+  const reader =
+    agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
+  const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
+  return (item) => {
+    const source = item.id.slice(item.id.indexOf(':') + 1);
+    if (source.startsWith('m-'))
+      return reader !== null && ctx.messaging.engine.canRead(source, reader);
+    if (item.runId !== undefined) {
+      const run = runs.get(item.runId);
+      return (
+        address === `run:${item.runId}` ||
+        (run !== undefined &&
+          (runOperator(run) === address || run.dispatchedBy === address))
+      );
+    }
+    if (item.taskId !== undefined)
+      return ctx.cache.get(item.taskId)?.meta.creator === address;
+    return false;
+  };
+}
+
+/** The run a presented token belongs to, and whether it is still live; null
+ *  when the token is a registry credential or no run's at all. */
+function runCredential(
+  ctx: ApiContext,
+  presented: string | null
+): { runId: string; live: boolean } | null {
+  if (presented === null || presented === '') return null;
+  if (ctx.tokens.registry.lookup(presented).kind !== 'unknown') return null;
+  const runId = ctx.messaging.runTokens.verify(presented);
+  if (runId === null) return null;
+  return { runId, live: ctx.orchestrator.isRunLive(runId) };
+}
+
 export async function handleApi(
   req: Request,
   daemonCtx: ApiContext
@@ -4878,32 +5050,93 @@ export async function handleApi(
     principal = principalResult.principal;
   }
 
+  // XH-R2: a run's MCP presents the run's own token, so a write is known to
+  // come from that run. It stands where the agent token does (request tier,
+  // no human behind it) and only while the run is live.
+  const run = runCredential(daemonCtx, presented);
+  if (run !== null && !run.live) {
+    return authErrorResponse(
+      401,
+      'run token for a finished run',
+      'auth_run_token_ended'
+    );
+  }
+
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(
-      req,
-      daemonCtx.tokens,
-      tier,
-      presented
-    );
+    const unauthorized =
+      run === null
+        ? rejectUnauthorized(req, daemonCtx.tokens, tier, presented)
+        : tierAllows('request', tier)
+          ? null
+          : authErrorResponse(
+              403,
+              wrongTierMessage(tier, 'request'),
+              'auth_insufficient_tier'
+            );
     if (unauthorized !== null) return unauthorized;
   }
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
-  const caller = daemonCtx.tokens.registry.resolve(presented);
+  const caller = daemonCtx.tokens.registry.resolve(
+    run === null ? presented : daemonCtx.tokens.agentToken
+  );
   // The shared agentToken resolves to the owner but is never a human; a
   // constant-time digest compare, as resolvePrincipal does.
   const viaAgentToken =
-    presented !== null &&
-    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
+    run !== null ||
+    (presented !== null &&
+      timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken)));
   const ownerCredential =
     presented !== null &&
     timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
   let ctx: ApiContext = daemonCtx;
   if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
+  if (run !== null) {
+    const meta = ctx.orchestrator.list().find((r) => r.id === run.runId);
+    ctx = {
+      ...ctx,
+      viaRun: run.runId,
+      runActor: runActorFor(
+        run.runId,
+        meta === undefined ? null : runOperator(meta)
+      ),
+    };
+  }
   if (principal !== undefined) ctx = { ...ctx, principal };
+  const scope = run === null ? null : a2aRunScope(ctx, run.runId);
+  if (scope !== null) {
+    const bridge = ctx.a2a;
+    ctx = {
+      ...ctx,
+      a2aRun: scope,
+      store: lineageStore(ctx.store, (taskId) =>
+        bridge?.inherit(scope.runId, taskId)
+      ),
+    };
+    const findingTask =
+      segments[0] === 'findings' && method === 'POST'
+        ? await bodyTaskId(req)
+        : null;
+    if (!a2aRunAllows(scope, method, segments, findingTask)) {
+      return authErrorResponse(
+        403,
+        'an A2A-origin run reaches only its own task and run, messaging, memory and docs',
+        'auth_a2a_run_scope'
+      );
+    }
+    // Whatever task it may still write inherits its provenance (XH-R8).
+    const written =
+      method === 'GET'
+        ? null
+        : segments[0] === 'tasks'
+          ? segments[1]
+          : findingTask;
+    if (written !== undefined && written !== null)
+      ctx.a2a?.inherit(scope.runId, written);
+  }
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
@@ -4928,6 +5161,10 @@ export async function handleApi(
         problems: [
           ...ctx.cache.problems(),
           ...(identity.problem === null ? [] : [identity.problem]),
+          ...receiptsProblems(ctx),
+          ...ctx.team.teammates.problems(),
+          ...ctx.memory.restoreProblems(),
+          ...(ctx.a2a?.problems() ?? []),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.
@@ -4951,13 +5188,16 @@ export async function handleApi(
       });
     }
 
+    if (segments[0] === 'team' && isFederationRoute(segments)) {
+      return await handleFederationRoute(req, ctx, segments, method);
+    }
     if (segments[0] === 'team' && segments[1] === 'tokens') {
       if (segments.length === 2 && method === 'GET') return listTeamTokens(ctx);
       if (segments.length === 2 && method === 'POST') {
         return await issueTeamToken(req, ctx);
       }
       if (segments.length === 3 && method === 'DELETE') {
-        return revokeTeamToken(ctx, segments[2]);
+        return await revokeTeamToken(ctx, segments[2]);
       }
     }
 
@@ -5022,12 +5262,11 @@ export async function handleApi(
     // answered below and read by the app's status strip.
     if (segments[0] === 'board-sync') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(
-          ctx.boardSync?.status() ?? {
-            enabled: false,
-            reason: boardSyncOffReason(ctx),
-          }
-        );
+        const status = ctx.boardSync?.status() ?? {
+          enabled: false,
+          reason: boardSyncOffReason(ctx),
+        };
+        return jsonResponse(statusFor(status, ctx.caller?.tier ?? 'request'));
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {
@@ -5036,8 +5275,7 @@ export async function handleApi(
             BOARD_SYNC_OFF_MESSAGE[boardSyncOffReason(ctx)]
           );
         }
-        await ctx.boardSync.syncNow();
-        return jsonResponse(ctx.boardSync.status());
+        return jsonResponse(await boardSyncNow(ctx, ctx.boardSync));
       }
     }
 
@@ -5065,6 +5303,25 @@ export async function handleApi(
       // caller here would be a bug rather than an unauthenticated one.
       if (ctx.caller === undefined) {
         return errorResponse(401, 'credential resolves to no one');
+      }
+      // A run's own token is that run, never the owner its caller stands in
+      // for; an A2A run names no operator at all.
+      if (ctx.viaRun !== undefined) {
+        const meta = ctx.orchestrator.list().find((r) => r.id === ctx.viaRun);
+        const operator = meta === undefined ? null : runOperator(meta);
+        return jsonResponse({
+          ref: `run:${ctx.viaRun}`,
+          ...(ctx.a2aRun === undefined
+            ? {
+                operator:
+                  operator?.startsWith('human:') === true
+                    ? operator.slice('human:'.length)
+                    : null,
+              }
+            : {}),
+          tier: 'request',
+          runToken: true,
+        });
       }
       return jsonResponse(ctx.caller);
     }
@@ -5281,6 +5538,9 @@ export async function handleApi(
     }
 
     if (segments[0] === 'tasks') {
+      // One fence for every write to a task an open A2A proposal holds.
+      const fenced = proposalWriteRefusal(ctx, method, segments);
+      if (fenced !== null) return fenced;
       // Before any `:id` sub-route below, and matched on its own literal so
       // "fanout" is never read as a run id.
       if (
@@ -5634,7 +5894,7 @@ export async function handleApi(
       ) {
         return jsonResponse(
           ctx.orchestrator.resumeRun(segments[1], {
-            actor: humanActor(ctx),
+            actor: requestActor(ctx),
             operator: humanOperator(ctx),
           }),
           201
@@ -5931,10 +6191,14 @@ export async function handleApi(
           );
         }
         return jsonResponse({
-          items: ctx.decisionFeed.list({
-            disposition: (raw ?? undefined) as DecisionDisposition | undefined,
-            includeResolved: url.searchParams.get('resolved') === '1',
-          }),
+          items: ctx.decisionFeed
+            .list({
+              disposition: (raw ?? undefined) as
+                | DecisionDisposition
+                | undefined,
+              includeResolved: url.searchParams.get('resolved') === '1',
+            })
+            .filter(decisionVisibleTo(ctx)),
         });
       }
     }
@@ -6603,8 +6867,18 @@ export async function handleApi(
     if (err instanceof OrchestratorConflictError) {
       return errorResponse(409, err.message);
     }
+    // The message says which file and what to do; it never quotes the file.
+    if (err instanceof CredentialsUnreadableError) {
+      return errorResponse(409, err.message);
+    }
     if (err instanceof OrchestratorClientError) {
       return errorResponse(400, err.message);
+    }
+    if (err instanceof TaskTooLargeError) {
+      return jsonResponse(
+        { error: err.message, code: 'too_large', field: err.field },
+        413
+      );
     }
     // Messaging routes let @dispatch/protocol's MessagingError surface
     // rather than pre-validating; `code` maps to the same statuses below.
@@ -6624,8 +6898,13 @@ export async function handleApi(
     if (err instanceof MemoryError) {
       const body: { error: string; field?: string } = { error: err.message };
       if (err.field !== undefined) body.field = err.field;
-      return jsonResponse(body, err.status);
+      const res = jsonResponse(body, err.status);
+      if (err instanceof MemoryBusyError) res.headers.set('retry-after', '1');
+      return res;
     }
+    // A busy database is 503 to retry; a write the disk refused is 507.
+    const storage = storageErrorResponse(err);
+    if (storage !== null) return storage;
     throw err;
   }
 }

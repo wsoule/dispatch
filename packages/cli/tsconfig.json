@@ -8,6 +8,9 @@
   "include": ["src/**/*.ts", "test/**/*.ts"],
   "references": [
     {
+      "path": "../a2a/tsconfig.json"
+    },
+    {
       "path": "../core/tsconfig.json"
     },
     {

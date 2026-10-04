@@ -495,6 +495,407 @@
           }
         ]
       }
+    },
+    {
+      "id": "a2a.projection.row-2-a-declined-handoff",
+      "title": "Row 2: a handoff whose proposal was declined is REJECTED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Declined by the project owner.",
+              "choice": "decline",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "dropped",
+              "phase": "dropped",
+              "approved": false
+            }
+          }
+        }
+      ],
+      "then": { "steps": [{ "ok": true, "result": { "state": "REJECTED" } }] }
+    },
+    {
+      "id": "a2a.projection.row-2-a-handoff-dropped-by-the-owner",
+      "title": "Row 2: a handoff whose work item someone other than the client dropped is REJECTED, even after it was approved",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "dropped": "other",
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "dropped",
+              "phase": "dropped",
+              "approved": true
+            }
+          }
+        }
+      ],
+      "then": { "steps": [{ "ok": true, "result": { "state": "REJECTED" } }] }
+    },
+    {
+      "id": "a2a.projection.row-4-a-deleted-handoff",
+      "title": "Row 4: a handoff whose work item no longer exists is FAILED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": { "skill": "handoff", "task": "deleted" }
+        }
+      ],
+      "then": { "steps": [{ "ok": true, "result": { "state": "FAILED" } }] }
+    },
+    {
+      "id": "a2a.projection.row-6-a-landed-handoff",
+      "title": "Row 6: a handoff whose work item landed is COMPLETED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "landed",
+              "phase": "landed",
+              "approved": true
+            }
+          }
+        }
+      ],
+      "then": { "steps": [{ "ok": true, "result": { "state": "COMPLETED" } }] }
+    },
+    {
+      "id": "a2a.projection.row-8-a-handoff-waits-on-its-proposal",
+      "title": "Row 8: a handoff whose task-proposal gate is open is AUTH_REQUIRED, and gate/v1 names the gate",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.5", "8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "draft",
+              "phase": "draft",
+              "approved": false
+            },
+            "openGates": [
+              {
+                "id": "m-gate",
+                "type": "task-proposal",
+                "openedAt": "2026-09-23T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "AUTH_REQUIRED",
+              "gates": [
+                {
+                  "id": "m-gate",
+                  "type": "task-proposal",
+                  "openedAt": "2026-09-23T11:00:00.000Z",
+                  "waitingOn": "owner"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-9-a-working-handoff",
+      "title": "Row 9: a handoff whose work item is working is WORKING, with no stage",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "working",
+              "phase": "working",
+              "approved": true
+            }
+          }
+        }
+      ],
+      "then": { "steps": [{ "ok": true, "result": { "state": "WORKING" } }] }
+    },
+    {
+      "id": "a2a.projection.row-9-a-handoff-in-review-has-a-stage",
+      "title": "Row 9: a handoff in review or landing is WORKING, with that stage",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "review",
+              "phase": "review",
+              "approved": true
+            }
+          }
+        },
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "landing",
+              "phase": "landing",
+              "approved": true
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "state": "WORKING", "stage": "review" } },
+          { "ok": true, "result": { "state": "WORKING", "stage": "landing" } }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-9-a-status-of-the-hosts-own",
+      "title": "Row 9: a status of the host's own that its status model reads as working is WORKING",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "qa",
+              "phase": "working",
+              "approved": true
+            }
+          }
+        }
+      ],
+      "then": { "steps": [{ "ok": true, "result": { "state": "WORKING" } }] }
+    },
+    {
+      "id": "a2a.projection.row-10-an-approved-draft-is-submitted",
+      "title": "Row 10: a handoff whose work item is draft or ready after approval is SUBMITTED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "draft",
+              "phase": "draft",
+              "approved": true
+            }
+          }
+        },
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Accepted.",
+              "choice": "accept",
+              "blocking": false
+            },
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "ready",
+              "phase": "queued",
+              "approved": true
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "state": "SUBMITTED" } },
+          { "ok": true, "result": { "state": "SUBMITTED" } }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-10-needs-approval",
+      "title": "Row 10 needs approval: an unapproved draft with no open gate falls to row 12, WORKING",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "skill": "handoff",
+            "task": {
+              "id": "t-4a8cce",
+              "title": "Add rate limiting",
+              "status": "draft",
+              "phase": "draft",
+              "approved": false
+            }
+          }
+        }
+      ],
+      "then": { "steps": [{ "ok": true, "result": { "state": "WORKING" } }] }
     }
   ]
 }

@@ -119,6 +119,20 @@ storage-independent. Server accounts back `human:*` refs in team mode; agents
 inherit their operator's authorization. `team.yml` becomes a cached projection
 of the org roster.
 
+The daemon's shared agent token (written to the daemon file for the CLI and MCP)
+is not the owner. Its writes are credited to `agent:local-cli`, and the runs it
+starts act for no one. A dispatched run's MCP presents that run's own token
+instead, so the daemon knows which run wrote and can apply the run's limits: A2A
+lineage (a task an A2A-origin run creates, edits or dispatches is A2A-origin
+too) and the A2A read scope (such a run sees no other A2A task).
+
+**Known limit (XH-R7).** A run that reads the agent token from the daemon file,
+or shells out to the `dispatch` CLI, escapes those run-scoped limits: its writes
+carry no lineage and its reads are not narrowed. They are still credited to
+`agent:local-cli`, never the owner. This is the same exposure as a run with
+shell access merging by hand. Closing it needs sandboxing that denies runs the
+daemon file.
+
 ## 6. Team features on top
 
 With the server authoritative, the earlier mirror/fan-out machinery is

@@ -5,11 +5,13 @@ import type {
   BridgePort,
   Caller,
   CardInputs,
+  CardRequest,
   ContinueInput,
   ContinueResult,
   HandoffStatuses,
   ListPage,
   ListQuery,
+  LookupAll,
   OpenInput,
   OpenResult,
   StatusEntry,
@@ -24,6 +26,7 @@ import {
   encodePageToken,
   matchChoice,
   offeredSkills,
+  peerSelfAddressed,
   statusReply,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
@@ -53,7 +56,9 @@ import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
+import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
+import type { CardSigner } from './signing.js';
 import type { BridgeWatch } from './watch.js';
 
 const MINUTE_MS = 60_000;
@@ -93,6 +98,10 @@ export interface BridgeDeps {
   // Those evidence and patch reads, kept per task's latest settled run.
   runResults: RunResultsMemo;
   now?: () => Date;
+  // Resolves webhook names for the push guard; tests swap it.
+  lookup?: LookupAll;
+  // The card signer, created on first use; null serves the card unsigned.
+  signer?: () => CardSigner | null;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
@@ -100,11 +109,14 @@ export interface BridgeDeps {
 export class DaemonBridgePort implements BridgePort {
   private readonly requestTimes = new Map<string, number[]>();
   private readonly streams = new Map<string, number>();
+  readonly pushConfigs: DaemonPushConfigs;
 
   constructor(
     readonly deps: BridgeDeps,
     private readonly hub: BridgeWatch
-  ) {}
+  ) {
+    this.pushConfigs = new DaemonPushConfigs(deps);
+  }
 
   private now(): Date {
     return this.deps.now?.() ?? new Date();
@@ -145,7 +157,10 @@ export class DaemonBridgePort implements BridgePort {
         return [target.from];
     }
     const client = this.deps.store.getClient(caller.address);
-    const list = input.to ?? [this.deps.ownerRef];
+    const list = peerSelfAddressed(
+      input.to ?? [this.deps.ownerRef],
+      this.deps.ownerRef
+    );
     checkInboundRecipients(list, {
       allowedHumans: [this.deps.ownerRef, ...(client?.recipients ?? [])],
       approvedTasks: this.approvedTasks(caller),
@@ -196,8 +211,13 @@ export class DaemonBridgePort implements BridgePort {
     const policy = this.deps.policy();
     const hourAgo = new Date(this.now().getTime() - HOUR_MS).toISOString();
     if (
-      this.deps.messages.countFrom(caller.address, hourAgo, false) >=
-      policy.sendsPerHour
+      this.deps.messages.countFrom(
+        caller.address,
+        hourAgo,
+        false,
+        undefined,
+        this.now().toISOString()
+      ) >= policy.sendsPerHour
     ) {
       throw new MessagingError(
         'limited',
@@ -303,20 +323,27 @@ export class DaemonBridgePort implements BridgePort {
     );
   }
 
-  card(): Promise<CardInputs> {
-    return settle(() => {
-      const policy = this.deps.policy();
-      const base = this.deps.cardBase();
-      return {
-        name: policy.name ?? basename(this.deps.rootDir),
-        description: policy.description,
-        publicUrl: base.publicUrl,
-        version: base.version,
-        skills: offeredSkills(policy.skills, this.deps.statuses()),
-        blockingWaitSec: policy.blockingWaitSec,
-        pushNotifications: false,
-      };
-    });
+  // `req` comes only from a trusted host (T36), never from a request's Host
+  // or X-Forwarded-* headers; the listener's card uses the configured URL.
+  async card(req: CardRequest = {}): Promise<CardInputs> {
+    const policy = this.deps.policy();
+    const base = this.deps.cardBase();
+    const inputs: CardInputs = {
+      name: policy.name ?? basename(this.deps.rootDir),
+      description: policy.description,
+      publicUrl: req.publicUrl ?? base.publicUrl,
+      version: base.version,
+      skills: offeredSkills(policy.skills, this.deps.statuses()),
+      blockingWaitSec: policy.blockingWaitSec,
+      pushNotifications: req.standalone !== true,
+    };
+    const signer = this.deps.signer?.() ?? null;
+    if (signer === null) return inputs;
+    return {
+      ...inputs,
+      signatures: await signer.signaturesFor(inputs),
+      jwks: signer.jwks(),
+    };
   }
 
   // A replayed messageId returns its first result before any limit applies;

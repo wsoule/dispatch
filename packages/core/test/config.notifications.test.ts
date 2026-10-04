@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -78,12 +78,29 @@ describe('loadConfig notifications', () => {
     );
   });
 
-  it('rejects an unknown kind rather than ignoring the typo', () => {
-    expect(() =>
-      loadConfig(
-        writeConfig('notifications:\n  kinds:\n    fix-loop-caped: false\n')
-      )
-    ).toThrow(/unknown kind "fix-loop-caped"/);
+  it('skips a kind this build does not know, warning once', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const dir = writeConfig(
+        'notifications:\n  kinds:\n    from-the-future: false\n    question: false\n'
+      );
+      expect(loadConfig(dir).notifications.kinds).toEqual({
+        ...DEFAULT_NOTIFICATIONS.kinds,
+        question: false,
+      });
+      expect(loadConfig(dir).notifications.kinds).not.toHaveProperty(
+        'from-the-future'
+      );
+      const lines = warn.mock.calls.map((call) => String(call[0]));
+      expect(
+        lines.filter((line) =>
+          line.includes('notifications.kinds.from-the-future')
+        )
+      ).toHaveLength(1);
+      expect(lines[0]).toContain('unknown to this build');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('rejects a non-boolean toggle', () => {
@@ -116,6 +133,23 @@ describe('updateConfig notifications', () => {
     expect(cfg.notifications.kinds.question).toBe(true);
     expect(read(dir)).toContain('run-stalled: false');
     expect(read(dir)).toContain('fix-loop-capped: false');
+  });
+
+  it('keeps writing known kinds while the file holds one this build does not know', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const dir = writeConfig(
+        'notifications:\n  kinds:\n    also-from-the-future: false\n'
+      );
+      const cfg = updateConfig(dir, {
+        notifications: { kinds: { question: false } },
+      });
+      expect(cfg.notifications.kinds.question).toBe(false);
+      expect(read(dir)).toContain('also-from-the-future: false');
+      expect(read(dir)).toContain('question: false');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('sets and clears the webhook', () => {

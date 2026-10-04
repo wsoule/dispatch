@@ -394,6 +394,20 @@ describe('the staged import', () => {
     });
   });
 
+  it("names each committed name's docs, so the CLI can upload their images", () => {
+    const { service, host } = makeService();
+    host.operators.set('human:wyat', {
+      human: 'human:wyat',
+      identity: 'id-wyat',
+    });
+    const shots = file('p/shots.md', '# Shots\n', '2026-09-20T00:00:00.000Z');
+    const dry = stage(service, [shots], true).report;
+    expect(dry.docs).toEqual([]);
+    const { report } = stage(service, [shots]);
+    const doc = service.read(service.actorFor(OWNER), 'shots').doc.id;
+    expect(report.docs).toEqual([{ name: 'shots', docs: [doc] }]);
+  });
+
   it('checks each upload against its hash and the manifest', () => {
     const { service } = makeService();
     const owner = service.actorFor(OWNER);

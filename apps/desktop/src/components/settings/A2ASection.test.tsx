@@ -2,6 +2,7 @@ import type {
   A2AClientSummary,
   A2AListenerSettings,
   A2AListenerStatus,
+  A2APeerSummary,
   A2ATaskSummary,
   AuthTier,
 } from '@dispatch/client';
@@ -84,6 +85,22 @@ const ASK: A2ATaskSummary = {
   createdAt: '2026-09-25T10:00:00.000Z',
 };
 
+const PEER: A2APeerSummary = {
+  alias: 'acme',
+  cardUrl: 'https://agent.example.com/.well-known/agent-card.json',
+  interfaceUrl: 'https://agent.example.com/a2a/v1',
+  binding: 'HTTP+JSON',
+  status: 'active',
+  name: '<b>Acme</b> Planner',
+  description: 'Plans.',
+  skills: [],
+  streaming: true,
+  addedBy: 'human:wyat',
+  addedTier: 'decide',
+  fetchedAt: '2026-09-25T10:00:00.000Z',
+  createdAt: '2026-09-25T10:00:00.000Z',
+};
+
 const BASE_URL = 'http://127.0.0.1:1';
 let queryClient: QueryClient;
 
@@ -94,6 +111,7 @@ function mount(
     card?: Record<string, unknown>;
     clients?: A2AClientSummary[];
     tasks?: A2ATaskSummary[];
+    peers?: A2APeerSummary[] | Error;
   } = {}
 ) {
   const status = over.status ?? CLOSED;
@@ -134,6 +152,21 @@ function mount(
     revokeAgent: mock((_address: string) => Promise.resolve({})),
     approveAgent: mock((_address: string) => Promise.resolve({})),
     a2aTasks: mock(() => Promise.resolve({ tasks: over.tasks ?? [] })),
+    a2aPeers: mock(() =>
+      over.peers instanceof Error
+        ? Promise.reject(over.peers)
+        : Promise.resolve({ peers: over.peers ?? [] })
+    ),
+    addA2APeer: mock((_input: unknown) => Promise.resolve(PEER)),
+    refreshA2APeer: mock((_alias: string) => Promise.resolve(PEER)),
+    setA2APeerEnabled: mock(
+      (_alias: string, _enabled: boolean, _token?: string) =>
+        Promise.resolve(PEER)
+    ),
+    removeA2APeer: mock((_alias: string) => Promise.resolve()),
+    setA2AStandalone: mock((enabled: boolean) =>
+      Promise.resolve({ standalone: enabled })
+    ),
   };
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -363,4 +396,213 @@ test('rotating a client shows the new token once', async () => {
 test('lists the open tasks under their client', async () => {
   mount('decide', { clients: [ACME], tasks: [ASK] });
   expect(await screen.findByText(/m-7/)).toBeTruthy();
+});
+
+async function fillPeer(alias: string, cardUrl: string, token?: string) {
+  fireEvent.change(await screen.findByLabelText('Peer alias'), {
+    target: { value: alias },
+  });
+  fireEvent.change(screen.getByLabelText('Card URL'), {
+    target: { value: cardUrl },
+  });
+  if (token !== undefined)
+    fireEvent.change(screen.getByLabelText('Peer credential'), {
+      target: { value: token },
+    });
+}
+
+test('adds a peer from its card URL with a credential, which is masked and cleared', async () => {
+  const client = mount('decide');
+  const token =
+    await screen.findByLabelText<HTMLInputElement>('Peer credential');
+  expect(token.type).toBe('password');
+  await fillPeer(
+    'acme',
+    'https://agent.example.com/.well-known/agent-card.json',
+    'peer-secret'
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Add peer' }));
+  await waitFor(() =>
+    expect(client.addA2APeer).toHaveBeenCalledWith({
+      alias: 'acme',
+      cardUrl: 'https://agent.example.com/.well-known/agent-card.json',
+      token: 'peer-secret',
+    })
+  );
+  expect(token.value).toBe('');
+  expect(document.body.textContent).not.toContain('peer-secret');
+  expect(screen.queryByLabelText('Allow plain http')).toBeNull();
+});
+
+test('clears the credential when the add fails too', async () => {
+  const client = mount('decide');
+  client.addA2APeer.mockImplementationOnce(() =>
+    Promise.reject(
+      Object.assign(new Error('cardUrl: resolves to a private address'), {
+        field: 'cardUrl',
+        status: 400,
+      })
+    )
+  );
+  await fillPeer('acme', 'https://intra.example.com/card', 'peer-secret');
+  fireEvent.click(screen.getByRole('button', { name: 'Add peer' }));
+  expect(await screen.findByText(/private address/)).toBeTruthy();
+  expect(screen.getByLabelText<HTMLInputElement>('Peer credential').value).toBe(
+    ''
+  );
+});
+
+test('shows both origins and lets the operator confirm the other one', async () => {
+  const client = mount('operator');
+  client.addA2APeer
+    .mockImplementationOnce(() =>
+      Promise.reject(
+        Object.assign(
+          new Error(
+            'allowOrigin: the card at https://a.example.com points at https://b.example.com; confirm with --allow-origin'
+          ),
+          { field: 'allowOrigin', status: 400 }
+        )
+      )
+    )
+    .mockImplementationOnce(() => Promise.resolve(PEER));
+  await fillPeer('acme', 'https://a.example.com/card');
+  // Named by its visible label, not a separate aria-label.
+  const http = screen.getByRole('checkbox', { name: 'Allow plain http' });
+  expect(http.getAttribute('aria-label')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add peer' }));
+  expect(
+    await screen.findByText(
+      'The card at https://a.example.com points its A2A interface at https://b.example.com.'
+    )
+  ).toBeTruthy();
+  const other = screen.getByRole('checkbox', {
+    name: 'Allow the other origin',
+  });
+  expect(other.getAttribute('aria-label')).toBeNull();
+  fireEvent.click(other);
+  fireEvent.click(screen.getByRole('button', { name: 'Add peer' }));
+  await waitFor(() =>
+    expect(client.addA2APeer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowOrigin: true })
+    )
+  );
+});
+
+test('lists peers as plain text: card text unrendered and URLs never links', async () => {
+  mount('decide', {
+    peers: [
+      PEER,
+      {
+        ...PEER,
+        alias: 'evil',
+        status: 'auth-failed',
+        interfaceUrl: 'javascript:alert(1)',
+      },
+    ],
+  });
+  expect(await screen.findByText('a2a:acme')).toBeTruthy();
+  expect(screen.getAllByText(/<b>Acme<\/b> Planner/)).toHaveLength(2);
+  expect(
+    screen.getByText(/https:\/\/agent\.example\.com\/a2a\/v1/)
+  ).toBeTruthy();
+  expect(screen.getByText(/Credential refused/)).toBeTruthy();
+  expect(document.querySelector('a[href^="javascript"]')).toBeNull();
+  expect(document.querySelector('b')).toBeNull();
+});
+
+test('shows loading, empty and error states for peers', async () => {
+  mount('decide');
+  expect(await screen.findByText('No peers yet')).toBeTruthy();
+  cleanup();
+  mount('decide', { peers: new Error('the A2A bridge is unavailable') });
+  expect(await screen.findByText("Couldn't load peers")).toBeTruthy();
+  expect(screen.getByText('the A2A bridge is unavailable')).toBeTruthy();
+});
+
+test('below decide, peers are listed but cannot be added or changed', async () => {
+  mount('request', { peers: [PEER] });
+  expect(await screen.findByText('a2a:acme')).toBeTruthy();
+  expect(screen.queryByLabelText('Peer alias')).toBeNull();
+  expect(screen.queryByLabelText('Peer credential')).toBeNull();
+  expect(screen.queryByRole('button', { name: /Disable a2a:acme/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Remove a2a:acme/ })).toBeNull();
+});
+
+test('re-enables an auth-failed peer with a new credential, then clears it', async () => {
+  const client = mount('decide', {
+    peers: [{ ...PEER, status: 'auth-failed' }],
+  });
+  const field = await screen.findByLabelText<HTMLInputElement>(
+    'New credential for a2a:acme'
+  );
+  expect(field.type).toBe('password');
+  fireEvent.change(field, { target: { value: 'new-secret' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Enable a2a:acme' }));
+  await waitFor(() =>
+    expect(client.setA2APeerEnabled).toHaveBeenCalledWith(
+      'acme',
+      true,
+      'new-secret'
+    )
+  );
+  expect(field.value).toBe('');
+});
+
+test('re-enables an auth-failed peer with the credential it already has', async () => {
+  const client = mount('decide', {
+    peers: [{ ...PEER, status: 'auth-failed' }],
+  });
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Enable a2a:acme with the same credential',
+    })
+  );
+  await waitFor(() =>
+    expect(client.setA2APeerEnabled).toHaveBeenCalledWith(
+      'acme',
+      true,
+      undefined
+    )
+  );
+});
+
+test('the operator turns standalone hosts on and off; others see the state only', async () => {
+  const client = mount('operator', {
+    status: { ...CLOSED, settings: { ...OFF, standalone: true } },
+  });
+  const toggle = await screen.findByRole('switch', {
+    name: 'Standalone hosts',
+  });
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(toggle);
+  await waitFor(() =>
+    expect(client.setA2AStandalone).toHaveBeenCalledWith(false)
+  );
+  cleanup();
+  mount('decide');
+  expect(
+    (
+      await screen.findByRole('switch', { name: 'Standalone hosts' })
+    ).hasAttribute('data-disabled')
+  ).toBe(true);
+});
+
+test('disables, refreshes and removes a peer after confirming', async () => {
+  const client = mount('decide', { peers: [PEER] });
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Disable a2a:acme' })
+  );
+  await waitFor(() =>
+    expect(client.setA2APeerEnabled).toHaveBeenCalledWith('acme', false)
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh a2a:acme' }));
+  await waitFor(() =>
+    expect(client.refreshA2APeer).toHaveBeenCalledWith('acme')
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Remove a2a:acme' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+  await waitFor(() =>
+    expect(client.removeA2APeer).toHaveBeenCalledWith('acme')
+  );
 });

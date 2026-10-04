@@ -57,6 +57,14 @@ describe('sniffImage', () => {
   });
 });
 
+// Sweeps twice a day for `days`, as a running daemon would (far more often).
+function sweepEvery12h(svc: DocsService, h: FakeDocsHost, days: number): void {
+  for (let i = 0; i < days * 2; i++) {
+    h.advance(12 * 60);
+    svc.sweep();
+  }
+}
+
 describe('the asset store', () => {
   let service: DocsService;
   let host: FakeDocsHost;
@@ -317,7 +325,14 @@ describe('the asset store', () => {
       'image/jpeg'
     );
     host.advance(31 * 24 * 60);
+    // A month since the last sweep reads as a clock jump: nothing goes until
+    // a full 30 days of clock have passed since it, sweep after sweep.
     service.sweep();
+    sweepEvery12h(service, host, 29);
+    expect(service.asset(as(OWNER), 'img', dropped.name).mime).toBe(
+      'image/jpeg'
+    );
+    sweepEvery12h(service, host, 1.5);
     expect(() => service.asset(as(OWNER), 'img', dropped.name)).toThrow(
       'not found'
     );
@@ -325,6 +340,36 @@ describe('the asset store', () => {
       existsSync(join(dir, 'docs-assets', made.doc.id, dropped.name))
     ).toBe(false);
     expect(service.asset(as(OWNER), 'img', kept.name).mime).toBe('image/png');
+  });
+
+  it('reads a daemon stopped for days as a pause, not a clock jump', () => {
+    const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    const dropped = service.putAsset(as(OWNER), 'img', JPEG);
+    sweepEvery12h(service, host, 28);
+    // Off for three days, then back: the sweep deletes as usual.
+    host.advance(3 * 24 * 60);
+    service.sweep();
+    expect(() => service.asset(as(OWNER), 'img', dropped.name)).toThrow(
+      'not found'
+    );
+    expect(made.doc.id).toBeTruthy();
+  });
+
+  it('deletes no image while an image stamp is in the future', () => {
+    service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    service.sweep();
+    const dropped = service.putAsset(as(OWNER), 'img', JPEG);
+    // An upload stamped by a clock that ran 40 days fast, then came back.
+    host.advance(40 * 24 * 60);
+    service.putAsset(as(OWNER), 'img', PNG);
+    host.advance(-40 * 24 * 60);
+    for (let i = 0; i < 64; i++) {
+      host.advance(12 * 60);
+      service.sweep();
+    }
+    expect(service.asset(as(OWNER), 'img', dropped.name).mime).toBe(
+      'image/jpeg'
+    );
   });
 
   it('rescans a referenced image only once its last check is 30 days old', () => {
@@ -353,7 +398,11 @@ describe('the asset store', () => {
     svc.sweep();
     expect(scans).toBe(1);
     h.advance(31 * 24 * 60);
+    // The month-long gap reads as a clock jump: no rescan for 30 days.
     svc.sweep();
+    sweepEvery12h(svc, h, 29);
+    expect(scans).toBe(1);
+    sweepEvery12h(svc, h, 1.5);
     expect(scans).toBe(2);
   });
 

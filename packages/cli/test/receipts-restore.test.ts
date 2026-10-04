@@ -2,6 +2,7 @@ import {
   DOCS_LIMITS,
   initProjectStores,
   materializeReceipts,
+  MEMORY_RECEIPT_FILE_BYTES,
   openProjectStores,
   readProjectBackend,
 } from '@dispatch/core';
@@ -10,6 +11,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -21,6 +23,7 @@ import { basename, join } from 'node:path';
 
 import { daemonFileKey } from '../src/commands/daemon.js';
 import type { CliContext } from '../src/context.js';
+import { CliError } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
 import { projectRoot } from '../src/projectRoot.js';
 
@@ -216,19 +219,58 @@ function stagingFor(fresh: string): string {
   );
 }
 
-// Restores `remote` into a fresh checkout; returns it and what the CLI printed.
+// Restores `remote` into a fresh checkout; returns it, what the CLI printed,
+// and the error a restore that reported problems ends with.
 async function restoreFresh(
   remote: string
-): Promise<{ fresh: string; lines: string[] }> {
+): Promise<{ fresh: string; lines: string[]; failed: unknown }> {
   const fresh = temp('dispatch-fresh-');
   git(fresh, 'init', '-q', '-b', 'main');
   const lines: string[] = [];
-  await makeProgram({ cwd: fresh, log: (l) => lines.push(l) }).parseAsync(
-    ['receipts', 'restore', '--from', remote],
-    { from: 'user' }
-  );
-  return { fresh, lines };
+  const failed: unknown = await makeProgram({
+    cwd: fresh,
+    log: (l) => lines.push(l),
+  })
+    .parseAsync(['receipts', 'restore', '--from', remote], { from: 'user' })
+    .then(
+      () => null,
+      (err: unknown) => err
+    );
+  return { fresh, lines, failed };
 }
+
+test('a restore that reports problems exits non-zero', async () => {
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch', 'docs'), { recursive: true });
+    writeFileSync(join(log, '.dispatch', 'docs', 'NOTES.txt.md'), 'x\n');
+    writeFileSync(
+      join(log, '.dispatch', 'docs', 'big.md'),
+      'x'.repeat(DOCS_LIMITS.receiptFileBytes + 1)
+    );
+  });
+  const { failed } = await restoreFresh(remote);
+  expect(failed).toBeInstanceOf(CliError);
+  expect((failed as CliError).exitCode).toBe(1);
+  expect((failed as CliError).message).toContain('problem');
+});
+
+test('a clean restore exits zero', async () => {
+  const { remote } = pushedLog();
+  expect((await restoreFresh(remote)).failed).toBeNull();
+});
+
+test('a killed restore’s temp clone is removed by the next restore', async () => {
+  const { remote } = pushedLog();
+  // A pid nobody holds: what a restore killed mid-clone leaves.
+  const dead = mkdtempSync(join(tmpdir(), 'dispatch-receipts-restore-999999-'));
+  const live = mkdtempSync(
+    join(tmpdir(), `dispatch-receipts-restore-${process.pid}-`)
+  );
+  dirs.push(dead, live);
+  await restoreFresh(remote);
+  expect(existsSync(dead)).toBe(false);
+  expect(existsSync(live)).toBe(true);
+});
 
 test('a symlinked doc file in the log is not staged', async () => {
   const secret = join(temp('dispatch-secret-'), 'secret.md');
@@ -272,4 +314,87 @@ test('a doc file over the receipt file limit is not staged, and is reported', as
   expect(lines.some((l) => l.includes('huge.md') && l.includes('over'))).toBe(
     true
   );
+});
+
+// The staging directory `receipts restore` copies team memory into for `fresh`.
+function memoryStagingFor(fresh: string): string {
+  return join(
+    process.env.DISPATCH_HOME ?? '',
+    '.dispatch',
+    'runs',
+    daemonFileKey(projectRoot(fresh)),
+    'memory-restore'
+  );
+}
+
+const MEMORY_FILE = 'mem-01K5Z6G0000000000000000000.md';
+// A memory receipt as the exporter writes one (the parts staging checks).
+const LESSON =
+  '---\nname: mem-01K5Z6G0000000000000000000\ndescription: "a lesson"\nmetadata:\n  dispatch:\n    scope: team\n    status: active\n---\n\na lesson\n';
+
+test('team memory in the log is staged for the daemon to propose again', async () => {
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch', 'memory'), { recursive: true });
+    writeFileSync(join(log, '.dispatch', 'memory', MEMORY_FILE), LESSON);
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  const staging = memoryStagingFor(fresh);
+  expect(readFileSync(join(staging, MEMORY_FILE), 'utf8')).toBe(LESSON);
+  expect(statSync(staging).mode & 0o777).toBe(0o700);
+  expect(existsSync(stagingFor(fresh))).toBe(false);
+  expect(lines).toContain(
+    'staged 1 memory entr(ies) for the daemon to propose again'
+  );
+});
+
+test('symlinked, oversized or oddly named memory files are not staged, and are reported', async () => {
+  const secret = join(temp('dispatch-secret-'), 'secret.md');
+  writeFileSync(secret, 'not a lesson\n');
+  const leak = 'mem-01K5Z6G0000000000000000001.md';
+  const huge = 'mem-01K5Z6G0000000000000000002.md';
+  const { remote } = pushedLog((log) => {
+    const dir = join(log, '.dispatch', 'memory');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, MEMORY_FILE), LESSON);
+    symlinkSync(secret, join(dir, leak));
+    writeFileSync(join(dir, huge), 'x'.repeat(MEMORY_RECEIPT_FILE_BYTES + 1));
+    writeFileSync(join(dir, 'notes.md'), 'not an entry\n');
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  expect(readdirSync(memoryStagingFor(fresh))).toEqual([MEMORY_FILE]);
+  expect(lines.some((l) => l.includes(leak))).toBe(true);
+  expect(lines.some((l) => l.includes(huge) && l.includes('over'))).toBe(true);
+  expect(
+    lines.some((l) => l.includes('notes.md') && l.includes('not named'))
+  ).toBe(true);
+});
+
+test('a damaged memory receipt is not staged, and fails the restore', async () => {
+  const cut = 'mem-01K5Z6G0000000000000000003.md';
+  const { remote } = pushedLog((log) => {
+    const dir = join(log, '.dispatch', 'memory');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, MEMORY_FILE), LESSON);
+    writeFileSync(join(dir, cut), LESSON.slice(0, LESSON.indexOf('---\n\n')));
+  });
+  const { fresh, lines, failed } = await restoreFresh(remote);
+  expect(readdirSync(memoryStagingFor(fresh))).toEqual([MEMORY_FILE]);
+  expect(
+    lines.some((l) => l.includes(cut) && l.includes('not a memory receipt'))
+  ).toBe(true);
+  expect(failed).toBeInstanceOf(CliError);
+});
+
+test('a symlinked .dispatch/memory stages nothing', async () => {
+  const outside = temp('dispatch-outside-');
+  writeFileSync(join(outside, MEMORY_FILE), 'not from the log\n');
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch'), { recursive: true });
+    symlinkSync(outside, join(log, '.dispatch', 'memory'));
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  expect(existsSync(memoryStagingFor(fresh))).toBe(false);
+  expect(
+    lines.some((l) => l.includes('.dispatch/memory') && l.includes('symlink'))
+  ).toBe(true);
 });

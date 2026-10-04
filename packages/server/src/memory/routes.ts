@@ -2,6 +2,7 @@ import {
   kindFromClaudeType,
   MEMORY_KINDS,
   MEMORY_SCOPES,
+  MemoryBusyError,
   MemoryError,
   parseMemoryFile,
   personalIdentityFor,
@@ -217,6 +218,23 @@ async function bodyOf(
   if (optional) return readJsonBodyOptional(req);
   const parsed = await readJsonBody(req);
   return parsed.ok ? { ok: true, value: parsed.value as Body } : parsed;
+}
+
+// Delays between attempts at a write that met a busy memory.db.
+const BUSY_RETRY_MS = [50, 100, 200, 400];
+
+// Runs a memory write, retrying a busy database after an async pause so the
+// event loop keeps serving; the last MemoryBusyError reaches the API as 503.
+async function retryBusy<T>(write: () => T | Promise<T>): Promise<T> {
+  for (const delay of BUSY_RETRY_MS) {
+    try {
+      return await write();
+    } catch (err) {
+      if (!(err instanceof MemoryBusyError)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return await write();
 }
 
 const saveCaches = new WeakMap<
@@ -527,7 +545,7 @@ export async function saveMemoryRoute(
   if (!parsed.ok) return parsed.response;
   const input = saveInputOf(parsed.value);
   const engine = ctx.memory.requireEngine();
-  const save = () => engine.save(principal, input);
+  const save = () => retryBusy(() => engine.save(principal, input));
   const key = req.headers.get('idempotency-key');
   if (key === null) return jsonResponse(await save(), 201);
   const { result, replayed } = idempotentSave(
@@ -555,8 +573,9 @@ export async function memoryActionRoute(
   const ref = refOf(segment);
   switch (action) {
     case 'retire': {
+      const reason = stringField(parsed.value, 'reason');
       const forget = () =>
-        engine.forget(principal, ref, stringField(parsed.value, 'reason'));
+        retryBusy(() => engine.forget(principal, ref, reason));
       const key = req.headers.get('idempotency-key');
       if (key === null) return jsonResponse(await forget());
       const { result } = idempotentSave(
@@ -567,17 +586,25 @@ export async function memoryActionRoute(
       return jsonResponse(await result);
     }
     case 'undo':
-      return jsonResponse(engine.undo(principal, ref));
+      return jsonResponse(await retryBusy(() => engine.undo(principal, ref)));
     case 'confirm':
-      return jsonResponse(engine.confirm(principal, ref));
+      return jsonResponse(
+        await retryBusy(() => engine.confirm(principal, ref))
+      );
     case 'pin':
     case 'unpin':
-      return jsonResponse(engine.setPinned(principal, ref, action === 'pin'));
+      return jsonResponse(
+        await retryBusy(() =>
+          engine.setPinned(principal, ref, action === 'pin')
+        )
+      );
     case 'promote': {
       const scope = stringField(parsed.value, 'scope');
       if (scope !== 'project' && scope !== 'team')
         throw invalidField('scope', 'project|team');
-      return jsonResponse(await engine.promote(principal, ref, scope));
+      return jsonResponse(
+        await retryBusy(() => engine.promote(principal, ref, scope))
+      );
     }
     default:
       return null;
@@ -737,14 +764,14 @@ export async function startLinkRoute(
     rosterEmail: rosterEmailOf(ctx.rootDir, handle),
   };
   if (optionalBoolean(parsed.value, 'fresh') !== true)
-    return jsonResponse(identities.startLink(alias));
+    return jsonResponse(await retryBusy(() => identities.startLink(alias)));
   if (principal.address === ctx.actorContext.humanRef)
     throw new MemoryError(
       'invalid',
       "fresh: the owner's personal memory always stays its own",
       'fresh'
     );
-  const identity = identities.startFresh(alias);
+  const identity = await retryBusy(() => identities.startFresh(alias));
   ctx.memory.host.changed({ scope: 'personal' });
   return jsonResponse({ identity });
 }
@@ -760,12 +787,14 @@ export async function completeLinkRoute(
   const parsed = await bodyOf(req, true);
   if (!parsed.ok) return parsed.response;
   const identities = requireIdentities(ctx);
-  const { identity, previous } = identities.completeLink({
-    code: refOf(code),
-    projectKey: ctx.memory.host.projectKey(),
-    handle,
-    rosterEmail: rosterEmailOf(ctx.rootDir, handle),
-  });
+  const { identity, previous } = await retryBusy(() =>
+    identities.completeLink({
+      code: refOf(code),
+      projectKey: ctx.memory.host.projectKey(),
+      handle,
+      rosterEmail: rosterEmailOf(ctx.rootDir, handle),
+    })
+  );
   if (previous !== null && identities.aliasesOf(previous).length === 0)
     ctx.memory.personal.move(previous, identity);
   ctx.memory.host.changed({ scope: 'personal' });

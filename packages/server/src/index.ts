@@ -27,15 +27,17 @@ import type {
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
+import { printable } from '@dispatch/federation';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
 import type { A2ABridge } from './a2a/bridge.js';
 import { openA2ABridge } from './a2a/bridge.js';
+import type { WatchLimits } from './a2a/portRoutes.js';
 import type { ListenerOverrides } from './a2a/settings.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
@@ -48,6 +50,8 @@ import {
   validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
@@ -69,6 +73,7 @@ import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
 import { docsRestoreDir, openDocs } from './docs/open.js';
 import { docsReceiptsStep } from './docs/receipts.js';
+import { redispatchPublishes } from './docs/routes.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
@@ -96,6 +101,7 @@ import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
 import type { PreflightResult } from './memory/claudeModes.js';
 import { docsOverflowPort } from './memory/overflow.js';
+import { memoryReceiptsStep, memoryRestoreDir } from './memory/receipts.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
@@ -156,6 +162,7 @@ import {
   previewResponseHeaders,
   previewUpstreamUrl,
 } from './previewHeaders.js';
+import type { ReceiptsStep } from './receipts/exporter.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { sessionOrigins, sessionToken } from './session.js';
@@ -169,11 +176,16 @@ import {
   SyncWorktree,
 } from './sync/worktree.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
-import { SyncRepo } from './team/boardSync/repo.js';
-import { BoardSyncService } from './team/boardSync/service.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
+import { appendAuditToReceipts } from './team/federation/audit.js';
+import type { Federation } from './team/federation/daemon.js';
+import { buildFederation } from './team/federation/daemon.js';
+import { rekeyIfKeysLost } from './team/federation/keys.js';
+import type { FederationContext } from './team/federation/routes.js';
+import type { FederationService } from './team/federation/service.js';
 import type { Team } from './team/index.js';
-import { createTeam, syncSeats } from './team/index.js';
+import { createTeam } from './team/index.js';
+import { hostSpawner } from './terminalHost.js';
 import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
@@ -314,6 +326,11 @@ export interface StartServerOptions {
   // autoCommit: true and every startServer()-based test would otherwise boot
   // a live interval.
   boardSyncPeriodicMs?: number;
+  // The clock board sync reads (the ledger's hybrid clock, the clock guard,
+  // license expiry); test-only, like boardSyncDebounceMs.
+  federationNow?: () => number;
+  // Debounce for a board sync pass after a local change; test-only.
+  federationDebounceMs?: number;
   // Debounce for the receipts exporter's response to a task change. Defaults
   // to ReceiptsScheduler's own multi-second default; tests pass something much
   // shorter. There is no periodic counterpart: the export has no remote to
@@ -341,6 +358,8 @@ export interface StartServerOptions {
   onIdle?: () => void;
   // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
   a2a?: ListenerOverrides;
+  // Standalone hosts' watch-stream limits; tests shorten the keepalive.
+  a2aWatchLimits?: Partial<WatchLimits>;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -615,6 +634,8 @@ async function serveIndexHtml(
 interface SocketData extends SocketAudience {
   handle: string | null;
   release?: () => boolean;
+  /** The credential the socket opened with, re-resolved on every event (M2). */
+  token?: string;
 }
 
 // Constant-time, like principal.ts: /ws must tell the shared agent token
@@ -1006,7 +1027,23 @@ async function bootServer(
   }
   // With sync on, everything gets the store that records each write as a
   // change for the other replicas; the board it writes to is the same one.
-  let boardSync: BoardSyncService | null = null;
+  let boardSync: FederationService | null = null;
+  let federation: Federation | null = null;
+  let federationContext: FederationContext | null = null;
+  const federationNow = (): Date =>
+    new Date(opts.federationNow?.() ?? Date.now());
+  // A key file lost with state.db kept: start over as a new replica id (F-D35).
+  if (syncConfig !== null) {
+    const rekeyed = rekeyIfKeysLost(
+      boardSyncDir(rootDir),
+      join(boardSyncDir(rootDir), 'state.db'),
+      actorContext.member.handle
+    );
+    if (rekeyed !== null)
+      console.warn(
+        `dispatchd: keys/replica.json was missing; this machine is a new replica and must be admitted again (was ${rekeyed})`
+      );
+  }
   const syncLedger =
     syncConfig === null
       ? null
@@ -1016,7 +1053,8 @@ async function bootServer(
           // every write is attributed to — not the OS login, which two
           // people on stock cloud machines share and one person can have
           // two of. The license counts sync seats by it.
-          actorContext.member.handle
+          actorContext.member.handle,
+          () => federationNow().getTime()
         );
   const syncedStore =
     syncLedger === null || !(stores.tasks instanceof SqliteTaskStore)
@@ -1027,6 +1065,24 @@ async function bootServer(
   const store: TaskStorePort = syncedStore ?? stores.tasks;
   const cache = new TaskCache();
   const events = new EventBus();
+  // M2: a socket's tier is what its credential holds now, not at upgrade; one
+  // whose credential was revoked or expired is closed on the next event.
+  // A detached socket's person is no longer present.
+  events.setAudienceCheck(
+    (client) => {
+      const data = client.data as SocketData | undefined;
+      if (data === undefined || data.token === undefined) return data ?? null;
+      const who = tokens.registry.resolve(data.token);
+      return who === null ? null : { ...data, ref: who.ref, tier: who.tier };
+    },
+    (client) => {
+      const data = client.data as SocketData | undefined;
+      const release = data?.release;
+      if (data === undefined || release === undefined) return;
+      data.release = undefined;
+      if (release()) events.broadcast({ type: 'presence.changed' });
+    }
+  );
 
   // Refresh + broadcast on any on-disk change, regardless of who made it:
   // the watcher names the tasks whose files changed, the cache re-reads just
@@ -1113,6 +1169,8 @@ async function bootServer(
   // because nothing resolvable" case to log. Whether it runs at all is
   // config.yml's `receipts.enabled`, re-read on every pass rather than latched
   // here.
+  // Memory opens further down; until it does, its step writes nothing.
+  let memoryReceipts: ReceiptsStep | null = null;
   const receiptsScheduler =
     store instanceof TaskStore
       ? null
@@ -1124,7 +1182,18 @@ async function bootServer(
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
-          steps: [docsReceiptsStep(docs.service, docsRestoreDir(rootDir))],
+          steps: [
+            docsReceiptsStep(docs.service, docsRestoreDir(rootDir)),
+            (dir) =>
+              memoryReceipts?.(dir) ?? { changed: 0, removed: 0, problems: [] },
+          ],
+          // The federation audit log, once board sync built it (Task 24).
+          appendices: [
+            (dir) => {
+              if (federation !== null)
+                appendAuditToReceipts(federation.fed, dir);
+            },
+          ],
         });
   // Team doc changes that reach a sealed head (seals, reviews, status, links,
   // renames, deletes) export; open-revision amends and new heads wait for the seal.
@@ -1158,20 +1227,19 @@ async function bootServer(
         `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
-      boardSync = new BoardSyncService({
-        store: syncedStore,
+      // Only here are the federation's store and roster built; the team
+      // routes read them from `federation`.
+      federation = buildFederation({
+        syncDir: boardSyncDir(rootDir),
         ledger: syncLedger,
-        repo: new SyncRepo(
-          join(boardSyncDir(rootDir), 'repo'),
-          remoteUrl,
-          syncConfig.branch,
-          syncLedger.replica,
-          defaultAsyncGitRunner
-        ),
-        remote: remoteUrl,
+        store: syncedStore,
+        team,
+        handle: actorContext.member.handle,
+        build: packageJson.version,
+        remoteUrl,
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
-        ...syncSeats(team),
+        git: defaultAsyncGitRunner,
         // A teammate's change lands like a local edit: the cache is resynced
         // and every client told which tasks moved, so boards refresh without
         // anyone reloading.
@@ -1181,7 +1249,33 @@ async function bootServer(
             events.broadcast({ type: 'task.changed', ids: changed });
           }
         },
+        now: federationNow,
+        ...(opts.federationDebounceMs === undefined
+          ? {}
+          : { debounceMs: opts.federationDebounceMs }),
       });
+      boardSync = federation.service;
+      const { roster, fed } = federation;
+      federationContext = {
+        roster,
+        fed,
+        handle: actorContext.member.handle,
+        device: hostname().split('.')[0] ?? 'machine',
+        now: federationNow,
+        // The origin warning names the code remote only when sync.repo is unset.
+        remote: syncConfig.repo === undefined ? remoteUrl : null,
+        label: (replica) => roster.label(replica),
+        observer: () => {
+          const watcher = [...(roster.view()?.members.values() ?? [])].find(
+            (m) => m.observer
+          );
+          if (watcher === undefined) return null;
+          const device = printable(
+            fed.pinned(watcher.replica)?.device ?? watcher.replica
+          );
+          return `${watcher.handle}'s ${device}`;
+        },
+      };
       const published = syncedStore.bootstrap();
       if (published > 0) {
         console.log(
@@ -1362,6 +1456,13 @@ async function bootServer(
   });
   // Memory opens before messaging.recover() because it registers the memory
   // gate's handler: an answer replayed with no handler is marked applied and lost.
+  const unsubscribeRevokedAsks = closeAsksOfRevoked(
+    messaging.engine,
+    (address) =>
+      speaksForRevoked(address, actorContext.member.handle, (handle) =>
+        team.teammates.hasAccess(handle)
+      )
+  );
   const memory = openMemory({
     rootDir,
     store,
@@ -1370,6 +1471,8 @@ async function bootServer(
     ledgerStore,
     messaging,
     ownerRef: actorContext.humanRef,
+    hasAccess: (human) =>
+      team.teammates.hasAccess(human.slice('human:'.length)),
     appendPolicyActivity,
     watchLedgerFile:
       stores.records === null
@@ -1379,6 +1482,10 @@ async function bootServer(
       ? {}
       : { preflight: opts.memoryPreflight }),
   });
+  memoryReceipts = memoryReceiptsStep(
+    () => memory.shared,
+    memoryRestoreDir(rootDir)
+  );
   docsHost.bindRuns(orchestrator);
   // A publish lands once its task does (on a merged run); task.changed is the signal.
   const syncDocPublishes = (): void => {
@@ -1388,6 +1495,12 @@ async function bootServer(
       console.error('docs: recording publishes failed', err);
     }
   };
+  // A publish a crash cut short closes its orphan task before anything runs.
+  try {
+    docs.service.recoverPublishes();
+  } catch (err) {
+    console.error('docs: recovering publishes failed', err);
+  }
   syncDocPublishes();
   const unsubscribeDocPublishes = events.subscribe((event) => {
     if (event.type === 'task.changed') syncDocPublishes();
@@ -1455,6 +1568,12 @@ async function bootServer(
   } catch (err) {
     console.error('dispatchd: doc gate reconcile failed', err);
   }
+  // Open publishes a crash left with no run start now.
+  try {
+    await redispatchPublishes(docs.service, orchestrator);
+  } catch (err) {
+    console.error('dispatchd: publish redispatch failed', err);
+  }
   // Before HTTP serves: the boot import carries every ledger lesson in before
   // the first dispatch, then proposals a crash left without a gate get one.
   try {
@@ -1462,6 +1581,20 @@ async function bootServer(
   } catch (err) {
     console.error('dispatchd: boot ledger import failed', err);
   }
+  // Team memory staged by `dispatch receipts restore` returns as proposals,
+  // then the log is written again with memory in it.
+  try {
+    const restored = await memory.restoreStaged();
+    for (const p of restored?.problems ?? [])
+      console.error(`dispatchd: memory restore: ${p.file}: ${p.detail}`);
+    if (restored !== null && restored.deferred > 0)
+      console.error(
+        `dispatchd: memory restore: ${restored.deferred} staged file(s) are proposed in batches over the next minutes`
+      );
+  } catch (err) {
+    console.error('dispatchd: memory restore failed', err);
+  }
+  receiptsScheduler?.notifyChanged();
   try {
     await memory.recover();
   } catch (err) {
@@ -1501,6 +1634,9 @@ async function bootServer(
       ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
     ],
     ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    ...(opts.a2aWatchLimits === undefined
+      ? {}
+      : { watchLimits: opts.a2aWatchLimits }),
     ...(opts.tls === undefined
       ? {}
       : {
@@ -1839,7 +1975,11 @@ async function bootServer(
   // readable the moment the app reconnects. Output is announced rather than
   // streamed: a client holds a byte cursor and pulls the increment, so a
   // dropped event costs a round trip and never a gap.
+  // Children spawn in a helper process, started on the first terminal: a pty
+  // spawn blocked the event loop for seconds under load.
+  const terminalHost = hostSpawner();
   const terminals = new TerminalRegistry(rootDir, {
+    spawn: terminalHost.spawn,
     onOutput: (terminalId) =>
       events.broadcast({ type: 'terminal.output', terminalId }),
     onExit: (terminalId) =>
@@ -1984,6 +2124,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    federation: federationContext,
     team,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
@@ -2083,6 +2224,7 @@ async function bootServer(
                 ref: who?.ref ?? null,
                 tier: who?.tier ?? null,
                 agentToken: isAgentToken(wsToken, tokens.agentToken),
+                ...(wsToken === null ? {} : { token: wsToken }),
               },
             })
           ) {
@@ -2172,6 +2314,8 @@ async function bootServer(
       // never carry stack traces — log server-side, return opaque JSON.
       error(err) {
         console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
+        const storage = storageErrorResponse(err);
+        if (storage !== null) return storage;
         return new Response(JSON.stringify({ error: 'internal error' }), {
           status: 500,
           headers: {
@@ -2282,6 +2426,7 @@ async function bootServer(
       clearInterval(externalMergeTimer);
       mergeQueue.stop();
       unsubscribeLinear();
+      unsubscribeRevokedAsks();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();
@@ -2291,6 +2436,7 @@ async function bootServer(
       // Kills every child and flushes scrollback; the sessions stay in the
       // index so the next daemon hydrates them as `orphaned`.
       terminals.shutdown();
+      terminalHost.close();
       // Otherwise every session leaks a Chromium process.
       browsers.shutdown();
       boardSyncScheduler?.stop();
@@ -2307,7 +2453,8 @@ async function bootServer(
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather
       // than let it finish. A no-op on the file backend.
-      boardSync?.stop();
+      // The pass in flight finishes before its ledger closes (B2).
+      await boardSync?.stop();
       syncLedger?.close();
       orchestrator.setMemoryPort(null);
       memory.close();

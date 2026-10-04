@@ -232,6 +232,32 @@ test('badges a custom kind by its name, as the run chat does', () => {
   expect(screen.getByText('x-review')).toBeTruthy();
 });
 
+test('badges a sender from outside the machine as A2A, and a run not at all', () => {
+  for (const from of ['a2a:acme', 'agent:wyat/a2a.acme']) {
+    renderRow(msg(`m-${from}`, { from, body: 'hello' }), { open: false });
+    expect(screen.getByText('A2A')).toBeTruthy();
+    cleanup();
+  }
+  renderRow(msg('m-run', { from: 'run:r-000001', body: 'hello' }), {
+    open: false,
+  });
+  expect(screen.queryByText('A2A')).toBeNull();
+});
+
+test('renders an A2A peer’s markdown and links as plain text', () => {
+  renderRow(
+    msg('m-p', {
+      from: 'a2a:acme',
+      body: '[click](javascript:alert(1)) **bold**',
+    }),
+    { open: false }
+  );
+  expect(
+    screen.getByText('[click](javascript:alert(1)) **bold**')
+  ).toBeTruthy();
+  expect(document.querySelector('a[href^="javascript"]')).toBeNull();
+});
+
 test("keeps a revoked agent's message readable, with a Revoked pill", () => {
   renderRow(msg('m-r', { from: 'agent:wyat/old', body: 'still here' }), {
     open: false,

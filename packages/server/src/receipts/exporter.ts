@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -120,6 +121,31 @@ function isPathInside(parent: string, child: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
+// Removes the *.lock files under a log's .git (objects aside). The exporter is
+// the log's only writer and passes never overlap, so any lock is a killed pass's.
+function clearStaleLocks(dir: string): string[] {
+  const removed: string[] = [];
+  const walk = (at: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(at, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const path = join(at, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'objects') walk(path);
+      } else if (e.name.endsWith('.lock')) {
+        rmSync(path, { force: true });
+        removed.push(relative(dir, path));
+      }
+    }
+  };
+  walk(join(dir, '.git'));
+  return removed;
+}
+
 /** A step that writes more of the log after the core records (docs), before staging. */
 export type ReceiptsStep = (dir: string) => {
   changed: number;
@@ -132,7 +158,10 @@ export class ReceiptsExporter {
     private readonly stores: ProjectStores,
     private readonly actor: ActorContext,
     private readonly run: AsyncGitRunner,
-    private readonly steps: readonly ReceiptsStep[] = []
+    private readonly steps: readonly ReceiptsStep[] = [],
+    /** Writers run after materializing and before `git add -A`, for files
+     *  outside the materialized set (the federation audit log, Task 24). */
+    private readonly appendices: readonly ((dir: string) => void)[] = []
   ) {}
 
   /**
@@ -183,6 +212,8 @@ export class ReceiptsExporter {
     markBlockingSection('receipts export');
     // A log created just now holds nothing yet, so a scoped pass writes it all.
     const created = await this.ensureRepo(dir);
+    for (const lock of clearStaleLocks(dir))
+      console.error(`receipts: removed a stale ${lock} a killed pass left`);
     const materialized = await runSliced(
       receiptSteps(this.stores, dir, created ? {} : scope),
       stopped
@@ -221,6 +252,7 @@ export class ReceiptsExporter {
         );
       }
     }
+    for (const append of this.appendices) append(dir);
     const failed = (detail: string): ReceiptsResult => ({
       ...counts,
       state: 'failed',

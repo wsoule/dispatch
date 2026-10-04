@@ -52,6 +52,27 @@ describe('lastCommitFor', () => {
   });
 });
 
+describe('findPublishTasks', () => {
+  it('finds open elevated tasks by exact title, skipping ended or routine ones', () => {
+    const task = (id: string, title: string, status: string, risk: string) => ({
+      meta: { id, title, status, risk },
+    });
+    const title = 'Publish doc spec (rev 1) to docs/spec.md';
+    const host = new DaemonDocsHost({
+      store: {
+        list: () => [
+          task('t-1', title, 'todo', 'elevated'),
+          task('t-2', title, 'dropped', 'elevated'),
+          task('t-3', title, 'todo', 'routine'),
+          task('t-4', `${title} again`, 'todo', 'elevated'),
+        ],
+      } as never,
+      events,
+    });
+    expect(host.findPublishTasks(title)).toEqual(['t-1']);
+  });
+});
+
 describe('closePublishTask', () => {
   it('drops the task with the reason in its activity', () => {
     const updates: { id: string; patch: Record<string, unknown> }[] = [];

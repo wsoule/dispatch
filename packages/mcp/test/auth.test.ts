@@ -18,6 +18,7 @@ import { createDispatchMcpServer } from '../src/index.js';
 
 const AGENT_TOKEN = 'agent-token-from-the-daemon-file';
 const APP_TOKEN = 'app-token-mcp-must-never-reach';
+const RUN_TOKEN = 'this-runs-own-token';
 
 async function connectClient(rootDir: string): Promise<Client> {
   const server = createDispatchMcpServer(rootDir);
@@ -52,7 +53,10 @@ class FakeDaemon {
         const auth = req.headers.get('authorization');
         this.seen.push({ path: url.pathname, method: req.method, auth });
         if (url.pathname === '/api/health') return Response.json({ ok: true });
-        if (auth !== `Bearer ${AGENT_TOKEN}`) {
+        if (
+          auth !== `Bearer ${AGENT_TOKEN}` &&
+          auth !== `Bearer ${RUN_TOKEN}`
+        ) {
           return Response.json(
             { error: 'missing daemon token', code: 'auth_missing_token' },
             { status: 401 }
@@ -79,6 +83,7 @@ let daemon: FakeDaemon;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 const originalRunId = process.env.DISPATCH_RUN_ID;
 const originalAppToken = process.env.DISPATCH_APP_TOKEN;
+const originalRunTokenFile = process.env.DISPATCH_RUN_TOKEN_FILE;
 
 // The daemon file carries an `appToken` a real daemon never writes, so a tool
 // that reached for one would be caught rather than silently finding nothing.
@@ -115,6 +120,9 @@ afterEach(() => {
   else process.env.DISPATCH_RUN_ID = originalRunId;
   if (originalAppToken === undefined) delete process.env.DISPATCH_APP_TOKEN;
   else process.env.DISPATCH_APP_TOKEN = originalAppToken;
+  if (originalRunTokenFile === undefined)
+    delete process.env.DISPATCH_RUN_TOKEN_FILE;
+  else process.env.DISPATCH_RUN_TOKEN_FILE = originalRunTokenFile;
   rmSync(fakeHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
 });
@@ -154,6 +162,24 @@ describe('the token MCP tools present', () => {
     expect(daemon.seen.filter((r) => r.auth === `Bearer ${APP_TOKEN}`)).toEqual(
       []
     );
+  });
+
+  // XH-R2: inside a run the daemon must know which run wrote, so every tool
+  // presents the run's own token rather than the shared agent token.
+  it("is the run's own token inside a run", async () => {
+    const file = join(fakeHome, 'run.token');
+    writeFileSync(file, `${RUN_TOKEN}\n`, { mode: 0o600 });
+    process.env.DISPATCH_RUN_TOKEN_FILE = file;
+    process.env.DISPATCH_RUN_ID = 'r-self1';
+    const client = await connectClient(root);
+    await client.callTool({ name: 'run_list', arguments: {} });
+    await client.callTool({
+      name: 'dispatch_note',
+      arguments: { kind: 'note', title: 'something to look at' },
+    });
+    const authed = daemon.seen.filter((r) => r.path !== '/api/health');
+    expect(authed.length).toBeGreaterThan(0);
+    expect(authed.every((r) => r.auth === `Bearer ${RUN_TOKEN}`)).toBe(true);
   });
 
   it('is absent from the open health probe', async () => {

@@ -13,7 +13,12 @@ export {
   cardEtag,
   cardJson,
   DEFAULT_CARD_DESCRIPTION,
+  JWKS_PATH,
   offeredSkills,
+  signCard,
+  verifyCardSignature,
+  unsignedCardEtag,
+  unsignedCardJson,
 } from './card.js';
 export {
   DEFAULT_HANDOFF_STATUSES,
@@ -74,6 +79,7 @@ export type {
 } from './ext.js';
 export {
   checkInboundRecipients,
+  peerSelfAddressed,
   checkReachClient,
   CLIENT_NAME_PREFIX,
   clientNameFor,
@@ -98,16 +104,32 @@ export type {
   BridgePort,
   Caller,
   CardInputs,
+  CardRequest,
+  CardSignatureJson,
   ContinueInput,
   ContinueResult,
+  Jwks,
   ListPage,
   ListQuery,
   OpenGateFact,
   OpenInput,
   OpenKind,
   OpenResult,
+  PushConfigPort,
   TaskFacts,
 } from './port.js';
+export { parsePortContinue, parsePortOpen } from './http/input.js';
+export { HttpBridgePort } from './http/port.js';
+export { checkStandalone, startStandalone } from './http/serve.js';
+export type { StandaloneCheck, StandaloneOptions } from './http/serve.js';
+export type { HttpBridgePortOptions } from './http/port.js';
+export {
+  PORT_CLIENT_HEADER,
+  portErrorFrom,
+  portErrorJson,
+} from './http/wire.js';
+export type { PortError } from './http/wire.js';
+export * from './peer/index.js';
 export {
   decideState,
   GATE_SENTENCES,
@@ -122,12 +144,27 @@ export {
   wrapExternalData,
 } from './sanitize.js';
 export type { ExternalContent, SanitizedContent } from './sanitize.js';
+export {
+  deliverPush,
+  parsePushConfig,
+  PUSH_LIMITS,
+  PUSH_TOKEN_HEADER,
+  pushConfigJson,
+  pushHeaders,
+} from './push.js';
+export type {
+  DeliverOptions,
+  PushAuth,
+  PushConfigInput,
+  PushConfigJson,
+  PushResult,
+} from './push.js';
 export { handleA2A, matchRoute } from './server/handle.js';
 export type { HandleOptions, Route } from './server/handle.js';
 export { IpLimiter } from './server/limits.js';
 export { decodePageToken, encodePageToken } from './server/paging.js';
-export { taskEventStream } from './server/sse.js';
-export type { StreamOptions } from './server/sse.js';
+export { eventsBetween, snapshotOf, taskEventStream } from './server/sse.js';
+export type { Snapshot, StreamOptions } from './server/sse.js';
 export {
   INTERRUPTED_STATES,
   stateFromWire,
@@ -142,6 +179,12 @@ export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
 export type {
   A2AStore,
   ClientRow,
+  HostRow,
+  OutboundRow,
+  OutboundState,
+  PeerRow,
+  PeerStatus,
+  PushConfigRow,
   TaskListQuery,
   TaskPatch,
   TaskRow,

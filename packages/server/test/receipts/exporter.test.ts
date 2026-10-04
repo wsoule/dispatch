@@ -103,6 +103,30 @@ describe('ReceiptsExporter', () => {
     expect(tracked).toMatch(/\.dispatch\/tasks\/t-[0-9a-f]{6}-first-task\.md/);
   });
 
+  // Task 24: an appendix (the federation audit log) is committed with the
+  // export, and a later export never removes files under federation/.
+  it('commits what an appendix writes and keeps it on later exports', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    const dir = logDir();
+    const appendix = (d: string) => {
+      mkdirSync(join(d, 'federation'), { recursive: true });
+      writeFileSync(join(d, 'federation', 'audit.jsonl'), '{"id":1}\n');
+    };
+    const exporter = new ReceiptsExporter(
+      s,
+      ActorContext.resolve(root, gitReaderFor(root)),
+      runAsync,
+      [],
+      [appendix]
+    );
+    expect((await exporter.exportOnce(dir)).state).toBe('committed');
+    s.tasks.create({ kind: 'task', title: 'Second task' });
+    await exporterFor(s).exportOnce(dir);
+    const tracked = run(dir, ['ls-tree', '-r', '--name-only', 'HEAD']).stdout;
+    expect(tracked).toContain('federation/audit.jsonl');
+  });
+
   it('commits nothing when the database has not changed', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
@@ -182,6 +206,25 @@ describe('ReceiptsExporter', () => {
     const result = await exporter.exportOnce(dir);
 
     expect(result.state).toBe('committed');
+    expect(log(dir)).toHaveLength(2);
+  });
+
+  it('clears a stale git lock a killed pass left, so exports keep committing', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    const dir = logDir();
+    const exporter = exporterFor(s);
+    await exporter.exportOnce(dir);
+    // What a kill -9 inside `git add` or `git commit` leaves behind.
+    writeFileSync(join(dir, '.git', 'index.lock'), '');
+    mkdirSync(join(dir, '.git', 'refs', 'heads'), { recursive: true });
+    writeFileSync(join(dir, '.git', 'refs', 'heads', 'main.lock'), '');
+    s.tasks.create({ kind: 'task', title: 'Second task' });
+
+    const result = await exporter.exportOnce(dir);
+
+    expect(result.state).toBe('committed');
+    expect(existsSync(join(dir, '.git', 'index.lock'))).toBe(false);
     expect(log(dir)).toHaveLength(2);
   });
 
@@ -517,6 +560,38 @@ describe('ReceiptsScheduler', () => {
     throw new Error(`the receipt log never reached ${count} commit(s)`);
   }
 
+  it('retries a failed export on a backoff instead of waiting for the sweep', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    let failures = 2;
+    const flaky: AsyncGitRunner = (cwd, args) => {
+      if (args.includes('commit') && failures > 0) {
+        failures -= 1;
+        return Promise.resolve({
+          status: 1,
+          stdout: '',
+          stderr: 'disk hiccup',
+        });
+      }
+      return runAsync(cwd, args);
+    };
+    const scheduler = new ReceiptsScheduler({
+      rootDir: root,
+      stores: s,
+      actor: ActorContext.resolve(root, gitReaderFor(root)),
+      run: flaky,
+      events: new EventBus(),
+      debounceMs: 5,
+      sweepMs: 60 * 60_000,
+      retryMs: [20, 40, 60],
+    });
+    expect((await scheduler.exportNow())?.state).toBe('failed');
+    await waitForCommits(defaultReceiptsDir(root), 1);
+    expect(failures).toBe(0);
+    expect(scheduler.lastResult()?.state).toBe('committed');
+    await scheduler.stop();
+  });
+
   it('exports once at boot', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
@@ -764,7 +839,9 @@ describe('ReceiptsScheduler', () => {
     expect(taskFiles(dir)).toHaveLength(2);
     expect(tracked(dir)).toContain('README.md');
     await scheduler.stop();
-  });
+    // A whole rebuild under load can outlast the 5 s default; waitForCommits
+    // polls for 10 s on its own.
+  }, 20_000);
 
   it('writes the whole board when receipts.dir points back at an older log', async () => {
     const s = stores();

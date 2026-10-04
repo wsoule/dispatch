@@ -1,6 +1,11 @@
 export const MEMORY_PACKAGE_VERSION = '0.1.0';
 export { memoryContentHash, normalizeTitle } from './contentHash.js';
-export { MEMORY_ERROR_STATUS, MemoryError } from './errors.js';
+export {
+  isSqliteBusy,
+  MEMORY_ERROR_STATUS,
+  MemoryBusyError,
+  MemoryError,
+} from './errors.js';
 export type { MemoryErrorCode } from './errors.js';
 export {
   HANDLE_PATTERN,
@@ -89,7 +94,7 @@ export {
 } from './visibility.js';
 export type { Viewer } from './visibility.js';
 export type { MemoryHost, MemoryStores } from './host.js';
-export { MemoryEngine } from './engine.js';
+export { isRestoredOrigin, MemoryEngine } from './engine.js';
 export { decayStore } from './decay.js';
 export type { DecayResult } from './decay.js';
 export type {
@@ -117,9 +122,11 @@ export {
   newIndexLines,
   parsedHash,
   parseMemoryFile,
+  parseReceiptFile,
   projectOnlyForClaudeType,
   readClaudeIndex,
   renderClaudeIndex,
+  renderReceiptFile,
   renderTopicFile,
   topicFileName,
 } from './claudeFiles.js';

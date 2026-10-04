@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ApiContext } from '../src/api.js';
-import { humanCredentialRef, routePrincipal } from '../src/api/caller.js';
+import {
+  humanActor,
+  humanCredentialRef,
+  requestActor,
+  routePrincipal,
+} from '../src/api/caller.js';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { RunMeta } from '../src/orchestrator/types.js';
@@ -160,11 +165,15 @@ describe('humanCredentialRef and routePrincipal', () => {
       viaAgentToken: true,
     });
     expect(humanCredentialRef(shared)).toBeNull();
+    // XH-R2: credited as agent:local-cli, so a memory proposal it raises is
+    // never authored by the owner.
     expect(routePrincipal(shared)).toEqual({
-      address: 'human:owner',
+      address: 'agent:local-cli',
       canDecide: false,
       kind: 'agent',
     });
+    expect(requestActor(shared)).toBe('agent:local-cli');
+    expect(humanActor(shared)).toBe('human:owner');
   });
 
   it('a teammate is a human who decides only at decide tier', () => {

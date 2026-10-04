@@ -172,6 +172,7 @@ export {
 export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
 export {
   materializeReceipts,
+  MEMORY_RECEIPT_FILE_BYTES,
   receiptSteps,
   restoreReceipts,
 } from './receipts.js';
@@ -326,19 +327,28 @@ export type {
 } from './config.js';
 export {
   clearCredential,
+  clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
+  CredentialsUnreadableError,
+  credentialsUnreadable,
+  readA2ASigningKey,
   readCredentials,
+  readPeerCredential,
   resolveLinearApiKey,
   resolveTypesafeApiKey,
+  writeA2ASigningKey,
   writeCredential,
+  writePeerCredential,
   writeProjectCredential,
 } from './credentials.js';
 export type {
   CredentialName,
   CredentialSource,
   CredentialsFile,
+  PeerCredential,
   ProjectCredentials,
+  SigningKeyRead,
 } from './credentials.js';
 export * from './linearContainers.js';
 export * from './linearFields.js';
@@ -409,3 +419,4 @@ export {
   TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from './mergeDriverSetup.js';
+export { childEnv } from './childEnv.js';

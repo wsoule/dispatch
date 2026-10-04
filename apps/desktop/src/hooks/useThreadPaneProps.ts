@@ -14,7 +14,7 @@ import {
   threadLookups,
 } from '../lib/threadSources';
 import type { DispatchProjectData } from './useDispatchProject';
-import { useAgentRoster, useChannels } from './useThreads';
+import { useA2APeers, useAgentRoster, useChannels } from './useThreads';
 
 export interface ThreadPaneProjectProps {
   lookups: ThreadLookups;
@@ -34,6 +34,7 @@ export function useThreadPaneProps(
   const { client, port, me, messageAccess: access } = data;
   const agents = useAgentRoster(client, port);
   const channels = useChannels(client, port, access.canMessage);
+  const peers = useA2APeers(client, access.canMessage);
   const lookups = useKeyed(lookupsKey(data.tasks, data.runs, agents), () =>
     threadLookups(data.tasks, data.runs, agents)
   );
@@ -49,8 +50,9 @@ export function useThreadPaneProps(
         agents,
         presence: data.presence,
         me,
+        peers,
       }),
-    [data.tasks, channels, agents, data.presence, me]
+    [data.tasks, channels, agents, data.presence, me, peers]
   );
   // App rebuilds its handlers on every event; refs keep these callbacks stable for memoised rows.
   const latest = useRef(data);

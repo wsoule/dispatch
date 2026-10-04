@@ -6,6 +6,88 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+- [clarification] A host reads an `a2a:` entry in an inbound `to` as its owner,
+  since a peer host writes `to` as its own name for the receiver; and only a 401
+  or an `AUTH_*` 403 marks a peer failed, while another 403 fails the one
+  message (§8.4, §8.9). Vector:
+  `a2a.external.an-a2a-recipient-reads-as-the-owner`.
+- [additive] The `task-proposal` gate type is permanent: only the system address
+  raises it, only a deciding principal answers it, and its answer chooses
+  `approve` or `decline` (§8.6, App. C.3). Vectors:
+  `core.gates.task-proposal-is-raised-only-by-the-system`,
+  `core.gates.task-proposal-needs-a-deciding-answer`,
+  `core.gates.task-proposal-is-answered-with-approve-or-decline`,
+  `a2a.projection.row-8-a-handoff-waits-on-its-proposal`.
+- [additive] The `work/v1` extension is permanent, with the task-state rows for
+  handoffs: a request's limits, a write's repository rule, and rows 2, 4, 6, 8,
+  9 and 10 for a handoff (§8.6, §8.7). Vectors:
+  `a2a.work-ext.accepts-a-handoff-with-every-field`,
+  `a2a.work-ext.accepts-a-status-request`,
+  `a2a.work-ext.refuses-an-unknown-skill`,
+  `a2a.work-ext.refuses-a-handoff-without-a-title`,
+  `a2a.work-ext.refuses-a-title-over-200-bytes`,
+  `a2a.work-ext.refuses-a-multi-line-title`,
+  `a2a.work-ext.refuses-more-than-20-acceptance-criteria`,
+  `a2a.work-ext.refuses-a-criterion-over-500-bytes`,
+  `a2a.work-ext.refuses-a-multi-line-criterion`,
+  `a2a.work-ext.refuses-more-than-50-writes`,
+  `a2a.work-ext.refuses-a-write-outside-the-repository`,
+  `a2a.work-ext.refuses-a-write-over-512-bytes`,
+  `a2a.work-ext.refuses-an-unknown-priority`,
+  `a2a.work-ext.refuses-more-than-10-labels`,
+  `a2a.work-ext.refuses-a-request-that-is-not-an-object`,
+  `a2a.projection.row-2-a-declined-handoff`,
+  `a2a.projection.row-2-a-handoff-dropped-by-the-owner`,
+  `a2a.projection.row-4-a-deleted-handoff`,
+  `a2a.projection.row-6-a-landed-handoff`,
+  `a2a.projection.row-8-a-handoff-waits-on-its-proposal`,
+  `a2a.projection.row-9-a-working-handoff`,
+  `a2a.projection.row-9-a-handoff-in-review-has-a-stage`,
+  `a2a.projection.row-9-a-status-of-the-hosts-own`,
+  `a2a.projection.row-10-an-approved-draft-is-submitted`,
+  `a2a.projection.row-10-needs-approval`.
+- [additive] The `memory` gate type is permanent: only the system address raises
+  it, never a human, a session or an agent; its shape is fixed, naming a
+  proposal and never its text; and only a deciding principal answers it (App.
+  C.3). Vectors: `core.gates.memory-is-raised-only-by-the-system`,
+  `core.gates.memory-is-refused-from-a-session-or-an-agent`,
+  `core.gates.memory-needs-a-deciding-answer`,
+  `env.envelope.a-memory-gate-names-a-proposal`,
+  `env.envelope.a-memory-gate-has-a-project-or-team-scope`,
+  `env.envelope.a-memory-gate-names-its-action-and-kind`,
+  `env.envelope.memory-gates-have-a-fixed-shape`.
+- [editorial] Appendix B lists the `memory_*` tools (§B.3), and Appendix C.4
+  says the system's `x-expired` answer also expires a memory proposal.
+- [additive] The `doc` ref type is permanent, in the Dispatch profile: a local
+  send may ref a document by its id and a section anchor (§4.3, App. C.1).
+  Vectors: `core.refs.a-local-doc-ref-is-accepted`.
+- [clarification] A vector that needs a profile ref type is a `dispatch` vector
+  (§12.3). Vectors: `core.refs.a-local-doc-ref-is-accepted`.
+- [additive] The `doc` gate type is permanent: only the system address raises
+  it, its shape is fixed, naming a document and its proposed revision and never
+  the text, and only a deciding principal answers it (App. C.3). With it, every
+  gate type in the registry is permanent, so a Dispatch-profile claim now
+  requires the adapter to declare all eight: `wake`, `tool-approval`, `scope`,
+  `agent-registration`, `overseer-action`, `task-proposal`, `memory` and `doc`
+  (§12.1). Vectors: `core.gates.doc-is-raised-only-by-the-system`,
+  `core.gates.doc-needs-a-deciding-answer`,
+  `env.envelope.a-doc-gate-names-its-doc-and-proposal`,
+  `env.envelope.doc-gates-have-a-fixed-shape`.
+- [editorial] Appendix A, complete since draft 1, names memory and documents
+  among the daemon routes outside DMP, and no appendix is a stub.
+- [clarification] A `scope`, `memory` or `doc` gate fails `invalid` only for
+  breaking a rule App. C.3 lists for it; other members of its data are not
+  checked. Vectors: `env.envelope.scope-gates-have-a-fixed-shape`,
+  `env.envelope.memory-gates-have-a-fixed-shape`,
+  `env.envelope.doc-gates-have-a-fixed-shape`.
+- [additive] The `a2a` address scheme is permanent, in the A2A binding: an
+  `a2a:<alias>` address names an outbound peer by an alias of at most 40
+  characters in the handle grammar, and a delivery to a peer, direct or through
+  a channel, is held for the host to relay (§3.4, §8.9). No registry entry is
+  provisional any more. Vectors: `a2a.peers.parses-an-alias`,
+  `a2a.peers.an-alias-is-at-most-40-characters`,
+  `a2a.peers.a-delivery-to-a-peer-is-held`.
+
 ## 1.0.0-draft.1 (2026-09-28)
 
 - [editorial] The core text: §0-7, §9-14.

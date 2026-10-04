@@ -45,7 +45,7 @@ import { join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import type { TaskCache } from '../cache.js';
-import type { EventBus } from '../events.js';
+import type { EventBus, SocketAudience } from '../events.js';
 import { FindingStore } from '../findings.js';
 import type { FindingStorePort } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
@@ -686,7 +686,13 @@ export class Orchestrator {
   }
 
   // A run's own message to a human, logged on its transcript.
-  logOutgoing(runId: string, message: { id: string; body: string }): void {
+  // `audience` scopes the run.log frame to the message's participants: a DM
+  // never reaches other sockets (XH-R4).
+  logOutgoing(
+    runId: string,
+    message: { id: string; body: string },
+    audience?: (who: SocketAudience | undefined) => boolean
+  ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const entry: NormalizedEntry = {
@@ -701,7 +707,7 @@ export class Orchestrator {
     this.bestEffort(`logging an outgoing message for run ${runId}`, () => {
       this.transcriptFor(runId).appendEntry(entry);
     });
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry }, audience);
   }
 
   // deliverToRun for a non-interrupting channel digest: logged the same way,
@@ -5471,8 +5477,15 @@ export class Orchestrator {
     executorName: string,
     runId: string
   ): (memorySection: string | null) => string {
+    // An A2A task's prompt fences its spec, amendments and comments, no epic.
+    const a2aOrigin = this.a2a(task.meta.id);
     let parentEpic: TaskDoc | null = null;
-    if (task.meta.parent !== null) {
+    // An A2A task's body is never parent context, whichever task runs.
+    if (
+      task.meta.parent !== null &&
+      !a2aOrigin &&
+      !this.a2a(task.meta.parent)
+    ) {
       try {
         parentEpic = this.ctx.store.get(task.meta.parent);
       } catch (err) {
@@ -5494,7 +5507,8 @@ export class Orchestrator {
         dispatchTools,
         humanRef,
         docs,
-        comments
+        comments,
+        a2aOrigin
       );
   }
 

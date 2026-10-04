@@ -1,3 +1,4 @@
+import { getSection } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
@@ -11,6 +12,7 @@ import {
 import type { RunMeta } from '../orchestrator/types.js';
 import { humanOperator } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
+import { decidingHuman } from './proposalFence.js';
 
 /**
  * `POST /api/tasks/:id/fanout` — run the same work on several agents at once.
@@ -63,6 +65,14 @@ export async function fanoutTask(
     );
   }
 
+  // Clones run the client's text: only a deciding human fans one out.
+  const a2a = ctx.a2a?.taskOrigin(taskId) === 'a2a';
+  if (a2a && !decidingHuman(ctx))
+    return errorResponse(
+      403,
+      `${taskId} came in over A2A; fanning it out needs the decide tier`
+    );
+
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { variants?: unknown };
@@ -83,7 +93,15 @@ export async function fanoutTask(
   };
 
   for (const variant of variants) {
-    const task = ctx.store.create(variantTaskInput(source, variant));
+    const created = ctx.store.create(variantTaskInput(source, variant));
+    // The Description went in at create; the criteria follow as their section.
+    const criteria = getSection(source.body, 'Acceptance Criteria');
+    const task =
+      criteria === ''
+        ? created
+        : ctx.store.update(created.meta.id, { acceptanceCriteria: criteria });
+    // Before dispatch, so the clone's run gets an A2A task's fences.
+    if (a2a) ctx.a2a?.markDerived(task.meta.id, taskId);
     // Refreshed per variant rather than once at the end: `dispatch` reads the
     // task back through the store, and a cache that has not caught up would
     // make the second variant fail to find the task the first just created.

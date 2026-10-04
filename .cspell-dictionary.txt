@@ -1,8 +1,10 @@
 ABCDEFGHJKMNPQRSTVWXYZ
 acceptedits
+acks
 ACMR
 acodex
 addext
+adminless
 affordances
 allowbuilds
 analysability
@@ -54,6 +56,7 @@ cdylib
 Centralised
 CFRG
 cfworker
+cgnat
 checkpointed
 chev
 choiceless
@@ -244,6 +247,7 @@ Lamport
 landable
 lede
 Lesk
+lfsconfig
 libc
 libsodium
 libvips
@@ -272,6 +276,7 @@ metacharacter
 METACHARS
 Metas
 misdescribe
+mkfifo
 mktemp
 modelcontextprotocol
 mojibake
@@ -304,6 +309,7 @@ nosuch
 NOSYSTEM
 notekind
 noul
+numstat
 nvim
 objectname
 obug
@@ -420,6 +426,7 @@ retheme
 retuned
 reusify
 revset
+rightless
 riscv
 rkbeef
 rlib
@@ -502,6 +509,7 @@ TESTKEY
 testuser
 textareas
 textful
+textconv
 theanshsonkar
 thiserror
 timsort
@@ -563,6 +571,7 @@ unkeyed
 unlayered
 unlisten
 unlistened
+unmatch
 unmutes
 unobservably
 unpadded

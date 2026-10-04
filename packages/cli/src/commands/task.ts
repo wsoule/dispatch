@@ -3,6 +3,7 @@ import {
   ActorContext,
   ASSIGNEES,
   canonicalStatus,
+  childEnv,
   loadConfig,
   PRIORITIES,
   readProjectBackend,
@@ -43,7 +44,11 @@ function canonicalStatusOpt(value: string | undefined): string | undefined {
 // repo would.
 function makeGitReader(cwd: string): GitReader {
   return (args) => {
-    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const result = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: childEnv(),
+    });
     return result.status === 0 ? result.stdout.trim() : null;
   };
 }

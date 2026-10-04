@@ -121,6 +121,24 @@ describe('decodeInbound', () => {
   });
 });
 
+describe('url parts', () => {
+  it.each([
+    'javascript:alert(1)',
+    'JavaScript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'file:///etc/passwd',
+    'vbscript:x',
+    'not a url',
+  ])('refuses %s, naming the part', (url) => {
+    expect(() => inbound({ parts: [{ text: 'see' }, { url }] })).toThrow(
+      expect.objectContaining({
+        code: 'invalid',
+        field: 'message.parts[1].url',
+      })
+    );
+  });
+});
+
 describe('encodeMessage', () => {
   const base: Message = {
     id: 'm-2',

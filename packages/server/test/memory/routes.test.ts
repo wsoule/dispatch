@@ -1,4 +1,5 @@
 import type { AddLedgerInput } from '@dispatch/core';
+import { openSqliteDb } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,10 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { renderImportReport } from '../../src/memory/ledgerImport.js';
 import type { LedgerImportReport } from '../../src/memory/ledgerImport.js';
+import {
+  memoryDbPath,
+  personalMemoryDir,
+} from '../../src/orchestrator/paths.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from '../testAuth.js';
 import { BEFORE_CUTOVER, importAtCutover, seedLedger } from './fixtures.js';
@@ -103,6 +108,79 @@ describe('memory read routes', () => {
     expect(health.ledgerImportText).toBe(
       renderImportReport(health.ledgerImport)
     );
+  });
+
+  it('retries a busy memory.db off the event loop, then answers 503 with Retry-After', async () => {
+    const save = (title: string) =>
+      fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'project',
+          kind: 'hazard',
+          title,
+          body: 'detail',
+        }),
+      });
+    const other = openSqliteDb(memoryDbPath(root));
+    other.exec('BEGIN IMMEDIATE');
+    // Released while the route waits between attempts: the retry lands.
+    setTimeout(() => other.exec('ROLLBACK'), 150);
+    expect((await save('lands after a retry')).status).toBe(201);
+    other.exec('BEGIN IMMEDIATE');
+    try {
+      const busy = await save('never lands');
+      expect(busy.status).toBe(503);
+      expect(busy.headers.get('retry-after')).toBe('1');
+    } finally {
+      other.exec('ROLLBACK');
+      other.close();
+    }
+  });
+
+  it('retries a busy identities.db off the event loop, then answers 503', async () => {
+    const issued = (await (
+      await fetch(`${base}/api/team/tokens`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com', tier: 'request' }),
+      })
+    ).json()) as { token: string };
+    const asAlice = (path: string, body: unknown) =>
+      rawFetch(`${base}${path}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${issued.token}`,
+        },
+        body: JSON.stringify(body),
+      });
+    // A personal save binds the teammate's alias, so a link writes only the code.
+    const saved = await asAlice('/api/memory', {
+      scope: 'personal',
+      kind: 'preference',
+      title: 'tabs',
+      body: 'two spaces',
+    });
+    expect(saved.status).toBe(201);
+    const other = openSqliteDb(join(personalMemoryDir(), 'identities.db'));
+    other.exec('BEGIN IMMEDIATE');
+    setTimeout(() => other.exec('ROLLBACK'), 150);
+    const started = performance.now();
+    const health = fetch(`${base}/api/health`);
+    const linked = asAlice('/api/memory/link', {});
+    expect((await health).status).toBe(200);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect((await linked).status).toBe(200);
+    other.exec('BEGIN IMMEDIATE');
+    try {
+      const busy = await asAlice('/api/memory/link', {});
+      expect(busy.status).toBe(503);
+      expect(busy.headers.get('retry-after')).toBe('1');
+    } finally {
+      other.exec('ROLLBACK');
+      other.close();
+    }
   });
 
   it('refuses the shared agent token, and A2A agents', async () => {

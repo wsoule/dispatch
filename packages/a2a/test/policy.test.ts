@@ -10,6 +10,7 @@ import {
   isReservedName,
   matchChoice,
   normalizeName,
+  peerSelfAddressed,
   replyChain,
   scopeOf,
 } from '../src/policy.js';
@@ -34,6 +35,17 @@ describe('names', () => {
   it('recognizes client addresses', () => {
     expect(isClientAddress(CLIENT)).toBe(true);
     expect(isClientAddress('agent:wyat/claude')).toBe(false);
+  });
+});
+
+describe('peerSelfAddressed', () => {
+  it('reads a peer host’s name for this host as the owner', () => {
+    expect(peerSelfAddressed(['a2a:pd'], 'human:wyat')).toEqual(['human:wyat']);
+  });
+  it('keeps other recipients and folds duplicates', () => {
+    expect(
+      peerSelfAddressed(['human:alice', 'a2a:pd', 'human:wyat'], 'human:wyat')
+    ).toEqual(['human:alice', 'human:wyat']);
   });
 });
 

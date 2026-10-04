@@ -119,7 +119,8 @@ class FakeDocsDaemon {
           body: raw === '' ? null : JSON.parse(raw),
         });
         if (url.pathname.startsWith('/api/tasks/')) {
-          if (auth !== SHARED)
+          // The request tier: the shared token, or a run's own (XH-R2).
+          if (auth !== SHARED && auth !== RUN_TOKEN)
             return Response.json({ error: 'unknown token' }, { status: 401 });
           return Response.json(this.task);
         }
@@ -665,5 +666,26 @@ describe('task_get docs', () => {
     expect(
       daemon.calls.some((x) => x.path.startsWith('/api/agents/register'))
     ).toBe(false);
+  });
+});
+
+describe('doc_save description', () => {
+  it('says replace_section keeps the heading and replaces only what is under it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-doc-desc-'));
+    try {
+      const server = createDispatchMcpServer(root);
+      const client = new Client({ name: 'test-client', version: '1.0' });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        client.connect(clientTransport),
+        server.connect(serverTransport),
+      ]);
+      const { tools } = await client.listTools();
+      const save = tools.find((t) => t.name === 'doc_save');
+      expect(save?.description).toContain('the heading line stays');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

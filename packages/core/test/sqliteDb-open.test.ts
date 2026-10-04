@@ -23,6 +23,14 @@ describe('openSqliteDb', () => {
     db.close();
   });
 
+  it('waits briefly on a busy database rather than failing at once or stalling', () => {
+    const db = openSqliteDb(':memory:');
+    const [row] = queryAll<{ timeout: number }>(db, 'PRAGMA busy_timeout');
+    expect(row.timeout).toBeGreaterThan(0);
+    expect(row.timeout).toBeLessThanOrEqual(100);
+    db.close();
+  });
+
   it('creates missing parent directories', () => {
     const dir = mkdtempSync(join(tmpdir(), 'open-sqlite-'));
     dirs.push(dir);

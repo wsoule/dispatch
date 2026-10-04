@@ -24,7 +24,7 @@ const TERMINAL_STATES = new Set([
  *  `a2a.changed` event refreshes them with one prefix. */
 export function a2aQueryKey(
   baseUrl: string | undefined,
-  what: 'listener' | 'card' | 'clients' | 'tasks'
+  what: 'listener' | 'card' | 'clients' | 'tasks' | 'peers'
 ): readonly unknown[] {
   return ['dispatch-a2a', baseUrl, what];
 }
@@ -37,6 +37,32 @@ export function isFromA2AClient(message: { from: string }): boolean {
 /** Whether a message came in over A2A, from a client or an `a2a:` peer. */
 export function isFromA2A(message: { from: string }): boolean {
   return message.from.startsWith('a2a:') || isFromA2AClient(message);
+}
+
+/** Whether an address is A2A: an `a2a:` peer or an A2A client agent. */
+export function isA2AAddress(address: string): boolean {
+  return isFromA2A({ from: address });
+}
+
+/** Active peers as the `a2a:<alias>` addresses a composer may complete. */
+export function peerAddresses(
+  peers: readonly { alias: string; status: string }[]
+): string[] {
+  return peers
+    .filter((p) => p.status === 'active')
+    .map((p) => `a2a:${p.alias}`);
+}
+
+const ORIGINS = /the card at (\S+) points at (\S+?);/;
+
+/** The two origins in the daemon's allowOrigin refusal, or null for any other error. */
+export function originConflict(error: {
+  field?: string;
+  message: string;
+}): { cardOrigin: string; interfaceOrigin: string } | null {
+  if (error.field !== 'allowOrigin') return null;
+  const m = ORIGINS.exec(error.message);
+  return m === null ? null : { cardOrigin: m[1], interfaceOrigin: m[2] };
 }
 
 /** A blocking, non-gate question from an A2A client, which a deciding human

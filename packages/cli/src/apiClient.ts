@@ -790,6 +790,40 @@ export interface ApiClient {
     fresh?: boolean;
   }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
   completeMemoryLink(code: string): Promise<{ identity: string }>;
+  // The signed team roster (decide tier to read, operator tier to change):
+  // build the client on the app token.
+  getTeamKeys(): Promise<TeamKeys>;
+  foundTeam(name?: string): Promise<
+    {
+      teamId: string;
+      recoveryCode: string;
+      fingerprint: string;
+    } & RosterAnswer
+  >;
+  trustFounder(fingerprint: string): Promise<void>;
+  inviteToTeam(handle: string): Promise<{ code: string; expires: string }>;
+  joinTeam(code: string): Promise<RosterAnswer>;
+  recoverTeam(code: string): Promise<RosterAnswer>;
+  newRecoveryCode(): Promise<{ recoveryCode: string }>;
+  shareTeamLicense(): Promise<void>;
+  admitReplica(replica: string, body: AdmitBody): Promise<RosterAnswer>;
+  revokeReplica(replica: string, reason?: string): Promise<RosterAnswer>;
+  setReplicaRole(
+    replica: string,
+    role: 'member' | 'admin'
+  ): Promise<RosterAnswer>;
+  setReplicaHosts(replica: string, hosts: string[]): Promise<RosterAnswer>;
+  closeLegacy(): Promise<void>;
+  /** Takes an op no build reads out of every fold, when this admin may. */
+  dismissRosterOp(
+    replica: string,
+    seq: number,
+    hash: string
+  ): Promise<RosterAnswer>;
+  /** Lets go of the invite this machine joined with. */
+  abandonInvite(): Promise<void>;
+  /** Acknowledges a race, cut, merge or route note; it is not raised again. */
+  ackProblem(subject: string): Promise<void>;
 }
 
 /** The fields of @dispatch/memory's entry view the CLI prints. */
@@ -834,7 +868,88 @@ export interface MemoryProposal {
   content: { kind: string; title: string } | null;
 }
 
-/** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts.
+/** What `keys admit` sends. */
+interface AdmitBody {
+  fingerprint: string;
+  handle?: string;
+  role?: 'member' | 'admin';
+  hosts?: string[];
+  observer?: boolean;
+}
+
+/** A roster change's answer: a warning when it could not pull first, and
+ *  pending while its sync is still running. */
+export interface RosterAnswer {
+  warning?: string;
+  pending?: boolean;
+  /** The roster already showed this change; nothing new was signed. */
+  already?: boolean;
+}
+
+/** Mirrors TeamKeys in packages/server/src/team/federation/teamKeys.ts. */
+export interface TeamKeys {
+  machine: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+  };
+  team: {
+    id: string;
+    name: string;
+    founder: { replica: string; handle: string; fingerprint: string };
+  } | null;
+  foundings: { replica: string; fingerprint: string }[];
+  roster: {
+    replica: string;
+    handle: string;
+    device: string;
+    build: string;
+    role: 'member' | 'admin';
+    rank: number | null;
+    hosts: string[];
+    observer: boolean;
+    recovered: boolean;
+    fingerprint: string;
+    lastSeen: string | null;
+    skewMs: number | null;
+  }[];
+  waiting: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+    invitedBy: string | null;
+  }[];
+  invites: { handle: string; expires: string; by: string }[];
+  legacy: { until: string | null; closed: boolean; olderBuilds: string[] };
+  transport: {
+    kind: 'git' | 'relay';
+    lastExchangeAt: string | null;
+    lastError: string | null;
+    unpublished: number;
+    sizeBytes: number | null;
+    acks: Record<string, string>;
+  };
+  license: {
+    seats: number;
+    org: string | null;
+    sharedBy: string | null;
+  } | null;
+  pruningBlockers: {
+    replica: string;
+    handle: string;
+    lastAck: string | null;
+  }[];
+  originWarning: string | null;
+  relayDisclosure: string;
+  warnings: string[];
+  problems: { subject: string; message: string; at: string }[];
+  /** The roster op a pause waits on, for a dismiss (FW-R8/R9); else null. */
+  pause: { replica: string; seq: number; hash: string } | null;
+}
+
+/** Mirrors FederationStatus in packages/server/src/team/federation/service.ts.
  *  `reason` (BoardSyncOffReason in packages/server/src/api.ts) is absent on
  *  daemons older than it. */
 export type SyncStatus =
@@ -852,6 +967,14 @@ export type SyncStatus =
       people: number;
       seats: number;
       paused: string | null;
+      // From a daemon with federation (FederationStatus); absent on older ones.
+      founded?: boolean;
+      teamId?: string | null;
+      legacyUntil?: string | null;
+      transport?: 'git' | 'relay';
+      federationProblems?: { subject: string; message: string; at: string }[];
+      /** On POST /now: the pass outran the daemon's wait and carries on. */
+      running?: boolean;
     };
 
 /** Mirrors licenseView in packages/server/src/team/routes.ts. */
@@ -1023,6 +1146,49 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         ...jsonBody({ key }),
         method: 'PUT',
       }),
+    getTeamKeys: () => request(target, '/api/team/keys'),
+    foundTeam: (name) =>
+      request(
+        target,
+        '/api/team/found',
+        jsonBody(name === undefined ? {} : { name })
+      ),
+    trustFounder: async (fingerprint) => {
+      await request(target, '/api/team/trust', jsonBody({ fingerprint }));
+    },
+    inviteToTeam: (handle) =>
+      request(target, '/api/team/invite', jsonBody({ handle })),
+    joinTeam: (code) => request(target, '/api/team/join', jsonBody({ code })),
+    recoverTeam: (code) =>
+      request(target, '/api/team/recover', jsonBody({ code })),
+    newRecoveryCode: () =>
+      request(target, '/api/team/recovery-key', jsonBody({})),
+    shareTeamLicense: async () => {
+      await request(target, '/api/team/license', jsonBody({}));
+    },
+    admitReplica: (replica, body) =>
+      request(target, rosterPath(replica, 'admit'), jsonBody(body)),
+    revokeReplica: (replica, reason) =>
+      request(
+        target,
+        rosterPath(replica, 'revoke'),
+        jsonBody(reason === undefined ? {} : { reason })
+      ),
+    setReplicaRole: (replica, role) =>
+      request(target, rosterPath(replica, 'role'), jsonBody({ role })),
+    setReplicaHosts: (replica, hosts) =>
+      request(target, rosterPath(replica, 'hosts'), jsonBody({ hosts })),
+    closeLegacy: async () => {
+      await request(target, '/api/team/close-legacy', jsonBody({}));
+    },
+    dismissRosterOp: (replica, seq, hash) =>
+      request(target, '/api/team/dismiss', jsonBody({ replica, seq, hash })),
+    abandonInvite: async () => {
+      await request(target, '/api/team/abandon-invite', jsonBody({}));
+    },
+    ackProblem: async (subject) => {
+      await request(target, '/api/team/problems/ack', jsonBody({ subject }));
+    },
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
@@ -1089,6 +1255,11 @@ function memoryQuery(
   return search.size > 0 ? `?${search.toString()}` : '';
 }
 
+// A roster action on one replica's key.
+function rosterPath(replica: string, action: string): string {
+  return `/api/team/keys/${encodeURIComponent(replica)}/${action}`;
+}
+
 // The A2A control surface. Mirrors packages/server/src/a2a/routes.ts and its
 // settings.ts; keep the two in step.
 interface A2AListenerSettings {
@@ -1098,7 +1269,8 @@ interface A2AListenerSettings {
   publicUrl: string | null;
   tls: { certPath: string; keyPath: string } | null;
   trustForwardedFor: boolean;
-  standalone: boolean;
+  // Left out, the daemon keeps its current switch.
+  standalone?: boolean;
 }
 
 export interface A2AListenerStatus {
@@ -1129,6 +1301,24 @@ interface A2ATaskSummary {
   dispatchTask: string | null;
 }
 
+// An outbound peer as /api/a2a/peers shows it; never its credential.
+// Mirrors packages/server/src/a2a/peers.ts PeerSummary.
+export interface A2APeerSummary {
+  alias: string;
+  cardUrl: string;
+  interfaceUrl: string;
+  binding: 'HTTP+JSON' | 'JSONRPC';
+  status: 'active' | 'disabled' | 'auth-failed';
+  name: string;
+  description: string;
+  skills: { id: string; name: string; description: string }[];
+  streaming: boolean;
+  addedBy: string;
+  addedTier: 'decide' | 'operator';
+  fetchedAt: string;
+  createdAt: string;
+}
+
 // Separate from ApiClient so its test fakes need not grow the A2A routes.
 export interface A2AApiClient {
   listenerStatus(): Promise<A2AListenerStatus>;
@@ -1145,6 +1335,39 @@ export interface A2AApiClient {
   revokeAgent(address: string): Promise<unknown>;
   tasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
   declineTask(id: string, reason?: string): Promise<unknown>;
+  peers(): Promise<{ peers: A2APeerSummary[] }>;
+  addPeer(input: {
+    alias: string;
+    cardUrl: string;
+    token?: string;
+    apiKeyHeader?: string;
+    allowHttp?: boolean;
+    allowOrigin?: boolean;
+  }): Promise<A2APeerSummary>;
+  refreshPeer(alias: string): Promise<A2APeerSummary>;
+  setPeerEnabled(
+    alias: string,
+    enabled: boolean,
+    token?: string
+  ): Promise<A2APeerSummary>;
+  removePeer(alias: string): Promise<void>;
+  hosts(): Promise<{ standalone: boolean; hosts: A2AHostSummary[] }>;
+  addHost(
+    name: string,
+    publicUrl: string
+  ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
+  removeHost(id: string): Promise<void>;
+  setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+}
+
+// A standalone host as /api/a2a/hosts lists it; never its token or hash.
+interface A2AHostSummary {
+  id: string;
+  name: string;
+  publicUrl: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt: string | null;
 }
 
 export function createA2AApiClient(
@@ -1185,5 +1408,33 @@ export function createA2AApiClient(
         `/api/a2a/tasks/${encodeURIComponent(id)}/decline`,
         jsonBody(reason === undefined ? {} : { reason })
       ),
+    peers: () => request(target, '/api/a2a/peers'),
+    addPeer: (input) => request(target, '/api/a2a/peers', jsonBody(input)),
+    refreshPeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}/refresh`, {
+        method: 'POST',
+      }),
+    setPeerEnabled: (alias, enabled, token) =>
+      request(
+        target,
+        `/api/a2a/peers/${encodeURIComponent(alias)}/${enabled ? 'enable' : 'disable'}`,
+        jsonBody(token === undefined ? {} : { token })
+      ),
+    removePeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}`, {
+        method: 'DELETE',
+      }),
+    hosts: () => request(target, '/api/a2a/hosts'),
+    addHost: (name, publicUrl) =>
+      request(target, '/api/a2a/hosts', jsonBody({ name, publicUrl })),
+    removeHost: (id) =>
+      request(target, `/api/a2a/hosts/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    setStandalone: (enabled) =>
+      request(target, '/api/a2a/listener/standalone', {
+        ...jsonBody({ enabled }),
+        method: 'PUT',
+      }),
   };
 }

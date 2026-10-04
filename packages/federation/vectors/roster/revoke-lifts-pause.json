@@ -1,0 +1,169 @@
+{
+  "name": "revoke-lifts-pause",
+  "input": {
+    "founder": {
+      "replica": "ada-0000000a",
+      "seq": 1
+    },
+    "ops": [
+      {
+        "replica": "ada-0000000a",
+        "seq": 1,
+        "hlc": "1790380800000.0000.ada-0000000a",
+        "hash": "337864fcb4fc040ea3c81780466f6b0562ecc34d9107fd333e4ac9e5df35419a",
+        "body": {
+          "rv": 1,
+          "action": "found",
+          "name": "acme",
+          "legacy": [],
+          "recoveryPub": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 2,
+        "hlc": "1790380800100.0000.ada-0000000a",
+        "hash": "01631d517ea8408b650e3d74aac003aa9a378999513f196e359d966d42d9c31c",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "dee-0000000d",
+          "handle": "dee",
+          "role": "member",
+          "fingerprint": "FP-dee-0000000d"
+        }
+      },
+      {
+        "replica": "dee-0000000d",
+        "seq": 3,
+        "hlc": "1790380800200.0000.dee-0000000d",
+        "hash": "09ef7358ffb705aff360604a0f5184572cf2f2d6aa32d8cfa75999d3d66a74f7",
+        "body": {
+          "rv": 1,
+          "action": "teleport"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 3,
+        "hlc": "1790380800300.0000.ada-0000000a",
+        "hash": "8db2ea02e1bd91be3ba1489a8742e3a2d09183419db43692ebc2b50d76ba0493",
+        "body": {
+          "rv": 1,
+          "action": "revoke",
+          "replica": "dee-0000000d",
+          "afterSeq": 2,
+          "afterHash": "h-dee-0000000d-2",
+          "reason": "test"
+        }
+      }
+    ],
+    "keys": [
+      [
+        "ada-0000000a",
+        {
+          "replica": "ada-0000000a",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000a",
+          "fingerprint": "FP-ada-0000000a"
+        }
+      ],
+      [
+        "bob-0000000b",
+        {
+          "replica": "bob-0000000b",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000b",
+          "fingerprint": "FP-bob-0000000b"
+        }
+      ],
+      [
+        "cy-0000000c",
+        {
+          "replica": "cy-0000000c",
+          "handle": "cy",
+          "signPub": "sign-cy-0000000c",
+          "fingerprint": "FP-cy-0000000c"
+        }
+      ],
+      [
+        "dee-0000000d",
+        {
+          "replica": "dee-0000000d",
+          "handle": "dee",
+          "signPub": "sign-dee-0000000d",
+          "fingerprint": "FP-dee-0000000d"
+        }
+      ],
+      [
+        "bob-0000000f",
+        {
+          "replica": "bob-0000000f",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000f",
+          "fingerprint": "FP-bob-0000000f"
+        }
+      ],
+      [
+        "ada-0000000e",
+        {
+          "replica": "ada-0000000e",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000e",
+          "fingerprint": "FP-ada-0000000e"
+        }
+      ],
+      [
+        "obs-00000010",
+        {
+          "replica": "obs-00000010",
+          "handle": "obs",
+          "signPub": "sign-obs-00000010",
+          "fingerprint": "FP-obs-00000010"
+        }
+      ]
+    ],
+    "now": "2026-09-27T00:00:00.000Z",
+    "licensePublicKey": null
+  },
+  "expect": {
+    "members": [["ada-0000000a", "admin", 0, [], false, false]],
+    "revoked": [
+      [
+        "dee-0000000d",
+        {
+          "afterSeq": 2,
+          "afterHash": "h-dee-0000000d-2",
+          "handle": "dee",
+          "hosts": [],
+          "observer": false
+        }
+      ]
+    ],
+    "hostCuts": [],
+    "resolution": [
+      [
+        "8db2ea02e1bd91be3ba1489a8742e3a2d09183419db43692ebc2b50d76ba0493",
+        "accepted"
+      ]
+    ],
+    "pending": [
+      "ada-0000000e",
+      "bob-0000000b",
+      "bob-0000000f",
+      "cy-0000000c",
+      "obs-00000010"
+    ],
+    "invites": [],
+    "invitedBy": [],
+    "seats": 3,
+    "people": ["ada"],
+    "covered": ["ada"],
+    "closedBy": null,
+    "transport": {
+      "kind": "git"
+    },
+    "dismissed": [],
+    "unknown": null
+  }
+}

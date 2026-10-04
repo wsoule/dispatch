@@ -32,6 +32,21 @@ describe('spawnWithDeadline', () => {
     expect(result.stderr).toContain('killed after 300ms');
   });
 
+  it('kills a command whose stdout passes the output cap', async () => {
+    const started = Date.now();
+    const result = await spawnWithDeadline(
+      ['sh', '-c', 'yes xxxxxxxxxxxxxxx'],
+      tmpdir(),
+      20_000,
+      undefined,
+      1024 * 1024
+    );
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result.status).toBe(-1);
+    expect(result.stdout.length).toBeLessThanOrEqual(1024 * 1024);
+    expect(result.stderr).toContain('output over 1048576 bytes');
+  });
+
   it('does not hold the event loop while the command runs', async () => {
     let ticks = 0;
     const ticker = setInterval(() => {

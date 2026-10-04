@@ -187,12 +187,16 @@ function validateWebhookUrl(value: unknown, label: string): string {
   return trimmed;
 }
 
+// Kind keys a newer build wrote that this one does not know, warned about once
+// per process: config.yml is committed, and an older build must still load it.
+const warnedUnknownKinds = new Set<string>();
+
 // Validates one `kinds:` map — the shape the loader and updateConfig share.
-// An unknown kind is an error rather than ignored, so a typo cannot leave the
-// kind it meant to silence on its default.
+// The loader skips an unknown kind; a patch naming one is still refused.
 function parseNotificationKinds(
   raw: unknown,
-  label: string
+  label: string,
+  skipUnknown = false
 ): Partial<Record<NotificationKind, boolean>> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new ConfigError(`invalid ${label}: must be an object`);
@@ -200,6 +204,15 @@ function parseNotificationKinds(
   const result: Partial<Record<NotificationKind, boolean>> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!NOTIFICATION_KINDS.includes(key as NotificationKind)) {
+      if (skipUnknown) {
+        if (!warnedUnknownKinds.has(key)) {
+          warnedUnknownKinds.add(key);
+          console.warn(
+            `dispatch: .dispatch/config.yml notifications.kinds.${key} is unknown to this build (expected ${NOTIFICATION_KINDS.join('|')}); ignored`
+          );
+        }
+        continue;
+      }
       throw new ConfigError(
         `invalid ${label}: unknown kind "${key}" (expected ${NOTIFICATION_KINDS.join('|')})`
       );
@@ -229,7 +242,8 @@ function parseNotificationsConfig(raw: unknown): NotificationsConfig {
       result.kinds,
       parseNotificationKinds(
         obj.kinds,
-        '.dispatch/config.yml: notifications.kinds'
+        '.dispatch/config.yml: notifications.kinds',
+        true
       )
     );
   }

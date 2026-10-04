@@ -7,6 +7,7 @@ import type {
 } from '@dispatch/core';
 import {
   assetNames,
+  childEnv,
   LINK_RELS,
   parseDocFile,
   renderDocFile,
@@ -160,6 +161,63 @@ function withUnread(
   };
 }
 
+// An exported image link: `![alt](<rel>/assets/<doc id>/<asset name>)`.
+const EXPORTED_IMAGE =
+  /!\[([^\]]*)\]\(([^)\s]*?assets\/(doc-[0-9A-Z]{26})\/([0-9a-f]{64}\.(?:png|jpg|gif|webp)))\)/g;
+
+// Points an exported doc's image links back at `asset:`, reading each image
+// its own assets/<doc id>/ folder holds; the names with no bytes are missing.
+function importedImages(
+  path: string,
+  docId: string,
+  text: string
+): { text: string; bytes: Map<string, Uint8Array>; missing: string[] } {
+  const bytes = new Map<string, Uint8Array>();
+  const missing = new Set<string>();
+  const rewritten = text.replace(
+    EXPORTED_IMAGE,
+    (whole, alt: string, target: string, owner: string, name: string) => {
+      if (owner !== docId) return whole;
+      try {
+        bytes.set(
+          name,
+          new Uint8Array(readFileSync(join(dirname(path), target)))
+        );
+      } catch {
+        missing.add(name);
+      }
+      return `![${alt}](asset:${name})`;
+    }
+  );
+  for (const name of assetNames(rewritten))
+    if (!bytes.has(name)) missing.add(name);
+  return { text: rewritten, bytes, missing: [...missing] };
+}
+
+// Uploads each image a committed name's docs link, from the files it was read
+// from; answers how many distinct images reached the daemon.
+async function uploadImages(
+  api: DocsApi,
+  report: ImportReportInfo,
+  images: ReadonlyMap<string, ReadonlyMap<string, Uint8Array>>
+): Promise<number> {
+  const uploaded = new Set<string>();
+  for (const { name, docs } of report.docs ?? []) {
+    const held = images.get(name);
+    if (held === undefined || held.size === 0) continue;
+    for (const doc of docs) {
+      const text = (await api.get(doc)).text;
+      for (const ref of assetNames(text)) {
+        const bytes = held.get(ref);
+        if (bytes === undefined) continue;
+        const stored = await api.putAsset(doc, bytes);
+        if (stored.name === ref) uploaded.add(ref);
+      }
+    }
+  }
+  return uploaded.size;
+}
+
 // Reads files on this machine (the daemon never reads arbitrary paths) and runs
 // one staged session: manifest, uploads of what the daemon needs, commit.
 export async function importFiles(
@@ -168,9 +226,12 @@ export async function importFiles(
   opts: { link?: string; dryRun: boolean }
 ): Promise<ImportReportInfo> {
   const unread: { path: string; detail: string }[] = [];
+  const images = new Map<string, Map<string, Uint8Array>>();
+  const missingImages: { path: string; detail: string }[] = [];
+  let referenced = 0;
   const files = paths.flatMap((path) => {
     try {
-      const raw = readFileSync(path);
+      let raw = readFileSync(path);
       // A receipts or export file: sent whole (the daemon reads its
       // frontmatter), under its own slug and time.
       const parsed = parseDocFile(raw.toString('utf8'));
@@ -184,6 +245,14 @@ export async function importFiles(
       ) {
         unread.push({ path, detail: 'personal docs are never imported' });
         return [];
+      }
+      if (doc !== null) {
+        const found = importedImages(path, doc.meta.id, raw.toString('utf8'));
+        raw = Buffer.from(found.text, 'utf8');
+        images.set(doc.meta.slug, found.bytes);
+        referenced += found.bytes.size + found.missing.length;
+        for (const name of found.missing)
+          missingImages.push({ path, detail: `image ${name} was not found` });
       }
       return [
         {
@@ -213,14 +282,42 @@ export async function importFiles(
   }
   try {
     const report = await api.commitImport(id, opts.dryRun);
+    const uploaded = opts.dryRun ? 0 : await uploadImages(api, report, images);
+    const held = [...images.values()].reduce((n, m) => n + m.size, 0);
+    const missing = missingImages.length + (opts.dryRun ? 0 : held - uploaded);
+    const withImages: ImportReportInfo = {
+      ...report,
+      errors:
+        missingImages.length === 0
+          ? report.errors
+          : [
+              ...report.errors,
+              ...missingImages.map((m) => ({
+                ...m,
+                reason: 'missing' as const,
+              })),
+            ],
+      parity: { ...report.parity, images: missing === 0 },
+      images: { referenced, uploaded, missing },
+    };
     return withUnread(
-      report,
+      withImages,
       unread,
       files.map((f) => f.path)
     );
   } finally {
     if (opts.dryRun) await api.deleteImport(id).catch(() => undefined);
   }
+}
+
+// Fails the import command on a parity mismatch, or when an image is missing.
+export function checkImportReport(r: ImportReportInfo): void {
+  if (!r.parity.files || !r.parity.names)
+    throw new CliError('parity mismatch; nothing was imported');
+  if (r.parity.images === false)
+    throw new CliError(
+      `${r.images?.missing ?? 0} image(s) missing; the docs were imported without them`
+    );
 }
 
 function printReport(ctx: CliContext, r: ImportReportInfo): void {
@@ -238,8 +335,12 @@ function printReport(ctx: CliContext, r: ImportReportInfo): void {
   );
   for (const e of r.errors)
     ctx.log(`error: ${e.path}: ${e.reason} (${e.detail})`);
+  const images =
+    r.images === undefined
+      ? ''
+      : `, images ${r.images.missing === 0 ? 'ok' : `${r.images.missing} MISSING`} (${r.images.uploaded} of ${r.images.referenced} uploaded)`;
   ctx.log(
-    `parity: files ${r.parity.files ? 'ok' : 'MISMATCH'}, names ${r.parity.names ? 'ok' : 'MISMATCH'}`
+    `parity: files ${r.parity.files ? 'ok' : 'MISMATCH'}, names ${r.parity.names ? 'ok' : 'MISMATCH'}${images}`
   );
 }
 
@@ -278,6 +379,7 @@ function runEditor(file: string): number {
   const [cmd, ...args] = (editor ?? 'vi').trim().split(/\s+/);
   return (
     spawnSync(cmd, [...args, file], {
+      env: childEnv(),
       stdio: 'inherit',
       shell: false,
     }).status ?? 1
@@ -744,8 +846,7 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
           { link: o.link, dryRun: o.dryRun === true }
         );
         printReport(ctx, report);
-        if (!report.parity.files || !report.parity.names)
-          throw new CliError('parity mismatch; nothing was imported');
+        checkImportReport(report);
       }
     );
 

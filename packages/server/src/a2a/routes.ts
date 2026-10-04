@@ -3,8 +3,11 @@ import {
   cardJson,
   clientNameFor,
   decideState,
+  isClientAddress,
+  PeerHttpError,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
+import { MessagingError } from '@dispatch/protocol';
 import { randomBytes } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
@@ -25,7 +28,17 @@ import { tierAllows } from '../tiers.js';
 import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
+import { hostPublicUrl, isHostName, mintHost } from './hosts.js';
+import type { PeerAddInput, PeerChange } from './peers.js';
+import {
+  addPeer,
+  peerSummary,
+  refreshPeer,
+  removePeer,
+  setPeerEnabled,
+} from './peers.js';
 import type { DaemonBridgePort } from './port.js';
+import { handlePortRoute } from './portRoutes.js';
 import { parseSettings } from './settings.js';
 
 const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -81,6 +94,9 @@ async function putListener(
   const parsed = parseSettings(body.value);
   if (!parsed.ok)
     return invalid(parsed.key, `${parsed.key} has the wrong type`);
+  // A write that leaves `standalone` out keeps the current switch.
+  if ((body.value as { standalone?: unknown }).standalone === undefined)
+    parsed.settings.standalone = b.a2a.standalone();
   const checked = b.a2a.check(parsed.settings);
   if (!checked.ok) return invalid(checked.key, checked.error);
   const status = await b.a2a.applySettings(parsed.settings);
@@ -103,6 +119,22 @@ function listClients(ctx: ApiContext, store: A2AStore): Response {
   return jsonResponse({ clients });
 }
 
+// Unapproved clients per requester, so registrations cannot pile up gates.
+const MAX_PENDING_CLIENTS = 10;
+
+// One requester's clients still waiting for approval.
+function pendingClients(ctx: ApiContext, requester: string): number {
+  const prefix = `agent:${requester.slice('human:'.length)}/`;
+  return ctx.messaging.store
+    .agents()
+    .filter(
+      (a) =>
+        a.status === 'pending' &&
+        a.address.startsWith(prefix) &&
+        isClientAddress(a.address)
+    ).length;
+}
+
 // POST /api/a2a/clients: the clients row first, then the agent row and its
 // registration gate, which `approve` answers at once for a deciding caller.
 async function addClient(
@@ -110,6 +142,16 @@ async function addClient(
   ctx: ApiContext,
   b: Running
 ): Promise<Response> {
+  // The shared agent token is no human: an agent must not mint the
+  // credentials outside callers reach this project with.
+  if (ctx.viaAgentToken === true)
+    return jsonResponse(
+      {
+        error: 'an agent cannot add A2A clients; a human adds them',
+        code: 'auth_agent_token',
+      },
+      403
+    );
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as {
@@ -147,6 +189,14 @@ async function addClient(
     );
   }
   const requester = humanActor(ctx);
+  if (
+    body.approve !== true &&
+    pendingClients(ctx, requester) >= MAX_PENDING_CLIENTS
+  )
+    return errorResponse(
+      429,
+      `${MAX_PENDING_CLIENTS} of your A2A clients already wait for approval; approve or revoke some first`
+    );
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
   // Any existing row, revoked included: a re-used name would inherit the old
   // client's tasks and threads, which key on the address.
@@ -170,6 +220,7 @@ async function addClient(
     client: 'a2a',
     requester,
     refuseAnyExisting: true,
+    approvedAtOnce: body.approve === true,
     gateBody: `New A2A client ${address} wants to reach this project. It may address ${[ctx.actorContext.humanRef, ...recipients].join(', ')}. Requested by ${requester}.`,
   });
   if (!reg.ok) return reg.response;
@@ -261,6 +312,180 @@ async function declineTask(
   return jsonResponse(b.store.getTask(id));
 }
 
+// A peer add body, field by field; MessagingError('invalid') names the bad one.
+function parsePeerAddInput(raw: Record<string, unknown>): PeerAddInput {
+  const text = (key: string, required: boolean): string | undefined => {
+    const v = raw[key];
+    if (v === undefined && !required) return undefined;
+    if (typeof v !== 'string' || (required && v.trim() === ''))
+      throw new MessagingError('invalid', `${key} must be text`, key);
+    return v;
+  };
+  const flag = (key: string): boolean | undefined => {
+    const v = raw[key];
+    if (v === undefined) return undefined;
+    if (typeof v !== 'boolean')
+      throw new MessagingError('invalid', `${key} must be true or false`, key);
+    return v;
+  };
+  const token = text('token', false);
+  const apiKeyHeader = text('apiKeyHeader', false);
+  const allowHttp = flag('allowHttp');
+  const allowOrigin = flag('allowOrigin');
+  return {
+    alias: text('alias', true) ?? '',
+    cardUrl: text('cardUrl', true) ?? '',
+    ...(token === undefined ? {} : { token }),
+    ...(apiKeyHeader === undefined ? {} : { apiKeyHeader }),
+    ...(allowHttp === undefined ? {} : { allowHttp }),
+    ...(allowOrigin === undefined ? {} : { allowOrigin }),
+  };
+}
+
+// `/api/a2a/peers[/:alias[/refresh|enable|disable]]`; tiers are in
+// ELEVATED_ROUTES, and addPeer asks the operator tier for private URLs.
+async function peerRoute(
+  req: Request,
+  ctx: ApiContext,
+  rest: string[],
+  method: string
+): Promise<Response | null> {
+  const service = ctx.a2a?.peers ?? null;
+  if (service === null)
+    return errorResponse(503, 'the A2A bridge is unavailable');
+  const caller = {
+    tier: ctx.caller?.tier ?? 'request',
+    ref: humanActor(ctx),
+  };
+  const changedPeer = (alias: string, what: PeerChange) => {
+    service.emit(alias, what);
+    changed(ctx);
+  };
+  try {
+    if (rest.length === 0 && method === 'GET')
+      return jsonResponse({
+        peers: service.deps.store.peers().map(peerSummary),
+      });
+    if (rest.length === 0 && method === 'POST') {
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return parsed.response;
+      const row = await addPeer(
+        service.deps,
+        parsePeerAddInput(parsed.value as Record<string, unknown>),
+        caller
+      );
+      changedPeer(row.alias, 'added');
+      return jsonResponse(peerSummary(row), 201);
+    }
+    if (rest.length === 0) return null;
+    const alias = decodeURIComponent(rest[0]);
+    if (rest.length === 1 && method === 'DELETE') {
+      if (!removePeer(service.deps, alias))
+        return errorResponse(404, `no A2A peer ${alias}`);
+      changedPeer(alias, 'removed');
+      return new Response(null, { status: 204 });
+    }
+    if (rest.length === 2 && method === 'POST' && rest[1] === 'refresh') {
+      const row = await refreshPeer(service.deps, service.notices, alias);
+      changedPeer(alias, row.status === 'disabled' ? 'disabled' : 'refreshed');
+      return jsonResponse(peerSummary(row));
+    }
+    if (
+      rest.length === 2 &&
+      method === 'POST' &&
+      (rest[1] === 'enable' || rest[1] === 'disable')
+    ) {
+      const parsed = await readJsonBodyOptional(req);
+      if (!parsed.ok) return parsed.response;
+      const token = (parsed.value as { token?: unknown }).token;
+      if (token !== undefined && typeof token !== 'string')
+        return invalid('token', 'token must be text');
+      const enable = rest[1] === 'enable';
+      const row = await setPeerEnabled(service.deps, alias, enable, token);
+      changedPeer(alias, enable ? 'enabled' : 'disabled');
+      return jsonResponse(peerSummary(row));
+    }
+    return null;
+  } catch (err) {
+    if (err instanceof PeerHttpError)
+      return jsonResponse(
+        {
+          error: `the peer's card could not be fetched: ${err.message}`,
+          field: 'cardUrl',
+        },
+        502
+      );
+    throw err;
+  }
+}
+
+// Standalone hosts and the switch that lets them in; tiers are in
+// ELEVATED_ROUTES (operator). A host's token is shown once, never listed.
+async function hostRoute(
+  req: Request,
+  ctx: ApiContext,
+  segments: string[],
+  method: string
+): Promise<Response | null> {
+  const b = bridge(ctx);
+  if (!b.ok) return b.response;
+  if (segments[0] === 'listener' && segments.length === 2 && method === 'PUT') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const enabled = (parsed.value as { enabled?: unknown }).enabled;
+    if (typeof enabled !== 'boolean')
+      return invalid('enabled', 'enabled must be true or false');
+    const result = await b.a2a.setStandalone(enabled);
+    changed(ctx);
+    return jsonResponse(result);
+  }
+  if (segments[0] !== 'hosts') return null;
+  if (segments.length === 1 && method === 'GET')
+    return jsonResponse({
+      standalone: b.a2a.standalone(),
+      hosts: b.store.hosts().map(({ tokenHash: _hash, ...row }) => row),
+    });
+  if (segments.length === 1 && method === 'POST') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const { name, publicUrl: rawUrl } = parsed.value as {
+      name?: unknown;
+      publicUrl?: unknown;
+    };
+    if (typeof name !== 'string' || !isHostName(name.trim()))
+      return invalid(
+        'name',
+        'name: letters, digits, spaces, ".", "_" and "-", at most 64'
+      );
+    const publicUrl = hostPublicUrl(rawUrl);
+    if (publicUrl === null)
+      return invalid(
+        'publicUrl',
+        'publicUrl: the URL the host serves on, https (or http on loopback), with no query'
+      );
+    const { row, token } = mintHost(
+      b.store,
+      name.trim(),
+      publicUrl,
+      humanActor(ctx)
+    );
+    changed(ctx);
+    return jsonResponse(
+      { id: row.id, name: row.name, publicUrl: row.publicUrl, token },
+      201
+    );
+  }
+  if (segments.length === 2 && method === 'DELETE') {
+    const id = decodeURIComponent(segments[1]);
+    if (!b.store.revokeHost(id, new Date().toISOString()))
+      return errorResponse(404, `no live A2A host ${id}`);
+    b.a2a.hostRevoked(id);
+    changed(ctx);
+    return new Response(null, { status: 204 });
+  }
+  return null;
+}
+
 // `/api/a2a/*` after the `a2a` segment; null for anything it does not serve,
 // so handleApi's 404 applies. Tiers are enforced in ELEVATED_ROUTES.
 export async function handleA2ARoute(
@@ -269,6 +494,15 @@ export async function handleA2ARoute(
   segments: string[],
   method: string
 ): Promise<Response | null> {
+  if (segments[0] === 'peers')
+    return peerRoute(req, ctx, segments.slice(1), method);
+  if (segments[0] === 'port')
+    return handlePortRoute(req, ctx, segments.slice(1), method);
+  if (
+    segments[0] === 'hosts' ||
+    (segments[0] === 'listener' && segments[1] === 'standalone')
+  )
+    return hostRoute(req, ctx, segments, method);
   const withId = segments.length === 3;
   const key = withId
     ? `${method} ${segments[0]}/*/${segments[2]}`

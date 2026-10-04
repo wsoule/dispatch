@@ -936,6 +936,7 @@ export interface LedgerImportReport {
     truncated: number;
     alreadyImported: number;
     alreadyDeleted: number;
+    duplicates: number;
   };
   audit: Record<string, number>;
   damaged: number;
@@ -978,6 +979,16 @@ export interface MemoryHealth {
   pinnedOverflow: boolean;
   /** Why runs cannot use the Claude export (its preflight failed), or null. */
   exportBlocked: string | null;
+  /** The last receipt-log restore this daemon applied, or null. */
+  restore?: {
+    restored: number;
+    skipped: number;
+    /** Files left staged past the per-boot limit, for the next boot. */
+    deferred: number;
+    problems: { file: string; detail: string }[];
+    pending: string | null;
+    at: string;
+  } | null;
   /** The owner's Claude-notes import; null for anyone but the daemon's own human. */
   claudeImport: {
     state: 'complete' | 'failed' | 'unconfirmed' | 'running' | null;
@@ -1334,6 +1345,34 @@ export interface A2ATaskSummary {
   canceledAt: string | null;
   declinedAt: string | null;
   createdAt: string;
+}
+
+// One row of GET /api/a2a/peers: an outbound peer, never its credential.
+// Mirrors PeerSummary in packages/server/src/a2a/peers.ts.
+export interface A2APeerSummary {
+  alias: string;
+  cardUrl: string;
+  interfaceUrl: string;
+  binding: 'HTTP+JSON' | 'JSONRPC';
+  status: 'active' | 'disabled' | 'auth-failed';
+  name: string;
+  description: string;
+  skills: { id: string; name: string; description: string }[];
+  streaming: boolean;
+  addedBy: string;
+  addedTier: 'decide' | 'operator';
+  fetchedAt: string;
+  createdAt: string;
+}
+
+// The body of POST /api/a2a/peers.
+export interface A2APeerInput {
+  alias: string;
+  cardUrl: string;
+  token?: string;
+  apiKeyHeader?: string;
+  allowHttp?: boolean;
+  allowOrigin?: boolean;
 }
 
 // The body of `GET /api/runs/claims` — one entry per live run.
@@ -2118,7 +2157,7 @@ export type BoardSyncOffReason = 'files' | 'off' | 'not-started';
  *  daemons older than it. */
 export type BoardSyncStatus =
   | { enabled: false; reason?: BoardSyncOffReason }
-  | {
+  | ({
       enabled: true;
       replica: string;
       remote: string;
@@ -2134,7 +2173,115 @@ export type BoardSyncStatus =
       /** Why this machine is paused though the remote is fine — it is past
        *  the license's seats — or null while it syncs. */
       paused: string | null;
-    };
+    } & FederationSyncFields);
+
+/** What a federated daemon adds to the board-sync status (FederationStatus
+ *  in packages/server/src/team/federation/service.ts); absent on older ones,
+ *  and health and problems only at the decide tier. */
+interface FederationSyncFields {
+  teamId?: string | null;
+  founded?: boolean;
+  legacyUntil?: string | null;
+  transport?: 'git' | 'relay';
+  transportHealth?: TransportHealth;
+  federationProblems?: TeamProblem[];
+  /** On POST /now: the pass outran the daemon's wait and carries on. */
+  running?: boolean;
+}
+
+/** One federation problem: its subject names its source (halt:, clock:,
+ *  team:race:, …) and the message what to do. */
+interface TeamProblem {
+  subject: string;
+  message: string;
+  at: string;
+}
+
+/** Mirrors TransportHealth in packages/server/src/team/federation/transport.ts. */
+interface TransportHealth {
+  kind: 'git' | 'relay';
+  lastExchangeAt: string | null;
+  lastError: string | null;
+  unpublished: number;
+  sizeBytes: number | null;
+  readBytes: number;
+  acks: Record<string, string>;
+}
+
+/** Mirrors TeamKeys in packages/server/src/team/federation/teamKeys.ts. */
+export interface TeamKeys {
+  machine: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+  };
+  team: {
+    id: string;
+    name: string;
+    founder: { replica: string; handle: string; fingerprint: string };
+  } | null;
+  /** Two or more, awaiting trust. */
+  foundings: { replica: string; fingerprint: string }[];
+  roster: {
+    replica: string;
+    handle: string;
+    device: string;
+    build: string;
+    role: 'member' | 'admin';
+    rank: number | null;
+    hosts: string[];
+    observer: boolean;
+    recovered: boolean;
+    fingerprint: string;
+    lastSeen: string | null;
+    skewMs: number | null;
+  }[];
+  waiting: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+    invitedBy: string | null;
+  }[];
+  invites: { handle: string; expires: string; by: string }[];
+  legacy: { until: string | null; closed: boolean; olderBuilds: string[] };
+  transport: TransportHealth;
+  license: {
+    seats: number;
+    org: string | null;
+    sharedBy: string | null;
+  } | null;
+  pruningBlockers: {
+    replica: string;
+    handle: string;
+    lastAck: string | null;
+  }[];
+  originWarning: string | null;
+  relayDisclosure: string;
+  warnings: string[];
+  problems: TeamProblem[];
+  /** The roster op a pause waits on, for a dismiss (FW-R8/R9); else null. */
+  pause: { replica: string; seq: number; hash: string } | null;
+}
+
+/** A roster change's answer: a warning when it could not pull first,
+ *  `pending` while its sync still runs, `already` when the roster already
+ *  showed it. */
+interface RosterAnswer {
+  ok?: boolean;
+  warning?: string;
+  pending?: boolean;
+  already?: boolean;
+}
+
+/** What admitting a waiting machine sends. */
+interface AdmitInput {
+  fingerprint: string;
+  handle?: string;
+  role?: 'member' | 'admin';
+  hosts?: string[];
+}
 
 /** The plan a project runs on: how many people may use it together, and
  *  how many do. Mirrors licenseView in packages/server/src/team/routes.ts. */
@@ -3027,6 +3174,39 @@ export interface ApiClient {
   /** Installs a license key. Rejects with the reason when it does not
    *  verify; the key already installed stays. */
   installLicense(key: string): Promise<LicenseStatus>;
+  /** Decide-tier: this machine, the signed team, its roster and problems. */
+  getTeamKeys(): Promise<TeamKeys>;
+  /** Operator-tier from here on: each signs a roster op with this machine. */
+  foundTeam(
+    name?: string
+  ): Promise<
+    { teamId: string; recoveryCode: string; fingerprint: string } & RosterAnswer
+  >;
+  trustFounder(fingerprint: string): Promise<RosterAnswer>;
+  inviteToTeam(
+    handle: string
+  ): Promise<{ code: string; expires: string } & RosterAnswer>;
+  joinTeam(code: string): Promise<RosterAnswer>;
+  recoverTeam(code: string): Promise<RosterAnswer>;
+  newRecoveryCode(): Promise<{ recoveryCode: string } & RosterAnswer>;
+  shareTeamLicense(): Promise<RosterAnswer>;
+  admitReplica(replica: string, input: AdmitInput): Promise<RosterAnswer>;
+  revokeReplica(replica: string, reason?: string): Promise<RosterAnswer>;
+  setReplicaRole(
+    replica: string,
+    role: 'member' | 'admin'
+  ): Promise<RosterAnswer>;
+  setReplicaHosts(replica: string, hosts: string[]): Promise<RosterAnswer>;
+  closeLegacy(): Promise<RosterAnswer>;
+  /** FW-R8: takes an op no build reads out of every fold. */
+  dismissRosterOp(
+    replica: string,
+    seq: number,
+    hash: string
+  ): Promise<RosterAnswer>;
+  abandonInvite(): Promise<RosterAnswer>;
+  /** Decide-tier: acknowledges a race, cut, merge or route note. */
+  ackProblem(subject: string): Promise<void>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;
@@ -3699,6 +3879,20 @@ export interface ApiClient {
   a2aTasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
   /** Closes an unanswered ask; the client sees REJECTED with the reason. */
   declineA2ATask(id: string, reason?: string): Promise<unknown>;
+  a2aPeers(): Promise<{ peers: A2APeerSummary[] }>;
+  /** Decide tier; private URLs, allowHttp and allowOrigin need the operator. */
+  addA2APeer(input: A2APeerInput): Promise<A2APeerSummary>;
+  refreshA2APeer(alias: string): Promise<A2APeerSummary>;
+  /** `token` replaces the stored credential. */
+  setA2APeerEnabled(
+    alias: string,
+    enabled: boolean,
+    token?: string
+  ): Promise<A2APeerSummary>;
+  /** Removes the peer and its stored credential. */
+  removeA2APeer(alias: string): Promise<void>;
+  /** Operator tier: lets standalone hosts reach /api/a2a/port, or closes it. */
+  setA2AStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -3931,6 +4125,35 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'PUT',
         body: JSON.stringify({ key }),
       }),
+    getTeamKeys: () => request(target, '/api/team/keys'),
+    foundTeam: (name) =>
+      teamPost(target, '/api/team/found', name === undefined ? {} : { name }),
+    trustFounder: (fingerprint) =>
+      teamPost(target, '/api/team/trust', { fingerprint }),
+    inviteToTeam: (handle) => teamPost(target, '/api/team/invite', { handle }),
+    joinTeam: (code) => teamPost(target, '/api/team/join', { code }),
+    recoverTeam: (code) => teamPost(target, '/api/team/recover', { code }),
+    newRecoveryCode: () => teamPost(target, '/api/team/recovery-key', {}),
+    shareTeamLicense: () => teamPost(target, '/api/team/license', {}),
+    admitReplica: (replica, input) =>
+      teamPost(target, rosterPath(replica, 'admit'), input),
+    revokeReplica: (replica, reason) =>
+      teamPost(
+        target,
+        rosterPath(replica, 'revoke'),
+        reason === undefined ? {} : { reason }
+      ),
+    setReplicaRole: (replica, role) =>
+      teamPost(target, rosterPath(replica, 'role'), { role }),
+    setReplicaHosts: (replica, hosts) =>
+      teamPost(target, rosterPath(replica, 'hosts'), { hosts }),
+    closeLegacy: () => teamPost(target, '/api/team/close-legacy', {}),
+    dismissRosterOp: (replica, seq, hash) =>
+      teamPost(target, '/api/team/dismiss', { replica, seq, hash }),
+    abandonInvite: () => teamPost(target, '/api/team/abandon-invite', {}),
+    ackProblem: async (subject) => {
+      await teamPost(target, '/api/team/problems/ack', { subject });
+    },
     fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>
@@ -4712,6 +4935,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     disableA2AListener: () =>
       request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    setA2AStandalone: (enabled) =>
+      request(target, '/api/a2a/listener/standalone', {
+        method: 'PUT',
+        ...jsonBody({ enabled }),
+      }),
     a2aCard: () => request(target, '/api/a2a/card'),
     a2aClients: () => request(target, '/api/a2a/clients'),
     addA2AClient: (input) =>
@@ -4735,6 +4963,28 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(reason === undefined ? {} : { reason }),
       }),
+    a2aPeers: () => request(target, '/api/a2a/peers'),
+    addA2APeer: (input) =>
+      request(target, '/api/a2a/peers', { method: 'POST', ...jsonBody(input) }),
+    refreshA2APeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}/refresh`, {
+        method: 'POST',
+      }),
+    setA2APeerEnabled: (alias, enabled, token) =>
+      request(
+        target,
+        `/api/a2a/peers/${encodeURIComponent(alias)}/${enabled ? 'enable' : 'disable'}`,
+        {
+          method: 'POST',
+          ...jsonBody(token === undefined ? {} : { token }),
+        }
+      ),
+    // send(), not request(): the daemon answers 204 with no body.
+    removeA2APeer: async (alias) => {
+      await send(target, `/api/a2a/peers/${encodeURIComponent(alias)}`, {
+        method: 'DELETE',
+      });
+    },
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>
@@ -4831,4 +5081,18 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, { token: target.token, ...options }),
   };
+}
+
+// A federation route's POST with its JSON body.
+function teamPost<T>(
+  target: ApiTarget,
+  path: string,
+  body: object
+): Promise<T> {
+  return request(target, path, { method: 'POST', body: JSON.stringify(body) });
+}
+
+// A roster action on one replica's key, the replica percent-encoded.
+function rosterPath(replica: string, action: string): string {
+  return `/api/team/keys/${encodeURIComponent(replica)}/${action}`;
 }

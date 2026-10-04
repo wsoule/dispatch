@@ -45,10 +45,22 @@ function optionsUnder(experiments: ExperimentName[]): Options | undefined {
 
 describe('ClaudeExecutor experiments', () => {
   it('changes nothing beyond the always-removed tools by default', () => {
-    const options = optionsUnder([]);
-    expect(options?.disallowedTools).toEqual([...UNUSABLE_IN_DISPATCHED_RUN]);
-    // No env override: the CLI inherits the daemon's environment as before.
-    expect(options?.env).toBeUndefined();
+    const saved = process.env.DISPATCH_PROBE_TOKEN;
+    process.env.DISPATCH_PROBE_TOKEN = 'secret';
+    try {
+      const options = optionsUnder([]);
+      expect(options?.disallowedTools).toEqual([...UNUSABLE_IN_DISPATCHED_RUN]);
+      // The env is always set: the daemon's own, without its tokens.
+      const env = options?.env ?? {};
+      expect(env.PATH).toBe(process.env.PATH);
+      expect(env.ENABLE_PROMPT_CACHING_1H).toBeUndefined();
+      expect(
+        Object.keys(env).filter((k) => /^DISPATCH_\w*TOKEN/.test(k))
+      ).toEqual([]);
+    } finally {
+      if (saved === undefined) delete process.env.DISPATCH_PROBE_TOKEN;
+      else process.env.DISPATCH_PROBE_TOKEN = saved;
+    }
   });
 
   it('lean-tools also removes the rarely needed tools, keeping the core set', () => {

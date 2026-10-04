@@ -1,8 +1,21 @@
 import { TaskStore } from '@dispatch/core';
 import type { Principal } from '@dispatch/memory';
+import {
+  createMemoryIds,
+  newMemoryEntry,
+  renderReceiptFile,
+} from '@dispatch/memory';
 import type { DeliveryEngine } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +23,7 @@ import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { PROBED_CLAUDE_CODE_VERSION } from '../../src/memory/claudeModes.js';
+import { memoryRestoreDir } from '../../src/memory/receipts.js';
 import { openMemory, overseerMemory } from '../../src/memory/service.js';
 import type { OpenMemoryDeps } from '../../src/memory/service.js';
 import { GateHandlers } from '../../src/messaging/gates.js';
@@ -53,6 +67,175 @@ function setup(over: Partial<OpenMemoryDeps> = {}) {
   });
   return { root, memory, ledgerStore, events, seen };
 }
+
+describe('restoring staged team memory', () => {
+  it('drains files past the per-pass limit on a timer, not only at the next boot', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-drain-home-'))
+    );
+    const t = setup({ restoreBatch: 1, restoreDrainMs: 10 });
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const ids = createMemoryIds();
+    for (const title of ['one', 'two', 'three']) {
+      const e = newMemoryEntry(
+        {
+          scope: 'team',
+          kind: 'fact',
+          title,
+          body: `${title} body`,
+          author: 'human:wyat',
+          trust: 'human',
+        },
+        ids.entry(Date.now()),
+        new Date().toISOString()
+      );
+      writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    }
+    const first = await t.memory.restoreStaged();
+    expect(first).toMatchObject({ restored: 1, deferred: 2 });
+    expect(first?.pending).not.toContain('restart');
+    await waitFor(() => !existsSync(staging));
+    expect(t.memory.shared?.listProposals()).toHaveLength(3);
+    // Health counts every pass, not just the last one.
+    expect(t.memory.health(null).restore).toMatchObject({
+      restored: 3,
+      deferred: 0,
+      problems: [],
+    });
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore problems', () => {
+  it('names each staged file a restore could not take, for /api/health', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-problem-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, 'notes.md'), 'stray\n');
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toEqual([
+      'memory restore: notes.md: not a memory receipt file name',
+    ]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore health over several passes', () => {
+  it('counts each file once and clears a problem once its file is gone', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-dedupe-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, 'notes.md'), 'stray\n');
+    const e = newMemoryEntry(
+      {
+        scope: 'team',
+        kind: 'fact',
+        title: 'kept',
+        body: 'kept body',
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      createMemoryIds().entry(Date.now()),
+      new Date().toISOString()
+    );
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    await t.memory.restoreStaged();
+    // A second pass meets the same stray file: one problem line, not two.
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toHaveLength(1);
+    expect(t.memory.health(null).restore).toMatchObject({
+      restored: 1,
+      skipped: 0,
+    });
+    rmSync(join(staging, 'notes.md'));
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore retries and restarts', () => {
+  const lesson = (title: string) =>
+    newMemoryEntry(
+      {
+        scope: 'team',
+        kind: 'fact',
+        title,
+        body: `${title} body`,
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      createMemoryIds().entry(Date.now()),
+      new Date().toISOString()
+    );
+
+  it('keeps retrying a staging dir it could not empty until it can', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-retry-home-'))
+    );
+    const t = setup({ restoreDrainMs: 10 });
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const e = lesson('stuck');
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    chmodSync(staging, 0o500);
+    try {
+      await t.memory.restoreStaged();
+      expect(t.memory.restoreProblems()[0]).toContain('could not remove');
+    } finally {
+      chmodSync(staging, 0o700);
+    }
+    await waitFor(() => !existsSync(staging));
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+
+  it('shows the restore totals again after a restart', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-restart-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const e = lesson('kept');
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    await t.memory.restoreStaged();
+    t.memory.close();
+    const reopened = openMemory({
+      rootDir: t.root,
+      store: TaskStore.init(t.root),
+      events: new EventBus(),
+      ledgerStore: t.ledgerStore,
+      ...quietDaemon(t.root),
+      dbPath: join(t.root, 'memory.db'),
+    });
+    expect(reopened.health(null).restore).toMatchObject({ restored: 1 });
+    reopened.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
 
 describe('openMemory', () => {
   it('imports at boot and again on ledger.changed, announcing a team change', () => {
