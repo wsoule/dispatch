@@ -1,8 +1,6 @@
 import type { A2AConfig } from '@dispatch/core';
 import { DEFAULT_A2A } from '@dispatch/core';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createServer as createHttpServer } from 'node:http';
-import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo, Socket } from 'node:net';
 
 import { JWKS_PATH } from '../card.js';
@@ -248,10 +246,14 @@ export async function startStandalone(
       res.end();
     });
   };
+  // node:http(s) load on first use: see test/lazy-imports.test.ts.
   const server =
     o.tls === null
-      ? createHttpServer(handler)
-      : createHttpsServer({ cert: o.tls.cert, key: o.tls.key }, handler);
+      ? (await import('node:http')).createServer(handler)
+      : (await import('node:https')).createServer(
+          { cert: o.tls.cert, key: o.tls.key },
+          handler
+        );
   // Tracked so stop() can end keep-alive and SSE connections on Node and Bun alike.
   const sockets = new Set<Socket>();
   server.on('connection', (socket: Socket) => {

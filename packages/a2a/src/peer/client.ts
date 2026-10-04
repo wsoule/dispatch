@@ -9,11 +9,6 @@ import {
   Task,
 } from '@a2a-js/sdk';
 import type { Client } from '@a2a-js/sdk/client';
-import {
-  ClientFactory,
-  JsonRpcTransportFactory,
-  RestTransportFactory,
-} from '@a2a-js/sdk/client';
 import { VersionNotSupportedError } from '@a2a-js/sdk/errors';
 import type { JsonValue } from '@dispatch/protocol';
 
@@ -71,7 +66,10 @@ function shortMessage(text: string): string {
 export class PeerClient {
   constructor(private readonly o: PeerClientOptions) {}
 
-  private sdk(box: StatusBox, signal?: AbortSignal): Promise<Client> {
+  private async sdk(box: StatusBox, signal?: AbortSignal): Promise<Client> {
+    // Loaded on first contact, not at import: see test/lazy-imports.test.ts.
+    const { ClientFactory, JsonRpcTransportFactory, RestTransportFactory } =
+      await import('@a2a-js/sdk/client');
     const fetchImpl = peerFetch({
       headers: {
         [A2A_VERSION_HEADER]: '1.0',
