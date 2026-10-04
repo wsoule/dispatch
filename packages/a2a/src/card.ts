@@ -210,13 +210,68 @@ export async function signCard(
   ];
 }
 
-// Whether Dispatch's own signature (typ DISPATCH_CARD_TYP; never the
-// SDK-form one, which leaves the auth fields out) verifies over the card's
-// JSON as received, under the key `keyFor` returns for its kid.
+// Whether a JSON text (already known to parse) repeats a member name in any
+// object: I-JSON (RFC 7493) forbids it, since readers keep different copies.
+function hasDuplicateKeys(text: string): boolean {
+  const stack: (Set<string> | null)[] = [];
+  let expectKey = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      const top = stack.at(-1);
+      if (expectKey && top instanceof Set) {
+        const key = JSON.parse(text.slice(i, j + 1)) as string;
+        if (top.has(key)) return true;
+        top.add(key);
+        expectKey = false;
+      }
+      i = j;
+    } else if (c === '{') {
+      stack.push(new Set());
+      expectKey = true;
+    } else if (c === '[') {
+      stack.push(null);
+    } else if (c === '}' || c === ']') {
+      stack.pop();
+      expectKey = false;
+    } else if (c === ',') {
+      expectKey = stack.at(-1) instanceof Set;
+    }
+  }
+  return false;
+}
+
+// RFC 7638 thumbprint of a P-256 public key; null for any other key.
+function ecThumbprint(jwk: JWK): string | null {
+  if (jwk.kty !== 'EC' || jwk.crv !== 'P-256') return null;
+  if (typeof jwk.x !== 'string' || typeof jwk.y !== 'string') return null;
+  return createHash('sha256')
+    .update(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }))
+    .digest('base64url');
+}
+
+// Whether Dispatch's own signature (typ DISPATCH_CARD_TYP; never the SDK-form
+// one, which leaves the auth fields out) verifies over the card as received.
+// Pass the raw text where you have it: a duplicate member name fails. keyFor
+// gets the kid alone (a card's own jku is attacker-chosen), and the key it
+// returns must have that kid as its RFC 7638 thumbprint.
 export async function verifyCardSignature(
-  served: Record<string, unknown>,
-  keyFor: (kid: string, jku: string | undefined) => Promise<JWK>
+  card: string | Record<string, unknown>,
+  keyFor: (kid: string) => Promise<JWK>
 ): Promise<boolean> {
+  let served: Record<string, unknown>;
+  if (typeof card === 'string') {
+    try {
+      served = JSON.parse(card) as Record<string, unknown>;
+    } catch {
+      return false;
+    }
+    if (hasDuplicateKeys(card)) return false;
+  } else {
+    served = card;
+  }
   const signatures = Array.isArray(served.signatures)
     ? (served.signatures as CardSignatureJson[])
     : [];
@@ -225,16 +280,14 @@ export async function verifyCardSignature(
     try {
       const header = JSON.parse(
         Buffer.from(sig.protected, 'base64url').toString('utf8')
-      ) as { kid?: string; jku?: string; typ?: string };
+      ) as { kid?: string; typ?: string };
       if (header.kid === undefined || header.typ !== DISPATCH_CARD_TYP)
         continue;
-      const key = await importJWK(
-        await keyFor(header.kid, header.jku),
-        'ES256'
-      );
+      const jwk = await keyFor(header.kid);
+      if (ecThumbprint(jwk) !== header.kid) continue;
       await flattenedVerify(
         { payload, protected: sig.protected, signature: sig.signature },
-        key
+        await importJWK(jwk, 'ES256')
       );
       return true;
     } catch {

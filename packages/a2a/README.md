@@ -96,7 +96,15 @@ The card carries two signatures, made with the same key:
    does not protect how a client authenticates.
 
 A client that relies on the auth scheme should verify `signatures[0]`, picked by
-its `typ`, against the card as received.
+its `typ`, against the card's raw text as received.
+
+**Where the key comes from matters.** The card's `jku` is part of what an
+attacker controls, so never fetch a key from wherever it points. Pin the key, or
+fetch the JWKS only from the origin you fetched the card from, at
+`/.well-known/jwks.json`. `verifyCardSignature` hands its `keyFor` the `kid`
+alone, and accepts a key only when its RFC 7638 thumbprint equals that `kid`.
+Given the raw text, it also refuses a card that repeats a member name (I-JSON),
+since two readers could see different values.
 
 ## Outbound address checks
 
