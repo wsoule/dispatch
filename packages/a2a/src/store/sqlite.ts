@@ -155,7 +155,8 @@ export interface A2AStore {
   // The peer's context for this thread, from the newest row that has one.
   contextFor(alias: string, thread: string): string | null;
   // Open or done rows first attempted since `sinceIso`: the channel quota.
-  relayedSince(alias: string, sinceIso: string): number;
+  // Relays first tried in [sinceIso, untilIso].
+  relayedSince(alias: string, sinceIso: string, untilIso?: string): number;
   // Upsert on (task_id, id).
   putPushConfig(row: PushConfigRow): void;
   getPushConfig(taskId: string, id: string): PushConfigRow | null;
@@ -753,12 +754,12 @@ export class SqliteA2AStore implements A2AStore {
     );
   }
 
-  relayedSince(alias: string, sinceIso: string): number {
+  relayedSince(alias: string, sinceIso: string, untilIso?: string): number {
     return Number(
       queryOne<{ n: number }>(
         this.db,
-        "SELECT COUNT(*) AS n FROM outbound WHERE alias = ? AND state IN ('open','done') AND first_attempt_at >= ?",
-        [alias, sinceIso]
+        "SELECT COUNT(*) AS n FROM outbound WHERE alias = ? AND state IN ('open','done') AND first_attempt_at >= ? AND first_attempt_at <= ?",
+        [alias, sinceIso, untilIso ?? '9999']
       )?.n ?? 0
     );
   }

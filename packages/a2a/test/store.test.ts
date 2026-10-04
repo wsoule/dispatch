@@ -299,6 +299,14 @@ describe('outbound', () => {
     expect(store.contextFor('acme', 'm-thread')).toBe('pc-new');
     expect(store.contextFor('acme', 'm-other')).toBeNull();
     expect(store.relayedSince('acme', '2026-09-25T10:30:00.000Z')).toBe(1);
+    // A row dated after `until` (a clock that jumped) is outside the window.
+    expect(
+      store.relayedSince(
+        'acme',
+        '2026-09-25T10:30:00.000Z',
+        '2026-09-25T10:45:00.000Z'
+      )
+    ).toBe(0);
   });
 });
 

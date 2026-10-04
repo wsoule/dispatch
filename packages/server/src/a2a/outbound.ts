@@ -317,7 +317,8 @@ export class OutboundWorker {
       d.via === 'channel' &&
       this.deps.store.relayedSince(
         alias,
-        new Date(now.getTime() - HOUR_MS).toISOString()
+        new Date(now.getTime() - HOUR_MS).toISOString(),
+        now.toISOString()
       ) >= this.deps.policy().outboundPerHour
     ) {
       this.laterKick(

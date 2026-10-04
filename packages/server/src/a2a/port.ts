@@ -211,8 +211,13 @@ export class DaemonBridgePort implements BridgePort {
     const policy = this.deps.policy();
     const hourAgo = new Date(this.now().getTime() - HOUR_MS).toISOString();
     if (
-      this.deps.messages.countFrom(caller.address, hourAgo, false) >=
-      policy.sendsPerHour
+      this.deps.messages.countFrom(
+        caller.address,
+        hourAgo,
+        false,
+        undefined,
+        this.now().toISOString()
+      ) >= policy.sendsPerHour
     ) {
       throw new MessagingError(
         'limited',

@@ -201,6 +201,14 @@ describe('a handoff', () => {
     });
   });
 
+  it('does not count sends dated after now against sendsPerHour', async () => {
+    const base = f.deps.policy();
+    f.deps.policy = () => ({ ...base, sendsPerHour: 1 });
+    await open();
+    f.deps.now = () => new Date(Date.now() - 365 * 86_400_000);
+    await expect(open({ clientMessageId: 'c-h2' })).resolves.toBeDefined();
+  });
+
   it('counts a handoff against the durable sendsPerHour', async () => {
     const base = f.deps.policy();
     f.deps.policy = () => ({ ...base, sendsPerHour: 1 });

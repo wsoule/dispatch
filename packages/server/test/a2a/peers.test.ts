@@ -458,6 +458,24 @@ describe('admission', () => {
     ).toHaveLength(1);
   });
 
+  it('does not count sends dated after now against outboundPerHour', async () => {
+    const base = f.deps.policy();
+    f.deps.policy = () => ({ ...base, outboundPerHour: 1 });
+    await active('acme');
+    await f.messaging.engine.send(
+      { to: ['a2a:acme'], kind: 'message', body: 'first' },
+      HUMAN
+    );
+    // The clock jumped forward for the first send and came back.
+    f.deps.now = () => new Date(Date.now() - 365 * 86_400_000);
+    await expect(
+      f.messaging.engine.send(
+        { to: ['a2a:acme'], kind: 'message', body: 'second' },
+        HUMAN
+      )
+    ).resolves.toBeDefined();
+  });
+
   it('refuses a direct send over outboundPerHour and holds a channel one', async () => {
     const base = f.deps.policy();
     f.deps.policy = () => ({ ...base, outboundPerHour: 1 });

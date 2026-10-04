@@ -541,21 +541,28 @@ export class SqliteMessageStore implements MessageStore {
     from: Address,
     sinceIso: string,
     urgentOnly: boolean,
-    origin?: string
+    origin?: string,
+    untilIso?: string
   ): number {
     const row = queryOne<{ n: number }>(
       this.db,
-      `SELECT COUNT(*) AS n FROM messages WHERE from_addr = ? AND COALESCE(received_at, created_at) >= ?${urgentOnly ? ' AND urgent = 1' : ''}${origin === undefined ? '' : ' AND origin = ?'}`,
-      origin === undefined ? [from, sinceIso] : [from, sinceIso, origin]
+      `SELECT COUNT(*) AS n FROM messages WHERE from_addr = ? AND COALESCE(received_at, created_at) >= ? AND COALESCE(received_at, created_at) <= ?${urgentOnly ? ' AND urgent = 1' : ''}${origin === undefined ? '' : ' AND origin = ?'}`,
+      origin === undefined
+        ? [from, sinceIso, untilIso ?? '9999']
+        : [from, sinceIso, untilIso ?? '9999', origin]
     );
     return row === undefined ? 0 : Number(row.n);
   }
 
-  countDeliveredTo(recipient: Address, sinceIso: string): number {
+  countDeliveredTo(
+    recipient: Address,
+    sinceIso: string,
+    untilIso?: string
+  ): number {
     const row = queryOne<{ n: number }>(
       this.db,
-      'SELECT COUNT(DISTINCT m.id) AS n FROM deliveries d JOIN messages m ON m.id = d.message_id WHERE d.recipient = ? AND m.created_at >= ?',
-      [recipient, sinceIso]
+      'SELECT COUNT(DISTINCT m.id) AS n FROM deliveries d JOIN messages m ON m.id = d.message_id WHERE d.recipient = ? AND m.created_at >= ? AND m.created_at <= ?',
+      [recipient, sinceIso, untilIso ?? '9999']
     );
     return row === undefined ? 0 : Number(row.n);
   }
