@@ -4961,6 +4961,7 @@ export async function handleApi(
         problems: [
           ...ctx.cache.problems(),
           ...(identity.problem === null ? [] : [identity.problem]),
+          ...(ctx.a2a?.problems() ?? []),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.

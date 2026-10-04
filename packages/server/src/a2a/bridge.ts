@@ -13,7 +13,13 @@ import {
   TERMINAL_STATES,
 } from '@dispatch/a2a';
 import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
-import { DEFAULT_A2A, loadConfig, statusModelOf } from '@dispatch/core';
+import {
+  credentialsPath,
+  credentialsUnreadable,
+  DEFAULT_A2A,
+  loadConfig,
+  statusModelOf,
+} from '@dispatch/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -92,6 +98,8 @@ export interface A2ABridge {
   hostRevoked(hostId: string): void;
   peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
+  // Lines for GET /api/health: an unreadable credentials file, an unsigned card.
+  problems(): string[];
   // Opens the listener from the settings file plus the one-boot overrides.
   start(): Promise<void>;
   // The key that would keep `next` closed, before anything is written;
@@ -441,6 +449,22 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       }
     },
     status,
+    problems() {
+      const out: string[] = [];
+      let peered = false;
+      try {
+        peered = (store?.peers().length ?? 0) > 0;
+      } catch {
+        // a2a.db trouble shows in the listener status instead.
+      }
+      if ((peered || settings.enabled) && credentialsUnreadable())
+        out.push(
+          `${credentialsPath()} cannot be parsed: A2A peer sends wait and the agent card goes unsigned until it is fixed`
+        );
+      if (signerError !== null)
+        out.push(`A2A card signing is off: ${signerError}`);
+      return out;
+    },
     start: () =>
       serial(async () => {
         const read = readListenerSettings(rootDir);

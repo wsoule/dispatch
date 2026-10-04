@@ -18,6 +18,7 @@ import {
   clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
+  credentialsUnreadable,
   CredentialsUnreadableError,
   isStaleLock,
   readA2ASigningKey,
@@ -174,6 +175,20 @@ describe('a credentials file that cannot be parsed', () => {
       expect(write).toThrow(CredentialsUnreadableError);
     expect(readFileSync(credentialsPath(), 'utf8')).toBe(BROKEN);
     expect(existsSync(`${credentialsPath()}.lock`)).toBe(false);
+  });
+
+  it('throws on a peer credential read rather than reading it as absent', () => {
+    writeBroken();
+    expect(() => readPeerCredential(ROOT, 'acme')).toThrow(
+      CredentialsUnreadableError
+    );
+    expect(credentialsUnreadable()).toBe(true);
+  });
+
+  it('reports a readable or absent file as readable', () => {
+    expect(credentialsUnreadable()).toBe(false);
+    writeRaw({});
+    expect(credentialsUnreadable()).toBe(false);
   });
 
   it('reads the signing key as unreadable, not absent', () => {

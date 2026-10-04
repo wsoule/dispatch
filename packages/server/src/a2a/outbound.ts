@@ -22,6 +22,7 @@ import {
   UnresolvedHostError,
 } from '@dispatch/a2a';
 import type { A2AConfig } from '@dispatch/core';
+import { CredentialsUnreadableError } from '@dispatch/core';
 import type {
   Delivery,
   DeliveryEngine,
@@ -53,6 +54,8 @@ type GuardVerdict =
   | { kind: 'unreachable'; reason: string };
 const HOUR_MS = 3_600_000;
 const QUOTA_RECHECK_MS = 5 * 60_000;
+// How soon a send held by an unreadable credentials file looks again.
+const LOCAL_RETRY_MS = 60_000;
 
 export interface OutboundDeps {
   engine: DeliveryEngine;
@@ -454,6 +457,18 @@ export class OutboundWorker {
     const reason = errorText(err);
     const at = this.now().toISOString();
     const attempts = row.attempts + 1;
+    if (err instanceof CredentialsUnreadableError) {
+      // A local fault: no attempt counted, the peer untouched, health shows it.
+      const next = new Date(this.now().getTime() + LOCAL_RETRY_MS);
+      this.deps.store.putOutbound({
+        ...row,
+        nextAttemptAt: next.toISOString(),
+        lastError: reason,
+        updatedAt: at,
+      });
+      this.laterKick(row.alias, next.toISOString());
+      return;
+    }
     const refusal = addressRefusal(err);
     if (refusal !== null) {
       const why = this.disableRefused(row.alias, refusal);
@@ -668,9 +683,14 @@ export class OutboundWorker {
       let client: PeerClient;
       try {
         client = this.deps.clientFor(peer);
-      } catch {
-        this.deps.markAuthFailed(peer.alias);
-        return;
+      } catch (err) {
+        if (!(err instanceof CredentialsUnreadableError)) {
+          this.deps.markAuthFailed(peer.alias);
+          return;
+        }
+        await sleep(this.deps.pollMs?.(polls) ?? pollDelayMs(polls), signal);
+        polls += 1;
+        continue;
       }
       // Before subscribing; poll() re-checks before every read.
       const verdict = await this.guarded(peer);

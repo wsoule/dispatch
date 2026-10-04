@@ -324,13 +324,24 @@ function isPeerCredential(value: unknown): value is PeerCredential {
   );
 }
 
-/** One peer's stored credential, or null when it is absent or malformed. */
+/** Whether the credentials file exists but cannot be parsed. */
+export function credentialsUnreadable(): boolean {
+  return loadCredentials().kind === 'unreadable';
+}
+
+/** One peer's stored credential, or null when it is absent or malformed.
+ *  Throws CredentialsUnreadableError when the file cannot be parsed, so a
+ *  damaged file is not mistaken for a missing credential. */
 export function readPeerCredential(
   rootDir: string,
   alias: string
 ): PeerCredential | null {
+  const loaded = loadCredentials();
+  if (loaded.kind === 'unreadable') throw new CredentialsUnreadableError();
   const peers = peersOf(
-    readCredentials().projects?.[normalizeProjectPath(rootDir)]
+    loaded.kind === 'ok'
+      ? loaded.file.projects?.[normalizeProjectPath(rootDir)]
+      : undefined
   );
   if (!Object.hasOwn(peers, alias)) return null;
   const raw = peers[alias];

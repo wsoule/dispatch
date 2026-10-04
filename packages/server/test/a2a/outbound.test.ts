@@ -1,5 +1,6 @@
-import { writePeerCredential } from '@dispatch/core';
+import { credentialsPath, writePeerCredential } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 import { addPeer, removePeer, setPeerEnabled } from '../../src/a2a/peers.js';
 import { HUMAN, useTempProject, waitFor } from '../messaging/harness.js';
@@ -244,6 +245,23 @@ describe('failures', () => {
     const q = await ask();
     await waitFor(() => row(q.id)?.state === 'failed');
     expect(f.store.getPeer('fixture')?.status).toBe('active');
+  });
+
+  it('waits out an unreadable credentials file without failing the peer', async () => {
+    const good = readFileSync(credentialsPath(), 'utf8');
+    writeFileSync(credentialsPath(), '{ not json');
+    const q = await ask();
+    await waitFor(
+      () => row(q.id)?.lastError?.includes('cannot be parsed') === true
+    );
+    expect(f.store.getPeer('fixture')?.status).toBe('active');
+    expect(row(q.id)).toMatchObject({ state: 'queued', attempts: 0 });
+    expect(row(q.id)?.nextAttemptAt).not.toBeNull();
+    expect(peer.sends).toBe(0);
+    writeFileSync(credentialsPath(), good);
+    f.store.putOutbound({ ...row(q.id)!, nextAttemptAt: null });
+    f.outbound.kick('fixture');
+    await waitFor(() => row(q.id)?.state === 'open');
   });
 
   it('marks the peer auth-failed on 401, keeps the delivery held, and resumes on enable', async () => {
