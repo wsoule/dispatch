@@ -119,13 +119,20 @@ function listClients(ctx: ApiContext, store: A2AStore): Response {
   return jsonResponse({ clients });
 }
 
-// Unapproved clients at once, so registrations cannot pile up gates.
+// Unapproved clients per requester, so registrations cannot pile up gates.
 const MAX_PENDING_CLIENTS = 10;
 
-function pendingClients(ctx: ApiContext): number {
+// One requester's clients still waiting for approval.
+function pendingClients(ctx: ApiContext, requester: string): number {
+  const prefix = `agent:${requester.slice('human:'.length)}/`;
   return ctx.messaging.store
     .agents()
-    .filter((a) => a.status === 'pending' && isClientAddress(a.address)).length;
+    .filter(
+      (a) =>
+        a.status === 'pending' &&
+        a.address.startsWith(prefix) &&
+        isClientAddress(a.address)
+    ).length;
 }
 
 // POST /api/a2a/clients: the clients row first, then the agent row and its
@@ -181,12 +188,15 @@ async function addClient(
       403
     );
   }
-  if (body.approve !== true && pendingClients(ctx) >= MAX_PENDING_CLIENTS)
+  const requester = humanActor(ctx);
+  if (
+    body.approve !== true &&
+    pendingClients(ctx, requester) >= MAX_PENDING_CLIENTS
+  )
     return errorResponse(
       429,
-      `${MAX_PENDING_CLIENTS} A2A clients already wait for approval; approve or revoke some first`
+      `${MAX_PENDING_CLIENTS} of your A2A clients already wait for approval; approve or revoke some first`
     );
-  const requester = humanActor(ctx);
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
   // Any existing row, revoked included: a re-used name would inherit the old
   // client's tasks and threads, which key on the address.
