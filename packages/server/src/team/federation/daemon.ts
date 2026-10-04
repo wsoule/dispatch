@@ -126,7 +126,7 @@ export function buildFederation(deps: FederationDeps): Federation {
       acknowledgedBy,
       ownLog: () => fed.ownLog(),
       onPruned: (seqs) => fed.stubLog(seqs),
-      readHints: () => readHints(fed),
+      readHints: () => readHints(fed, roster),
       onStarved: (replicas) => starvedProblems(fed, replicas),
       onCommit: (failed) => {
         if (failed === null) fed.clearProblem('transport:commit');
@@ -156,7 +156,7 @@ export function buildFederation(deps: FederationDeps): Federation {
 
 // Each replica's cursor head, and a check against its pinned key, so a pull
 // reads the segment that continues the log before any other (I2).
-function readHints(fed: FedStore): ReadHints {
+function readHints(fed: FedStore, roster: RosterService): ReadHints {
   const heads = new Map<string, string>();
   for (const row of fed.db
     .query<{ replica: string; hash: string | null }, []>(
@@ -164,12 +164,14 @@ function readHints(fed: FedStore): ReadHints {
     )
     .all())
     if (row.hash !== null) heads.set(row.replica, row.hash);
-  // Read in full: every id with a key claim or a cursor, and this machine.
-  const known = new Set<string>([fed.replica, ...heads.keys()]);
-  for (const c of fed.claims()) known.add(c.replica);
+  // FW-R26(4): admitted members first, then other ids with a cursor; an id
+  // with only a claim is read to its key op and first roster op, a few a pass.
+  const members = roster.view()?.members;
+  const tier = (r: string): number =>
+    r === fed.replica || members?.has(r) === true ? 0 : heads.has(r) ? 1 : 2;
   return {
     heads,
-    known,
+    tier,
     signedBy: (e) => {
       const pin = fed.pinned(e.replica);
       return pin !== null && signedEntry(e, pin.signPub);

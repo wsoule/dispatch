@@ -137,6 +137,10 @@ export interface ReadHints {
   /** Replicas read in full, first; any other id is read only as far as its
    *  key op. Absent, every replica is known. */
   known?: ReadonlySet<string>;
+  /** FW-R26(4): 0 for admitted members, 1 for other ids with a cursor, 2 for
+   *  claim-only ids, read only to their key op and first roster op, a few a
+   *  pass. Overrides `known`. */
+  tier?: (replica: string) => number;
   /** Fresh bytes one pass reads across every replica (TOTAL_READ_BYTES). */
   totalBudget?: number;
   /** Unknown ids probed for a key op per pass (MAX_UNKNOWN_IDS). */
@@ -147,6 +151,8 @@ export class SyncRepo {
   private readonly segmentCache = new Map<string, CachedSegment>();
   private credentials: Promise<string[]> | null = null;
   private passBytes = 0;
+  /** Where the next pass starts probing claim-only ids (FW-R26(4)). */
+  private probeStart = 0;
   private readonly segmentInfo = new Map<string, SegmentInfo>();
   // The person's credential helpers and sshCommand, read once from their own
   // git config, as `-c` options for fetch and push.
@@ -382,22 +388,31 @@ export class SyncRepo {
     const budget = hints.budget ?? READ_BUDGET_BYTES;
     const signed = hints.signedBy ?? (() => true);
     const total = hints.totalBudget ?? TOTAL_READ_BYTES;
-    const isKnown = (r: string) => hints.known?.has(r) ?? true;
+    const tierOf =
+      hints.tier ??
+      ((r: string) =>
+        hints.known === undefined || hints.known.has(r) ? 0 : 2);
     const root = join(this.dir, FED_DIR);
     const out: LogEntry[] = [];
     const live = new Set<string>();
-    let unknown = 0;
     this.passBytes = 0;
-    const ids = listDir(root)
-      .filter((r) => REPLICA_ID.test(r) && realDir(join(root, r)))
-      .sort((x, y) => Number(isKnown(y)) - Number(isKnown(x)));
-    for (const replica of ids) {
-      if (!isKnown(replica)) {
-        if (unknown >= (hints.maxUnknown ?? MAX_UNKNOWN_IDS)) continue;
-        unknown += 1;
-        out.push(...this.probeKeyOps(root, replica, total));
-        continue;
-      }
+    const all = listDir(root).filter(
+      (r) => REPLICA_ID.test(r) && realDir(join(root, r))
+    );
+    const tiers = new Map(all.map((r) => [r, tierOf(r)]));
+    const full = all
+      .filter((r) => (tiers.get(r) ?? 2) < 2)
+      .sort((x, y) => (tiers.get(x) ?? 0) - (tiers.get(y) ?? 0));
+    // Claim-only and unknown ids: a few a pass, from where the last stopped.
+    const probe = all.filter((r) => (tiers.get(r) ?? 2) >= 2);
+    const cap = Math.min(hints.maxUnknown ?? MAX_UNKNOWN_IDS, probe.length);
+    const start = probe.length === 0 ? 0 : this.probeStart % probe.length;
+    const probed = [...probe.slice(start), ...probe.slice(0, start)].slice(
+      0,
+      cap
+    );
+    this.probeStart = start + cap;
+    for (const replica of full) {
       const cursor = since.get(replica) ?? 0;
       const head = hints.heads?.get(replica);
       const files: { file: string; stamp: string; size: number }[] = [];
@@ -473,6 +488,8 @@ export class SyncRepo {
         else kept += bytes;
       }
     }
+    for (const replica of probed)
+      out.push(...this.probeKeyOps(root, replica, total));
     for (const map of [this.segmentCache, this.segmentInfo])
       for (const file of map.keys()) if (!live.has(file)) map.delete(file);
     this.capCache();
@@ -484,8 +501,9 @@ export class SyncRepo {
     return this.passBytes;
   }
 
-  // An unknown id's key ops: the first complete line of each of its first
-  // MAX_KEY_PROBES files, read no further than KEY_PROBE_BYTES each.
+  // A claim-only or unknown id's key ops, each with its chain's first roster
+  // op: the first lines of its first MAX_KEY_PROBES files, KEY_PROBE_BYTES
+  // each.
   private probeKeyOps(
     root: string,
     replica: string,
@@ -497,10 +515,22 @@ export class SyncRepo {
       const head = readHead(join(root, replica, name), KEY_PROBE_BYTES);
       if (head === null) continue;
       this.passBytes += Buffer.byteLength(head);
-      const end = head.indexOf('\n');
-      const entry = end < 0 ? null : parseEntry(head.slice(0, end));
-      if (entry?.replica === replica && entry.type === 'key') out.push(entry);
-      if (out.length >= MAX_PROBED_KEYS) break;
+      const lines = head
+        .slice(0, Math.max(0, head.lastIndexOf('\n')))
+        .split('\n');
+      const first = parseEntry(lines[0] ?? '');
+      if (first?.replica !== replica || first.type !== 'key') continue;
+      out.push(first);
+      // The chain's first roster op, which may be its recover.
+      for (const line of lines.slice(1)) {
+        const entry = parseEntry(line);
+        if (entry?.replica !== replica) continue;
+        if (entry.type === 'roster') {
+          out.push(entry);
+          break;
+        }
+      }
+      if (out.filter((e) => e.type === 'key').length >= MAX_PROBED_KEYS) break;
     }
     return out;
   }

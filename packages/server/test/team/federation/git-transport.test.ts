@@ -409,6 +409,75 @@ describe('the read budget (FW-R23 hint)', () => {
     expect(read.some((e) => e.replica.startsWith('mal-'))).toBe(false);
   });
 
+  // FW-R26(4), the re-verify's R8: hundreds of claim-only ids never starve a
+  // member; they are probed a few a pass, the starting point rotating.
+  it('reads members first and probes claim-only ids a few a pass, rotating', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(3));
+    const junk: string[] = [];
+    for (let n = 0; n < 700; n++) {
+      const id = `aaa-${String(n).padStart(8, '0')}`;
+      junk.push(id);
+      const k = generateReplicaKeys();
+      const keyOp = buildOp(
+        {
+          replica: id,
+          seq: 1,
+          prev: ZERO_HASH,
+          hlc: `0000000002000.0000.${id}`,
+          type: 'key',
+          body: {
+            handle: 'x',
+            device: 'x',
+            build: '0',
+            signPub: k.signPub,
+            sealPub: k.sealPub,
+            legacy: null,
+          },
+        },
+        k.signPriv
+      );
+      mkdirSync(join(dir, 'a', 'fed', id), { recursive: true });
+      writeFileSync(
+        join(dir, 'a', 'fed', id, '000000000001.jsonl'),
+        `${JSON.stringify(keyOp)}\n${'x'.repeat(2000)}\n`
+      );
+    }
+    const claimOnly = new Set(junk);
+    const tier = (r: string) => (r === A ? 0 : claimOnly.has(r) ? 2 : 1);
+    const probed = new Set<string>();
+    for (let pass = 0; pass < 3; pass++) {
+      const read = a.readV2(new Map(), {
+        tier,
+        maxUnknown: 8,
+        totalBudget: 1024 * 1024,
+      });
+      expect(seqs(read.filter((e) => e.replica === A))).toEqual([1, 2, 3]);
+      const these = new Set(
+        read.filter((e) => e.replica !== A).map((e) => e.replica)
+      );
+      expect(these.size).toBeLessThanOrEqual(8);
+      for (const r of these) probed.add(r);
+    }
+    expect(probed.size).toBe(24);
+  });
+
+  // FW-R25: the default pass budget holds across replicas.
+  it('reads at most 32 MiB in one pass by default', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const big = `${'x'.repeat(1023)}\n`.repeat(4 * 1024 - 8);
+    for (let n = 0; n < 10; n++) {
+      const id = `big-${String(n).padStart(8, '0')}`;
+      mkdirSync(join(dir, 'a', 'fed', id), { recursive: true });
+      writeFileSync(join(dir, 'a', 'fed', id, '000000000001.jsonl'), big);
+    }
+    a.readV2(new Map());
+    expect(a.lastPassBytes()).toBeLessThanOrEqual(32 * 1024 * 1024);
+    expect(a.lastPassBytes()).toBeGreaterThan(24 * 1024 * 1024);
+  });
+
   it('sees an append to a segment it already read', async () => {
     const a = clone('a', A);
     await a.ensure();
