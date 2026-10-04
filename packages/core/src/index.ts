@@ -331,6 +331,7 @@ export {
   clearProjectCredential,
   credentialsPath,
   CredentialsUnreadableError,
+  credentialsUnreadable,
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,

@@ -13,7 +13,13 @@ import {
   TERMINAL_STATES,
 } from '@dispatch/a2a';
 import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
-import { DEFAULT_A2A, loadConfig, statusModelOf } from '@dispatch/core';
+import {
+  credentialsPath,
+  credentialsUnreadable,
+  DEFAULT_A2A,
+  loadConfig,
+  statusModelOf,
+} from '@dispatch/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -25,6 +31,7 @@ import { replayTranscript } from '../orchestrator/transcript.js';
 import type { AuthTier } from '../tiers.js';
 import { RunResultsMemo } from './artifacts.js';
 import { bridgeExternalPolicy } from './external.js';
+import { gatherFacts } from './facts.js';
 import type { GuardDeps, PatchGuard } from './guards.js';
 import {
   dispatchRefusal,
@@ -92,6 +99,8 @@ export interface A2ABridge {
   hostRevoked(hostId: string): void;
   peerStatus(alias: string): PeerStatus | null;
   status(): ListenerStatus;
+  // Lines for GET /api/health: an unreadable credentials file, an unsigned card.
+  problems(): string[];
   // Opens the listener from the settings file plus the one-boot overrides.
   start(): Promise<void>;
   // The key that would keep `next` closed, before anything is written;
@@ -103,8 +112,8 @@ export interface A2ABridge {
   applySettings(next: ListenerSettings): Promise<ListenerStatus>;
   disable(): Promise<ListenerStatus>;
   listening(): boolean;
-  // Closes a revoked client's unanswered asks as the system ("client
-  // revoked"); its handoff gates stay open for the owner.
+  // Closes a revoked client's unanswered asks and open task-proposal gates
+  // as the system ("client revoked").
   clientRevoked(address: string): void;
   // The proposal guards; each works with a2a.db down.
   guardTaskPatch(
@@ -116,6 +125,8 @@ export interface A2ABridge {
   // 'a2a' when a client handed the task off: its runs act for no one and
   // read team memory only.
   taskOrigin(taskId: string): 'a2a' | null;
+  // Records that `taskId` was made from the A2A task `sourceTaskId`.
+  markDerived(taskId: string, sourceTaskId: string): void;
   // Puts every gated draft something moved back in Draft; returns how many.
   recheckProposals(): number;
   close(): Promise<void>;
@@ -308,6 +319,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       ...(deps.track === undefined ? {} : { track: deps.track }),
     });
     try {
+      push.resume((row) => gatherFacts(bridgeDeps, row));
+    } catch (err) {
+      console.error('dispatchd: A2A push resume failed', err);
+    }
+    try {
       // Its gate sends finish in the background and log their own failures.
       reconcileA2A(bridgeDeps, hub);
     } catch (err) {
@@ -441,6 +457,22 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       }
     },
     status,
+    problems() {
+      const out: string[] = [];
+      let peered = false;
+      try {
+        peered = (store?.peers().length ?? 0) > 0;
+      } catch {
+        // a2a.db trouble shows in the listener status instead.
+      }
+      if ((peered || settings.enabled) && credentialsUnreadable())
+        out.push(
+          `${credentialsPath()} cannot be parsed: A2A peer sends wait and the agent card goes unsigned until it is fixed`
+        );
+      if (signerError !== null)
+        out.push(`A2A card signing is off: ${signerError}`);
+      return out;
+    },
     start: () =>
       serial(async () => {
         const read = readListenerSettings(rootDir);
@@ -503,10 +535,13 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         console.error(`dispatchd: could not list ${address}'s A2A tasks`, err);
       }
       for (const row of rows) {
-        if (row.skill !== 'ask' || TERMINAL_STATES.has(row.state)) continue;
+        if (TERMINAL_STATES.has(row.state)) continue;
+        // An ask closes its root question; a handoff, its open proposal gate.
+        const question = row.skill === 'ask' ? row.id : row.gate;
+        if (question === null) continue;
         try {
           // False when an answer got there first; the recompute shows which.
-          closeGate(messaging.engine, row.id, 'client revoked');
+          closeGate(messaging.engine, question, 'client revoked');
           watch?.recompute(row.id);
         } catch (err) {
           console.error(`dispatchd: could not close A2A task ${row.id}`, err);
@@ -519,6 +554,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
     // The guards' evidence: a2a.db's row, else a handoff messages.db ties to the task.
     taskOrigin: (taskId) => (isA2ATask(guardDeps, taskId) ? 'a2a' : null),
+    markDerived: (taskId, sourceTaskId) =>
+      store?.markDerived(taskId, sourceTaskId, new Date().toISOString()),
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {

@@ -115,11 +115,18 @@ function mustPeer(deps: PeerDeps, alias: string): PeerRow {
   return row;
 }
 
+// A token for a card that names no scheme is refused, never dropped unseen.
 function secretFor(
   auth: PeerAuth,
   token: string | undefined
 ): PeerSecret | null {
-  if (auth.kind === 'none' || token === undefined || token === '') return null;
+  if (token === undefined || token === '') return null;
+  if (auth.kind === 'none')
+    throw new MessagingError(
+      'invalid',
+      "the peer's card asks for no credential; add it without a token",
+      'token'
+    );
   return auth.kind === 'bearer'
     ? { scheme: 'bearer', token }
     : { scheme: 'api-key', token, header: auth.header };
@@ -545,8 +552,15 @@ export function admitPeer(
   }
   if (target.via === 'direct') {
     const limit = deps.policy().outboundPerHour;
-    const hourAgo = new Date(nowOf(deps).getTime() - HOUR_MS).toISOString();
-    if (deps.messages.countDeliveredTo(target.recipient, hourAgo) >= limit) {
+    const now = nowOf(deps);
+    const hourAgo = new Date(now.getTime() - HOUR_MS).toISOString();
+    if (
+      deps.messages.countDeliveredTo(
+        target.recipient,
+        hourAgo,
+        now.toISOString()
+      ) >= limit
+    ) {
       throw new MessagingError(
         'limited',
         `a2a:${alias} takes at most ${limit} messages an hour`,

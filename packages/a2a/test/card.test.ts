@@ -1,6 +1,7 @@
 import { AgentCard, verifyAgentCardSignature } from '@a2a-js/sdk';
 import { describe, expect, it } from 'bun:test';
-import { generateKeyPairSync } from 'node:crypto';
+import { flattenedVerify, importJWK } from 'jose';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 
 import {
   buildCard,
@@ -12,6 +13,7 @@ import {
   signCard,
   unsignedCardEtag,
   unsignedCardJson,
+  verifyCardSignature,
 } from '../src/card.js';
 import type { CardInputs } from '../src/port.js';
 import { handoffStatuses, namedStatusVocabulary } from '../src/statuses.js';
@@ -149,42 +151,197 @@ function keyPair() {
   const { privateKey, publicKey } = generateKeyPairSync('ec', {
     namedCurve: 'P-256',
   });
+  const publicJwk = publicKey.export({ format: 'jwk' }) as Record<
+    string,
+    string
+  >;
+  // RFC 7638, as the daemon names its key.
+  const thumbprint = createHash('sha256')
+    .update(
+      JSON.stringify({
+        crv: publicJwk.crv,
+        kty: publicJwk.kty,
+        x: publicJwk.x,
+        y: publicJwk.y,
+      })
+    )
+    .digest('base64url');
   return {
     privateJwk: privateKey.export({ format: 'jwk' }) as Record<string, string>,
-    publicJwk: publicKey.export({ format: 'jwk' }) as Record<string, string>,
+    publicJwk,
+    thumbprint,
   };
 }
 
 describe('signed cards', () => {
-  it('signs the canonical card so the SDK verifies it, and a changed card fails', async () => {
-    const { privateJwk, publicJwk } = keyPair();
+  // A verifier written from RFC 8785 alone: the served card minus
+  // `signatures`, keys sorted, ECMAScript string and number forms.
+  function referenceJcs(v: unknown): string {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return `[${v.map(referenceJcs).join(',')}]`;
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${referenceJcs(o[k])}`)
+      .join(',')}}`;
+  }
+  async function standardVerify(
+    served: Record<string, unknown>,
+    publicJwk: Record<string, string>
+  ): Promise<void> {
+    const { signatures, ...rest } = served as {
+      signatures: { protected: string; signature: string }[];
+    };
+    const payload = Buffer.from(referenceJcs(rest)).toString('base64url');
+    await flattenedVerify(
+      { payload, ...signatures[0] },
+      await importJWK(publicJwk, 'ES256')
+    );
+  }
+
+  async function signedServedCard(
+    over: Partial<CardInputs> = {},
+    kidOverride?: string
+  ) {
+    const { privateJwk, publicJwk, thumbprint } = keyPair();
+    const kid = kidOverride ?? thumbprint;
     const jku = 'https://acme-agent.example.com/.well-known/jwks.json';
-    const signatures = await signCard(unsignedCardJson(SIGNED), {
-      privateJwk,
-      kid: 'k1',
-      jku,
-    });
-    expect(signatures).toHaveLength(1);
+    const signatures = await signCard(
+      unsignedCardJson({ ...SIGNED, ...over }),
+      {
+        privateJwk,
+        kid,
+        jku,
+      }
+    );
+    const served = JSON.parse(
+      JSON.stringify(cardJson({ ...SIGNED, ...over, signatures }))
+    ) as Record<string, unknown>;
+    return { served, signatures, privateJwk, publicJwk, jku, kid };
+  }
+
+  it('signs the RFC 8785 form of the full served card, so a plain JCS verifier passes', async () => {
+    const { served, signatures, privateJwk, publicJwk, jku, kid } =
+      await signedServedCard();
+    // Ours over the full card first, then one over the SDK's canonical form.
+    expect(signatures).toHaveLength(2);
     const header = JSON.parse(
       Buffer.from(signatures[0].protected, 'base64url').toString('utf8')
     ) as Record<string, string>;
-    expect(header).toMatchObject({ alg: 'ES256', kid: 'k1', jku });
+    expect(header).toMatchObject({ alg: 'ES256', kid, jku });
     expect(JSON.stringify(signatures)).not.toContain(String(privateJwk.d));
-    const verify = verifyAgentCardSignature((kid) => {
-      expect(kid).toBe('k1');
+    expect(served).toHaveProperty('securitySchemes');
+    await expect(standardVerify(served, publicJwk)).resolves.toBeUndefined();
+    await expect(
+      verifyCardSignature(served, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(true);
+    await expect(
+      standardVerify({ ...served, name: 'Evil API' }, publicJwk)
+    ).rejects.toThrow();
+  });
+
+  it('also carries a signature the SDK 1.2.0 verifier accepts', async () => {
+    const { served, publicJwk, kid } = await signedServedCard();
+    const sdkVerify = verifyAgentCardSignature((got) => {
+      expect(got).toBe(kid);
       return Promise.resolve(publicJwk);
     });
     await expect(
-      verify(AgentCard.fromJSON(buildCardJson({ ...SIGNED, signatures })))
+      sdkVerify(AgentCard.fromJSON(served))
     ).resolves.toBeUndefined();
     await expect(
-      verify(
-        AgentCard.fromJSON({
-          ...buildCardJson({ ...SIGNED, signatures }),
-          name: 'Evil API',
-        })
-      )
+      sdkVerify(AgentCard.fromJSON({ ...served, name: 'Evil API' }))
     ).rejects.toThrow();
+  });
+
+  it('breaks when the auth scheme or its requirement is swapped', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    const swapped = {
+      ...served,
+      securitySchemes: {
+        bearer: { apiKeySecurityScheme: { location: 'header', name: 'X-Key' } },
+      },
+    };
+    await expect(standardVerify(swapped, publicJwk)).rejects.toThrow();
+    await expect(
+      verifyCardSignature(swapped, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(false);
+    const noRequirement = { ...served, securityRequirements: [] };
+    await expect(standardVerify(noRequirement, publicJwk)).rejects.toThrow();
+  });
+
+  it('never takes the SDK-form signature for its own, so stripping both auth fields fails', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    const {
+      securitySchemes: _s,
+      securityRequirements: _r,
+      ...stripped
+    } = served;
+    await expect(
+      verifyCardSignature(stripped, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(false);
+    const sdkOnly = {
+      ...stripped,
+      signatures: (served.signatures as unknown[]).slice(1),
+    };
+    await expect(
+      verifyCardSignature(sdkOnly, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(false);
+  });
+
+  it('marks its own signature in the protected header', async () => {
+    const { signatures } = await signedServedCard();
+    const typ = (i: number) =>
+      (
+        JSON.parse(
+          Buffer.from(signatures[i].protected, 'base64url').toString('utf8')
+        ) as { typ: string }
+      ).typ;
+    expect(typ(0)).toBe('dispatch-card+jws');
+    expect(typ(1)).toBe('JOSE');
+  });
+
+  it('verifies the card as received: a field added outside the schema breaks it', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    await expect(
+      verifyCardSignature({ ...served, 'x-pay-to': 'attacker' }, () =>
+        Promise.resolve(publicJwk)
+      )
+    ).resolves.toBe(false);
+  });
+
+  it('asks keyFor by kid alone, never the card’s jku', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    const asked: unknown[][] = [];
+    await expect(
+      verifyCardSignature(served, (...args: unknown[]) => {
+        asked.push(args);
+        return Promise.resolve(publicJwk);
+      })
+    ).resolves.toBe(true);
+    expect(asked.every((a) => a.length === 1)).toBe(true);
+  });
+
+  it('refuses a key whose RFC 7638 thumbprint is not the kid', async () => {
+    const { served, publicJwk } = await signedServedCard({}, 'k1');
+    await expect(
+      verifyCardSignature(served, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(false);
+  });
+
+  it('verifies raw card text, and refuses one with a duplicate key', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    const text = JSON.stringify(served);
+    const key = () => Promise.resolve(publicJwk);
+    await expect(verifyCardSignature(text, key)).resolves.toBe(true);
+    // JSON.parse keeps the last `name`; a reader keeping the first sees Evil.
+    const duplicated = `{"name":"Evil API",${text.slice(1)}`;
+    await expect(verifyCardSignature(duplicated, key)).resolves.toBe(false);
+    const nested = text.replace(
+      '"capabilities":{',
+      '"capabilities":{"streaming":false,'
+    );
+    await expect(verifyCardSignature(nested, key)).resolves.toBe(false);
   });
 
   it('keeps one ETag with and without signatures, and never puts the JWKS in the card', () => {

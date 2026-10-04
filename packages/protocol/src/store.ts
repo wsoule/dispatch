@@ -141,15 +141,21 @@ export interface MessageStore {
   voidAnswer(answerId: string, questionId: string, at: string): boolean;
   /** Answered gate questions (closes excluded) whose host effect is not yet recorded. */
   unappliedAnsweredGates(): { question: Message; answer: Message }[];
-  /** Messages from `from` that arrived at or after `sinceIso`; `origin` narrows to one replica's. */
+  /** Messages from `from` that arrived at or after `sinceIso`, and not after
+   *  `untilIso` when given; `origin` narrows to one replica's. */
   countFrom(
     from: Address,
     sinceIso: string,
     urgentOnly: boolean,
-    origin?: string
+    origin?: string,
+    untilIso?: string
   ): number;
-  /** Messages created since `sinceIso` with a delivery to `recipient`; the per-peer quota. */
-  countDeliveredTo(recipient: Address, sinceIso: string): number;
+  /** Messages created in [sinceIso, untilIso] with a delivery to `recipient`; the per-peer quota. */
+  countDeliveredTo(
+    recipient: Address,
+    sinceIso: string,
+    untilIso?: string
+  ): number;
   /** Agent-authored messages in a thread by arrival; a remote `exclude` still counts. */
   countAgentAuthored(
     threadId: string,

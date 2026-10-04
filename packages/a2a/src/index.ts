@@ -16,6 +16,7 @@ export {
   JWKS_PATH,
   offeredSkills,
   signCard,
+  verifyCardSignature,
   unsignedCardEtag,
   unsignedCardJson,
 } from './card.js';
@@ -78,6 +79,7 @@ export type {
 } from './ext.js';
 export {
   checkInboundRecipients,
+  peerSelfAddressed,
   checkReachClient,
   CLIENT_NAME_PREFIX,
   clientNameFor,

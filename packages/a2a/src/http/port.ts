@@ -1,3 +1,4 @@
+import { DaemonUnavailableError } from '../errors.js';
 import type {
   Admission,
   AuthResult,
@@ -73,16 +74,22 @@ export class HttpBridgePort implements BridgePort {
     caller: Caller | null,
     body?: unknown
   ): Promise<T> {
-    const res = await (this.o.fetchImpl ?? fetch)(
-      `${this.o.daemonUrl}/api/a2a/port${path}`,
-      {
-        method,
-        headers: this.headers(caller, body !== undefined),
-        redirect: 'manual',
-        signal: AbortSignal.timeout(this.o.timeoutMs ?? CALL_TIMEOUT_MS),
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      }
-    );
+    let res: Response;
+    try {
+      res = await (this.o.fetchImpl ?? fetch)(
+        `${this.o.daemonUrl}/api/a2a/port${path}`,
+        {
+          method,
+          headers: this.headers(caller, body !== undefined),
+          redirect: 'manual',
+          signal: AbortSignal.timeout(this.o.timeoutMs ?? CALL_TIMEOUT_MS),
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }
+      );
+    } catch {
+      // Down, refusing or timed out: the client should retry, not see a fault.
+      throw new DaemonUnavailableError();
+    }
     const parsed: unknown =
       res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) throw portErrorFrom(res.status, parsed);

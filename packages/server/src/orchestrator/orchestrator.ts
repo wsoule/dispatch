@@ -5471,8 +5471,15 @@ export class Orchestrator {
     executorName: string,
     runId: string
   ): (memorySection: string | null) => string {
+    // An A2A task's prompt fences its spec, amendments and comments, no epic.
+    const a2aOrigin = this.a2a(task.meta.id);
     let parentEpic: TaskDoc | null = null;
-    if (task.meta.parent !== null) {
+    // An A2A task's body is never parent context, whichever task runs.
+    if (
+      task.meta.parent !== null &&
+      !a2aOrigin &&
+      !this.a2a(task.meta.parent)
+    ) {
       try {
         parentEpic = this.ctx.store.get(task.meta.parent);
       } catch (err) {
@@ -5494,7 +5501,8 @@ export class Orchestrator {
         dispatchTools,
         humanRef,
         docs,
-        comments
+        comments,
+        a2aOrigin
       );
   }
 

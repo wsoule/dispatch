@@ -13,6 +13,7 @@ import {
   loadConfig,
   PRIORITIES,
   TaskParseError,
+  untrustedFenced,
   updateConfig,
 } from '@dispatch/core';
 import type {
@@ -110,6 +111,12 @@ import {
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
+import {
+  a2aParentRefusal,
+  decidingHuman,
+  markA2AChild,
+  proposalWriteRefusal,
+} from './api/proposalFence.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
@@ -679,7 +686,8 @@ export function validateTaskInput(
 // Creates a task as POST /api/tasks does: checked, a legacy `milestone`
 // resolved to a parent, stored, cached and broadcast as task.changed.
 export function createTaskChecked(
-  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'>,
+  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'> &
+    Partial<Pick<ApiContext, 'a2a'>>,
   input: CreateInput
 ): { ok: true; doc: TaskDoc } | { ok: false; error: string } {
   const error = validateTaskInput(ctx.rootDir, { ...input });
@@ -696,6 +704,7 @@ export function createTaskChecked(
     // Omitted, a task starts in the project's ready role.
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
   });
+  markA2AChild(ctx, doc.meta.id, doc.meta.parent);
   ctx.cache.refresh(ctx.store, [doc.meta.id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
   return { ok: true, doc };
@@ -705,6 +714,8 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const input = parsed.value as CreateInput;
+  const refused = a2aParentRefusal(ctx, input.parent);
+  if (refused !== null) return refused;
   // Credit whoever made the request unless the caller names a creator (a
   // sync importing someone else's issue).
   const created = createTaskChecked(ctx, {
@@ -836,10 +847,16 @@ async function updateTask(
       ref: humanActor(ctx),
     };
     const guard = await ctx.a2a.guardTaskPatch(id, patch, {
-      tier: caller.tier,
+      tier: decidingHuman(ctx) ? caller.tier : 'request',
       ref: caller.ref,
     });
     if (!guard.ok) return errorResponse(guard.status, guard.error);
+  }
+
+  // Moving a task under an A2A task makes it one: a decider's call.
+  if (patch.parent !== undefined && patch.parent !== existing.meta.parent) {
+    const refused = a2aParentRefusal(ctx, patch.parent);
+    if (refused !== null) return refused;
   }
 
   // A publish task's elevated risk is what keeps a human on its merge, so only
@@ -848,11 +865,7 @@ async function updateTask(
     patch.risk !== undefined &&
     patch.risk !== existing.meta.risk &&
     ctx.docs.publishing(id) &&
-    !(
-      ctx.viaAgentToken !== true &&
-      ctx.caller !== undefined &&
-      tierAllows(ctx.caller.tier, 'decide')
-    )
+    !decidingHuman(ctx)
   ) {
     return errorResponse(
       403,
@@ -869,6 +882,7 @@ async function updateTask(
   }
 
   const doc = ctx.store.update(id, patch);
+  markA2AChild(ctx, id, doc.meta.parent);
   ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
@@ -4185,6 +4199,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
         ...(description === '' ? {} : { description }),
         ...(parent === null ? {} : { parent }),
       });
+      markA2AChild(ctx, task.meta.id, parent);
       links.push({ id, taskId: task.meta.id });
       results.push({
         id,
@@ -4356,7 +4371,8 @@ function getInboxTriage(ctx: ApiContext): Response {
  * failure mode to avoid is an agent helpfully rewriting a carefully-worded acceptance criterion
  * into something vaguer.
  */
-function buildTaskEnrichPrompt(task: TaskDoc): string {
+// An A2A task's spec (a2a) is fenced as a client's words.
+export function buildTaskEnrichPrompt(task: TaskDoc, a2a = false): string {
   // The two spec sections only — `task.body` verbatim would carry the template's empty
   // headings (so no task ever looks empty) and the agent-written Activity log.
   const existing = [
@@ -4371,7 +4387,7 @@ function buildTaskEnrichPrompt(task: TaskDoc): string {
     `Title: ${task.meta.title}`,
     existing === ''
       ? 'It currently has no description at all.'
-      : `Its current description and criteria:\n\n${existing}`,
+      : `Its current description and criteria:\n\n${a2a ? untrustedFenced('an A2A client wrote this', existing) : existing}`,
     'Read enough of this repository to ground it: which files and functions are actually ' +
       'involved, what the code does today, and what would have to change. Then propose exactly ' +
       "ONE task, and no epic, keeping this task's title and intent. " +
@@ -4393,7 +4409,7 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     return errorResponse(404, `task not found: ${id}`);
   }
   const record = ctx.planManager.startPlan(
-    buildTaskEnrichPrompt(task),
+    buildTaskEnrichPrompt(task, ctx.a2a?.taskOrigin(id) === 'a2a'),
     'claude',
     undefined,
     'enrich',
@@ -4973,6 +4989,7 @@ export async function handleApi(
           ...receiptsProblems(ctx),
           ...ctx.team.teammates.problems(),
           ...ctx.memory.restoreProblems(),
+          ...(ctx.a2a?.problems() ?? []),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.
@@ -5326,6 +5343,9 @@ export async function handleApi(
     }
 
     if (segments[0] === 'tasks') {
+      // One fence for every write to a task an open A2A proposal holds.
+      const fenced = proposalWriteRefusal(ctx, method, segments);
+      if (fenced !== null) return fenced;
       // Before any `:id` sub-route below, and matched on its own literal so
       // "fanout" is never read as a run id.
       if (

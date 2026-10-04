@@ -12,7 +12,7 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { runsDir } from '../../src/orchestrator/paths.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
-import { useTestAuth } from '../testAuth.js';
+import { rawFetch, useTestAuth } from '../testAuth.js';
 import { approvedClient, freePort, useSeedBase } from './seed.js';
 
 let home: string;
@@ -75,6 +75,32 @@ async function addClient(name: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('/api/a2a/clients', () => {
+  it('refuses the shared agent token: only a human adds a client', async () => {
+    const res = await rawFetch(`${base}/api/a2a/clients`, {
+      method: 'POST',
+      headers: {
+        ...json,
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ name: 'minted' }),
+    });
+    expect(res.status).toBe(403);
+    expect(handle.a2a.store!.clients()).toEqual([]);
+  });
+
+  it('caps the clients waiting for approval', async () => {
+    const add = (name: string) =>
+      fetch(`${base}/api/a2a/clients`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({ name }),
+      });
+    for (let i = 0; i < 10; i++) expect((await add(`p${i}`)).status).toBe(201);
+    expect((await add('one-more')).status).toBe(429);
+    // An approved client does not count against the cap.
+    expect((await approvedClient('approved')).token).toBeTruthy();
+  });
+
   beforeEach(boot);
 
   it('adds a client, shows the token once, and --approve answers the registration gate', async () => {
@@ -465,6 +491,45 @@ describe('decline and revocation', () => {
     expect(row).not.toBeNull();
     expect(decideState(gatherFacts(port.deps, row!)).state).toBe('FAILED');
     expect(handle.a2a.store!.getTask(two.taskId)?.state).toBe('FAILED');
+  });
+
+  it('keeps a revoked client revoked: approving it again is a conflict', async () => {
+    const { caller } = await approvedClient('acme');
+    const at = (verb: string) =>
+      fetch(
+        `${base}/api/agents/${encodeURIComponent(caller.address)}/${verb}`,
+        { method: 'POST' }
+      );
+    expect((await at('revoke')).status).toBe(200);
+    expect((await at('approve')).status).toBe(409);
+    expect(handle.messaging.store.getAgent(caller.address)?.status).toBe(
+      'revoked'
+    );
+  });
+
+  it('closes a revoked client’s open task-proposal gates', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-h1',
+      contextId: null,
+      kind: 'handoff',
+      to: null,
+      replyTo: null,
+      body: 'Please add limits.',
+      refs: [],
+      work: { skill: 'handoff', title: 'Rate-limit uploads' },
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const gate = handle.a2a.store!.getTask(opened.taskId)!.gate!;
+    const isOpen = () =>
+      handle.messaging.engine.openBlocking().some((m) => m.id === gate);
+    expect(isOpen()).toBe(true);
+    await fetch(
+      `${base}/api/agents/${encodeURIComponent(caller.address)}/revoke`,
+      { method: 'POST' }
+    );
+    expect(isOpen()).toBe(false);
   });
 
   it('deletes a revoked client’s push configs, secrets included', async () => {

@@ -132,6 +132,9 @@ catalogs:
     dependency-cruiser:
       specifier: 18.1.1
       version: 18.1.1
+    jose:
+      specifier: 6.2.10
+      version: 6.2.10
     jscpd:
       specifier: 5.0.14
       version: 5.0.14
@@ -436,6 +439,9 @@ importers:
       '@dispatch/protocol':
         specifier: workspace:*
         version: link:../protocol
+      jose:
+        specifier: 'catalog:'
+        version: 6.2.10
     devDependencies:
       '@dispatch/protocol-spec':
         specifier: workspace:*

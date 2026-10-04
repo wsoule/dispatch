@@ -82,6 +82,30 @@ signing off with a warning in the listener status, and nothing is written.
 Losing the credentials file makes a new key, so the `kid` changes and clients
 that pinned the old key must fetch the JWKS again.
 
+The card carries two signatures, made with the same key:
+
+1. `signatures[0]` has `typ: "dispatch-card+jws"` in its protected header. It
+   covers the RFC 8785 (JCS) form of the card's JSON exactly as served, minus
+   `signatures`. Every field is covered, the auth fields `securitySchemes` and
+   `securityRequirements` included. A standard JCS verifier checks it, and so
+   does `verifyCardSignature` in this package, which accepts no other signature.
+2. `signatures[1]` has `typ: "JOSE"` and covers the canonical form of
+   `@a2a-js/sdk` 1.2.0, so the SDK's `verifyAgentCardSignature` accepts the
+   card. That form leaves out `securitySchemes`, `securityRequirements`, every
+   empty value and any field outside the SDK's card schema, so this signature
+   does not protect how a client authenticates.
+
+A client that relies on the auth scheme should verify `signatures[0]`, picked by
+its `typ`, against the card's raw text as received.
+
+**Where the key comes from matters.** The card's `jku` is part of what an
+attacker controls, so never fetch a key from wherever it points. Pin the key, or
+fetch the JWKS only from the origin you fetched the card from, at
+`/.well-known/jwks.json`. `verifyCardSignature` hands its `keyFor` the `kid`
+alone, and accepts a key only when its RFC 7638 thumbprint equals that `kid`.
+Given the raw text, it also refuses a card that repeats a member name (I-JSON),
+since two readers could see different values.
+
 ## Outbound address checks
 
 Every outbound contact (a peer's card, its interface, a push webhook) resolves

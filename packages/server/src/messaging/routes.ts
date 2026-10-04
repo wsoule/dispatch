@@ -982,6 +982,17 @@ async function decideAgent(
 ): Promise<Response> {
   const agent = ctx.messaging.store.getAgent(address);
   if (agent === null) return errorResponse(404, `no agent ${address}`);
+  // Revoking an A2A client is final: its tasks were failed and its push
+  // configs deleted, so approving it again is refused; add a new client.
+  if (
+    choice === 'approve' &&
+    agent.status === 'revoked' &&
+    isClientAddress(address)
+  )
+    return errorResponse(
+      409,
+      `${address} was revoked, which is final; add a new A2A client instead`
+    );
   const gate = openRegistrationGateFor(ctx, address);
   if (gate !== null) {
     await ctx.messaging.engine.reply(

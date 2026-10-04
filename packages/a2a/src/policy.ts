@@ -1,4 +1,9 @@
-import { gateOf, hasGateData, MessagingError } from '@dispatch/protocol';
+import {
+  gateOf,
+  hasGateData,
+  isPeerAddress,
+  MessagingError,
+} from '@dispatch/protocol';
 import type { Address, Delivery, JsonValue, Message } from '@dispatch/protocol';
 
 export const CLIENT_NAME_PREFIX = 'a2a.';
@@ -51,6 +56,15 @@ export function isReservedName(normalized: string): boolean {
 
 export function isClientAddress(address: Address): boolean {
   return CLIENT_ADDRESS.test(address);
+}
+
+// A peer host writes `to` as its own name for this host (spec §8.9), which
+// this host reads as its default recipient, the owner.
+export function peerSelfAddressed(
+  to: readonly Address[],
+  owner: Address
+): Address[] {
+  return [...new Set(to.map((a) => (isPeerAddress(a) ? owner : a)))];
 }
 
 // A client may name listed humans and its approved handoffs' tasks; every

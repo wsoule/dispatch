@@ -144,6 +144,17 @@ describe('variantTaskInput', () => {
     expect(input.description).toBe('The login form rejects valid passwords.');
   });
 
+  it('gives a sectioned body’s Description once, not the whole body under a second heading', () => {
+    const input = variantTaskInput(
+      {
+        ...sourceTask(),
+        body: '\n## Description\n\nFix login.\n\n## Acceptance Criteria\n\n- works\n',
+      },
+      { executor: 'claude' }
+    );
+    expect(input.description).toBe('Fix login.');
+  });
+
   it('copies everything that scopes or gates the work', () => {
     const input = variantTaskInput(sourceTask(), { executor: 'claude' });
     expect(input.writes).toEqual(['src/auth/**']);

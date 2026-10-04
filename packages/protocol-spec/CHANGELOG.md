@@ -6,6 +6,10 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+- [clarification] A host reads an `a2a:` entry in an inbound `to` as its owner,
+  since a peer host writes `to` as its own name for the receiver; and only a 401
+  or an `AUTH_*` 403 marks a peer failed, while another 403 fails the one
+  message (§8.4, §8.9).
 - [additive] The `task-proposal` gate type is permanent: only the system address
   raises it, only a deciding principal answers it, and its answer chooses
   `approve` or `decline` (§8.6, App. C.3). Vectors:

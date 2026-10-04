@@ -158,6 +158,8 @@ catalog:
   'commander': '13.1.0'
   'cspell': '10.0.1'
   'dependency-cruiser': '18.1.1'
+  # The card signer's JWS; the version @a2a-js/sdk already resolves.
+  'jose': '6.2.10'
   'jscpd': '5.0.14'
   'knip': '6.29.0'
   'lint-staged': '16.2.7'

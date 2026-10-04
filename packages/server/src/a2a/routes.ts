@@ -3,6 +3,7 @@ import {
   cardJson,
   clientNameFor,
   decideState,
+  isClientAddress,
   PeerHttpError,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
@@ -118,6 +119,22 @@ function listClients(ctx: ApiContext, store: A2AStore): Response {
   return jsonResponse({ clients });
 }
 
+// Unapproved clients per requester, so registrations cannot pile up gates.
+const MAX_PENDING_CLIENTS = 10;
+
+// One requester's clients still waiting for approval.
+function pendingClients(ctx: ApiContext, requester: string): number {
+  const prefix = `agent:${requester.slice('human:'.length)}/`;
+  return ctx.messaging.store
+    .agents()
+    .filter(
+      (a) =>
+        a.status === 'pending' &&
+        a.address.startsWith(prefix) &&
+        isClientAddress(a.address)
+    ).length;
+}
+
 // POST /api/a2a/clients: the clients row first, then the agent row and its
 // registration gate, which `approve` answers at once for a deciding caller.
 async function addClient(
@@ -125,6 +142,16 @@ async function addClient(
   ctx: ApiContext,
   b: Running
 ): Promise<Response> {
+  // The shared agent token is no human: an agent must not mint the
+  // credentials outside callers reach this project with.
+  if (ctx.viaAgentToken === true)
+    return jsonResponse(
+      {
+        error: 'an agent cannot add A2A clients; a human adds them',
+        code: 'auth_agent_token',
+      },
+      403
+    );
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as {
@@ -162,6 +189,14 @@ async function addClient(
     );
   }
   const requester = humanActor(ctx);
+  if (
+    body.approve !== true &&
+    pendingClients(ctx, requester) >= MAX_PENDING_CLIENTS
+  )
+    return errorResponse(
+      429,
+      `${MAX_PENDING_CLIENTS} of your A2A clients already wait for approval; approve or revoke some first`
+    );
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
   // Any existing row, revoked included: a re-used name would inherit the old
   // client's tasks and threads, which key on the address.

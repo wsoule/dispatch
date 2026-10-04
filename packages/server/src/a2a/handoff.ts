@@ -56,8 +56,12 @@ export async function openHandoff(
   const now = deps.now?.() ?? new Date();
   const dayAgo = new Date(now.getTime() - DAY_MS).toISOString();
   if (
-    deps.store.countSince(caller.address, 'handoff', dayAgo) >=
-    policy.handoffsPerDay
+    deps.store.countSince(
+      caller.address,
+      'handoff',
+      dayAgo,
+      now.toISOString()
+    ) >= policy.handoffsPerDay
   ) {
     throw new MessagingError(
       'limited',

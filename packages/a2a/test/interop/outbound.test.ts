@@ -248,8 +248,9 @@ describe('an HTTP+JSON peer (handleA2A)', () => {
       .getTask('m-root')
       .catch((e: unknown) => e);
     expect(err).toMatchObject({ status: 400 });
-    const message = (err as Error).message;
-    // The peer's text did reach the message, cut and cleaned.
+    // The message is Dispatch's; the peer's text is kept apart, cut and cleaned.
+    expect((err as Error).message).toBe('the peer answered HTTP 400');
+    const message = (err as PeerHttpError).peerText ?? '';
     expect(message).toContain('bad');
     expect(message).toContain('xxxx');
     expect(message.length).toBeLessThanOrEqual(300);
