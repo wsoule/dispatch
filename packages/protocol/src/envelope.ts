@@ -109,6 +109,9 @@ export type GateData =
       client: string;
       // The human who asked; the agent registers under their handle.
       requestedBy?: Address;
+      // The registration this card decides (a prefix of its token hash); an
+      // answer for any other, after a re-key, changes nothing.
+      key?: string;
     }
   | {
       type: 'overseer-action';

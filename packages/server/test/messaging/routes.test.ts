@@ -1030,6 +1030,50 @@ describe('messaging HTTP routes', () => {
     );
   });
 
+  it('closes the earlier pending card on re-key, and binds each card to its key', async () => {
+    const register = (rekey: boolean) =>
+      fetch(`${baseUrl}/api/agents/register`, {
+        method: 'POST',
+        headers: authHeaders(handle.tokens.agentToken),
+        body: JSON.stringify({ name: 'rekeyed card', client: 'codex', rekey }),
+      });
+    const first = await json<{ address: string; token: string }>(
+      await register(false)
+    );
+    type Card = { id: string; data?: { agent?: string; key?: string } };
+    const cards = async (): Promise<Card[]> =>
+      (
+        await json<{ items: Card[] }>(
+          await fetch(`${baseUrl}/api/decisions/open`)
+        )
+      ).items.filter((m) => m.data?.agent === first.address);
+    const [stale] = await cards();
+    expect(stale.data?.key).toMatch(/^[0-9a-f]{16}$/);
+    const second = await json<{ token: string }>(await register(true));
+    const open = await cards();
+    expect(open).toHaveLength(1);
+    expect(open[0].id).not.toBe(stale.id);
+    expect(open[0].data?.key).not.toBe(stale.data?.key);
+    // The stale card is closed: denying it changes nothing.
+    const staleDeny = await fetch(`${baseUrl}/api/messages/${stale.id}/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: '', choice: 'deny' }),
+    });
+    expect(staleDeny.status).toBe(409);
+    await fetch(`${baseUrl}/api/messages/${open[0].id}/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: '', choice: 'approve' }),
+    });
+    const sent = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(second.token),
+      body: JSON.stringify({ to: ['human:test'], kind: 'message', body: 'hi' }),
+    });
+    expect(sent.status).toBe(201);
+  });
+
   it('re-keys the same name on the owner machine, retiring the old token', async () => {
     const first = await registerAndApprove('lost cache');
     const register = (rekey: boolean) =>

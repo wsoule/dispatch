@@ -32,7 +32,12 @@ import {
   readJsonBodyOptional,
 } from '../api/http.js';
 import { runMessageRefusal } from '../orchestrator/types.js';
-import { answeringWith, openHumanDecisions } from './gates.js';
+import {
+  answeringWith,
+  closeGate,
+  openHumanDecisions,
+  registrationKey,
+} from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
@@ -837,6 +842,12 @@ function rekeyAgent(ctx: ApiContext, address: string): Response | null {
       `${address} is Dispatch's own agent; register under another name`
     );
   ctx.messaging.store.putAgent({ ...existing, status: 'revoked' });
+  // Cards raised for the old key would decide nothing now: close them.
+  for (;;) {
+    const card = openRegistrationGateFor(ctx, address);
+    if (card === null || !closeGate(ctx.messaging.engine, card.id, 're-keyed'))
+      break;
+  }
   return null;
 }
 
@@ -922,6 +933,7 @@ export async function registerAgentRow(
           agent: address,
           client: reg.client,
           requestedBy: reg.requester,
+          key: registrationKey(record.tokenHash),
         } satisfies GateData,
       },
       { address: SYSTEM_ADDRESS, canDecide: true }

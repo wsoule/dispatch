@@ -33,6 +33,7 @@ import {
   closeRunGates,
   GateHandlers,
   openToolApprovalGate,
+  registrationKey,
   SYSTEM_SENDER,
 } from './gates.js';
 import type { ExternalPolicy, WakeActor } from './host.js';
@@ -337,6 +338,12 @@ export function openMessaging(deps: {
       if (gate === null || gate.type !== 'agent-registration') return;
       const agent = store.getAgent(gate.agent);
       if (agent === null) return;
+      // A card raised for an earlier key (before a re-key) decides nothing.
+      if (
+        gate.key !== undefined &&
+        gate.key !== registrationKey(agent.tokenHash)
+      )
+        return;
       if (answer.choice === 'approve') {
         if (agent.status === 'approved') return;
         store.putAgent({
