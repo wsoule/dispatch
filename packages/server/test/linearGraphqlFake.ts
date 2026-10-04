@@ -236,6 +236,7 @@ export function graphqlFetch(world: GraphqlWorld): {
           ),
           projectMilestones: hit(false),
           initiatives: hit(false),
+          documents: hit(false),
         };
       }
       default:

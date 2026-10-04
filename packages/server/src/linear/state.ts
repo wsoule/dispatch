@@ -115,6 +115,8 @@ export interface LinearSyncState {
   /** Set by an upgrade that added a milestone field: the next pull reads
    *  every linked milestone once, not just those newer than the cursor. */
   milestoneWalk?: boolean;
+  /** High-water mark for the Linear documents pull; absent until the first. */
+  documentCursor?: string | null;
 }
 
 // Sync state is user-level, not project-level: `.dispatch/` is committed to the

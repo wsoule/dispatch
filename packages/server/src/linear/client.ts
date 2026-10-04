@@ -18,6 +18,7 @@ import type {
   TaskCycle,
 } from '@dispatch/core';
 
+import type { LinearDocument } from '../docs/linear.js';
 import * as Q from './queries.js';
 
 const LINEAR_API_URL = 'https://api.linear.app/graphql';
@@ -86,6 +87,7 @@ export interface LinearProbe {
   projects: boolean;
   milestones: boolean;
   initiatives: boolean;
+  documents: boolean;
 }
 
 export interface LinearWebhookInput {
@@ -106,7 +108,12 @@ export interface LinearClient {
   labels(teamId: string): Promise<LinearResult<LinearLabel[]>>;
   cycles(teamId: string): Promise<LinearResult<TaskCycle[]>>;
   users(ids: string[]): Promise<LinearResult<LinearUser[]>>;
-  probe(teamId: string, since: string): Promise<LinearResult<LinearProbe>>;
+  /** Documents are asked about after their own cursor, `documentsSince`. */
+  probe(
+    teamId: string,
+    since: string,
+    documentsSince?: string
+  ): Promise<LinearResult<LinearProbe>>;
   /** `onPage` hears the running count after each page, for progress. */
   issuesUpdatedSince(
     teamId: string,
@@ -132,6 +139,26 @@ export interface LinearClient {
   initiatives(
     since: string | null
   ): Promise<LinearResult<LinearPage<LinearInitiative>>>;
+  /** Documents of the team's projects, issues and the team itself. */
+  documents(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearDocument>>>;
+  document(id: string): Promise<LinearResult<LinearDocument>>;
+  /** Replaces the document's markdown; Linear offers no precondition. */
+  updateDocument(
+    id: string,
+    content: string
+  ): Promise<LinearResult<LinearDocument>>;
+  createDocument(input: {
+    title: string;
+    content: string;
+    projectId?: string;
+    issueId?: string;
+  }): Promise<LinearResult<LinearDocument>>;
+  documentContentHistory(
+    id: string
+  ): Promise<LinearResult<LinearContentHistoryEntry[]>>;
   createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>>;
   updateIssue(
     id: string,
@@ -416,6 +443,50 @@ function toComment(node: CommentNode): LinearComment | null {
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
     archivedAt: node.archivedAt ?? null,
+  };
+}
+
+interface DocumentNode {
+  id: string;
+  title: string;
+  content?: string | null;
+  updatedAt: string;
+  updatedBy?: { id: string } | null;
+  issue?: { id: string } | null;
+  project?: { id: string } | null;
+  initiative?: { id: string } | null;
+  cycle?: { id: string } | null;
+  release?: { id: string } | null;
+  team?: { id: string } | null;
+}
+
+/** One `documentContentHistory` entry: when it snapshotted, and who edited. */
+export interface LinearContentHistoryEntry {
+  contentDataSnapshotAt: string;
+  actorIds: string[];
+}
+
+// The most specific parent wins: an issue's document is the issue's.
+const DOCUMENT_PARENTS = [
+  'issue',
+  'project',
+  'initiative',
+  'cycle',
+  'release',
+  'team',
+] as const;
+
+function toDocument(node: DocumentNode): LinearDocument {
+  const kind = DOCUMENT_PARENTS.find((k) => (node[k]?.id ?? null) !== null);
+  const parentId = kind === undefined ? null : (node[kind]?.id ?? null);
+  return {
+    id: node.id,
+    title: node.title,
+    content: node.content ?? '',
+    updatedAt: node.updatedAt,
+    updatedBy: node.updatedBy?.id ?? null,
+    parent:
+      kind === undefined || parentId === null ? null : { kind, id: parentId },
   };
 }
 
@@ -838,12 +909,14 @@ export class HttpLinearClient implements LinearClient {
 
   async probe(
     teamId: string,
-    since: string
+    since: string,
+    documentsSince: string = since
   ): Promise<LinearResult<LinearProbe>> {
     type Hit = { nodes: unknown[] } | null | undefined;
     const result = await this.request<Record<string, Hit>>(Q.PROBE_QUERY, {
       teamId,
       since,
+      documentsSince,
     });
     if (!result.ok) return result;
     const hit = (key: string) => (result.data[key]?.nodes.length ?? 0) > 0;
@@ -855,6 +928,7 @@ export class HttpLinearClient implements LinearClient {
         projects: hit('projects'),
         milestones: hit('projectMilestones'),
         initiatives: hit('initiatives'),
+        documents: hit('documents'),
       },
     };
   }
@@ -965,6 +1039,85 @@ export class HttpLinearClient implements LinearClient {
       toIssue,
       'create'
     );
+  }
+
+  documents(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearDocument>>> {
+    return this.walk(
+      since === null ? Q.DOCUMENTS_QUERY_ALL : Q.DOCUMENTS_QUERY,
+      since === null ? { teamId } : { teamId, since },
+      'documents',
+      toDocument
+    );
+  }
+
+  async document(id: string): Promise<LinearResult<LinearDocument>> {
+    const result = await this.request<{ document: DocumentNode | null }>(
+      Q.DOCUMENT_QUERY,
+      { id }
+    );
+    if (!result.ok) return result;
+    const doc = result.data.document;
+    return doc === null
+      ? { ok: false, kind: 'graphql', error: `no Linear document ${id}` }
+      : { ok: true, data: toDocument(doc) };
+  }
+
+  updateDocument(
+    id: string,
+    content: string
+  ): Promise<LinearResult<LinearDocument>> {
+    return this.mutate(
+      Q.DOCUMENT_UPDATE,
+      { id, input: { content } },
+      'documentUpdate',
+      'document',
+      toDocument,
+      'update document'
+    );
+  }
+
+  createDocument(input: {
+    title: string;
+    content: string;
+    projectId?: string;
+    issueId?: string;
+  }): Promise<LinearResult<LinearDocument>> {
+    return this.mutate(
+      Q.DOCUMENT_CREATE,
+      { input },
+      'documentCreate',
+      'document',
+      toDocument,
+      'create document'
+    );
+  }
+
+  // History is keyed by the document's content id, read first.
+  async documentContentHistory(
+    id: string
+  ): Promise<LinearResult<LinearContentHistoryEntry[]>> {
+    const doc = await this.request<{
+      document: { documentContentId?: string | null } | null;
+    }>(Q.DOCUMENT_QUERY, { id });
+    if (!doc.ok) return doc;
+    const contentId = doc.data.document?.documentContentId ?? null;
+    if (contentId === null) return { ok: true, data: [] };
+    const result = await this.request<{
+      documentContentHistory: {
+        history: { contentDataSnapshotAt: string; actorIds: string[] | null }[];
+      } | null;
+    }>(Q.DOCUMENT_HISTORY, { id: contentId });
+    if (!result.ok) return result;
+    return {
+      ok: true,
+      data: (result.data.documentContentHistory?.history ?? []).map((h) => ({
+        contentDataSnapshotAt: h.contentDataSnapshotAt,
+        actorIds: h.actorIds ?? [],
+      })),
+    };
   }
 
   updateIssue(

@@ -602,3 +602,124 @@ describe('HttpLinearClient walk cap', () => {
     expect(calls).toBe(300);
   });
 });
+
+describe('HttpLinearClient documents', () => {
+  // Answers each request in turn from `replies`, recording what was sent.
+  function sequence(replies: unknown[], sent: GraphqlSent[]): typeof fetch {
+    return ((_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)) as GraphqlSent);
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: replies.shift() }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+    }) as unknown as typeof fetch;
+  }
+  interface GraphqlSent {
+    query: string;
+    variables: Record<string, unknown>;
+  }
+  const node = {
+    id: 'doc-1',
+    title: 'Spec',
+    content: '# Spec\n',
+    updatedAt: '2026-09-26T10:00:00.000Z',
+    updatedBy: { id: 'u-1' },
+    documentContentId: 'dc-1',
+    issue: null,
+    project: { id: 'p-1' },
+    initiative: null,
+    cycle: null,
+    release: null,
+    team: null,
+  };
+
+  it('pages documents of the team updated since the cursor, parent mapped', async () => {
+    const sent: GraphqlSent[] = [];
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: sequence(
+        [
+          {
+            documents: {
+              nodes: [
+                node,
+                { ...node, id: 'doc-2', project: null, updatedBy: null },
+              ],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        ],
+        sent
+      ),
+    });
+    const result = await client.documents('team-1', '2026-09-01T00:00:00.000Z');
+    expect(result.ok && result.data.nodes).toEqual([
+      {
+        id: 'doc-1',
+        title: 'Spec',
+        content: '# Spec\n',
+        updatedAt: '2026-09-26T10:00:00.000Z',
+        updatedBy: 'u-1',
+        parent: { kind: 'project', id: 'p-1' },
+      },
+      {
+        id: 'doc-2',
+        title: 'Spec',
+        content: '# Spec\n',
+        updatedAt: '2026-09-26T10:00:00.000Z',
+        updatedBy: null,
+        parent: null,
+      },
+    ]);
+    expect(sent[0].variables).toMatchObject({
+      teamId: 'team-1',
+      since: '2026-09-01T00:00:00.000Z',
+    });
+    expect(sent[0].query).toContain('documents(');
+  });
+
+  it('updates and creates with markdown content, and reads history by content id', async () => {
+    const sent: GraphqlSent[] = [];
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: sequence(
+        [
+          { documentUpdate: { success: true, document: node } },
+          { documentCreate: { success: true, document: node } },
+          { document: node },
+          {
+            documentContentHistory: {
+              success: true,
+              history: [
+                {
+                  contentDataSnapshotAt: '2026-09-26T10:01:00.000Z',
+                  actorIds: ['u-2'],
+                },
+              ],
+            },
+          },
+        ],
+        sent
+      ),
+    });
+    expect((await client.updateDocument('doc-1', 'x\n')).ok).toBe(true);
+    expect(sent[0].variables).toEqual({
+      id: 'doc-1',
+      input: { content: 'x\n' },
+    });
+    const made = await client.createDocument({
+      title: 'Spec',
+      content: 'x\n',
+      issueId: 'iss-1',
+    });
+    expect(made.ok && made.data.id).toBe('doc-1');
+    expect(sent[1].variables).toEqual({
+      input: { title: 'Spec', content: 'x\n', issueId: 'iss-1' },
+    });
+    const history = await client.documentContentHistory('doc-1');
+    expect(history.ok && history.data).toEqual([
+      { contentDataSnapshotAt: '2026-09-26T10:01:00.000Z', actorIds: ['u-2'] },
+    ]);
+    expect(sent[3].variables).toEqual({ id: 'dc-1' });
+  });
+});

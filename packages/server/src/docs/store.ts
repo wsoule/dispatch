@@ -1460,6 +1460,13 @@ export class SqliteDocStore {
     return r === undefined ? null : toLinearDoc(r);
   }
 
+  // Linear-synced docs whose head moved past the last synced revision.
+  linearChanged(): string[] {
+    return this.all<{ doc_id: string }>(
+      'SELECT l.doc_id FROM linear_docs l JOIN docs d ON d.id = l.doc_id WHERE d.head_id != l.base_rev ORDER BY l.doc_id'
+    ).map((r) => r.doc_id);
+  }
+
   putLinearDoc(row: LinearDocRow): void {
     this.run(
       'INSERT OR REPLACE INTO linear_docs (doc_id, document_id, base_rev, remote_updated_at) VALUES (?, ?, ?, ?)',

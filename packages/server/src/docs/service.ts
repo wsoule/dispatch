@@ -2588,6 +2588,16 @@ export class DocsService {
     return { state, head: this.headOf(doc), baseBody };
   }
 
+  // Linear-origin team docs with local changes to push; none while docs are down.
+  linearOutstanding(): string[] {
+    if (!this.available) return [];
+    const store = this.store();
+    return store.linearChanged().filter((id) => {
+      const doc = store.doc(id);
+      return doc !== null && doc.scope === 'team' && doc.status !== 'archived';
+    });
+  }
+
   // After a push: the pushed revision is the base Linear now holds.
   linearPushed(docId: string, revId: string, remoteUpdatedAt: string): void {
     const store = this.store();
