@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
-import { call, liveRun, startRun, useWorld } from './world.js';
+import { a2aRun } from './a2a.js';
+import { call, invite, liveRun, startRun, useWorld } from './world.js';
 
 // XH-R2: a run's MCP presents the run's own token rather than the shared
 // agent token, so the daemon knows which run made a write. The run token
@@ -70,5 +71,39 @@ describe('a run token on the request-tier routes', () => {
     await w.handle.orchestrator.cancel(run.runId);
     const after = await call(w, run.runToken, 'GET', '/api/tasks');
     expect(after.status).toBe(401);
+  });
+
+  it('whoami names the run and its operator, never the owner', async () => {
+    const w = world();
+    const ada = await invite(w, 'ada@x.io', 'request');
+    const adas = await liveRun(w, ada.token, 'ada work');
+    expect((await call(w, adas.runToken, 'GET', '/api/whoami')).json).toEqual({
+      ref: `run:${adas.runId}`,
+      operator: 'ada',
+      tier: 'request',
+      runToken: true,
+    });
+    const t = await call(w, w.agent, 'POST', '/api/tasks', { title: 'cli' });
+    const orphan = await startRun(w, w.agent, t.json.meta.id);
+    expect((await call(w, orphan.runToken, 'GET', '/api/whoami')).json).toEqual(
+      {
+        ref: `run:${orphan.runId}`,
+        operator: null,
+        tier: 'request',
+        runToken: true,
+      }
+    );
+  });
+
+  it('whoami for an A2A run omits any operator', async () => {
+    const w = world();
+    const a2a = await a2aRun(w);
+    const me = await call(w, a2a.runToken, 'GET', '/api/whoami');
+    expect(me.json).toEqual({
+      ref: `run:${a2a.runId}`,
+      tier: 'request',
+      runToken: true,
+    });
+    expect(me.text).not.toContain('human:test');
   });
 });

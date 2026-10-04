@@ -5234,6 +5234,25 @@ export async function handleApi(
       if (ctx.caller === undefined) {
         return errorResponse(401, 'credential resolves to no one');
       }
+      // A run's own token is that run, never the owner its caller stands in
+      // for; an A2A run names no operator at all.
+      if (ctx.viaRun !== undefined) {
+        const meta = ctx.orchestrator.list().find((r) => r.id === ctx.viaRun);
+        const operator = meta === undefined ? null : runOperator(meta);
+        return jsonResponse({
+          ref: `run:${ctx.viaRun}`,
+          ...(ctx.a2aRun === undefined
+            ? {
+                operator:
+                  operator?.startsWith('human:') === true
+                    ? operator.slice('human:'.length)
+                    : null,
+              }
+            : {}),
+          tier: 'request',
+          runToken: true,
+        });
+      }
       return jsonResponse(ctx.caller);
     }
 
