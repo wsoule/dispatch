@@ -364,6 +364,25 @@ describe("elsewhere: Bob's question, received here", () => {
     );
   });
 
+  // The accepted answer went to the asker only, never here: the settle
+  // alone tells this replica its own answer lost.
+  it('supersedes its own pending answer on a settle naming an answer it never sees', async () => {
+    const { message: mine } = await engine.reply(q.id, { body: 'no' }, wyat);
+    expect(store.settledAs(mine.id)).toBe('pending');
+    engine.applySettlement(
+      {
+        t: 'settle',
+        question: q.id,
+        answer: 'm-acy',
+        at: '2026-09-26T10:05:00.000Z',
+      },
+      BOB
+    );
+    expect(store.settledAs(mine.id)).toBe('superseded');
+    expect(store.getMessage(mine.id)?.kind).toBe('message');
+    expect(store.settlement(q.id)?.answerId).toBe('m-acy');
+  });
+
   it('stores the first answer seen as pending and later ones as candidates', async () => {
     const { message: mine } = await engine.reply(q.id, { body: 'yes' }, wyat);
     expect(store.settledAs(mine.id)).toBe('pending');

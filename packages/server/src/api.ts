@@ -4271,6 +4271,12 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  // An admin's pick between two machines that each claim a run first.
+  {
+    method: 'POST',
+    segments: ['team', 'runs', '*', 'resolve'],
+    tier: 'decide',
+  },
   {
     method: 'POST',
     segments: ['team', 'keys', '*', 'admit'],

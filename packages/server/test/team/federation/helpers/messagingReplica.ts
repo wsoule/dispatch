@@ -11,7 +11,8 @@ import type {
   PolicyRuling,
   WakeResult,
 } from '@dispatch/protocol';
-import { fingerprint } from '@dispatch/protocol/federation';
+import { fingerprint, sealPayload } from '@dispatch/protocol/federation';
+import type { StatePayload } from '@dispatch/protocol/federation';
 import { join } from 'node:path';
 
 import { AgentSync } from '../../../../src/team/federation/agents.js';
@@ -22,7 +23,9 @@ import { Inbound } from '../../../../src/team/federation/inbound.js';
 import type { StateHooks } from '../../../../src/team/federation/inbound.js';
 import { MailOut } from '../../../../src/team/federation/mail.js';
 import { Presence } from '../../../../src/team/federation/presence.js';
+import { trackWaiting } from '../../../../src/team/federation/presence.js';
 import type { RunInfo } from '../../../../src/team/federation/presence.js';
+import { HeldMail, StateOut } from '../../../../src/team/federation/state.js';
 import { MemoryRemote } from './memoryTransport.js';
 import { MemoryV1, serviceReplica } from './serviceReplica.js';
 import type { ServiceReplica } from './serviceReplica.js';
@@ -115,6 +118,11 @@ export interface MessagingReplica extends ServiceReplica {
     refused: [string, string, string][];
     received: [string, string][];
   };
+  stateOut: StateOut;
+  heldMail: HeldMail;
+  /** An execute run starts here as the daemon starts one: presence first,
+   *  then remote task mail claimed and held mail delivered. */
+  startExecute(taskId: string, runId: string): Promise<void>;
   /** The engine's next `n` receives throw a store error. */
   failReceives(n: number): void;
   /** A run starts here: live on the host, and its presence queued. */
@@ -156,6 +164,7 @@ export function messagingReplica(
     roster: base.roster,
     tasks: base.store,
   });
+  const heldRef: { current: HeldMail | null } = { current: null };
   const knowsRun = (run: string) =>
     host.runTasks.has(run) || host.auxRuns.has(run);
   const presence = new Presence({
@@ -166,6 +175,9 @@ export function messagingReplica(
     knowsRun,
     isLive: (run) => host.isLiveRun(run),
     now: () => base.clock.now,
+    onLiveRun: (task, replica) => {
+      heldRef.current?.onLiveRun(task, replica);
+    },
   });
   base.service.register(presence);
   base.service.addCollector(presence);
@@ -179,6 +191,7 @@ export function messagingReplica(
   });
   host.federation = hooks;
   const engine = new DeliveryEngine({ store: messages, host });
+  trackWaiting(engine, messages, presence);
   const agents = new AgentSync({
     fed: base.fed,
     roster: base.roster,
@@ -206,11 +219,32 @@ export function messagingReplica(
     refused: [],
     received: [],
   };
+  const stateOut = new StateOut({
+    fed: base.fed,
+    roster: base.roster,
+    homes,
+    engine,
+    messages,
+    now: () => base.clock.now,
+  });
+  base.service.addCollector(stateOut);
+  const heldMail = new HeldMail({
+    fed: base.fed,
+    engine,
+    messages,
+    mailOut,
+    homes,
+  });
+  heldRef.current = heldMail;
   const state: StateHooks = {
-    refused: (id, reason, origin) =>
-      stateCalls.refused.push([id, reason, origin]),
-    received: (message, origin) =>
-      stateCalls.received.push([message.id, origin]),
+    refused: (id, reason, origin) => {
+      stateCalls.refused.push([id, reason, origin]);
+      stateOut.refused(id, reason, origin);
+    },
+    received: (message, origin, deliveries) => {
+      stateCalls.received.push([message.id, origin]);
+      stateOut.received(message, origin, deliveries);
+    },
   };
   let failing = 0;
   const receive = engine.receive.bind(engine);
@@ -230,6 +264,7 @@ export function messagingReplica(
     state,
   });
   base.service.register(inbound);
+  base.service.register(inbound.stateHandler(stateOut));
   base.service.setInbox(inbound);
   const replica: MessagingReplica = {
     ...base,
@@ -244,7 +279,15 @@ export function messagingReplica(
     channels,
     mailOut,
     inbound,
+    stateOut,
+    heldMail,
     stateCalls,
+    startExecute: async (taskId, runId) => {
+      host.startRun(taskId, runId);
+      presence.runStarted({ id: runId, taskId, kind: 'execute' });
+      engine.claimRemote(taskId);
+      await engine.deliverHeld(runId, taskId);
+    },
     failReceives: (n) => {
       failing = n;
     },
@@ -300,4 +343,26 @@ export async function foundedTeamWith(
   });
   await settleAll(rs);
   return rs;
+}
+
+/** A state op sealed to `to`, straight through `replica`'s log: a replica
+ *  publishing entries it may have no right to. */
+export function sealStateForTest(
+  replica: MessagingReplica,
+  entries: StatePayload['entries'],
+  to: readonly MessagingReplica[]
+): void {
+  replica.fed.append({
+    type: 'state',
+    seal: (stamp) => {
+      const { to: sealedTo, sealed } = sealPayload({
+        replica: replica.fed.replica,
+        seq: stamp.seq,
+        type: 'state',
+        payload: { entries } as never,
+        recipients: new Map(to.map((r) => [r.fed.replica, r.fed.keys.sealPub])),
+      });
+      return { to: sealedTo, sealed };
+    },
+  });
 }

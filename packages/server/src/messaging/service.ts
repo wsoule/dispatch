@@ -92,6 +92,8 @@ export interface Messaging {
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
   // Installs (or with null removes) the A2A bridge's say on external recipients.
   setExternalPolicy(policy: ExternalPolicy | null): void;
+  /** messaging.agentBlockingTimeoutSec as read at open. */
+  agentWaitSec: number;
   close(): void;
 }
 
@@ -560,6 +562,8 @@ export function openMessaging(deps: {
   // run only gets mail addressed to its own run.
   const unsubscribeRunStarted = deps.orchestrator.onRunStarted((meta) => {
     if (runKind(meta) !== 'execute') return;
+    // Task mail a teammate's machine held for this task comes here first.
+    if (deps.federation !== undefined) engine.claimRemote(meta.taskId);
     engine
       .deliverHeld(meta.id, meta.taskId)
       .catch((err) => console.error('messaging: deliverHeld failed', err));
@@ -574,6 +578,7 @@ export function openMessaging(deps: {
       overseer = target;
     },
     recover: () => engine.recover(),
+    agentWaitSec: limits.agentBlockingTimeoutSec,
     setExternalPolicy(policy) {
       host.setExternalPolicy(policy);
     },

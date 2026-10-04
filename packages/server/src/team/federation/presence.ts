@@ -1,6 +1,8 @@
+import type { DeliveryEngine, MessageStore } from '@dispatch/protocol';
 import { hlcWallMs } from '@dispatch/protocol/federation';
 import type { FederatedOp, PresenceBody } from '@dispatch/protocol/federation';
 
+import { RosterError } from './roster.js';
 import type { RosterService } from './roster.js';
 import type { Collector, OpHandler, StageContext } from './service.js';
 import type { FedStore } from './store.js';
@@ -13,6 +15,14 @@ export interface RunInfo {
   id: string;
   taskId: string | null;
   kind?: string;
+}
+
+type RunBody = Extract<PresenceBody, { kind: 'run' }>;
+
+/** A claimant's latest claim on a contested run. */
+interface Claim {
+  body: RunBody;
+  hlc: string;
 }
 
 interface RunRow {
@@ -33,7 +43,7 @@ export class Presence implements Collector, OpHandler {
   private lastReplicaAt: number | null = null;
 
   constructor(
-    private readonly deps: {
+    private deps: {
       fed: FedStore;
       roster: RosterService;
       build: string;
@@ -49,6 +59,11 @@ export class Presence implements Collector, OpHandler {
       changed?: () => void;
     }
   ) {}
+
+  /** Wires held task mail in once messaging is open. */
+  setOnLiveRun(fn: (task: string, replica: string, hlc: string) => void): void {
+    this.deps.onLiveRun = fn;
+  }
 
   runStarted(meta: RunInfo): void {
     this.publishRun(meta, true, null);
@@ -123,6 +138,7 @@ export class Presence implements Collector, OpHandler {
         );
       return 'applied';
     }
+    if (body?.kind === 'resolve') return this.stageResolve(op, body, ctx);
     if (body?.kind !== 'run' || typeof body.run !== 'string') return 'dropped';
     return this.stageRun(op, body, ctx);
   }
@@ -146,9 +162,17 @@ export class Presence implements Collector, OpHandler {
         `${roster.label(p)} claims run ${body.run}, already running on ${roster.label(holder)}`,
         [p, holder]
       );
+      // Kept, so an admin's resolution can still name this claimant.
+      const known = this.rivalClaims(body.run);
+      known[p] = { body, hlc: op.hlc };
+      fed.db
+        .query(
+          'INSERT OR REPLACE INTO fed_run_claims (run, claims_json) VALUES (?, ?)'
+        )
+        .run(body.run, JSON.stringify(known));
       return 'dropped';
     }
-    if (bound === null && this.contested(body.run, claims, ctx))
+    if (bound === null && this.contested(op, body, claims, ctx))
       return 'dropped';
     fed.db
       .query(
@@ -171,19 +195,19 @@ export class Presence implements Collector, OpHandler {
   // Whether an unbound run is contested: two first claims in one pull open a
   // conflict, and it stays open, whoever posts next, until at most `p` still
   // stands among its claimants (an admin revoked the rest).
-  private contested(run: string, claims: string[], ctx: StageContext): boolean {
+  private contested(
+    op: FederatedOp,
+    body: RunBody,
+    claims: string[],
+    ctx: StageContext
+  ): boolean {
     const { fed, roster } = this.deps;
-    const held = fed.db
-      .query<{ replicas_json: string }, [string]>(
-        'SELECT replicas_json FROM fed_run_conflicts WHERE run = ?'
-      )
-      .get(run);
-    const all = [
-      ...new Set([
-        ...(held === null ? [] : (JSON.parse(held.replicas_json) as string[])),
-        ...claims,
-      ]),
-    ].sort();
+    const run = body.run;
+    const held = this.claimsOf(run);
+    const known: Record<string, Claim | null> = { ...(held ?? {}) };
+    for (const r of claims) known[r] ??= null;
+    known[op.replica] = { body, hlc: op.hlc };
+    const all = Object.keys(known).sort();
     if (held === null && all.length < 2) return false;
     const standing = all.filter(
       (r) => ctx.view.members.has(r) && !ctx.view.revoked.has(r)
@@ -201,7 +225,7 @@ export class Presence implements Collector, OpHandler {
       .query(
         'INSERT OR REPLACE INTO fed_run_conflicts (run, replicas_json) VALUES (?, ?)'
       )
-      .run(run, JSON.stringify(all));
+      .run(run, JSON.stringify(known));
     if (held === null)
       this.conflict(
         run,
@@ -214,6 +238,136 @@ export class Presence implements Collector, OpHandler {
         all
       );
     return true;
+  }
+
+  /** An admin binds a contested run to one of its claimants, on every
+   *  machine; this one at once. */
+  resolve(run: string, replica: string): void {
+    const { fed, roster } = this.deps;
+    const me = roster.view()?.members.get(fed.replica);
+    if (me?.role !== 'admin' || !this.canPublish())
+      throw new RosterError(
+        'forbidden',
+        'only an admin resolves a run conflict'
+      );
+    const bound = this.row(run);
+    const claim =
+      bound?.replica === replica
+        ? { body: this.bodyOf(bound), hlc: bound.hlc }
+        : (this.claimsOf(run)?.[replica] ??
+          this.rivalClaim(run, replica) ??
+          undefined);
+    if (claim === undefined)
+      throw new RosterError(
+        'invalid',
+        `${replica} is not a claimant of a conflict over run ${run}`
+      );
+    if (claim === null)
+      throw new RosterError(
+        'conflict',
+        `${replica}'s claim on run ${run} has not arrived here yet; sync, then try again`
+      );
+    const body: PresenceBody = { kind: 'resolve', run, replica };
+    fed.append({ type: 'presence', body });
+    this.bindResolved(run, replica, claim);
+    this.deps.changed?.();
+  }
+
+  private stageResolve(
+    op: FederatedOp,
+    body: Extract<PresenceBody, { kind: 'resolve' }>,
+    ctx: StageContext
+  ): 'applied' | 'dropped' {
+    const by = ctx.view.members.get(op.replica);
+    if (by?.role !== 'admin' || by.observer) {
+      this.deps.fed.problem(
+        `run-conflict:${String(body.run)}`,
+        `${this.deps.roster.label(op.replica)} tried to resolve run ${String(body.run)}, but is no admin; ignored`
+      );
+      return 'dropped';
+    }
+    const bound = this.row(body.run);
+    if (bound?.replica === body.replica) {
+      this.settleClaims(body.run);
+      return 'applied';
+    }
+    const claim =
+      this.claimsOf(body.run)?.[body.replica] ??
+      this.rivalClaim(body.run, body.replica);
+    if (claim === undefined || claim === null) return 'dropped';
+    this.bindResolved(body.run, body.replica, claim);
+    return 'applied';
+  }
+
+  private bindResolved(run: string, replica: string, claim: Claim): void {
+    const { fed } = this.deps;
+    fed.db
+      .query(
+        'INSERT OR REPLACE INTO fed_runs (run, replica, task, run_kind, live, waiting_on, hlc) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        run,
+        replica,
+        claim.body.task,
+        claim.body.runKind,
+        claim.body.live ? 1 : 0,
+        claim.body.waitingOn ?? null,
+        claim.hlc
+      );
+    this.settleClaims(run);
+    if (
+      claim.body.live &&
+      claim.body.runKind === 'execute' &&
+      claim.body.task !== null
+    )
+      this.deps.onLiveRun?.(claim.body.task, replica, claim.hlc);
+  }
+
+  private bodyOf(row: RunRow): RunBody {
+    return {
+      kind: 'run',
+      run: row.run,
+      task: row.task,
+      runKind: row.run_kind,
+      live: row.live === 1,
+      ...(row.waiting_on === null ? {} : { waitingOn: row.waiting_on }),
+    };
+  }
+
+  private settleClaims(run: string): void {
+    const { fed } = this.deps;
+    fed.db.query('DELETE FROM fed_run_conflicts WHERE run = ?').run(run);
+    fed.db.query('DELETE FROM fed_run_claims WHERE run = ?').run(run);
+    fed.clearProblem(`run-conflict:${run}`);
+  }
+
+  // Claims refused because the run was already bound here, by claimant.
+  private rivalClaims(run: string): Record<string, Claim> {
+    const row = this.deps.fed.db
+      .query<{ claims_json: string }, [string]>(
+        'SELECT claims_json FROM fed_run_claims WHERE run = ?'
+      )
+      .get(run);
+    return row === null
+      ? {}
+      : (JSON.parse(row.claims_json) as Record<string, Claim>);
+  }
+
+  private rivalClaim(run: string, replica: string): Claim | null {
+    return this.rivalClaims(run)[replica] ?? null;
+  }
+
+  // A contested run's claimants, each with its latest claim (null until that
+  // claimant's own op is read here), or null when the run is not contested.
+  private claimsOf(run: string): Record<string, Claim | null> | null {
+    const row = this.deps.fed.db
+      .query<{ replicas_json: string }, [string]>(
+        'SELECT replicas_json FROM fed_run_conflicts WHERE run = ?'
+      )
+      .get(run);
+    return row === null
+      ? null
+      : (JSON.parse(row.replicas_json) as Record<string, Claim | null>);
   }
 
   // FW-R31(3): the run-conflict note can be acknowledged.
@@ -273,4 +427,30 @@ export class Presence implements Collector, OpHandler {
       .query<RunRow, [string]>('SELECT * FROM fed_runs WHERE run = ?')
       .get(run);
   }
+}
+
+// Keeps each run's waitingOn current from the engine: a run's open blocking
+// question to a human waits on that human, its answer ends the wait.
+export function trackWaiting(
+  engine: DeliveryEngine,
+  messages: MessageStore,
+  presence: Presence
+): void {
+  engine.subscribe((e) => {
+    if (e.type !== 'message') return;
+    const m = e.message;
+    if (m.from.startsWith('run:') && m.blocking && m.kind === 'question') {
+      const human = m.to.find((a) => a.startsWith('human:'));
+      if (human !== undefined)
+        presence.waitingOn(
+          m.from.slice('run:'.length),
+          human.slice('human:'.length)
+        );
+      return;
+    }
+    if (m.kind !== 'answer' || m.replyTo === null) return;
+    const q = messages.getMessage(m.replyTo);
+    if (q?.from.startsWith('run:') === true)
+      presence.waitingOn(q.from.slice('run:'.length), null);
+  });
 }

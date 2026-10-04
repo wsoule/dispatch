@@ -384,6 +384,22 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
     );
 
   team
+    .command('resolve-run <run> <replica>')
+    .description(
+      'Bind a run two machines each claim first to one of them (an admin, decide tier); no machine is revoked'
+    )
+    .option(tokenOption, tokenHelp)
+    .action(async (run: string, replica: string, opts: { token?: string }) => {
+      logAnswer(
+        ctx,
+        await (
+          await client(opts, 'dispatch team resolve-run')
+        ).resolveRunConflict(run, replica)
+      );
+      ctx.log(`Run ${run} now runs on ${replica}.`);
+    });
+
+  team
     .command('ack <subject>')
     .description(
       'Acknowledge a race, cut, merge, route, observer or slow-read note (the subject `team keys` lists); a halt or pause goes only when its cause does'

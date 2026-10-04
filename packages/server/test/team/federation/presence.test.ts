@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import type { ApiContext } from '../../../src/api.js';
+import { handleFederationRoute } from '../../../src/team/federation/routes.js';
 import { MemoryRemote } from './helpers/memoryTransport.js';
 import { foundedTeam, messagingReplica } from './helpers/messagingReplica.js';
 import type { MessagingReplica } from './helpers/messagingReplica.js';
@@ -144,6 +146,53 @@ describe('presence', () => {
     expect(at(0).hooks.remoteRunTask(run)).toBe('t-00000a01');
   });
 
+  // An admin settles a conflict by naming the claimant, with no revocation;
+  // every replica binds the run to it, and a non-admin cannot.
+  it('lets an admin resolve a run conflict to one claimant, on every machine', async () => {
+    open = await foundedTeam('ada', 'bob', 'cy');
+    const run = 'r-0000000000ad';
+    at(1).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    at(2).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    for (const r of [at(1), at(2), at(0), at(1), at(2)])
+      await r.service.syncNow();
+    expect(at(0).hooks.remoteRunTask(run)).toBeNull();
+    // Bob holds its own claim; cy's was refused there and kept.
+    expect(at(1).homes.taskLiveRun('t-00000a01')?.replica).toBe(
+      at(1).fed.replica
+    );
+    // Cy is no admin: its resolution is refused at once.
+    expect(() => at(2).presence.resolve(run, at(2).fed.replica)).toThrow(
+      /admin/
+    );
+    at(0).presence.resolve(run, at(2).fed.replica);
+    expect(at(0).hooks.remoteRunTask(run)).toBe('t-00000a01');
+    await at(1).settleWith(at(0));
+    expect(at(1).homes.taskLiveRun('t-00000a01')?.replica).toBe(
+      at(2).fed.replica
+    );
+    expect(
+      at(1)
+        .fed.problems()
+        .some((p) => p.subject === `run-conflict:${run}`)
+    ).toBe(false);
+  });
+
+  it('ignores a resolution published by a machine that is not an admin', async () => {
+    open = await foundedTeam('ada', 'bob', 'cy');
+    const run = 'r-0000000000ae';
+    at(1).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    at(2).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    await at(1).service.syncNow();
+    await at(2).service.syncNow();
+    await at(0).service.syncNow();
+    at(2).fed.append({
+      type: 'presence',
+      body: { kind: 'resolve', run, replica: at(2).fed.replica },
+    });
+    await at(0).settleWith(at(2));
+    expect(at(0).hooks.remoteRunTask(run)).toBeNull();
+  });
+
   it('refuses a claim on a run this machine is running', async () => {
     open = await foundedTeam('ada', 'bob');
     at(0).host.startRun('t-00000a01', 'r-0000000000ad');
@@ -155,6 +204,35 @@ describe('presence', () => {
     await at(0).settleWith(at(1));
     expect(at(0).hooks.remoteRunTask('r-0000000000ad')).toBeNull();
     expect(runCount(at(0), 'run-conflict')).toBe(1);
+  });
+
+  it('says whom a run waits on while its blocking question is open', async () => {
+    open = await foundedTeam('ada', 'bob');
+    at(0).startRun({
+      id: 'r-0000000000a1',
+      taskId: 't-00000a01',
+      kind: 'execute',
+    });
+    const { message: q } = await at(0).engine.send(
+      { to: ['human:bob'], kind: 'question', blocking: true, body: 'which?' },
+      { address: 'run:r-0000000000a1', canDecide: false }
+    );
+    await at(1).settleWith(at(0));
+    const waiting = () =>
+      at(1)
+        .fed.db.query<{ waiting_on: string | null }, [string]>(
+          'SELECT waiting_on FROM fed_runs WHERE run = ?'
+        )
+        .get('r-0000000000a1')?.waiting_on;
+    expect(waiting()).toBe('bob');
+    await at(1).engine.reply(
+      q.id,
+      { body: 'that one' },
+      { address: 'human:bob', canDecide: true }
+    );
+    await at(0).settleWith(at(1));
+    await at(1).settleWith(at(0));
+    expect(waiting()).toBeNull();
   });
 
   it("estimates each replica's clock skew from its replica presence", async () => {
@@ -196,5 +274,50 @@ describe('presence', () => {
     await at(1).settleWith(at(0));
     expect(at(1).homes.taskLiveRun('t-00000a02')).toBeNull();
     expect(at(1).homes.taskLiveRun('t-00000a03')).toBeNull();
+  });
+});
+
+describe('POST /api/team/runs/:run/resolve', () => {
+  it('resolves a run conflict for an admin, and refuses a run with none', async () => {
+    open = await foundedTeam('ada', 'bob', 'cy');
+    const run = 'r-0000000000af';
+    at(1).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    at(2).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    for (const r of [at(1), at(2), at(0)]) await r.service.syncNow();
+    const ada = at(0);
+    const ctx = {
+      caller: { tier: 'decide' },
+      boardSync: ada.service,
+      federation: {
+        roster: ada.roster,
+        fed: ada.fed,
+        now: () => ada.clock.now,
+        label: (r: string) => ada.roster.label(r),
+        passWaitMs: 5000,
+        resolveRun: (id: string, replica: string) => {
+          ada.presence.resolve(id, replica);
+        },
+      },
+    } as unknown as ApiContext;
+    const post = (path: string, body: unknown) =>
+      handleFederationRoute(
+        new Request(`http://127.0.0.1${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+        ctx,
+        path.split('/').slice(2),
+        'POST'
+      );
+    const res = await post(`/api/team/runs/${run}/resolve`, {
+      replica: at(1).fed.replica,
+    });
+    expect(res.status).toBe(200);
+    expect(ada.hooks.remoteRunTask(run)).toBe('t-00000a01');
+    const none = await post('/api/team/runs/r-0000000000b0/resolve', {
+      replica: at(1).fed.replica,
+    });
+    expect(none.status).toBe(400);
   });
 });

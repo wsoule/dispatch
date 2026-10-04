@@ -35,6 +35,9 @@ export interface FederationContext {
   label(replica: string): string;
   /** "<handle>'s <device>" of an admitted observer, or null. */
   observer(): string | null;
+  /** Binds a contested run to one claimant (an admin's), when messaging
+   *  federates; absent before then. */
+  resolveRun?: (run: string, replica: string) => void;
   /** How long a route waits for its pass; ROUTE_PASS_WAIT_MS unless a test sets it. */
   passWaitMs?: number;
 }
@@ -128,6 +131,7 @@ const ACTIONS = new Set([
   'dismiss',
   'abandon-invite',
   'problems',
+  'runs',
 ]);
 
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
@@ -289,6 +293,16 @@ async function act(
       );
     fedCtx.fed.ackProblem(subject);
     return { ok: true };
+  }
+  if (
+    segments.length === 4 &&
+    segments[1] === 'runs' &&
+    segments[3] === 'resolve'
+  ) {
+    if (fedCtx.resolveRun === undefined)
+      return errorResponse(409, 'team messaging is not on');
+    fedCtx.resolveRun(segments[2] ?? '', need('replica'));
+    return after({ ok: true });
   }
   if (segments.length !== 2) return errorResponse(404, 'not found');
   switch (segments[1]) {

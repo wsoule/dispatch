@@ -1785,7 +1785,12 @@ export class DeliveryEngine {
       changed.push(...this.swapSettled(q.id, s.answerId));
       return this.markAnswered(q.id);
     }
-    if (s.closedReason === null) return [];
+    // The accepted answer may never reach this replica (it went to the
+    // asker): every answer held here already lost, so it is superseded now.
+    if (s.closedReason === null) {
+      changed.push(...this.demoteOtherAnswers(q.id, s.answerId));
+      return [];
+    }
     changed.push(...this.demoteOtherAnswers(q.id, s.answerId));
     this.store.insertMessage(
       closeCopy(

@@ -1390,9 +1390,17 @@ async function bootServer(
         }),
   });
   messagesRef.current = messaging;
+  if (federationContext !== null && mailFederation !== null) {
+    const { presence } = mailFederation;
+    federationContext.resolveRun = (run, replica) => {
+      presence.resolve(run, replica);
+    };
+  }
   if (federation !== null && mailFederation !== null)
     wireAgentsAndChannels(federation, {
       homes: mailFederation.homes,
+      presence: mailFederation.presence,
+      agentWaitSec: messaging.agentWaitSec,
       messages: messaging.store,
       engine: messaging.engine,
       perReplicaPerHour: remoteMailQuota(rootDir),

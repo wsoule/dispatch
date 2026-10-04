@@ -213,7 +213,9 @@ export type PresenceBody =
       runKind: string; // execute | review | verify | …
       live: boolean;
       waitingOn?: string; // the handle an open gate or blocking question on this run waits for
-    };
+    }
+  // An admin settles a run two replicas claimed first: it binds to `replica`.
+  | { kind: 'resolve'; run: string; replica: string };
 
 export interface AgentBody {
   address: Address; // agent:<op>/<name>; never agent:*/overseer or agent:*/a2a.*

@@ -22,9 +22,10 @@ import { Inbound } from './inbound.js';
 import { loadOrCreateKeys } from './keys.js';
 import { LegacyWindow } from './legacy.js';
 import { MailOut } from './mail.js';
-import { Presence } from './presence.js';
+import { Presence, trackWaiting } from './presence.js';
 import { RosterService } from './roster.js';
 import { FederationService } from './service.js';
+import { HeldMail, StateOut } from './state.js';
 import { FedStore } from './store.js';
 import { TaskOpSigner } from './taskOps.js';
 
@@ -106,11 +107,14 @@ export function wireAgentsAndChannels(
   federation: Federation,
   deps: {
     homes: Homes;
+    presence: Presence;
     messages: MessageStore;
     engine: DeliveryEngine;
     implicit: (channel: string) => Address[];
     /** messaging.remoteMailPerReplicaPerHour */
     perReplicaPerHour: number;
+    /** messaging.agentBlockingTimeoutSec, for the fast pass */
+    agentWaitSec: number;
     now: () => Date;
   }
 ): void {
@@ -127,18 +131,48 @@ export function wireAgentsAndChannels(
     service.register(sync);
     service.addCollector(sync);
   }
-  service.addCollector(
-    new MailOut({ fed, roster, homes: deps.homes, messages: deps.messages })
-  );
+  const mailOut = new MailOut({
+    fed,
+    roster,
+    homes: deps.homes,
+    messages: deps.messages,
+  });
+  service.addCollector(mailOut);
+  const stateOut = new StateOut({
+    fed,
+    roster,
+    homes: deps.homes,
+    engine: deps.engine,
+    messages: deps.messages,
+    now: deps.now,
+    fast: (until) => {
+      service.fastUntil(until);
+    },
+  });
+  stateOut.agentWaitSec = deps.agentWaitSec;
+  service.addCollector(stateOut);
   const inbound = new Inbound({
     fed,
     roster,
     engine: deps.engine,
     perReplicaPerHour: deps.perReplicaPerHour,
     now: deps.now,
+    state: stateOut,
   });
   service.register(inbound);
+  service.register(inbound.stateHandler(stateOut));
   service.setInbox(inbound);
+  const held = new HeldMail({
+    fed,
+    engine: deps.engine,
+    messages: deps.messages,
+    mailOut,
+    homes: deps.homes,
+  });
+  deps.presence.setOnLiveRun((task, replica) => {
+    held.onLiveRun(task, replica);
+  });
+  trackWaiting(deps.engine, deps.messages, deps.presence);
 }
 
 // Board sync as one daemon runs it: the signed roster, signed task ops, the

@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS fed_roster (replica TEXT NOT NULL, sign_pub TEXT NOT 
 CREATE TABLE IF NOT EXISTS fed_runs (run TEXT PRIMARY KEY, replica TEXT NOT NULL, task TEXT, run_kind TEXT NOT NULL, live INTEGER NOT NULL, waiting_on TEXT, hlc TEXT NOT NULL);
 -- A run two replicas claimed first: bound to neither until all but one claimant is revoked.
 CREATE TABLE IF NOT EXISTS fed_run_conflicts (run TEXT PRIMARY KEY, replicas_json TEXT NOT NULL);
+-- Claims refused because their run was bound here first, for an admin's resolution.
+CREATE TABLE IF NOT EXISTS fed_run_claims (run TEXT PRIMARY KEY, claims_json TEXT NOT NULL);
+-- State entries waiting for the next pass, by their recipients ("a,b").
+CREATE TABLE IF NOT EXISTS fed_state_out (id INTEGER PRIMARY KEY, recipients TEXT NOT NULL, entry_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_replicas (replica TEXT PRIMARY KEY, build TEXT NOT NULL, device TEXT NOT NULL, last_hlc TEXT NOT NULL, skew_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_members (channel TEXT NOT NULL, member TEXT NOT NULL, joined INTEGER NOT NULL, hlc TEXT NOT NULL, PRIMARY KEY (channel, member));
 CREATE TABLE IF NOT EXISTS fed_agents (address TEXT PRIMARY KEY, replica TEXT NOT NULL, display_name TEXT NOT NULL, client TEXT NOT NULL, status TEXT NOT NULL, hlc TEXT NOT NULL);

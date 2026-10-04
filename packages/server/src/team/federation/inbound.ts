@@ -1,6 +1,6 @@
 import type { RosterView } from '@dispatch/federation';
 import { MessagingError } from '@dispatch/protocol';
-import type { DeliveryEngine, Message } from '@dispatch/protocol';
+import type { Delivery, DeliveryEngine, Message } from '@dispatch/protocol';
 import {
   fromB64u,
   hlcWallMs,
@@ -14,6 +14,7 @@ import type {
   ForwardPayload,
   MailPayload,
   MailTarget,
+  StatePayload,
 } from '@dispatch/protocol/federation';
 
 import type { RosterService } from './roster.js';
@@ -27,7 +28,12 @@ const PARKED_MAX_PER_PUBLISHER = 10_000;
 /** What the inbox tells the state module (Task 16); no-ops until then. */
 export interface StateHooks {
   refused(messageId: string, reason: string, origin: string): void;
-  received(message: Message, origin: string): void;
+  received(message: Message, origin: string, deliveries: Delivery[]): void;
+}
+
+/** Where a `state` op's opened payload goes (Task 16's StateOut). */
+export interface StateApplier {
+  applyState(payload: StatePayload, publisher: string, op: FederatedOp): void;
 }
 
 // One fed_inbox row's payload: a verified, decrypted message waiting for the
@@ -184,6 +190,34 @@ export class Inbound implements OpHandler, InboxDrainer {
         fed.clearProblem(p.subject);
   }
 
+  /** The `state` handler: an op sealed here is opened and applied at once,
+   *  under the same cut rule as mail. */
+  stateHandler(applier: StateApplier): OpHandler {
+    return {
+      type: 'state',
+      stage: (op, ctx) => {
+        const { fed } = this.deps;
+        if (!(op.to ?? []).includes(fed.replica)) return 'dropped';
+        const cut = ctx.view.revoked.get(op.replica);
+        if (cut !== undefined && op.seq > cut.afterSeq)
+          return this.contested(op.replica, ctx.view) ? 'parked' : 'dropped';
+        const key = unwrapContentKey(op, fed.replica, fed.keys.sealPriv);
+        const opened = (key === null ? null : openWithKey(op, key)) as {
+          entries?: unknown;
+        } | null;
+        if (!Array.isArray(opened?.entries)) {
+          fed.problem(
+            `op:${op.replica}:${op.seq}`,
+            `state from ${op.replica} seq ${op.seq} could not be read`
+          );
+          return 'dropped';
+        }
+        applier.applyState(opened as StatePayload, op.replica, op);
+        return 'applied';
+      },
+    };
+  }
+
   waiting(replica: string): number {
     return (
       this.deps.fed.db
@@ -230,7 +264,7 @@ export class Inbound implements OpHandler, InboxDrainer {
             )
             .run(p.message.id, JSON.stringify(p.op));
       });
-      state?.received(p.message, p.origin);
+      state?.received(p.message, p.origin, result.deliveries);
       return true;
     } catch (err) {
       if (err instanceof MessagingError) {

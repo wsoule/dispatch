@@ -714,6 +714,8 @@ export interface ApiClient {
   abandonInvite(): Promise<void>;
   /** Acknowledges a race, cut, merge or route note; it is not raised again. */
   ackProblem(subject: string): Promise<void>;
+  /** An admin binds a run two machines claim first to one of them. */
+  resolveRunConflict(run: string, replica: string): Promise<RosterAnswer>;
 }
 
 /** What `keys admit` sends. */
@@ -1036,6 +1038,12 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     ackProblem: async (subject) => {
       await request(target, '/api/team/problems/ack', jsonBody({ subject }));
     },
+    resolveRunConflict: (run, replica) =>
+      request(
+        target,
+        `/api/team/runs/${encodeURIComponent(run)}/resolve`,
+        jsonBody({ replica })
+      ),
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
