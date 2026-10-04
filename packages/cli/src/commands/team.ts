@@ -386,7 +386,7 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
   team
     .command('ack <subject>')
     .description(
-      'Acknowledge a race, cut, merge or route note (the subject `team keys` lists); a halt or pause goes only when its cause does'
+      'Acknowledge a race, cut, merge, route, observer or slow-read note (the subject `team keys` lists); a halt or pause goes only when its cause does'
     )
     .option(tokenOption, tokenHelp)
     .action(async (subject: string, opts: { token?: string }) => {

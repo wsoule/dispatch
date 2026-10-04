@@ -746,6 +746,9 @@ describe('FederationService', () => {
         .problems()
         .find((p) => p.subject === `observer:${ops.fed.replica}`);
     expect(note()?.message).toContain('dispatch team keys revoke');
+    expect(note()?.message).toContain(
+      'have its owner join again from a fresh machine id'
+    );
     ada.roster.revoke(ops.fed.replica, 'done');
     await settle(ada);
     expect(note()).toBeUndefined();

@@ -194,7 +194,7 @@ function readHints(fed: FedStore, roster: RosterService): ReadHints {
 
 // A problem per replica whose reads the budget keeps cutting short; cleared
 // once its reads fit again.
-function starvedProblems(fed: FedStore, replicas: string[]): void {
+export function starvedProblems(fed: FedStore, replicas: string[]): void {
   const prefix = 'transport:read:';
   for (const p of fed.problems())
     if (

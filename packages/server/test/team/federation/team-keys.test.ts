@@ -1,11 +1,13 @@
 import type { RosterView } from '@dispatch/federation';
 import { describe, expect, it } from 'bun:test';
 
+import { starvedProblems } from '../../../src/team/federation/daemon.js';
 import {
   assembleTeamKeys,
   BRANCH_SIZE_WARN_BYTES,
   PRUNE_BLOCKED_AFTER_MS,
 } from '../../../src/team/federation/teamKeys.js';
+import { testReplica } from './helpers/replica.js';
 
 const NOW = new Date('2026-10-26T00:00:00.000Z');
 const member = (replica: string, handle: string, observer = false) => ({
@@ -174,5 +176,25 @@ describe('assembleTeamKeys', () => {
     ).toStartWith(
       'Everyone with access to git@github.com:acme/app.git can read the whole board'
     );
+  });
+});
+
+// Minor (2): the slow-read note names what to do.
+describe('starvation notes', () => {
+  it('says to remove the files the owner did not write', () => {
+    const ada = testReplica('ada');
+    try {
+      starvedProblems(ada.fed, ['bob-0000000b']);
+      const note = ada.fed
+        .problems()
+        .find((p) => p.subject === 'transport:read:bob-0000000b');
+      expect(note?.message).toContain(
+        'remove the files under fed/bob-0000000b/ its owner did not write'
+      );
+      starvedProblems(ada.fed, []);
+      expect(ada.fed.problems()).toEqual([]);
+    } finally {
+      ada.close();
+    }
   });
 });

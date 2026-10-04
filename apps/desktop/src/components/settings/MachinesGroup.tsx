@@ -43,6 +43,7 @@ const PROBLEM_TITLES: [string, string][] = [
   ['recovery:', 'Admin by recovery code'],
   ['rekey:', 'This machine joined again'],
   ['op:', 'Roster change'],
+  ['task:', 'Task change too large'],
 ];
 
 /** A problem row's title: its source in words, and the machine it is about. */

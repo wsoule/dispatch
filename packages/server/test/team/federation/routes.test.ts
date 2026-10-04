@@ -433,6 +433,17 @@ describe('acknowledging a problem (E)', () => {
         'POST'
       );
       expect(refused.status).toBe(403);
+      // Minor (2): observer and slow-read notes can be acknowledged too.
+      for (const subject of [
+        'observer:ops-0000000c',
+        'transport:read:bob-0000000b',
+      ]) {
+        ada.fed.problem(subject, 'a note');
+        expect((await ack(subject)).status).toBe(200);
+      }
+      expect(
+        ada.fed.problems().some((p) => p.subject.startsWith('observer:'))
+      ).toBe(false);
     } finally {
       ada.close();
     }

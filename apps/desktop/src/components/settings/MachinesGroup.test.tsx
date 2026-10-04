@@ -367,3 +367,85 @@ test('explains the tier instead of showing a refused request', async () => {
     await screen.findByText(/Changing settings needs Can approve access/)
   ).toBeTruthy();
 });
+
+// Minor (1): an operator on a member's machine sees no admin control.
+test("shows a member's operator no admin controls", async () => {
+  const [me] = founded.roster;
+  if (me === undefined) throw new Error('no roster entry for this machine');
+  mount({
+    ...founded,
+    roster: [
+      { ...me, role: 'member' },
+      {
+        replica: 'bob-0000000b',
+        handle: 'bob',
+        device: 'desk',
+        build: '0.40.0',
+        role: 'member',
+        rank: null,
+        hosts: [],
+        observer: false,
+        recovered: false,
+        fingerprint: 'BBBB',
+        lastSeen: null,
+        skewMs: null,
+      },
+    ],
+    legacy: {
+      until: '2026-10-26T00:00:00.000Z',
+      closed: false,
+      olderBuilds: [],
+    },
+    pause: { replica: 'bob-0000000b', seq: 4, hash: 'h'.repeat(64) },
+  });
+  expect(await screen.findByText('bob on desk')).toBeTruthy();
+  for (const name of [
+    'Make admin',
+    'Make member',
+    'Revoke',
+    'New recovery code',
+    'Save hosts for bob',
+    'Close now',
+    "Dismiss bob-0000000b's op",
+  ])
+    expect(screen.queryByRole('button', { name })).toBeNull();
+});
+
+// Minor (1): an uncheckable revocation is the operator's to acknowledge.
+test('hides the team:cut Acknowledge below the operator tier', async () => {
+  mount(
+    {
+      ...founded,
+      problems: [
+        {
+          subject: 'team:cut:bob-0000000b',
+          message: 'cannot be checked',
+          at: 'x',
+        },
+        { subject: 'team:race:bob-0000000b', message: 'raced', at: 'x' },
+      ],
+    },
+    'decide'
+  );
+  expect(
+    await screen.findByRole('button', {
+      name: 'Acknowledge team:race:bob-0000000b',
+    })
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole('button', { name: 'Acknowledge team:cut:bob-0000000b' })
+  ).toBeNull();
+});
+
+// Minor (5): a field-cap note on a task has a title of its own.
+test('titles a task field-cap note', async () => {
+  mount({
+    ...founded,
+    problems: [
+      { subject: 'task:t-00000a01', message: 'field over the cap', at: 'x' },
+    ],
+  });
+  expect(
+    await screen.findByText('Task change too large: t-00000a01')
+  ).toBeTruthy();
+});

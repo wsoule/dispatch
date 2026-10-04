@@ -899,7 +899,7 @@ export class FederationService {
     if (observer && entry.type !== 'presence') {
       fed.problem(
         `observer:${r}`,
-        `${roster.label(r)} is an observer, so its ${entry.type} change at seq ${entry.seq} was dropped: an observer publishes only keys, presence and acks. If it should edit, revoke it (\`dispatch team keys revoke ${r}\`) and admit it again as a member; else acknowledge this.`
+        `${roster.label(r)} is an observer, so its ${entry.type} change at seq ${entry.seq} was dropped: an observer publishes only keys, presence and acks. If it should edit, revoke it (\`dispatch team keys revoke ${r}\`), and have its owner join again from a fresh machine id; else acknowledge this.`
       );
       fed.audit('speaks-for', `op:${r}:${entry.seq}`, {
         replica: r,
