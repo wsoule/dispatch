@@ -1,15 +1,15 @@
+import type { TaskDoc } from '@dispatch/core';
 import { expect } from 'bun:test';
 
+import { taskFields } from '../../../../src/team/boardSync/engine.js';
 import type { Member } from './cluster.js';
 
 /** The merge state a member holds (fields, tombstones, activity) and the
- *  tasks it renders, by id. */
+ *  task docs it renders, by id, as the synced fields and Activity. */
 export async function boardProjection(m: Member): Promise<unknown> {
   const rows = <T>(sql: string) => m.handle.stateDb<T>(sql);
   const tasks = (await m.handle.api('/api/tasks')).body as unknown;
-  const list = (Array.isArray(tasks) ? tasks : []) as {
-    meta: { id: string; title: string; status: string };
-  }[];
+  const list = (Array.isArray(tasks) ? tasks : []) as TaskDoc[];
   return {
     fields: rows(
       'SELECT task, field, hlc, value FROM fields ORDER BY task, field'
@@ -18,12 +18,9 @@ export async function boardProjection(m: Member): Promise<unknown> {
     activity: rows(
       'SELECT task, hlc, idx, line FROM activity ORDER BY task, hlc, idx'
     ),
+    // Each task as rendered: every synced field and its Activity lines.
     tasks: list
-      .map((t) => ({
-        id: t.meta.id,
-        title: t.meta.title,
-        status: t.meta.status,
-      }))
+      .map((t) => ({ id: t.meta.id, ...taskFields(t) }))
       .sort((a, b) => a.id.localeCompare(b.id)),
   };
 }

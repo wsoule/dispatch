@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { defaultAsyncGitRunner } from '../../../src/sync/worktree.js';
 import type { BoardOp } from '../../../src/team/boardSync/engine.js';
 import { SyncRepo } from '../../../src/team/boardSync/repo.js';
+import { regularFile } from '../../../src/team/boardSync/safeFs.js';
 import { runGitSync } from '../../orchestrator/helpers.js';
 
 // FW-R22(1): the sync branch is hostile input for the filesystem too. A path
@@ -283,3 +284,16 @@ function gitCommitAndPush(raw: string): void {
   ]);
   runGitSync(raw, ['push', '-q', 'origin', 'HEAD:dispatch-sync']);
 }
+
+// I: regularFile goes by lstat, so a symlink to a regular file is not one.
+describe('regularFile', () => {
+  it('reads the link itself, never what it points at', () => {
+    const file = join(dir, 'plain.jsonl');
+    writeFileSync(file, '{}\n');
+    const link = join(dir, 'link.jsonl');
+    symlinkSync(file, link);
+    expect(regularFile(file)).toBe(true);
+    expect(regularFile(link)).toBe(false);
+    expect(regularFile(join(dir, 'missing.jsonl'))).toBe(false);
+  });
+});

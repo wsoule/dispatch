@@ -657,6 +657,140 @@ describe('board convergence over signed ops', () => {
         expect(
           (await m.handle.keys()).roster.find((r) => r.replica === replica)
         ).toMatchObject({ role: 'admin', recovered: true });
+      await expectConverged([bob, ada2], [boardProjection, rosterProjection]);
+    },
+    SLOW
+  );
+
+  // I: two machines edit one field at once, one of them cut off; every
+  // machine ends on the same value once they meet.
+  it(
+    'converges concurrent edits to one task field, including under partition',
+    async () => {
+      const { members } = await team(['ada', 'bob', 'cy']);
+      const [ada, bob, cy] = members as [Member, Member, Member];
+      const id = await ada.handle.create('first');
+      await quiesce(members);
+      await ada.handle.patch(id, { title: 'from ada' });
+      await bob.handle.patch(id, { title: 'from bob' });
+      await quiesce(members);
+      await expectConverged(members, [boardProjection]);
+      cy.handle.partition(true);
+      advance(members, 1_000);
+      await cy.handle.patch(id, { title: 'from cy, offline' });
+      await ada.handle.patch(id, { title: 'from ada, later' });
+      await quiesce([ada, bob]);
+      cy.handle.partition(false);
+      await quiesce(members);
+      const titles = await Promise.all(members.map((m) => m.handle.title(id)));
+      expect(new Set(titles).size).toBe(1);
+      await expectConverged(members, [boardProjection]);
+    },
+    SLOW
+  );
+
+  // I: two foundings race on one branch (eve founded too, from a machine of
+  // her own); a new machine follows neither until it trusts one.
+  it(
+    'holds two concurrent foundings until trust, then converges on the trusted one',
+    async () => {
+      const c = await cluster(['ada', 'cy']);
+      stop = c.stop;
+      const [ada, cy] = c.members as [Member, Member];
+      await ada.handle.found();
+      await quiesce([ada]);
+      const eve = 'eve-0000000e';
+      const k = generateReplicaKeys();
+      const hlcAt = (n: number) =>
+        `${String(ada.clock.ms).padStart(13, '0')}.000${n}.${eve}`;
+      const keyOp = buildOp(
+        {
+          replica: eve,
+          seq: 1,
+          prev: ZERO_HASH,
+          hlc: hlcAt(0),
+          type: 'key',
+          body: {
+            handle: 'eve',
+            device: 'desk',
+            build: '0.40.0',
+            signPub: k.signPub,
+            sealPub: k.sealPub,
+            legacy: null,
+          },
+        },
+        k.signPriv
+      );
+      const found = buildOp(
+        {
+          replica: eve,
+          seq: 2,
+          prev: opHash(keyOp),
+          hlc: hlcAt(1),
+          type: 'roster',
+          body: {
+            rv: 1,
+            action: 'found',
+            name: 'rival',
+            legacy: [],
+            recoveryPub: generateReplicaKeys().signPub,
+          },
+        },
+        k.signPriv
+      );
+      editRemote(c.remote, (dir) => {
+        mkdirSync(join(dir, 'fed', eve), { recursive: true });
+        writeFileSync(
+          join(dir, 'fed', eve, '000000000001.jsonl'),
+          `${JSON.stringify(keyOp)}\n${JSON.stringify(found)}\n`
+        );
+      });
+      // cy's key op waits for a founding to follow, so it never settles
+      // before trust; a few passes show it both foundings.
+      for (let round = 0; round < 3; round++)
+        for (const m of c.members) await m.handle.sync();
+      const seen = (await cy.handle.keys()).foundings;
+      expect(seen.map((f) => f.replica).sort()).toEqual(
+        [await ada.handle.replica(), eve].sort()
+      );
+      expect((await cy.handle.keys()).team).toBeNull();
+      const adaFp = (await ada.handle.keys()).machine.fingerprint;
+      const trusted = await cy.handle.api('/api/team/trust', {
+        method: 'POST',
+        body: JSON.stringify({ fingerprint: adaFp }),
+      });
+      expect(trusted.status).toBe(200);
+      await quiesce(c.members);
+      expect((await cy.handle.keys()).team?.founder.fingerprint).toBe(adaFp);
+      await ada.handle.admit(cy.handle);
+      await quiesce(c.members);
+      await expectConverged(c.members, [rosterProjection]);
+    },
+    SLOW
+  );
+
+  // I: a log past one segment's 1,000 ops rolls over, and a machine that
+  // joins later reads every segment.
+  it(
+    'rolls a segment over at 1,000 ops and a later joiner reads them all',
+    async () => {
+      const c = await team(['ada', 'bob']);
+      const [ada] = c.members as [Member];
+      const ids: string[] = [];
+      for (let n = 0; n < 1001; n++) ids.push(await ada.handle.create(`t${n}`));
+      await quiesce(c.members);
+      const adaId = await ada.handle.replica();
+      const segments = readdirSync(
+        join(ada.handle.syncDir, 'repo', 'fed', adaId)
+      ).filter((f) => f.endsWith('.jsonl'));
+      expect(segments.length).toBeGreaterThan(1);
+      const cy = await c.add('cy');
+      await quiesce(c.members);
+      await ada.handle.admit(cy.handle);
+      await quiesce(c.members);
+      expect(await cy.handle.title(ids[0] ?? '')).toBe('t0');
+      expect(await cy.handle.title(ids[1000] ?? '')).toBe('t1000');
+      await expectConverged(c.members, [boardProjection]);
     },
     SLOW
   );
