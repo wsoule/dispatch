@@ -153,7 +153,7 @@ function jcs(value: unknown): string {
 }
 
 // What a card signature covers: the card exactly as served, minus
-// `signatures`, in JCS. The SDK 1.2.0 canonicalizer drops securitySchemes and
+// `signatures`, in JCS. The SDK 1.2.0 canonical form drops securitySchemes and
 // securityRequirements, so a swapped auth scheme would still verify.
 function canonicalCard(card: Record<string, unknown>): string {
   const served = AgentCard.toJSON(AgentCard.fromJSON(card)) as Record<

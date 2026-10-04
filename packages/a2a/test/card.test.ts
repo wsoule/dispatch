@@ -231,8 +231,8 @@ describe('signed cards', () => {
     await expect(
       verifyCardSignature(swapped, () => Promise.resolve(publicJwk))
     ).resolves.toBe(false);
-    const unrequired = { ...served, securityRequirements: [] };
-    await expect(standardVerify(unrequired, publicJwk)).rejects.toThrow();
+    const noRequirement = { ...served, securityRequirements: [] };
+    await expect(standardVerify(noRequirement, publicJwk)).rejects.toThrow();
   });
 
   it('keeps one ETag with and without signatures, and never puts the JWKS in the card', () => {
