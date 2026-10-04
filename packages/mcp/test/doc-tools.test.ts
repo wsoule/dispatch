@@ -667,3 +667,24 @@ describe('task_get docs', () => {
     ).toBe(false);
   });
 });
+
+describe('doc_save description', () => {
+  it('says replace_section keeps the heading and replaces only what is under it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-doc-desc-'));
+    try {
+      const server = createDispatchMcpServer(root);
+      const client = new Client({ name: 'test-client', version: '1.0' });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      await Promise.all([
+        client.connect(clientTransport),
+        server.connect(serverTransport),
+      ]);
+      const { tools } = await client.listTools();
+      const save = tools.find((t) => t.name === 'doc_save');
+      expect(save?.description).toContain('the heading line stays');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
