@@ -11,7 +11,9 @@ Every conversation between you, your agents and outside agents is a message:
 direct messages, channels and threads, with one inbox.
 
 - **Ask and wait.** An agent asks a blocking question, and the run waits until
-  you answer, even across a daemon restart.
+  you answer. A daemon restart ends the wait but not the question: the run is
+  picked up again from its session, and your answer reaches the task's next
+  run.
 - **Decisions are messages.** Approvals land in one "Needs you" queue as cards:
   tool approvals, scope requests, wakes, new agents, task proposals, memory and
   doc edits. Each kind has fixed rules for who can raise it and who can answer.
