@@ -114,7 +114,8 @@ runs in, and `requestedBy` the human who asked, under whose handle it registers.
 `key`, when present, names the registration the gate decides (16 lowercase hex
 digits); after the agent re-registers under a new key, an answer to a gate for
 an earlier key has no effect. `approve` approves the agent; `deny` revokes it.
-Vector: `core.answers.a-human-decides-an-agent-registration-gate`.
+Vectors: `core.answers.a-human-decides-an-agent-registration-gate`,
+`core.answers.an-agent-registration-gate-names-its-key`.
 
 **`overseer-action`.** The system raises it to the owner when Dispatch's
 overseer, the project's own assistant, wants to take an action it queued:

@@ -87,6 +87,10 @@ vector ids (see §14.2).
   provisional any more. Vectors: `a2a.peers.parses-an-alias`,
   `a2a.peers.an-alias-is-at-most-40-characters`,
   `a2a.peers.a-delivery-to-a-peer-is-held`.
+- [additive] An `agent-registration` gate may name the registration it decides
+  as `key`, 16 lowercase hex digits; after the agent re-registers under a new
+  key, an answer to a gate for an earlier one has no effect (App. C.3). Vector:
+  `core.answers.an-agent-registration-gate-names-its-key`.
 
 ## 1.0.0-draft.1 (2026-09-28)
 

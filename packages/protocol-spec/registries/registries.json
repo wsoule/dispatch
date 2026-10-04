@@ -439,7 +439,10 @@
         "key": "string, optional"
       },
       "effect": "approve or refuse the agent (C.3)",
-      "vectors": ["core.answers.a-human-decides-an-agent-registration-gate"]
+      "vectors": [
+        "core.answers.a-human-decides-an-agent-registration-gate",
+        "core.answers.an-agent-registration-gate-names-its-key"
+      ]
     },
     {
       "value": "overseer-action",

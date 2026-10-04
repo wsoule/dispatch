@@ -1335,6 +1335,65 @@
         "steps": [{ "ok": true }, { "ok": true }],
         "messages": [{ "id": "$s2", "replyTo": "$s1", "from": "human:ana" }]
       }
+    },
+    {
+      "id": "core.answers.an-agent-registration-gate-names-its-key",
+      "title": "An agent-registration gate may name the registration it decides by key; the key is stored with the gate and a deciding answer applies its effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "5.5", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "Register agent:wyat/claude-code.macbook?",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "data": {
+              "type": "agent-registration",
+              "agent": "agent:wyat/claude-code.macbook",
+              "client": "claude-code",
+              "requestedBy": "human:wyat",
+              "key": "3f9a0c1e7b24d58a"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "deny" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "$system",
+            "data": {
+              "type": "agent-registration",
+              "agent": "agent:wyat/claude-code.macbook",
+              "client": "claude-code",
+              "requestedBy": "human:wyat",
+              "key": "3f9a0c1e7b24d58a"
+            }
+          },
+          { "id": "$s2", "choice": "deny" }
+        ],
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" }
+        ],
+        "gateEffects": ["$s1"]
+      }
     }
   ]
 }
