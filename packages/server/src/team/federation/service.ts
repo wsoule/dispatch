@@ -117,6 +117,8 @@ export interface OpHandler {
   readonly type: string;
   /** Inside the state.db transaction; 'parked' keeps the op for a later pass. */
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped';
+  /** After each pass that ran to the end: project what the pass applied. */
+  passComplete?(): void;
 }
 
 /** Queues ops into fed_outbox before publishing (spec "Collect"). */
@@ -361,6 +363,7 @@ export class FederationService {
       await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
       await transport.ack(this.watermarks());
+      for (const h of this.handlers.values()) h.passComplete?.();
       if (fed.outbox().length > 0) this.notifyLocalChange();
       this.lastSyncAt = now.toISOString();
       // A route's late sync failure is over once a sync goes through.

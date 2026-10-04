@@ -14,6 +14,8 @@ import type {
 import { fingerprint } from '@dispatch/protocol/federation';
 import { join } from 'node:path';
 
+import { AgentSync } from '../../../../src/team/federation/agents.js';
+import { ChannelSync } from '../../../../src/team/federation/channels.js';
 import { Homes } from '../../../../src/team/federation/homes.js';
 import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js';
 import { Presence } from '../../../../src/team/federation/presence.js';
@@ -101,6 +103,8 @@ export interface MessagingReplica extends ServiceReplica {
   homes: Homes;
   hooks: DaemonFederationHooks;
   presence: Presence;
+  agents: AgentSync;
+  channels: ChannelSync;
   /** A run starts here: live on the host, and its presence queued. */
   startRun(meta: RunInfo): void;
   /** `other`'s pass, then this replica's. */
@@ -151,6 +155,22 @@ export function messagingReplica(
   });
   host.federation = hooks;
   const engine = new DeliveryEngine({ store: messages, host });
+  const agents = new AgentSync({
+    fed: base.fed,
+    roster: base.roster,
+    messages,
+  });
+  const channels = new ChannelSync({
+    fed: base.fed,
+    roster: base.roster,
+    messages,
+    engine,
+    implicit: () => [],
+  });
+  for (const sync of [agents, channels]) {
+    base.service.register(sync);
+    base.service.addCollector(sync);
+  }
   const replica: MessagingReplica = {
     ...base,
     remote,
@@ -160,6 +180,8 @@ export function messagingReplica(
     homes,
     hooks,
     presence,
+    agents,
+    channels,
     startRun: (meta) => {
       host.startRun(meta.taskId, meta.id);
       presence.runStarted(meta);

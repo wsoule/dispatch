@@ -1,5 +1,5 @@
 import { LICENSE_PUBLIC_KEY } from '@dispatch/federation';
-import type { MessageStore } from '@dispatch/protocol';
+import type { Address, DeliveryEngine, MessageStore } from '@dispatch/protocol';
 import { canonicalize, TAG, verifyText } from '@dispatch/protocol/federation';
 import type { FederatedOp } from '@dispatch/protocol/federation';
 import { hostname } from 'node:os';
@@ -12,6 +12,8 @@ import { SyncRepo } from '../boardSync/repo.js';
 import type { SyncedTaskStore } from '../boardSync/syncedStore.js';
 import type { Team } from '../index.js';
 import { syncSeats } from '../index.js';
+import { AgentSync } from './agents.js';
+import { ChannelSync } from './channels.js';
 import { GitFederationTransport, signedEntry } from './git.js';
 import { Homes } from './homes.js';
 import type { HomeTasks } from './homes.js';
@@ -94,6 +96,31 @@ export function wireMessagingFederation(
     knowsRun: deps.knowsRun,
   });
   return { homes, presence, hooks };
+}
+
+// The agent roster and channel memberships across daemons, once messaging
+// is open: both publish each pass and project after it.
+export function wireAgentsAndChannels(
+  federation: Federation,
+  deps: {
+    messages: MessageStore;
+    engine: DeliveryEngine;
+    implicit: (channel: string) => Address[];
+  }
+): void {
+  const { fed, roster, service } = federation;
+  const agents = new AgentSync({ fed, roster, messages: deps.messages });
+  const channels = new ChannelSync({
+    fed,
+    roster,
+    messages: deps.messages,
+    engine: deps.engine,
+    implicit: deps.implicit,
+  });
+  for (const sync of [agents, channels]) {
+    service.register(sync);
+    service.addCollector(sync);
+  }
 }
 
 // Board sync as one daemon runs it: the signed roster, signed task ops, the

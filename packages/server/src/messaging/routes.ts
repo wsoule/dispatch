@@ -890,6 +890,18 @@ function openRegistrationGateFor(
   return null;
 }
 
+// The handle of the machine a replicated agent was registered on.
+function registeringHandle(ctx: ApiContext, address: string): string {
+  const fed = ctx.federation;
+  if (fed === null) return 'a teammate';
+  const row = fed.fed.db
+    .query<{ replica: string }, [string]>(
+      'SELECT replica FROM fed_agents WHERE address = ?'
+    )
+    .get(address);
+  return row === null ? 'a teammate' : fed.label(row.replica);
+}
+
 // Approve/revoke: answers the open registration gate if there is one, so its
 // handler stays the one writer of status; else writes the agent row directly.
 async function decideAgent(
@@ -900,6 +912,12 @@ async function decideAgent(
 ): Promise<Response> {
   const agent = ctx.messaging.store.getAgent(address);
   if (agent === null) return errorResponse(404, `no agent ${address}`);
+  // A teammate's agent is approved or revoked only on its own machine.
+  if (agent.tokenHash.startsWith('remote:'))
+    return errorResponse(
+      409,
+      `${address} is registered on ${registeringHandle(ctx, address)}'s machine; approve or revoke it there`
+    );
   const gate = openRegistrationGateFor(ctx, address);
   if (gate !== null) {
     await ctx.messaging.engine.reply(

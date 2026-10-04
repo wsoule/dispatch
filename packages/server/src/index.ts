@@ -90,6 +90,7 @@ import {
   openHumanDecisions,
   SYSTEM_SENDER,
 } from './messaging/gates.js';
+import { implicitEpicMembers } from './messaging/host.js';
 import {
   createOverseerBus,
   ensureOverseerActor,
@@ -160,6 +161,7 @@ import { appendAuditToReceipts } from './team/federation/audit.js';
 import type { Federation } from './team/federation/daemon.js';
 import {
   buildFederation,
+  wireAgentsAndChannels,
   wireMessagingFederation,
 } from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
@@ -1387,6 +1389,16 @@ async function bootServer(
         }),
   });
   messagesRef.current = messaging;
+  if (federation !== null && mailFederation !== null)
+    wireAgentsAndChannels(federation, {
+      messages: messaging.store,
+      engine: messaging.engine,
+      implicit: (channel) =>
+        implicitEpicMembers(
+          (epicId) => store.list({ parent: epicId }),
+          channel
+        ),
+    });
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the

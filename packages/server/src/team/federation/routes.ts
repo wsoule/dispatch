@@ -145,6 +145,9 @@ const ACKNOWLEDGEABLE = [
   // FW-R31(3): a message note and a run conflict can be acknowledged.
   'message:',
   'run-conflict:',
+  // A teammate's refused agent or channel op is a one-off note.
+  'agent:',
+  'channel:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {
