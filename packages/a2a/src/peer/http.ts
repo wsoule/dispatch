@@ -1,6 +1,5 @@
 import { MessagingError } from '@dispatch/protocol';
 import { isIP } from 'node:net';
-import { checkServerIdentity } from 'node:tls';
 
 import type { GuardOptions } from './guard.js';
 import { pinPublicUrl, UnresolvedHostError } from './guard.js';
@@ -89,6 +88,8 @@ async function pinned(
   }
   const { url, addresses } = pin;
   const name = url.hostname;
+  // Loaded here, not at import: see test/lazy-imports.test.ts.
+  const { checkServerIdentity } = await import('node:tls');
   headers.set('host', url.host);
   const urls = addresses.map((address) => {
     const at = new URL(url.href);
