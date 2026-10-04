@@ -16,7 +16,7 @@ describe('raising a system gate by hand', () => {
       for (const data of [
         {
           type: 'memory',
-          proposalId: 'mp-01M43R5N3NMEA80J4XRX0ZSC8T',
+          proposalId: 'mp-01K6ABCDEFGHJKMNPQRSTVWXYZ',
           action: 'add',
           scope: 'team',
           kind: 'hazard',

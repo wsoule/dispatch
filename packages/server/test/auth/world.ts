@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { json } from '../json.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 import { rawFetch } from '../testAuth.js';
 
@@ -22,9 +23,12 @@ export interface World {
   agent: string;
 }
 
+// A response body to assert on: test/json.ts holds the one loose type.
+type Body = Awaited<ReturnType<typeof json>>;
+
 export interface Reply {
   status: number;
-  json: any;
+  json: Body;
   text: string;
 }
 
@@ -90,13 +94,13 @@ export async function call(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await res.text();
-  let json: any = null;
+  let parsed: Body = null;
   try {
-    json = JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
-    json = null;
+    parsed = null;
   }
-  return { status: res.status, json, text };
+  return { status: res.status, json: parsed, text };
 }
 
 /** Invites a teammate with the owner's app token. */
@@ -128,7 +132,7 @@ export async function startRun(
   w: World,
   token: string,
   taskId: string
-): Promise<{ runId: string; runToken: string; meta: any }> {
+): Promise<{ runId: string; runToken: string; meta: Body }> {
   const before = w.executor.started.length;
   const r = await call(w, token, 'POST', `/api/tasks/${taskId}/runs`, {
     executor: 'claude',

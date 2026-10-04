@@ -61,7 +61,9 @@ export function lineageStore(
         };
       }
       const value: unknown = Reflect.get(target, prop, target);
-      return typeof value === 'function' ? value.bind(target) : value;
+      return typeof value === 'function'
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value;
     },
   });
 }

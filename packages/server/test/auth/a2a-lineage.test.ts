@@ -118,7 +118,7 @@ describe('what an A2A run reads', () => {
     });
     const other = await handoff(
       w,
-      'globex',
+      'rival',
       'PRIVATE-HANDOFF: our merger term sheet',
       'PRIVATE-TITLE secret project'
     );

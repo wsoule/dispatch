@@ -5,7 +5,7 @@ import { tierAllows } from '../tiers.js';
 
 /** The actor the shared agentToken is credited as (XH-R2): an agent of the
  *  daemon's own, never the owner whose handle the token resolves to. */
-export const AGENT_TOKEN_ACTOR = 'agent:dispatch';
+const AGENT_TOKEN_ACTOR = 'agent:dispatch';
 
 /**
  * The human whose namespace this credential speaks in: whoever presented it,

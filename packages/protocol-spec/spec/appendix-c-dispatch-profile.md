@@ -64,15 +64,15 @@ types below, and a host that claims the profile declares all eight
 ([§12.1](12-conformance.md#s12.1)). Each effect is idempotent and applied as
 [§5.5](05-gates.md#s5.5) says.
 
-| Type                 | Raised by         | Choices                        | Data besides `type`                                                            |
-| -------------------- | ----------------- | ------------------------------ | ------------------------------------------------------------------------------ |
-| `tool-approval`      | system            | approve, approve-session, deny | `requestId`, `runId` or `conversation`, `tool`, `input`, `truncated`?, `floor` |
-| `scope`              | session           | grant, deny                    | `paths`, `reason`                                                              |
-| `agent-registration` | system            | approve, deny                  | `agent`, `client`, `requestedBy`?                                              |
-| `overseer-action`    | system            | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
-| `task-proposal`      | system            | approve, decline               | `task`, `proposedBy`, `message`                                                |
-| `memory`             | system            | approve, reject                | `proposalId`, `action`, `scope`, `kind`                                        |
-| `doc`                | system            | approve, reject                | `doc`, `proposal`, `taskId`?, `runId`?                                         |
+| Type                 | Raised by | Choices                        | Data besides `type`                                                            |
+| -------------------- | --------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| `tool-approval`      | system    | approve, approve-session, deny | `requestId`, `runId` or `conversation`, `tool`, `input`, `truncated`?, `floor` |
+| `scope`              | session   | grant, deny                    | `paths`, `reason`                                                              |
+| `agent-registration` | system    | approve, deny                  | `agent`, `client`, `requestedBy`?                                              |
+| `overseer-action`    | system    | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
+| `task-proposal`      | system    | approve, decline               | `task`, `proposedBy`, `message`                                                |
+| `memory`             | system    | approve, reject                | `proposalId`, `action`, `scope`, `kind`                                        |
+| `doc`                | system    | approve, reject                | `doc`, `proposal`, `taskId`?, `runId`?                                         |
 
 **`tool-approval`.** The system raises it to the owner as a blocking question
 when a session or the overseer parks a tool call for approval, with refs to the
@@ -134,8 +134,8 @@ and the client's task is rejected ([§8.7](08-a2a-binding.md#s8.7)). Vectors:
 a principal proposes to add, supersede or retire a `project` or `team` entry and
 the project's autonomy policy does not accept the proposal itself; only the
 system raises one, so a gate never names a proposal the system did not raise.
-Its shape is fixed ([§5.3](05-gates.md#s5.3)): kind
-`question`, `blocking` true, `choices` exactly `approve` then `reject`, and data
+Its shape is fixed ([§5.3](05-gates.md#s5.3)): kind `question`, `blocking` true,
+`choices` exactly `approve` then `reject`, and data
 `{ "type": "memory", "proposalId", "action", "scope", "kind" }`. `proposalId` is
 `mp-` and an uppercase ULID, and names the proposal, whose text stays with the
 host and never travels in the gate. `action` is `add`, `supersede` or `retire`,
