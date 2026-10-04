@@ -156,7 +156,7 @@ export interface MessageStore {
     sinceIso: string,
     untilIso?: string
   ): number;
-  /** Threads `from` started since `sinceIso` whose deliveries reach no human. */
+  /** Threads `from` started since `sinceIso` that name an agent, run or task and reach no human. */
   countAgentThreadsFrom(from: Address, sinceIso: string): number;
   /** Agent-authored messages in a thread by arrival; a remote `exclude` still counts. */
   countAgentAuthored(

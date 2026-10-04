@@ -107,6 +107,68 @@ describe('opt-in guardrails', () => {
     await open.send(toAgent, run1);
   });
 
+  it('caps direct agent threads and names the allowance that ran out', async () => {
+    engine = new DeliveryEngine({
+      store,
+      host,
+      limits: { agentThreadsPerHour: 2 },
+    });
+    store.putAgent({
+      address: 'agent:wyat/codex',
+      displayName: 'codex',
+      client: 'codex',
+      tokenHash: 'x',
+      status: 'approved',
+      muted: false,
+      approvedBy: 'human:wyat',
+      createdAt: '2026-09-26T00:00:00.000Z',
+    });
+    const dm: SendInput = {
+      to: ['agent:wyat/codex'],
+      kind: 'message',
+      body: 'fresh',
+    };
+    await engine.send(dm, run1);
+    await engine.send(dm, run1);
+    await expect(engine.send(dm, run1)).rejects.toMatchObject({
+      code: 'limited',
+      message: expect.stringContaining(
+        'started 2 new threads with other agents this hour'
+      ),
+    });
+  });
+
+  it('leaves channel posts and peer questions out of the agent-thread cap', async () => {
+    engine = new DeliveryEngine({
+      store,
+      host,
+      limits: { agentThreadsPerHour: 2 },
+    });
+    host.externals.set('a2a:acme', 'peer');
+    engine.join('ops', 'task:t-000001');
+    for (let i = 0; i < 3; i++) {
+      await engine.send(
+        { to: ['channel:ops'], kind: 'message', body: `post ${i}` },
+        run1
+      );
+      await engine.send(
+        { to: ['a2a:acme'], kind: 'question', body: `ask ${i}` },
+        run1
+      );
+    }
+    // Neither spent the allowance: two agent threads still go.
+    const toAgent: SendInput = {
+      to: ['task:t-000002'],
+      kind: 'message',
+      body: 'fresh',
+    };
+    await engine.send(toAgent, run1);
+    await engine.send(toAgent, run1);
+    await expect(engine.send(toAgent, run1)).rejects.toMatchObject({
+      code: 'limited',
+    });
+  });
+
   it('keeps one open wake gate per target', async () => {
     engine = new DeliveryEngine({
       store,

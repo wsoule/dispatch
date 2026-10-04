@@ -2069,7 +2069,9 @@ export class DeliveryEngine {
   }
 
   // Rejects a new agent-to-agent thread past the sender's hourly allowance,
-  // so starting fresh threads cannot sidestep the reply breaker.
+  // so starting fresh threads cannot sidestep the reply breaker. Only roots
+  // that name an agent, run or task and no human count: channels and A2A
+  // peers have limits of their own.
   private checkNewThreads(
     input: SendInput,
     replyTarget: Message | null,
@@ -2078,7 +2080,7 @@ export class DeliveryEngine {
     if (
       replyTarget !== null ||
       !isAgentAuthored(sender.address) ||
-      input.to.some((to) => to.startsWith('human:'))
+      !isAgentThread(input.to)
     )
       return;
     const started = this.store.countAgentThreadsFrom(
@@ -2088,7 +2090,7 @@ export class DeliveryEngine {
     if (started < this.limits.agentThreadsPerHour) return;
     throw new MessagingError(
       'limited',
-      `${sender.address} started ${started} threads with agents this hour; message a human or wait`,
+      `${sender.address} started ${started} new threads with other agents this hour; message a human or wait`,
       'to'
     );
   }
@@ -2396,5 +2398,16 @@ function wakesEndedRuns(message: Message): boolean {
     message.wake === 'request' &&
     message.origin === undefined &&
     message.from.startsWith('human:')
+  );
+}
+
+// A root among agents: it names an agent, run or task, and no human.
+function isAgentThread(to: readonly Address[]): boolean {
+  return (
+    !to.some((a) => a.startsWith('human:')) &&
+    to.some(
+      (a) =>
+        a.startsWith('agent:') || a.startsWith('run:') || a.startsWith('task:')
+    )
   );
 }

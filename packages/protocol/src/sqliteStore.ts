@@ -570,7 +570,7 @@ export class SqliteMessageStore implements MessageStore {
   countAgentThreadsFrom(from: Address, sinceIso: string): number {
     const row = queryOne<{ n: number }>(
       this.db,
-      "SELECT COUNT(*) AS n FROM messages m WHERE m.from_addr = ? AND m.thread = m.id AND COALESCE(m.received_at, m.created_at) >= ? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.message_id = m.id AND d.recipient LIKE 'human:%')",
+      "SELECT COUNT(*) AS n FROM messages m WHERE m.from_addr = ? AND m.thread = m.id AND COALESCE(m.received_at, m.created_at) >= ? AND EXISTS (SELECT 1 FROM recipients r WHERE r.message_id = m.id AND (r.addr LIKE 'agent:%' OR r.addr LIKE 'run:%' OR r.addr LIKE 'task:%')) AND NOT EXISTS (SELECT 1 FROM recipients r WHERE r.message_id = m.id AND r.addr LIKE 'human:%') AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.message_id = m.id AND d.recipient LIKE 'human:%')",
       [from, sinceIso]
     );
     return row === undefined ? 0 : Number(row.n);
