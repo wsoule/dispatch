@@ -173,6 +173,13 @@ export async function guardTaskPatch(
   }
   if (!deciding && unapprovedHandoff(deps, deps.tasks.get(taskId)))
     return { ok: false, status: 409, error: unapproved(taskId) };
+  // Moving an A2A task under another epic changes what its runs see (XH-R5).
+  if (!deciding && patch.parent !== undefined && isA2ATask(deps, taskId))
+    return {
+      ok: false,
+      status: 403,
+      error: 're-parenting an A2A task needs the decide tier',
+    };
   if (deciding || patch.risk === undefined) return { ok: true };
   const current = deps.tasks.get(taskId);
   if (

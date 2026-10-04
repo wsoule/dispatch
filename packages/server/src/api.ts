@@ -110,6 +110,7 @@ import {
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
+import { decidingHuman, proposalWriteRefusal } from './api/proposalFence.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
@@ -835,7 +836,7 @@ async function updateTask(
       ref: humanActor(ctx),
     };
     const guard = await ctx.a2a.guardTaskPatch(id, patch, {
-      tier: caller.tier,
+      tier: decidingHuman(ctx) ? caller.tier : 'request',
       ref: caller.ref,
     });
     if (!guard.ok) return errorResponse(guard.status, guard.error);
@@ -847,11 +848,7 @@ async function updateTask(
     patch.risk !== undefined &&
     patch.risk !== existing.meta.risk &&
     ctx.docs.publishing(id) &&
-    !(
-      ctx.viaAgentToken !== true &&
-      ctx.caller !== undefined &&
-      tierAllows(ctx.caller.tier, 'decide')
-    )
+    !decidingHuman(ctx)
   ) {
     return errorResponse(
       403,
@@ -5415,6 +5412,9 @@ export async function handleApi(
       ) {
         return jsonResponse(cachedReadiness(ctx));
       }
+      // One fence for every write to a task an open A2A proposal holds.
+      const fenced = proposalWriteRefusal(ctx, method, segments);
+      if (fenced !== null) return fenced;
       if (segments.length === 2 && method === 'GET') {
         const doc = ctx.cache.get(segments[1]);
         return doc !== null
