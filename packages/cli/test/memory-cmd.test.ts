@@ -448,6 +448,16 @@ describe('dispatch memory', () => {
     ).toEqual(['#AAAAAAAA', '#BBBBBBBB']);
   });
 
+  it('strips control characters from titles it prints', async () => {
+    entries = [
+      entry('#AAAAAAAA', { title: 'clear \u001b[2Jscreen \u202eevil' }),
+    ];
+    await run('memory', 'list', '--token', APP_TOKEN);
+    expect(lines).toEqual([
+      '#AAAAAAAA  hazard  project  active  clear [2Jscreen evil',
+    ]);
+  });
+
   it('shows one entry with its body, by handle', async () => {
     entries = [entry('#AAAAAAAA')];
     await run('memory', 'show', '#AAAAAAAA', '--token', APP_TOKEN);

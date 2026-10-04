@@ -39,6 +39,26 @@ describe('validateMemoryInput', () => {
     });
   });
 
+  it('refuses control characters in a title: escapes, bidi overrides, NUL', () => {
+    for (const title of [
+      'pwned \u001b[2J',
+      'a\u0000b',
+      'admin\u202eexe.txt',
+      'bell \u0007',
+      'c1 \u009b31m',
+    ]) {
+      expect(
+        failure(() => validateMemoryInput({ ...base, title }))
+      ).toMatchObject({
+        field: 'title',
+        message: expect.stringContaining('control'),
+      });
+    }
+    expect(validateMemoryInput({ ...base, title: 'tab\tis fine' }).title).toBe(
+      'tab\tis fine'
+    );
+  });
+
   it('points an over-long body at doc_save', () => {
     expect(() =>
       validateMemoryInput({ ...base, body: 'x'.repeat(8193) })
