@@ -191,3 +191,25 @@ describe('createDocsApi', () => {
     );
   });
 });
+
+describe('a dispatchd lost mid-import', () => {
+  it('says so in one sentence instead of the runtime connect error', async () => {
+    const gone = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(),
+    });
+    const port = gone.port;
+    await gone.stop(true);
+    const api = createDocsApi(`http://127.0.0.1:${port}`, 'app-token');
+    for (const step of [
+      () => api.openImport([], undefined),
+      () => api.putImportContent('imp-1', 'abc', new Uint8Array([1])),
+      () => api.commitImport('imp-1', false),
+    ]) {
+      const err: unknown = await step().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).message).toContain('lost dispatchd mid-import');
+    }
+  });
+});
