@@ -507,3 +507,27 @@ describe('admission', () => {
     ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
   });
 });
+
+describe('a card that asks for no credential', () => {
+  const OPEN_CARD = {
+    ...CARD,
+    securitySchemes: undefined,
+    securityRequirements: undefined,
+  };
+
+  it('refuses a token rather than dropping it silently', async () => {
+    const deps = f.peerDeps({
+      fetchImpl: serveCard(OPEN_CARD),
+      lookup: publicDns,
+    });
+    await expect(
+      addPeer(deps, { alias: 'open', cardUrl: CARD_URL, token: 't' }, DECIDE)
+    ).rejects.toMatchObject({ code: 'invalid', field: 'token' });
+    expect(f.store.getPeer('open')).toBeNull();
+    await addPeer(deps, { alias: 'open', cardUrl: CARD_URL }, DECIDE);
+    await expect(setPeerEnabled(deps, 'open', true, 't')).rejects.toMatchObject(
+      { code: 'invalid', field: 'token' }
+    );
+    expect(readPeerCredential(project.root(), 'open')).toBeNull();
+  });
+});

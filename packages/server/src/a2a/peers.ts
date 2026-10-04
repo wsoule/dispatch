@@ -115,11 +115,18 @@ function mustPeer(deps: PeerDeps, alias: string): PeerRow {
   return row;
 }
 
+// A token for a card that names no scheme is refused, never dropped unseen.
 function secretFor(
   auth: PeerAuth,
   token: string | undefined
 ): PeerSecret | null {
-  if (auth.kind === 'none' || token === undefined || token === '') return null;
+  if (token === undefined || token === '') return null;
+  if (auth.kind === 'none')
+    throw new MessagingError(
+      'invalid',
+      "the peer's card asks for no credential; add it without a token",
+      'token'
+    );
   return auth.kind === 'bearer'
     ? { scheme: 'bearer', token }
     : { scheme: 'api-key', token, header: auth.header };
