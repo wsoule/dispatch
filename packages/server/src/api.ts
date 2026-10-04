@@ -71,7 +71,12 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor, humanOperator, requestActor } from './api/caller.js';
+import {
+  humanActor,
+  humanOperator,
+  requestActor,
+  runActorFor,
+} from './api/caller.js';
 import {
   addComment,
   addLegacyTaskNote,
@@ -455,6 +460,8 @@ export interface ApiContext {
   /** The live run whose own token made this request (XH-R2). `caller` is then
    *  the agent token's identity and `viaAgentToken` is true. */
   viaRun?: string;
+  /** What `viaRun`'s writes are credited as (api/caller.ts runActorFor). */
+  runActor?: string;
   /** Set when `viaRun` is A2A-origin: it reaches only the XH-R8 allowlist
    *  (api/a2aRunScope.ts), and its task writes inherit its provenance. */
   a2aRun?: A2ARunScope;
@@ -5022,7 +5029,17 @@ export async function handleApi(
     timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
   let ctx: ApiContext = daemonCtx;
   if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
-  if (run !== null) ctx = { ...ctx, viaRun: run.runId };
+  if (run !== null) {
+    const meta = ctx.orchestrator.list().find((r) => r.id === run.runId);
+    ctx = {
+      ...ctx,
+      viaRun: run.runId,
+      runActor: runActorFor(
+        run.runId,
+        meta === undefined ? null : runOperator(meta)
+      ),
+    };
+  }
   if (principal !== undefined) ctx = { ...ctx, principal };
   const scope = run === null ? null : a2aRunScope(ctx, run.runId);
   if (scope !== null) {

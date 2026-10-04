@@ -28,6 +28,7 @@ type CommentRouteContext = Pick<
   | 'caller'
   | 'actorContext'
   | 'viaRun'
+  | 'runActor'
 > &
   Partial<Pick<ApiContext, 'orchestrator'>>;
 
@@ -44,17 +45,20 @@ function commentsOf(ctx: CommentRouteContext): CommentStorePort {
  * who operates the daemon. Any other credential is its human.
  */
 function commentActor(ctx: CommentRouteContext, runId: unknown): string {
+  if (ctx.runActor !== undefined) return ctx.runActor;
   if (ctx.caller?.agentToken !== true) return humanActor(ctx);
-  // A run's own token names its run; a body runId cannot override it.
-  const id = ctx.viaRun ?? runId;
   const run =
-    typeof id === 'string' ? (ctx.orchestrator?.getRun(id) ?? null) : null;
+    typeof runId === 'string'
+      ? (ctx.orchestrator?.getRun(runId) ?? null)
+      : null;
   return run === null ? 'agent' : ctx.actorContext.agentRef(run.meta.executor);
 }
 
 // Whether the caller may edit or delete a comment `author` wrote: their own,
 // or (for a human) one their own agents wrote.
 function mayModify(ctx: CommentRouteContext, author: string): boolean {
+  // A run edits only what it wrote itself.
+  if (ctx.runActor !== undefined) return author === ctx.runActor;
   if (ctx.caller?.agentToken === true) {
     const operator = ctx.caller.handle;
     return author === 'agent' || author.startsWith(`agent:${operator}/`);

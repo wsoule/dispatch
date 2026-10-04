@@ -329,18 +329,30 @@ describe('task_save through a live daemon', () => {
   });
 });
 
-// XH-R2: inside a run the tools present the run's own token, so a task the
-// run makes is the run's agent's, never the owner's.
+// XH-R2/XH-R8: inside a run the tools present the run's own token, so a task
+// the run makes is credited to that run, for its operator: never the owner and
+// never the CLI's agent:local-cli.
 describe('task_save inside a run', () => {
-  it('credits agent:local-cli, never the owner', async () => {
+  it("credits the run, under its operator's handle", async () => {
+    const invited = (await json(
+      await fetch(`${baseUrl}/api/team/tokens`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...appAuth() },
+        body: JSON.stringify({ email: 'ada@example.com', tier: 'request' }),
+      })
+    )) as { token: string };
     const parent = await createTaskViaApi('parent');
     const run = (await json(
       await fetch(`${baseUrl}/api/tasks/${parent}/runs`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...appAuth() },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${invited.token}`,
+        },
         body: JSON.stringify({ executor: 'claude' }),
       })
-    )) as { id: string };
+    )) as { id: string; operator: string | null };
+    expect(run.operator).toBe('human:ada');
     const deadline = Date.now() + 4000;
     while (executor.lastRunToken === undefined && Date.now() < deadline)
       await new Promise((r) => setTimeout(r, 20));
@@ -355,7 +367,9 @@ describe('task_save inside a run', () => {
       }
     );
     const meta = structured(result).meta as { id: string };
-    expect((await getTaskViaApi(meta.id)).meta.creator).toBe('agent:local-cli');
+    expect((await getTaskViaApi(meta.id)).meta.creator).toBe(
+      `agent:ada/${run.id}`
+    );
   });
 });
 
