@@ -1799,6 +1799,17 @@ fetched 2026-09-26).
   issue) calls `documentCreate` with that `projectId` or `issueId` and makes the
   doc Linear-origin. Team docs do not leak to Linear by default.
 - Echo suppression and the rate-limit pause are P2's own.
+- **Known limits.**
+  - The integration's Linear user is the API key's own user, which is also the
+    local human. An edit that user makes in Linear's editor between the push's
+    read and its write is overwritten without a sync problem: the history entry
+    names only the integration's user.
+  - The pull is scoped to the linked teams: documents under a team's projects or
+    issues, or on the team itself. A document whose only parent is an
+    initiative, cycle or release outside those is never pulled.
+  - Linear may normalize pushed markdown (whitespace, list markers). The re-read
+    after a push then differs from what was sent and folds in as a clean merge
+    or a no-op; this has not been checked against Linear's real output.
 
 ## Transport
 
