@@ -123,7 +123,7 @@ function isPathInside(parent: string, child: string): boolean {
 
 // Removes the *.lock files under a log's .git (objects aside). The exporter is
 // the log's only writer and passes never overlap, so any lock is a killed pass's.
-export function clearStaleLocks(dir: string): string[] {
+function clearStaleLocks(dir: string): string[] {
   const removed: string[] = [];
   const walk = (at: string): void => {
     let entries;

@@ -422,6 +422,9 @@ export function attachDispatchDb(dbPath: string): SqliteDatabase | null {
  * Opens (creating if needed) a SQLite file with Dispatch's pragmas and no
  * schema, for packages that own their own tables (e.g. @dispatch/protocol).
  */
+/** How long a statement waits on a locked database before SQLITE_BUSY. */
+const SQLITE_BUSY_TIMEOUT_MS = 100;
+
 export function openSqliteDb(dbPath: string): SqliteDatabase {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const DatabaseClass = databaseCtor();
@@ -435,9 +438,6 @@ export function openSqliteDb(dbPath: string): SqliteDatabase {
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   return db;
 }
-
-/** How long a statement waits on a locked database before SQLITE_BUSY. */
-export const SQLITE_BUSY_TIMEOUT_MS = 100;
 
 export function openDispatchDb(dbPath: string): SqliteDatabase {
   const db = openSqliteDb(dbPath);

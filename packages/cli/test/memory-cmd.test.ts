@@ -450,11 +450,11 @@ describe('dispatch memory', () => {
 
   it('strips control characters from titles it prints', async () => {
     entries = [
-      entry('#AAAAAAAA', { title: 'clear \u001b[2Jscreen \u202eevil' }),
+      entry('#AAAAAAAA', { title: 'clear \u001b[2J screen \u202eevil' }),
     ];
     await run('memory', 'list', '--token', APP_TOKEN);
     expect(lines).toEqual([
-      '#AAAAAAAA  hazard  project  active  clear [2Jscreen evil',
+      '#AAAAAAAA  hazard  project  active  clear [2J screen evil',
     ]);
   });
 

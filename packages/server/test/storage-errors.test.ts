@@ -14,7 +14,7 @@ const errno = (code: string, message = code): Error =>
   Object.assign(new Error(message), { code });
 
 describe('storageErrorResponse', () => {
-  it('answers a busy database with 503 and Retry-After', async () => {
+  it('answers a busy database with 503 and Retry-After', () => {
     for (const err of [
       errno('SQLITE_BUSY', 'database is locked'),
       errno('SQLITE_BUSY_SNAPSHOT'),
@@ -36,8 +36,9 @@ describe('storageErrorResponse', () => {
     ];
     for (const [err, words] of cases) {
       const res = storageErrorResponse(err);
-      expect(res?.status).toBe(507);
-      expect(((await res?.json()) as { error: string }).error).toContain(words);
+      if (res === null) throw new Error(`no answer for ${err.message}`);
+      expect(res.status).toBe(507);
+      expect(((await res.json()) as { error: string }).error).toContain(words);
     }
   });
 

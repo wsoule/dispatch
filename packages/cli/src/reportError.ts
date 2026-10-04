@@ -17,7 +17,10 @@ export function reportCliError(
   if (typeof code === 'string' && code.startsWith('commander.')) {
     return (err as { exitCode?: number }).exitCode ?? 1;
   }
-  const message = err instanceof Error ? err.message : String(err);
+  const message =
+    err instanceof Error
+      ? err.message
+      : (JSON.stringify(err) ?? 'unknown error');
   const first = message.split('\n')[0];
   if (err instanceof TaskParseError) {
     write(`error: ${first} — run 'dispatch doctor'`);

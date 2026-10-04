@@ -477,11 +477,14 @@ describe('a staged memory restore', () => {
       restoreDir
     );
     expect(report?.restored).toBe(0);
-    expect(report?.problems.map((p) => [p.file, p.detail]).sort()).toEqual(
+    const byFile = (a: string[], b: string[]) => a[0].localeCompare(b[0]);
+    expect(
+      report?.problems.map((p) => [p.file, p.detail]).sort(byFile)
+    ).toEqual(
       [
         [`${cut.id}.md`, 'frontmatter: missing or not terminated by ---'],
         [`${bare.id}.md`, 'status: missing'],
-      ].sort()
+      ].sort(byFile)
     );
     expect(t.shared.listProposals()).toHaveLength(0);
   });
