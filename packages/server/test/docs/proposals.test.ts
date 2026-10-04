@@ -270,6 +270,29 @@ describe('proposals', () => {
     ).toEqual(['approve', 'proposal']);
   });
 
+  it('hands a decider the marked merge of a conflicting proposal, and none for a clean one', () => {
+    acceptedSpec();
+    const p = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'replace_section', section: 'API', text: 'run' }],
+    });
+    expect(service.proposal(as(DECIDER), p.proposal ?? '').marked).toBeNull();
+    service.edit(as(DECIDER), 'spec', {
+      ops: [{ op: 'replace_section', section: 'API', text: 'human' }],
+    });
+    const view = service.proposal(as(DECIDER), p.proposal ?? '');
+    expect(view.mergeable.clean).toBe(false);
+    const head = service.read(as(DECIDER), 'spec').rev;
+    expect(view.mergeable).toMatchObject({
+      headN: head.n,
+      headRev: head.id,
+      headHash: head.hash,
+    });
+    expect(view.marked).toContain('<<<<<<< ');
+    expect(view.marked).toContain('human\n');
+    expect(view.marked).toContain('run\n');
+    expect(view.marked).toContain('>>>>>>> ');
+  });
+
   it('fails an approval that conflicts, with a notice, and changes nothing', () => {
     acceptedSpec();
     const p = service.edit(as(RUN), 'spec', {
@@ -327,6 +350,29 @@ describe('proposals', () => {
       runId: 'r-1',
       line: '📄 doc · spec: your proposal was rejected by human:bob: keep the v1 shape',
     });
+  });
+
+  it('announces a proposal made, rejected or expired as a meta change, so open pages refetch', async () => {
+    acceptedSpec();
+    const metas = () =>
+      host.changes.filter((c) => c.kind === 'meta').map((c) => c.summary);
+    const before = metas().length;
+    const first = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'append', text: 'x' }],
+    });
+    service.rejectProposal(first.proposal ?? '', 'human:bob', 'no');
+    const second = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'append', text: 'y' }],
+    });
+    await service.ensureGate(second.proposal ?? '');
+    host.advance(14 * 24 * 60 + 1);
+    service.sweep();
+    expect(metas().slice(before)).toEqual([
+      `proposal ${first.proposal} opened`,
+      `proposal ${first.proposal} rejected`,
+      `proposal ${second.proposal} opened`,
+      `proposal ${second.proposal} expired`,
+    ]);
   });
 
   it('expires in docs.db first, then closes the gate', async () => {
@@ -429,7 +475,9 @@ describe('proposals', () => {
       }
       expect(service.proposals(as(viewer), {})).toEqual([]);
     }
-    expect(service.proposal(as(DECIDER), p.proposal ?? '').mergeable).toEqual({
+    expect(
+      service.proposal(as(DECIDER), p.proposal ?? '').mergeable
+    ).toMatchObject({
       clean: true,
       headN: 1,
     });

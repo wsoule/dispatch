@@ -261,11 +261,12 @@ describe('mapPeerEvent (spec:1498-1506)', () => {
     );
   });
 
-  it('closes a direct question with the peer’s reason on FAILED, REJECTED or CANCELED', () => {
+  it('closes a direct question with a fixed reason on FAILED, REJECTED or CANCELED, the peer’s words in its own notice', () => {
     expect(
       mapPeerEvent(event(task('TASK_STATE_REJECTED', 'not my job')), ctx())
-    ).toEqual([
-      { kind: 'close', reason: 'a2a:acme declined (REJECTED): not my job' },
+    ).toMatchObject([
+      { kind: 'close', reason: 'a2a:acme declined (REJECTED)' },
+      { kind: 'send', input: { kind: 'notice', body: 'not my job' } },
     ]);
     expect(
       mapPeerEvent(event(task('TASK_STATE_FAILED')), ctx({ via: 'channel' }))
@@ -351,13 +352,13 @@ describe('mapPeerEvent (spec:1498-1506)', () => {
           if (act.kind === 'send') expect(act.input.wake).toBeUndefined();
   });
 
-  it('keeps a close reason to one short line', () => {
+  it('never puts the peer’s text in a close reason, which the system authors', () => {
     const [act] = mapPeerEvent(
-      event(task('TASK_STATE_FAILED', `${'x'.repeat(500)}\nsecond line`)),
+      event(
+        task('TASK_STATE_FAILED', '![x](https://evil.example/p.png) **click**')
+      ),
       ctx()
     );
-    expect(act).toMatchObject({ kind: 'close' });
-    expect((act as { reason: string }).reason).not.toContain('second line');
-    expect((act as { reason: string }).reason.length).toBeLessThan(260);
+    expect(act).toEqual({ kind: 'close', reason: 'a2a:acme failed (FAILED)' });
   });
 });

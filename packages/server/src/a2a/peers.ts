@@ -115,11 +115,18 @@ function mustPeer(deps: PeerDeps, alias: string): PeerRow {
   return row;
 }
 
+// A token for a card that names no scheme is refused, never dropped unseen.
 function secretFor(
   auth: PeerAuth,
   token: string | undefined
 ): PeerSecret | null {
-  if (auth.kind === 'none' || token === undefined || token === '') return null;
+  if (token === undefined || token === '') return null;
+  if (auth.kind === 'none')
+    throw new MessagingError(
+      'invalid',
+      "the peer's card asks for no credential; add it without a token",
+      'token'
+    );
   return auth.kind === 'bearer'
     ? { scheme: 'bearer', token }
     : { scheme: 'api-key', token, header: auth.header };
@@ -259,7 +266,7 @@ export function markAuthFailed(
   notices.send(
     alias,
     'auth',
-    `a2a:${alias} refused Dispatch's credential. Direct messages to it fail and channels skip it until you run: dispatch a2a peers enable ${alias} --token-stdin`
+    `a2a:${alias} refused Dispatch's credential. Direct messages to it fail and channels skip it until it is enabled again with a working credential, in Settings → A2A → Peers or with dispatch a2a peers enable ${alias}.`
   );
   return { ...row, status: 'auth-failed' };
 }
@@ -281,7 +288,7 @@ export function disablePeer(
 
 // The notice a decide-tier peer gets when its name stops resolving publicly.
 function addressRefused(alias: string, why: string): string {
-  return `a2a:${alias} is disabled: ${why}. A peer added below the operator tier must resolve only to public addresses. Check it, then run: dispatch a2a peers enable ${alias}`;
+  return `a2a:${alias} is disabled: ${why}. A peer added below the operator tier must resolve only to public addresses. Check it, then enable it in Settings → A2A → Peers or with dispatch a2a peers enable ${alias}.`;
 }
 
 // Why the guard refuses `url` now, or null when it passes (or there is no
@@ -451,9 +458,10 @@ export async function setPeerEnabled(
 }
 
 export function removePeer(deps: PeerDeps, alias: string): boolean {
-  const removed = deps.store.deletePeer(alias);
+  // The secret goes first: a credentials file that refuses the clear leaves
+  // the peer listed, never a row gone with its token still stored.
   clearPeerCredential(deps.rootDir, alias);
-  return removed;
+  return deps.store.deletePeer(alias);
 }
 
 // The peer notices plus a listener set: routes emit each change, and the
@@ -544,8 +552,15 @@ export function admitPeer(
   }
   if (target.via === 'direct') {
     const limit = deps.policy().outboundPerHour;
-    const hourAgo = new Date(nowOf(deps).getTime() - HOUR_MS).toISOString();
-    if (deps.messages.countDeliveredTo(target.recipient, hourAgo) >= limit) {
+    const now = nowOf(deps);
+    const hourAgo = new Date(now.getTime() - HOUR_MS).toISOString();
+    if (
+      deps.messages.countDeliveredTo(
+        target.recipient,
+        hourAgo,
+        now.toISOString()
+      ) >= limit
+    ) {
       throw new MessagingError(
         'limited',
         `a2a:${alias} takes at most ${limit} messages an hour`,

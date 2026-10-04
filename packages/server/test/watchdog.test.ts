@@ -69,6 +69,30 @@ describe('EventLoopWatchdog', () => {
     expect(reports).toEqual([]);
   });
 
+  it('reads no stall from a wall-clock jump', async () => {
+    const reports: StallReport[] = [];
+    const realNow = Date.now;
+    watchdog = new EventLoopWatchdog({
+      thresholdMs: 150,
+      heartbeatMs: 20,
+      checkMs: 20,
+      quiet: true,
+      onStall: (report) => reports.push(report),
+    });
+    watchdog.start();
+    await tick();
+    // The wall clock steps back an hour (NTP, a manual change); the loop is fine.
+    Date.now = () => realNow() - 3_600_000;
+    try {
+      for (let i = 0; i < 6; i++) await tick();
+    } finally {
+      Date.now = realNow;
+    }
+    // A stall is reported once the loop recovers, so give it the chance.
+    for (let i = 0; i < 4; i++) await tick();
+    expect(reports).toEqual([]);
+  });
+
   it('routes markBlockingSection to the running instance and truncates long labels', async () => {
     const reports: StallReport[] = [];
     watchdog = new EventLoopWatchdog({

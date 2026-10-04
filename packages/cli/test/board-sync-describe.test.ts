@@ -66,6 +66,64 @@ describe('describeSync', () => {
     expect(lines).toContain('t-abc12345');
   });
 
+  test('names the team, the legacy countdown and the origin warning', () => {
+    const on = {
+      enabled: true as const,
+      replica: 'ada-1a2b3c4d',
+      remote: 'git@example.com:team/repo.git',
+      branch: 'dispatch-sync',
+      lastSyncAt: null,
+      lastError: null,
+      pending: 0,
+      applied: 0,
+      problems: [],
+      people: 1,
+      seats: 3,
+      paused: null,
+    };
+    const lines = describeSync(
+      {
+        ...on,
+        founded: true,
+        teamId: 'a'.repeat(32),
+        legacyUntil: '2026-10-26T00:00:00.000Z',
+        transport: 'git',
+      },
+      {
+        now: new Date('2026-10-16T00:00:00.000Z'),
+        originWarning:
+          'Everyone with access to origin can read the whole board',
+      }
+    );
+    expect(lines).toContain(`Team ${'a'.repeat(8)}…, over git.`);
+    expect(lines).toContain('Older Dispatch builds can sync for 10 more days.');
+    expect(
+      lines.some((l) => l.startsWith('Everyone with access to origin'))
+    ).toBe(true);
+  });
+
+  // C: a sync asked for that outran the route's wait says it carries on.
+  test('says when the pass it asked for is still running', () => {
+    const lines = describeSync({
+      enabled: true,
+      replica: 'ada-1a2b3c4d',
+      remote: 'git@example.com:team/repo.git',
+      branch: 'dispatch-sync',
+      lastSyncAt: null,
+      lastError: null,
+      pending: 0,
+      applied: 0,
+      problems: [],
+      people: 1,
+      seats: 3,
+      paused: null,
+      running: true,
+    });
+    expect(lines).toContain(
+      'The sync is still running; it carries on in the background.'
+    );
+  });
+
   test('past the seats it says so, in the daemon’s words', () => {
     const lines = describeSync({
       enabled: true,

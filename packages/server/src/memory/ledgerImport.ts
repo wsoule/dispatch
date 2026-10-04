@@ -4,6 +4,7 @@ import {
   cutUtf8,
   insertFresh,
   MEMORY_LIMITS,
+  memoryContentHash,
   newMemoryEntry,
   newProposal,
   utf8Bytes,
@@ -125,6 +126,8 @@ export interface LedgerImportReport {
     truncated: number;
     alreadyImported: number;
     alreadyDeleted: number;
+    /** Lessons whose content a team entry or proposal already holds. */
+    duplicates: number;
   };
   audit: Record<AuditReason, number> & { total: number };
   damaged: number;
@@ -167,6 +170,7 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
     proposed: 0,
     truncated: 0,
     alreadyImported: 0,
+    duplicates: 0,
     alreadyDeleted: 0,
   };
   const audit: LedgerImportReport['audit'] = {
@@ -220,6 +224,21 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
             : null;
         const refs =
           taskId === null ? [] : [{ type: 'task' as const, id: taskId }];
+        // The same lesson under another origin (a re-logged or copied row) is
+        // counted, not imported twice; rows this import wrote are seen too.
+        const hash = memoryContentHash({
+          kind,
+          title: content.title,
+          body: content.body,
+          refs,
+        });
+        if (
+          store.entriesByContentHash(hash, ['team']).length > 0 ||
+          store.proposalsByContentHash(hash).length > 0
+        ) {
+          memory.duplicates += 1;
+          continue;
+        }
         const epic =
           row.epicId !== null && TASK_ID_PATTERN.test(row.epicId)
             ? row.epicId
@@ -305,10 +324,13 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
         );
       if (
         memory.total !==
-        memory.imported + memory.proposed + memory.alreadyImported
+        memory.imported +
+          memory.proposed +
+          memory.alreadyImported +
+          memory.duplicates
       )
         mismatches.push(
-          `memory ${memory.total} ≠ imported ${memory.imported} + proposed ${memory.proposed} + already ${memory.alreadyImported}`
+          `memory ${memory.total} ≠ imported ${memory.imported} + proposed ${memory.proposed} + already ${memory.alreadyImported} + duplicates ${memory.duplicates}`
         );
       if (after.rows !== before.rows + memory.imported)
         mismatches.push(
@@ -345,7 +367,7 @@ export function renderImportReport(r: LedgerImportReport): string {
   const line = (label: string, count: number, detail = '') =>
     `${label.padEnd(22)}${String(count).padStart(5)}${detail === '' ? '' : `   (${detail})`}`;
   const kinds = LEDGER_KIND_ORDER.map((k) => `${k} ${r.byKind[k]}`).join(' · ');
-  const mem = `imported ${r.memory.imported} · proposed ${r.memory.proposed} · truncated ${r.memory.truncated} · already imported ${r.memory.alreadyImported}, of which deleted ${r.memory.alreadyDeleted}`;
+  const mem = `imported ${r.memory.imported} · proposed ${r.memory.proposed} · truncated ${r.memory.truncated} · already imported ${r.memory.alreadyImported}, of which deleted ${r.memory.alreadyDeleted} · duplicates ${r.memory.duplicates}`;
   const aud = AUDIT_REASONS.map(
     (reason) => `${reason} ${r.audit[reason]}`
   ).join(' · ');

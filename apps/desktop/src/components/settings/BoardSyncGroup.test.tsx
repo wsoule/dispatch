@@ -126,3 +126,20 @@ test('past the seats it says it is paused, not that the remote is down', async (
   ).toBeTruthy();
   expect(screen.queryByText(/reach the remote/)).toBeNull();
 });
+
+// B: the team's problems, which only the decide tier sees, show here too.
+test('lists the team problems the daemon reports', async () => {
+  mount({
+    ...on,
+    federationProblems: [
+      {
+        subject: 'halt:bob-1a2b3c4d',
+        message: "bob-1a2b3c4d's log fails verification at seq 4",
+        at: '2026-09-23T10:00:00.000Z',
+      },
+    ],
+  });
+  expect(
+    await screen.findByText("bob-1a2b3c4d's log fails verification at seq 4")
+  ).toBeTruthy();
+});

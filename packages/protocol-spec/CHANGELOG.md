@@ -6,6 +6,11 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+- [clarification] A host reads an `a2a:` entry in an inbound `to` as its owner,
+  since a peer host writes `to` as its own name for the receiver; and only a 401
+  or an `AUTH_*` 403 marks a peer failed, while another 403 fails the one
+  message (§8.4, §8.9). Vector:
+  `a2a.external.an-a2a-recipient-reads-as-the-owner`.
 - [additive] The `task-proposal` gate type is permanent: only the system address
   raises it, only a deciding principal answers it, and its answer chooses
   `approve` or `decline` (§8.6, App. C.3). Vectors:
@@ -41,10 +46,10 @@ vector ids (see §14.2).
   `a2a.projection.row-9-a-status-of-the-hosts-own`,
   `a2a.projection.row-10-an-approved-draft-is-submitted`,
   `a2a.projection.row-10-needs-approval`.
-- [additive] The `memory` gate type is permanent: the system or a deciding human
-  raises it, never a session or an agent; its shape is fixed, naming a proposal
-  and never its text; and only a deciding principal answers it (App. C.3).
-  Vectors: `core.gates.memory-is-raised-by-the-system-or-a-deciding-human`,
+- [additive] The `memory` gate type is permanent: only the system address raises
+  it, never a human, a session or an agent; its shape is fixed, naming a
+  proposal and never its text; and only a deciding principal answers it (App.
+  C.3). Vectors: `core.gates.memory-is-raised-only-by-the-system`,
   `core.gates.memory-is-refused-from-a-session-or-an-agent`,
   `core.gates.memory-needs-a-deciding-answer`,
   `env.envelope.a-memory-gate-names-a-proposal`,

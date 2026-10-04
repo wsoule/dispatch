@@ -15,7 +15,10 @@ import {
 } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
+import { humanOperator, requestActor } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
+import { retryWhileBusy } from '../api/storageErrors.js';
+import { MAX_ASSET_BYTES } from './assets.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
 import { readBoundedBytes, readBoundedJson } from './http.js';
 import { parseOps } from './ops.js';
@@ -306,6 +309,49 @@ async function once(
   }
 }
 
+// Starts the publish task's run as the human who asked (MEM-R5..R8: the
+// operator is theirs, the owner only with the owner credential). The task
+// stands either way, so a failed dispatch is reported rather than thrown.
+async function dispatchPublish(
+  ctx: Pick<ApiContext, 'orchestrator'>,
+  task: string,
+  as: { actor: string; operator: string | null }
+): Promise<{ run: string | null; dispatchError: string | null }> {
+  try {
+    const run = await ctx.orchestrator.dispatch(
+      task,
+      ctx.orchestrator.defaultExecutorName(),
+      as
+    );
+    return { run: run.id, dispatchError: null };
+  } catch (err) {
+    return {
+      run: null,
+      dispatchError: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// Boot, after reconcileOnBoot: an open publish that asked for a run and has
+// none (a crash between its row and its dispatch) starts as who asked.
+export async function redispatchPublishes(
+  docs: DocsService,
+  orchestrator: ApiContext['orchestrator']
+): Promise<void> {
+  const ran = new Set(orchestrator.list().map((r) => r.taskId));
+  for (const p of docs.publishesToDispatch()) {
+    if (ran.has(p.task)) continue;
+    const out = await dispatchPublish({ orchestrator }, p.task, {
+      actor: p.actor,
+      operator: p.operator,
+    });
+    if (out.dispatchError !== null)
+      console.error(
+        `dispatchd: publish ${p.task} did not start again: ${out.dispatchError}`
+      );
+  }
+}
+
 // Routes /api/docs/<rest>; null when nothing here matches, so api.ts 404s.
 export async function handleDocsRoute(
   req: Request,
@@ -321,13 +367,19 @@ export async function handleDocsRoute(
   const method = req.method;
   try {
     const actor = docs.actorFor(principal);
-    const body = async (): Promise<Record<string, unknown>> => {
-      const parsed = await readBoundedJson(req);
-      if (!parsed.ok) throw new BodyRefused(parsed.response);
-      return parsed.value;
+    // Read once and kept, so a write retried on a busy docs.db sees it again.
+    let parsedBody: Promise<Record<string, unknown>> | null = null;
+    const body = (): Promise<Record<string, unknown>> => {
+      parsedBody ??= readBoundedJson(req).then((parsed) => {
+        if (!parsed.ok) throw new BodyRefused(parsed.response);
+        return parsed.value;
+      });
+      return parsedBody;
     };
     const write = (fn: () => Promise<Response>): Promise<Response> =>
-      once(req, docs, actor, `${method} ${url.pathname}`, fn);
+      once(req, docs, actor, `${method} ${url.pathname}`, () =>
+        retryWhileBusy(fn)
+      );
 
     if (rest.length === 0) {
       if (method === 'GET') {
@@ -464,6 +516,43 @@ export async function handleDocsRoute(
             const wanted = status((await body()).status, 'status');
             return jsonResponse(docs.setStatus(actor, ref, wanted));
           });
+        case 'publish':
+          return await write(async () => {
+            const b = await body();
+            if (b.dispatch !== undefined && typeof b.dispatch !== 'boolean')
+              throw invalid('dispatch', 'expected a boolean');
+            const out = docs.publish(actor, ref, {
+              path: str(b.path, 'path'),
+              idempotencyKey: req.headers.get('idempotency-key') ?? undefined,
+              ...(b.dispatch === false
+                ? {}
+                : {
+                    dispatchAs: {
+                      actor: requestActor(ctx),
+                      operator: humanOperator(ctx),
+                    },
+                  }),
+            });
+            const ran = ctx.orchestrator
+              .list()
+              .filter((r) => r.taskId === out.task)
+              .at(-1);
+            const { existing, ...rest } = out;
+            return jsonResponse(
+              {
+                ...rest,
+                ...(ran !== undefined
+                  ? { run: ran.id, dispatchError: null }
+                  : b.dispatch === false
+                    ? { run: null, dispatchError: null }
+                    : await dispatchPublish(ctx, out.task, {
+                        actor: requestActor(ctx),
+                        operator: humanOperator(ctx),
+                      })),
+              },
+              existing ? 200 : 201
+            );
+          });
         case 'reviewed':
           await body();
           return jsonResponse(docs.markReviewed(actor, ref));
@@ -487,6 +576,19 @@ export async function handleDocsRoute(
             });
             return jsonResponse({ links: linked });
           });
+        case 'assets': {
+          // A cross-origin page cannot send this content type without a preflight.
+          if (req.headers.get('content-type') !== 'application/octet-stream')
+            return errorResponse(
+              415,
+              'expected content-type: application/octet-stream'
+            );
+          // Who may write, and the doc's room, are answered before any body is read.
+          docs.assetUploadAllowed(actor, ref);
+          const bytes = await readBoundedBytes(req, MAX_ASSET_BYTES);
+          if (bytes instanceof Response) return bytes;
+          return jsonResponse(docs.putAsset(actor, ref, bytes), 201);
+        }
         case 'promote':
           return await write(async () => {
             await body();
@@ -509,6 +611,20 @@ export async function handleDocsRoute(
         const to = revRef(url.searchParams.get('to'), 'to');
         return jsonResponse(docs.diff(actor, ref, from, to));
       }
+    }
+    if (rest.length === 3 && method === 'GET' && action === 'assets') {
+      const name = decode(rest[2], 'name');
+      const { bytes, mime } = docs.assetBytes(actor, ref, name);
+      // Served as an inert image: typed by its bytes, never sniffed, sandboxed.
+      return new Response(bytes, {
+        headers: {
+          'content-type': mime,
+          'x-content-type-options': 'nosniff',
+          'content-disposition': `inline; filename="${name}"`,
+          'content-security-policy': "default-src 'none'; sandbox",
+          'cache-control': 'private, max-age=3600',
+        },
+      });
     }
     if (rest.length === 3 && method === 'GET' && action === 'revisions') {
       const rev = revRef(decode(rest[2], 'rev'), 'rev');

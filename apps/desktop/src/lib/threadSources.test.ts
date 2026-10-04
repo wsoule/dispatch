@@ -262,6 +262,49 @@ describe('rowControl', () => {
     ).toEqual({ kind: 'read-only', reason: 'needs decide' });
   });
 
+  it("gives a decider the doc card for the system's doc gate, and a look-alike only its choices", () => {
+    const data = { type: 'doc', doc: 'doc-1', proposal: 'rev-p', runId: 'r-1' };
+    const docGate = msg('m-doc', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data,
+    });
+    const decider = rowControl(docGate, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({ kind: 'doc', doc: 'doc-1', proposal: 'rev-p' });
+    expect(offersAnswer(decider)).toBe(true);
+    expect(
+      rowControl(docGate, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+    for (const bad of [
+      { type: 'doc', doc: 7, proposal: 'rev-p' },
+      { type: 'doc', doc: 'doc-1', proposal: 7 },
+      { type: 'doc', doc: 'doc-1' },
+    ]) {
+      const malformed = { ...docGate, data: bad };
+      expect(
+        rowControl(malformed as unknown as Message, {
+          me: ME,
+          open: true,
+          access: DECIDER,
+        })
+      ).toEqual({
+        kind: 'choices',
+        choices: ['approve', 'reject'],
+        gate: true,
+      });
+    }
+    const lookAlike = { ...docGate, from: 'agent:wyat/impostor' };
+    expect(
+      rowControl(lookAlike, { me: ME, open: true, access: DECIDER })
+    ).toEqual({ kind: 'choices', choices: ['approve', 'reject'], gate: true });
+  });
+
   it('gives everyone who sees a task proposal its card, with answers only for a decider', () => {
     const proposal = msg('m-p', {
       from: 'agent:dispatch',
@@ -833,19 +876,22 @@ describe('refs and labels', () => {
       openTask: (...args) => calls.push(['task', ...args]),
       openThread: (id) => calls.push(['thread', id]),
       openImpact: (subject) => calls.push(['impact', subject]),
-      openDoc: (docId, anchor) => calls.push(['doc', docId, anchor]),
+      openDoc: (docId, anchor, merge) =>
+        calls.push(['doc', docId, anchor, merge]),
     });
     open({ kind: 'task', taskId: 't-000001' });
     open({ kind: 'run', taskId: 't-000001', runId: 'r-000001' });
     open({ kind: 'file', path: 'src/a.ts' });
     open({ kind: 'message', messageId: 'm-01' });
     open({ kind: 'doc', docId: 'doc-01K', anchor: 'api' });
+    open({ kind: 'doc', docId: 'doc-01K', anchor: null, merge: 'rev-p' });
     expect(calls).toEqual([
       ['task', 't-000001', 'auto'],
       ['task', 't-000001', 'run', 'r-000001'],
       ['impact', { kind: 'file', id: 'src/a.ts' }],
       ['thread', 'm-01'],
-      ['doc', 'doc-01K', 'api'],
+      ['doc', 'doc-01K', 'api', undefined],
+      ['doc', 'doc-01K', null, 'rev-p'],
     ]);
   });
 

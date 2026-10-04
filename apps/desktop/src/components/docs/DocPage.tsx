@@ -1,8 +1,13 @@
 import type { ApiClient, DocRevisionInfo } from '@dispatch/client';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { docsKey, refetchDocAfterSave, useDoc } from '../../hooks/useDocs';
+import {
+  docsKey,
+  refetchDocAfterSave,
+  useDoc,
+  useOpenDocProposals,
+} from '../../hooks/useDocs';
 import { describeError } from '../../lib/actionFeedback';
 import type { DocBuffer } from '../../lib/docBuffer';
 import {
@@ -22,17 +27,21 @@ import {
   anchorLine,
   docBadges,
   docDiffPatch,
+  docStatusActions,
   docStatusLine,
   revisionAuthor,
   revisionsSinceReview,
   sameRevisions,
 } from '../../lib/docs';
+import { relativeTime } from '../../lib/landingView';
 import { parseMarked } from '../../lib/mergeLayout';
 import { DiffSurface } from '../code/DiffSurface';
+import { AssetImage } from './AssetImage';
 import { DocEditor } from './DocEditor';
 import { DocHistory } from './DocHistory';
 import { DocLinksRail } from './DocLinksRail';
 import { DocMergeView } from './DocMergeView';
+import { PublishDialog } from './PublishDialog';
 import { Button } from '@/ui/button';
 
 interface DocPageProps {
@@ -42,6 +51,10 @@ interface DocPageProps {
   canDecide: boolean;
   /** The section a link named, whose heading the editor opens on. */
   anchor?: string | null;
+  /** A conflicting proposal whose marked merge the page opens on. */
+  mergeProposal?: string | null;
+  /** Opens another doc (the team copy a promote makes). */
+  onOpenDoc?: (id: string) => void;
 }
 
 // The most saves one flush sends; a 409 on the way marks the text against the
@@ -64,9 +77,16 @@ export function DocPage({
   refId,
   canDecide,
   anchor = null,
+  mergeProposal = null,
+  onOpenDoc,
 }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
+  const proposals = useOpenDocProposals(
+    client,
+    port,
+    read?.doc.status === 'accepted' ? read.doc.id : null
+  );
   // The buffer lives in a ref so a save that lands after unmount still sees
   // it; `buf` mirrors it for rendering and the autosave timer.
   const bufRef = useRef<DocBuffer | null>(null);
@@ -79,10 +99,34 @@ export function DocPage({
   // What a Mark reviewed would cover, shown before it acts.
   const [confirming, setConfirming] = useState<ReviewCover | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // A proposal's marked merge the merge view shows in place of the buffer's text.
+  const [mergeText, setMergeText] = useState<string | null>(null);
+  // The head that merge was computed from: its resolution saves on this base,
+  // so a newer head goes through the server's merge or 409 instead of being overwritten.
+  const [mergeBase, setMergeBase] = useState<DocBuffer['base'] | null>(null);
+  const [mergeNote, setMergeNote] = useState<string | null>(null);
+  const proposalMerge = useQuery({
+    queryKey: [...docsKey(port), 'proposal', mergeProposal],
+    enabled: mergeProposal !== null,
+    queryFn: () => client.getDocProposal(mergeProposal ?? ''),
+    retry: false,
+  });
+  const appliedMerge = useRef<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  // What the last publish from this page started, shown under the header.
+  const [publishNote, setPublishNote] = useState<string | null>(null);
   // Where the editor opens: placed once per named anchor, so later reads of
   // the same doc never move the caret out from under typing.
   const [placeAt, setPlaceAt] = useState<{ line: number } | null>(null);
   const placedFor = useRef<string | null>(null);
+
+  // Stable across rerenders, so the preview keeps its images (and fetches each once).
+  const renderImage = useCallback(
+    ({ src, alt }: { src?: string; alt?: string }) => (
+      <AssetImage client={client} docId={refId} src={src} alt={alt} />
+    ),
+    [client, refId]
+  );
 
   const update = useCallback((next: (b: DocBuffer) => DocBuffer): void => {
     if (bufRef.current === null) return;
@@ -177,6 +221,14 @@ export function DocPage({
     }
   }, [save]);
 
+  // Sends the text, then refuses to seal a head the buffer still disagrees with.
+  const flushForSeal = async (): Promise<void> => {
+    await flush();
+    const problem =
+      bufRef.current === null ? null : docSealProblem(bufRef.current);
+    if (problem !== null) throw new Error(problem);
+  };
+
   // Read through a ref so a new connection's `save` does not count as leaving.
   const flushRef = useRef(flush);
   useEffect(() => {
@@ -206,11 +258,69 @@ export function DocPage({
     [text]
   );
 
+  // A named proposal's marked merge opens the merge view once, when it loads.
+  useEffect(() => {
+    const view = proposalMerge.data;
+    if (view === undefined || appliedMerge.current === view.proposal.rev)
+      return;
+    appliedMerge.current = view.proposal.rev;
+    if (view.marked === null || view.proposal.state !== 'open') {
+      setMergeNote(
+        `Proposal ${view.proposal.rev} has nothing to resolve here (${view.proposal.state}).`
+      );
+      return;
+    }
+    setMergeText(view.marked);
+    setMergeBase({
+      rev: view.mergeable.headRev,
+      n: view.mergeable.headN,
+      hash: view.mergeable.headHash,
+    });
+    setPanel('merge');
+  }, [proposalMerge.data]);
+
   // The merge view's resolution replaces the text and goes out at once.
   const saveResolution = (resolved: string): void => {
-    update((b) => editDocBuffer(b, resolved));
+    const base = mergeText === null ? null : mergeBase;
+    update((b) => editDocBuffer(base === null ? b : { ...b, base }, resolved));
     setPanel('editor');
+    if (mergeText !== null) {
+      setMergeText(null);
+      setMergeBase(null);
+      setMergeNote(
+        'Resolution saved. Now reject the proposal as resolved in its gate.'
+      );
+    }
     void flush();
+  };
+
+  // Stores each pasted or dropped image, answering the links to insert; a
+  // refused one (not an image, too large) is reported and skipped.
+  const uploadImages = async (files: File[]): Promise<string[]> => {
+    const links: string[] = [];
+    for (const file of files) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        links.push((await client.uploadDocAsset(refId, bytes)).markdown);
+      } catch (err) {
+        setActionError(`${file.name}: ${describeError(err)}`);
+      }
+    }
+    return links;
+  };
+
+  // Why Accept may not run now: unsaved or marked text, or a conflicted doc.
+  const acceptProblem = (conflicted: boolean): string | null => {
+    const current = bufRef.current;
+    if (current !== null) {
+      const problem = docSealProblem(current);
+      if (problem !== null) return problem;
+      if (parseMarked(current.buffer.text).some((p) => p.kind === 'conflict'))
+        return 'Resolve the conflict markers before accepting.';
+    }
+    return conflicted
+      ? 'This doc is conflicted; resolve it in the merge view before accepting.'
+      : null;
   };
 
   // The revisions a review would cover now, newest first.
@@ -250,7 +360,11 @@ export function DocPage({
   };
 
   if (read === null || buf === null) {
-    return error === null ? null : (
+    return error === null ? (
+      <p className="p-4 text-xs text-[var(--color-muted-foreground)]">
+        Loading the doc…
+      </p>
+    ) : (
       <p className="p-4 text-xs text-[var(--color-destructive)]">
         {error.message}
       </p>
@@ -258,7 +372,16 @@ export function DocPage({
   }
   const doc = read.doc;
   const archived = doc.status === 'archived';
+  // A personal doc is its owner's to review and move, whatever their tier (only
+  // its owner can read it here).
+  const decides = canDecide || doc.scope === 'personal';
   const fileName = `${doc.handle}.md`;
+  // Agent text no human checked never heads for the repo; personal docs never do.
+  const publishable =
+    doc.scope === 'team' &&
+    !archived &&
+    (doc.status === 'accepted' || !doc.unreviewed);
+  const published = doc.published;
   const togglePanel = (to: 'history' | 'merge'): void =>
     setPanel((p) => (p === to ? 'editor' : to));
   return (
@@ -302,7 +425,7 @@ export function DocPage({
         >
           History
         </Button>
-        {!archived && (marked || panel === 'merge') && (
+        {!archived && (marked || mergeText !== null || panel === 'merge') && (
           <Button
             size="sm"
             variant="ghost"
@@ -318,12 +441,7 @@ export function DocPage({
             variant="ghost"
             onClick={() =>
               act(async () => {
-                await flush();
-                const problem =
-                  bufRef.current === null
-                    ? null
-                    : docSealProblem(bufRef.current);
-                if (problem !== null) throw new Error(problem);
+                await flushForSeal();
                 await client.sealDoc(refId);
               })
             }
@@ -331,7 +449,7 @@ export function DocPage({
             Save version
           </Button>
         )}
-        {canDecide && doc.unreviewed && (
+        {decides && doc.unreviewed && (
           <Button
             size="sm"
             onClick={() =>
@@ -346,23 +464,104 @@ export function DocPage({
             Mark reviewed
           </Button>
         )}
-        {canDecide && (
+        {doc.scope === 'personal' && !archived && (
           <Button
             size="sm"
             variant="ghost"
             onClick={() =>
-              act(() =>
-                client.setDocStatus(
-                  refId,
-                  archived ? (doc.archivedFrom ?? 'draft') : 'archived'
-                )
-              )
+              act(async () => {
+                await flush();
+                const out = await client.promoteDoc(refId);
+                onOpenDoc?.(out.doc.id);
+              })
             }
           >
-            {archived ? 'Restore' : 'Archive'}
+            Promote to team
           </Button>
         )}
+        {publishable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setPublishOpen(true)}
+          >
+            Publish to repo
+          </Button>
+        )}
+        {decides &&
+          docStatusActions(doc).map(({ label, status }) => (
+            <Button
+              key={label}
+              size="sm"
+              variant={status === 'accepted' ? 'default' : 'ghost'}
+              onClick={() =>
+                act(async () => {
+                  // Every status change seals the head, so the typed text goes out first.
+                  await flush();
+                  if (status === 'accepted') {
+                    const problem = acceptProblem(doc.conflicted);
+                    if (problem !== null) throw new Error(problem);
+                  }
+                  await client.setDocStatus(refId, status);
+                })
+              }
+            >
+              {label}
+            </Button>
+          ))}
       </header>
+      {doc.status === 'accepted' && proposals.length > 0 && (
+        <div className="flex flex-col gap-0.5 border-b border-[var(--color-border)] px-3 py-1 text-xs">
+          <p>Open proposals, each waiting on its gate in Needs you:</p>
+          <ul>
+            {proposals.map((p) => (
+              <li
+                key={p.rev}
+              >{`${p.rev} · ${p.author} · ${relativeTime(p.createdAt, Date.now())}`}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {published !== null && published.rev !== doc.head.id && (
+        <p className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-muted-foreground)]">
+          {`published rev ${published.n ?? '-'} to ${published.path}; head is rev ${doc.head.n}`}
+        </p>
+      )}
+      {publishNote !== null && (
+        <p
+          role="status"
+          className="border-b border-[var(--color-border)] px-3 py-1 text-xs"
+        >
+          {publishNote}
+        </p>
+      )}
+      {publishOpen && (
+        <PublishDialog
+          open
+          onOpenChange={setPublishOpen}
+          client={client}
+          docRef={doc.id}
+          initialPath={doc.lastPublishPath ?? published?.path ?? ''}
+          onPublished={(result, path) => {
+            const run =
+              result.run !== null
+                ? `, run ${result.run}`
+                : result.dispatchError !== null
+                  ? `; its run did not start: ${result.dispatchError}`
+                  : '';
+            setPublishNote(`Publishing to ${path}: task ${result.task}${run}`);
+            void queryClient.invalidateQueries({ queryKey: docsKey(port) });
+          }}
+        />
+      )}
+      {mergeNote !== null && (
+        <p
+          role="status"
+          className="border-b border-[var(--color-border)] px-3 py-1 text-xs"
+        >
+          {mergeNote}
+        </p>
+      )}
       {actionError !== null && (
         <p
           role="alert"
@@ -463,10 +662,13 @@ export function DocPage({
               client={client}
               port={port}
               refId={refId}
-              text={buf.buffer.text}
+              text={mergeText ?? buf.buffer.text}
               name={fileName}
               onSave={saveResolution}
-              onClose={() => setPanel('editor')}
+              onClose={() => {
+                setMergeText(null);
+                setPanel('editor');
+              }}
             />
           )}
           {/* Hidden, not unmounted, under the other panels: the textarea keeps
@@ -479,6 +681,8 @@ export function DocPage({
               readOnly={archived}
               onChange={(next) => update((b) => editDocBuffer(b, next))}
               placeAt={placeAt}
+              renderImage={renderImage}
+              onImages={uploadImages}
             />
           </div>
         </main>

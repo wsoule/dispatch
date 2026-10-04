@@ -63,6 +63,7 @@ import { TaskThreadTab } from './components/tasks/TaskThreadTab';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter';
 import { useDispatchProject } from './hooks/useDispatchProject';
+import { useDocList } from './hooks/useDocs';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
@@ -151,6 +152,9 @@ import { TooltipProvider } from '@/ui/tooltip';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
+// The Inbox's doc query: team docs whose head is conflicted.
+const CONFLICTED_TEAM_DOCS = { conflicted: true, scope: 'team' } as const;
+
 function SurfaceHosts({
   taskPage,
   flightPlan,
@@ -570,8 +574,8 @@ function App() {
 
   // The Docs view on one doc, scrolled to `anchor`'s section when set.
   const openDoc = useCallback(
-    (docId: string, anchor: string | null) =>
-      dispatchNav({ type: 'openDoc', docId, anchor }),
+    (docId: string, anchor: string | null, merge?: string) =>
+      dispatchNav({ type: 'openDoc', docId, anchor, merge }),
     []
   );
 
@@ -667,6 +671,12 @@ function App() {
   // task. See `buildInbox`; this one result also feeds the sidebar badge and the rail's
   // attention strip, so the three surfaces always agree.
   const statusModel = useStatusModelOf(data.config);
+  // Conflicted team docs are Inbox items until a save clears them.
+  const conflictedDocs = useDocList(
+    data.messageAccess.canMessage ? data.client : null,
+    data.port,
+    CONFLICTED_TEAM_DOCS
+  ).docs;
   const inboxData = useMemo(
     () =>
       buildInbox({
@@ -681,8 +691,10 @@ function App() {
         fixLoops: data.fixLoops,
         me: data.me,
         model: statusModel,
+        conflictedDocs,
       }),
     [
+      conflictedDocs,
       data.runs,
       data.tasks,
       data.epics,
@@ -1410,6 +1422,7 @@ function App() {
                                       onOpenPr={(number) =>
                                         dispatchNav({ type: 'openPr', number })
                                       }
+                                      onOpenDoc={(id) => openDoc(id, null)}
                                     />
                                   )}
                                   {navState.projectView === 'threads' && (
@@ -1541,6 +1554,7 @@ function App() {
                                       data={data}
                                       initialDoc={navState.activeDocId}
                                       initialAnchor={navState.activeDocAnchor}
+                                      initialMerge={navState.activeDocMerge}
                                       onSelectDoc={(docId) =>
                                         openDoc(docId, null)
                                       }

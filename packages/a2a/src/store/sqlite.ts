@@ -106,6 +106,8 @@ export interface HostRow {
   id: string;
   name: string;
   tokenHash: string;
+  // The URL the host serves on, pinned at minting; its card uses no other.
+  publicUrl: string;
   createdBy: Address;
   createdAt: string;
   revokedAt: string | null;
@@ -127,10 +129,13 @@ export interface A2AStore {
   // Every task whose state is not terminal.
   openTasks(): TaskRow[];
   countOpen(client: Address): number;
+  // Rows created in [sinceIso, untilIso]; a row dated past `untilIso` (a
+  // clock that jumped) is outside the window.
   countSince(
     client: Address,
     skill: 'ask' | 'handoff',
-    sinceIso: string
+    sinceIso: string,
+    untilIso?: string
   ): number;
   newestTaskAt(client: Address): string | null;
   taskForDispatchTask(taskId: string): TaskRow | null;
@@ -150,7 +155,8 @@ export interface A2AStore {
   // The peer's context for this thread, from the newest row that has one.
   contextFor(alias: string, thread: string): string | null;
   // Open or done rows first attempted since `sinceIso`: the channel quota.
-  relayedSince(alias: string, sinceIso: string): number;
+  // Relays first tried in [sinceIso, untilIso].
+  relayedSince(alias: string, sinceIso: string, untilIso?: string): number;
   // Upsert on (task_id, id).
   putPushConfig(row: PushConfigRow): void;
   getPushConfig(taskId: string, id: string): PushConfigRow | null;
@@ -173,6 +179,24 @@ export interface A2AStore {
   // Disables a config at once (a refused address). Disabling, here or at ten
   // failures, also drops the config's token and credentials.
   disablePushConfig(taskId: string, id: string, at: string): void;
+  // A delivery still owed to a config: its retries so far and when the next
+  // is due, kept so a restart resumes rather than forgets.
+  getPushPending(
+    taskId: string,
+    id: string
+  ): { tries: number; nextAt: string } | null;
+  setPushPending(
+    taskId: string,
+    id: string,
+    tries: number,
+    nextAt: string
+  ): void;
+  clearPushPending(taskId: string, id: string): void;
+  // Tasks that still have a live push config.
+  pushConfigTaskIds(): string[];
+  // A Dispatch task made from an A2A task (a fanout clone) keeps its origin.
+  markDerived(taskId: string, sourceTaskId: string, at: string): void;
+  derivedFrom(taskId: string): string | null;
   putHost(row: HostRow): void;
   // Oldest first, revoked rows included.
   hosts(): HostRow[];
@@ -215,8 +239,15 @@ CREATE TABLE IF NOT EXISTS push_configs (
   PRIMARY KEY (task_id, id)
 );
 CREATE INDEX IF NOT EXISTS push_client ON push_configs (client);
+CREATE TABLE IF NOT EXISTS derived_tasks (
+  task_id TEXT PRIMARY KEY, source_task TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_pending (
+  task_id TEXT NOT NULL, id TEXT NOT NULL, tries INTEGER NOT NULL, next_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
 CREATE TABLE IF NOT EXISTS hosts (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, public_url TEXT NOT NULL,
   created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
 );
 `;
@@ -381,6 +412,7 @@ interface HostDbRow {
   id: string;
   name: string;
   token_hash: string;
+  public_url: string;
   created_by: string;
   created_at: string;
   revoked_at: string | null;
@@ -391,6 +423,7 @@ function toHost(r: HostDbRow): HostRow {
     id: r.id,
     name: r.name,
     tokenHash: r.token_hash,
+    publicUrl: r.public_url,
     createdBy: r.created_by,
     createdAt: r.created_at,
     revokedAt: r.revoked_at,
@@ -580,13 +613,14 @@ export class SqliteA2AStore implements A2AStore {
   countSince(
     client: Address,
     skill: 'ask' | 'handoff',
-    sinceIso: string
+    sinceIso: string,
+    untilIso?: string
   ): number {
     return Number(
       queryOne<{ n: number }>(
         this.db,
-        'SELECT COUNT(*) AS n FROM tasks WHERE client = ? AND skill = ? AND created_at >= ?',
-        [client, skill, sinceIso]
+        'SELECT COUNT(*) AS n FROM tasks WHERE client = ? AND skill = ? AND created_at >= ? AND created_at <= ?',
+        [client, skill, sinceIso, untilIso ?? '9999']
       )?.n ?? 0
     );
   }
@@ -726,12 +760,12 @@ export class SqliteA2AStore implements A2AStore {
     );
   }
 
-  relayedSince(alias: string, sinceIso: string): number {
+  relayedSince(alias: string, sinceIso: string, untilIso?: string): number {
     return Number(
       queryOne<{ n: number }>(
         this.db,
-        "SELECT COUNT(*) AS n FROM outbound WHERE alias = ? AND state IN ('open','done') AND first_attempt_at >= ?",
-        [alias, sinceIso]
+        "SELECT COUNT(*) AS n FROM outbound WHERE alias = ? AND state IN ('open','done') AND first_attempt_at >= ? AND first_attempt_at <= ?",
+        [alias, sinceIso, untilIso ?? '9999']
       )?.n ?? 0
     );
   }
@@ -787,7 +821,68 @@ export class SqliteA2AStore implements A2AStore {
     );
   }
 
+  getPushPending(
+    taskId: string,
+    id: string
+  ): { tries: number; nextAt: string } | null {
+    const r = queryOne<{ tries: number; next_at: string }>(
+      this.db,
+      'SELECT tries, next_at FROM push_pending WHERE task_id = ? AND id = ?',
+      [taskId, id]
+    );
+    return r === undefined
+      ? null
+      : { tries: Number(r.tries), nextAt: r.next_at };
+  }
+
+  setPushPending(
+    taskId: string,
+    id: string,
+    tries: number,
+    nextAt: string
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO push_pending (task_id, id, tries, next_at) VALUES (?,?,?,?)
+         ON CONFLICT (task_id, id) DO UPDATE SET tries = excluded.tries, next_at = excluded.next_at`
+      )
+      .run(taskId, id, tries, nextAt);
+  }
+
+  clearPushPending(taskId: string, id: string): void {
+    this.db
+      .prepare('DELETE FROM push_pending WHERE task_id = ? AND id = ?')
+      .run(taskId, id);
+  }
+
+  markDerived(taskId: string, sourceTaskId: string, at: string): void {
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO derived_tasks (task_id, source_task, created_at) VALUES (?,?,?)'
+      )
+      .run(taskId, sourceTaskId, at);
+  }
+
+  derivedFrom(taskId: string): string | null {
+    return (
+      queryOne<{ s: string }>(
+        this.db,
+        'SELECT source_task AS s FROM derived_tasks WHERE task_id = ?',
+        [taskId]
+      )?.s ?? null
+    );
+  }
+
+  pushConfigTaskIds(): string[] {
+    return queryAll<{ task_id: string }>(
+      this.db,
+      'SELECT DISTINCT task_id FROM push_configs WHERE disabled_at IS NULL ORDER BY task_id',
+      []
+    ).map((r) => r.task_id);
+  }
+
   deletePushConfig(taskId: string, id: string): boolean {
+    this.clearPushPending(taskId, id);
     return (
       Number(
         this.db
@@ -798,6 +893,11 @@ export class SqliteA2AStore implements A2AStore {
   }
 
   deletePushConfigsOf(client: Address): number {
+    this.db
+      .prepare(
+        'DELETE FROM push_pending WHERE (task_id, id) IN (SELECT task_id, id FROM push_configs WHERE client = ?)'
+      )
+      .run(client);
     return Number(
       this.db.prepare('DELETE FROM push_configs WHERE client = ?').run(client)
         .changes
@@ -835,9 +935,17 @@ export class SqliteA2AStore implements A2AStore {
   putHost(h: HostRow): void {
     this.db
       .prepare(
-        'INSERT INTO hosts (id, name, token_hash, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?)'
+        'INSERT INTO hosts (id, name, token_hash, public_url, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,?)'
       )
-      .run(h.id, h.name, h.tokenHash, h.createdBy, h.createdAt, h.revokedAt);
+      .run(
+        h.id,
+        h.name,
+        h.tokenHash,
+        h.publicUrl,
+        h.createdBy,
+        h.createdAt,
+        h.revokedAt
+      );
   }
 
   hosts(): HostRow[] {

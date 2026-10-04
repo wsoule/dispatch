@@ -1,13 +1,16 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 
 import {
+  cutMemoryBody,
   diffExport,
   kindFromClaudeType,
   newIndexLines,
   parsedHash,
   parseMemoryFile,
+  parseReceiptFile,
   projectOnlyForClaudeType,
   renderClaudeIndex,
+  renderReceiptFile,
   renderTopicFile,
   topicFileName,
 } from '../src/claudeFiles.js';
@@ -187,6 +190,24 @@ describe('topic files', () => {
     expect(parsed.body).toMatch(
       /\n\[truncated by Dispatch: \d+ bytes; long-form belongs in Docs\]$/
     );
+  });
+
+  it('keeps the full text beside a truncated body, and none beside a whole one', () => {
+    const lines = 'line of text\n'.repeat(1000).trimEnd();
+    const parsed = parseMemoryFile(`---\nname: n\n---\n${lines}`, 'n.md');
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.fullBody).toBe(lines);
+    expect(parseMemoryFile('short', 's.md').fullBody).toBeUndefined();
+  });
+
+  it('cuts a body to fit with any marker, naming the bytes it cut', () => {
+    const full = 'line of text\n'.repeat(1000).trimEnd();
+    const long = (n: number) => `\n[cut ${n} bytes; ${'z'.repeat(80)}]`;
+    const cut = cutMemoryBody(full, long);
+    expect(utf8(cut)).toBeLessThanOrEqual(8192);
+    const n = Number(/\[cut (\d+) bytes/.exec(cut)?.[1]);
+    expect(utf8(cut.slice(0, cut.lastIndexOf('\n[cut'))) + n).toBe(utf8(full));
+    expect(cutMemoryBody('short', long)).toBe('short');
   });
 
   it('cuts a single line longer than 8 KiB instead of dropping it', () => {
@@ -387,5 +408,100 @@ describe('diffExport', () => {
       ['renamed', 'one.md'],
       ['new', ''],
     ]);
+  });
+});
+
+describe('receipt files', () => {
+  it('are topic files that also carry the entry state', () => {
+    const retired = {
+      ...entry,
+      status: 'retired' as const,
+      statusReason: 'superseded' as const,
+    };
+    const text = renderReceiptFile(retired);
+    expect(text).toContain(`    rev: 3\n    status: retired (superseded)\n---`);
+    expect(renderReceiptFile(entry)).toContain('    status: active\n');
+    expect(renderReceiptFile({ ...entry, decay: 'expired' })).toContain(
+      '    status: retired (expired)\n'
+    );
+    expect(renderTopicFile(entry)).not.toContain('status:');
+  });
+
+  it('parse back to title, body and a known kind', () => {
+    const parsed = parseReceiptFile(renderReceiptFile(entry), `${entry.id}.md`);
+    expect(parsed.title).toBe(entry.title);
+    expect(parsed.body).toBe(entry.body);
+    expect(parsed.kind).toBe('hazard');
+    expect(parsed.status).toBe('active');
+    expect(
+      parseReceiptFile(
+        renderReceiptFile({
+          ...entry,
+          status: 'retired',
+          statusReason: 'superseded',
+        }),
+        'x.md'
+      ).status
+    ).toBe('retired (superseded)');
+    expect(parseReceiptFile('just a body', 'x.md').status).toBeUndefined();
+  });
+
+  it('normalize the status and refuse one that is not a single string', () => {
+    const text = renderReceiptFile(entry);
+    const withStatus = (line: string) =>
+      text.replace('    status: active', line);
+    expect(
+      parseReceiptFile(withStatus('    status: Retired'), 'x.md').status
+    ).toBe('retired');
+    expect(
+      parseReceiptFile(withStatus('    status: " retired"'), 'x.md').status
+    ).toBe('retired');
+    expect(parseReceiptFile(text, 'x.md').problem).toBeNull();
+    expect(
+      parseReceiptFile(withStatus('    status: [retired]'), 'x.md').problem
+    ).toBe('status: expected a string');
+    expect(
+      parseReceiptFile(
+        withStatus('    status: active\n    status: retired'),
+        'x.md'
+      ).problem
+    ).toStartWith('frontmatter: ');
+  });
+
+  it('refuse a damaged file: no terminated frontmatter, or no scope or status', () => {
+    const text = renderReceiptFile(entry);
+    const damaged = [
+      ['just a body', 'frontmatter'],
+      [text.slice(0, text.indexOf('\n---\n') + 1), 'frontmatter'],
+      [text.replace('    scope: team\n', ''), 'scope'],
+      [text.replace('    status: active\n', ''), 'status'],
+      [text.replace('    status: active', '    status: ""'), 'status'],
+    ] as const;
+    for (const [file, field] of damaged)
+      expect(parseReceiptFile(file, 'x.md').problem).toStartWith(`${field}:`);
+  });
+
+  it('refuse pathological frontmatter fast: oversized, or deeply nested flow', () => {
+    const big = `---\ndescription: ${'[a'.repeat(32 * 1024)}\n---\nbody\n`;
+    const deep = `---\ndescription: ${'[a'.repeat(200)}\n---\nbody\n`;
+    for (const text of [big, deep]) {
+      const started = performance.now();
+      expect(parseReceiptFile(text, 'x.md').problem).toStartWith(
+        'frontmatter:'
+      );
+      const parsed = parseMemoryFile(text, 'x.md');
+      expect(performance.now() - started).toBeLessThan(100);
+      expect(parsed.title).not.toContain('[a[a');
+    }
+    // Ordinary flow lists still read.
+    const listed = `---\nname: a\ntags: [x, [y, z]]\ndescription: fine\n---\nbody\n`;
+    expect(parseMemoryFile(listed, 'x.md').title).toBe('fine');
+  });
+
+  it('read an unknown or missing kind as a fact', () => {
+    const text = renderReceiptFile(entry);
+    const forged = text.replace('    kind: hazard', '    kind: root');
+    expect(parseReceiptFile(forged, 'x.md').kind).toBe('fact');
+    expect(parseReceiptFile('just a body', 'x.md').kind).toBe('fact');
   });
 });

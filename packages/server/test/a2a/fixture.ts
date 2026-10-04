@@ -95,7 +95,11 @@ export async function bridgeFixture(
     ...over,
   });
   messaging.setExternalPolicy(bridgeExternalPolicy(deps, notices));
-  const startWorker = () => startOutbound(peers, { pollMs: () => 20 });
+  const startWorker = () =>
+    startOutbound(peers, {
+      pollMs: () => 20,
+      changed: () => events.broadcast({ type: 'a2a.changed' }),
+    });
   let outbound = opts.outbound === true ? startWorker() : null;
   messaging.gates.register('task-proposal', (q, a) =>
     handleProposal(deps, watch, q, a)

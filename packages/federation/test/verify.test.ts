@@ -11,7 +11,7 @@ import {
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
-import { verifyLog } from '../src/verify.js';
+import { printable, verifyLog } from '../src/verify.js';
 
 const R = 'ada-0000000a';
 const keys = generateReplicaKeys();
@@ -246,6 +246,14 @@ describe('verifyLog', () => {
       { legacy: [] },
       { invite: null },
       { invite: { id: 1, sig: 'sig' } },
+      // M1: a handle off the grammar, and a device or build with control
+      // characters or past the cap, are not printable anywhere.
+      { handle: 'Ada Lovelace' },
+      { handle: 'a'.repeat(65) },
+      { device: 'desk\u001b[2J' },
+      { device: 'd'.repeat(129) },
+      { build: '0.40.0\n' },
+      { build: '' },
     ];
     for (const change of bad) {
       const r = verifyLog(R, [keyOpWith(change)], fresh, null);
@@ -272,5 +280,13 @@ describe('verifyLog', () => {
     const r = verifyLog(R, [ops[0], ops[1], ...junk], fresh, null);
     expect(r.accepted.map((a) => a.entry.seq)).toEqual([1, 2]);
     expect(r.cursor.halted).toContain('fails verification at seq 3');
+  });
+});
+
+describe('printable', () => {
+  it('drops C0 and C1 controls and caps the length', () => {
+    expect(printable('desk\u001b[2J\u009bx')).toBe('desk[2Jx');
+    expect(printable('d'.repeat(200))).toHaveLength(128);
+    expect(printable('laptop')).toBe('laptop');
   });
 });

@@ -125,8 +125,9 @@ class FakeDaemon {
 
   private server: ReturnType<typeof Bun.serve> | undefined;
 
-  // Register and config take only the shared agentToken; every other route is
-  // a messaging route and takes only a run or approved agent token.
+  // Register takes only the shared agentToken, config that or a run's own
+  // token (XH-R2); every other route is a messaging route and takes only a
+  // run or approved agent token.
   private authFailure(req: Request, url: URL): Response | null {
     const token = (req.headers.get('authorization') ?? '').replace(
       /^Bearer /,
@@ -134,11 +135,10 @@ class FakeDaemon {
     );
     const sharedOnly =
       url.pathname === '/api/config' || url.pathname === '/api/agents/register';
-    if (
-      sharedOnly
-        ? token === SHARED_AGENT_TOKEN
-        : this.messagingTokens.has(token)
-    ) {
+    const accepted =
+      token === SHARED_AGENT_TOKEN ||
+      (url.pathname === '/api/config' && token === 'rt-secret');
+    if (sharedOnly ? accepted : this.messagingTokens.has(token)) {
       return null;
     }
     this.rejectedTokens.push(token);
@@ -179,7 +179,10 @@ class FakeDaemon {
             this.sendResponses.length - 1
           );
           const resp = this.sendResponses[idx];
-          return Response.json(resp.body, { status: resp.status });
+          return Response.json(resp.body, {
+            status: resp.status,
+            ...(resp.status === 503 ? { headers: { 'retry-after': '0' } } : {}),
+          });
         }
 
         const answer = /^\/api\/messages\/([^/]+)\/answer$/.exec(url.pathname);
@@ -591,6 +594,43 @@ describe('msg_send (network error)', () => {
   });
 });
 
+describe('msg_send (busy daemon)', () => {
+  it('retries once on 503 after Retry-After, with the same Idempotency-Key', async () => {
+    daemon = new FakeDaemon();
+    const ok = daemon.sendResponses[0];
+    daemon.sendResponses = [
+      { status: 503, body: { error: 'the database is busy; retry shortly' } },
+      ok,
+    ];
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(daemon.sendCalls).toHaveLength(2);
+    expect(daemon.sendCalls[1]?.headers['idempotency-key']).toBe(
+      daemon.sendCalls[0]?.headers['idempotency-key']
+    );
+  });
+
+  it('gives up after one retry', async () => {
+    daemon = new FakeDaemon();
+    daemon.sendResponses = [
+      { status: 503, body: { error: 'the database is busy; retry shortly' } },
+    ];
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(daemon.sendCalls).toHaveLength(2);
+  });
+});
+
 describe('msg_send (revoked agent)', () => {
   it('reports a clear revoked error and does not re-register', async () => {
     const tokenPath = writeCachedAgentToken(
@@ -700,6 +740,42 @@ describe('msg_send (blocking)', () => {
     expect(result.structuredContent?.answer).toBeNull();
     expect(result.structuredContent?.note).toBe(SCOPE_EXPIRED_NOTE);
   });
+
+  it('rides out a daemon restart mid-wait and returns the answer the new daemon holds', async () => {
+    const first = new FakeDaemon();
+    first.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    daemon = first;
+    writeFakeDaemonFile(first.start());
+    const client = await connectClient(root);
+    // Once the first poll lands, the daemon goes down and a new one comes up.
+    const restart = (async () => {
+      while (first.answerPolls < 1) await new Promise((r) => setTimeout(r, 10));
+      first.stop();
+      await new Promise((r) => setTimeout(r, 200));
+      const second = new FakeDaemon();
+      second.answerAfterPolls = 0;
+      daemon = second;
+      writeFakeDaemonFile(second.start());
+    })();
+
+    const result = (await client.callTool(
+      {
+        name: 'msg_send',
+        arguments: {
+          to: ['human:wyat'],
+          kind: 'question',
+          body: 'which db?',
+          blocking: true,
+        },
+      },
+      undefined,
+      { timeout: 20_000 }
+    )) as ToolCallResult;
+    await restart;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toEqual(daemon.answerValue);
+  }, 30_000);
 
   it('stops polling immediately on a non-retryable 4xx instead of riding out the budget', async () => {
     daemon = new FakeDaemon();

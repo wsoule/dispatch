@@ -2,13 +2,15 @@ import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import type { DaemonFileInfo } from './daemon.js';
 import {
@@ -80,9 +82,34 @@ function readStoredToken(path: string): StoredAgentToken | null {
   return null;
 }
 
+// Through a temp file and a rename, so a crash never leaves half a cache file.
 function writeStoredToken(path: string, value: StoredAgentToken): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
+  const temp = `${path}.tmp-${process.pid}`;
+  writeFileSync(temp, JSON.stringify(value), { mode: 0o600 });
+  renameSync(temp, path);
+}
+
+// Moves a cache file that exists but will not read aside, answering whether it
+// did: its name stays registered, so the caller re-keys that name.
+function setAsideUnreadable(path: string): boolean {
+  if (!existsSync(path) || readStoredToken(path) !== null) return false;
+  renameSync(path, `${path}.corrupt-${Date.now()}`);
+  pruneSetAside(path);
+  return true;
+}
+
+// Keeps only the newest KEEP_SET_ASIDE copies of a cache file set aside.
+const KEEP_SET_ASIDE = 3;
+function pruneSetAside(path: string): void {
+  const prefix = `${basename(path)}.corrupt-`;
+  const copies = readdirSync(dirname(path))
+    .filter((f) => f.startsWith(prefix))
+    .sort(
+      (a, b) => Number(a.slice(prefix.length)) - Number(b.slice(prefix.length))
+    );
+  for (const f of copies.slice(0, -KEEP_SET_ASIDE))
+    rmSync(join(dirname(path), f), { force: true });
 }
 
 // Self-heal step: drops the cached token the daemon just called unknown, but
@@ -142,12 +169,13 @@ async function registerAgent(
   rootDir: string,
   daemon: DaemonFileInfo,
   name: string,
-  clientName: string | undefined
+  clientName: string | undefined,
+  rekey = false
 ): Promise<MessagingCredential | { error: string }> {
   const key = `${rootDir}\u0000${name}`;
   const existing = inFlightRegistrations.get(key);
   if (existing !== undefined) return existing;
-  const promise = doRegisterAgent(rootDir, daemon, name, clientName);
+  const promise = doRegisterAgent(rootDir, daemon, name, clientName, rekey);
   inFlightRegistrations.set(key, promise);
   try {
     return await promise;
@@ -162,7 +190,8 @@ async function doRegisterAgent(
   rootDir: string,
   daemon: DaemonFileInfo,
   name: string,
-  clientName: string | undefined
+  clientName: string | undefined,
+  rekey: boolean
 ): Promise<MessagingCredential | { error: string }> {
   let res: Response;
   try {
@@ -175,6 +204,7 @@ async function doRegisterAgent(
           clientName !== undefined && clientName.trim() !== ''
             ? clientName
             : 'unknown',
+        ...(rekey ? { rekey: true } : {}),
       }),
       signal: requestDeadline(),
     });
@@ -259,5 +289,8 @@ export async function messagingCredential(
         'dispatchd not running — cannot register this agent identity. Start it with: dispatch serve',
     };
   }
-  return registerAgent(rootDir, daemon, name, clientName);
+  // The name still holds the lost token, so a damaged cache re-keys it: the
+  // daemon retires the old token and issues this name a new one.
+  const rekey = setAsideUnreadable(agentTokenFilePath(rootDir, name));
+  return registerAgent(rootDir, daemon, name, clientName, rekey);
 }

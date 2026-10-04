@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import {
   addPeer,
+  markAuthFailed,
   peerClientFor,
   refreshDuePeers,
   refreshPeer,
@@ -69,6 +70,30 @@ const ownerNotices = () =>
     .inbox('human:wyat')
     .filter(({ message }) => message.kind === 'notice')
     .map(({ message }) => message.body);
+
+describe('owner notices', () => {
+  it('name the Settings page as well as the CLI, never a CLI-only flag', async () => {
+    await addPeer(
+      f.peerDeps({ fetchImpl: serveCard(CARD), lookup: publicDns }),
+      { alias: 'acme', cardUrl: CARD_URL, token: 't' },
+      DECIDE
+    );
+    markAuthFailed(f.peerDeps(), f.notices, 'acme');
+    await refreshPeer(
+      f.peerDeps({
+        fetchImpl: serveCard(CARD),
+        lookup: () => Promise.resolve(['169.254.169.254']),
+      }),
+      f.notices,
+      'acme'
+    );
+    await waitFor(() => ownerNotices().length >= 2);
+    for (const body of ownerNotices()) {
+      expect(body).toContain('Settings → A2A → Peers');
+      expect(body).not.toContain('--token-stdin');
+    }
+  });
+});
 
 describe('adding a peer', () => {
   it('lets a decide-tier human add a public https peer, the credential kept out of a2a.db', async () => {
@@ -433,6 +458,24 @@ describe('admission', () => {
     ).toHaveLength(1);
   });
 
+  it('does not count sends dated after now against outboundPerHour', async () => {
+    const base = f.deps.policy();
+    f.deps.policy = () => ({ ...base, outboundPerHour: 1 });
+    await active('acme');
+    await f.messaging.engine.send(
+      { to: ['a2a:acme'], kind: 'message', body: 'first' },
+      HUMAN
+    );
+    // The clock jumped forward for the first send and came back.
+    f.deps.now = () => new Date(Date.now() - 365 * 86_400_000);
+    await expect(
+      f.messaging.engine.send(
+        { to: ['a2a:acme'], kind: 'message', body: 'second' },
+        HUMAN
+      )
+    ).resolves.toBeDefined();
+  });
+
   it('refuses a direct send over outboundPerHour and holds a channel one', async () => {
     const base = f.deps.policy();
     f.deps.policy = () => ({ ...base, outboundPerHour: 1 });
@@ -480,5 +523,29 @@ describe('admission', () => {
         { address: 'agent:dispatch', canDecide: true }
       )
     ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
+  });
+});
+
+describe('a card that asks for no credential', () => {
+  const OPEN_CARD = {
+    ...CARD,
+    securitySchemes: undefined,
+    securityRequirements: undefined,
+  };
+
+  it('refuses a token rather than dropping it silently', async () => {
+    const deps = f.peerDeps({
+      fetchImpl: serveCard(OPEN_CARD),
+      lookup: publicDns,
+    });
+    await expect(
+      addPeer(deps, { alias: 'open', cardUrl: CARD_URL, token: 't' }, DECIDE)
+    ).rejects.toMatchObject({ code: 'invalid', field: 'token' });
+    expect(f.store.getPeer('open')).toBeNull();
+    await addPeer(deps, { alias: 'open', cardUrl: CARD_URL }, DECIDE);
+    await expect(setPeerEnabled(deps, 'open', true, 't')).rejects.toMatchObject(
+      { code: 'invalid', field: 'token' }
+    );
+    expect(readPeerCredential(project.root(), 'open')).toBeNull();
   });
 });

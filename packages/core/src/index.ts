@@ -172,6 +172,7 @@ export {
 export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
 export {
   materializeReceipts,
+  MEMORY_RECEIPT_FILE_BYTES,
   receiptSteps,
   restoreReceipts,
 } from './receipts.js';
@@ -330,6 +331,7 @@ export {
   clearProjectCredential,
   credentialsPath,
   CredentialsUnreadableError,
+  credentialsUnreadable,
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,
@@ -417,3 +419,4 @@ export {
   TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from './mergeDriverSetup.js';
+export { childEnv } from './childEnv.js';

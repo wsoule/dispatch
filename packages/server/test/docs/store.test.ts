@@ -97,13 +97,14 @@ describe('openDocsDb', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('stamps the schema version and sets a busy timeout', () => {
+  it('stamps the schema version and never waits on a lock', () => {
     const { db } = openDocsDb(join(dir, 'docs.db'));
     expect(dbVersion(db)).toBe(DOCS_DB_VERSION);
     const timeout = db.prepare('PRAGMA busy_timeout').get() as {
       timeout: number;
     };
-    expect(timeout.timeout).toBe(5000);
+    // Any wait stalls the event loop; the routes retry a busy write instead.
+    expect(timeout.timeout).toBe(0);
     db.close();
   });
 
@@ -462,5 +463,35 @@ describe('SqliteDocStore without FTS5', () => {
       plain.search('tokens', ['team'], { includeArchived: false, limit: 5 })
     ).toThrow('FTS5 is not available');
     plain.close();
+  });
+});
+
+describe('later columns', () => {
+  it('adds publishes.reason to a docs.db made before it existed', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'docs-cols-')));
+    try {
+      const path = join(base, 'docs.db');
+      const old = openSqliteDb(path);
+      old.exec(
+        'CREATE TABLE publishes (task_id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, rev_id TEXT NOT NULL, path TEXT NOT NULL, state TEXT NOT NULL, "commit" TEXT, created_at TEXT NOT NULL)'
+      );
+      old.close();
+      const { db, fts } = openDocsDb(path);
+      const store = new SqliteDocStore(db, fts);
+      store.putPublish({
+        task: 't-1',
+        doc: 'doc-1',
+        rev: 'rev-1',
+        path: 'docs/a.md',
+        state: 'failed',
+        commit: null,
+        createdAt: AT,
+        reason: 'why',
+      });
+      expect(store.publishRows({ task: 't-1' })[0].reason).toBe('why');
+      store.close();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

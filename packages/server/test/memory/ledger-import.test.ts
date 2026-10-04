@@ -194,6 +194,19 @@ describe('importLedger', () => {
     expect(run(store, [first, second]).memory.imported).toBe(2);
   });
 
+  it('imports a lesson the ledger holds twice only once, counting the copy', () => {
+    const store = fresh();
+    const same = {
+      title: 'pnpm 11 ignores onlyBuiltDependencies',
+      detail: 'use allowBuilds',
+    };
+    const report = run(store, [row(same), row(same), row()]);
+    expect(report.outcome).toBe('ok');
+    expect(report.memory).toMatchObject({ imported: 2, duplicates: 1 });
+    expect(store.countEntries()).toBe(2);
+    expect(renderImportReport(report)).toContain('duplicates 1');
+  });
+
   // A hard-deleted import never comes back on the next ledger change.
   it('keeps tombstoned origins gone', () => {
     const store = fresh();
@@ -232,6 +245,15 @@ describe('importLedger', () => {
     );
     expect(e.body.startsWith('t'.repeat(50))).toBe(true);
     expect(e.body).toMatch(/\[truncated on import: \d+ bytes\]$/);
+  });
+
+  it('truncates a long ledger lesson plainly: team entries never point at a doc (docs Task 18)', () => {
+    const store = fresh();
+    run(store, [row({ detail: 'x'.repeat(20_000) })]);
+    const [entry] = store.listEntries();
+    expect(entry.scope).toBe('team');
+    expect(entry.body).toMatch(/\[truncated on import: \d+ bytes\]$/);
+    expect(entry.refs.some((r) => r.type === 'doc')).toBe(false);
   });
 
   it('writes nothing on a dry run but reports the same counts', () => {

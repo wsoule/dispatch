@@ -86,11 +86,15 @@ it('a standalone host serves an SDK client end to end through a team-local TLS d
     headers: json,
     body: JSON.stringify({ enabled: true }),
   });
+  const relayPort = await freePort();
   const { token: hostToken } = (await (
     await fetch(`${base}/api/a2a/hosts`, {
       method: 'POST',
       headers: json,
-      body: JSON.stringify({ name: 'relay' }),
+      body: JSON.stringify({
+        name: 'relay',
+        publicUrl: `http://127.0.0.1:${relayPort}`,
+      }),
     })
   ).json()) as { token: string };
   const { token: clientToken } = await approvedClient('acme');
@@ -102,7 +106,6 @@ it('a standalone host serves an SDK client end to end through a team-local TLS d
       ...init,
       tls: tlsOpts,
     } as RequestInit)) as typeof fetch;
-  const relayPort = await freePort();
   const relay = await startStandalone({
     host: '127.0.0.1',
     port: relayPort,

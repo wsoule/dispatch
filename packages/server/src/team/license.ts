@@ -58,7 +58,8 @@ export class LicenseManager {
     this.clock = opts.clock ?? (() => new Date());
   }
 
-  private installedKey(): string | null {
+  /** The installed key, which the roster shares with the team at founding. */
+  installedKey(): string | null {
     const env = this.opts.envKey?.trim();
     if (env !== undefined && env !== '') return env;
     if (!existsSync(this.opts.path)) return null;

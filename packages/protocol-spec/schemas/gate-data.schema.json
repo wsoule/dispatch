@@ -71,7 +71,8 @@
         "type": { "const": "agent-registration" },
         "agent": { "$ref": "message.schema.json#/$defs/address" },
         "client": { "type": "string" },
-        "requestedBy": { "$ref": "message.schema.json#/$defs/address" }
+        "requestedBy": { "$ref": "message.schema.json#/$defs/address" },
+        "key": { "type": "string", "pattern": "^[0-9a-f]{16}$" }
       },
       "required": ["type", "agent", "client"],
       "additionalProperties": false

@@ -10,6 +10,7 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { DISPATCH_MCP_TOOLS, DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
+import { childEnv } from '@dispatch/core';
 import type { CartoBinary } from '@dispatch/core/carto';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
@@ -180,9 +181,9 @@ export const LEAN_TOOL_EXCLUSIONS = [
 ] as const;
 
 // The SDK options each active experiment changes. `env` replaces the CLI's
-// environment wholesale rather than merging into it (sdk.d.ts), which is why
-// it starts from process.env.
-function experimentOptions(
+// environment wholesale rather than merging into it (sdk.d.ts), so it is
+// always set: this process's environment without its tokens.
+export function experimentOptions(
   experiments: readonly ExperimentName[]
 ): Pick<Options, 'disallowedTools' | 'env'> {
   const disallowed: string[] = [...UNUSABLE_IN_DISPATCHED_RUN];
@@ -191,9 +192,9 @@ function experimentOptions(
   }
   return {
     disallowedTools: disallowed,
-    ...(experiments.includes('cache-1h')
-      ? { env: { ...process.env, ENABLE_PROMPT_CACHING_1H: '1' } }
-      : {}),
+    env: childEnv(
+      experiments.includes('cache-1h') ? { ENABLE_PROMPT_CACHING_1H: '1' } : {}
+    ),
   };
 }
 

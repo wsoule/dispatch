@@ -37,6 +37,34 @@ function clearHint(restoreDir: string): string {
 }
 
 // The staged restore's files, or none when nothing is staged.
+// What sits at `path` without following a link: 'missing', 'symlink', a
+// regular 'file', a 'dir', or 'other'.
+function kindAt(
+  path: string
+): 'missing' | 'symlink' | 'file' | 'dir' | 'other' {
+  try {
+    const st = lstatSync(path);
+    if (st.isSymbolicLink()) return 'symlink';
+    if (st.isFile()) return 'file';
+    return st.isDirectory() ? 'dir' : 'other';
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 'missing';
+    throw err;
+  }
+}
+
+// Creates `.dispatch/docs` under `dir` one level at a time; null when a part
+// of it is a symlink or not a directory, so nothing is written through it.
+function docsOutDir(dir: string): string | null {
+  let at = dir;
+  for (const part of ['.dispatch', 'docs']) {
+    at = join(at, part);
+    if (kindAt(at) === 'missing') mkdirSync(at);
+    if (kindAt(at) !== 'dir') return null;
+  }
+  return at;
+}
+
 function stagedFiles(restoreDir: string): string[] {
   if (!existsSync(restoreDir)) return [];
   return readdirSync(restoreDir).sort();
@@ -50,10 +78,18 @@ export function docsReceiptsStep(
     const docs = service.receiptsDocs();
     if (docs === null)
       return { changed: 0, removed: 0, problems: [UNAVAILABLE] };
-    const out = join(dir, DOCS_REL);
-    mkdirSync(out, { recursive: true });
+    const out = docsOutDir(dir);
+    if (out === null)
+      return {
+        changed: 0,
+        removed: 0,
+        problems: [
+          `${DOCS_REL} or a part of it is a symlink or not a directory; nothing written`,
+        ],
+      };
     let changed = 0;
     const wanted = new Set<string>();
+    const linked: string[] = [];
     for (const d of docs) {
       const file = `${d.row.handle}.md`;
       wanted.add(file);
@@ -75,25 +111,44 @@ export function docsReceiptsStep(
       };
       const text = renderDocFile(meta, d.head.body);
       const path = join(out, file);
-      if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
+      const kind = kindAt(path);
+      if (kind !== 'missing' && kind !== 'file') {
+        linked.push(file);
+        continue;
+      }
+      if (kind === 'missing') {
+        // `wx`: a link planted since the check is refused, never followed.
+        writeFileSync(path, text, { flag: 'wx' });
+        changed++;
+      } else if (readFileSync(path, 'utf8') !== text) {
         writeFileSync(path, text);
         changed++;
       }
     }
+    const problems: string[] = linked.map(
+      (file) =>
+        `${DOCS_REL}/${file} is a symlink or not a file; not written through`
+    );
     const pending = stagedFiles(restoreDir);
     if (pending.length > 0) {
       return {
         changed,
         removed: 0,
         problems: [
+          ...problems,
           `a staged restore is pending (${pending.join(', ')}); nothing removed. ${clearHint(restoreDir)}`,
         ],
       };
     }
-    const problems: string[] = [];
     let removed = 0;
     for (const file of readdirSync(out)) {
       if (wanted.has(file) || !file.endsWith('.md')) continue;
+      if (kindAt(join(out, file)) !== 'file') {
+        problems.push(
+          `${DOCS_REL}/${file} is a symlink or not a file; left alone`
+        );
+        continue;
+      }
       const parsed = parseDocFile(readFileSync(join(out, file), 'utf8'));
       const id = 'error' in parsed ? null : parsed.meta.id;
       if (id !== null && service.knowsDoc(id)) {
@@ -155,6 +210,12 @@ function restoreProblem(meta: DocFileMeta, body: string): string | null {
 // Applies the receipt files the CLI staged: a held or deleted id is skipped, a
 // bad hash or a broken input rule is a problem, and the directory goes once
 // every file applied. Null when nothing is staged or docs are unavailable.
+// Why a staged file could not be read, with its errno code.
+export function unreadable(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException).code;
+  return `unreadable (${code ?? 'error'}): ${(err as Error).message}`;
+}
+
 export function applyStagedRestore(
   service: DocsService,
   restoreDir: string
@@ -169,19 +230,27 @@ export function applyStagedRestore(
   };
   for (const file of stagedFiles(restoreDir).filter((f) => f.endsWith('.md'))) {
     const path = join(restoreDir, file);
-    const stat = lstatSync(path);
-    if (!stat.isFile()) {
-      report.problems.push({ file, detail: 'not a regular file' });
+    let text: string;
+    try {
+      const stat = lstatSync(path);
+      if (!stat.isFile()) {
+        report.problems.push({ file, detail: 'not a regular file' });
+        continue;
+      }
+      if (stat.size > DOCS_LIMITS.receiptFileBytes) {
+        report.problems.push({
+          file,
+          detail: `over ${DOCS_LIMITS.receiptFileBytes} bytes`,
+        });
+        continue;
+      }
+      text = readFileSync(path, 'utf8');
+    } catch (err) {
+      // One file this process may not read never stops the rest.
+      report.problems.push({ file, detail: unreadable(err) });
       continue;
     }
-    if (stat.size > DOCS_LIMITS.receiptFileBytes) {
-      report.problems.push({
-        file,
-        detail: `over ${DOCS_LIMITS.receiptFileBytes} bytes`,
-      });
-      continue;
-    }
-    const parsed = parseDocFile(readFileSync(path, 'utf8'));
+    const parsed = parseDocFile(text);
     if ('error' in parsed) {
       report.problems.push({ file, detail: parsed.error });
       continue;
@@ -205,9 +274,18 @@ export function applyStagedRestore(
       report.problems.push({ file, detail: err.message });
     }
   }
-  if (report.problems.length === 0)
-    rmSync(restoreDir, { recursive: true, force: true });
-  else report.pending = clearHint(restoreDir);
+  if (report.problems.length === 0) {
+    // A staging directory that will not go is reported, never fatal.
+    try {
+      rmSync(restoreDir, { recursive: true, force: true });
+    } catch (err) {
+      report.problems.push({
+        file: '.',
+        detail: `restored, but could not remove the staging directory: ${(err as Error).message}`,
+      });
+      report.pending = clearHint(restoreDir);
+    }
+  } else report.pending = clearHint(restoreDir);
   service.recordRestore(report);
   return report;
 }

@@ -233,4 +233,71 @@ describe('attribution on a shared daemon', () => {
       'human:ada'
     );
   });
+
+  it('the shared agent token is agent:local-cli, never the owner (XH-R2)', async () => {
+    const agent = handle.tokens.agentToken;
+    const taskId = await newTask(agent, 'Made by a run');
+    const task = (await (
+      await rawFetch(`${baseUrl}/api/tasks/${taskId}`, {
+        headers: headers(agent),
+      })
+    ).json()) as { meta: { creator: string } };
+    expect(task.meta.creator).toBe('agent:local-cli');
+
+    await rawFetch(`${baseUrl}/api/tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: headers(agent),
+      body: JSON.stringify({ appendActivity: 'I approved the deploy' }),
+    });
+    const after = (await (
+      await rawFetch(`${baseUrl}/api/tasks/${taskId}`, {
+        headers: headers(agent),
+      })
+    ).json()) as { body: string };
+    const line = after.body
+      .split('\n')
+      .find((l) => l.includes('I approved the deploy'));
+    expect(line).toContain('agent:local-cli');
+    expect(line).not.toContain('human:wyat');
+
+    const finding = await post('/api/findings', agent, {
+      taskId,
+      severity: 'minor',
+      title: 'From a run',
+      detail: 'x',
+    });
+    expect(((await finding.json()) as { raisedBy: string }).raisedBy).toBe(
+      'agent:local-cli'
+    );
+
+    const run = await post(`/api/tasks/${taskId}/runs`, agent, {});
+    expect(run.status).toBe(201);
+    const meta = (await run.json()) as {
+      dispatchedBy?: string;
+      operator?: string | null;
+    };
+    // Only a person owns a run, and no person stands behind the agent token.
+    expect(meta.dispatchedBy).toBeUndefined();
+    expect(meta.operator ?? null).toBeNull();
+  });
+
+  it('a body creator is ignored on POST /api/tasks (XH-R2)', async () => {
+    for (const [token, who, forged] of [
+      [ada, 'human:ada', 'human:wyat'],
+      [ada, 'human:ada', 'agent:dispatch'],
+      [handle.tokens.agentToken, 'agent:local-cli', 'human:wyat'],
+      [handle.tokens.agentToken, 'agent:local-cli', 'agent:dispatch'],
+      [ada, 'human:ada', 'agent:local-cli'],
+      [handle.tokens.appToken, 'human:wyat', 'human:ada'],
+    ] as const) {
+      const res = await post('/api/tasks', token, {
+        title: 'forged',
+        creator: forged,
+      });
+      expect(res.status).toBe(201);
+      expect(
+        ((await res.json()) as { meta: { creator: string } }).meta.creator
+      ).toBe(who);
+    }
+  });
 });

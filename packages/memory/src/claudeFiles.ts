@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { cutUtf8, MEMORY_LIMITS, utf8Bytes } from './limits.js';
 import type { RankContext } from './rank.js';
 import { reachTags } from './render.js';
+import { displayState, MEMORY_KINDS, MEMORY_SCOPES } from './types.js';
 import type { MemoryEntry, MemoryKind } from './types.js';
 
 type ClaudeType = 'feedback' | 'project' | 'reference';
@@ -31,6 +32,8 @@ export interface ParsedMemoryFile {
   type: string | undefined;
   modified: string | undefined;
   truncated: boolean;
+  // The whole body before the cut, when `truncated`: a personal doc may take it.
+  fullBody?: string;
 }
 
 // One exported file of a lineage directory, as written: `parsedHash` is what
@@ -103,6 +106,22 @@ function trustNote(e: MemoryEntry): string {
 // Claude Code's own layout (type nested under metadata), plus Dispatch's
 // informational block; ingest never trusts any of it.
 export function renderTopicFile(e: MemoryEntry): string {
+  return renderEntryFile(e, []);
+}
+
+// The state a receipt shows: active, stale, or retired with its reason.
+function receiptStatus(e: MemoryEntry): string {
+  const state = displayState(e);
+  if (state !== 'retired') return state;
+  return `retired (${e.statusReason ?? 'expired'})`;
+}
+
+// The receipt log's copy of a team entry: the topic file plus its state.
+export function renderReceiptFile(e: MemoryEntry): string {
+  return renderEntryFile(e, [`    status: ${receiptStatus(e)}`]);
+}
+
+function renderEntryFile(e: MemoryEntry, extra: readonly string[]): string {
   return [
     '---',
     `name: ${e.id}`,
@@ -116,6 +135,7 @@ export function renderTopicFile(e: MemoryEntry): string {
     `    kind: ${e.kind}`,
     `    trust: ${e.trust}`,
     `    rev: ${e.rev}`,
+    ...extra,
     '---',
     '',
     `> Dispatch memory ${e.handle} · ${e.scope} ${e.kind} · by ${untrustedInline(e.author)} · ${trustNote(e)}`,
@@ -172,13 +192,15 @@ function nonEmpty(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
-// Cut to the body limit on a line boundary, ending with a marker naming the bytes cut.
-function cutBody(body: string): { body: string; truncated: boolean } {
+/** `body` cut to the memory body limit on a line boundary, ending with
+ *  `marker(n)` for the n bytes cut; unchanged when it already fits. */
+export function cutMemoryBody(
+  body: string,
+  marker: (n: number) => string
+): string {
   const limit = MEMORY_LIMITS.bodyBytes;
   const size = utf8Bytes(body);
-  if (size <= limit) return { body, truncated: false };
-  const marker = (n: number) =>
-    `\n[truncated by Dispatch: ${n} bytes; long-form belongs in Docs]`;
+  if (size <= limit) return body;
   const room = limit - utf8Bytes(marker(size));
   const lines = body.split('\n');
   const kept: string[] = [];
@@ -192,7 +214,107 @@ function cutBody(body: string): { body: string; truncated: boolean } {
   // A first line longer than the room is cut mid-line rather than lost.
   if (kept.length === 0) kept.push(cutUtf8(lines[0], room));
   const text = kept.join('\n');
-  return { body: text + marker(size - utf8Bytes(text)), truncated: true };
+  return text + marker(size - utf8Bytes(text));
+}
+
+const PLAIN_MARKER = (n: number): string =>
+  `\n[truncated by Dispatch: ${n} bytes; long-form belongs in Docs]`;
+
+const DOC_MARKER =
+  /\n\[truncated by Dispatch: (\d+) bytes; full text in doc (doc-[0-9A-Z]{26}) of project [^\]\n]+\]$/;
+
+/** A personal entry's body and refs as a shared copy may carry them: an
+ *  overflow marker naming its human's personal doc becomes the plain one, and
+ *  that doc's ref is dropped, so a shared entry never points at a personal doc. */
+export function withoutPersonalDoc<R extends { type: string; id: string }>(
+  body: string,
+  refs: readonly R[]
+): { body: string; refs: R[] } {
+  const m = DOC_MARKER.exec(body);
+  if (m === null) return { body, refs: [...refs] };
+  return {
+    body: body.slice(0, m.index) + PLAIN_MARKER(Number(m[1])),
+    refs: refs.filter((r) => !(r.type === 'doc' && r.id === m[2])),
+  };
+}
+
+// Frontmatter past this size, or flow collections nested past this depth, is
+// refused before YAML sees it: crafted input can cost the parser seconds.
+const FRONTMATTER_MAX_BYTES = 4096;
+const FRONTMATTER_MAX_DEPTH = 16;
+
+// Why `yaml` is refused unparsed; null when it is small and shallow enough.
+function frontmatterRefusal(yaml: string): string | null {
+  if (utf8Bytes(yaml) > FRONTMATTER_MAX_BYTES)
+    return `over ${FRONTMATTER_MAX_BYTES} bytes`;
+  let depth = 0;
+  let quote: string | null = null;
+  for (const ch of yaml) {
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '[' || ch === '{') {
+      depth += 1;
+      if (depth > FRONTMATTER_MAX_DEPTH)
+        return `nested deeper than ${FRONTMATTER_MAX_DEPTH}`;
+    } else if ((ch === ']' || ch === '}') && depth > 0) depth -= 1;
+  }
+  return null;
+}
+
+// A frontmatter refused unparsed, or one YAML could not read.
+class FrontmatterRefused extends Error {}
+
+// Parses are cached by content hash: a watched directory is re-read often.
+const PARSE_CACHE_SIZE = 512;
+const parseCache = new Map<string, { value: unknown } | { error: string }>();
+
+// Frontmatter YAML, refused when oversized or deeply nested; throws on either
+// refusal or a parse error, with the reason as the message's first line.
+function parseFrontmatterYaml(yaml: string, uniqueKeys: boolean): unknown {
+  const key = `${uniqueKeys ? 'u' : 'l'}:${createHash('sha256').update(yaml).digest('hex')}`;
+  let hit = parseCache.get(key);
+  if (hit === undefined) {
+    const refusal = frontmatterRefusal(yaml);
+    if (refusal !== null) hit = { error: refusal };
+    else {
+      try {
+        hit = { value: parseYaml(yaml, { logLevel: 'error', uniqueKeys }) };
+      } catch (err) {
+        hit = {
+          error:
+            err instanceof Error ? err.message.split('\n')[0] : 'unreadable',
+        };
+      }
+    }
+    parseCache.set(key, hit);
+    if (parseCache.size > PARSE_CACHE_SIZE) {
+      const oldest = parseCache.keys().next().value;
+      if (oldest !== undefined) parseCache.delete(oldest);
+    }
+  }
+  if ('error' in hit) throw new FrontmatterRefused(hit.error);
+  return hit.value;
+}
+
+// The parsed frontmatter and the text after it; unparseable YAML reads as body,
+// and frontmatter refused unparsed is dropped.
+function splitFrontmatter(text: string): {
+  front: Record<string, unknown>;
+  rest: string;
+} {
+  const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
+  const match = FRONTMATTER.exec(source);
+  if (match === null) return { front: {}, rest: source };
+  const rest = source.slice(match[0].length);
+  if (frontmatterRefusal(match[1] ?? '') !== null) return { front: {}, rest };
+  try {
+    const front = record(parseFrontmatterYaml(match[1] ?? '', false));
+    return { front, rest };
+  } catch {
+    // Unparseable frontmatter reads as body, never as a failed ingest.
+    return { front: {}, rest: source };
+  }
 }
 
 // Title and body as ingest reads them: frontmatter is informational, the
@@ -203,23 +325,7 @@ export function parseMemoryFile(
   fileName: string,
   opts: { linkText?: string } = {}
 ): ParsedMemoryFile {
-  const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
-  let front: Record<string, unknown> = {};
-  let rest = source;
-  const match = FRONTMATTER.exec(source);
-  if (match !== null) {
-    try {
-      front = record(
-        parseYaml(match[1] ?? '', {
-          logLevel: 'error',
-          uniqueKeys: false,
-        }) as unknown
-      );
-      rest = source.slice(match[0].length);
-    } catch {
-      // Unparseable frontmatter reads as body, never as a failed ingest.
-    }
-  }
+  const { front, rest } = splitFrontmatter(text);
   const meta = record(front.metadata);
   const lines = rest.replace(BREAKS, '\n').split('\n');
   while (lines.length > 0 && lines[0].trim() === '') lines.shift();
@@ -231,7 +337,8 @@ export function parseMemoryFile(
     .map((line) => (ESCAPED_STRUCTURE.test(line) ? line.slice(1) : line))
     .join('\n')
     .trimEnd();
-  const { body, truncated } = cutBody(unescaped);
+  const body = cutMemoryBody(unescaped, PLAIN_MARKER);
+  const truncated = body !== unescaped;
   // A frontmatter fence left in the body by unparseable YAML is never the title.
   const firstLine = body
     .split('\n')
@@ -252,6 +359,62 @@ export function parseMemoryFile(
     type: nonEmpty(meta.type) ?? nonEmpty(front.type),
     modified: nonEmpty(meta.modified) ?? nonEmpty(front.modified),
     truncated,
+    ...(truncated ? { fullBody: unescaped } : {}),
+  };
+}
+
+// The frontmatter's `metadata.dispatch` block read strictly: a duplicated key
+// or unreadable YAML is a problem rather than a value picked silently.
+function strictDispatch(text: string): {
+  dispatch: Record<string, unknown>;
+  problem: string | null;
+} {
+  const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
+  const match = FRONTMATTER.exec(source);
+  if (match === null)
+    return {
+      dispatch: {},
+      problem: 'frontmatter: missing or not terminated by ---',
+    };
+  try {
+    const front = record(parseFrontmatterYaml(match[1] ?? '', true));
+    return { dispatch: record(record(front.metadata).dispatch), problem: null };
+  } catch (err) {
+    const why =
+      err instanceof Error ? err.message.split('\n')[0] : 'unreadable';
+    return { dispatch: {}, problem: `frontmatter: ${why}` };
+  }
+}
+
+// A receipt file as restore reads it: the kind is kept only when Dispatch
+// knows it; the status is trimmed and lower-cased, and must be one string.
+export function parseReceiptFile(
+  text: string,
+  fileName: string
+): ParsedMemoryFile & {
+  kind: MemoryKind;
+  status: string | undefined;
+  problem: string | null;
+} {
+  const { dispatch, problem } = strictDispatch(text);
+  const kind = MEMORY_KINDS.find((k) => k === dispatch.kind) ?? 'fact';
+  const raw = dispatch.status;
+  const status = typeof raw === 'string' ? raw.trim().toLowerCase() : undefined;
+  // A receipt always carries both; a file without them is damaged, not a lesson.
+  const fieldProblem =
+    typeof dispatch.scope !== 'string' ||
+    !MEMORY_SCOPES.some((s) => s === dispatch.scope)
+      ? 'scope: missing or unknown'
+      : raw === undefined || status === ''
+        ? 'status: missing'
+        : typeof raw === 'string'
+          ? null
+          : 'status: expected a string';
+  return {
+    ...parseMemoryFile(text, fileName),
+    kind,
+    status: status === '' ? undefined : status,
+    problem: problem ?? fieldProblem,
   };
 }
 

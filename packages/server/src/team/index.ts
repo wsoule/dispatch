@@ -1,4 +1,5 @@
 import { licenseKeyPath, teamTokensPath } from '../orchestrator/paths.js';
+import type { RosterService } from './federation/roster.js';
 import {
   LicenseManager,
   seatLimitMessage,
@@ -21,14 +22,20 @@ export interface Team {
   license: LicenseManager;
 }
 
-/** What board sync needs to know about the license, read on every pass. */
-export function syncSeats(team: Team): {
+/** What board sync needs to know about the license, read on every pass: the
+ *  roster's seats once a team is founded, the installed license's before. */
+export function syncSeats(
+  team: Pick<Team, 'license'>,
+  roster?: RosterService
+): {
   seats: () => number;
   seatMessage: (seats: number) => string;
 } {
+  const founded = () => (roster?.founded() === true ? roster.view() : null);
   return {
-    seats: () => team.license.seats(),
-    seatMessage: (seats) => syncPausedMessage(seats, team.license.state()),
+    seats: () => founded()?.seats ?? team.license.seats(),
+    seatMessage: (seats) =>
+      syncPausedMessage(seats, founded()?.license ?? team.license.state()),
   };
 }
 

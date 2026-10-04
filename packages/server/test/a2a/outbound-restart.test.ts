@@ -10,6 +10,7 @@ import { ParkingExecutor, waitFor } from '../messaging/harness.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { useTestAuth } from '../testAuth.js';
 import { FixturePeer } from './fixturePeer.js';
+import { mcpCall, SessionExecutor } from './mcp.js';
 
 let home: string;
 let root: string;
@@ -127,4 +128,63 @@ it('relays a delivery the first boot held but never sent', async () => {
   // The row's next attempt is 30 s out; the restarted worker honours it.
   expect(h.a2a.store?.getOutbound(q.id, 'fixture')?.state).toBe('queued');
   expect(peer.opened).toHaveLength(0);
+});
+
+it('a run’s MCP msg_send question to a peer returns the answer and reaches the run’s session', async () => {
+  const executor = new SessionExecutor();
+  const h = await startServer({
+    rootDir: root,
+    port: 0,
+    writeDaemonFile: true,
+    webDistDir: null,
+    registerExecutors: (o) => o.registerExecutor('session', executor),
+  });
+  handle = h;
+  useTestAuth(h);
+  const base = `http://127.0.0.1:${h.port}`;
+  await fetch(`${base}/api/a2a/peers`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({
+      alias: 'fixture',
+      cardUrl: peer.cardUrl(),
+      token: 'peer-token',
+    }),
+  });
+  const created = (await (
+    await fetch(`${base}/api/tasks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ title: 'ask the peer over MCP' }),
+    })
+  ).json()) as { meta: { id: string } };
+  const run = await h.orchestrator.dispatch(created.meta.id, 'session');
+  await waitFor(() => executor.tokenFile !== null, 5000);
+  const call = mcpCall(
+    root,
+    {
+      DISPATCH_HOME: home,
+      DISPATCH_RUN_TOKEN_FILE: executor.tokenFile ?? '',
+      DISPATCH_RUN_ID: run.id,
+    },
+    'msg_send',
+    {
+      to: ['a2a:fixture'],
+      kind: 'question',
+      blocking: true,
+      body: 'Which colour?',
+    }
+  );
+  await waitFor(() => peer.opened.length === 1, 10_000);
+  peer.answer(peer.latest(), 'Blue.');
+  const result = await call;
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    message: { from: `run:${run.id}`, to: ['a2a:fixture'] },
+    answer: { from: 'a2a:fixture', body: 'Blue.' },
+  });
+  await waitFor(
+    () => executor.received.some((text) => text.includes('Blue.')),
+    5000
+  );
 });

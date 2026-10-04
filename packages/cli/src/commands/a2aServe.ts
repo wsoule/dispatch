@@ -1,6 +1,6 @@
 import type { StandaloneOptions } from '@dispatch/a2a';
 import { checkStandalone } from '@dispatch/a2a';
-import { readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 
 import { type CliContext, CliError } from '../context.js';
 import { attachToRunningDaemon } from './appToken.js';
@@ -17,17 +17,26 @@ export interface ServeCommandOptions {
   trustForwardedFor?: boolean;
 }
 
-// The host token, from a file only its owner can read or the environment;
-// never argv, and never quoted in an error.
+// The host token, from a regular file the current user owns and alone can
+// read, or the environment; never argv, and never quoted in an error.
 function readHostToken(file: string | undefined): string {
   if (file !== undefined) {
-    let mode: number;
+    let st: ReturnType<typeof lstatSync>;
     try {
-      mode = statSync(file).mode;
+      st = lstatSync(file);
     } catch {
       throw new CliError(`cannot read the host token file ${file}`);
     }
-    if ((mode & 0o077) !== 0)
+    if (!st.isFile())
+      throw new CliError(
+        `the host token file ${file} must be a regular file, not a symlink or directory`
+      );
+    const uid = process.getuid?.();
+    if (uid !== undefined && st.uid !== uid)
+      throw new CliError(
+        `the host token file ${file} is not owned by the current user`
+      );
+    if ((Number(st.mode) & 0o077) !== 0)
       throw new CliError(
         `the host token file ${file} is readable by others; run chmod 600 on it`
       );
@@ -52,7 +61,7 @@ export async function resolveServe(
   const hostToken = readHostToken(o.hostTokenFile);
   if (hostToken === '')
     throw new CliError(
-      'dispatch a2a serve needs a host token: --host-token-file <file> or DISPATCH_A2A_HOST_TOKEN (mint one with: dispatch a2a hosts add <name>)'
+      'dispatch a2a serve needs a host token: --host-token-file <file> or DISPATCH_A2A_HOST_TOKEN (mint one with: dispatch a2a hosts add <name> --public-url <url>)'
     );
   const daemonUrl = (
     o.daemon ?? (await attachToRunningDaemon(ctx)).baseUrl
@@ -76,4 +85,24 @@ export async function resolveServe(
   const checked = checkStandalone(options);
   if (!checked.ok) throw new CliError(`${checked.key}: ${checked.error}`);
   return options;
+}
+
+type SignalSource = Pick<NodeJS.EventEmitter, 'once' | 'off'>;
+
+// Resolves with the first SIGINT or SIGTERM, so `a2a serve` stops cleanly
+// under a terminal or a service manager; both listeners are removed.
+export function stopSignal(
+  source: SignalSource = process
+): Promise<'SIGINT' | 'SIGTERM'> {
+  return new Promise((resolve) => {
+    const on = (signal: 'SIGINT' | 'SIGTERM') => () => {
+      source.off('SIGINT', onInt);
+      source.off('SIGTERM', onTerm);
+      resolve(signal);
+    };
+    const onInt = on('SIGINT');
+    const onTerm = on('SIGTERM');
+    source.once('SIGINT', onInt);
+    source.once('SIGTERM', onTerm);
+  });
 }

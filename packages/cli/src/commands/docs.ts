@@ -5,7 +5,14 @@ import type {
   DocStatus,
   LinkRel,
 } from '@dispatch/core';
-import { LINK_RELS, renderDocFile } from '@dispatch/core';
+import {
+  assetNames,
+  childEnv,
+  LINK_RELS,
+  parseDocFile,
+  renderDocFile,
+  rewriteAssetLinks,
+} from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -13,12 +20,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, relative, sep } from 'node:path';
 
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
@@ -153,6 +161,63 @@ function withUnread(
   };
 }
 
+// An exported image link: `![alt](<rel>/assets/<doc id>/<asset name>)`.
+const EXPORTED_IMAGE =
+  /!\[([^\]]*)\]\(([^)\s]*?assets\/(doc-[0-9A-Z]{26})\/([0-9a-f]{64}\.(?:png|jpg|gif|webp)))\)/g;
+
+// Points an exported doc's image links back at `asset:`, reading each image
+// its own assets/<doc id>/ folder holds; the names with no bytes are missing.
+function importedImages(
+  path: string,
+  docId: string,
+  text: string
+): { text: string; bytes: Map<string, Uint8Array>; missing: string[] } {
+  const bytes = new Map<string, Uint8Array>();
+  const missing = new Set<string>();
+  const rewritten = text.replace(
+    EXPORTED_IMAGE,
+    (whole, alt: string, target: string, owner: string, name: string) => {
+      if (owner !== docId) return whole;
+      try {
+        bytes.set(
+          name,
+          new Uint8Array(readFileSync(join(dirname(path), target)))
+        );
+      } catch {
+        missing.add(name);
+      }
+      return `![${alt}](asset:${name})`;
+    }
+  );
+  for (const name of assetNames(rewritten))
+    if (!bytes.has(name)) missing.add(name);
+  return { text: rewritten, bytes, missing: [...missing] };
+}
+
+// Uploads each image a committed name's docs link, from the files it was read
+// from; answers how many distinct images reached the daemon.
+async function uploadImages(
+  api: DocsApi,
+  report: ImportReportInfo,
+  images: ReadonlyMap<string, ReadonlyMap<string, Uint8Array>>
+): Promise<number> {
+  const uploaded = new Set<string>();
+  for (const { name, docs } of report.docs ?? []) {
+    const held = images.get(name);
+    if (held === undefined || held.size === 0) continue;
+    for (const doc of docs) {
+      const text = (await api.get(doc)).text;
+      for (const ref of assetNames(text)) {
+        const bytes = held.get(ref);
+        if (bytes === undefined) continue;
+        const stored = await api.putAsset(doc, bytes);
+        if (stored.name === ref) uploaded.add(ref);
+      }
+    }
+  }
+  return uploaded.size;
+}
+
 // Reads files on this machine (the daemon never reads arbitrary paths) and runs
 // one staged session: manifest, uploads of what the daemon needs, commit.
 export async function importFiles(
@@ -161,17 +226,45 @@ export async function importFiles(
   opts: { link?: string; dryRun: boolean }
 ): Promise<ImportReportInfo> {
   const unread: { path: string; detail: string }[] = [];
+  const images = new Map<string, Map<string, Uint8Array>>();
+  const missingImages: { path: string; detail: string }[] = [];
+  let referenced = 0;
   const files = paths.flatMap((path) => {
     try {
-      const content = readFileSync(path);
+      let raw = readFileSync(path);
+      // A receipts or export file: sent whole (the daemon reads its
+      // frontmatter), under its own slug and time.
+      const parsed = parseDocFile(raw.toString('utf8'));
+      const doc = 'error' in parsed ? null : parsed;
+      // An exported doc in its export's personal/ folder is someone's private
+      // doc: never sent. A plain note in any other personal/ folder is a file.
+      if (
+        doc !== null &&
+        (doc.meta.scope === 'personal' ||
+          basename(dirname(realpathSync(path))).toLowerCase() === 'personal')
+      ) {
+        unread.push({ path, detail: 'personal docs are never imported' });
+        return [];
+      }
+      if (doc !== null) {
+        const found = importedImages(path, doc.meta.id, raw.toString('utf8'));
+        raw = Buffer.from(found.text, 'utf8');
+        images.set(doc.meta.slug, found.bytes);
+        referenced += found.bytes.size + found.missing.length;
+        for (const name of found.missing)
+          missingImages.push({ path, detail: `image ${name} was not found` });
+      }
       return [
         {
           path,
-          name: basename(path),
-          mtime: statSync(path).mtime.toISOString(),
-          bytes: content.byteLength,
-          hash: createHash('sha256').update(content).digest('hex'),
-          content,
+          name: doc === null ? basename(path) : `${doc.meta.slug}.md`,
+          mtime:
+            doc === null
+              ? statSync(path).mtime.toISOString()
+              : doc.meta.updatedAt,
+          bytes: raw.byteLength,
+          hash: createHash('sha256').update(raw).digest('hex'),
+          content: raw,
         },
       ];
     } catch (err) {
@@ -189,14 +282,42 @@ export async function importFiles(
   }
   try {
     const report = await api.commitImport(id, opts.dryRun);
+    const uploaded = opts.dryRun ? 0 : await uploadImages(api, report, images);
+    const held = [...images.values()].reduce((n, m) => n + m.size, 0);
+    const missing = missingImages.length + (opts.dryRun ? 0 : held - uploaded);
+    const withImages: ImportReportInfo = {
+      ...report,
+      errors:
+        missingImages.length === 0
+          ? report.errors
+          : [
+              ...report.errors,
+              ...missingImages.map((m) => ({
+                ...m,
+                reason: 'missing' as const,
+              })),
+            ],
+      parity: { ...report.parity, images: missing === 0 },
+      images: { referenced, uploaded, missing },
+    };
     return withUnread(
-      report,
+      withImages,
       unread,
       files.map((f) => f.path)
     );
   } finally {
     if (opts.dryRun) await api.deleteImport(id).catch(() => undefined);
   }
+}
+
+// Fails the import command on a parity mismatch, or when an image is missing.
+export function checkImportReport(r: ImportReportInfo): void {
+  if (!r.parity.files || !r.parity.names)
+    throw new CliError('parity mismatch; nothing was imported');
+  if (r.parity.images === false)
+    throw new CliError(
+      `${r.images?.missing ?? 0} image(s) missing; the docs were imported without them`
+    );
 }
 
 function printReport(ctx: CliContext, r: ImportReportInfo): void {
@@ -214,8 +335,12 @@ function printReport(ctx: CliContext, r: ImportReportInfo): void {
   );
   for (const e of r.errors)
     ctx.log(`error: ${e.path}: ${e.reason} (${e.detail})`);
+  const images =
+    r.images === undefined
+      ? ''
+      : `, images ${r.images.missing === 0 ? 'ok' : `${r.images.missing} MISSING`} (${r.images.uploaded} of ${r.images.referenced} uploaded)`;
   ctx.log(
-    `parity: files ${r.parity.files ? 'ok' : 'MISMATCH'}, names ${r.parity.names ? 'ok' : 'MISMATCH'}`
+    `parity: files ${r.parity.files ? 'ok' : 'MISMATCH'}, names ${r.parity.names ? 'ok' : 'MISMATCH'}${images}`
   );
 }
 
@@ -254,6 +379,7 @@ function runEditor(file: string): number {
   const [cmd, ...args] = (editor ?? 'vi').trim().split(/\s+/);
   return (
     spawnSync(cmd, [...args, file], {
+      env: childEnv(),
       stdio: 'inherit',
       shell: false,
     }).status ?? 1
@@ -300,6 +426,35 @@ function ancestryAuthors(
 
 // Writes every doc the caller can see to `dir` (personal ones under `personal/`)
 // in the receipt file format; `revHistory` adds sealed revisions in `.history/<handle>/`.
+// Doc ids are `doc-` and a ULID; one names a directory only once it matches.
+const EXPORT_DOC_ID = /^doc-[0-9A-Z]{26}$/;
+
+// Copies each image `text` references to <dir>/assets/<doc id>/ and points its
+// link there, relative to the doc's own folder; one the daemon lacks keeps its link.
+async function exportImages(
+  api: DocsApi,
+  dir: string,
+  sub: string,
+  docId: string,
+  text: string
+): Promise<string> {
+  const names = assetNames(text);
+  if (names.length === 0 || !EXPORT_DOC_ID.test(docId)) return text;
+  const assetsDir = join(dir, 'assets', docId);
+  const copied = new Set<string>();
+  for (const name of names) {
+    const bytes = await api.asset(docId, name);
+    if (bytes === null) continue;
+    mkdirSync(assetsDir, { recursive: true });
+    writeFileSync(join(assetsDir, name), bytes);
+    copied.add(name);
+  }
+  const rel = relative(sub, assetsDir).split(sep).join('/');
+  return rewriteAssetLinks(text, (n) =>
+    copied.has(n) ? `${rel}/${n}` : `asset:${n}`
+  );
+}
+
 export async function exportDocs(
   api: DocsApi,
   dir: string,
@@ -330,10 +485,13 @@ export async function exportDocs(
         })),
         authors: ancestryAuthors(r.rev, history),
         updatedAt: d.updatedAt,
+        // Names a personal doc as one, so no import takes it for a team doc.
+        scope: d.scope,
       };
       const sub = d.scope === 'personal' ? join(dir, 'personal') : dir;
       mkdirSync(sub, { recursive: true });
-      writeFileSync(join(sub, `${d.handle}.md`), renderDocFile(meta, r.text));
+      const text = await exportImages(api, dir, sub, d.id, r.text);
+      writeFileSync(join(sub, `${d.handle}.md`), renderDocFile(meta, text));
       if (revHistory) {
         const historyDir = join(sub, '.history', d.handle);
         mkdirSync(historyDir, { recursive: true });
@@ -617,6 +775,41 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
     });
 
   docs
+    .command('publish <ref>')
+    .description(
+      'Write a reviewed or accepted team doc into the repo through an elevated task'
+    )
+    .option('--path <path>', 'repo-relative .md path (default: the last one)')
+    .option('--no-dispatch', 'create the task without starting its run')
+    .option(...tokenOpt)
+    .action(
+      async (
+        ref: string,
+        o: { path?: string; dispatch: boolean; token?: string }
+      ) => {
+        const api = await docsClient(ctx, o.token);
+        let path = o.path;
+        if (path === undefined) {
+          const { doc } = await api.get(ref);
+          path = doc.lastPublishPath ?? doc.published?.path;
+        }
+        if (path === undefined)
+          throw new Error(`${ref} has no earlier publish path; pass --path`);
+        const r = await api.publish(ref, {
+          path,
+          ...(o.dispatch ? {} : { dispatch: false }),
+        });
+        const started =
+          r.run !== null
+            ? `, run ${r.run}`
+            : r.dispatchError !== null
+              ? `; dispatch failed: ${r.dispatchError}`
+              : ' (not dispatched)';
+        ctx.log(`publishing ${ref} to ${path}: task ${r.task}${started}`);
+      }
+    );
+
+  docs
     .command('reviewed <ref>')
     .description("Mark a doc's head reviewed")
     .option(...tokenOpt)
@@ -653,8 +846,7 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
           { link: o.link, dryRun: o.dryRun === true }
         );
         printReport(ctx, report);
-        if (!report.parity.files || !report.parity.names)
-          throw new CliError('parity mismatch; nothing was imported');
+        checkImportReport(report);
       }
     );
 

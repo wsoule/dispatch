@@ -164,6 +164,9 @@ function mount(
         Promise.resolve(PEER)
     ),
     removeA2APeer: mock((_alias: string) => Promise.resolve()),
+    setA2AStandalone: mock((enabled: boolean) =>
+      Promise.resolve({ standalone: enabled })
+    ),
   };
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -544,6 +547,45 @@ test('re-enables an auth-failed peer with a new credential, then clears it', asy
     )
   );
   expect(field.value).toBe('');
+});
+
+test('re-enables an auth-failed peer with the credential it already has', async () => {
+  const client = mount('decide', {
+    peers: [{ ...PEER, status: 'auth-failed' }],
+  });
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Enable a2a:acme with the same credential',
+    })
+  );
+  await waitFor(() =>
+    expect(client.setA2APeerEnabled).toHaveBeenCalledWith(
+      'acme',
+      true,
+      undefined
+    )
+  );
+});
+
+test('the operator turns standalone hosts on and off; others see the state only', async () => {
+  const client = mount('operator', {
+    status: { ...CLOSED, settings: { ...OFF, standalone: true } },
+  });
+  const toggle = await screen.findByRole('switch', {
+    name: 'Standalone hosts',
+  });
+  expect(toggle.getAttribute('aria-checked')).toBe('true');
+  fireEvent.click(toggle);
+  await waitFor(() =>
+    expect(client.setA2AStandalone).toHaveBeenCalledWith(false)
+  );
+  cleanup();
+  mount('decide');
+  expect(
+    (
+      await screen.findByRole('switch', { name: 'Standalone hosts' })
+    ).hasAttribute('data-disabled')
+  ).toBe(true);
 });
 
 test('disables, refreshes and removes a peer after confirming', async () => {

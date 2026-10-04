@@ -15,7 +15,7 @@ import type {
   Principal,
 } from '@dispatch/memory';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { unwatchFile, watchFile } from 'node:fs';
+import { existsSync, unwatchFile, watchFile } from 'node:fs';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -65,6 +65,7 @@ import {
   IDENTITIES_DOWN_IDENTITY,
   NOT_OWNER_IDENTITY,
   REUSED_HANDLE_IDENTITY,
+  REVOKED_IDENTITY,
 } from './host.js';
 import type { DaemonMemoryHostDeps } from './host.js';
 import { MemoryIdentities } from './identities.js';
@@ -73,7 +74,10 @@ import {
   renderImportReport,
 } from './ledgerImport.js';
 import type { LedgerImportReport } from './ledgerImport.js';
+import type { DocsOverflowPort } from './overflow.js';
 import { PersonalStores } from './personalStores.js';
+import { applyStagedMemoryRestore, memoryRestoreDir } from './receipts.js';
+import type { MemoryRestoreReport } from './receipts.js';
 
 interface MemoryHealth {
   available: boolean;
@@ -92,6 +96,8 @@ interface MemoryHealth {
   pinnedOverflow: boolean;
   // Why runs cannot use the Claude export (the preflight failed), or null.
   exportBlocked: string | null;
+  // The last receipt-log restore this daemon applied, or null.
+  restore: MemoryRestoreReport | null;
   // The owner's Claude-notes import; null for anyone but the daemon's own human.
   claudeImport: {
     state: ImportState | null;
@@ -121,12 +127,19 @@ export interface MemoryService extends MemoryPromptPort {
   refreshPreflight(): Promise<PreflightResult>;
   /** Boot: imports the owner's Claude notes unless this project already recorded an import. */
   importClaudeOnce(): Promise<ClaudeImportReport | null>;
+  /** Binds docs for long personal notes; once per project, re-runs a completed
+   *  import so notes cut before docs were there get their full text back. */
+  bindDocsOverflow(port: DocsOverflowPort): Promise<void>;
   /** Re-runs the owner's Claude-notes import; `from` or `none` answers an unconfirmed one. */
   importClaude(opts?: {
     from?: string;
     none?: boolean;
     dryRun?: boolean;
   }): Promise<ClaudeImportReport>;
+  /** Boot, after messaging.recover(): proposes the team memory `dispatch receipts restore` staged. */
+  restoreStaged(): Promise<MemoryRestoreReport | null>;
+  /** The files the last restore could not take, as /api/health problem lines. */
+  restoreProblems(): string[];
   /** Boot, after messaging.recover(): raises unsent gates, closes strays, sweeps Claude exports, then starts decay. */
   recover(): Promise<{ raised: number; closed: number }>;
   health(principal: Principal | null): MemoryHealth;
@@ -160,6 +173,12 @@ export interface OpenMemoryDeps {
   /** The version boot records as probed; this build's own unless a test overrides it. */
   probedClaudeVersion?: string | null;
   now?: () => Date;
+  /** Most staged restore files one pass proposes; the receipts default otherwise. */
+  restoreBatch?: number;
+  /** How long between restore passes while staged files remain. */
+  restoreDrainMs?: number;
+  /** Whether a teammate still holds a usable token (XH-R3). */
+  hasAccess?: (human: string) => boolean;
 }
 
 const LAST_IMPORT_KEY = 'ledger-import:last';
@@ -169,6 +188,13 @@ const CUTOVER_SWEPT_KEY = 'ledger-cutover-swept-at';
 // The oldest Claude Code version the live probe passed on.
 const PROBE_KEY = 'claude-probe-passed';
 const HOUR_MS = 3_600_000;
+// The pause between restore passes while staged files remain.
+const RESTORE_DRAIN_MS = 60_000;
+// A stuck file's retries back off to at most 2^this times the drain pause.
+const RESTORE_MAX_BACKOFF = 5;
+const RESTORE_STATE_KEY = 'restore:state';
+// The problem a handled file the restore could not remove carries.
+const COULD_NOT_REMOVE = 'handled, but could not remove';
 const UNLOADED_NOTE =
   'Your auto-memory directory is not active; save memories with memory_save.';
 const IMPORT_STATES = ['complete', 'failed', 'unconfirmed', 'running'] as const;
@@ -293,6 +319,12 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           `personal memory unavailable: ${identitiesReason}`,
           'store'
         );
+      if (identity === REVOKED_IDENTITY)
+        throw new MemoryError(
+          'forbidden',
+          "this teammate's access was revoked",
+          'identity'
+        );
       return personal.personal(identity);
     },
     locatePersonal: (id) =>
@@ -308,6 +340,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     messaging: deps.messaging,
     ledgerStore: deps.ledgerStore,
     appendPolicyActivity: deps.appendPolicyActivity,
+    ...(deps.hasAccess === undefined ? {} : { hasAccess: deps.hasAccess }),
     identities,
     shared: () => stores.shared(),
     engine: () => {
@@ -338,6 +371,11 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       throw err;
     }
   };
+  // Docs bind after memory opens; until then long notes stay plainly cut.
+  let docsOverflow: DocsOverflowPort | null = null;
+  const overflowPort: DocsOverflowPort = {
+    overflow: (input) => docsOverflow?.overflow(input) ?? null,
+  };
   const claudeExport =
     engine === null || shared === null
       ? null
@@ -348,6 +386,8 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           personalStore: personalStoreOf,
           config,
           now,
+          docsOverflow: overflowPort,
+          projectKey: projectKeyOf(deps.rootDir),
         });
   // Scans leftover export directories and deletes those whose lineage closed.
   const sweepExports = async (): Promise<void> => {
@@ -716,6 +756,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           now: now(),
           home: claudeEnv.home,
           dryRun: opts.dryRun,
+          // The owner is identity `self`; overflow waits for docs to bind.
+          ...(docsOverflow === null
+            ? {}
+            : { overflow: overflowPort.overflow, identity: 'self' }),
         });
         if (writes && report.imported + report.updated > 0)
           host.changed({ scope: 'personal' });
@@ -745,6 +789,111 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     };
   };
 
+  let lastRestore: MemoryRestoreReport | null = null;
+  let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  // Each staged file's latest outcome and open problem, across drain passes.
+  const restoreOutcomes = new Map<string, 'restored' | 'skipped'>();
+  const restoreProblemsByFile = new Map<
+    string,
+    { file: string; detail: string }
+  >();
+  let closed = false;
+  // One restore pass; files past its limit drain on a timer, a batch at a time.
+  let restoreBackoff = 0;
+  // The restore's per-file record, kept in memory.db so health shows its
+  // totals after a restart.
+  const saveRestoreState = (): void => {
+    if (shared === null || lastRestore === null) return;
+    try {
+      shared.setMeta(
+        RESTORE_STATE_KEY,
+        JSON.stringify({
+          report: lastRestore,
+          outcomes: Object.fromEntries(restoreOutcomes),
+        })
+      );
+    } catch (err) {
+      console.error('dispatchd: saving the memory restore state failed', err);
+    }
+  };
+  try {
+    const raw = shared?.meta(RESTORE_STATE_KEY) ?? null;
+    if (raw !== null) {
+      const saved = JSON.parse(raw) as {
+        report: MemoryRestoreReport;
+        outcomes: Record<string, 'restored' | 'skipped'>;
+      };
+      lastRestore = saved.report;
+      for (const [file, outcome] of Object.entries(saved.outcomes))
+        restoreOutcomes.set(file, outcome);
+      for (const p of saved.report.problems)
+        restoreProblemsByFile.set(p.file, p);
+    }
+  } catch (err) {
+    console.error('dispatchd: reading the memory restore state failed', err);
+  }
+  const restoreStaged = async (): Promise<MemoryRestoreReport | null> => {
+    const dir = memoryRestoreDir(deps.rootDir);
+    const visited = new Set<string>();
+    const report = await applyStagedMemoryRestore(
+      engine,
+      shared,
+      dir,
+      deps.restoreBatch,
+      (file, outcome) => {
+        visited.add(file);
+        if (outcome === 'problem') return;
+        restoreProblemsByFile.delete(file);
+        // A file restored once stays restored, however often it is seen again.
+        if (restoreOutcomes.get(file) !== 'restored')
+          restoreOutcomes.set(file, outcome);
+      }
+    );
+    for (const p of report?.problems ?? [])
+      restoreProblemsByFile.set(p.file, p);
+    // A problem file no longer staged was dealt with by hand.
+    for (const file of [...restoreProblemsByFile.keys()])
+      if (!visited.has(file) && !existsSync(join(dir, file)))
+        restoreProblemsByFile.delete(file);
+    if (report === null) {
+      if (lastRestore !== null) {
+        lastRestore = {
+          ...lastRestore,
+          problems: [...restoreProblemsByFile.values()],
+        };
+        saveRestoreState();
+      }
+      return null;
+    }
+    const counted = [...restoreOutcomes.values()];
+    lastRestore = {
+      ...report,
+      restored: counted.filter((o) => o === 'restored').length,
+      skipped: counted.filter((o) => o === 'skipped').length,
+      problems: [...restoreProblemsByFile.values()],
+    };
+    saveRestoreState();
+    // Files past the per-pass limit drain next pass; a file it could not
+    // remove (a read-only staging dir) is retried on a backoff until it can.
+    const stuck = [...restoreProblemsByFile.values()].some((p) =>
+      p.detail.startsWith(COULD_NOT_REMOVE)
+    );
+    restoreBackoff = stuck && report.deferred === 0 ? restoreBackoff + 1 : 0;
+    if ((report.deferred > 0 || stuck) && !closed && restoreTimer === null) {
+      const base = deps.restoreDrainMs ?? RESTORE_DRAIN_MS;
+      restoreTimer = setTimeout(
+        () => {
+          restoreTimer = null;
+          restoreStaged().catch((err: unknown) =>
+            console.error('dispatchd: memory restore failed', err)
+          );
+        },
+        base * 2 ** Math.min(restoreBackoff, RESTORE_MAX_BACKOFF)
+      );
+      restoreTimer.unref();
+    }
+    return report;
+  };
   const unsubscribe = deps.events.subscribe((event) => {
     if (event.type === 'ledger.changed') importQuietly();
   });
@@ -796,6 +945,34 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       }
     },
     importClaude,
+    restoreStaged,
+    restoreProblems: () =>
+      (lastRestore?.problems ?? []).map(
+        (p) => `memory restore: ${p.file}: ${p.detail}`
+      ),
+    bindDocsOverflow: async (port) => {
+      // Counts docs refusing (null), so the recovery is done only once every
+      // note it asked about went to a doc.
+      let refused = 0;
+      docsOverflow = {
+        overflow: (input) => {
+          const docId = port.overflow(input);
+          if (docId === null) refused += 1;
+          return docId;
+        },
+      };
+      const store = openPersonal('self');
+      const key = `claude-import-overflow:${projectKey}`;
+      if (store === null || store.meta(key) !== null) return;
+      try {
+        // Notes a completed import cut before docs were here; none yet means the
+        // coming first import already overflows.
+        if (importState(store, projectKey) === 'complete') await importClaude();
+        if (refused === 0) store.setMeta(key, 'done');
+      } catch (err) {
+        console.error('dispatchd: recovering cut Claude notes failed', err);
+      }
+    },
     recover: async () => {
       try {
         if (engine === null || shared === null) return { raised: 0, closed: 0 };
@@ -824,6 +1001,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       personal: principal === null ? null : personalHealth(principal),
       pinnedOverflow: principal === null ? false : pinnedOverflow(principal),
       exportBlocked: preflight.ok ? null : preflight.reason,
+      restore: lastRestore,
       claudeImport:
         principal !== null &&
         principal.kind === 'human' &&
@@ -833,6 +1011,8 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           : null,
     }),
     close: () => {
+      closed = true;
+      if (restoreTimer !== null) clearTimeout(restoreTimer);
       clearInterval(exportSweep);
       clearInterval(preflightTimer);
       claudeExport?.close();

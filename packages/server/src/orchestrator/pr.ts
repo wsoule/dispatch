@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import type { ActorContext, TaskStorePort } from '@dispatch/core';
 import {
   existsSync,
@@ -128,7 +129,12 @@ export async function defaultCommandRunner(
   // detectPrCapability. A missing binary is just a failed command: report
   // ok:false so callers degrade (pr capability false) instead of crashing.
   try {
-    const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe' });
+    const proc = Bun.spawn(cmd, {
+      cwd,
+      env: childEnv(),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
     const collect = Promise.all([
       drain(proc.stdout, opts?.onOutput),
       drain(proc.stderr, opts?.onOutput),

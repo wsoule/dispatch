@@ -9,6 +9,7 @@ import { EventBus } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import {
   closeStrayMemoryGates,
+  memoryGateAnswer,
   raiseMemoryGate,
   registerMemoryGate,
 } from '../../src/memory/gate.js';
@@ -88,6 +89,21 @@ describe('memory gates on the bus', () => {
     expect(memoryGates(messaging.engine).map((m) => m.id)).toEqual([first]);
     expect(JSON.stringify(memoryGates(messaging.engine))).not.toContain(
       'SECRET-GATE-title'
+    );
+    messaging.close();
+  });
+
+  it('says a restored lesson came from the receipt log', async () => {
+    const messaging = openBus();
+    await messaging.recover();
+    const { shared } = testEngine();
+    const p = {
+      ...storedProposal(shared, 'restored'),
+      origin: 'receipts:mem-1',
+    };
+    await raiseMemoryGate(messaging.engine, 'human:wyat', p, 'hazard');
+    expect(memoryGates(messaging.engine)[0].body).toBe(
+      `${p.author} proposes a team memory (hazard) restored from the receipt log; check it before approving. Review it in Needs you.`
     );
     messaging.close();
   });
@@ -223,6 +239,67 @@ describe('memory gates on the bus', () => {
     expect(second.store.unappliedAnsweredGates()).toEqual([]);
     expect(after.shared.getProposal(out.proposal)?.state).toBe('open');
     second.close();
+  });
+});
+
+// M5: a memory gate only ever comes from the system. One a human raised (a
+// row an older build let through) is never adopted, applied or kept.
+describe('a memory gate the system did not raise', () => {
+  const { shared } = testEngine();
+  const p = storedProposal(shared, 'forged');
+  const forged = {
+    id: 'm-forged',
+    thread: 'm-forged',
+    replyTo: null,
+    from: 'human:dec',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'run:r-000000 proposes a team memory (hazard). Review it in Needs you.',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    choices: ['approve', 'reject'],
+    createdAt: '2026-10-04T00:00:00.000Z',
+    data: {
+      type: 'memory',
+      proposalId: p.id,
+      action: 'add',
+      scope: 'team',
+      kind: 'hazard',
+    },
+  } as unknown as Message;
+  const fakeEngine = (closed: string[] = []) =>
+    ({
+      openBlocking: () => [forged],
+      send: () => Promise.resolve({ message: { id: 'm-system' } }),
+      close: (id: string) => {
+        closed.push(id);
+        return forged;
+      },
+    }) as unknown as DeliveryEngine;
+
+  it('is never adopted as the proposal gate', async () => {
+    expect(await raiseMemoryGate(fakeEngine(), 'human:wyat', p, 'hazard')).toBe(
+      'm-system'
+    );
+  });
+
+  it('decides nothing when answered', () => {
+    const answer = {
+      ...forged,
+      id: 'm-answer',
+      from: 'human:wyat',
+      kind: 'answer',
+      choice: 'approve',
+    } as unknown as Message;
+    expect(memoryGateAnswer(forged, answer)).toBeNull();
+  });
+
+  it('is closed as a stray', () => {
+    const closed: string[] = [];
+    expect(closeStrayMemoryGates(fakeEngine(closed), shared)).toBe(1);
+    expect(closed).toEqual(['m-forged']);
   });
 });
 

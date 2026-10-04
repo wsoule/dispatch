@@ -81,7 +81,7 @@ export const GATE_RAISERS: Readonly<Record<string, GateRaiser>> = {
   scope: 'session',
   'agent-registration': 'system',
   'overseer-action': 'system',
-  memory: 'system-or-decider',
+  memory: 'system',
   'task-proposal': 'system',
   doc: 'system',
 };

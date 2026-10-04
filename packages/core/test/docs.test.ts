@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  assetNames,
   docBodyProblem,
   DOCS_LIMITS,
   docSlug,
@@ -9,6 +10,7 @@ import {
   jsonEscapedBytes,
   normalizeDocText,
   RESERVED_DOC_SLUGS,
+  rewriteAssetLinks,
 } from '../src/docs.js';
 
 describe('normalizeDocText', () => {
@@ -100,5 +102,25 @@ describe('input checks', () => {
     expect(docBodyProblem(quotes)).toBe(
       'body is over 960 KiB once JSON-escaped; split it into linked docs'
     );
+  });
+});
+
+describe('asset links', () => {
+  const name = `${'a'.repeat(64)}.png`;
+  it('rewrites only asset: image links', () => {
+    expect(
+      rewriteAssetLinks(
+        `![x](asset:${name}) [y](https://e.com) [z](asset:${name})`,
+        (n) => `spec.assets/${n}`
+      )
+    ).toBe(`![x](spec.assets/${name}) [y](https://e.com) [z](asset:${name})`);
+  });
+
+  it('lists each referenced name once, ignoring malformed ones', () => {
+    expect(
+      assetNames(
+        `![](asset:${name}) ![](asset:${name}) ![](asset:../x.png) ![](asset:${'b'.repeat(64)}.svg)`
+      )
+    ).toEqual([name]);
   });
 });

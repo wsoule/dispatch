@@ -16,6 +16,7 @@ export {
   JWKS_PATH,
   offeredSkills,
   signCard,
+  verifyCardSignature,
   unsignedCardEtag,
   unsignedCardJson,
 } from './card.js';
@@ -78,6 +79,7 @@ export type {
 } from './ext.js';
 export {
   checkInboundRecipients,
+  peerSelfAddressed,
   checkReachClient,
   CLIENT_NAME_PREFIX,
   clientNameFor,
@@ -116,6 +118,7 @@ export type {
   PushConfigPort,
   TaskFacts,
 } from './port.js';
+export { parsePortContinue, parsePortOpen } from './http/input.js';
 export { HttpBridgePort } from './http/port.js';
 export { checkStandalone, startStandalone } from './http/serve.js';
 export type { StandaloneCheck, StandaloneOptions } from './http/serve.js';

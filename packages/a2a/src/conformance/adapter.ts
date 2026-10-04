@@ -19,7 +19,7 @@ import type { OpContext, OpHandler } from '@dispatch/protocol/conformance';
 import packageJson from '../../package.json';
 import { decodeInbound } from '../codec.js';
 import { checkMetadataBudget, parseEnvelopeExt, parseWorkExt } from '../ext.js';
-import { checkInboundRecipients } from '../policy.js';
+import { checkInboundRecipients, peerSelfAddressed } from '../policy.js';
 import type { ContinueInput, OpenInput, TaskFacts } from '../port.js';
 import { decideState, project } from '../projection.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from '../uris.js';
@@ -159,7 +159,7 @@ function openingInput(input: OpenInput, owner: Address): SendInput {
       'this host takes no handoffs',
       'work.skill'
     );
-  const to = input.to ?? [owner];
+  const to = peerSelfAddressed(input.to ?? [owner], owner);
   checkInboundRecipients(to, {
     allowedHumans: [owner],
     approvedTasks: new Set(),

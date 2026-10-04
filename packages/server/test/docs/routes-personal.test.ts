@@ -114,4 +114,27 @@ describe('personal docs over the routes', () => {
     ).toMatchObject({ doc: { scope: 'team', handle: 'plan' } });
     expect((await as(reader, '/docs/plan')).status).toBe(200);
   });
+
+  it("hides a personal doc's image from a teammate with 404", async () => {
+    const mine = await json<{ doc: { id: string } }>(
+      await post('/docs', { title: 'Mine', body: 'x\n', scope: 'personal' })
+    );
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 3,
+    ]);
+    const up = await fetch(`${base}/docs/${mine.doc.id}/assets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: png,
+    });
+    expect(up.status).toBe(201);
+    const { name } = await json<{ name: string }>(up);
+    const path = `/docs/${mine.doc.id}/assets/${name}`;
+    expect((await fetch(`${base}${path}`)).status).toBe(200);
+    const reader = await teammateToken('alice@example.com', 'request');
+    const res = await rawFetch(`${base}${path}`, {
+      headers: { authorization: `Bearer ${reader}` },
+    });
+    expect(res.status).toBe(404);
+  });
 });

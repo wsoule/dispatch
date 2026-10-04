@@ -309,6 +309,52 @@ describe('shared writes', () => {
   });
 });
 
+describe('promoting an overflowed note', () => {
+  const DOC = 'doc-01K3Z9R0000000000000000000';
+  const overflowed = `kept text\n[truncated by Dispatch: 120 bytes; full text in doc ${DOC} of project aaaaaaaaaaaa]`;
+
+  it("drops the personal doc's marker and ref from the shared copy", async () => {
+    const t = setup();
+    const e = (await t.engine.save(OWNER, {
+      ...hazard,
+      scope: 'personal',
+      title: 'long note',
+      body: overflowed,
+      refs: [
+        { type: 'doc', id: DOC },
+        { type: 'task', id: 't-1a2b3c' },
+      ],
+    })) as { id: string };
+    const copy = (await t.engine.promote(OWNER, e.id, 'team')) as {
+      id: string;
+    };
+    const shared = t.shared.getEntry(copy.id);
+    expect(shared?.body).toBe(
+      'kept text\n[truncated by Dispatch: 120 bytes; long-form belongs in Docs]'
+    );
+    expect(shared?.refs).toEqual([{ type: 'task', id: 't-1a2b3c' }]);
+    expect(JSON.stringify(shared)).not.toContain(DOC);
+  });
+
+  it('strips them from a promotion proposal too', async () => {
+    const t = setup();
+    const low = { ...OWNER, canDecide: false };
+    const e = (await t.engine.save(low, {
+      ...hazard,
+      scope: 'personal',
+      title: 'long note',
+      body: overflowed,
+      refs: [{ type: 'doc', id: DOC }],
+    })) as { id: string };
+    const proposed = (await t.engine.promote(low, e.id, 'project')) as {
+      proposal: string;
+    };
+    expect(
+      JSON.stringify(t.shared.getProposal(proposed.proposal))
+    ).not.toContain(DOC);
+  });
+});
+
 describe('write edges', () => {
   it('undoing a supersede brings back the entry it replaced', async () => {
     const t = setup();

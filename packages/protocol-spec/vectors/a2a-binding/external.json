@@ -386,6 +386,42 @@
       }
     },
     {
+      "id": "a2a.external.an-a2a-recipient-reads-as-the-owner",
+      "title": "An a2a: entry in an inbound to is how a peer host names this host, so it reads as the owner, once",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {
+        "agents": [{ "address": "agent:wyat/a2a.acme", "status": "approved" }],
+        "external": { "agent:wyat/a2a.acme": "client" },
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "a2a.inbound",
+          "as": "agent:wyat/a2a.acme",
+          "envelope": { "to": ["a2a:pd", "human:wyat"], "kind": "message" },
+          "body": "Your agent asked about /sessions; it is final."
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true, "result": { "message": "$s1" } }],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "agent:wyat/a2a.acme",
+            "to": ["human:wyat"],
+            "kind": "message"
+          }
+        ],
+        "deliveries": [
+          { "message": "$s1", "recipient": "human:wyat", "state": "notified" }
+        ]
+      }
+    },
+    {
       "id": "a2a.external.a-client-reaches-only-the-owner",
       "title": "A client whose recipient list is the owner alone is refused on the slot that names a work item it did not hand off or another human, and nothing is stored",
       "class": "a2a-binding",

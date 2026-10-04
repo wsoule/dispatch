@@ -141,6 +141,13 @@ describe('delivering to a peer', () => {
     );
     expect(store.countDeliveredTo(PEER, '2026-09-23T09:00:00.000Z')).toBe(2);
     expect(store.countDeliveredTo(PEER, '2026-09-23T11:00:00.000Z')).toBe(0);
+    expect(
+      store.countDeliveredTo(
+        PEER,
+        '2026-09-23T09:00:00.000Z',
+        '2026-09-23T09:30:00.000Z'
+      )
+    ).toBe(0);
   });
 });
 

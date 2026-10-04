@@ -3,6 +3,7 @@ import {
   cardJson,
   clientNameFor,
   decideState,
+  isClientAddress,
   PeerHttpError,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
@@ -27,7 +28,7 @@ import { tierAllows } from '../tiers.js';
 import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
-import { isHostName, mintHost } from './hosts.js';
+import { hostPublicUrl, isHostName, mintHost } from './hosts.js';
 import type { PeerAddInput, PeerChange } from './peers.js';
 import {
   addPeer,
@@ -93,6 +94,9 @@ async function putListener(
   const parsed = parseSettings(body.value);
   if (!parsed.ok)
     return invalid(parsed.key, `${parsed.key} has the wrong type`);
+  // A write that leaves `standalone` out keeps the current switch.
+  if ((body.value as { standalone?: unknown }).standalone === undefined)
+    parsed.settings.standalone = b.a2a.standalone();
   const checked = b.a2a.check(parsed.settings);
   if (!checked.ok) return invalid(checked.key, checked.error);
   const status = await b.a2a.applySettings(parsed.settings);
@@ -115,6 +119,22 @@ function listClients(ctx: ApiContext, store: A2AStore): Response {
   return jsonResponse({ clients });
 }
 
+// Unapproved clients per requester, so registrations cannot pile up gates.
+const MAX_PENDING_CLIENTS = 10;
+
+// One requester's clients still waiting for approval.
+function pendingClients(ctx: ApiContext, requester: string): number {
+  const prefix = `agent:${requester.slice('human:'.length)}/`;
+  return ctx.messaging.store
+    .agents()
+    .filter(
+      (a) =>
+        a.status === 'pending' &&
+        a.address.startsWith(prefix) &&
+        isClientAddress(a.address)
+    ).length;
+}
+
 // POST /api/a2a/clients: the clients row first, then the agent row and its
 // registration gate, which `approve` answers at once for a deciding caller.
 async function addClient(
@@ -122,6 +142,16 @@ async function addClient(
   ctx: ApiContext,
   b: Running
 ): Promise<Response> {
+  // The shared agent token is no human: an agent must not mint the
+  // credentials outside callers reach this project with.
+  if (ctx.viaAgentToken === true)
+    return jsonResponse(
+      {
+        error: 'an agent cannot add A2A clients; a human adds them',
+        code: 'auth_agent_token',
+      },
+      403
+    );
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as {
@@ -159,6 +189,14 @@ async function addClient(
     );
   }
   const requester = humanActor(ctx);
+  if (
+    body.approve !== true &&
+    pendingClients(ctx, requester) >= MAX_PENDING_CLIENTS
+  )
+    return errorResponse(
+      429,
+      `${MAX_PENDING_CLIENTS} of your A2A clients already wait for approval; approve or revoke some first`
+    );
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
   // Any existing row, revoked included: a re-used name would inherit the old
   // client's tasks and threads, which key on the address.
@@ -182,6 +220,7 @@ async function addClient(
     client: 'a2a',
     requester,
     refuseAnyExisting: true,
+    approvedAtOnce: body.approve === true,
     gateBody: `New A2A client ${address} wants to reach this project. It may address ${[ctx.actorContext.humanRef, ...recipients].join(', ')}. Requested by ${requester}.`,
   });
   if (!reg.ok) return reg.response;
@@ -409,20 +448,38 @@ async function hostRoute(
   if (segments.length === 1 && method === 'POST') {
     const parsed = await readJsonBody(req);
     if (!parsed.ok) return parsed.response;
-    const name = (parsed.value as { name?: unknown }).name;
+    const { name, publicUrl: rawUrl } = parsed.value as {
+      name?: unknown;
+      publicUrl?: unknown;
+    };
     if (typeof name !== 'string' || !isHostName(name.trim()))
       return invalid(
         'name',
         'name: letters, digits, spaces, ".", "_" and "-", at most 64'
       );
-    const { row, token } = mintHost(b.store, name.trim(), humanActor(ctx));
+    const publicUrl = hostPublicUrl(rawUrl);
+    if (publicUrl === null)
+      return invalid(
+        'publicUrl',
+        'publicUrl: the URL the host serves on, https (or http on loopback), with no query'
+      );
+    const { row, token } = mintHost(
+      b.store,
+      name.trim(),
+      publicUrl,
+      humanActor(ctx)
+    );
     changed(ctx);
-    return jsonResponse({ id: row.id, name: row.name, token }, 201);
+    return jsonResponse(
+      { id: row.id, name: row.name, publicUrl: row.publicUrl, token },
+      201
+    );
   }
   if (segments.length === 2 && method === 'DELETE') {
     const id = decodeURIComponent(segments[1]);
     if (!b.store.revokeHost(id, new Date().toISOString()))
       return errorResponse(404, `no live A2A host ${id}`);
+    b.a2a.hostRevoked(id);
     changed(ctx);
     return new Response(null, { status: 204 });
   }

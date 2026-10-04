@@ -1,6 +1,10 @@
+import type { ReactNode } from 'react';
+import { useMemo } from 'react';
+import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { LinkedImage, MarkdownLink } from './LinkedImage';
 import { cn } from '@/lib/utils';
 import type { CodeBlockLanguage } from '@/ui/ai/code-block';
 import { CodeBlock } from '@/ui/ai/code-block';
@@ -101,11 +105,24 @@ export function Markdown({
   content,
   className,
   variant = 'inline',
+  urlTransform,
+  img,
 }: {
   content: string;
   className?: string;
   variant?: 'inline' | 'prose';
+  /** Replaces react-markdown's URL filter (the docs preview keeps `asset:`). */
+  urlTransform?: (url: string, key: string) => string;
+  /** Renders images; the docs preview resolves `asset:` through the API. */
+  img?: (props: { src?: string; alt?: string }) => ReactNode;
 }) {
+  // One component per `img`, so a rerender keeps each image mounted (and fetched once).
+  // With no `img`, an image is a link: agent-written markdown never loads one.
+  const imgComponent = useMemo<Components['img']>(() => {
+    const render = img ?? LinkedImage;
+    return ({ src, alt }) =>
+      render({ src: typeof src === 'string' ? src : undefined, alt });
+  }, [img]);
   return (
     <div
       data-slot="markdown"
@@ -118,11 +135,11 @@ export function Markdown({
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        {...(urlTransform === undefined ? {} : { urlTransform })}
         components={{
+          img: imgComponent,
           a: ({ children, href }) => (
-            <a href={href} target="_blank" rel="noreferrer">
-              {children}
-            </a>
+            <MarkdownLink href={href}>{children}</MarkdownLink>
           ),
           code: ({ children }) => (
             <code className="bg-surface-quaternary rounded-[4px] px-1 py-0.5 font-mono text-[0.85em]">

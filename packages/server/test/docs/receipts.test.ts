@@ -2,6 +2,7 @@ import { DOCS_LIMITS, parseDocFile, renderDocFile } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -206,6 +207,30 @@ describe('the docs receipts step', () => {
     expect(files()).toEqual(['keep.md']);
   });
 
+  it('never writes through a symlinked docs directory or receipt file', () => {
+    const { service } = makeService();
+    const owner = service.actorFor(OWNER);
+    service.create(owner, { title: 'Spec', body: 'x\n' });
+    service.seal(owner, 'spec');
+    const outside = join(dir, 'outside');
+    mkdirSync(outside);
+    mkdirSync(join(dir, '.dispatch'));
+    symlinkSync(outside, docsDir());
+    const step = docsReceiptsStep(service, restoreDir);
+    const linked = step(dir);
+    expect(linked.changed).toBe(0);
+    expect(linked.problems.join(' ')).toContain('symlink');
+    expect(readdirSync(outside)).toEqual([]);
+
+    rmSync(docsDir());
+    mkdirSync(docsDir());
+    writeFileSync(join(outside, 'secret.md'), 'keep\n');
+    symlinkSync(join(outside, 'secret.md'), join(docsDir(), 'spec.md'));
+    const fileLinked = step(dir);
+    expect(fileLinked.problems.join(' ')).toContain('symlink');
+    expect(readFileSync(join(outside, 'secret.md'), 'utf8')).toBe('keep\n');
+  });
+
   it('removes nothing while a staged restore is pending', () => {
     const { service } = makeService({ coalesceMinutes: 0 });
     service.create(service.actorFor(OWNER), { title: 'A', body: 'x\n' });
@@ -326,6 +351,36 @@ describe('the boot restore', () => {
       (service.health(service.actorFor(OWNER)).restore as { pending: string })
         .pending
     ).toContain(restoreDir);
+  });
+
+  it('records a file it may not read as a problem and still restores the rest', () => {
+    const { service } = makeService();
+    stage('restored.md', 'body\n');
+    writeFileSync(join(restoreDir, 'locked.md'), 'secret');
+    chmodSync(join(restoreDir, 'locked.md'), 0o000);
+    try {
+      const report = applyStagedRestore(service, restoreDir);
+      expect(report?.restored).toBe(1);
+      expect(report?.problems).toEqual([
+        { file: 'locked.md', detail: expect.stringContaining('EACCES') },
+      ]);
+    } finally {
+      chmodSync(join(restoreDir, 'locked.md'), 0o600);
+    }
+  });
+
+  it('restores from a staging directory it may not empty, reporting it', () => {
+    const { service } = makeService();
+    stage('restored.md', 'body\n');
+    chmodSync(restoreDir, 0o500);
+    try {
+      const report = applyStagedRestore(service, restoreDir);
+      expect(report?.restored).toBe(1);
+      expect(report?.problems[0].detail).toContain('could not remove');
+      expect(report?.pending).toContain(restoreDir);
+    } finally {
+      chmodSync(restoreDir, 0o700);
+    }
   });
 
   it('names no pending directory once every file applied', () => {

@@ -58,7 +58,6 @@ const OUTCOME: Partial<Record<TaskStateName, string>> = {
   CANCELED: 'canceled',
 };
 const WORKING_NOTICE_MS = 60_000;
-const MAX_REASON_CHARS = 200;
 
 const record = (v: unknown): Record<string, unknown> | null =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -176,10 +175,6 @@ export function peerContent(
   );
 }
 
-function firstLine(body: string): string {
-  return body.split(/\r?\n/)[0].slice(0, MAX_REASON_CHARS);
-}
-
 // What one peer event records in the thread (spec:1498-1531): at most one send
 // from the peer, and for an outbound handoff or a direct question a system
 // close first. A peer never authors a handoff's answer (Q6).
@@ -279,15 +274,15 @@ export function mapPeerEvent(
       ];
     }
     default: {
+      // The close reason is the system's words; the peer's go in its own notice.
       const c = peerContent(texts);
-      const why = c.body === '(no text)' ? '' : `: ${firstLine(c.body)}`;
-      if ((directQuestion || handoff) && open)
-        return [
-          {
-            kind: 'close',
-            reason: `${peer} ${OUTCOME[event.state]} (${event.state})${why}`,
-          },
-        ];
+      if ((directQuestion || handoff) && open) {
+        const close: PeerAction = {
+          kind: 'close',
+          reason: `${peer} ${OUTCOME[event.state]} (${event.state})`,
+        };
+        return c.body === '(no text)' ? [close] : [close, send('notice', c)];
+      }
       return [send('notice', c)];
     }
   }

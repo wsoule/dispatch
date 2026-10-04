@@ -1,5 +1,5 @@
 import type { DocRevisionInfo } from '@dispatch/core';
-import { parseDocFile } from '@dispatch/core';
+import { parseDocFile, renderDocFile } from '@dispatch/core';
 import {
   afterAll,
   afterEach,
@@ -15,6 +15,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,7 @@ import { dirname, join } from 'node:path';
 import { daemonFilePath } from '../src/commands/daemon.js';
 import {
   acceptRestored,
+  checkImportReport,
   editLoop,
   exportDocs,
   importFiles,
@@ -322,7 +324,170 @@ describe('dispatch docs import', () => {
   });
 });
 
+describe('dispatch docs import of an export with images', () => {
+  it('uploads the assets/<doc id>/ files, links them as asset:, and counts the missing', async () => {
+    const exported = join(tmpDir, 'export-images-in');
+    const id = 'doc-01K5ZZZZZZZZZZZZZZZZZZZZZZ';
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,
+    ]);
+    const name = `${new Bun.CryptoHasher('sha256').update(png).digest('hex')}.png`;
+    const gone = `${'e'.repeat(64)}.png`;
+    mkdirSync(join(exported, 'assets', id), { recursive: true });
+    writeFileSync(join(exported, 'assets', id, name), png);
+    const meta = {
+      id,
+      slug: 'shots',
+      title: 'Shots',
+      status: 'accepted',
+      rev: 'rev-1',
+      n: 1,
+      parents: [],
+      author: 'human:wyat',
+      cause: 'create',
+      createdAt: '2026-09-26T10:00:00.000Z',
+      hash: 'h',
+      links: [],
+      authors: ['human:wyat'],
+      updatedAt: '2026-09-27T10:00:00.000Z',
+    } as unknown as Parameters<typeof renderDocFile>[0];
+    const file = join(exported, 'shots.md');
+    writeFileSync(
+      file,
+      renderDocFile(
+        meta,
+        `# Shots\n![a](assets/${id}/${name})\n![b](assets/${id}/${gone})\n`
+      )
+    );
+    const sent: string[] = [];
+    const uploads: { doc: string; bytes: number[] }[] = [];
+    const api = {
+      openImport: (files: { hash: string }[]) =>
+        Promise.resolve({ id: 'imp-3', need: files.map((f) => f.hash) }),
+      putImportContent: (_id: string, _hash: string, bytes: Uint8Array) => {
+        sent.push(new TextDecoder().decode(bytes));
+        return Promise.resolve();
+      },
+      commitImport: (_id: string, dryRun: boolean) =>
+        Promise.resolve({
+          dryRun,
+          files: 1,
+          names: 1,
+          failedNames: 0,
+          errors: [],
+          parity: { files: true, names: true },
+          docs: [{ name: 'shots', docs: ['doc-new'] }],
+        }),
+      deleteImport: () => Promise.resolve(),
+      get: () =>
+        Promise.resolve({
+          text: `# Shots\n![a](asset:${name})\n![b](asset:${gone})\n`,
+        }),
+      putAsset: (doc: string, bytes: Uint8Array) => {
+        uploads.push({ doc, bytes: [...bytes] });
+        return Promise.resolve({ name, markdown: `![](asset:${name})` });
+      },
+    } as unknown as DocsApi;
+    const report = await importFiles(api, [file], { dryRun: false });
+    expect(sent[0]).toContain(`![a](asset:${name})`);
+    expect(sent[0]).toContain(`![b](asset:${gone})`);
+    expect(uploads).toEqual([{ doc: 'doc-new', bytes: [...png] }]);
+    expect(report.images).toEqual({ referenced: 2, uploaded: 1, missing: 1 });
+    expect(report.parity.images).toBe(false);
+    expect(report.errors).toContainEqual(
+      expect.objectContaining({
+        reason: 'missing',
+        detail: expect.stringContaining(gone),
+      })
+    );
+  });
+});
+
 describe('dispatch docs import with unreadable paths', () => {
+  it('imports an exported doc by its frontmatter, and refuses a personal one', async () => {
+    const exported = join(tmpDir, 'export-in');
+    mkdirSync(exported, { recursive: true });
+    const meta = {
+      id: 'doc-01K5ZZZZZZZZZZZZZZZZZZZZZZ',
+      slug: 'auth-spec',
+      title: 'Auth spec',
+      status: 'accepted',
+      rev: 'rev-1',
+      n: 1,
+      parents: [],
+      author: 'human:wyat',
+      cause: 'create',
+      createdAt: '2026-09-26T10:00:00.000Z',
+      hash: 'h',
+      links: [],
+      authors: ['human:wyat'],
+      updatedAt: '2026-09-27T10:00:00.000Z',
+    } as unknown as Parameters<typeof renderDocFile>[0];
+    const team = join(exported, 'renamed-on-disk.md');
+    writeFileSync(team, renderDocFile(meta, '# Auth spec\nbody\n'));
+    // An exported personal doc sits in the export's Personal/ folder, in any case.
+    mkdirSync(join(exported, 'Personal'), { recursive: true });
+    const personal = join(exported, 'Personal', 'notes.md');
+    writeFileSync(
+      personal,
+      renderDocFile({ ...meta, slug: 'notes' }, '# Notes\n')
+    );
+    // A plain note under some other personal/ folder is just a file.
+    mkdirSync(join(tmpDir, 'home-personal', 'personal'), { recursive: true });
+    const plain = join(tmpDir, 'home-personal', 'personal', 'todo.md');
+    writeFileSync(plain, '# Todo\n');
+    let manifest: { name: string; mtime: string; hash: string }[] = [];
+    const sent: string[] = [];
+    const api = {
+      openImport: (files: typeof manifest) => {
+        manifest = files;
+        return Promise.resolve({ id: 'imp-2', need: files.map((f) => f.hash) });
+      },
+      putImportContent: (_id: string, _hash: string, bytes: Uint8Array) => {
+        sent.push(new TextDecoder().decode(bytes));
+        return Promise.resolve();
+      },
+      commitImport: () =>
+        Promise.resolve({
+          dryRun: true,
+          files: 2,
+          names: 2,
+          failedNames: 0,
+          errors: [],
+          parity: { files: true, names: true },
+        }),
+      deleteImport: () => Promise.resolve(),
+    } as unknown as DocsApi;
+    const report = await importFiles(api, [team, personal, plain], {
+      dryRun: true,
+    });
+    expect(manifest.map((f) => [f.name, f.mtime])).toEqual([
+      ['auth-spec.md', '2026-09-27T10:00:00.000Z'],
+      ['todo.md', expect.any(String)],
+    ]);
+    // The file goes whole, so the daemon reads its frontmatter too.
+    expect(sent[0]).toContain('# Auth spec\nbody\n');
+    expect(sent[0].startsWith('---')).toBe(true);
+    expect(report.errors.map((e) => [e.path, e.detail])).toEqual([
+      [personal, 'personal docs are never imported'],
+    ]);
+
+    // Through a symlink to the export's personal folder, or with the export's
+    // personal scope wherever the file sits, it is still refused.
+    symlinkSync(join(exported, 'Personal'), join(tmpDir, 'linked-in'));
+    const viaLink = join(tmpDir, 'linked-in', 'notes.md');
+    const moved = join(tmpDir, 'moved-notes.md');
+    writeFileSync(
+      moved,
+      renderDocFile({ ...meta, slug: 'moved', scope: 'personal' }, '# Moved\n')
+    );
+    const again = await importFiles(api, [viaLink, moved], { dryRun: true });
+    expect(again.errors.map((e) => [e.path, e.detail])).toEqual([
+      [viaLink, 'personal docs are never imported'],
+      [moved, 'personal docs are never imported'],
+    ]);
+  });
+
   it('reports a missing path and a directory by name and imports the rest', async () => {
     const good = join(tmpDir, 'good.md');
     writeFileSync(good, '# Good\n');
@@ -492,6 +657,42 @@ describe('dispatch docs export', () => {
   });
 });
 
+describe('exporting images', () => {
+  it('copies each referenced image under assets/<doc id>/ and points the links there', async () => {
+    const name = `${'a'.repeat(64)}.png`;
+    const gone = `${'b'.repeat(64)}.png`;
+    const id = 'doc-01K5ZZZZZZZZZZZZZZZZZZZZZZ';
+    const summary = (scope: string) => ({
+      id,
+      handle: 'spec',
+      title: 'Spec',
+      status: 'draft',
+      scope,
+      updatedAt: '2026-09-26T11:00:00.000Z',
+    });
+    const api = {
+      list: () => Promise.resolve({ docs: [summary('personal')], total: 1 }),
+      get: () =>
+        Promise.resolve({
+          rev: rev(1, [], 'human:wyat'),
+          links: [],
+          text: `# Spec\n![shot](asset:${name})\n![](asset:${gone})\n`,
+        }),
+      history: () => Promise.resolve({ revisions: [rev(1, [], 'human:wyat')] }),
+      asset: (_doc: string, n: string) =>
+        Promise.resolve(n === name ? new Uint8Array([7, 8]) : null),
+    } as unknown as DocsApi;
+    const out = join(tmpDir, 'export-images');
+    expect(await exportDocs(api, out, false)).toBe(1);
+    expect(new Uint8Array(readFileSync(join(out, 'assets', id, name)))).toEqual(
+      new Uint8Array([7, 8])
+    );
+    const written = readFileSync(join(out, 'personal', 'spec.md'), 'utf8');
+    expect(written).toContain(`![shot](../assets/${id}/${name})`);
+    expect(written).toContain(`![](asset:${gone})`);
+  });
+});
+
 describe('dispatch docs handles', () => {
   const personal = {
     id: 'doc-p',
@@ -512,6 +713,7 @@ describe('dispatch docs handles', () => {
   let root: string;
   let home: string;
   let lines: string[];
+  let published: unknown[];
   let server: ReturnType<typeof Bun.serve>;
   const savedHome = process.env.DISPATCH_HOME;
   const run = (...argv: string[]) => {
@@ -526,6 +728,7 @@ describe('dispatch docs handles', () => {
     lines = [];
     await run('init');
     lines = [];
+    published = [];
     server = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
@@ -557,6 +760,29 @@ describe('dispatch docs handles', () => {
                 createdAt: '2026-09-29T10:00:00.000Z',
               },
             ],
+          });
+        if (pathname === '/api/docs/notes/publish' && req.method === 'POST')
+          return req.json().then((b) => {
+            published.push(b);
+            return Response.json(
+              {
+                task: 't-pub-1',
+                doc: team,
+                run:
+                  (b as { dispatch?: boolean }).dispatch === false
+                    ? null
+                    : 'r-9',
+                dispatchError: null,
+              },
+              { status: 201 }
+            );
+          });
+        if (pathname === '/api/docs/notes')
+          return Response.json({
+            doc: { ...team, lastPublishPath: 'docs/notes.md' },
+            rev: { n: 2, author: 'human:wyat' },
+            outline: [],
+            text: 'x\n',
           });
         if (pathname === '/api/docs/~notes')
           return Response.json({
@@ -625,5 +851,43 @@ describe('dispatch docs handles', () => {
       '~notes: draft',
       'rev-p\topen\tdoc-t\trun:r-1\tgate m-g\t2026-09-29T10:00:00.000Z',
     ]);
+  });
+
+  it('publishes to the path given, or the one last asked for, and can skip the dispatch', async () => {
+    const token = ['--token', 'app-token'];
+    await run(
+      'docs',
+      'publish',
+      'notes',
+      '--path',
+      'docs/specs/notes.md',
+      ...token
+    );
+    await run('docs', 'publish', 'notes', '--no-dispatch', ...token);
+    expect(published).toEqual([
+      { path: 'docs/specs/notes.md' },
+      { path: 'docs/notes.md', dispatch: false },
+    ]);
+    expect(lines).toEqual([
+      'publishing notes to docs/specs/notes.md: task t-pub-1, run r-9',
+      'publishing notes to docs/notes.md: task t-pub-1 (not dispatched)',
+    ]);
+  });
+});
+
+describe('checkImportReport', () => {
+  const base = { parity: { files: true, names: true } } as ImportReportInfo;
+  it('passes a clean report, and fails on a mismatch or a missing image', () => {
+    expect(() => checkImportReport(base)).not.toThrow();
+    expect(() =>
+      checkImportReport({ ...base, parity: { files: false, names: true } })
+    ).toThrow('parity mismatch');
+    expect(() =>
+      checkImportReport({
+        ...base,
+        parity: { files: true, names: true, images: false },
+        images: { referenced: 2, uploaded: 1, missing: 1 },
+      })
+    ).toThrow('1 image(s) missing');
   });
 });

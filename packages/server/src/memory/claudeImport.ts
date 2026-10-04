@@ -22,6 +22,8 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import { readMemoryTree } from './claudeExport.js';
+import type { DocsOverflowPort } from './overflow.js';
+import { overflowBody, overflowDocOf, overflowedText } from './overflow.js';
 
 interface ClaudeImportSource {
   dir: string;
@@ -65,6 +67,8 @@ interface Note {
   projectKey: string | null;
   title: string;
   body: string;
+  // The whole text when `body` was cut: a personal doc may take it.
+  fullBody?: string;
   createdAt: string;
 }
 
@@ -344,6 +348,7 @@ function notesOf(
       projectKey: projectOnlyForClaudeType(parsed.type) ? projectKey : null,
       title: parsed.title,
       body: parsed.body,
+      ...(parsed.fullBody === undefined ? {} : { fullBody: parsed.fullBody }),
       createdAt: createdAtOf(parsed.modified, join(dir, file), at),
     });
   }
@@ -363,7 +368,83 @@ function notesOf(
   return notes;
 }
 
-// Writes the notes into the store in one transaction; a dry run counts, then rolls back.
+// Whether a note's full text should go to the owner's personal doc on this
+// run: a port and identity, not a dry run, a cut note keyed to this project.
+function overflows(input: ImportInput, note: Note): boolean {
+  return (
+    input.overflow !== undefined &&
+    input.identity !== undefined &&
+    input.dryRun !== true &&
+    note.fullBody !== undefined &&
+    note.projectKey === input.projectKey
+  );
+}
+
+// Whether `body` is what overflow made of this note: its full text cut with
+// the marker of the doc it names.
+function isOverflowOf(body: string, note: Note, projectKey: string): boolean {
+  const docId = overflowDocOf(body);
+  return (
+    docId !== null &&
+    note.fullBody !== undefined &&
+    body === overflowedText(note.fullBody, docId, projectKey)
+  );
+}
+
+interface PendingOverflow {
+  note: Note;
+  entryId: string;
+  // A note cut plainly before docs were here: counted as updated once it overflows.
+  recovery: boolean;
+}
+
+// After the import committed, hands each queued note's full text to the
+// owner's personal doc and points its entry at it; docs.db is never written for
+// an import that rolled back. Answers how many recoveries took.
+function overflowAfterCommit(
+  input: ImportInput,
+  pending: readonly PendingOverflow[],
+  author: string
+): number {
+  const { store, overflow, identity } = input;
+  if (overflow === undefined || identity === undefined) return 0;
+  let recovered = 0;
+  for (const { note, entryId, recovery } of pending) {
+    const entry = store.getEntry(entryId);
+    if (entry === null) continue;
+    const over = overflowBody(
+      { ...entry, scope: 'personal', title: note.title },
+      note,
+      {
+        projectKey: input.projectKey,
+        human: input.ownerRef,
+        identity,
+        author,
+        port: { overflow },
+      }
+    );
+    if (over === null) continue;
+    const at = input.now.toISOString();
+    store.transaction(() =>
+      store.updateEntry(
+        {
+          ...entry,
+          body: over.body,
+          refs: over.refs,
+          rev: entry.rev + 1,
+          updatedAt: at,
+        },
+        author,
+        'import'
+      )
+    );
+    if (recovery) recovered += 1;
+  }
+  return recovered;
+}
+
+// Writes the notes into the store in one transaction; a dry run counts, then
+// rolls back. Long project notes overflow into a doc once it has committed.
 function applyNotes(
   input: ImportInput,
   notes: readonly Note[],
@@ -373,6 +454,7 @@ function applyNotes(
   const at = input.now.toISOString();
   const nowMs = input.now.getTime();
   const author = `agent:${input.ownerRef.slice('human:'.length)}/claude-code`;
+  const pending: PendingOverflow[] = [];
   try {
     store.transaction(() => {
       for (const note of notes) {
@@ -384,6 +466,21 @@ function applyNotes(
         if (existing !== null) {
           const last = lastImported(store, existing);
           if (last.title === note.title && last.body === note.body) {
+            // Cut plainly before docs were here: recovered after commit, but
+            // only while the owner has not edited it since that import.
+            if (
+              overflows(input, note) &&
+              existing.title === last.title &&
+              existing.body === last.body
+            )
+              pending.push({ note, entryId: existing.id, recovery: true });
+            else report.unchanged += 1;
+            continue;
+          }
+          if (
+            last.title === note.title &&
+            isOverflowOf(last.body, note, projectKey)
+          ) {
             report.unchanged += 1;
             continue;
           }
@@ -399,6 +496,8 @@ function applyNotes(
             author,
             'import'
           );
+          if (overflows(input, note))
+            pending.push({ note, entryId: existing.id, recovery: false });
           report.updated += 1;
           continue;
         }
@@ -409,7 +508,7 @@ function applyNotes(
           report.duplicates += 1;
           continue;
         }
-        insertFresh(
+        const fresh = insertFresh(
           store,
           ids,
           nowMs,
@@ -433,6 +532,8 @@ function applyNotes(
           author,
           'import'
         );
+        if (overflows(input, note))
+          pending.push({ note, entryId: fresh.id, recovery: false });
         report.imported += 1;
       }
       if (input.dryRun === true) throw ROLLBACK;
@@ -440,7 +541,13 @@ function applyNotes(
     });
   } catch (err) {
     if (err !== ROLLBACK) throw err;
+    return;
   }
+  const recovered = overflowAfterCommit(input, pending, author);
+  const waiting = pending.filter((p) => p.recovery).length;
+  report.updated += recovered;
+  report.unchanged += waiting - recovered;
+  if (pending.length > 0) record(store, projectKey, report);
 }
 
 function record(
@@ -482,6 +589,9 @@ export function importClaudeNotes(input: {
   now: Date;
   home: string;
   dryRun?: boolean;
+  // With both set, long project notes overflow into the owner's personal doc.
+  overflow?: DocsOverflowPort['overflow'];
+  identity?: string;
 }): Promise<ClaudeImportReport> {
   return Promise.resolve().then(() => importNow(input));
 }

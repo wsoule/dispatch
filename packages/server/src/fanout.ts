@@ -1,3 +1,4 @@
+import { getSection } from '@dispatch/core';
 import type { CreateInput, TaskDoc } from '@dispatch/core';
 
 /**
@@ -111,6 +112,7 @@ export function variantTaskInput(
   variant: FanoutVariant
 ): CreateInput {
   const meta = source.meta;
+  const description = getSection(source.body, 'Description');
   // Deliberately no `derivedFrom`. That field is a security marker meaning
   // "this body is text from outside this repo" — a PR description — and the
   // orchestrator refuses to start an execute run on anything carrying it. A
@@ -129,8 +131,9 @@ export function variantTaskInput(
     selfReview: meta.selfReview,
     ...(variant.model === undefined ? {} : { model: variant.model }),
     // The body is the prompt: every variant has to be given the same problem
-    // statement, or the comparison is between different questions.
-    description: source.body,
+    // statement, or the comparison is between different questions. A body with
+    // sections gives its Description (the route copies the criteria).
+    description: description === '' ? source.body : description,
   };
 }
 

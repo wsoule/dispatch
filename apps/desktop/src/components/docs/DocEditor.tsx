@@ -1,5 +1,7 @@
+import type { ClipboardEvent, DragEvent, ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 
+import { docUrlTransform, imageFiles } from '../../lib/docAssets';
 import { Markdown } from '../runs/Markdown';
 
 interface DocEditorProps {
@@ -11,6 +13,10 @@ interface DocEditorProps {
   onChange: (text: string) => void;
   /** A line to put the caret on and scroll to; a new object places it again. */
   placeAt?: { line: number } | null;
+  /** Renders the preview's images (`asset:` ones through the docs API). */
+  renderImage?: (props: { src?: string; alt?: string }) => ReactNode;
+  /** Uploads pasted or dropped images, answering the markdown to insert at the caret. */
+  onImages?: (files: File[]) => Promise<string[]>;
 }
 
 // The styles that decide where a textarea's lines wrap, copied onto its mirror.
@@ -70,8 +76,27 @@ export function DocEditor({
   readOnly,
   onChange,
   placeAt = null,
+  renderImage,
+  onImages,
 }: DocEditorProps) {
   const area = useRef<HTMLTextAreaElement>(null);
+  // Uploads the images a paste or drop carried and inserts their links at the caret.
+  const insertImages = (
+    files: File[],
+    e: ClipboardEvent<HTMLTextAreaElement> | DragEvent<HTMLTextAreaElement>
+  ): void => {
+    if (onImages === undefined || readOnly || files.length === 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const at = el.selectionStart;
+    void onImages(files).then((links) => {
+      if (links.length === 0) return;
+      const current = el.value;
+      onChange(
+        `${current.slice(0, at)}${links.join('\n')}${current.slice(at)}`
+      );
+    });
+  };
   useEffect(() => {
     const el = area.current;
     if (el === null || placeAt === null) return;
@@ -84,7 +109,12 @@ export function DocEditor({
   if (previewing) {
     return (
       <div className="h-full overflow-auto p-4">
-        <Markdown content={text} variant="prose" />
+        <Markdown
+          content={text}
+          variant="prose"
+          urlTransform={docUrlTransform}
+          img={renderImage}
+        />
       </div>
     );
   }
@@ -95,6 +125,8 @@ export function DocEditor({
       readOnly={readOnly}
       spellCheck={false}
       onChange={(e) => onChange(e.target.value)}
+      onPaste={(e) => insertImages(imageFiles(e.clipboardData.files), e)}
+      onDrop={(e) => insertImages(imageFiles(e.dataTransfer.files), e)}
       className="h-full w-full resize-none border-0 bg-[var(--color-card)] p-3 font-mono text-xs leading-relaxed outline-none"
       aria-label={label}
     />

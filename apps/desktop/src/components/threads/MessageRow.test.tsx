@@ -1,4 +1,4 @@
-import type { AgentSummary, Message } from '@dispatch/client';
+import type { AgentSummary, DocProposalView, Message } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
@@ -84,6 +84,7 @@ function clientWith(
   return {
     declineA2ATask: missing('declineA2ATask'),
     getMemoryProposal: missing('getMemoryProposal'),
+    getDocProposal: missing('getDocProposal'),
     fetchTask: missing('fetchTask'),
     ...calls,
   };
@@ -411,6 +412,47 @@ test('shows a decider the memory proposal, and answers its gate with the choice'
     expect(onAnswer).toHaveBeenCalledWith(memoryGate, {
       body: '',
       choice: 'approve',
+    })
+  );
+});
+
+test("shows a decider a doc gate's proposal, answers it, and opens the doc", async () => {
+  const docGate = msg('m-doc', {
+    from: 'agent:dispatch',
+    kind: 'question',
+    blocking: true,
+    choices: ['approve', 'reject'],
+    body: 'run:r-000001 proposes an edit to an accepted doc.',
+    data: { type: 'doc', doc: 'doc-1', proposal: 'rev-p', runId: 'r-000001' },
+  });
+  const getDocProposal = mock((_rev: string) =>
+    Promise.resolve({
+      proposal: { rev: 'rev-p', author: 'run:r-000001', state: 'open' },
+      title: 'Auth spec',
+      body: 'new\n',
+      chunks: [{ equal: false, a: ['old\n'], b: ['new\n'] }],
+      mergeable: { clean: false, headN: 4 },
+    } as unknown as DocProposalView)
+  );
+  const onOpen = mock((_action: unknown) => undefined);
+  const onAnswer = renderRow(docGate, {
+    client: clientWith({ getDocProposal }),
+    onOpen,
+  });
+  await screen.findByText('Auth spec');
+  expect(getDocProposal).toHaveBeenCalledWith('rev-p');
+  fireEvent.click(screen.getByRole('button', { name: 'Open merge view' }));
+  expect(onOpen).toHaveBeenCalledWith({
+    kind: 'doc',
+    docId: 'doc-1',
+    anchor: null,
+    merge: 'rev-p',
+  });
+  fireEvent.click(screen.getByRole('radio', { name: 'Reject' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(docGate, {
+      body: 'resolved in the doc',
+      choice: 'reject',
     })
   );
 });

@@ -148,3 +148,22 @@ it('speaks the /api/a2a/peers routes with the bodies the daemon reads', async ()
     { method: 'DELETE', path: '/api/a2a/peers/acme', body: null },
   ]);
 });
+
+it('turns standalone hosts on and off', async () => {
+  seen.length = 0;
+  const client = createApiClient(`http://127.0.0.1:${server.port}`);
+  await client.setA2AStandalone(true);
+  await client.setA2AStandalone(false);
+  expect(seen).toEqual([
+    {
+      method: 'PUT',
+      path: '/api/a2a/listener/standalone',
+      body: { enabled: true },
+    },
+    {
+      method: 'PUT',
+      path: '/api/a2a/listener/standalone',
+      body: { enabled: false },
+    },
+  ]);
+});

@@ -1,0 +1,194 @@
+{
+  "name": "transport-and-invites",
+  "input": {
+    "founder": {
+      "replica": "ada-0000000a",
+      "seq": 1
+    },
+    "ops": [
+      {
+        "replica": "ada-0000000a",
+        "seq": 1,
+        "hlc": "1790380800000.0000.ada-0000000a",
+        "hash": "337864fcb4fc040ea3c81780466f6b0562ecc34d9107fd333e4ac9e5df35419a",
+        "body": {
+          "rv": 1,
+          "action": "found",
+          "name": "acme",
+          "legacy": [],
+          "recoveryPub": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 2,
+        "hlc": "1790380800100.0000.ada-0000000a",
+        "hash": "5b1ef33080b375e2e13c321f5241092eb1a83029f3fb9fdb4a2945557f7a5bfc",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "bob-0000000b",
+          "handle": "bob",
+          "role": "member",
+          "fingerprint": "FP-bob-0000000b"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 3,
+        "hlc": "1790380800200.0000.ada-0000000a",
+        "hash": "c4464c9606b93b3f7346a6c7c57f5a05d8c4f068f4f991243c24b8e6120b2b7e",
+        "body": {
+          "rv": 1,
+          "action": "transport",
+          "kind": "relay",
+          "url": "https://relay.test"
+        }
+      },
+      {
+        "replica": "bob-0000000b",
+        "seq": 2,
+        "hlc": "1790380800300.0000.bob-0000000b",
+        "hash": "0257f392e1a4e0967915692623d49385d8ef0273646bc51816980dee76b17cd1",
+        "body": {
+          "rv": 1,
+          "action": "transport",
+          "kind": "git"
+        }
+      },
+      {
+        "replica": "bob-0000000b",
+        "seq": 3,
+        "hlc": "1790380800400.0000.bob-0000000b",
+        "hash": "a4525c818cd0220f9555e1b11fa2d51741872647456fac8877fe629bfa831204",
+        "body": {
+          "rv": 1,
+          "action": "invite",
+          "id": "i-own",
+          "pub": "P",
+          "handle": "bob",
+          "expires": "2026-10-03T00:00:00.000Z"
+        }
+      },
+      {
+        "replica": "bob-0000000b",
+        "seq": 4,
+        "hlc": "1790380800500.0000.bob-0000000b",
+        "hash": "ae0e471e1cffbf57ec89adff9f92a26b52d1ac9a7a2c076876bc7d3d96e90724",
+        "body": {
+          "rv": 1,
+          "action": "invite",
+          "id": "i-other",
+          "pub": "P",
+          "handle": "cy",
+          "expires": "2026-10-03T00:00:00.000Z"
+        }
+      }
+    ],
+    "keys": [
+      [
+        "ada-0000000a",
+        {
+          "replica": "ada-0000000a",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000a",
+          "fingerprint": "FP-ada-0000000a"
+        }
+      ],
+      [
+        "bob-0000000b",
+        {
+          "replica": "bob-0000000b",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000b",
+          "fingerprint": "FP-bob-0000000b"
+        }
+      ],
+      [
+        "cy-0000000c",
+        {
+          "replica": "cy-0000000c",
+          "handle": "cy",
+          "signPub": "sign-cy-0000000c",
+          "fingerprint": "FP-cy-0000000c"
+        }
+      ],
+      [
+        "dee-0000000d",
+        {
+          "replica": "dee-0000000d",
+          "handle": "dee",
+          "signPub": "sign-dee-0000000d",
+          "fingerprint": "FP-dee-0000000d"
+        }
+      ],
+      [
+        "bob-0000000f",
+        {
+          "replica": "bob-0000000f",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000f",
+          "fingerprint": "FP-bob-0000000f"
+        }
+      ],
+      [
+        "ada-0000000e",
+        {
+          "replica": "ada-0000000e",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000e",
+          "fingerprint": "FP-ada-0000000e"
+        }
+      ],
+      [
+        "obs-00000010",
+        {
+          "replica": "obs-00000010",
+          "handle": "obs",
+          "signPub": "sign-obs-00000010",
+          "fingerprint": "FP-obs-00000010"
+        }
+      ]
+    ],
+    "now": "2026-09-27T00:00:00.000Z",
+    "licensePublicKey": null
+  },
+  "expect": {
+    "members": [
+      ["ada-0000000a", "admin", 0, [], false, false],
+      ["bob-0000000b", "member", null, [], false, false]
+    ],
+    "revoked": [],
+    "hostCuts": [],
+    "resolution": [],
+    "pending": [
+      "ada-0000000e",
+      "bob-0000000f",
+      "cy-0000000c",
+      "dee-0000000d",
+      "obs-00000010"
+    ],
+    "invites": [
+      [
+        "i-own",
+        {
+          "pub": "P",
+          "handle": "bob",
+          "expires": "2026-10-03T00:00:00.000Z",
+          "by": "bob-0000000b"
+        }
+      ]
+    ],
+    "invitedBy": [],
+    "seats": 3,
+    "people": ["ada", "bob"],
+    "covered": ["ada", "bob"],
+    "closedBy": null,
+    "transport": {
+      "kind": "relay",
+      "url": "https://relay.test"
+    },
+    "dismissed": [],
+    "unknown": null
+  }
+}

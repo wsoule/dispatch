@@ -1,4 +1,4 @@
-import type { ApiClient, MemoryEntryView } from '@dispatch/client';
+import type { ApiClient, DocSummary, MemoryEntryView } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
@@ -169,11 +169,13 @@ function renderInbox(
     project = projectWith(),
     entries = [],
     onOpenPr = () => {},
+    onOpenDoc,
     projectRoot = ROOT,
   }: {
     project?: DispatchProjectData;
     entries?: InboxEntry[];
     onOpenPr?: (n: number) => void;
+    onOpenDoc?: (id: string) => void;
     projectRoot?: string | null;
   } = {}
 ) {
@@ -192,6 +194,7 @@ function renderInbox(
         projectName="dispatch"
         projectRoot={projectRoot}
         onOpenPr={onOpenPr}
+        onOpenDoc={onOpenDoc}
       />
     </Providers>
   );
@@ -850,4 +853,29 @@ test('has no memory section while nothing was written to your memory', async () 
   });
   await waitFor(() => expect(memoryActivity).toHaveBeenCalled());
   expect(screen.queryByRole('region', { name: 'Your memory' })).toBeNull();
+});
+
+const conflicted = (over: Record<string, unknown> = {}) =>
+  ({
+    id: 'doc-1',
+    handle: 'auth',
+    title: 'Auth refactor',
+    scope: 'team',
+    conflicted: true,
+    updatedAt: '2026-09-26T10:00:00.000Z',
+    ...over,
+  }) as unknown as DocSummary;
+
+test('a conflicted doc renders as a row and Open doc opens it', () => {
+  const opened: string[] = [];
+  const { container } = renderInbox(
+    { ...dataWith([]), docs: [conflicted()], total: 1 },
+    { onOpenDoc: (id) => opened.push(id) }
+  );
+  fireEvent.click(rowOf('Conflict markers in Auth refactor'));
+  const detail = container.querySelector('[data-slot="inbox-detail-pane"]');
+  fireEvent.click(
+    within(detail as HTMLElement).getByRole('button', { name: 'Open doc' })
+  );
+  expect(opened).toEqual(['doc-1']);
 });

@@ -45,7 +45,7 @@ import { join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import type { TaskCache } from '../cache.js';
-import type { EventBus } from '../events.js';
+import type { EventBus, SocketAudience } from '../events.js';
 import { FindingStore } from '../findings.js';
 import type { FindingStorePort } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
@@ -446,6 +446,9 @@ export class Orchestrator {
   private memoryPort: MemoryPromptPort | null = null;
   // Renders each dispatch prompt's `## Docs` section (see setDocsPort); null leaves it out.
   private docsPort: DocsPromptPort | null = null;
+  // Writes files a task needs into its new worktree (see setWorktreeSeed).
+  private worktreeSeed: ((taskId: string, worktree: string) => void) | null =
+    null;
   // Why a task may not run right now, or null (see setDispatchGuard).
   private dispatchGuard: ((task: TaskDoc) => string | null) | null = null;
   // When each run's claims were last refreshed from git status — see
@@ -577,6 +580,14 @@ export class Orchestrator {
     this.docsPort = port;
   }
 
+  // Called right after a fresh dispatch adds its worktree, before the executor
+  // starts; a throw removes the worktree and fails the dispatch.
+  setWorktreeSeed(
+    hook: ((taskId: string, worktree: string) => void) | null
+  ): void {
+    this.worktreeSeed = hook;
+  }
+
   // Subscribes to "a run just became live" (its ExecutorRun is registered), so
   // messaging can start delivering to it. Returns an unsubscribe function.
   onRunStarted(callback: (meta: RunMeta) => void): () => void {
@@ -675,7 +686,13 @@ export class Orchestrator {
   }
 
   // A run's own message to a human, logged on its transcript.
-  logOutgoing(runId: string, message: { id: string; body: string }): void {
+  // `audience` scopes the run.log frame to the message's participants: a DM
+  // never reaches other sockets (XH-R4).
+  logOutgoing(
+    runId: string,
+    message: { id: string; body: string },
+    audience?: (who: SocketAudience | undefined) => boolean
+  ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const entry: NormalizedEntry = {
@@ -690,7 +707,7 @@ export class Orchestrator {
     this.bestEffort(`logging an outgoing message for run ${runId}`, () => {
       this.transcriptFor(runId).appendEntry(entry);
     });
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry }, audience);
   }
 
   // deliverToRun for a non-interrupting channel digest: logged the same way,
@@ -1022,6 +1039,24 @@ export class Orchestrator {
     const wtPath = worktreePath(this.ctx.rootDir, runId);
 
     this.worktrees.add(wtPath, branch, baseBranch);
+    if (this.worktreeSeed !== null) {
+      try {
+        this.worktreeSeed(taskId, wtPath);
+      } catch (err) {
+        // A failed cleanup is logged; the seed's reason is what the caller hears.
+        try {
+          this.worktrees.remove(wtPath, branch, runId);
+        } catch (removeErr) {
+          console.error(
+            `dispatchd: removing ${wtPath} after a failed seed failed`,
+            removeErr
+          );
+        }
+        throw new OrchestratorClientError(
+          `could not seed the worktree: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
 
     const dispatchedBy = humanOwner(
       opts.dispatchedBy ?? opts.actor ?? this.ctx.actorContext?.humanRef
@@ -5442,8 +5477,15 @@ export class Orchestrator {
     executorName: string,
     runId: string
   ): (memorySection: string | null) => string {
+    // An A2A task's prompt fences its spec, amendments and comments, no epic.
+    const a2aOrigin = this.a2a(task.meta.id);
     let parentEpic: TaskDoc | null = null;
-    if (task.meta.parent !== null) {
+    // An A2A task's body is never parent context, whichever task runs.
+    if (
+      task.meta.parent !== null &&
+      !a2aOrigin &&
+      !this.a2a(task.meta.parent)
+    ) {
       try {
         parentEpic = this.ctx.store.get(task.meta.parent);
       } catch (err) {
@@ -5465,7 +5507,8 @@ export class Orchestrator {
         dispatchTools,
         humanRef,
         docs,
-        comments
+        comments,
+        a2aOrigin
       );
   }
 

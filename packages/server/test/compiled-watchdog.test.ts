@@ -52,6 +52,15 @@ function compileDaemon(entries: string[]): string {
 // Boots the compiled binary against an empty project and returns the
 // watchdog status its health endpoint reports once it is listening.
 async function bootAndReadWatchdog(binary: string): Promise<string> {
+  return (await boot(binary)).watchdog;
+}
+
+const APP_TOKEN = 'compiled-test-app-token';
+
+// Boots the compiled binary, answering its port and the watchdog status.
+async function boot(
+  binary: string
+): Promise<{ port: number; watchdog: string }> {
   const root = join(work!, 'project');
   mkdirSync(join(root, '.dispatch', 'tasks'), { recursive: true });
   writeFileSync(
@@ -64,7 +73,7 @@ async function bootAndReadWatchdog(binary: string): Promise<string> {
 
   child = Bun.spawn({
     cmd: [binary, '--root', root, '--port', '0'],
-    env: { ...process.env, DISPATCH_HOME: home },
+    env: { ...process.env, DISPATCH_HOME: home, DISPATCH_APP_TOKEN: APP_TOKEN },
     stdout: 'pipe',
     stderr: 'ignore',
   });
@@ -91,7 +100,7 @@ async function bootAndReadWatchdog(binary: string): Promise<string> {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`);
     const body = (await res.json()) as { watchdog?: string };
     if (body.watchdog !== 'starting' || Date.now() >= deadline) {
-      return body.watchdog ?? 'missing';
+      return { port, watchdog: body.watchdog ?? 'missing' };
     }
     await Bun.sleep(50);
   }
@@ -102,6 +111,35 @@ describe('compiled dispatchd', () => {
     work = mkdtempSync(join(tmpdir(), 'dispatch-compiled-watchdog-'));
     const binary = compileDaemon([BIN, WORKER]);
     expect(await bootAndReadWatchdog(binary)).toBe('armed');
+  }, 60_000);
+
+  // The terminal host is the same binary run with --terminal-host (bin.ts).
+  it('runs a terminal session through its own terminal host', async () => {
+    work = mkdtempSync(join(tmpdir(), 'dispatch-compiled-watchdog-'));
+    const { port } = await boot(compileDaemon([BIN, WORKER]));
+    const api = (path: string, init?: RequestInit) =>
+      fetch(`http://127.0.0.1:${port}${path}`, {
+        ...init,
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${APP_TOKEN}`,
+        },
+      });
+    const created = await api('/api/terminals', {
+      method: 'POST',
+      body: JSON.stringify({ command: ['sh', '-c', 'echo from-the-host'] }),
+    });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    let text = '';
+    for (let i = 0; i < 200 && !text.includes('from-the-host'); i++) {
+      const out = (await (await api(`/api/terminals/${id}/output`)).json()) as {
+        data: string;
+      };
+      text = Buffer.from(out.data, 'base64').toString('utf8');
+      await Bun.sleep(25);
+    }
+    expect(text).toContain('from-the-host');
   }, 60_000);
 
   // The failure mode the entry exists to prevent, kept as the control: if

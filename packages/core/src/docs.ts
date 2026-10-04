@@ -181,7 +181,15 @@ export interface DocProposalView {
   title: string;
   body: string;
   chunks: { equal: boolean; a: string[]; b: string[] }[];
-  mergeable: { clean: boolean; headN: number };
+  // The head the merge was computed against: a resolution saves on this base.
+  mergeable: {
+    clean: boolean;
+    headN: number;
+    headRev: string;
+    headHash: string;
+  };
+  // The head merged with the proposal, diff3 markers at each conflict; null when it merges cleanly.
+  marked: string | null;
 }
 
 export interface DocConflict {
@@ -367,6 +375,9 @@ export interface DocFileMeta {
   links: { target: string; rel: LinkRel }[];
   authors: string[];
   updatedAt: string;
+  // An export names a personal doc's scope, so no import mistakes it for a
+  // team doc; receipt files (team docs only) leave it out.
+  scope?: DocScope;
 }
 
 const DOC_FILE_FIELDS: readonly (keyof DocFileMeta)[] = [
@@ -440,6 +451,8 @@ function docFileValueProblem(
 
 export function renderDocFile(meta: DocFileMeta, body: string): string {
   const lines = DOC_FILE_FIELDS.map((k) => `${k}: ${JSON.stringify(meta[k])}`);
+  if (meta.scope !== undefined)
+    lines.push(`scope: ${JSON.stringify(meta.scope)}`);
   return `---\n${lines.join('\n')}\n---\n${body}`;
 }
 
@@ -479,5 +492,37 @@ export function parseDocFile(
     DOC_FILE_FIELDS.map((k) => [k, fields.get(k)])
   ) as unknown as DocFileMeta;
   meta.links = meta.links.map(({ target, rel }) => ({ target, rel }));
+  const scope = fields.get('scope');
+  if (scope !== undefined) {
+    if (scope !== 'team' && scope !== 'personal')
+      return { error: 'scope must be team or personal' };
+    meta.scope = scope;
+  }
   return { meta, body: text.slice(end + 5) };
+}
+
+// ---- images (v1) -------------------------------------------------------------
+
+/** A stored image's name: the hex sha256 of its bytes and its sniffed extension. */
+export const ASSET_NAME = /^[0-9a-f]{64}\.(?:png|jpg|gif|webp)$/;
+const ASSET_REF_SOURCE =
+  '!\\[([^\\]]*)\\]\\(asset:([0-9a-f]{64}\\.(?:png|jpg|gif|webp))\\)';
+
+/** Each asset name the body's `![…](asset:…)` images reference, once, in order. */
+export function assetNames(body: string): string[] {
+  const names = new Set<string>();
+  for (const m of body.matchAll(new RegExp(ASSET_REF_SOURCE, 'g')))
+    names.add(m[2]);
+  return [...names];
+}
+
+/** `body` with each `asset:` image link pointed at `to(name)`. */
+export function rewriteAssetLinks(
+  body: string,
+  to: (name: string) => string
+): string {
+  return body.replace(
+    new RegExp(ASSET_REF_SOURCE, 'g'),
+    (_m, alt: string, name: string) => `![${alt}](${to(name)})`
+  );
 }

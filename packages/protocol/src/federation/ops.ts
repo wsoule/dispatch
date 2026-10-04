@@ -193,6 +193,9 @@ export type RosterBody = { rv: 1 } & (
   | { action: 'recover'; proof: string }
   | { action: 'recovery-key'; pub: string } // a new recovery code replaces the last
   | { action: 'transport'; kind: 'git' | 'relay'; url?: string }
+  // Takes the named roster op, whose (action, rv) is outside Known(1), out of
+  // every build's fold when an admin that may dismiss it sends it; no level.
+  | { action: 'dismiss'; replica: string; seq: number; hash: string }
 );
 
 export interface LegacyAttestation {

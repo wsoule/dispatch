@@ -33,6 +33,7 @@ import {
   closeRunGates,
   GateHandlers,
   openToolApprovalGate,
+  registrationKey,
   SYSTEM_SENDER,
 } from './gates.js';
 import type { ExternalPolicy, WakeActor } from './host.js';
@@ -193,7 +194,13 @@ export function openMessaging(deps: {
   const engine = new DeliveryEngine({
     store,
     host,
-    limits,
+    limits: {
+      ...limits,
+      // M4: fresh agent-to-agent threads count against the breaker's number
+      // too, and repeated wake asks for one target share a single gate.
+      agentThreadsPerHour: limits.agentTurnsPerThreadPerHour,
+      openWakeGatesPerTarget: 1,
+    },
     gateTypes: DISPATCH_GATE_TYPES,
   });
 
@@ -337,6 +344,12 @@ export function openMessaging(deps: {
       if (gate === null || gate.type !== 'agent-registration') return;
       const agent = store.getAgent(gate.agent);
       if (agent === null) return;
+      // A card raised for an earlier key (before a re-key) decides nothing.
+      if (
+        gate.key !== undefined &&
+        gate.key !== registrationKey(agent.tokenHash)
+      )
+        return;
       if (answer.choice === 'approve') {
         if (agent.status === 'approved') return;
         store.putAgent({
@@ -565,7 +578,8 @@ export function openMessaging(deps: {
     if (!e.message.to.some((addr) => addr.startsWith('human:'))) return;
     deps.orchestrator.logOutgoing(
       e.message.from.slice('run:'.length),
-      e.message
+      e.message,
+      messageAudience(store, e.message)
     );
   });
 

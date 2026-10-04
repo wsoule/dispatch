@@ -28,6 +28,18 @@ describe('the receipt file format', () => {
     expect(parseDocFile(text)).toEqual({ meta: META, body });
   });
 
+  it('carries an export’s scope only when it is set, and refuses an unknown one', () => {
+    expect(renderDocFile(META, 'x\n')).not.toContain('scope:');
+    const personal = renderDocFile({ ...META, scope: 'personal' }, 'x\n');
+    expect(parseDocFile(personal)).toEqual({
+      meta: { ...META, scope: 'personal' },
+      body: 'x\n',
+    });
+    expect(parseDocFile(personal.replace('"personal"', '"secret"'))).toEqual({
+      error: 'scope must be team or personal',
+    });
+  });
+
   it('round-trips a title with line separators and an empty body', () => {
     const meta = { ...META, title: 'a b' };
     expect(parseDocFile(renderDocFile(meta, ''))).toEqual({ meta, body: '' });

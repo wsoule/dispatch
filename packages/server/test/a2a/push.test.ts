@@ -2,6 +2,8 @@ import type { StreamResponseJson } from '@dispatch/a2a';
 import { handleA2A, IpLimiter, PUSH_LIMITS } from '@dispatch/a2a';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
+import { gatherFacts } from '../../src/a2a/facts.js';
+import { PushWorker } from '../../src/a2a/push.js';
 import { HUMAN, useTempProject, waitFor } from '../messaging/harness.js';
 import { bridgeFixture } from './fixture.js';
 
@@ -10,12 +12,16 @@ let f: Awaited<ReturnType<typeof bridgeFixture>>;
 let posts: { url: string; headers: Headers; body: StreamResponseJson }[];
 let hang = false;
 let failWith: number | null = null;
+// Runs after each recorded post, before its answer.
+let onPost: (() => void) | null = null;
 let addresses: () => Promise<string[]>;
+let pushFetch: typeof fetch;
 
 beforeEach(async () => {
   posts = [];
   hang = false;
   failWith = null;
+  onPost = null;
   addresses = () => Promise.resolve(['93.184.216.34']);
   // Cast, not annotated: bun-types' `typeof fetch` also carries `preconnect`.
   const fetchImpl = ((input: string | URL, init?: RequestInit) => {
@@ -27,8 +33,10 @@ beforeEach(async () => {
         typeof init?.body === 'string' ? init.body : 'null'
       ) as StreamResponseJson,
     });
+    onPost?.();
     return Promise.resolve(new Response(null, { status: failWith ?? 204 }));
   }) as typeof fetch;
+  pushFetch = fetchImpl;
   f = await bridgeFixture(
     project.root(),
     {},
@@ -292,6 +300,22 @@ describe('push configs', () => {
     expect(posts).toEqual([]);
   });
 
+  it('checks the client again at each retry, so one revoked during backoff gets nothing more', async () => {
+    const id = await ask();
+    await configs().create(f.caller, id, { id: 'hook', url: HOOK });
+    failWith = 500;
+    // Revoked as the first attempt fails, so during its retry's delay.
+    onPost = () => {
+      const agent = f.messaging.store.getAgent(f.caller.address)!;
+      f.messaging.store.putAgent({ ...agent, status: 'revoked' });
+    };
+    await nudge(id);
+    await waitFor(() => posts.length === 1);
+    await f.push.idle();
+    expect(posts).toHaveLength(1);
+    expect(f.store.getPushConfig(id, 'hook')?.failures).toBe(1);
+  });
+
   // Review Focus 5.
   it('a hanging webhook never delays a stream event', async () => {
     const id = await ask();
@@ -306,5 +330,70 @@ describe('push configs', () => {
     await waitFor(() => fired > 0, 1000);
     expect(performance.now() - started).toBeLessThan(1000);
     stop();
+  });
+});
+
+// A daemon that stopped mid-delivery: a fresh worker over the same a2a.db.
+describe('after a restart', () => {
+  const restarted = (delaysMs: number[] = [5, 5, 5]) =>
+    new PushWorker({
+      store: f.store,
+      clientActive: () => true,
+      lookup: () => addresses(),
+      delaysMs,
+      fetchImpl: pushFetch,
+    });
+
+  it('sends a finished task’s final event once, then deletes its config', async () => {
+    const id = await ask();
+    await configs().create(f.caller, id, { id: 'hook', url: HOOK });
+    hang = true;
+    await f.messaging.engine.reply(id, { body: 'Yes, final.' }, HUMAN);
+    await waitFor(() => f.store.getTask(id)?.state === 'COMPLETED');
+    hang = false;
+    const worker = restarted();
+    worker.resume((row) => gatherFacts(f.deps, row));
+    await worker.idle();
+    expect(posts).toHaveLength(1);
+    expect(JSON.stringify(posts[0].body)).toContain('TASK_STATE_COMPLETED');
+    expect(f.store.getPushConfig(id, 'hook')).toBeNull();
+    worker.resume((row) => gatherFacts(f.deps, row));
+    await worker.idle();
+    expect(posts).toHaveLength(1);
+  });
+
+  it('keeps a failing delivery’s retry count, and resumes from it', async () => {
+    const id = await ask();
+    await configs().create(f.caller, id, { id: 'hook', url: HOOK });
+    failWith = 500;
+    // What a2a.db holds as each retry goes out.
+    const kept: (number | undefined)[] = [];
+    onPost = () => kept.push(f.store.getPushPending(id, 'hook')?.tries);
+    await nudge(id);
+    await waitFor(() => posts.length === 4);
+    await f.push.idle();
+    expect(kept).toEqual([undefined, 1, 2, 3]);
+    expect(f.store.getPushPending(id, 'hook')).toBeNull();
+    onPost = null;
+    // Every retry was spent: a restarted worker tries once more, no more.
+    f.store.setPushPending(id, 'hook', 3, new Date(0).toISOString());
+    posts = [];
+    const worker = restarted();
+    worker.onChanged(
+      f.store.getTask(id)!,
+      gatherFacts(f.deps, f.store.getTask(id)!)
+    );
+    await worker.idle();
+    expect(posts).toHaveLength(1);
+    failWith = null;
+    worker.onChanged(
+      f.store.getTask(id)!,
+      gatherFacts(f.deps, f.store.getTask(id)!),
+      {
+        force: true,
+      }
+    );
+    await worker.idle();
+    expect(f.store.getPushPending(id, 'hook')).toBeNull();
   });
 });

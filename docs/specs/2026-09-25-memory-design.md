@@ -457,14 +457,16 @@ Promoting a personal entry is a copy, and the source stays where it is.
 
 Size limits per write:
 
-| Field                     | Limit                                  |
-| ------------------------- | -------------------------------------- |
-| `title`                   | 200 bytes (UTF-8), one line, non-empty |
-| `body`                    | 8 KiB (UTF-8); long-form belongs to #4 |
-| `refs`                    | 20 entries; `id`, `at` 512 bytes each  |
-| `appliesTo`               | 50 task ids                            |
-| `reason` (forget, reject) | 500 bytes, one line                    |
-| `query` (search)          | 500 bytes                              |
+| Field   | Limit                                  |
+| ------- | -------------------------------------- |
+| `title` | 200 bytes (UTF-8), one line, non-empty |
+| `body`  | 8 KiB (UTF-8); long-form belongs to #4 |
+
+Over 8 KiB, `memory_save` answers
+`body: at most 8192 bytes (UTF-8); long-form belongs in a doc: doc_save it, then ref it from a short entry`.
+| `refs` | 20 entries; `id`, `at` 512 bytes each | | `appliesTo` | 50 task ids |
+| `reason` (forget, reject) | 500 bytes, one line | | `query` (search) | 500
+bytes |
 
 Every failure is a `MemoryError` whose `field` names the bad input. Its `code`
 maps to a status the way `MessagingError`'s does: `invalid` 400, `forbidden`
@@ -563,6 +565,9 @@ decay (local to each machine, only while active):
     re-imported on every `ledger.changed`. Without the tombstone, a deleted
     imported entry would come back at the next policy receipt
     (`policyEngine.ts:592`, `:618`).
+  - A hard delete of a team entry removes its receipt file at the next export,
+    but does not scrub git history: earlier versions stay in the receipt log,
+    and on any remote it was pushed to, until that history is rewritten.
 
 ### Tables
 
@@ -759,7 +764,7 @@ When a `project` or `team` entry of kind `hazard` or `constraint` becomes
 active, the service hands a digest line to every live execute run that may see
 it and whose task it reaches, other than the author's own run:
 
-- The line goes through `orchestrator.notifyRun` (`orchestrator.ts:599-611`),
+- The line goes through `orchestrator.notifyRun` (`orchestrator.ts:709-723`),
   the same path messaging's channel digests take (`messaging/host.ts:101-103`):
 
   ```text
@@ -923,16 +928,22 @@ desktop:
   (`:21-27`).
 - `GATE_RUNGS.memory = 4` (`:67-73`): the top rung, per the controller's ruling,
   because a bad team lesson reaches every teammate's runs.
+- **Config hazard.** A `.dispatch/config.yml` naming `policy.gates.memory` used
+  to be a `ConfigError` on a build without the gate. Docs Task 3a made
+  `parsePolicyConfig` skip an unknown gate key with a warning instead, one
+  release before the `memory` gate shipped, so a teammate's older build ignores
+  the pin rather than refusing the file.
 - **Rung 4 is relabelled**, since it now covers two gates:
   - core's stop (`:50`) keeps the name `auto-merge`, which config and old
     receipts use, and its label becomes "Auto-merge on green and accept agents'
-    team memory";
+    team memory and doc edits" (the `doc` gate joined it in docs v1);
   - the desktop slider's label
     (`apps/desktop/src/components/settings/PolicySection.tsx:56`) becomes "Merge
-    and accept memory on their own";
+    and accept memory and doc edits on their own";
   - its description (`:48`) gains "Agents' lessons join shared memory without
     review";
-  - rung 3's description (`:47`) ends "Merging and shared memory still wait."
+  - rung 3's description (`:47`) ends "Merging, shared memory and accepted docs
+    still wait."
 - **Receipts name the gate.** `describePolicyAuthorization`
   (`policy.ts:261-270`) now names the gate instead of the stop:
   `auto-decided by policy rung 4 (memory gate)`, and likewise for every gate.
@@ -1442,7 +1453,13 @@ from the file exactly as Dispatch wrote it.
 - The body is the text after the frontmatter, with Dispatch's provenance line
   removed and `untrustedBlock`'s escapes reversed. It is cut at 8 KiB on a line
   boundary, with the line
-  `[truncated by Dispatch: N bytes; long-form belongs in Docs]`.
+  `[truncated by Dispatch: N bytes; long-form belongs in Docs]`. A personal
+  entry keyed to this project hands its full text to a personal doc of its human
+  instead, and the line reads
+  `[truncated by Dispatch: N bytes; full text in doc <doc id> of project <key>]`
+  with a `doc` ref to it (built in docs Task 18). Every other case stays plain
+  truncation: cross-project personal entries, project and team entries, the
+  `supersede` proposals ingest makes for them, and ledger import rows.
 - **Changed** means the sha256 of the parsed title and body differs from the
   manifest's `parsed_hash`. Claude Code rewrites frontmatter whenever it writes
   a file (`metadata.modified`, `originSessionId`, `node_type`), and those keys
@@ -1900,9 +1917,39 @@ interface MemoryOp {
   `add` proposal with `origin: sync:<replica>`, and later ops for it update the
   proposal until it is decided. On approval, the entry keeps its replicated id.
 - **Seats.** Replication pauses past the license's seats, like task ops.
-- **Receipts.** v2 also exports team entries as `memory/<id>.md` into the
-  receipt log (`packages/core/src/receipts.ts:265`,
-  `packages/server/src/receipts/exporter.ts`). They are never read back.
+- **Receipts.** v2 also exports team entries, active and retired, as
+  `.dispatch/memory/<id>.md` into the receipt log (the layout in
+  `packages/core/src/receipts.ts`; the export is a receipts step,
+  `packages/server/src/memory/receipts.ts`). The export never reads the log
+  back: editing a file changes nothing in `memory.db`. A file is pruned only
+  when this `memory.db` exported its id (meta `receipts_exported`), or when an
+  entry, or an approved or rejected proposal, holds a `receipts:<id>` origin. An
+  expired proposal owns nothing, so its file stays. Pruning continues while a
+  restore is staged. A hard delete does not scrub git history.
+- **Restore (ruling MEM-R9).** Restore is an explicit owner action,
+  `dispatch receipts restore`, at parity with docs. The log is untrusted input
+  from anyone with push rights:
+  - **Staging.** The CLI stages only regular files named `mem-<ULID>.md`, within
+    32 KiB (`MEMORY_RECEIPT_FILE_BYTES`), refusing symlinks, into run-state
+    `memory-restore/` (0700).
+  - **Validation.** At boot, after `messaging.recover()`, each staged file is
+    checked again: its name, `lstat`, size, and a body within 8 KiB. The
+    frontmatter is read strictly (a duplicated key is a problem) and only
+    suggests the kind. The `status` must be one string, compared trimmed and
+    lower-cased.
+  - **Always gated.** Each file becomes an `add` proposal by `agent:dispatch`
+    with `agent` trust and origin `receipts:<id>` (`receipts:<id>/2`, `/3` after
+    an attempt expired undecided), exempt from the hourly proposal limit. A
+    `receipts:` proposal always raises a gate, whatever the auto policy, as a
+    personal-entry match does, and the gate says the lesson came from the
+    receipt log. Nothing restored goes live without a human.
+  - **Skipped.** A receipt whose `status` begins with `retired`, after trimming
+    and lower-casing, is skipped, as are ids or origins already held and content
+    conflicts.
+  - **At most 50 per pass.** Handled files leave the staging directory, which is
+    removed only once empty. The rest are proposed by further passes a minute
+    apart, and problem files stay with a hint.
+  - **Health.** The last report is served as `restore` in `/api/memory/health`.
 
 ## Failure handling
 

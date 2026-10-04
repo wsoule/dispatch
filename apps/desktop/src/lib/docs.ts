@@ -33,6 +33,25 @@ export function docBadges(
   ];
 }
 
+// The status moves a decider may make from here: accept a draft (again, when
+// the receipt log had it accepted), reopen an accepted doc, archive or restore.
+export function docStatusActions(
+  doc: Pick<DocRecord, 'status' | 'restored' | 'archivedFrom'>
+): { label: string; status: DocRecord['status'] }[] {
+  if (doc.status === 'archived') {
+    return [{ label: 'Restore', status: doc.archivedFrom ?? 'draft' }];
+  }
+  const move =
+    doc.status === 'accepted'
+      ? { label: 'Reopen', status: 'draft' as const }
+      : {
+          label:
+            doc.restored?.status === 'accepted' ? 'Accept again' : 'Accept',
+          status: 'accepted' as const,
+        };
+  return [move, { label: 'Archive', status: 'archived' }];
+}
+
 export interface DocFilter {
   query: string;
   scope: 'all' | 'team' | 'personal';

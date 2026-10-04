@@ -25,6 +25,16 @@ beforeEach(() => {
         type: req.headers.get('content-type'),
         body: await req.text(),
       });
+      if (url.pathname.includes('/assets/')) {
+        return url.pathname.endsWith('.png')
+          ? new Response(new Uint8Array([1, 2, 3]), {
+              headers: { 'content-type': 'image/png' },
+            })
+          : Response.json(
+              { error: 'not found', code: 'not-found' },
+              { status: 404 }
+            );
+      }
       if (url.pathname === '/api/docs/archived/body') {
         return Response.json(
           {
@@ -121,11 +131,46 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('uploads an image as raw octet-stream bytes to the doc', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    expect(
+      await api.putAsset('doc-1', new TextEncoder().encode('img'))
+    ).toEqual({ ok: true } as never);
+    expect(seen.map((s) => [s.method, s.path, s.type, s.body])).toEqual([
+      ['POST', '/api/docs/doc-1/assets', 'application/octet-stream', 'img'],
+    ]);
+  });
+
   it('promotes a personal doc by its ~handle', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await api.promote('~notes');
     expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
       ['POST', '/api/docs/~notes/promote', '{}'],
+    ]);
+  });
+
+  it('publishes a doc to a repo path, dispatching unless told not to', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await api.publish('spec', { path: 'docs/spec.md' });
+    await api.publish('spec', { path: 'docs/spec.md', dispatch: false });
+    expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
+      ['POST', '/api/docs/spec/publish', '{"path":"docs/spec.md"}'],
+      [
+        'POST',
+        '/api/docs/spec/publish',
+        '{"path":"docs/spec.md","dispatch":false}',
+      ],
+    ]);
+  });
+
+  it("fetches a doc's image as bytes, and null when it is gone", async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    const name = `${'a'.repeat(64)}.png`;
+    expect(await api.asset('doc-1', name)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(await api.asset('doc-1', `${'a'.repeat(64)}.gif`)).toBeNull();
+    expect(seen.map((s) => s.path)).toEqual([
+      `/api/docs/doc-1/assets/${name}`,
+      `/api/docs/doc-1/assets/${'a'.repeat(64)}.gif`,
     ]);
   });
 
@@ -144,5 +189,27 @@ describe('createDocsApi', () => {
     await expect(api.get('missing')).rejects.toThrow(
       'doc missing not found (field: doc)'
     );
+  });
+});
+
+describe('a dispatchd lost mid-import', () => {
+  it('says so in one sentence instead of the runtime connect error', async () => {
+    const gone = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(),
+    });
+    const port = gone.port;
+    await gone.stop(true);
+    const api = createDocsApi(`http://127.0.0.1:${port}`, 'app-token');
+    for (const step of [
+      () => api.openImport([], undefined),
+      () => api.putImportContent('imp-1', 'abc', new Uint8Array([1])),
+      () => api.commitImport('imp-1', false),
+    ]) {
+      const err: unknown = await step().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).message).toContain('lost dispatchd mid-import');
+    }
   });
 });

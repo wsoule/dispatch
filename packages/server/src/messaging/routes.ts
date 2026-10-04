@@ -31,8 +31,14 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
+import { speaksForRevoked } from '../api/revoke.js';
 import { runMessageRefusal } from '../orchestrator/types.js';
-import { answeringWith, openHumanDecisions } from './gates.js';
+import {
+  answeringWith,
+  closeGate,
+  openHumanDecisions,
+  registrationKey,
+} from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
@@ -332,6 +338,44 @@ function liveRunRefusal(
   return null;
 }
 
+// XH-R2: no run may message an A2A-origin run, directly, through its task or
+// by replying into its thread; what one run reads must not reach a client.
+function a2aRunRefusal(
+  ctx: ApiContext,
+  principal: Principal,
+  addresses: readonly string[]
+): string | null {
+  if (principal.kind !== 'run') return null;
+  const self = principal.address.slice('run:'.length);
+  const ownTask = ctx.orchestrator.taskIdOfRun(self);
+  for (const address of addresses) {
+    let taskId: string | null = null;
+    if (address.startsWith('run:')) {
+      const runId = address.slice('run:'.length);
+      if (runId !== self) taskId = ctx.orchestrator.taskIdOfRun(runId);
+    } else if (address.startsWith('task:')) {
+      taskId = address.slice('task:'.length);
+    }
+    if (
+      taskId !== null &&
+      taskId !== ownTask &&
+      ctx.orchestrator.isA2ATask(taskId)
+    )
+      return `${address} came in over A2A; another run may not message it`;
+  }
+  return null;
+}
+
+// XH-R3: whether the principal's teammate lost access after handleApi
+// resolved it; the cascade and closeAsksOfRevoked cover what lands anyway.
+function revokedSince(ctx: ApiContext, principal: Principal): boolean {
+  return speaksForRevoked(
+    principal.address,
+    ctx.actorContext.member.handle,
+    (handle) => ctx.team.teammates.hasAccess(handle)
+  );
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -343,7 +387,15 @@ export async function sendMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
-  const refusal = liveRunRefusal(ctx, principal, parsedInput.value.to);
+  // The body may arrive after a revoke this credential's check predates.
+  if (revokedSince(ctx, principal))
+    return jsonResponse(
+      { error: "this credential's access was revoked", code: 'auth_revoked' },
+      401
+    );
+  const refusal =
+    liveRunRefusal(ctx, principal, parsedInput.value.to) ??
+    a2aRunRefusal(ctx, principal, parsedInput.value.to);
   if (refusal !== null) return errorResponse(403, refusal);
 
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
@@ -387,6 +439,11 @@ export async function replyToMessage(
   const parsedInput = parseReplyInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
   const target = ctx.messaging.engine.getMessage(id);
+  const refusal =
+    target === null || !ctx.messaging.engine.canRead(id, senderOf(principal))
+      ? null
+      : a2aRunRefusal(ctx, principal, [target.from, ...target.to]);
+  if (refusal !== null) return errorResponse(403, refusal);
   const result = await answeringWith(principal.ownerCredential === true, () =>
     ctx.messaging.engine.reply(id, parsedInput.value, senderOf(principal))
   );
@@ -775,7 +832,11 @@ export async function registerAgent(
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { name?: unknown; client?: unknown };
+  const body = parsed.value as {
+    name?: unknown;
+    client?: unknown;
+    rekey?: unknown;
+  };
   const displayName = registrationField(body.name, 'name');
   if (!displayName.ok) return errorResponse(400, displayName.error);
   const client = registrationField(body.client, 'client');
@@ -795,6 +856,12 @@ export async function registerAgent(
   }
   const requester = humanActor(ctx);
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
+  if (body.rekey !== undefined && typeof body.rekey !== 'boolean')
+    return errorResponse(400, 'invalid rekey: expected a boolean');
+  if (body.rekey === true) {
+    const refused = rekeyAgent(ctx, address);
+    if (refused !== null) return refused;
+  }
   const reg = await registerAgentRow(ctx, {
     name,
     displayName: displayName.value,
@@ -810,6 +877,35 @@ export async function registerAgent(
   );
 }
 
+// Retires `address`'s row so the same name can register again: an agent on
+// the owner's machine (the daemon file's token, or the app token) whose cached
+// token was lost. Null when it may go ahead; the refusal otherwise.
+function rekeyAgent(ctx: ApiContext, address: string): Response | null {
+  if (ctx.viaAgentToken !== true && ctx.ownerCredential !== true)
+    return errorResponse(
+      403,
+      "only an agent on the owner's machine may re-key its name"
+    );
+  const existing = ctx.messaging.store.getAgent(address);
+  if (existing === null || existing.status === 'revoked') return null;
+  if (isInternalAgent(existing))
+    return errorResponse(
+      409,
+      `${address} is Dispatch's own agent; register under another name`
+    );
+  ctx.messaging.store.putAgent({ ...existing, status: 'revoked' });
+  // Cards raised for the old key would decide nothing now: close them.
+  for (;;) {
+    const card = openRegistrationGateFor(ctx, address);
+    if (card === null || !closeGate(ctx.messaging.engine, card.id, 're-keyed'))
+      break;
+  }
+  return null;
+}
+
+// How many registrations one namespace (agent:<handle>/) may have pending.
+const MAX_PENDING_REGISTRATIONS = 10;
+
 // A registration already checked for its name: the agent row, its token and
 // the owner gate that approves it.
 export interface AgentRegistration {
@@ -820,6 +916,8 @@ export interface AgentRegistration {
   gateBody: string;
   // Refuse a name that was ever registered, revoked rows included.
   refuseAnyExisting: boolean;
+  // A deciding caller approves it in the same request, so no gate waits.
+  approvedAtOnce?: boolean;
 }
 
 // Writes a pending agent:<requester's handle>/<name> row with a fresh token and
@@ -866,6 +964,24 @@ export async function registerAgentRow(
     };
   }
 
+  // M4: each namespace may hold only so many registrations awaiting the
+  // owner, so a token cannot flood Needs you with approval gates.
+  const namespace = address.slice(0, address.indexOf('/') + 1);
+  const pending = ctx.messaging.store
+    .agents()
+    .filter(
+      (a) => a.status === 'pending' && a.address.startsWith(namespace)
+    ).length;
+  if (reg.approvedAtOnce !== true && pending >= MAX_PENDING_REGISTRATIONS) {
+    return {
+      ok: false,
+      response: errorResponse(
+        429,
+        `${pending} registrations under ${namespace}* already await approval; ask a human to approve or deny them first`
+      ),
+    };
+  }
+
   const token = randomBytes(32).toString('hex');
   const record: AgentRecord = {
     address,
@@ -892,6 +1008,7 @@ export async function registerAgentRow(
           agent: address,
           client: reg.client,
           requestedBy: reg.requester,
+          key: registrationKey(record.tokenHash),
         } satisfies GateData,
       },
       { address: SYSTEM_ADDRESS, canDecide: true }
@@ -940,6 +1057,17 @@ async function decideAgent(
 ): Promise<Response> {
   const agent = ctx.messaging.store.getAgent(address);
   if (agent === null) return errorResponse(404, `no agent ${address}`);
+  // Revoking an A2A client is final: its tasks were failed and its push
+  // configs deleted, so approving it again is refused; add a new client.
+  if (
+    choice === 'approve' &&
+    agent.status === 'revoked' &&
+    isClientAddress(address)
+  )
+    return errorResponse(
+      409,
+      `${address} was revoked, which is final; add a new A2A client instead`
+    );
   const gate = openRegistrationGateFor(ctx, address);
   if (gate !== null) {
     await ctx.messaging.engine.reply(

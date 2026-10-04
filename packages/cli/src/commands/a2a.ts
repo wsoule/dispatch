@@ -13,7 +13,7 @@ import { createA2AApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
 import type { ServeCommandOptions } from './a2aServe.js';
-import { resolveServe } from './a2aServe.js';
+import { resolveServe, stopSignal } from './a2aServe.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 
 const TOKEN_HELP = 'the daemon app token (or DISPATCH_APP_TOKEN)';
@@ -95,7 +95,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
   const a2a = program
     .command('a2a')
     .description(
-      'Expose this project as an A2A agent: the listener, its card, clients and their tasks'
+      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, and standalone hosts (hosts, serve)'
     );
 
   const withAgentToken = async (): Promise<A2AApiClient> => {
@@ -146,6 +146,10 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       'behind a tunnel on loopback: key per-IP limits on X-Forwarded-For'
     )
     .option('--standalone', 'enable /api/a2a/port/* for `dispatch a2a serve`')
+    .option(
+      '--no-standalone',
+      'close /api/a2a/port/* (left out, the current setting stays)'
+    )
     .option('--off', 'close the listener')
     .option('--status', 'show whether and where it listens')
     .option('--token <token>', TOKEN_HELP)
@@ -185,7 +189,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
                 keyPath: resolve(ctx.cwd, o.tlsKey),
               },
         trustForwardedFor: o.trustForwardedFor === true,
-        standalone: o.standalone === true,
+        ...(o.standalone === undefined ? {} : { standalone: o.standalone }),
       });
       printStatus(status);
       // Saved but closed (port in use, bad certificate): exit non-zero for scripts.
@@ -476,11 +480,9 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
     .action(async (o: ServeCommandOptions) => {
       const standalone = await startStandalone(await resolveServe(ctx, o));
       ctx.log(
-        `A2A standalone host listening at ${standalone.url} (card: ${standalone.url}/.well-known/agent-card.json). Ctrl-C to stop.`
+        `A2A standalone host listening at ${standalone.url} (card: ${standalone.url}/.well-known/agent-card.json). Ctrl-C or SIGTERM stops it.`
       );
-      await new Promise<void>((resolve) =>
-        process.once('SIGINT', () => resolve())
-      );
+      await stopSignal();
       await standalone.stop();
     });
 
@@ -499,19 +501,27 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       ctx.log(
         `standalone hosts: ${standalone ? 'allowed' : 'not allowed (dispatch a2a hosts allow)'}`
       );
+      if (list.length === 0)
+        ctx.log(
+          'No hosts yet. Add one with: dispatch a2a hosts add <name> --public-url <url>'
+        );
       for (const h of list)
         ctx.log(
-          `${h.id} · ${h.name} · ${h.revokedAt === null ? 'active' : `revoked ${h.revokedAt}`} · added by ${h.createdBy}`
+          `${h.id} · ${h.name} · ${h.publicUrl} · ${h.revokedAt === null ? 'active' : `revoked ${h.revokedAt}`} · added by ${h.createdBy}`
         );
     });
   hosts
     .command('add <name>')
     .description('Mint a host token, shown once')
+    .requiredOption(
+      '--public-url <url>',
+      'The URL the host serves on; its card names no other'
+    )
     .option('--token <token>', TOKEN_HELP)
-    .action(async (name: string, o: { token?: string }) => {
+    .action(async (name: string, o: { token?: string; publicUrl: string }) => {
       const client = await withAppToken(o.token, 'dispatch a2a hosts add');
-      const added = await client.addHost(name);
-      ctx.log(`${added.id} · ${added.name}`);
+      const added = await client.addHost(name, o.publicUrl);
+      ctx.log(`${added.id} · ${added.name} · ${added.publicUrl}`);
       ctx.log(`host token: ${added.token}`);
       ctx.log(
         'This token is shown once. Put it in a chmod 600 file on the relay machine and pass --host-token-file, or set DISPATCH_A2A_HOST_TOKEN.'

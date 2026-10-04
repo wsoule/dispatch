@@ -14,6 +14,7 @@ type DecisionKind =
   | 'approval'
   | 'scope-request'
   | 'memory'
+  | 'doc'
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
@@ -92,8 +93,8 @@ export type DecisionTarget =
  *
  * - approval / scope-request / question → the run's transcript, where the
  *   answer/approve cards render inline.
- * - memory → the gate message in Threads, whose card shows the proposal. The
- *   item's id is `memory:<gate message id>`.
+ * - memory, doc → the gate message in Threads, whose card shows the
+ *   proposal. The item's id is `<kind>:<gate message id>`.
  * - fix-loop-capped → the task's review, where FixLoopSection takes the
  *   ruling.
  * - run-stalled → the run's review: the stranded work is the thing to look at.
@@ -101,8 +102,8 @@ export type DecisionTarget =
  * `null` only when the item names neither a task, a run nor a gate.
  */
 export function decisionTarget(item: DecisionItem): DecisionTarget | null {
-  if (item.kind === 'memory') {
-    return { kind: 'thread', messageId: item.id.slice('memory:'.length) };
+  if (item.kind === 'memory' || item.kind === 'doc') {
+    return { kind: 'thread', messageId: item.id.slice(item.kind.length + 1) };
   }
   const tab: TaskTab =
     item.kind === 'fix-loop-capped' || item.kind === 'run-stalled'

@@ -35,10 +35,28 @@ function invalid(field: string, why: string): never {
   throw new MemoryError('invalid', `${field}: ${why}`, field);
 }
 
-// A one-line field: no line break of any kind, within `maxBytes`.
+// C0 and C1 controls (tab aside) and bidi overrides: they rewrite a terminal
+// or reorder the text a reader sees.
+function hasControlChar(text: string): boolean {
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (
+      (c <= 0x1f && c !== 0x09) ||
+      (c >= 0x7f && c <= 0x9f) ||
+      (c >= 0x202a && c <= 0x202e) ||
+      (c >= 0x2066 && c <= 0x2069)
+    )
+      return true;
+  }
+  return false;
+}
+
+// A one-line field: no line break or control character, within `maxBytes`.
 function oneLine(value: unknown, field: string, maxBytes: number): string {
   if (typeof value !== 'string') invalid(field, 'expected a string');
   if (LINE_BREAK.test(value)) invalid(field, 'must not contain line breaks');
+  if (hasControlChar(value))
+    invalid(field, 'must not contain control characters');
   if (utf8Bytes(value) > maxBytes)
     invalid(field, `at most ${maxBytes} bytes (UTF-8)`);
   return value;
@@ -86,7 +104,7 @@ export function validateMemoryInput(input: MemoryWriteInput): ValidMemoryInput {
   if (utf8Bytes(input.body) > MEMORY_LIMITS.bodyBytes)
     invalid(
       'body',
-      `at most ${MEMORY_LIMITS.bodyBytes} bytes (UTF-8); long-form belongs in Docs`
+      `at most ${MEMORY_LIMITS.bodyBytes} bytes (UTF-8); long-form belongs in a doc: doc_save it, then ref it from a short entry`
     );
   const refs = validateRefs(input.refs ?? []);
   const epic = input.epic ?? null;

@@ -9,11 +9,6 @@ import {
   Task,
 } from '@a2a-js/sdk';
 import type { Client } from '@a2a-js/sdk/client';
-import {
-  ClientFactory,
-  JsonRpcTransportFactory,
-  RestTransportFactory,
-} from '@a2a-js/sdk/client';
 import { VersionNotSupportedError } from '@a2a-js/sdk/errors';
 import type { JsonValue } from '@dispatch/protocol';
 
@@ -71,7 +66,10 @@ function shortMessage(text: string): string {
 export class PeerClient {
   constructor(private readonly o: PeerClientOptions) {}
 
-  private sdk(box: StatusBox, signal?: AbortSignal): Promise<Client> {
+  private async sdk(box: StatusBox, signal?: AbortSignal): Promise<Client> {
+    // Loaded on first contact, not at import: see test/lazy-imports.test.ts.
+    const { ClientFactory, JsonRpcTransportFactory, RestTransportFactory } =
+      await import('@a2a-js/sdk/client');
     const fetchImpl = peerFetch({
       headers: {
         [A2A_VERSION_HEADER]: '1.0',
@@ -122,13 +120,16 @@ export class PeerClient {
       if (box.network) throw new PeerHttpError(null, shortMessage(raw));
       const status =
         box.status !== null && box.status >= 400 ? box.status : 400;
-      // The one A2A reason the worker acts on: a peer that no longer speaks 1.0 gets its card refreshed.
-      const reason = versionNotSupported(err) ? 'VERSION_NOT_SUPPORTED' : null;
+      // The worker acts on VERSION_NOT_SUPPORTED (a card refresh) and AUTH_* (a failed credential).
+      const reason = versionNotSupported(err)
+        ? 'VERSION_NOT_SUPPORTED'
+        : (box.reason ?? null);
       throw new PeerHttpError(
         status,
-        shortMessage(`HTTP ${status}: ${raw}`),
+        `the peer answered HTTP ${status}`,
         box.retryAfterSec,
-        reason
+        reason,
+        shortMessage(raw)
       );
     }
   }

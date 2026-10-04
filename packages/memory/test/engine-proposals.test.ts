@@ -184,6 +184,42 @@ describe('proposals', () => {
     expect(t.shared.countEntries()).toBe(0);
   });
 
+  it('never auto-approves a lesson restored from the receipt log', async () => {
+    const t = setup();
+    t.host.ruling = AUTO;
+    const out = (await t.engine.submitProposal(
+      { address: 'agent:dispatch', canDecide: false, kind: 'agent' },
+      {
+        action: 'add',
+        scope: 'team',
+        content: valid('restored'),
+        origin: 'receipts:mem-1',
+      }
+    )) as Gated;
+    expect(out.gate).toBe('m-gate-1');
+    expect(t.shared.countEntries()).toBe(0);
+  });
+
+  it('gates a restore retry and exempts it from the hourly limit', async () => {
+    const t = setup({ proposalsPerHour: 1 });
+    t.host.ruling = AUTO;
+    const system = {
+      address: 'agent:dispatch',
+      canDecide: false,
+      kind: 'agent',
+    } as const;
+    for (const n of [1, 2]) {
+      const out = (await t.engine.submitProposal(system, {
+        action: 'add',
+        scope: 'team',
+        content: valid(`retried ${n}`),
+        origin: `receipts:mem-${n}/2`,
+      })) as Gated;
+      expect(out.gate).toBe(`m-gate-${n}`);
+    }
+    expect(t.shared.countEntries()).toBe(0);
+  });
+
   it('sends a proposal to a human when the policy ruling throws', async () => {
     const t = setup();
     t.host.failing.add('rule');
@@ -326,7 +362,27 @@ describe('proposals', () => {
     ).toBe('ok');
   });
 
-  // Only ledger: and sync: origins are exempt; any other origin counts.
+  it('never counts a receipt-log restore against the restoring agent', async () => {
+    const t = setup({ proposalsPerHour: 1 });
+    const system = {
+      address: 'agent:dispatch',
+      canDecide: false,
+      kind: 'agent',
+    } as const;
+    for (const n of [1, 2])
+      expect(
+        await conflictOf(
+          t.engine.submitProposal(system, {
+            action: 'add',
+            scope: 'team',
+            content: valid(`restored ${n}`),
+            origin: `receipts:mem-${n}`,
+          })
+        )
+      ).toBe('ok');
+  });
+
+  // Only ledger:, sync: and receipts: origins are exempt; any other origin counts.
   it('counts an amendment against its author’s hourly limit', async () => {
     const t = setup({ proposalsPerHour: 1 });
     // The shared agentToken's principal: attributed to the owner, never a human.

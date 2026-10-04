@@ -77,6 +77,10 @@ function sweep(
 ): DecayResult | null {
   try {
     const result = decayStore(store, policy);
+    if (result.anomaly !== null)
+      console.error(
+        `dispatchd: memory decay of ${label} only marked stale: ${result.anomaly}`
+      );
     summary.stores += 1;
     summary.staled += result.staled;
     summary.expired += result.expired;

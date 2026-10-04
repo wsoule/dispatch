@@ -1,5 +1,4 @@
-import { AgentCard, verifyAgentCardSignature } from '@a2a-js/sdk';
-import { buildCardJson } from '@dispatch/a2a';
+import { cardJson, verifyCardSignature } from '@dispatch/a2a';
 import {
   credentialsPath,
   normalizeProjectPath,
@@ -106,11 +105,13 @@ describe('the daemon card', () => {
     ) as { jku: string; kid: string };
     expect(header.jku).toBe('https://relay.example.com/.well-known/jwks.json');
     const key = inputs.jwks?.keys.find((k) => k.kid === header.kid);
+    const served = JSON.parse(JSON.stringify(cardJson(inputs))) as Record<
+      string,
+      unknown
+    >;
     await expect(
-      verifyAgentCardSignature(() => Promise.resolve(key as never))(
-        AgentCard.fromJSON(buildCardJson(inputs))
-      )
-    ).resolves.toBeUndefined();
+      verifyCardSignature(served, () => Promise.resolve(key as never))
+    ).resolves.toBe(true);
   });
 
   it('publishes public keys only', async () => {

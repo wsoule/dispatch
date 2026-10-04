@@ -182,6 +182,17 @@ describe('open revisions', () => {
     expect(store.revision(b.rev.id)?.sealed).toBe(true);
   });
 
+  it('starts a new revision after the clock steps back past the open head', () => {
+    const made = service.create(as(OWNER), { title: 'A', body: 'x\n' });
+    host.advance(-120);
+    const next = service.saveBody(as(OWNER), 'a', {
+      baseRev: made.rev.id,
+      body: 'y\n',
+    });
+    expect(next.rev.id).not.toBe(made.rev.id);
+    expect(store.revision(made.rev.id)?.body).toBe('x\n');
+  });
+
   it('seals every write when coalesceMinutes is 0', () => {
     ({ service, host, store } = makeService({ coalesceMinutes: 0 }));
     const made = service.create(service.actorFor(OWNER), {
@@ -545,6 +556,28 @@ describe('review state, revert and lifecycle', () => {
     expect(service.read(as(OWNER), 'a').text).toBe('agent\n');
   });
 
+  it('refuses to accept a head holding conflict markers, or a conflicted doc', () => {
+    service.create(as(OWNER), {
+      title: 'Marked',
+      body: '# M\n<<<<<<< rev-a\nx\n=======\ny\n>>>>>>> rev-b\n',
+    });
+    expect(() => service.setStatus(as(OWNER), 'marked', 'accepted')).toThrow(
+      'conflict markers'
+    );
+    const made = service.create(as(OWNER), { title: 'Clean', body: 'x\n' });
+    const row = store.doc(made.doc.id);
+    if (row === null) throw new Error('no doc');
+    store.putDoc({ ...row, conflicted: true });
+    expect(() => service.setStatus(as(OWNER), 'clean', 'accepted')).toThrow(
+      'conflicted'
+    );
+    // A line that only looks like a marker inside prose does not block.
+    service.create(as(OWNER), { title: 'Prose', body: 'a <<<<<<< b\n' });
+    expect(service.setStatus(as(OWNER), 'prose', 'accepted').status).toBe(
+      'accepted'
+    );
+  });
+
   it('archives read-only, hides from the default list, and restores', () => {
     service.create(as(OWNER), { title: 'A', body: 'x\n' });
     expect(code(() => service.setStatus(as(TEAMMATE), 'a', 'archived'))).toBe(
@@ -599,6 +632,7 @@ describe('review state, revert and lifecycle', () => {
     expect(code(() => service.read(as(OWNER), made.doc.id))).toBe('not-found');
     expect(store.tombstone(made.doc.id)).toEqual({
       docId: made.doc.id,
+      ns: 'team',
       origin: null,
     });
   });

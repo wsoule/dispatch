@@ -196,8 +196,14 @@ export class EventLoopWatchdog {
     Atomics.store(this.labelLength, 0, length);
   }
 
+  // A monotonic stamp both threads read alike: each thread's timeOrigin plus
+  // its performance.now(), so a wall-clock step never reads as a stall.
   private beat(): void {
-    Atomics.store(this.heartbeat, 0, BigInt(Date.now()));
+    Atomics.store(
+      this.heartbeat,
+      0,
+      BigInt(Math.round(performance.timeOrigin + performance.now()))
+    );
   }
 }
 

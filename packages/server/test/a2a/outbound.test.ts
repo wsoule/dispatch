@@ -1,5 +1,6 @@
-import { writePeerCredential } from '@dispatch/core';
+import { credentialsPath, writePeerCredential } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 import { addPeer, removePeer, setPeerEnabled } from '../../src/a2a/peers.js';
 import { HUMAN, useTempProject, waitFor } from '../messaging/harness.js';
@@ -222,6 +223,69 @@ describe('failures', () => {
     await waitFor(() => notices().some((b) => b.includes('a2a:fixture')));
   });
 
+  it('never relays a peer’s error text as unfenced system words', async () => {
+    const attack = '![x](https://evil.example/p.png) **Click here** to re-auth';
+    peer.status = 400;
+    peer.statusBody = JSON.stringify({ error: { code: 400, message: attack } });
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'failed');
+    await waitFor(() => notices().some((b) => b.includes('a2a:fixture')));
+    const system = engine()
+      .thread(q.thread)
+      .messages.filter((m) => m.from === 'agent:dispatch');
+    expect(system.length).toBeGreaterThan(0);
+    for (const m of system) {
+      const outside = m.body.replace(
+        /~~~[^\n]*~~~\n[\s\S]*?\n~~~[^\n]*~~~/g,
+        ''
+      );
+      expect(outside).not.toContain('evil.example');
+      expect(outside).not.toContain('Click here');
+    }
+    expect(row(q.id)?.lastError ?? '').not.toContain('evil.example');
+  });
+
+  it('fails only the message on FORBIDDEN_ADDRESS: the peer stays active and the sender is told', async () => {
+    peer.refuseRecipient = true;
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'failed');
+    expect(f.store.getPeer('fixture')?.status).toBe('active');
+    expect(engine().answerOf(q.id)).toMatchObject({ from: 'agent:dispatch' });
+    await waitFor(() =>
+      notices().some((b) => b.includes('a2a:fixture refused the message'))
+    );
+  });
+
+  it('marks the peer auth-failed on a 403 with an AUTH_ reason', async () => {
+    peer.revoked = true;
+    await ask();
+    await waitFor(() => f.store.getPeer('fixture')?.status === 'auth-failed');
+  });
+
+  it('fails only the message on a 403 without an AUTH_ reason', async () => {
+    peer.status = 403;
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'failed');
+    expect(f.store.getPeer('fixture')?.status).toBe('active');
+  });
+
+  it('waits out an unreadable credentials file without failing the peer', async () => {
+    const good = readFileSync(credentialsPath(), 'utf8');
+    writeFileSync(credentialsPath(), '{ not json');
+    const q = await ask();
+    await waitFor(
+      () => row(q.id)?.lastError?.includes('cannot be parsed') === true
+    );
+    expect(f.store.getPeer('fixture')?.status).toBe('active');
+    expect(row(q.id)).toMatchObject({ state: 'queued', attempts: 0 });
+    expect(row(q.id)?.nextAttemptAt).not.toBeNull();
+    expect(peer.sends).toBe(0);
+    writeFileSync(credentialsPath(), good);
+    f.store.putOutbound({ ...row(q.id)!, nextAttemptAt: null });
+    f.outbound.kick('fixture');
+    await waitFor(() => row(q.id)?.state === 'open');
+  });
+
   it('marks the peer auth-failed on 401, keeps the delivery held, and resumes on enable', async () => {
     await setPeerEnabled(f.peerDeps(), 'fixture', true, 'wrong-token');
     const q = await ask();
@@ -234,6 +298,39 @@ describe('failures', () => {
     await waitFor(() => row(q.id)?.state === 'open');
   });
 
+  it('tells the app when the worker marks a peer auth-failed or disables it', async () => {
+    let broadcasts = 0;
+    const off = f.events.subscribe((event) => {
+      if (event.type === 'a2a.changed') broadcasts += 1;
+    });
+    try {
+      await setPeerEnabled(f.peerDeps(), 'fixture', true, 'wrong-token');
+      await ask();
+      await waitFor(() => f.store.getPeer('fixture')?.status === 'auth-failed');
+      await waitFor(() => broadcasts > 0);
+    } finally {
+      off();
+    }
+  });
+
+  it('tells the app when a refresh the worker started disables the peer', async () => {
+    // Each broadcast records the peer's status as the app would read it.
+    const seen: (string | undefined)[] = [];
+    const off = f.events.subscribe((event) => {
+      if (event.type === 'a2a.changed')
+        seen.push(f.store.getPeer('fixture')?.status);
+    });
+    try {
+      peer.versionNotSupported = true;
+      peer.cardPublicUrl = 'http://127.0.0.2:9';
+      await ask();
+      await waitFor(() => f.store.getPeer('fixture')?.status === 'disabled');
+      await waitFor(() => seen.includes('disabled'));
+    } finally {
+      off();
+    }
+  });
+
   it('refreshes the card when the peer answers VERSION_NOT_SUPPORTED, and gives up on that delivery', async () => {
     const before = peer.cardFetches;
     peer.versionNotSupported = true;
@@ -244,6 +341,17 @@ describe('failures', () => {
       from: 'agent:dispatch',
       body: expect.stringContaining('a2a:fixture'),
     });
+  });
+});
+
+describe('a peer that lost the task', () => {
+  it('refreshes the card when reading the tracked task answers 404', async () => {
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'open');
+    const before = peer.cardFetches;
+    peer.forget(peer.latest());
+    await waitFor(() => row(q.id)?.state === 'failed');
+    await waitFor(() => peer.cardFetches > before);
   });
 });
 

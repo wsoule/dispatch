@@ -1,3 +1,5 @@
+import { childEnv } from '@dispatch/core';
+
 // Thrown, never swallowed to `[]` — a failed `git ls-files` is not "no
 // tracked files" and must not read as one.
 export class TrackedFilesError extends Error {
@@ -20,6 +22,7 @@ async function runLsFiles(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(['git', 'ls-files', '-z'], {
     cwd: rootDir,
+    env: childEnv(),
     stdout: 'pipe',
     stderr: 'pipe',
   });

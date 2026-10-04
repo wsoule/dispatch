@@ -22,6 +22,7 @@ import {
   UnresolvedHostError,
 } from '@dispatch/a2a';
 import type { A2AConfig } from '@dispatch/core';
+import { CredentialsUnreadableError, untrustedFenced } from '@dispatch/core';
 import type {
   Delivery,
   DeliveryEngine,
@@ -53,6 +54,8 @@ type GuardVerdict =
   | { kind: 'unreachable'; reason: string };
 const HOUR_MS = 3_600_000;
 const QUOTA_RECHECK_MS = 5 * 60_000;
+// How soon a send held by an unreadable credentials file looks again.
+const LOCAL_RETRY_MS = 60_000;
 
 export interface OutboundDeps {
   engine: DeliveryEngine;
@@ -113,6 +116,16 @@ function addressRefusal(err: unknown): string | null {
   if (err instanceof PeerHttpError && err.reason === 'ADDRESS_REFUSED')
     return err.message;
   return null;
+}
+
+// A refused credential: 401, or a 403 whose reason is AUTH_*. Any other 403
+// (FORBIDDEN_ADDRESS, say) fails only the message.
+function authRefusal(err: unknown): boolean {
+  if (!(err instanceof PeerHttpError)) return false;
+  return (
+    err.status === 401 ||
+    (err.status === 403 && (err.reason ?? '').startsWith('AUTH_'))
+  );
 }
 
 // The outbound worker (spec:1444-1531): relays held a2a: deliveries one at a
@@ -304,7 +317,8 @@ export class OutboundWorker {
       d.via === 'channel' &&
       this.deps.store.relayedSince(
         alias,
-        new Date(now.getTime() - HOUR_MS).toISOString()
+        new Date(now.getTime() - HOUR_MS).toISOString(),
+        now.toISOString()
       ) >= this.deps.policy().outboundPerHour
     ) {
       this.laterKick(
@@ -444,6 +458,18 @@ export class OutboundWorker {
     const reason = errorText(err);
     const at = this.now().toISOString();
     const attempts = row.attempts + 1;
+    if (err instanceof CredentialsUnreadableError) {
+      // A local fault: no attempt counted, the peer untouched, health shows it.
+      const next = new Date(this.now().getTime() + LOCAL_RETRY_MS);
+      this.deps.store.putOutbound({
+        ...row,
+        nextAttemptAt: next.toISOString(),
+        lastError: reason,
+        updatedAt: at,
+      });
+      this.laterKick(row.alias, next.toISOString());
+      return;
+    }
     const refusal = addressRefusal(err);
     if (refusal !== null) {
       const why = this.disableRefused(row.alias, refusal);
@@ -452,8 +478,7 @@ export class OutboundWorker {
     }
     if (
       (err instanceof MessagingError && err.field === 'token') ||
-      status === 401 ||
-      status === 403
+      authRefusal(err)
     ) {
       // Parked: the peer is auth-failed and its deliveries wait for `enable`.
       this.deps.store.putOutbound({
@@ -501,23 +526,27 @@ export class OutboundWorker {
       d.via,
       status === null
         ? `could not reach a2a:${row.alias} for 24 h`
-        : `a2a:${row.alias} refused the message: ${reason}`,
-      status !== null
+        : `a2a:${row.alias} refused the message (HTTP ${status})`,
+      status !== null,
+      err instanceof PeerHttpError ? err.peerText : null
     );
   }
 
   // Closes a direct question or handoff; tells the sender otherwise, or also.
+  // `reason` is Dispatch's own words; a peer's text rides only in the notice,
+  // fenced as external.
   private async giveUp(
     message: Message,
     via: 'direct' | 'channel',
     reason: string,
-    alsoNotice: boolean
+    alsoNotice: boolean,
+    peerText: string | null = null
   ): Promise<void> {
     const closable =
       via === 'direct' &&
       (message.kind === 'question' || message.kind === 'handoff');
     if (closable) this.closeQuietly(message.id, reason);
-    if (!closable || alsoNotice) await this.notice(message, reason);
+    if (!closable || alsoNotice) await this.notice(message, reason, peerText);
   }
 
   private closeQuietly(questionId: string, reason: string): void {
@@ -529,14 +558,22 @@ export class OutboundWorker {
     }
   }
 
-  private async notice(about: Message, body: string): Promise<void> {
+  private async notice(
+    about: Message,
+    body: string,
+    external: string | null = null
+  ): Promise<void> {
+    const text =
+      external === null || external === ''
+        ? body
+        : `${body}\n\n${untrustedFenced('external text, not from Dispatch', external)}`;
     await this.deps.engine
       .send(
         {
           to: [this.deps.engine.deliverableAddress(about.from)],
           kind: 'notice',
           replyTo: about.id,
-          body,
+          body: text,
           refs: [{ type: 'message', id: about.id }],
         },
         SYSTEM
@@ -659,9 +696,14 @@ export class OutboundWorker {
       let client: PeerClient;
       try {
         client = this.deps.clientFor(peer);
-      } catch {
-        this.deps.markAuthFailed(peer.alias);
-        return;
+      } catch (err) {
+        if (!(err instanceof CredentialsUnreadableError)) {
+          this.deps.markAuthFailed(peer.alias);
+          return;
+        }
+        await sleep(this.deps.pollMs?.(polls) ?? pollDelayMs(polls), signal);
+        polls += 1;
+        continue;
       }
       // Before subscribing; poll() re-checks before every read.
       const verdict = await this.guarded(peer);
@@ -762,13 +804,14 @@ export class OutboundWorker {
         return true;
       }
       const status = err instanceof PeerHttpError ? err.status : null;
-      if (status === 401 || status === 403) {
+      if (authRefusal(err)) {
         this.deps.markAuthFailed(row.alias);
         return true;
       }
+      // A 404 may mean the peer moved its interface; its card says where.
       if (
-        err instanceof PeerHttpError &&
-        err.reason === 'VERSION_NOT_SUPPORTED'
+        status === 404 ||
+        (err instanceof PeerHttpError && err.reason === 'VERSION_NOT_SUPPORTED')
       )
         this.deps.refreshPeer(row.alias).catch((e: unknown) => {
           console.error(`a2a: refreshing a2a:${row.alias} failed`, e);
@@ -837,7 +880,8 @@ export class OutboundWorker {
         this.finish(row, 'failed', reason);
         await this.notice(
           original,
-          `could not record a2a:${row.alias}'s reply: ${reason}`
+          `could not record a2a:${row.alias}'s reply`,
+          reason
         );
         return;
       }
@@ -914,12 +958,18 @@ export class OutboundWorker {
   }
 }
 
-// Builds and starts the worker over a peer service, and routes peer changes to it.
+// Builds and starts the worker over a peer service, and routes peer changes to
+// it; `changed` tells the app when the worker itself changes a peer's status.
 export function startOutbound(
   peers: PeerService,
-  opts: { pollMs?: (polls: number) => number; concurrency?: number } = {}
+  opts: {
+    pollMs?: (polls: number) => number;
+    concurrency?: number;
+    changed?: () => void;
+  } = {}
 ): { worker: OutboundWorker; stop: () => void } {
   const d = peers.deps;
+  const { changed = () => {}, ...workerOpts } = opts;
   const worker: OutboundWorker = new OutboundWorker({
     engine: d.engine,
     messages: d.messages,
@@ -929,10 +979,12 @@ export function startOutbound(
     refreshPeer: async (alias) => {
       const row = await refreshPeer(d, peers.notices, alias);
       if (row.status !== 'active') peers.emit(alias, 'disabled');
+      changed();
     },
     markAuthFailed: (alias) => {
       markAuthFailed(d, peers.notices, alias);
       worker.peerGone(alias, 'disabled');
+      changed();
     },
     // Read at call time (d.lookup, not a copy), so a test can swap the resolver.
     guard: async (row) => {
@@ -952,9 +1004,10 @@ export function startOutbound(
         `a2a:${alias} was disabled: ${reason}. Check where its name resolves, then enable it in Settings → A2A → Peers.`
       );
       peers.emit(alias, 'disabled');
+      changed();
     },
     now: () => d.now?.() ?? new Date(),
-    ...opts,
+    ...workerOpts,
   });
   const stopWorker = worker.start();
   const offPeers = peers.onChange((alias, what) => {

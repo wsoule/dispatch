@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
@@ -38,7 +39,11 @@ export function projectRootFor(cwd: string): string {
   const result = spawnSync(
     'git',
     ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    {
+      encoding: 'utf8',
+      env: childEnv(),
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }
   );
   if (result.status !== 0) return cwd;
   const commonDir = result.stdout.trim();

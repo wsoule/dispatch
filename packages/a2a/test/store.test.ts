@@ -299,6 +299,14 @@ describe('outbound', () => {
     expect(store.contextFor('acme', 'm-thread')).toBe('pc-new');
     expect(store.contextFor('acme', 'm-other')).toBeNull();
     expect(store.relayedSince('acme', '2026-09-25T10:30:00.000Z')).toBe(1);
+    // A row dated after `until` (a clock that jumped) is outside the window.
+    expect(
+      store.relayedSince(
+        'acme',
+        '2026-09-25T10:30:00.000Z',
+        '2026-09-25T10:45:00.000Z'
+      )
+    ).toBe(0);
   });
 });
 
@@ -379,6 +387,7 @@ describe('hosts', () => {
     id,
     name: 'relay',
     tokenHash: `hash-${id}`,
+    publicUrl: 'https://relay.example.com',
     createdBy: 'human:wyat',
     createdAt: '2026-09-25T10:00:00.000Z',
     revokedAt: null,
@@ -399,5 +408,37 @@ describe('hosts', () => {
       ['h-1', '2026-09-25T12:00:00.000Z'],
       ['h-2', null],
     ]);
+  });
+});
+
+describe('push_pending', () => {
+  it('keeps a retry until cleared, and goes with its config', () => {
+    store.putPushConfig(push('a'));
+    store.putPushConfig(push('b', { client: 'agent:wyat/a2a.other' }));
+    expect(store.pushConfigTaskIds()).toEqual(['m-1']);
+    store.setPushPending('m-1', 'a', 1, '2026-09-25T10:00:10.000Z');
+    store.setPushPending('m-1', 'a', 2, '2026-09-25T10:01:10.000Z');
+    store.setPushPending('m-1', 'b', 1, '2026-09-25T10:00:10.000Z');
+    expect(store.getPushPending('m-1', 'a')).toEqual({
+      tries: 2,
+      nextAt: '2026-09-25T10:01:10.000Z',
+    });
+    store.deletePushConfig('m-1', 'a');
+    expect(store.getPushPending('m-1', 'a')).toBeNull();
+    store.deletePushConfigsOf('agent:wyat/a2a.other');
+    expect(store.getPushPending('m-1', 'b')).toBeNull();
+    store.putPushConfig(push('c'));
+    store.setPushPending('m-1', 'c', 1, '2026-09-25T10:00:10.000Z');
+    store.clearPushPending('m-1', 'c');
+    expect(store.getPushPending('m-1', 'c')).toBeNull();
+  });
+});
+
+describe('derived_tasks', () => {
+  it('keeps the A2A task a clone was made from', () => {
+    expect(store.derivedFrom('t-clone1')).toBeNull();
+    store.markDerived('t-clone1', 't-source', '2026-09-25T10:00:00.000Z');
+    store.markDerived('t-clone1', 't-other', '2026-09-25T11:00:00.000Z');
+    expect(store.derivedFrom('t-clone1')).toBe('t-source');
   });
 });

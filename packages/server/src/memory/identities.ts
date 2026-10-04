@@ -1,6 +1,6 @@
 import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase } from '@dispatch/core';
-import { MemoryError } from '@dispatch/memory';
+import { isSqliteBusy, MemoryBusyError, MemoryError } from '@dispatch/memory';
 import { createUlidFactory } from '@dispatch/protocol';
 import { createHash, randomBytes as cryptoRandomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
@@ -368,16 +368,21 @@ export class MemoryIdentities {
     return id;
   }
 
-  // BEGIN IMMEDIATE, so two daemons binding one alias queue instead of racing.
+  // BEGIN IMMEDIATE, so two daemons binding one alias never race; past the
+  // short busy wait it throws MemoryBusyError, which routes retry off the loop.
   private transaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+    } catch (err) {
+      throw isSqliteBusy(err) ? new MemoryBusyError() : err;
+    }
     try {
       const out = fn();
       this.db.exec('COMMIT');
       return out;
     } catch (err) {
       this.db.exec('ROLLBACK');
-      throw err;
+      throw isSqliteBusy(err) ? new MemoryBusyError() : err;
     }
   }
 }
@@ -417,7 +422,9 @@ function openIdentitiesDb(path: string): SqliteDatabase {
     );
   }
   try {
-    db.exec('PRAGMA busy_timeout = 5000');
+    // No synchronous wait: a locked write throws MemoryBusyError at once and
+    // the routes retry it asynchronously.
+    db.exec('PRAGMA busy_timeout = 0');
     db.exec(TABLES);
     const minReader = queryOne<{ value: string }>(
       db,

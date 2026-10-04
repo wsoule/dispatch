@@ -1,4 +1,9 @@
-import { parseTeam, TaskStore } from '@dispatch/core';
+import {
+  parseTeam,
+  serializeTeam,
+  TaskStore,
+  upsertMember,
+} from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -309,7 +314,7 @@ describe('the tier ladder', () => {
   it('nobody hands out more than they hold', async () => {
     const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
 
-    // A decide-tier lead can invite reviewers at their own level or below…
+    // A decide-tier lead can invite someone new at their own level or below…
     expect((await invite({ email: 'ada@example.com' }, lead)).status).toBe(201);
     expect(
       (await invite({ email: 'mary@example.com', tier: 'decide' }, lead)).status
@@ -319,6 +324,51 @@ describe('the tier ladder', () => {
       (await invite({ email: 'eve@example.com', tier: 'operator' }, lead))
         .status
     ).toBe(403);
+    // Re-issuing their own token cannot raise it either.
+    expect(
+      (await invite({ handle: 'grace', tier: 'operator' }, lead)).status
+    ).toBe(403);
+  });
+
+  it("only the owner re-issues another member's credential (XH-R1)", async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+    const ops = await issued({ email: 'linus@example.com', tier: 'operator' });
+
+    // Re-issuing Carol's token would hand Bob her identity, by handle or by
+    // an email that resolves to her roster entry.
+    for (const body of [
+      { handle: 'carol', tier: 'decide' },
+      { handle: 'carol', tier: 'request' },
+      { email: 'carol@example.com', tier: 'request' },
+    ]) {
+      const res = await invite(body, bob);
+      expect(res.status).toBe(403);
+      expect(await res.text()).not.toContain('"token"');
+    }
+    // A teammate holding operator is still not the owner.
+    expect((await invite({ handle: 'carol' }, ops)).status).toBe(403);
+    // A roster member who never held a token is an existing member too.
+    const roster = join(root, '.dispatch', 'team.yml');
+    const members = parseTeam(readFileSync(roster, 'utf8'));
+    writeFileSync(
+      roster,
+      serializeTeam(upsertMember(members, 'dana@example.com', 'Dana').members)
+    );
+    expect((await invite({ handle: 'dana' }, bob)).status).toBe(403);
+
+    // Carol still holds her own token, and it still names her.
+    const me = await get('/api/whoami', carol);
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('carol');
+
+    // Bob may re-issue his own; the old one stops working.
+    const own = await invite({ handle: 'bob', tier: 'decide' }, bob);
+    expect(own.status).toBe(201);
+    expect((await get('/api/whoami', bob)).status).toBe(401);
+    // The owner still re-issues anyone's.
+    expect((await invite({ handle: 'carol' })).status).toBe(201);
+    expect((await get('/api/whoami', carol)).status).toBe(401);
   });
 
   it('nor replaces or revokes a token above their own tier', async () => {

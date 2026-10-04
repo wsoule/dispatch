@@ -24,6 +24,8 @@ import type {
   RevisionCause,
 } from '@dispatch/core';
 import {
+  ASSET_NAME,
+  assetNames,
   DOC_STATUSES,
   docBodyProblem,
   DOCS_LIMITS,
@@ -33,14 +35,25 @@ import {
   LINK_RELS,
   LINK_TARGET_TYPES,
   normalizeDocText,
+  parseDocFile,
+  rewriteAssetLinks,
   untrustedInline,
 } from '@dispatch/core';
 import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
 import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 
 import type { Principal } from '../messaging/principal.js';
+import {
+  assetFilePath,
+  MAX_ASSET_BYTES,
+  readAssetFile,
+  removeAssetDir,
+  sniffImage,
+  storeAssetFile,
+} from './assets.js';
 import { DocConflictError, DocsError } from './errors.js';
 import type { DocChange, DocsHost } from './host.js';
 import type { DiffChunk } from './merge.js';
@@ -48,6 +61,12 @@ import { diffChunks, merge3 } from './merge.js';
 import { applyOps } from './ops.js';
 import type { IndexLine, InlineSpec } from './prompt.js';
 import { renderDocsSection } from './prompt.js';
+import {
+  publishAssetsDir,
+  seedAsset,
+  seedFile,
+  validatePublishPath,
+} from './publish.js';
 import type { RestoreReport } from './receipts.js';
 import { carriesUnreviewed, unreviewedAtCreation } from './review.js';
 import {
@@ -64,6 +83,7 @@ import {
 import type {
   DocRow,
   LinkRow,
+  PublishRow,
   RevisionMeta,
   RevisionRow,
   SectionRow,
@@ -75,7 +95,7 @@ import type {
   ImportText,
   NamePlan,
 } from './transfer.js';
-import { nameKey, planImport } from './transfer.js';
+import { nameKey, planImport, splitForCap } from './transfer.js';
 
 // Every docs rule in one place: who may do what, the write path with open
 // revisions and three-way merges, links, lifecycle, reads, lists and search.
@@ -159,6 +179,11 @@ export interface DocsServiceDeps {
   config: () => { config: DocsConfig; warnings: DocsConfigWarning[] };
   // Other checkouts' docs.db files whose root is gone; they name other projects' paths, so decide tier only.
   orphans?: () => string[];
+  // docs-assets/: where images live (v1); without it uploads answer unavailable.
+  assetsDir?: string;
+  // Caps on stored images, per doc and for the project; the defaults are 200
+  // files and 256 MiB a doc, 2 GiB in all.
+  assetLimits?: { files: number; bytes: number; projectBytes: number };
 }
 
 // A team doc as the receipt log writes it: its newest sealed head, the
@@ -181,6 +206,15 @@ interface RawHit {
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
+// Per-doc image caps, and how long an image no revision links is kept.
+const DEFAULT_ASSET_LIMITS = {
+  files: 200,
+  bytes: 256 * 1024 * 1024,
+  projectBytes: 2 * 1024 * 1024 * 1024,
+};
+const ASSET_TTL_DAYS = 30;
+// A gap since the last image sweep past this reads as a clock jump.
+const ASSET_MAX_SWEEP_GAP_DAYS = 7;
 // A doc line to a run, as live notices are: at most 160 characters.
 const RUN_LINE_CHARS = 160;
 // Mergeability answers kept, per (proposal body, head).
@@ -202,10 +236,37 @@ const OPEN_CAUSES: ReadonlySet<RevisionCause> = new Set([
 
 const sha256 = (text: string): string =>
   createHash('sha256').update(text).digest('hex');
+const sha256Bytes = (bytes: Uint8Array): string =>
+  createHash('sha256').update(bytes).digest('hex');
 const ulid = createUlidFactory();
 
 function forbidden(message: string, field?: string): DocsError {
   return new DocsError('forbidden', message, field);
+}
+
+// Why the clock cannot be trusted to age images: over a week since the last
+// sweep (a daemon stopped for a weekend is a pause, not a jump), or a stamp
+// in the future. Null when sound.
+function assetClockAnomaly(
+  lastSweep: string | null,
+  newest: string | null,
+  now: Date
+): string | null {
+  const limit = now.getTime() + 5 * 60_000;
+  if (lastSweep !== null) {
+    const last = Date.parse(lastSweep);
+    if (last > limit) return `clock anomaly: the last sweep is in the future`;
+    if (now.getTime() - last > ASSET_MAX_SWEEP_GAP_DAYS * DAY_MS)
+      return `clock anomaly: ${lastSweep} was the last sweep`;
+  }
+  if (newest !== null && Date.parse(newest) > limit)
+    return `clock anomaly: an image is stamped ${newest}, in the future`;
+  return null;
+}
+
+// A publish task's title; recovery finds a crash's orphan task by it.
+function publishTitle(handle: string, n: number, path: string): string {
+  return `Publish doc ${handle} (rev ${n}) to ${path}`;
 }
 
 function archivedError(): DocsError {
@@ -329,6 +390,17 @@ function toLink(l: LinkRow): DocLink {
     createdBy: l.createdBy,
     createdAt: l.createdAt,
   };
+}
+
+// Whether `body` holds a diff3 conflict: a `<<<<<<< ` line, then `=======`, then `>>>>>>> `.
+function hasConflictMarkers(body: string): boolean {
+  let stage = 0;
+  for (const line of body.split('\n')) {
+    if (stage === 0 && line.startsWith('<<<<<<< ')) stage = 1;
+    else if (stage === 1 && line === '=======') stage = 2;
+    else if (stage === 2 && line.startsWith('>>>>>>> ')) return true;
+  }
+  return false;
 }
 
 export class DocsService {
@@ -636,7 +708,10 @@ export class DocsService {
     return rev;
   }
 
+  // A head stamped after `now` (the clock stepped back) counts as expired, so
+  // the next save starts a revision instead of overwriting it.
   private expired(rev: RevisionMeta, now: Date, cfg: DocsConfig): boolean {
+    if (now.getTime() < Date.parse(rev.updatedAt)) return true;
     const idle =
       now.getTime() - Date.parse(rev.updatedAt) >= cfg.coalesceMinutes * 60_000;
     return idle || now.getTime() - Date.parse(rev.createdAt) >= MAX_OPEN_AGE_MS;
@@ -857,7 +932,7 @@ export class DocsService {
               task: doc.publishedTask,
               commit: doc.publishedCommit,
             },
-      lastPublishPath: null,
+      lastPublishPath: store.publishRows({ doc: doc.id })[0]?.path ?? null,
       createdBy: doc.createdBy,
       createdAt: doc.createdAt,
       updatedBy: doc.updatedBy,
@@ -1199,6 +1274,7 @@ export class DocsService {
       this.sealInTx(doc, head);
       store.insertRevision(rev);
       store.putProposal(p);
+      this.proposalChanged(doc, p, actor.address, 'opened');
     });
     const task = p.taskId === null ? null : this.host.task(p.taskId);
     const ruling = this.host.rule(task === null ? 'elevated' : task.risk);
@@ -1604,16 +1680,36 @@ export class DocsService {
     const prop = this.proposalRevision(p);
     const base = store.revision(prop.parents[0]);
     const head = this.headOf(doc);
+    const clean = this.mergesCleanly(prop, base, head);
     return {
       proposal: p,
       title: prop.title,
       body: prop.body,
       chunks: diffChunks(base?.body ?? '', prop.body).chunks,
       mergeable: {
-        clean: this.mergesCleanly(prop, base, head),
+        clean,
         headN: head.n ?? 0,
+        headRev: head.id,
+        headHash: head.hash,
       },
+      marked: clean ? null : this.markedMerge(prop, base, head),
     };
+  }
+
+  // What the merge view resolves for a conflicting proposal: diff3 of base,
+  // head and proposal with markers; null when there is nothing to mark.
+  private markedMerge(
+    prop: RevisionRow,
+    base: RevisionRow | null,
+    head: RevisionRow
+  ): string | null {
+    if (base === null) return null;
+    const merged = merge3(base.body, head.body, prop.body, {
+      head: head.id,
+      base: base.id,
+      mine: prop.id,
+    });
+    return merged.clean ? null : merged.marked;
   }
 
   // One merge per (proposal body, head) pair, kept in a small LRU.
@@ -1749,20 +1845,36 @@ export class DocsService {
     const store = this.store();
     const p = this.proposalRow(revId);
     if (p.state !== 'open') return;
-    this.write(() =>
+    const doc = store.doc(p.doc);
+    this.write(() => {
       store.putProposal({
         ...p,
         state: 'rejected',
         reason,
         decidedBy: by,
         decidedAt: this.nowIso(),
-      })
-    );
-    this.tellRun(
-      p,
-      store.doc(p.doc),
-      `your proposal was rejected by ${by}: ${reason}`
-    );
+      });
+      if (doc !== null) this.proposalChanged(doc, p, by, 'rejected');
+    });
+    this.tellRun(p, doc, `your proposal was rejected by ${by}: ${reason}`);
+  }
+
+  // Queues a meta change for a proposal's state, so doc.changed refreshes open
+  // pages and gate cards; the summary names the proposal, never its text.
+  private proposalChanged(
+    doc: DocRow,
+    p: DocProposal,
+    author: string,
+    what: 'opened' | 'rejected' | 'expired'
+  ): void {
+    this.outbox.push({
+      doc: doc.id,
+      scope: doc.scope,
+      kind: 'meta',
+      author,
+      rev: null,
+      summary: `proposal ${p.rev} ${what}`,
+    });
   }
 
   // Marks every open proposal of `doc` withdrawn, inside the caller's write.
@@ -1793,14 +1905,17 @@ export class DocsService {
     for (const p of store.proposalRows({ states: ['open'] })) {
       if (Date.parse(p.createdAt) > cutoff) continue;
       const reason = 'proposal expired';
-      this.write(() =>
+      const doc = store.doc(p.doc);
+      this.write(() => {
         store.putProposal({
           ...p,
           state: 'expired',
           reason,
           decidedAt: now.toISOString(),
-        })
-      );
+        });
+        if (doc !== null)
+          this.proposalChanged(doc, p, SYSTEM_ADDRESS, 'expired');
+      });
       if (p.gate !== null) this.closeGateQuietly(p.gate, reason);
       this.tellRun(p, store.doc(p.doc), 'your proposal expired');
     }
@@ -1955,6 +2070,7 @@ export class DocsService {
     const restored = doc.restoredStatus !== null;
     if (status === doc.status && !(status === 'accepted' && restored))
       return this.record(doc);
+    if (status === 'accepted') this.requireAcceptable(doc);
     const at = this.nowIso();
     let reason: string | null = null;
     if (status === 'archived') reason = 'the doc was archived';
@@ -1969,6 +2085,22 @@ export class DocsService {
     });
     if (reason !== null) this.afterWithdraw(withdrawn, doc, reason);
     return out;
+  }
+
+  // An accepted head is what every linked run reads: never one with unresolved conflicts.
+  private requireAcceptable(doc: DocRow): void {
+    if (doc.conflicted)
+      throw new DocsError(
+        'conflict',
+        'the doc is conflicted; resolve it in the merge view before accepting',
+        'status'
+      );
+    if (hasConflictMarkers(this.headOf(doc).body))
+      throw new DocsError(
+        'conflict',
+        'the text holds conflict markers; resolve them before accepting',
+        'status'
+      );
   }
 
   // Reviews the (sealed) head as the accepting human and drops a restored mark.
@@ -2071,6 +2203,14 @@ export class DocsService {
         summary: 'deleted',
       });
     });
+    // Its images go once the rows are gone; a failure leaves files no row reaches.
+    if (this.deps.assetsDir !== undefined) {
+      try {
+        removeAssetDir(this.deps.assetsDir, doc.id);
+      } catch (err) {
+        console.error(`docs: removing ${doc.id}'s images failed`, err);
+      }
+    }
   }
 
   // A personal doc's head copied into a new team draft, with no history; the
@@ -2091,12 +2231,633 @@ export class DocsService {
       );
     this.write(() => this.sealInTx(doc, this.headOf(doc)));
     const head = this.headOf(doc);
-    return this.createDoc(
+    const out = this.createDoc(
       actor,
       { title: head.title, body: head.body, scope: 'team' },
       origin,
       head
     );
+    try {
+      this.copyAssets(doc, out.doc.id, head.body, actor.address);
+    } catch (err) {
+      // An image that cannot be copied takes the new draft back out.
+      this.dropDoc(out.doc.id, actor.address);
+      throw err;
+    }
+    return out;
+  }
+
+  // Removes a doc this call just made, rows and images, leaving no tombstone.
+  private dropDoc(docId: string, by: string): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    if (doc === null) return;
+    this.write(() => {
+      store.deleteDoc(docId);
+      this.outbox.push({
+        doc: docId,
+        scope: doc.scope,
+        kind: 'deleted',
+        author: by,
+        rev: null,
+        summary: 'deleted',
+      });
+    });
+    if (this.deps.assetsDir !== undefined)
+      removeAssetDir(this.deps.assetsDir, docId);
+  }
+
+  // Copies the images `body` links from `from` to the doc `to`, row and file,
+  // so a copy of its text shows them too.
+  private copyAssets(from: DocRow, to: string, body: string, by: string): void {
+    const root = this.deps.assetsDir;
+    if (root === undefined) return;
+    const store = this.store();
+    for (const name of this.storedAssets(from, body)) {
+      const row = store.assetRow(from.id, name);
+      if (row === null) continue;
+      const bytes = readAssetFile(root, from.id, name);
+      storeAssetFile(root, to, name, bytes);
+      this.write(() =>
+        store.putAsset({
+          ...row,
+          doc: to,
+          createdBy: by,
+          createdAt: this.nowIso(),
+        })
+      );
+    }
+  }
+
+  // Why an imported file must not be imported: an export of a personal doc
+  // (its frontmatter says so, or its id names a personal doc, live or deleted),
+  // or export-shaped frontmatter that does not parse. Null for any other file.
+  private exportRefusal(text: string): string | null {
+    const personal =
+      'the file is an export of a personal doc, which is never imported';
+    if (!text.startsWith('---\n')) return null;
+    const end = text.indexOf('\n---\n', 3);
+    const front = text.slice(4, end === -1 ? Math.min(text.length, 8192) : end);
+    const idLine = /^id: "?(doc-[0-9A-Za-z]{26})"?$/m.exec(front);
+    const parsed = parseDocFile(text);
+    if ('error' in parsed)
+      return idLine === null
+        ? null
+        : `the file looks like an exported doc but its frontmatter does not parse (${parsed.error})`;
+    if (parsed.meta.scope === 'personal') return personal;
+    const raw = idLine?.[1] ?? parsed.meta.id;
+    if (!/^doc-[0-9A-Za-z]{26}$/i.test(raw)) return null;
+    const id = `doc-${raw.slice(4).toUpperCase()}`;
+    const store = this.store();
+    if (store.doc(id)?.scope === 'personal') return personal;
+    if (store.tombstone(id)?.ns.startsWith('p:') === true) return personal;
+    return null;
+  }
+
+  // ---- memory overflow (v1) -------------------------------------------------
+
+  // The personal doc holding a memory entry's full text, owned by the entry's
+  // human but written as the entry's author (an agent or run), so its text
+  // reads unreviewed. One doc per entry (origin memory:<id>), kept current by
+  // new sealed revisions; null when its doc was deleted or archived.
+  // Memory calls it only for that human's own project-keyed personal entries.
+  overflowFromMemory(input: {
+    entryId: string;
+    human: string;
+    identity: string;
+    author: string;
+    title: string;
+    body: string;
+  }): string | null {
+    const { entryId, human, identity, author } = input;
+    if (!/^mem-[0-9A-Za-z]+$/.test(entryId))
+      throw new DocsError('invalid', 'not a memory entry id', 'entryId');
+    if (!human.startsWith('human:') || identity === '')
+      throw new DocsError(
+        'invalid',
+        'overflow needs the entry’s human',
+        'human'
+      );
+    if (!/^(?:agent|run|human):\S+$/.test(author))
+      throw new DocsError(
+        'invalid',
+        'overflow needs the entry’s author',
+        'author'
+      );
+    const store = this.store();
+    const origin = `memory:${entryId}`;
+    // A doc its owner deleted stays deleted.
+    if (store.tombstonedOrigin(origin)) return null;
+    // Writes as the author, owned by the human. A human-kind actor: the
+    // owner's own notes are exempt from the agent create limit.
+    const actor: DocsActor = {
+      principal: { address: author, canDecide: false, kind: 'human' },
+      address: author,
+      kind: 'human',
+      decider: false,
+      runKind: null,
+      taskId: null,
+      runTaskId: null,
+      runId: null,
+      operator: { human, identity },
+      a2aRun: false,
+    };
+    const ns = `p:${identity}`;
+    const body = splitForCap(normalizeDocText(input.body))[0] ?? '';
+    const oneLine = cutUtf8(
+      input.title.replace(/\s+/g, ' ').trim(),
+      DOCS_LIMITS.titleBytes
+    ).trim();
+    const title = oneLine !== '' ? oneLine : 'Memory note';
+    const existing = store.docByOrigin(origin);
+    let docId: string;
+    if (existing === null) {
+      docId = this.createDoc(
+        actor,
+        { title, body, scope: 'personal', links: [] },
+        origin
+      ).doc.id;
+    } else {
+      // An entry's doc is its own human's; it never moves to anyone else.
+      if (
+        existing.scope !== 'personal' ||
+        existing.ns !== ns ||
+        existing.ownerHuman !== human
+      )
+        throw forbidden('that memory entry’s doc belongs to someone else');
+      // The owner archived it: not written, and not pointed at.
+      if (existing.status === 'archived') return null;
+      docId = existing.id;
+      // A new revision, never an amend of anyone's open head.
+      this.write(() => this.sealInTx(existing, this.headOf(existing)));
+      this.commitDirect(actor, existing, {
+        body,
+        title,
+        summary: `memory ${entryId} changed`,
+        cause: 'save',
+      });
+    }
+    const doc = store.doc(docId);
+    if (doc !== null) this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    return docId;
+  }
+
+  // ---- images (v1) -----------------------------------------------------------
+
+  private assetsRoot(): string {
+    const dir = this.deps.assetsDir;
+    if (dir === undefined)
+      throw new DocsError('unavailable', 'images are not set up for docs');
+    return dir;
+  }
+
+  // Whether the caller may upload an image to the doc at all, checked before
+  // the route reads the body: a writer of a visible, live doc under its caps.
+  assetUploadAllowed(actor: DocsActor, ref: string): void {
+    const doc = this.resolve(actor, ref);
+    this.requireWritable(actor, doc);
+    this.assetsRoot();
+    this.requireAssetRoom(doc, 0, null);
+  }
+
+  // Refuses one more image that would take the doc past its file or byte cap;
+  // the same bytes again (`name` already stored) take no room.
+  private requireAssetRoom(
+    doc: DocRow,
+    bytes: number,
+    name: string | null
+  ): void {
+    const store = this.store();
+    if (name !== null && store.assetRow(doc.id, name) !== null) return;
+    const limits = this.deps.assetLimits ?? DEFAULT_ASSET_LIMITS;
+    const used = store.assetUsage(doc.id);
+    if (used.files + 1 > limits.files)
+      throw new DocsError(
+        'limited',
+        `a doc stores at most ${limits.files} images`,
+        'body'
+      );
+    if (used.bytes + bytes > limits.bytes)
+      throw new DocsError(
+        'limited',
+        `a doc stores at most ${limits.bytes} bytes of images`,
+        'body'
+      );
+    if (store.assetBytesTotal() + bytes > limits.projectBytes)
+      throw new DocsError(
+        'limited',
+        `the project stores at most ${limits.projectBytes} bytes of images`,
+        'body'
+      );
+  }
+
+  // Stores an image a writer of the doc pasted, named by its hash and typed by
+  // its bytes; the same bytes are the same asset.
+  putAsset(
+    actor: DocsActor,
+    ref: string,
+    bytes: Uint8Array
+  ): { name: string; markdown: string } {
+    const doc = this.resolve(actor, ref);
+    this.requireWritable(actor, doc);
+    if (bytes.byteLength === 0)
+      throw new DocsError('invalid', 'the image is empty', 'body');
+    if (bytes.byteLength > MAX_ASSET_BYTES)
+      throw new DocsError('invalid', 'images are at most 25 MiB', 'body');
+    const kind = sniffImage(bytes);
+    if (kind === null)
+      throw new DocsError(
+        'invalid',
+        'only png, jpeg, gif or webp images are stored (SVG is refused)',
+        'body'
+      );
+    const name = `${sha256Bytes(bytes)}.${kind.ext}`;
+    this.requireAssetRoom(doc, bytes.byteLength, name);
+    const root = this.assetsRoot();
+    storeAssetFile(root, doc.id, name, bytes);
+    this.write(() =>
+      this.store().putAsset({
+        doc: doc.id,
+        name,
+        bytes: bytes.byteLength,
+        mime: kind.mime,
+        createdBy: actor.address,
+        createdAt: this.nowIso(),
+      })
+    );
+    return { name, markdown: `![](asset:${name})` };
+  }
+
+  // An image's bytes and type for the caller, read through readAssetFile
+  // (no symlink, one hard link) after asset()'s checks.
+  assetBytes(
+    actor: DocsActor,
+    ref: string,
+    name: string
+  ): { bytes: Uint8Array; mime: string } {
+    const { mime } = this.asset(actor, ref, name);
+    const doc = this.resolve(actor, ref);
+    return { bytes: readAssetFile(this.assetsRoot(), doc.id, name), mime };
+  }
+
+  // An image of a doc the caller can see: the name is checked before any
+  // lookup, then the doc, then its row; only then is the path built.
+  asset(
+    actor: DocsActor,
+    ref: string,
+    name: string
+  ): { path: string; mime: string } {
+    if (!ASSET_NAME.test(name))
+      throw new DocsError('invalid', 'not an asset name', 'name');
+    const doc = this.resolve(actor, ref);
+    const row = this.store().assetRow(doc.id, name);
+    if (row === null)
+      throw new DocsError('not-found', `asset ${name} not found`, 'name');
+    return {
+      path: assetFilePath(this.assetsRoot(), doc.id, name),
+      mime: row.mime,
+    };
+  }
+
+  // Drops images 30 days old that no revision or proposal of their doc links:
+  // the row first, then the file.
+  private sweepAssets(now: Date): void {
+    const root = this.deps.assetsDir;
+    const store = this.deps.store;
+    if (root === undefined || store === null) return;
+    const anomaly = assetClockAnomaly(
+      store.meta('assets:last'),
+      store.newestAssetAt(),
+      now
+    );
+    store.setMeta('assets:last', now.toISOString());
+    // After a clock jump nothing is deleted until a full TTL of clock passes.
+    if (anomaly !== null) {
+      const until = new Date(now.getTime() + ASSET_TTL_DAYS * DAY_MS);
+      store.setMeta('assets:hold-until', until.toISOString());
+      console.error(
+        `docs: image sweep held until ${until.toISOString()}: ${anomaly}`
+      );
+      return;
+    }
+    const hold = store.meta('assets:hold-until');
+    if (hold !== null && now.toISOString() < hold) return;
+    const cutoff = new Date(
+      now.getTime() - ASSET_TTL_DAYS * DAY_MS
+    ).toISOString();
+    for (const a of store.assetsToCheck(cutoff)) {
+      if (store.assetReferenced(a.doc, a.name)) {
+        this.write(() =>
+          store.markAssetChecked(a.doc, a.name, now.toISOString())
+        );
+        continue;
+      }
+      this.write(() => store.deleteAsset(a.doc, a.name));
+      try {
+        rmSync(assetFilePath(root, a.doc, a.name), { force: true });
+      } catch (err) {
+        if (!(err instanceof DocsError && err.code === 'not-found'))
+          console.error(`docs: removing image ${a.name} failed`, err);
+      }
+    }
+  }
+
+  // The images `body` references that are stored for `doc`; none without an asset store.
+  private storedAssets(doc: DocRow, body: string): string[] {
+    if (this.deps.assetsDir === undefined) return [];
+    const store = this.store();
+    return assetNames(body).filter((n) => store.assetRow(doc.id, n) !== null);
+  }
+
+  // ---- publish to the repo (v1) --------------------------------------------
+
+  // Seals the head and creates the elevated task that writes it to `path`: a
+  // human asks, and a human merges, since elevated risk caps the merge rung.
+  // A pending row goes down before the task, so a crash between them is found
+  // at boot; the same doc, revision and path (or key) returns that publish.
+  publish(
+    actor: DocsActor,
+    ref: string,
+    input: {
+      path: string;
+      idempotencyKey?: string;
+      dispatchAs?: { actor: string; operator: string | null };
+    }
+  ): { task: string; doc: DocRecord; existing: boolean } {
+    const doc = this.resolve(actor, ref);
+    if (actor.kind !== 'human') throw forbidden('humans publish docs', 'doc');
+    if (doc.scope === 'personal')
+      throw forbidden('personal docs are never published', 'doc');
+    const store = this.store();
+    const key = input.idempotencyKey;
+    const keyed =
+      key === undefined || key === ''
+        ? undefined
+        : store
+            .publishRows({ doc: doc.id, idemKey: key })
+            .find((r) => r.state !== 'pending');
+    if (keyed !== undefined)
+      return { task: keyed.task, doc: this.record(doc), existing: true };
+    if (doc.status === 'archived') throw archivedError();
+    if (doc.status !== 'accepted' && doc.unreviewed)
+      throw new DocsError(
+        'conflict',
+        'review it first: agent text no human checked never heads for the repo',
+        'doc'
+      );
+    const path = validatePublishPath(this.host.rootDir, input.path);
+    const open = store.publishRows({ doc: doc.id, state: 'open' })[0];
+    if (open !== undefined) {
+      if (open.path === path && open.rev === doc.headId)
+        return { task: open.task, doc: this.record(doc), existing: true };
+      throw new DocsError(
+        'conflict',
+        `already publishing: ${open.task}`,
+        'doc'
+      );
+    }
+    this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    const head = this.headOf(doc);
+    const n = head.n ?? 0;
+    const pending: PublishRow = {
+      task: `pending:${randomUUID()}`,
+      doc: doc.id,
+      rev: head.id,
+      path,
+      state: 'pending',
+      commit: null,
+      createdAt: this.nowIso(),
+      reason: null,
+      idemKey: key === '' ? null : (key ?? null),
+      dispatchAs: input.dispatchAs ?? null,
+    };
+    this.write(() => store.putPublish(pending));
+    const images = this.storedAssets(doc, head.body).length > 0;
+    const task = this.host.createPublishTask({
+      title: publishTitle(doc.handle, n, path),
+      body: `Dispatch has written revision ${n} of doc ${doc.handle} to ${path} in this worktree${images ? `, with its images under ${publishAssetsDir(path)}/` : ''}. Format and lint it with the repository's own tools, fix only formatting, and commit it as "docs: publish ${doc.handle} rev ${n}". Do not rewrite its content.`,
+      writes: images ? [path, `${publishAssetsDir(path)}/**`] : [path],
+      risk: 'elevated',
+    });
+    const at = this.nowIso();
+    this.write(() => {
+      this.putLink(
+        actor,
+        doc,
+        { type: 'task', id: task },
+        'context',
+        false,
+        at
+      );
+      store.deletePublish(pending.task);
+      store.putPublish({ ...pending, task, state: 'open', createdAt: at });
+      this.outbox.push({
+        doc: doc.id,
+        scope: doc.scope,
+        kind: 'meta',
+        author: actor.address,
+        rev: null,
+        summary: `publishing to ${path}`,
+      });
+    });
+    return { task, doc: this.record(doc), existing: false };
+  }
+
+  // Boot, before anything dispatches: a pending row is a publish a crash cut
+  // short. The task it created, if any, closes; then the row goes.
+  recoverPublishes(): void {
+    if (!this.available) return;
+    const store = this.store();
+    const owned = new Set(store.publishRows({}).map((r) => r.task));
+    for (const row of store.publishRows({ state: 'pending' })) {
+      const doc = store.doc(row.doc);
+      const n = store.revisionMeta(row.rev)?.n ?? 0;
+      const orphans =
+        doc === null
+          ? []
+          : this.host.findPublishTasks(publishTitle(doc.handle, n, row.path));
+      for (const task of orphans) {
+        if (owned.has(task)) continue;
+        try {
+          this.host.closePublishTask(
+            task,
+            'the daemon stopped before this publish was recorded; publish the doc again'
+          );
+        } catch (err) {
+          console.error(`docs: closing publish task ${task} failed`, err);
+        }
+      }
+      this.write(() => store.deletePublish(row.task));
+    }
+  }
+
+  // Open publishes that asked for a run, with who it starts as; the boot
+  // dispatches each one that has no run yet.
+  publishesToDispatch(): {
+    task: string;
+    actor: string;
+    operator: string | null;
+  }[] {
+    if (!this.available) return [];
+    return this.store()
+      .publishRows({ state: 'open' })
+      .flatMap((r) =>
+        r.dispatchAs === null || r.dispatchAs === undefined
+          ? []
+          : [{ task: r.task, ...r.dispatchAs }]
+      );
+  }
+
+  // Whether `taskId` runs an open publish; with docs.db closed it cannot be
+  // ruled out, so it fails closed (callers guard the task's risk on it).
+  publishing(taskId: string): boolean {
+    if (!this.available) return true;
+    return this.store().publishRows({ task: taskId, state: 'open' }).length > 0;
+  }
+
+  // The text a publish writes at `path`: the revision with the links of the
+  // images copied beside it pointed at their copies.
+  private seededBody(
+    path: string,
+    body: string,
+    copied: readonly string[]
+  ): string {
+    const stem = publishAssetsDir(path).split('/').at(-1) ?? '';
+    const linked = new Set(copied);
+    return rewriteAssetLinks(body, (n) =>
+      linked.has(n) ? `${stem}/${n}` : `asset:${n}`
+    );
+  }
+
+  // What a publish wrote into its run's worktree, to check a landing against;
+  // null when its revision is gone.
+  private seededText(row: PublishRow): string | null {
+    const store = this.store();
+    const rev = store.revision(row.rev);
+    const doc = store.doc(row.doc);
+    if (rev === null || doc === null) return null;
+    return this.seededBody(
+      row.path,
+      rev.body,
+      this.storedAssets(doc, rev.body)
+    );
+  }
+
+  // A synced change tried to move an open publish's risk: the publish fails for
+  // good (whatever the risk reads later) and its task closes.
+  riskChangedDuringPublish(taskId: string): void {
+    if (!this.available) return;
+    const store = this.store();
+    const row = store.publishRows({ task: taskId, state: 'open' })[0];
+    if (row === undefined) return;
+    const reason =
+      "a teammate's synced change tried to move the task's risk while it published";
+    this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
+    try {
+      this.host.closePublishTask(taskId, reason);
+    } catch (err) {
+      console.error(`docs: closing publish task ${taskId} failed`, err);
+    }
+  }
+
+  // Writes an open publish's recorded revision into its run's worktree; a no-op
+  // for any other task. A throw fails the dispatch and marks the publish failed.
+  seedFor(taskId: string, worktree: string): void {
+    if (!this.available) return;
+    const store = this.store();
+    const row = store.publishRows({ task: taskId })[0];
+    if (row === undefined) return;
+    // A rerun of a publish that already ended would run with no seeded file.
+    if (row.state !== 'open')
+      throw new Error(
+        `publish task ${taskId} is ${row.state}; publish the doc again`
+      );
+    try {
+      // Lowering the risk would let policy merge it with no human.
+      if (this.host.task(taskId)?.risk === 'routine')
+        throw new Error(
+          `publish task ${taskId}'s risk was lowered; publish the doc again`
+        );
+      const rev = store.revision(row.rev);
+      if (rev === null)
+        throw new Error(`publish ${taskId}: revision ${row.rev} is gone`);
+      const doc = store.doc(row.doc);
+      const copied = doc === null ? [] : this.storedAssets(doc, rev.body);
+      for (const name of copied) {
+        seedAsset(
+          worktree,
+          row.path,
+          name,
+          readAssetFile(this.assetsRoot(), row.doc, name)
+        );
+      }
+      seedFile(worktree, row.path, this.seededBody(row.path, rev.body, copied));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
+      try {
+        this.host.closePublishTask(taskId, reason);
+      } catch (closeErr) {
+        console.error(`docs: closing publish task ${taskId} failed`, closeErr);
+      }
+      throw err;
+    }
+  }
+
+  // Records each open publish whose task has landed or been dropped; returns
+  // how many changed. A landing counts only as the host verifies it (a merged
+  // run, not a status alone) and only while the task is still elevated.
+  syncPublishes(): number {
+    if (!this.available) return 0;
+    const store = this.store();
+    let changed = 0;
+    for (const row of store.publishRows({ state: 'open' })) {
+      const outcome = this.host.publishOutcome(
+        row.task,
+        row.path,
+        this.seededText(row)
+      );
+      if (outcome === null) continue;
+      if (outcome.state === 'dropped') {
+        this.write(() => store.putPublish({ ...row, state: 'dropped' }));
+        changed += 1;
+        continue;
+      }
+      // A routine risk let policy merge it with no human: never recorded, and a
+      // new publish may start.
+      const reason =
+        outcome.state === 'failed'
+          ? outcome.reason
+          : this.host.task(row.task)?.risk === 'routine'
+            ? 'the task landed after its risk was lowered to routine, so no human merged it'
+            : null;
+      if (reason !== null) {
+        this.write(() => store.putPublish({ ...row, state: 'failed', reason }));
+        changed += 1;
+        continue;
+      }
+      const commit = outcome.state === 'landed' ? outcome.commit : null;
+      const doc = store.doc(row.doc);
+      this.write(() => {
+        store.putPublish({ ...row, state: 'landed', commit });
+        if (doc === null) return;
+        doc.publishedPath = row.path;
+        doc.publishedRev = row.rev;
+        doc.publishedTask = row.task;
+        doc.publishedCommit = commit;
+        store.putDoc(doc);
+        this.outbox.push({
+          doc: doc.id,
+          scope: doc.scope,
+          kind: 'meta',
+          author: SYSTEM_ADDRESS,
+          rev: null,
+          summary: `published to ${row.path}`,
+        });
+      });
+      changed += 1;
+    }
+    return changed;
   }
 
   // ---- links ----------------------------------------------------------------
@@ -2548,6 +3309,14 @@ export class DocsService {
         });
         continue;
       }
+      // An export or receipt file: its body, and never someone's personal doc.
+      const refusal = this.exportRefusal(text);
+      if (refusal !== null) {
+        texts.set(hash, { error: 'invalid', detail: refusal });
+        continue;
+      }
+      const exported = parseDocFile(text);
+      if (!('error' in exported)) text = exported.body;
       texts.set(
         hash,
         text.includes('\u0000')
@@ -2583,6 +3352,16 @@ export class DocsService {
       store.setMeta('import:last', JSON.stringify(report));
       store.deleteImportSession(id);
     });
+    for (const name of names) {
+      if (name.contents.length === 0) continue;
+      const docs: string[] = [];
+      for (let k = 1; ; k++) {
+        const part = store.docByOrigin(importOrigin(name.key, k));
+        if (part === null) break;
+        docs.push(part.id);
+      }
+      report.docs.push({ name: name.key, docs });
+    }
     return report;
   }
 
@@ -3405,6 +4184,7 @@ export class DocsService {
       reindexed++;
     }
     this.expireProposals(now);
+    this.sweepAssets(now);
     const dayAgo = new Date(now.getTime() - DAY_MS).toISOString();
     for (const id of store.idleImportSessions(dayAgo))
       store.deleteImportSession(id);

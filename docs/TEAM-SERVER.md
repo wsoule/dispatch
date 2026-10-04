@@ -119,6 +119,20 @@ storage-independent. Server accounts back `human:*` refs in team mode; agents
 inherit their operator's authorization. `team.yml` becomes a cached projection
 of the org roster.
 
+The daemon's shared agent token (written to the daemon file for the CLI and MCP)
+is not the owner. Its writes are credited to `agent:local-cli`, and the runs it
+starts act for no one. A dispatched run's MCP presents that run's own token
+instead, so the daemon knows which run wrote and can apply the run's limits: A2A
+lineage (a task an A2A-origin run creates, edits or dispatches is A2A-origin
+too) and the A2A read scope (such a run sees no other A2A task).
+
+**Known limit (XH-R7).** A run that reads the agent token from the daemon file,
+or shells out to the `dispatch` CLI, escapes those run-scoped limits: its writes
+carry no lineage and its reads are not narrowed. They are still credited to
+`agent:local-cli`, never the owner. This is the same exposure as a run with
+shell access merging by hand. Closing it needs sandboxing that denies runs the
+daemon file.
+
 ## 6. Team features on top
 
 With the server authoritative, the earlier mirror/fan-out machinery is
@@ -154,6 +168,28 @@ projects as of v1, both accepted:
   replicate between daemons once federation carries them (v2). Until then a
   lesson one teammate's run learns does not reach the others. Teammates who
   share one daemon share its memory as usual.
+
+Docs (`docs/specs/2026-09-25-docs-design.md`) have three limits in team projects
+as of v1, all accepted:
+
+- **A personal doc a run reads reaches its transcript.** A run's `doc_read` of
+  its operator's personal doc is tool output in the run's transcript, which
+  teammates on a shared host can read. Keep what must stay private out of
+  personal docs there, or run your own daemon.
+- **Files-backend projects have no restorable copy of docs.** Team docs live in
+  the daemon's `docs.db`, not in git. The receipt log carries them for database
+  projects. `dispatch docs export <dir>` writes a readable copy of every doc,
+  not a backup: importing it back makes new docs with new ids, without their
+  history, reviews or links. Back up `docs.db` itself.
+- **Moving the checkout orphans `docs.db`.** Docs are keyed to the checkout's
+  path, so a moved checkout starts empty. `GET /api/docs/health` lists, to
+  decide tier, the `runs/*/docs.db` files whose recorded root no longer exists.
+  To recover: stop the daemon, move the orphaned `docs.db` (with its `-wal` and
+  `-shm` files, and its `docs-assets/` directory) into the new checkout's key
+  directory under `runs/`, and start the daemon again.
+- **The publish risk guard protects only its own replica.** A synced change
+  cannot lower a publish task's risk on the replica that owns the publish; a
+  teammate's replica keeps whatever its own board says.
 
 ## 7. Phasing
 
