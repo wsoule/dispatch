@@ -140,7 +140,6 @@ export function openDocsDb(
 ): { db: SqliteDatabase; fts: boolean } {
   const db = openSqliteDb(path);
   try {
-    db.exec('PRAGMA busy_timeout = 5000');
     const existing = dbVersion(db);
     if (existing > DOCS_DB_VERSION) {
       throw new Error(

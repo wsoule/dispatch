@@ -17,6 +17,7 @@ import {
 import type { ApiContext } from '../api.js';
 import { humanActor, humanOperator } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
+import { retryWhileBusy } from '../api/storageErrors.js';
 import { MAX_ASSET_BYTES } from './assets.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
 import { readBoundedBytes, readBoundedJson } from './http.js';
@@ -366,13 +367,19 @@ export async function handleDocsRoute(
   const method = req.method;
   try {
     const actor = docs.actorFor(principal);
-    const body = async (): Promise<Record<string, unknown>> => {
-      const parsed = await readBoundedJson(req);
-      if (!parsed.ok) throw new BodyRefused(parsed.response);
-      return parsed.value;
+    // Read once and kept, so a write retried on a busy docs.db sees it again.
+    let parsedBody: Promise<Record<string, unknown>> | null = null;
+    const body = (): Promise<Record<string, unknown>> => {
+      parsedBody ??= readBoundedJson(req).then((parsed) => {
+        if (!parsed.ok) throw new BodyRefused(parsed.response);
+        return parsed.value;
+      });
+      return parsedBody;
     };
     const write = (fn: () => Promise<Response>): Promise<Response> =>
-      once(req, docs, actor, `${method} ${url.pathname}`, fn);
+      once(req, docs, actor, `${method} ${url.pathname}`, () =>
+        retryWhileBusy(fn)
+      );
 
     if (rest.length === 0) {
       if (method === 'GET') {

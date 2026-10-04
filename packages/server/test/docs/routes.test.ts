@@ -106,6 +106,28 @@ describe('docs routes', () => {
     expect((await rawFetch(`${base}/docs`)).status).toBe(401);
   });
 
+  it('retries a busy docs.db off the event loop, then answers 503 with Retry-After', async () => {
+    const other = openSqliteDb(join(runsDir(root), 'docs.db'));
+    other.exec('BEGIN IMMEDIATE');
+    // Released while the route waits between attempts: the retry lands.
+    setTimeout(() => other.exec('ROLLBACK'), 150);
+    const started = performance.now();
+    const health = fetch(`${base}/health`);
+    const created = post('/docs', { title: 'Busy', body: 'x\n' });
+    expect((await health).status).toBe(200);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect((await created).status).toBe(201);
+    other.exec('BEGIN IMMEDIATE');
+    try {
+      const busy = await post('/docs', { title: 'Never', body: 'x\n' });
+      expect(busy.status).toBe(503);
+      expect(busy.headers.get('retry-after')).toBe('1');
+    } finally {
+      other.exec('ROLLBACK');
+      other.close();
+    }
+  });
+
   it('creates, reads, edits, lists and deletes a team doc', async () => {
     const created = await post('/docs', {
       title: 'Auth refactor',
