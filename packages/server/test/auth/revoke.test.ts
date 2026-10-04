@@ -108,4 +108,30 @@ describe('revoking a teammate', () => {
     expect(frames.slice(heard)).toEqual([]);
     ws.close();
   });
+
+  it('cancels the run, and its run token stops working everywhere', async () => {
+    const w = world();
+    const ada = await invite(w, 'ada@x.io', 'request');
+    const run = await liveRun(w, ada.token, 'ada task');
+    expect((await call(w, run.runToken, 'GET', '/api/tasks')).status).toBe(200);
+
+    await call(w, w.app, 'DELETE', `/api/team/tokens/${ada.handle}`);
+    await waitFor(() => !w.handle.orchestrator.isRunLive(run.runId));
+
+    for (const [method, path, body] of [
+      ['GET', '/api/tasks', undefined],
+      ['POST', '/api/tasks', { title: 'after revoke' }],
+      ['GET', '/api/mailbox', undefined],
+      ['GET', '/api/memory?scope=project', undefined],
+      [
+        'POST',
+        '/api/messages',
+        { to: ['human:test'], kind: 'message', body: 'x' },
+      ],
+    ] as const) {
+      expect((await call(w, run.runToken, method, path, body)).status).toBe(
+        401
+      );
+    }
+  });
 });
