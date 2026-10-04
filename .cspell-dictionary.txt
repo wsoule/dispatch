@@ -299,6 +299,7 @@ nosuch
 NOSYSTEM
 notekind
 noul
+numstat
 nvim
 objectname
 obug

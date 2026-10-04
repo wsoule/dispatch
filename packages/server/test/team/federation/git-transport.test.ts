@@ -1193,6 +1193,80 @@ describe('GitFederationTransport', () => {
   // Git-verified appends: an honest writer's appends are read as just the
   // new bytes, while a rewrite (the V1 shift) still reads from the start.
   describe('the git-verified append path', () => {
+    // One shared clone of 100 committed segment files, read once, with a
+    // runner that logs every git command it spawns.
+    const hundred = async () => {
+      const calls: string[][] = [];
+      const counted: typeof defaultAsyncGitRunner = (cwd, args, env) => {
+        calls.push(args);
+        return defaultAsyncGitRunner(cwd, args, env);
+      };
+      const r = new SyncRepo(
+        join(dir, 'r'),
+        remote,
+        'dispatch-sync',
+        'bob-0000000b',
+        counted
+      );
+      await r.ensure();
+      const root = join(dir, 'r');
+      const files = Array.from({ length: 100 }, (_, n) =>
+        join(root, 'fed', A, `${String(n * 1000 + 1).padStart(12, '0')}.jsonl`)
+      );
+      mkdirSync(join(root, 'fed', A), { recursive: true });
+      for (const f of files)
+        writeFileSync(f, `{"j":"${'x'.repeat(200)}"}\n`.repeat(20));
+      const commit = async () => {
+        runGitSync(root, ['add', '-A']);
+        runGitSync(root, [
+          '-c',
+          'user.name=x',
+          '-c',
+          'user.email=x@x',
+          'commit',
+          '-q',
+          '-m',
+          'v',
+        ]);
+        await r.verifyAppends();
+      };
+      const read = () =>
+        r.readV2(new Map([[A, 1]]), {
+          tier: () => 0,
+          budget: 64 * 1024 * 1024,
+          totalBudget: 64 * 1024 * 1024,
+        });
+      await commit();
+      read();
+      return { r, calls, files, commit, read };
+    };
+
+    it('diffs 100 changed files with a handful of git processes', async () => {
+      const { r, calls, files, commit, read } = await hundred();
+      for (const f of files) appendFileSync(f, `{"j":"${'y'.repeat(200)}"}\n`);
+      calls.length = 0;
+      await commit();
+      expect(calls.length).toBeLessThanOrEqual(4);
+      read();
+      // Every file resumed: only the appended lines were read.
+      expect(r.lastPassBytes()).toBe(100 * 209);
+    }, 60_000);
+
+    it('falls back to full re-reads past 16 MiB of diff in a pass', async () => {
+      const { r, calls, files, commit, read } = await hundred();
+      // 100 x 200 KiB appended: 20 MiB of diff, over the cap.
+      for (const f of files)
+        appendFileSync(f, `{"j":"${'y'.repeat(200 * 1024)}"}\n`);
+      calls.length = 0;
+      await commit();
+      const full = calls.filter((c) => c.includes('--unified=0'));
+      // Never asked git for more than the cap, and the files over it re-read.
+      expect(full.length).toBeLessThanOrEqual(1);
+      read();
+      // The files the cap left out re-read their 4 KiB prefix too.
+      expect(r.lastPassBytes()).toBeGreaterThan(100 * (200 * 1024 + 9));
+    }, 60_000);
+
     const transport = (
       repo: SyncRepo,
       replica: string,

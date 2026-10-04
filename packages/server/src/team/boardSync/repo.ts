@@ -51,9 +51,10 @@ const ACKS = 'acks.json';
 const SEGMENT_MAX_OPS = 1000;
 const SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
 const SEGMENT = /^\d{12}\.jsonl$/;
-// FW-R25: overrides every .gitattributes on the branch.
+// FW-R25: overrides every .gitattributes on the branch. `diff` (set) is
+// git's own text diff, never a branch driver, so verifyAppends can count.
 const ATTRIBUTES =
-  '* -text -eol -filter -merge -diff -ident -working-tree-encoding\n';
+  '* -text -eol -filter -merge diff -ident -working-tree-encoding\n';
 // What fetch and push add to the person's config: no hooks, no LFS filter.
 const NETWORK_ARGS = [
   '-c',
@@ -96,6 +97,25 @@ const KEY_PROBE_BYTES = 64 * 1024;
 // The whole read cache, across replicas.
 const MAX_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_V1_READ = 256 * 1024 * 1024;
+// The most diff verifyAppends asks git for in one pass.
+// A cached file whose stat changed since it was read, as it is now.
+interface Changed {
+  held: CachedSegment;
+  stamp: string;
+  size: number;
+}
+const MAX_DIFF_BYTES = 16 * 1024 * 1024;
+// Paths per git diff, well under any argv limit.
+const DIFF_PATHS = 500;
+// --text and no drivers or renames, whatever the attributes say.
+const DIFF_ARGS = [
+  'diff',
+  '--no-color',
+  '--text',
+  '--no-ext-diff',
+  '--no-textconv',
+  '--no-renames',
+];
 const segmentName = (firstSeq: number): string =>
   `${String(firstSeq).padStart(12, '0')}.jsonl`;
 
@@ -808,44 +828,93 @@ export class SyncRepo {
   }
 
   /**
-   * The git-verified append path: for each file read before whose stat
-   * changed, `git diff --unified=0` from the commit it was read at to HEAD.
-   * Only lines added after the lines already consumed make a pure append,
-   * which readV2 then resumes from the offset; anything else (a deletion, a
-   * change, an insertion in the consumed part) leaves the full re-read with
-   * its prefix check. Git's object hashes make the diff the truth.
+   * The git-verified append path: files read before whose stat changed are
+   * diffed from the commit they were read at to HEAD, one `git diff` per
+   * base commit. Only lines added after every line read make a pure append,
+   * which readV2 resumes from the offset; anything else keeps the full
+   * re-read with its prefix check. Git's object hashes make the diff the
+   * truth. A --numstat pass first drops files with deletions and sizes the
+   * rest, so no pass asks git for over MAX_DIFF_BYTES of diff.
    */
   async verifyAppends(): Promise<void> {
     const head = await this.run(['rev-parse', 'HEAD']);
     const commit = head.ok ? head.out.trim() : null;
-    if (commit !== null)
-      for (const [file, held] of this.segmentCache) {
-        if (held.commit === null || held.commit === commit) continue;
-        const st = lstatSync(file, { throwIfNoEntry: false });
-        if (st === undefined) continue;
-        const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-        if (stamp === held.stamp) continue;
-        const rel = file.slice(this.dir.length + 1);
-        const diff = await this.run([
-          'diff',
-          '--unified=0',
-          '--no-color',
-          // -diff in info/attributes marks every file binary; read it as text.
-          '--text',
-          '--no-ext-diff',
-          '--no-textconv',
-          held.commit,
-          commit,
-          '--',
-          rel,
-        ]);
-        // A line read only in part counts as read: nothing may land before it.
-        const { stream } = held;
-        const mid = stream.skipping || stream.partial.length > 0;
-        if (diff.ok && pureAppend(diff.out, stream.lines + (mid ? 1 : 0)))
-          held.appendStamp = stamp;
-      }
     this.head = commit;
+    if (commit === null) return;
+    const byBase = new Map<string, Map<string, Changed>>();
+    for (const [file, held] of this.segmentCache) {
+      if (held.commit === null || held.commit === commit) continue;
+      const st = lstatSync(file, { throwIfNoEntry: false });
+      if (st === undefined) continue;
+      const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+      if (stamp === held.stamp) continue;
+      const paths = byBase.get(held.commit) ?? new Map();
+      paths.set(file.slice(this.dir.length + 1), {
+        held,
+        stamp,
+        size: st.size,
+      });
+      byBase.set(held.commit, paths);
+    }
+    let room = MAX_DIFF_BYTES;
+    for (const [base, all] of byBase)
+      for (let at = 0; at < all.size; at += DIFF_PATHS) {
+        const chunk = [...all.keys()].slice(at, at + DIFF_PATHS);
+        room = await this.diffAppends(base, commit, chunk, all, room);
+      }
+  }
+
+  // One base commit's share of verifyAppends: numstat, then a unified diff
+  // of the files that fit in `room`. Returns the room left.
+  private async diffAppends(
+    base: string,
+    commit: string,
+    chunk: string[],
+    paths: Map<string, Changed>,
+    start: number
+  ): Promise<number> {
+    let room = start;
+    const counts = await this.run([
+      ...DIFF_ARGS,
+      '--numstat',
+      '-z',
+      base,
+      commit,
+      '--',
+      ...chunk,
+    ]);
+    if (!counts.ok) return room;
+    const wanted: string[] = [];
+    for (const [added, removed, rel] of numstat(counts.out)) {
+      const hit = paths.get(rel);
+      if (hit === undefined || removed !== 0) continue;
+      // A pure append's diff: the new bytes, a '+' a line, a header a hunk.
+      const cost = Math.max(0, hit.size - hit.held.size) + 128 * added + 1024;
+      if (cost > room) continue;
+      room -= cost;
+      wanted.push(rel);
+    }
+    if (wanted.length === 0) return room;
+    const diff = await this.run([
+      ...DIFF_ARGS,
+      '--unified=0',
+      base,
+      commit,
+      '--',
+      ...wanted,
+    ]);
+    if (!diff.ok) return room;
+    const sections = splitDiff(diff.out, wanted);
+    for (const rel of wanted) {
+      const { held, stamp } = paths.get(rel) as Changed;
+      const { stream } = held;
+      // A line read only in part counts as read: nothing may land before it.
+      const mid = stream.skipping || stream.partial.length > 0;
+      const text = sections.get(rel);
+      if (text !== undefined && pureAppend(text, stream.lines + (mid ? 1 : 0)))
+        held.appendStamp = stamp;
+    }
+    return room;
   }
 
   /** Files seen far over the size any honest segment reaches, as
@@ -1379,4 +1448,40 @@ function pureAppend(diff: string, lines: number): boolean {
     const removed = h[2] === undefined ? 1 : Number(h[2]);
     return removed === 0 && start >= lines;
   });
+}
+
+// `git diff --numstat -z` records: lines added, lines removed, path. A
+// binary or unparsable count reads as removed, so it never resumes.
+function numstat(out: string): Array<[number, number, string]> {
+  const rows: Array<[number, number, string]> = [];
+  for (const rec of out.split('\0')) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(rec);
+    if (m === null) continue;
+    const added = m[1] === '-' ? 0 : Number(m[1]);
+    const removed = m[2] === '-' ? 1 : Number(m[2]);
+    rows.push([added, removed, m[3]]);
+  }
+  return rows;
+}
+
+// One multi-path diff split per file, by the exact header git writes for
+// each wanted path; a section under any other header belongs to none.
+function splitDiff(out: string, chunk: readonly string[]): Map<string, string> {
+  const headers = new Map(chunk.map((r) => [`diff --git a/${r} b/${r}`, r]));
+  const sections = new Map<string, string>();
+  let current: string | null = null;
+  let body: string[] = [];
+  const flush = () => {
+    if (current !== null) sections.set(current, body.join('\n'));
+  };
+  for (const line of out.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      flush();
+      current = headers.get(line) ?? null;
+      body = [];
+    }
+    body.push(line);
+  }
+  flush();
+  return sections;
 }
