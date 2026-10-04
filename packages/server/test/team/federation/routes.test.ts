@@ -353,7 +353,8 @@ describe('a route whose pass does not finish', () => {
       ).toBe(true);
       // I1: POST /api/board-sync/now is bounded the same way.
       const now = await boardSyncNow(ctx, ctx.boardSync as never);
-      expect(now.pending).toBe(true);
+      // `pending` stays the count of changes; the pass in flight is `running`.
+      expect(now.running).toBe(true);
       finish();
     } finally {
       ada.close();

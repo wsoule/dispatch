@@ -99,7 +99,8 @@ export function statusFor(
 }
 
 /** POST /api/board-sync/now: a pass, waited for at most passWaitMs, then the
- *  status for the caller's tier, `pending` while the pass still runs. */
+ *  status for the caller's tier, `running` while the pass still runs (its
+ *  `pending` stays the count of changes not yet pushed). */
 export async function boardSyncNow(
   ctx: ApiContext,
   service: NonNullable<ApiContext['boardSync']>
@@ -110,7 +111,7 @@ export async function boardSyncNow(
     'the sync you asked for'
   );
   const view = statusFor(service.status(), ctx.caller?.tier ?? 'request');
-  return done ? view : { ...view, pending: true };
+  return done ? view : { ...view, running: true };
 }
 
 // The roster actions under /api/team, beside the teammate-token routes.

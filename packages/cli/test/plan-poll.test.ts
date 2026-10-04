@@ -66,6 +66,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     closeLegacy: () => Promise.reject(new Error('not used')),
     dismissRosterOp: () => Promise.reject(new Error('not used')),
     abandonInvite: () => Promise.reject(new Error('not used')),
+    ackProblem: () => Promise.reject(new Error('not used')),
   };
 }
 

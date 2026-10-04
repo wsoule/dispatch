@@ -48,8 +48,17 @@ beforeEach(async () => {
     async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === '/api/health') return Response.json({ ok: true });
+      if (url.pathname === '/api/team/keys')
+        return Response.json({
+          machine: {
+            replica: 'ada-0000000a',
+            handle: 'ada',
+            device: 'laptop',
+            fingerprint: 'JOIN-7QX2-K9PA-M3TD-0W4R-HB8E',
+          },
+        });
       posted.push({ path: url.pathname, body: await req.json() });
-      return Response.json({ ok: true, fingerprint: 'AAAA-BBBB' });
+      return Response.json({ ok: true, pending: true });
     },
   });
   mkdirSync(join(fakeHome, '.dispatch', 'daemons'), { recursive: true });
@@ -80,6 +89,11 @@ describe('secret codes stay out of argv', () => {
     expect(posted).toEqual([
       { path: '/api/team/join', body: { code: 'di1.secret-code' } },
     ]);
+    // D, F: the joiner's fingerprint to read to an admin, and the pending note.
+    expect(lines.join('\n')).toContain('JOIN-7QX2-K9PA-M3TD-0W4R-HB8E');
+    expect(lines.join('\n')).toContain(
+      'goes out once a sync reaches the remote'
+    );
   });
 
   it('team recover reads the recovery code from a prompt', async () => {

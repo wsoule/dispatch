@@ -101,9 +101,11 @@ describe('dispatch team keys output', () => {
       'Founder: ada (AAAA-BBBB-CCCC-DDDD-EEEE-FFFF), verify this with ada'
     );
     expect(text).toContain(
-      'Waiting to join: cy on mini, CCCC-CCCC-CCCC-CCCC-CCCC-CCCC, invited by ada'
+      'Waiting to join: cy on mini (cy-0000000c), CCCC-CCCC-CCCC-CCCC-CCCC-CCCC, invited by ada'
     );
     expect(text).toContain('Only ada can admit, revoke or change the team.');
+    // D: the roster names each replica id, which revoke and role take.
+    expect(text).toContain('ada on laptop (ada-0000000a): admin');
   });
 });
 
@@ -122,6 +124,7 @@ describe('the API client', () => {
     await client.inviteToTeam('dee');
     await client.abandonInvite();
     await client.dismissRosterOp('cy-0000000c', 4, 'h'.repeat(64));
+    await client.ackProblem('team:race:bob-0000000b');
     expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
       ['POST', '/api/team/found', { name: 'acme' }],
       [
@@ -137,6 +140,7 @@ describe('the API client', () => {
         '/api/team/dismiss',
         { replica: 'cy-0000000c', seq: 4, hash: 'h'.repeat(64) },
       ],
+      ['POST', '/api/team/problems/ack', { subject: 'team:race:bob-0000000b' }],
     ]);
   });
 });

@@ -102,6 +102,28 @@ describe('describeSync', () => {
     ).toBe(true);
   });
 
+  // C: a sync asked for that outran the route's wait says it carries on.
+  test('says when the pass it asked for is still running', () => {
+    const lines = describeSync({
+      enabled: true,
+      replica: 'ada-1a2b3c4d',
+      remote: 'git@example.com:team/repo.git',
+      branch: 'dispatch-sync',
+      lastSyncAt: null,
+      lastError: null,
+      pending: 0,
+      applied: 0,
+      problems: [],
+      people: 1,
+      seats: 3,
+      paused: null,
+      running: true,
+    });
+    expect(lines).toContain(
+      'The sync is still running; it carries on in the background.'
+    );
+  });
+
   test('past the seats it says so, in the daemon’s words', () => {
     const lines = describeSync({
       enabled: true,

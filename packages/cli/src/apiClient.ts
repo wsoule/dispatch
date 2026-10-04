@@ -683,13 +683,17 @@ export interface ApiClient {
   // The signed team roster (decide tier to read, operator tier to change):
   // build the client on the app token.
   getTeamKeys(): Promise<TeamKeys>;
-  foundTeam(
-    name?: string
-  ): Promise<{ teamId: string; recoveryCode: string; fingerprint: string }>;
+  foundTeam(name?: string): Promise<
+    {
+      teamId: string;
+      recoveryCode: string;
+      fingerprint: string;
+    } & RosterAnswer
+  >;
   trustFounder(fingerprint: string): Promise<void>;
   inviteToTeam(handle: string): Promise<{ code: string; expires: string }>;
-  joinTeam(code: string): Promise<void>;
-  recoverTeam(code: string): Promise<void>;
+  joinTeam(code: string): Promise<RosterAnswer>;
+  recoverTeam(code: string): Promise<RosterAnswer>;
   newRecoveryCode(): Promise<{ recoveryCode: string }>;
   shareTeamLicense(): Promise<void>;
   admitReplica(replica: string, body: AdmitBody): Promise<RosterAnswer>;
@@ -701,9 +705,15 @@ export interface ApiClient {
   setReplicaHosts(replica: string, hosts: string[]): Promise<RosterAnswer>;
   closeLegacy(): Promise<void>;
   /** Takes an op no build reads out of every fold, when this admin may. */
-  dismissRosterOp(replica: string, seq: number, hash: string): Promise<void>;
+  dismissRosterOp(
+    replica: string,
+    seq: number,
+    hash: string
+  ): Promise<RosterAnswer>;
   /** Lets go of the invite this machine joined with. */
   abandonInvite(): Promise<void>;
+  /** Acknowledges a race, cut, merge or route note; it is not raised again. */
+  ackProblem(subject: string): Promise<void>;
 }
 
 /** What `keys admit` sends. */
@@ -785,7 +795,7 @@ export interface TeamKeys {
   problems: { subject: string; message: string; at: string }[];
 }
 
-/** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts.
+/** Mirrors FederationStatus in packages/server/src/team/federation/service.ts.
  *  `reason` (BoardSyncOffReason in packages/server/src/api.ts) is absent on
  *  daemons older than it. */
 export type SyncStatus =
@@ -809,6 +819,8 @@ export type SyncStatus =
       legacyUntil?: string | null;
       transport?: 'git' | 'relay';
       federationProblems?: { subject: string; message: string; at: string }[];
+      /** On POST /now: the pass outran the daemon's wait and carries on. */
+      running?: boolean;
     };
 
 /** Mirrors licenseView in packages/server/src/team/routes.ts. */
@@ -991,12 +1003,9 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     },
     inviteToTeam: (handle) =>
       request(target, '/api/team/invite', jsonBody({ handle })),
-    joinTeam: async (code) => {
-      await request(target, '/api/team/join', jsonBody({ code }));
-    },
-    recoverTeam: async (code) => {
-      await request(target, '/api/team/recover', jsonBody({ code }));
-    },
+    joinTeam: (code) => request(target, '/api/team/join', jsonBody({ code })),
+    recoverTeam: (code) =>
+      request(target, '/api/team/recover', jsonBody({ code })),
     newRecoveryCode: () =>
       request(target, '/api/team/recovery-key', jsonBody({})),
     shareTeamLicense: async () => {
@@ -1017,15 +1026,13 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     closeLegacy: async () => {
       await request(target, '/api/team/close-legacy', jsonBody({}));
     },
-    dismissRosterOp: async (replica, seq, hash) => {
-      await request(
-        target,
-        '/api/team/dismiss',
-        jsonBody({ replica, seq, hash })
-      );
-    },
+    dismissRosterOp: (replica, seq, hash) =>
+      request(target, '/api/team/dismiss', jsonBody({ replica, seq, hash })),
     abandonInvite: async () => {
       await request(target, '/api/team/abandon-invite', jsonBody({}));
+    },
+    ackProblem: async (subject) => {
+      await request(target, '/api/team/problems/ack', jsonBody({ subject }));
     },
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {

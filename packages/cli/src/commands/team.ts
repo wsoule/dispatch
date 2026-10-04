@@ -41,12 +41,14 @@ function day(iso: string | null): string {
   return iso === null ? '-' : iso.slice(0, 10);
 }
 
-// Every team command is decide-tier, since handing out a credential is an
-// adjudication, so each talks through the app token.
+// Every team command talks through the app token: handing out a credential
+// is decide-tier, and changing the signed team is operator-tier.
 export function registerTeamCommands(program: Command, ctx: CliContext): void {
   const team = program
     .command('team')
-    .description('Give teammates their own credential for a shared daemon');
+    .description(
+      'Teammates: daemon tokens for a shared daemon, and the signed team of machines that sync this board'
+    );
 
   team
     .command('invite <emailOrHandle>')
@@ -188,12 +190,12 @@ export function describeTeamKeys(keys: TeamKeys): string[] {
     const role = m.observer ? 'observer' : m.role;
     const extra = m.hosts.length > 0 ? `, hosts ${m.hosts.join(', ')}` : '';
     lines.push(
-      `  ${m.handle} on ${m.device}: ${role}${m.recovered ? ' (recovered)' : ''}${extra}, ${m.fingerprint}`
+      `  ${m.handle} on ${m.device} (${m.replica}): ${role}${m.recovered ? ' (recovered)' : ''}${extra}, ${m.fingerprint}`
     );
   }
   for (const w of keys.waiting)
     lines.push(
-      `Waiting to join: ${w.handle} on ${w.device}, ${w.fingerprint}${w.invitedBy === null ? '' : `, invited by ${w.invitedBy}`}`
+      `Waiting to join: ${w.handle} on ${w.device} (${w.replica}), ${w.fingerprint}${w.invitedBy === null ? '' : `, invited by ${w.invitedBy}`}`
     );
   for (const i of keys.invites)
     lines.push(
@@ -252,6 +254,7 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
     .action(async (opts: { name?: string; token?: string }) => {
       const api = await client(opts, 'dispatch team found');
       const founded = await api.foundTeam(opts.name);
+      logAnswer(ctx, founded);
       ctx.log(
         `Founded team ${founded.teamId.slice(0, 8)}…; this machine is ${founded.fingerprint}.`
       );
@@ -283,9 +286,11 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
     .allowExcessArguments(false)
     .action(async (opts: { token?: string }) => {
       const code = await readSecret(ctx, 'Invite code: ');
-      await (await client(opts, 'dispatch team join')).joinTeam(code);
+      const api = await client(opts, 'dispatch team join');
+      logAnswer(ctx, await api.joinTeam(code));
+      const { machine } = await api.getTeamKeys();
       ctx.log(
-        'Asked to join. An admin admits this machine once they compare its fingerprint (dispatch team keys).'
+        `Asked to join. Read this machine's fingerprint to an admin, who admits it once theirs shows the same: ${machine.fingerprint}`
       );
     });
 
@@ -311,7 +316,10 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
     .allowExcessArguments(false)
     .action(async (opts: { token?: string }) => {
       const code = await readSecret(ctx, 'Recovery code: ');
-      await (await client(opts, 'dispatch team recover')).recoverTeam(code);
+      logAnswer(
+        ctx,
+        await (await client(opts, 'dispatch team recover')).recoverTeam(code)
+      );
       ctx.log('Recovered: this machine is an admin, ranked after every other.');
     });
 
@@ -365,12 +373,26 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
         const n = Number(seq);
         if (!Number.isSafeInteger(n))
           throw new CliError(`seq must be a number, not "${seq}"`);
-        await (
-          await client(opts, 'dispatch team dismiss')
-        ).dismissRosterOp(replica, n, hash);
+        logAnswer(
+          ctx,
+          await (
+            await client(opts, 'dispatch team dismiss')
+          ).dismissRosterOp(replica, n, hash)
+        );
         ctx.log(`Dismissed ${replica}'s op at seq ${n}.`);
       }
     );
+
+  team
+    .command('ack <subject>')
+    .description(
+      'Acknowledge a race, cut, merge or route note (the subject `team keys` lists); a halt or pause goes only when its cause does'
+    )
+    .option(tokenOption, tokenHelp)
+    .action(async (subject: string, opts: { token?: string }) => {
+      await (await client(opts, 'dispatch team ack')).ackProblem(subject);
+      ctx.log(`Acknowledged ${subject}.`);
+    });
 
   const keys = team
     .command('keys')
