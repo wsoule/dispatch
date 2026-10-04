@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -372,6 +378,41 @@ describe('fileTokenStore', () => {
     );
     writeFileSync(path, '{ not json');
     expect(fileTokenStore(path).load()).toEqual([]);
+  });
+
+  test('moves an unreadable file aside with a problem, and never saves over it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-tokens-'));
+    const path = join(dir, 'team-tokens.json');
+    writeFileSync(path, '{ not json');
+    const store = fileTokenStore(path);
+    expect(store.load()).toEqual([]);
+    const aside = readdirSync(dir).filter((f) => f.includes('.corrupt-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(dir, aside[0]), 'utf8')).toBe('{ not json');
+    expect(store.problems?.()).toEqual([expect.stringContaining(aside[0])]);
+    expect(new TeammateTokens({ store }).problems()).toHaveLength(1);
+    // A file damaged after load is moved aside too, not overwritten.
+    writeFileSync(path, '[{ broken');
+    store.save([]);
+    expect(
+      readdirSync(dir).filter((f) => f.includes('.corrupt-'))
+    ).toHaveLength(2);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual([]);
+  });
+
+  test('saves through a temp file and rename, leaving no temp behind', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-tokens-'));
+    const path = join(dir, 'team-tokens.json');
+    const store = fileTokenStore(path);
+    store.save([]);
+    // A crash before the rename leaves the old file whole: simulate by a
+    // stray temp file, which the next save replaces.
+    writeFileSync(`${path}.tmp-stale`, 'half');
+    store.save([]);
+    expect(readdirSync(dir).filter((f) => !f.includes('stale'))).toEqual([
+      'team-tokens.json',
+    ]);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   test('drops entries that are not well-formed hashes', () => {
