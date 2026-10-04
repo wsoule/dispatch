@@ -9,14 +9,14 @@ import { call, liveRun, useWorld } from './world.js';
 const world = useWorld();
 
 describe('a run token on the request-tier routes', () => {
-  it('creates and edits tasks as agent:dispatch, never the owner', async () => {
+  it('creates and edits tasks as agent:local-cli, never the owner', async () => {
     const w = world();
     const run = await liveRun(w, w.app, 'parent');
     const made = await call(w, run.runToken, 'POST', '/api/tasks', {
       title: 'spawned by a run',
     });
     expect(made.status).toBe(201);
-    expect(made.json.meta.creator).toBe('agent:dispatch');
+    expect(made.json.meta.creator).toBe('agent:local-cli');
 
     const list = await call(w, run.runToken, 'GET', '/api/tasks');
     expect(list.status).toBe(200);
@@ -29,7 +29,7 @@ describe('a run token on the request-tier routes', () => {
       { appendActivity: 'looked' }
     );
     expect(patched.status).toBe(200);
-    expect(patched.json.body).toContain('agent:dispatch');
+    expect(patched.json.body).toContain('agent:local-cli');
   });
 
   it('never reaches the decide or operator tier', async () => {

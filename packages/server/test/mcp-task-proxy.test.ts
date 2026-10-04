@@ -332,7 +332,7 @@ describe('task_save through a live daemon', () => {
 // XH-R2: inside a run the tools present the run's own token, so a task the
 // run makes is the run's agent's, never the owner's.
 describe('task_save inside a run', () => {
-  it('credits agent:dispatch, never the owner', async () => {
+  it('credits agent:local-cli, never the owner', async () => {
     const parent = await createTaskViaApi('parent');
     const run = (await json(
       await fetch(`${baseUrl}/api/tasks/${parent}/runs`, {
@@ -355,7 +355,7 @@ describe('task_save inside a run', () => {
       }
     );
     const meta = structured(result).meta as { id: string };
-    expect((await getTaskViaApi(meta.id)).meta.creator).toBe('agent:dispatch');
+    expect((await getTaskViaApi(meta.id)).meta.creator).toBe('agent:local-cli');
   });
 });
 

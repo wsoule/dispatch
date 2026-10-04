@@ -234,7 +234,7 @@ describe('attribution on a shared daemon', () => {
     );
   });
 
-  it('the shared agent token is agent:dispatch, never the owner (XH-R2)', async () => {
+  it('the shared agent token is agent:local-cli, never the owner (XH-R2)', async () => {
     const agent = handle.tokens.agentToken;
     const taskId = await newTask(agent, 'Made by a run');
     const task = (await (
@@ -242,7 +242,7 @@ describe('attribution on a shared daemon', () => {
         headers: headers(agent),
       })
     ).json()) as { meta: { creator: string } };
-    expect(task.meta.creator).toBe('agent:dispatch');
+    expect(task.meta.creator).toBe('agent:local-cli');
 
     await rawFetch(`${baseUrl}/api/tasks/${taskId}`, {
       method: 'PATCH',
@@ -257,7 +257,7 @@ describe('attribution on a shared daemon', () => {
     const line = after.body
       .split('\n')
       .find((l) => l.includes('I approved the deploy'));
-    expect(line).toContain('agent:dispatch');
+    expect(line).toContain('agent:local-cli');
     expect(line).not.toContain('human:wyat');
 
     const finding = await post('/api/findings', agent, {
@@ -267,7 +267,7 @@ describe('attribution on a shared daemon', () => {
       detail: 'x',
     });
     expect(((await finding.json()) as { raisedBy: string }).raisedBy).toBe(
-      'agent:dispatch'
+      'agent:local-cli'
     );
 
     const run = await post(`/api/tasks/${taskId}/runs`, agent, {});
@@ -285,7 +285,9 @@ describe('attribution on a shared daemon', () => {
     for (const [token, who, forged] of [
       [ada, 'human:ada', 'human:wyat'],
       [ada, 'human:ada', 'agent:dispatch'],
-      [handle.tokens.agentToken, 'agent:dispatch', 'human:wyat'],
+      [handle.tokens.agentToken, 'agent:local-cli', 'human:wyat'],
+      [handle.tokens.agentToken, 'agent:local-cli', 'agent:dispatch'],
+      [ada, 'human:ada', 'agent:local-cli'],
       [handle.tokens.appToken, 'human:wyat', 'human:ada'],
     ] as const) {
       const res = await post('/api/tasks', token, {

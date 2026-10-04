@@ -165,14 +165,14 @@ describe('humanCredentialRef and routePrincipal', () => {
       viaAgentToken: true,
     });
     expect(humanCredentialRef(shared)).toBeNull();
-    // XH-R2: credited as agent:dispatch, so a memory proposal it raises is
+    // XH-R2: credited as agent:local-cli, so a memory proposal it raises is
     // never authored by the owner.
     expect(routePrincipal(shared)).toEqual({
-      address: 'agent:dispatch',
+      address: 'agent:local-cli',
       canDecide: false,
       kind: 'agent',
     });
-    expect(requestActor(shared)).toBe('agent:dispatch');
+    expect(requestActor(shared)).toBe('agent:local-cli');
     expect(humanActor(shared)).toBe('human:owner');
   });
 

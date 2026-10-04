@@ -3,9 +3,10 @@ import type { Principal } from '../messaging/principal.js';
 import { actingOperator } from '../orchestrator/types.js';
 import { tierAllows } from '../tiers.js';
 
-/** The actor the shared agentToken is credited as (XH-R2): an agent of the
- *  daemon's own, never the owner whose handle the token resolves to. */
-const AGENT_TOKEN_ACTOR = 'agent:dispatch';
+/** The actor the shared agentToken is credited as (XH-R2, amended): never the
+ *  owner whose handle the token resolves to, and never agent:dispatch, the
+ *  messaging system address that system-keyed checks trust. */
+const AGENT_TOKEN_ACTOR = 'agent:local-cli';
 
 /**
  * The human whose namespace this credential speaks in: whoever presented it,

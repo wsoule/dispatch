@@ -4926,8 +4926,7 @@ function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
     return () => true;
   const address =
     ctx.viaRun !== undefined ? `run:${ctx.viaRun}` : requestActor(ctx);
-  // The bare agent token's actor is the messaging system's own address, so it
-  // is never a reader: it takes part in no conversation.
+  // The bare agent token takes part in no conversation, so it reads none.
   const reader =
     agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
   const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
