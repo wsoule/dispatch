@@ -39,13 +39,13 @@ describe('openMemoryDb', () => {
     db.close();
   });
 
-  it('waits at most 100 ms on a busy file, then refuses as busy instead of stalling', () => {
+  it('never waits on a busy file: it refuses as busy at once', () => {
     const path = tempDb();
     const opened = openMemoryDb(path);
     const [row] = opened.db.prepare('PRAGMA busy_timeout').all() as {
       timeout: number;
     }[];
-    expect(row.timeout).toBeLessThanOrEqual(100);
+    expect(row.timeout).toBe(0);
     const store = new SqliteMemoryStore(opened);
     const other = openSqliteDb(path);
     other.exec('BEGIN IMMEDIATE');

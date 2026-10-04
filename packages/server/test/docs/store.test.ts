@@ -97,14 +97,14 @@ describe('openDocsDb', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('stamps the schema version and keeps the busy wait short', () => {
+  it('stamps the schema version and never waits on a lock', () => {
     const { db } = openDocsDb(join(dir, 'docs.db'));
     expect(dbVersion(db)).toBe(DOCS_DB_VERSION);
     const timeout = db.prepare('PRAGMA busy_timeout').get() as {
       timeout: number;
     };
-    // A long wait stalls the event loop; the routes retry a busy write instead.
-    expect(timeout.timeout).toBe(100);
+    // Any wait stalls the event loop; the routes retry a busy write instead.
+    expect(timeout.timeout).toBe(0);
     db.close();
   });
 

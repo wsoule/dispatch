@@ -140,6 +140,9 @@ export function openDocsDb(
 ): { db: SqliteDatabase; fts: boolean } {
   const db = openSqliteDb(path);
   try {
+    // No synchronous wait at all: a locked write fails at once and the routes
+    // retry it asynchronously, so parallel writes never queue on the loop.
+    db.exec('PRAGMA busy_timeout = 0');
     const existing = dbVersion(db);
     if (existing > DOCS_DB_VERSION) {
       throw new Error(

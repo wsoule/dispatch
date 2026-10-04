@@ -422,6 +422,9 @@ function openIdentitiesDb(path: string): SqliteDatabase {
     );
   }
   try {
+    // No synchronous wait: a locked write throws MemoryBusyError at once and
+    // the routes retry it asynchronously.
+    db.exec('PRAGMA busy_timeout = 0');
     db.exec(TABLES);
     const minReader = queryOne<{ value: string }>(
       db,

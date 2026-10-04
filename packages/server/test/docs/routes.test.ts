@@ -128,6 +128,26 @@ describe('docs routes', () => {
     }
   });
 
+  it('keeps health fast while 20 parallel writes wait out a docs.db lock', async () => {
+    const other = openSqliteDb(join(runsDir(root), 'docs.db'));
+    other.exec('BEGIN IMMEDIATE');
+    setTimeout(() => other.exec('ROLLBACK'), 300);
+    const writes = Array.from({ length: 20 }, (_, i) =>
+      post('/docs', { title: `Parallel ${i}`, body: 'x\n' })
+    );
+    let worst = 0;
+    for (let i = 0; i < 5; i++) {
+      const started = performance.now();
+      expect((await fetch(`${base}/health`)).status).toBe(200);
+      worst = Math.max(worst, performance.now() - started);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    const statuses = (await Promise.all(writes)).map((r) => r.status);
+    other.close();
+    expect(worst).toBeLessThan(200);
+    expect(statuses.every((s) => s === 201)).toBe(true);
+  });
+
   it('creates, reads, edits, lists and deletes a team doc', async () => {
     const created = await post('/docs', {
       title: 'Auth refactor',

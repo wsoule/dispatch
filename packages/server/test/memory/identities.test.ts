@@ -428,7 +428,7 @@ describe('MemoryIdentities', () => {
 });
 
 describe('a busy identities.db', () => {
-  it('waits at most 100 ms, then refuses as busy instead of stalling', () => {
+  it('refuses as busy at once instead of stalling', () => {
     const ids = open();
     const path = join(dir, 'memory', 'identities.db');
     const other = openSqliteDb(path);
