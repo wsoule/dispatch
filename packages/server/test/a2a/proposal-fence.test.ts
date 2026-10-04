@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { InboxTriageSnapshotStore } from '../../src/judgments/inboxTriage.js';
 import type {
   ExecutorEvents,
   ExecutorRun,
@@ -306,4 +307,52 @@ it('refuses a subtask of an A2A clone below decide tier', async () => {
     body: JSON.stringify({ title: 'Sub', parent: clone.meta.id }),
   });
   expect(viaAgent.status).toBe(403);
+});
+
+it('marks an inbox item converted under an A2A epic as A2A-origin', async () => {
+  const id = await approvedDraft();
+  expect(
+    (
+      await owner(id, {
+        method: 'PATCH',
+        headers: json,
+        body: JSON.stringify({ kind: 'epic' }),
+      })
+    ).status
+  ).toBe(200);
+  const captured = await fetch(`http://127.0.0.1:${handle.port}/api/inbox`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({ text: 'tidy the upload limits' }),
+  });
+  const [item] = (await captured.json()) as { id: string }[];
+  new InboxTriageSnapshotStore(root).save({
+    items: {
+      [item.id]: {
+        itemId: item.id,
+        hash: 'h',
+        kind: 'task',
+        kindConfidence: 1,
+        epicId: id,
+        epicTitle: 'Rate-limit uploads',
+        epicConfidence: 1,
+        duplicates: [],
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  });
+  const res = await fetch(`http://127.0.0.1:${handle.port}/api/inbox/convert`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({ ids: [item.id] }),
+  });
+  const { results } = (await res.json()) as {
+    results: { taskId?: string }[];
+  };
+  const child = results[0].taskId!;
+  const doc = (await (await owner(child, {})).json()) as {
+    meta: { parent: string | null };
+  };
+  expect(doc.meta.parent).toBe(id);
+  expect(handle.a2a.taskOrigin(child)).toBe('a2a');
 });

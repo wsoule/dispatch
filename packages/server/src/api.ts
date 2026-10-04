@@ -4190,6 +4190,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
         ...(description === '' ? {} : { description }),
         ...(parent === null ? {} : { parent }),
       });
+      markA2AChild(ctx, task.meta.id, parent);
       links.push({ id, taskId: task.meta.id });
       results.push({
         id,
