@@ -1,4 +1,5 @@
-import { MemoryError } from '@dispatch/memory';
+import { openSqliteDb } from '@dispatch/core';
+import { MemoryBusyError, MemoryError } from '@dispatch/memory';
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,
@@ -423,5 +424,30 @@ describe('MemoryIdentities', () => {
     ids.dropOwnerApproval(P1, 'agent:test/a');
     expect(ids.ownerApproved(P1, 'agent:test/a', 'h1')).toBe(false);
     ids.close();
+  });
+});
+
+describe('a busy identities.db', () => {
+  it('waits at most 100 ms, then refuses as busy instead of stalling', () => {
+    const ids = open();
+    const path = join(dir, 'memory', 'identities.db');
+    const other = openSqliteDb(path);
+    other.exec('BEGIN IMMEDIATE');
+    const started = performance.now();
+    try {
+      expect(() =>
+        ids.resolve({
+          projectKey: P1,
+          handle: 'wyat',
+          isOwner: true,
+          rosterEmail: null,
+        })
+      ).toThrow(MemoryBusyError);
+    } finally {
+      other.exec('ROLLBACK');
+      other.close();
+    }
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(identityOf(ids, P1, 'alice', 'a@x.com')).toMatch(IDENTITY_PATTERN);
   });
 });

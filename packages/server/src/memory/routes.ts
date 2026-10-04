@@ -764,14 +764,14 @@ export async function startLinkRoute(
     rosterEmail: rosterEmailOf(ctx.rootDir, handle),
   };
   if (optionalBoolean(parsed.value, 'fresh') !== true)
-    return jsonResponse(identities.startLink(alias));
+    return jsonResponse(await retryBusy(() => identities.startLink(alias)));
   if (principal.address === ctx.actorContext.humanRef)
     throw new MemoryError(
       'invalid',
       "fresh: the owner's personal memory always stays its own",
       'fresh'
     );
-  const identity = identities.startFresh(alias);
+  const identity = await retryBusy(() => identities.startFresh(alias));
   ctx.memory.host.changed({ scope: 'personal' });
   return jsonResponse({ identity });
 }
@@ -787,12 +787,14 @@ export async function completeLinkRoute(
   const parsed = await bodyOf(req, true);
   if (!parsed.ok) return parsed.response;
   const identities = requireIdentities(ctx);
-  const { identity, previous } = identities.completeLink({
-    code: refOf(code),
-    projectKey: ctx.memory.host.projectKey(),
-    handle,
-    rosterEmail: rosterEmailOf(ctx.rootDir, handle),
-  });
+  const { identity, previous } = await retryBusy(() =>
+    identities.completeLink({
+      code: refOf(code),
+      projectKey: ctx.memory.host.projectKey(),
+      handle,
+      rosterEmail: rosterEmailOf(ctx.rootDir, handle),
+    })
+  );
   if (previous !== null && identities.aliasesOf(previous).length === 0)
     ctx.memory.personal.move(previous, identity);
   ctx.memory.host.changed({ scope: 'personal' });
