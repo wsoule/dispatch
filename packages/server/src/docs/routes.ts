@@ -15,7 +15,7 @@ import {
 } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
-import { humanActor, humanOperator } from '../api/caller.js';
+import { humanOperator, requestActor } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
 import { MAX_ASSET_BYTES } from './assets.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
@@ -319,7 +319,7 @@ async function dispatchPublish(
     const run = await ctx.orchestrator.dispatch(
       task,
       ctx.orchestrator.defaultExecutorName(),
-      { actor: humanActor(ctx), operator: humanOperator(ctx) }
+      { actor: requestActor(ctx), operator: humanOperator(ctx) }
     );
     return { run: run.id, dispatchError: null };
   } catch (err) {

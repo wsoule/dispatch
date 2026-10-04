@@ -3,15 +3,15 @@ import type { Principal } from '../messaging/principal.js';
 import { actingOperator } from '../orchestrator/types.js';
 import { tierAllows } from '../tiers.js';
 
+/** The actor the shared agentToken is credited as (XH-R2): an agent of the
+ *  daemon's own, never the owner whose handle the token resolves to. */
+export const AGENT_TOKEN_ACTOR = 'agent:dispatch';
+
 /**
- * The human a write should be credited to: whoever presented the credential,
- * falling back to the operator for a context built without one (the few
- * internal callers that reach handlers directly).
- *
- * This is what makes attribution trustworthy on a shared daemon. Before
- * tokens named people every human write was credited to the operator,
- * because the operator was the only human there could be; a teammate's
- * comment would have read as the operator's.
+ * The human whose namespace this credential speaks in: whoever presented it,
+ * the owner for the shared agentToken, falling back to the operator for a
+ * context built without one (the few internal callers that reach handlers
+ * directly). Never use it to credit a write; that is requestActor.
  *
  * Its own module, importing only types and the import-free tiers module, so
  * the route modules under api/ can call it without a value-level import cycle
@@ -23,8 +23,18 @@ export function humanActor(
   return ctx.caller?.ref ?? ctx.actorContext.humanRef;
 }
 
+/** Who a write is credited to: the credential's own human, or
+ *  AGENT_TOKEN_ACTOR for the shared agentToken, which no human stands behind. */
+export function requestActor(
+  ctx: Pick<ApiContext, 'caller' | 'actorContext' | 'viaAgentToken'>
+): string {
+  if (ctx.viaAgentToken === true || ctx.caller?.agentToken === true)
+    return AGENT_TOKEN_ACTOR;
+  return humanActor(ctx);
+}
+
 /** The human behind this request's own credential; null for the shared
- *  agentToken, which humanActor credits to the owner. */
+ *  agentToken, which no human stands behind. */
 export function humanCredentialRef(
   ctx: Pick<ApiContext, 'caller' | 'viaAgentToken'>
 ): string | null {
@@ -51,10 +61,10 @@ export function humanOperator(
 }
 
 /** A memory principal for a route outside messaging: a human, or an
- *  agent-trust writer attributed as humanActor. */
+ *  agent-trust writer attributed as requestActor. */
 export function routePrincipal(ctx: ApiContext): Principal {
   if (ctx.viaAgentToken === true || ctx.caller === undefined)
-    return { address: humanActor(ctx), canDecide: false, kind: 'agent' };
+    return { address: requestActor(ctx), canDecide: false, kind: 'agent' };
   return {
     address: ctx.caller.ref,
     canDecide: tierAllows(ctx.caller.tier, 'decide'),

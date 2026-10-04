@@ -64,7 +64,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor, humanOperator } from './api/caller.js';
+import { humanActor, humanOperator, requestActor } from './api/caller.js';
 import {
   addComment,
   addLegacyTaskNote,
@@ -704,20 +704,14 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const input = parsed.value as CreateInput;
-  // Credit whoever made the request unless the caller names a creator (a
-  // sync importing someone else's issue).
+  // Credited to whoever made the request; a body `creator` is ignored, since
+  // imports (Linear, A2A) write through the store in-process (XH-R2).
   const created = createTaskChecked(ctx, {
     ...input,
-    creator: input.creator ?? humanActor(ctx),
+    creator: requestActor(ctx),
   });
   if (!created.ok) return errorResponse(400, created.error);
-  // A task imported on someone else's behalf is not the caller's writing.
-  ctx.taskAuthorship?.created(
-    created.doc,
-    input.creator === undefined || input.creator === humanActor(ctx)
-      ? humanOperator(ctx)
-      : null
-  );
+  ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
   return jsonResponse(created.doc, 201);
 }
 
@@ -864,7 +858,7 @@ async function updateTask(
   // credited to the human whose credential made the call, never whatever the
   // client sent (an untrusted body must not be able to forge attribution).
   if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
-    patch.activityActor = humanActor(ctx);
+    patch.activityActor = requestActor(ctx);
   }
 
   const doc = ctx.store.update(id, patch);
@@ -945,7 +939,7 @@ async function createRun(
     fresh: freshField === true,
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
-    actor: humanActor(ctx),
+    actor: requestActor(ctx),
     // Who the run acts for: the credential's own human (the owner only on
     // the app token), never the shared agentToken.
     operator: humanOperator(ctx),
@@ -2061,7 +2055,7 @@ function sendReviewToAgent(
     resume
       ? {
           resume: true,
-          actor: humanActor(ctx),
+          actor: requestActor(ctx),
           operator: humanOperator(ctx),
         }
       : {}
@@ -3805,7 +3799,7 @@ async function startEpic(
   const operator = humanOperator(ctx);
   const session = await ctx.epicEngine.start(epicId, {
     ...checked.body,
-    startedBy: humanActor(ctx),
+    startedBy: requestActor(ctx),
     ...(operator === null ? {} : { operator }),
   });
   return jsonResponse(session, 201);
@@ -5667,7 +5661,7 @@ export async function handleApi(
       ) {
         return jsonResponse(
           ctx.orchestrator.resumeRun(segments[1], {
-            actor: humanActor(ctx),
+            actor: requestActor(ctx),
             operator: humanOperator(ctx),
           }),
           201
