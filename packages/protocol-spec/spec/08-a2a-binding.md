@@ -197,6 +197,7 @@ Vectors: `a2a.envelope-ext.accepts-recipients-choices-and-message-refs`,
 `a2a.external.the-host-sets-id-thread-and-from`,
 `a2a.external.defaults-to-a-blocking-question-to-the-owner`,
 `a2a.external.a-client-reaches-only-the-owner`,
+`a2a.external.an-a2a-recipient-reads-as-the-owner`,
 `a2a.external.an-opening-answer-or-handoff-is-refused`,
 `a2a.external.an-answer-from-a-client-is-never-a-close`.
 
