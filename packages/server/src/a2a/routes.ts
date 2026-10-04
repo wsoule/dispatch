@@ -220,6 +220,7 @@ async function addClient(
     client: 'a2a',
     requester,
     refuseAnyExisting: true,
+    approvedAtOnce: body.approve === true,
     gateBody: `New A2A client ${address} wants to reach this project. It may address ${[ctx.actorContext.humanRef, ...recipients].join(', ')}. Requested by ${requester}.`,
   });
   if (!reg.ok) return reg.response;

@@ -101,6 +101,28 @@ describe('M4 caps', () => {
     expect(again.status).toBe(201);
   });
 
+  it('lets a registration the owner approves at once past a full namespace', async () => {
+    const w = world();
+    for (let i = 0; i < 10; i++) {
+      const r = await call(w, w.agent, 'POST', '/api/agents/register', {
+        name: `bot-${i}`,
+        client: 'x',
+      });
+      expect(r.status).toBe(201);
+    }
+    // No gate is left waiting, so the flood cap has nothing to bound.
+    const approved = await call(w, w.app, 'POST', '/api/a2a/clients', {
+      name: 'partner',
+      approve: true,
+    });
+    expect(approved.status).toBe(201);
+    expect(approved.json.status).toBe('approved');
+    const waiting = await call(w, w.app, 'POST', '/api/a2a/clients', {
+      name: 'waiting',
+    });
+    expect(waiting.status).toBe(429);
+  });
+
   it('merges repeated wake asks for one task into one gate', async () => {
     const w = world();
     const a = await approvedAgent(w, 'waker');

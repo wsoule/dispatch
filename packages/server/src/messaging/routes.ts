@@ -916,6 +916,8 @@ export interface AgentRegistration {
   gateBody: string;
   // Refuse a name that was ever registered, revoked rows included.
   refuseAnyExisting: boolean;
+  // A deciding caller approves it in the same request, so no gate waits.
+  approvedAtOnce?: boolean;
 }
 
 // Writes a pending agent:<requester's handle>/<name> row with a fresh token and
@@ -970,7 +972,7 @@ export async function registerAgentRow(
     .filter(
       (a) => a.status === 'pending' && a.address.startsWith(namespace)
     ).length;
-  if (pending >= MAX_PENDING_REGISTRATIONS) {
+  if (reg.approvedAtOnce !== true && pending >= MAX_PENDING_REGISTRATIONS) {
     return {
       ok: false,
       response: errorResponse(
