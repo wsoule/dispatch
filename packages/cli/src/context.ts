@@ -16,6 +16,10 @@ export interface CliContext {
   openApp?: (rootDir: string) => void;
   // Reads all of stdin (a secret piped in with --token-stdin); tests inject it.
   readStdin?: () => Promise<string>;
+  // Reads a secret (an invite or recovery code) without it reaching argv:
+  // tests inject a stub; real usage falls back to stdin or a muted prompt
+  // (`readSecret` in commands/secret.ts).
+  readSecret?: (prompt: string) => Promise<string>;
 }
 
 export class CliError extends Error {

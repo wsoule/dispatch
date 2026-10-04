@@ -27,9 +27,10 @@ import type {
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
+import { printable } from '@dispatch/federation';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -175,11 +176,15 @@ import {
   SyncWorktree,
 } from './sync/worktree.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
-import { SyncRepo } from './team/boardSync/repo.js';
-import { BoardSyncService } from './team/boardSync/service.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
+import { appendAuditToReceipts } from './team/federation/audit.js';
+import type { Federation } from './team/federation/daemon.js';
+import { buildFederation } from './team/federation/daemon.js';
+import { rekeyIfKeysLost } from './team/federation/keys.js';
+import type { FederationContext } from './team/federation/routes.js';
+import type { FederationService } from './team/federation/service.js';
 import type { Team } from './team/index.js';
-import { createTeam, syncSeats } from './team/index.js';
+import { createTeam } from './team/index.js';
 import { hostSpawner } from './terminalHost.js';
 import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
@@ -321,6 +326,11 @@ export interface StartServerOptions {
   // autoCommit: true and every startServer()-based test would otherwise boot
   // a live interval.
   boardSyncPeriodicMs?: number;
+  // The clock board sync reads (the ledger's hybrid clock, the clock guard,
+  // license expiry); test-only, like boardSyncDebounceMs.
+  federationNow?: () => number;
+  // Debounce for a board sync pass after a local change; test-only.
+  federationDebounceMs?: number;
   // Debounce for the receipts exporter's response to a task change. Defaults
   // to ReceiptsScheduler's own multi-second default; tests pass something much
   // shorter. There is no periodic counterpart: the export has no remote to
@@ -1017,7 +1027,23 @@ async function bootServer(
   }
   // With sync on, everything gets the store that records each write as a
   // change for the other replicas; the board it writes to is the same one.
-  let boardSync: BoardSyncService | null = null;
+  let boardSync: FederationService | null = null;
+  let federation: Federation | null = null;
+  let federationContext: FederationContext | null = null;
+  const federationNow = (): Date =>
+    new Date(opts.federationNow?.() ?? Date.now());
+  // A key file lost with state.db kept: start over as a new replica id (F-D35).
+  if (syncConfig !== null) {
+    const rekeyed = rekeyIfKeysLost(
+      boardSyncDir(rootDir),
+      join(boardSyncDir(rootDir), 'state.db'),
+      actorContext.member.handle
+    );
+    if (rekeyed !== null)
+      console.warn(
+        `dispatchd: keys/replica.json was missing; this machine is a new replica and must be admitted again (was ${rekeyed})`
+      );
+  }
   const syncLedger =
     syncConfig === null
       ? null
@@ -1027,7 +1053,8 @@ async function bootServer(
           // every write is attributed to — not the OS login, which two
           // people on stock cloud machines share and one person can have
           // two of. The license counts sync seats by it.
-          actorContext.member.handle
+          actorContext.member.handle,
+          () => federationNow().getTime()
         );
   const syncedStore =
     syncLedger === null || !(stores.tasks instanceof SqliteTaskStore)
@@ -1160,6 +1187,13 @@ async function bootServer(
             (dir) =>
               memoryReceipts?.(dir) ?? { changed: 0, removed: 0, problems: [] },
           ],
+          // The federation audit log, once board sync built it (Task 24).
+          appendices: [
+            (dir) => {
+              if (federation !== null)
+                appendAuditToReceipts(federation.fed, dir);
+            },
+          ],
         });
   // Team doc changes that reach a sealed head (seals, reviews, status, links,
   // renames, deletes) export; open-revision amends and new heads wait for the seal.
@@ -1193,20 +1227,19 @@ async function bootServer(
         `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
-      boardSync = new BoardSyncService({
-        store: syncedStore,
+      // Only here are the federation's store and roster built; the team
+      // routes read them from `federation`.
+      federation = buildFederation({
+        syncDir: boardSyncDir(rootDir),
         ledger: syncLedger,
-        repo: new SyncRepo(
-          join(boardSyncDir(rootDir), 'repo'),
-          remoteUrl,
-          syncConfig.branch,
-          syncLedger.replica,
-          defaultAsyncGitRunner
-        ),
-        remote: remoteUrl,
+        store: syncedStore,
+        team,
+        handle: actorContext.member.handle,
+        build: packageJson.version,
+        remoteUrl,
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
-        ...syncSeats(team),
+        git: defaultAsyncGitRunner,
         // A teammate's change lands like a local edit: the cache is resynced
         // and every client told which tasks moved, so boards refresh without
         // anyone reloading.
@@ -1216,7 +1249,33 @@ async function bootServer(
             events.broadcast({ type: 'task.changed', ids: changed });
           }
         },
+        now: federationNow,
+        ...(opts.federationDebounceMs === undefined
+          ? {}
+          : { debounceMs: opts.federationDebounceMs }),
       });
+      boardSync = federation.service;
+      const { roster, fed } = federation;
+      federationContext = {
+        roster,
+        fed,
+        handle: actorContext.member.handle,
+        device: hostname().split('.')[0] ?? 'machine',
+        now: federationNow,
+        // The origin warning names the code remote only when sync.repo is unset.
+        remote: syncConfig.repo === undefined ? remoteUrl : null,
+        label: (replica) => roster.label(replica),
+        observer: () => {
+          const watcher = [...(roster.view()?.members.values() ?? [])].find(
+            (m) => m.observer
+          );
+          if (watcher === undefined) return null;
+          const device = printable(
+            fed.pinned(watcher.replica)?.device ?? watcher.replica
+          );
+          return `${watcher.handle}'s ${device}`;
+        },
+      };
       const published = syncedStore.bootstrap();
       if (published > 0) {
         console.log(
@@ -2065,6 +2124,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    federation: federationContext,
     team,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
@@ -2393,7 +2453,8 @@ async function bootServer(
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather
       // than let it finish. A no-op on the file backend.
-      boardSync?.stop();
+      // The pass in flight finishes before its ledger closes (B2).
+      await boardSync?.stop();
       syncLedger?.close();
       orchestrator.setMemoryPort(null);
       memory.close();

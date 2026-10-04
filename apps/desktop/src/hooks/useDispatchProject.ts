@@ -1968,6 +1968,10 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: syncStatusQueryKey,
           });
+          // A teammate's change may come with roster ops: Settings → Machines.
+          if (event.type === 'board.sync') {
+            void queryClient.invalidateQueries({ queryKey: ['team-keys'] });
+          }
         } else if (event.type === 'linear.progress') {
           // An import moved on: patch the status in place, no refetch.
           queryClient.setQueryData<LinearStatus>(linearStatusQueryKey, (prev) =>

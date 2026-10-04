@@ -158,7 +158,10 @@ export class ReceiptsExporter {
     private readonly stores: ProjectStores,
     private readonly actor: ActorContext,
     private readonly run: AsyncGitRunner,
-    private readonly steps: readonly ReceiptsStep[] = []
+    private readonly steps: readonly ReceiptsStep[] = [],
+    /** Writers run after materializing and before `git add -A`, for files
+     *  outside the materialized set (the federation audit log, Task 24). */
+    private readonly appendices: readonly ((dir: string) => void)[] = []
   ) {}
 
   /**
@@ -249,6 +252,7 @@ export class ReceiptsExporter {
         );
       }
     }
+    for (const append of this.appendices) append(dir);
     const failed = (detail: string): ReceiptsResult => ({
       ...counts,
       state: 'failed',

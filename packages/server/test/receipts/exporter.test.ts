@@ -103,6 +103,30 @@ describe('ReceiptsExporter', () => {
     expect(tracked).toMatch(/\.dispatch\/tasks\/t-[0-9a-f]{6}-first-task\.md/);
   });
 
+  // Task 24: an appendix (the federation audit log) is committed with the
+  // export, and a later export never removes files under federation/.
+  it('commits what an appendix writes and keeps it on later exports', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    const dir = logDir();
+    const appendix = (d: string) => {
+      mkdirSync(join(d, 'federation'), { recursive: true });
+      writeFileSync(join(d, 'federation', 'audit.jsonl'), '{"id":1}\n');
+    };
+    const exporter = new ReceiptsExporter(
+      s,
+      ActorContext.resolve(root, gitReaderFor(root)),
+      runAsync,
+      [],
+      [appendix]
+    );
+    expect((await exporter.exportOnce(dir)).state).toBe('committed');
+    s.tasks.create({ kind: 'task', title: 'Second task' });
+    await exporterFor(s).exportOnce(dir);
+    const tracked = run(dir, ['ls-tree', '-r', '--name-only', 'HEAD']).stdout;
+    expect(tracked).toContain('federation/audit.jsonl');
+  });
+
   it('commits nothing when the database has not changed', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });

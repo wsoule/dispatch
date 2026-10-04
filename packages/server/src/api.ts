@@ -297,7 +297,15 @@ import {
 import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
-import type { BoardSyncService } from './team/boardSync/service.js';
+import type { FederationContext } from './team/federation/routes.js';
+import {
+  boardSyncNow,
+  handleFederationRoute,
+  isFederationRoute,
+  statusFor,
+} from './team/federation/routes.js';
+import type { FederationService } from './team/federation/service.js';
+import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
   getLicense,
@@ -442,7 +450,9 @@ export interface ApiContext {
   /** Teammates' way into previews, in team-local mode; null on loopback. */
   previewGateway: PreviewGateway | null;
   /** Board sync between replicas (team/boardSync/); null when it is off. */
-  boardSync: BoardSyncService | null;
+  boardSync: FederationService | null;
+  /** The signed roster and its store, once board sync is on (Task 10b). */
+  federation: FederationContext | null;
   /** Teammates' credentials and the license that says how many people may
    *  use this project together — team/, under the Elastic License 2.0. */
   team: Team;
@@ -4572,6 +4582,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // listing holders tells it whose to go looking for. team/routes.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
+  { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
@@ -4589,6 +4601,34 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
+  // Roster changes are signed with this machine's key, so they need its owner.
+  { method: 'POST', segments: ['team', 'found'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'trust'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'invite'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'join'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'recover'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'recovery-key'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'license'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'close-legacy'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'admit'],
+    tier: 'operator',
+  },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'revoke'],
+    tier: 'operator',
+  },
+  { method: 'POST', segments: ['team', 'keys', '*', 'role'], tier: 'operator' },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'hosts'],
+    tier: 'operator',
+  },
   // Approving, revoking or (un)muting an agent is an adjudication: on the
   // request tier the shared agentToken could approve itself onto the roster.
   { method: 'POST', segments: ['agents', '*', 'approve'], tier: 'decide' },
@@ -5148,6 +5188,9 @@ export async function handleApi(
       });
     }
 
+    if (segments[0] === 'team' && isFederationRoute(segments)) {
+      return await handleFederationRoute(req, ctx, segments, method);
+    }
     if (segments[0] === 'team' && segments[1] === 'tokens') {
       if (segments.length === 2 && method === 'GET') return listTeamTokens(ctx);
       if (segments.length === 2 && method === 'POST') {
@@ -5219,12 +5262,11 @@ export async function handleApi(
     // answered below and read by the app's status strip.
     if (segments[0] === 'board-sync') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(
-          ctx.boardSync?.status() ?? {
-            enabled: false,
-            reason: boardSyncOffReason(ctx),
-          }
-        );
+        const status = ctx.boardSync?.status() ?? {
+          enabled: false,
+          reason: boardSyncOffReason(ctx),
+        };
+        return jsonResponse(statusFor(status, ctx.caller?.tier ?? 'request'));
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {
@@ -5233,8 +5275,7 @@ export async function handleApi(
             BOARD_SYNC_OFF_MESSAGE[boardSyncOffReason(ctx)]
           );
         }
-        await ctx.boardSync.syncNow();
-        return jsonResponse(ctx.boardSync.status());
+        return jsonResponse(await boardSyncNow(ctx, ctx.boardSync));
       }
     }
 
@@ -6832,6 +6873,12 @@ export async function handleApi(
     }
     if (err instanceof OrchestratorClientError) {
       return errorResponse(400, err.message);
+    }
+    if (err instanceof TaskTooLargeError) {
+      return jsonResponse(
+        { error: err.message, code: 'too_large', field: err.field },
+        413
+      );
     }
     // Messaging routes let @dispatch/protocol's MessagingError surface
     // rather than pre-validating; `code` maps to the same statuses below.

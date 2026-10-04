@@ -2157,7 +2157,7 @@ export type BoardSyncOffReason = 'files' | 'off' | 'not-started';
  *  daemons older than it. */
 export type BoardSyncStatus =
   | { enabled: false; reason?: BoardSyncOffReason }
-  | {
+  | ({
       enabled: true;
       replica: string;
       remote: string;
@@ -2173,7 +2173,115 @@ export type BoardSyncStatus =
       /** Why this machine is paused though the remote is fine — it is past
        *  the license's seats — or null while it syncs. */
       paused: string | null;
-    };
+    } & FederationSyncFields);
+
+/** What a federated daemon adds to the board-sync status (FederationStatus
+ *  in packages/server/src/team/federation/service.ts); absent on older ones,
+ *  and health and problems only at the decide tier. */
+interface FederationSyncFields {
+  teamId?: string | null;
+  founded?: boolean;
+  legacyUntil?: string | null;
+  transport?: 'git' | 'relay';
+  transportHealth?: TransportHealth;
+  federationProblems?: TeamProblem[];
+  /** On POST /now: the pass outran the daemon's wait and carries on. */
+  running?: boolean;
+}
+
+/** One federation problem: its subject names its source (halt:, clock:,
+ *  team:race:, …) and the message what to do. */
+interface TeamProblem {
+  subject: string;
+  message: string;
+  at: string;
+}
+
+/** Mirrors TransportHealth in packages/server/src/team/federation/transport.ts. */
+interface TransportHealth {
+  kind: 'git' | 'relay';
+  lastExchangeAt: string | null;
+  lastError: string | null;
+  unpublished: number;
+  sizeBytes: number | null;
+  readBytes: number;
+  acks: Record<string, string>;
+}
+
+/** Mirrors TeamKeys in packages/server/src/team/federation/teamKeys.ts. */
+export interface TeamKeys {
+  machine: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+  };
+  team: {
+    id: string;
+    name: string;
+    founder: { replica: string; handle: string; fingerprint: string };
+  } | null;
+  /** Two or more, awaiting trust. */
+  foundings: { replica: string; fingerprint: string }[];
+  roster: {
+    replica: string;
+    handle: string;
+    device: string;
+    build: string;
+    role: 'member' | 'admin';
+    rank: number | null;
+    hosts: string[];
+    observer: boolean;
+    recovered: boolean;
+    fingerprint: string;
+    lastSeen: string | null;
+    skewMs: number | null;
+  }[];
+  waiting: {
+    replica: string;
+    handle: string;
+    device: string;
+    fingerprint: string;
+    invitedBy: string | null;
+  }[];
+  invites: { handle: string; expires: string; by: string }[];
+  legacy: { until: string | null; closed: boolean; olderBuilds: string[] };
+  transport: TransportHealth;
+  license: {
+    seats: number;
+    org: string | null;
+    sharedBy: string | null;
+  } | null;
+  pruningBlockers: {
+    replica: string;
+    handle: string;
+    lastAck: string | null;
+  }[];
+  originWarning: string | null;
+  relayDisclosure: string;
+  warnings: string[];
+  problems: TeamProblem[];
+  /** The roster op a pause waits on, for a dismiss (FW-R8/R9); else null. */
+  pause: { replica: string; seq: number; hash: string } | null;
+}
+
+/** A roster change's answer: a warning when it could not pull first,
+ *  `pending` while its sync still runs, `already` when the roster already
+ *  showed it. */
+interface RosterAnswer {
+  ok?: boolean;
+  warning?: string;
+  pending?: boolean;
+  already?: boolean;
+}
+
+/** What admitting a waiting machine sends. */
+interface AdmitInput {
+  fingerprint: string;
+  handle?: string;
+  role?: 'member' | 'admin';
+  hosts?: string[];
+}
 
 /** The plan a project runs on: how many people may use it together, and
  *  how many do. Mirrors licenseView in packages/server/src/team/routes.ts. */
@@ -3066,6 +3174,39 @@ export interface ApiClient {
   /** Installs a license key. Rejects with the reason when it does not
    *  verify; the key already installed stays. */
   installLicense(key: string): Promise<LicenseStatus>;
+  /** Decide-tier: this machine, the signed team, its roster and problems. */
+  getTeamKeys(): Promise<TeamKeys>;
+  /** Operator-tier from here on: each signs a roster op with this machine. */
+  foundTeam(
+    name?: string
+  ): Promise<
+    { teamId: string; recoveryCode: string; fingerprint: string } & RosterAnswer
+  >;
+  trustFounder(fingerprint: string): Promise<RosterAnswer>;
+  inviteToTeam(
+    handle: string
+  ): Promise<{ code: string; expires: string } & RosterAnswer>;
+  joinTeam(code: string): Promise<RosterAnswer>;
+  recoverTeam(code: string): Promise<RosterAnswer>;
+  newRecoveryCode(): Promise<{ recoveryCode: string } & RosterAnswer>;
+  shareTeamLicense(): Promise<RosterAnswer>;
+  admitReplica(replica: string, input: AdmitInput): Promise<RosterAnswer>;
+  revokeReplica(replica: string, reason?: string): Promise<RosterAnswer>;
+  setReplicaRole(
+    replica: string,
+    role: 'member' | 'admin'
+  ): Promise<RosterAnswer>;
+  setReplicaHosts(replica: string, hosts: string[]): Promise<RosterAnswer>;
+  closeLegacy(): Promise<RosterAnswer>;
+  /** FW-R8: takes an op no build reads out of every fold. */
+  dismissRosterOp(
+    replica: string,
+    seq: number,
+    hash: string
+  ): Promise<RosterAnswer>;
+  abandonInvite(): Promise<RosterAnswer>;
+  /** Decide-tier: acknowledges a race, cut, merge or route note. */
+  ackProblem(subject: string): Promise<void>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;
@@ -3984,6 +4125,35 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'PUT',
         body: JSON.stringify({ key }),
       }),
+    getTeamKeys: () => request(target, '/api/team/keys'),
+    foundTeam: (name) =>
+      teamPost(target, '/api/team/found', name === undefined ? {} : { name }),
+    trustFounder: (fingerprint) =>
+      teamPost(target, '/api/team/trust', { fingerprint }),
+    inviteToTeam: (handle) => teamPost(target, '/api/team/invite', { handle }),
+    joinTeam: (code) => teamPost(target, '/api/team/join', { code }),
+    recoverTeam: (code) => teamPost(target, '/api/team/recover', { code }),
+    newRecoveryCode: () => teamPost(target, '/api/team/recovery-key', {}),
+    shareTeamLicense: () => teamPost(target, '/api/team/license', {}),
+    admitReplica: (replica, input) =>
+      teamPost(target, rosterPath(replica, 'admit'), input),
+    revokeReplica: (replica, reason) =>
+      teamPost(
+        target,
+        rosterPath(replica, 'revoke'),
+        reason === undefined ? {} : { reason }
+      ),
+    setReplicaRole: (replica, role) =>
+      teamPost(target, rosterPath(replica, 'role'), { role }),
+    setReplicaHosts: (replica, hosts) =>
+      teamPost(target, rosterPath(replica, 'hosts'), { hosts }),
+    closeLegacy: () => teamPost(target, '/api/team/close-legacy', {}),
+    dismissRosterOp: (replica, seq, hash) =>
+      teamPost(target, '/api/team/dismiss', { replica, seq, hash }),
+    abandonInvite: () => teamPost(target, '/api/team/abandon-invite', {}),
+    ackProblem: async (subject) => {
+      await teamPost(target, '/api/team/problems/ack', { subject });
+    },
     fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>
@@ -4911,4 +5081,18 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     connectEvents: (onChange, options) =>
       connectEvents(baseUrl, onChange, { token: target.token, ...options }),
   };
+}
+
+// A federation route's POST with its JSON body.
+function teamPost<T>(
+  target: ApiTarget,
+  path: string,
+  body: object
+): Promise<T> {
+  return request(target, path, { method: 'POST', body: JSON.stringify(body) });
+}
+
+// A roster action on one replica's key, the replica percent-encoded.
+function rosterPath(replica: string, action: string): string {
+  return `/api/team/keys/${encodeURIComponent(replica)}/${action}`;
 }

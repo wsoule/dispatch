@@ -206,6 +206,50 @@ function samePin(a: PinnedKey, b: PinnedKey): boolean {
   );
 }
 
+/** A handle every Dispatch accepts, at most 64 characters. */
+export const HANDLE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const MAX_LABEL_CHARS = 128;
+// C0 and C1 controls, which a terminal or a log line would act on.
+function isControl(code: number): boolean {
+  return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+}
+function hasControl(value: string): boolean {
+  for (let i = 0; i < value.length; i++)
+    if (isControl(value.charCodeAt(i))) return true;
+  return false;
+}
+
+/** Why a key op's handle, device or build is not printable as is (M1), or
+ *  null: the handle follows HANDLE, the others are 1-128 characters with no
+ *  control characters. */
+export function keyFieldsProblem(
+  handle: string,
+  device: string,
+  build: string
+): string | null {
+  if (!HANDLE.test(handle))
+    return `handle ${JSON.stringify(handle.slice(0, 80))} is not a handle`;
+  for (const [name, value] of [
+    ['device', device],
+    ['build', build],
+  ] as const)
+    if (
+      value.length === 0 ||
+      value.length > MAX_LABEL_CHARS ||
+      hasControl(value)
+    )
+      return `${name} is empty, too long or holds control characters`;
+  return null;
+}
+
+/** A label from elsewhere made safe to print: controls out, capped. */
+export function printable(value: string, max = MAX_LABEL_CHARS): string {
+  let clean = '';
+  for (let i = 0; i < value.length; i++)
+    if (!isControl(value.charCodeAt(i))) clean += value.charAt(i);
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
 // The pin a verified key op makes, or null when its body is not a KeyBody.
 function pinFromKeyOp(e: FederatedOp): PinnedKey | null {
   const b = bodyOf(e);
@@ -215,6 +259,7 @@ function pinFromKeyOp(e: FederatedOp): PinnedKey | null {
     typeof handle !== 'string' ||
     typeof device !== 'string' ||
     typeof build !== 'string' ||
+    keyFieldsProblem(handle, device, build) !== null ||
     !isRawKey(signPub) ||
     !isRawKey(sealPub) ||
     !isLegacy(legacy)

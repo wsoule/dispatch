@@ -186,6 +186,7 @@ export type {
   IssuedTeamToken,
   LicenseStatus,
   TeamAddress,
+  TeamKeys,
   TeamTokenHolder,
   RunMeta,
   RunPreview,

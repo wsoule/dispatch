@@ -43,6 +43,8 @@ export interface ReceiptsSchedulerDeps {
   retryMs?: readonly number[];
   /** Writers of more of the log (team docs), run after the core records. */
   steps?: readonly ReceiptsStep[];
+  /** Passed to the exporter: writers of files beside the materialized ones. */
+  appendices?: readonly ((dir: string) => void)[];
 }
 
 // Matches BoardSyncScheduler's debounce, and for the same reason: long enough
@@ -138,7 +140,8 @@ export class ReceiptsScheduler {
       deps.stores,
       deps.actor,
       deps.run,
-      deps.steps
+      deps.steps,
+      deps.appendices
     );
     // Runs unconditionally; runPending re-reads the config, so a project with
     // receipts off generates no export traffic despite the timer ticking, and

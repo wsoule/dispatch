@@ -5,8 +5,10 @@ export type { ChainHead } from './chain.js';
 export { b64u, crockford32, fromB64u, sha256Hex } from './encoding.js';
 export { fingerprint } from './fingerprint.js';
 export {
+  aheadOfClock,
   compareHlc,
   hlcWallMs,
+  MAX_CLOCK_LEAD_MS,
   MAX_HLC_COUNTER,
   OpClock,
   parseOpHlc,

@@ -9,6 +9,7 @@ import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useSettingsAccess } from './access';
+import { MachinesGroup } from './MachinesGroup';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
 import { Pill } from '@/ui/ai/pill';
@@ -349,6 +350,7 @@ export function TeamSection({ data }: TeamSectionProps) {
           );
         })}
       </SettingsGroup>
+      <MachinesGroup data={data} />
     </>
   );
 }

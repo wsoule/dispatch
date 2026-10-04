@@ -1,4 +1,4 @@
-import type { AuthTier, LicenseStatus } from '@dispatch/client';
+import type { AuthTier, LicenseStatus, TeamKeys } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
@@ -97,4 +97,118 @@ test('below the operator tier there is nothing to install with', async () => {
   await waitFor(() =>
     expect(screen.queryByLabelText('Paste a key')).toBeNull()
   );
+});
+
+// Task 13: a founded team shares one key; these mount with the team keys.
+function mountTeam(status: LicenseStatus, keys: TeamKeys) {
+  const client = {
+    baseUrl: 'http://127.0.0.1:1',
+    fetchLicense: mock(() => Promise.resolve(status)),
+    installLicense: mock(() => Promise.resolve(status)),
+    getTeamKeys: mock(() => Promise.resolve(keys)),
+    shareTeamLicense: mock(() => Promise.resolve({ ok: true })),
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <LicenseSection
+        data={dataWith({ client: client as never, myTier: 'operator' })}
+      />
+    </QueryClientProvider>
+  );
+  return client;
+}
+
+function teamKeys(
+  role: 'admin' | 'member',
+  license: TeamKeys['license']
+): TeamKeys {
+  return {
+    machine: {
+      replica: 'ada-0000000a',
+      handle: 'ada',
+      device: 'laptop',
+      fingerprint: 'F',
+    },
+    team: {
+      id: 'a'.repeat(32),
+      name: 'acme',
+      founder: { replica: 'ada-0000000a', handle: 'ada', fingerprint: 'F' },
+    },
+    foundings: [],
+    roster: [
+      {
+        replica: 'ada-0000000a',
+        handle: 'ada',
+        device: 'laptop',
+        build: '0.40.0',
+        role,
+        rank: role === 'admin' ? 0 : null,
+        hosts: [],
+        observer: false,
+        recovered: false,
+        fingerprint: 'F',
+        lastSeen: null,
+        skewMs: null,
+      },
+    ],
+    waiting: [],
+    invites: [],
+    legacy: { until: null, closed: true, olderBuilds: [] },
+    transport: {
+      kind: 'git',
+      lastExchangeAt: null,
+      lastError: null,
+      unpublished: 0,
+      sizeBytes: null,
+      readBytes: 0,
+      acks: {},
+    },
+    license,
+    pruningBlockers: [],
+    originWarning: null,
+    relayDisclosure: 'R',
+    warnings: [],
+    problems: [],
+    pause: null,
+  };
+}
+const ACME: LicenseStatus = {
+  ...FREE,
+  kind: 'licensed',
+  seats: 10,
+  org: 'Acme',
+};
+
+test("offers Share with the team on an admin's machine of a founded team with a key installed", async () => {
+  const client = mountTeam(
+    ACME,
+    teamKeys('admin', { seats: 3, org: null, sharedBy: null })
+  );
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Share with the team' })
+  );
+  await waitFor(() => expect(client.shareTeamLicense).toHaveBeenCalledTimes(1));
+});
+
+test('asks a member to have an admin share the key instead', async () => {
+  mountTeam(ACME, teamKeys('member', { seats: 3, org: null, sharedBy: null }));
+  expect(
+    await screen.findByText('Ask an admin to share this key with your team')
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole('button', { name: 'Share with the team' })
+  ).toBeNull();
+});
+
+test('names whose key the team uses', async () => {
+  mountTeam(
+    FREE,
+    teamKeys('member', { seats: 10, org: 'Acme', sharedBy: 'bob' })
+  );
+  expect(
+    await screen.findByText("Your team uses bob's key: Acme, 10 people")
+  ).toBeTruthy();
 });
