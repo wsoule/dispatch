@@ -481,6 +481,23 @@ describe('receipt files', () => {
       expect(parseReceiptFile(file, 'x.md').problem).toStartWith(`${field}:`);
   });
 
+  it('refuse pathological frontmatter fast: oversized, or deeply nested flow', () => {
+    const big = `---\ndescription: ${'[a'.repeat(32 * 1024)}\n---\nbody\n`;
+    const deep = `---\ndescription: ${'[a'.repeat(200)}\n---\nbody\n`;
+    for (const text of [big, deep]) {
+      const started = performance.now();
+      expect(parseReceiptFile(text, 'x.md').problem).toStartWith(
+        'frontmatter:'
+      );
+      const parsed = parseMemoryFile(text, 'x.md');
+      expect(performance.now() - started).toBeLessThan(100);
+      expect(parsed.title).not.toContain('[a[a');
+    }
+    // Ordinary flow lists still read.
+    const listed = `---\nname: a\ntags: [x, [y, z]]\ndescription: fine\n---\nbody\n`;
+    expect(parseMemoryFile(listed, 'x.md').title).toBe('fine');
+  });
+
   it('read an unknown or missing kind as a fact', () => {
     const text = renderReceiptFile(entry);
     const forged = text.replace('    kind: hazard', '    kind: root');
