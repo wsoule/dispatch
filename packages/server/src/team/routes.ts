@@ -25,10 +25,12 @@ import { SeatLimitError } from './teammates.js';
 // agent holding the on-disk agent token must not be able to mint itself a
 // second identity.
 //
-// Issuing for anyone but yourself takes the owner's app token (XH-R1): a
-// re-issue hands back a working token for that handle. On top of that, nobody
-// hands out more than they hold: a lead re-issuing their own token cannot
-// raise it to operator, which would be a shell on the host by another name. The same cap applies to revoking, so a lead cannot
+// Only the owner's app token re-issues an existing member's credential for
+// anyone but the caller (XH-R1): the new token comes back to the caller and
+// replaces the old one, so anyone else doing it could become that teammate. A
+// lead may still invite someone not yet on the roster. On top of that, nobody
+// hands out more than they hold: a decide-tier lead cannot mint an operator
+// token, which would be a shell on the host by another name. The same cap applies to revoking, so a lead cannot
 // lock the operator's own teammate-issued operator tokens out either.
 
 // How long an invite lasts when the inviter does not say. Long enough that a
@@ -77,6 +79,23 @@ function exceedsCaller(ctx: ApiContext, tier: AuthTier): Response | null {
   return errorResponse(
     403,
     `you hold the ${held} tier and cannot grant or revoke ${tier}; ask whoever runs this daemon`
+  );
+}
+
+/** XH-R1: refuses re-issuing an existing member's credential to anyone but
+ *  the owner's app token or that member, or null to proceed. A re-issue hands
+ *  the caller a working token for `handle`, which would make them that person. */
+function reissueRefusal(
+  ctx: ApiContext,
+  handle: string,
+  existing: boolean
+): Response | null {
+  if (!existing) return null;
+  if (ctx.caller?.appToken === true || ctx.caller?.handle === handle)
+    return null;
+  return errorResponse(
+    403,
+    `only the daemon owner can issue a token for "${handle}"; you can re-issue only your own`
   );
 }
 
@@ -162,6 +181,12 @@ export async function issueTeamToken(
         ? body.displayName.trim()
         : email.slice(0, email.indexOf('@'));
     const result = upsertMember(roster.members, email, displayName);
+    const existing = roster.members.some(
+      (m) => m.handle === result.member.handle
+    );
+    // Checked before team.yml is touched, so a refused call changes nothing.
+    const refused = reissueRefusal(ctx, result.member.handle, existing);
+    if (refused !== null) return refused;
     if (result.changed) {
       // Rewriting a roster with skipped entries would delete those teammates.
       if (roster.dropped.length > 0) {
@@ -183,6 +208,8 @@ export async function issueTeamToken(
         `no roster member "${wanted}": pass their email instead to add them`
       );
     }
+    const refused = reissueRefusal(ctx, wanted, true);
+    if (refused !== null) return refused;
     handle = wanted;
   } else {
     return errorResponse(400, 'expected { handle } or { email }');
@@ -194,16 +221,6 @@ export async function issueTeamToken(
     return errorResponse(
       400,
       `${handle} runs this daemon and uses its own token; a teammate token cannot be issued for them`
-    );
-  }
-
-  // XH-R1: a credential for anyone but the caller is the owner's to hand
-  // out. Re-issuing returns a fresh token for that handle, so a lead who
-  // could re-issue a colleague's would walk away as them.
-  if (ctx.ownerCredential !== true && handle !== ctx.caller?.handle) {
-    return errorResponse(
-      403,
-      `only the owner can issue a credential for ${handle}; you may re-issue only your own`
     );
   }
 
