@@ -37,6 +37,9 @@ export const REUSED_HANDLE_IDENTITY = '!reused-handle';
 export const NOT_OWNER_IDENTITY = '!not-owner';
 // The identity every human resolves to while identities.db will not open.
 export const IDENTITIES_DOWN_IDENTITY = '!identities-down';
+// The identity of a teammate who no longer holds a usable token (XH-R3), so
+// their agents and runs stop reaching their personal memory.
+export const REVOKED_IDENTITY = '!revoked';
 
 const REJECTION_REASON_CHARS = 80;
 
@@ -60,6 +63,9 @@ export interface DaemonMemoryHostDeps {
   shared: () => MemoryStore;
   engine: () => MemoryEngine;
   now?: () => Date;
+  /** Whether a teammate (`human:<handle>`) still holds a usable token; omitted
+   *  in tests that have no team, where everyone does. */
+  hasAccess?: (human: string) => boolean;
 }
 
 // The roster email behind `handle` in .dispatch/team.yml, read per call;
@@ -309,6 +315,8 @@ export class DaemonMemoryHost implements MemoryHost {
   private bind(human: string, ownerCredential: boolean): Operator {
     if (human === this.deps.ownerRef && !ownerCredential)
       return { human, identity: NOT_OWNER_IDENTITY };
+    if (human !== this.deps.ownerRef && this.deps.hasAccess?.(human) === false)
+      return { human, identity: REVOKED_IDENTITY };
     const identities = this.deps.identities;
     if (identities === null)
       return { human, identity: IDENTITIES_DOWN_IDENTITY };

@@ -177,6 +177,10 @@ export interface BroadcastClient {
   readonly data?: SocketAudience;
 }
 
+/** Who a socket's credential names right now, or null once it is revoked or
+ *  expired; index.ts installs it so every event re-checks the tier (M2). */
+export type AudienceCheck = (client: BroadcastClient) => SocketAudience | null;
+
 // Fan-out hub for connected WS clients. The watcher (external file edits) and
 // the API mutation handlers (our own writes) both call `broadcast()`.
 // Sockets are closed via `Bun.serve`'s own `server.stop(true)` on shutdown
@@ -186,6 +190,17 @@ export interface BroadcastClient {
 export class EventBus {
   private readonly clients = new Set<BroadcastClient>();
   private readonly listeners = new Set<(event: ServerEvent) => void>();
+  private check: AudienceCheck | null = null;
+  private onDetach: ((client: BroadcastClient) => void) | null = null;
+
+  // `onDetach` hears each socket dropped for a dead credential.
+  setAudienceCheck(
+    check: AudienceCheck | null,
+    onDetach: ((client: BroadcastClient) => void) | null = null
+  ): void {
+    this.check = check;
+    this.onDetach = onDetach;
+  }
 
   add(client: BroadcastClient): void {
     this.clients.add(client);
@@ -217,8 +232,29 @@ export class EventBus {
   ): void {
     const payload = JSON.stringify(event);
     for (const client of this.clients) {
-      if (audience === undefined || audience(client.data)) client.send(payload);
+      const who = this.current(client);
+      if (who === null) continue;
+      if (audience === undefined || audience(who)) client.send(payload);
     }
     for (const listener of this.listeners) listener(event);
+  }
+
+  // Detaches every socket whose credential no longer resolves; a revoke calls
+  // it so a socket that would hear nothing further still goes.
+  revalidate(): void {
+    for (const client of this.clients) this.current(client);
+  }
+
+  // The socket's audience as its credential stands now, or null after
+  // detaching a socket whose credential is gone. Detached, not closed: on Bun
+  // 1.3.14 any server-side close hangs server.stop(true) (see above), so the
+  // socket hears nothing more and its owner's next reconnect is refused.
+  private current(client: BroadcastClient): SocketAudience | undefined | null {
+    if (this.check === null || client.data === undefined) return client.data;
+    const who = this.check(client);
+    if (who !== null) return who;
+    this.clients.delete(client);
+    this.onDetach?.(client);
+    return null;
   }
 }

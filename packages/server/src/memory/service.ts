@@ -65,6 +65,7 @@ import {
   IDENTITIES_DOWN_IDENTITY,
   NOT_OWNER_IDENTITY,
   REUSED_HANDLE_IDENTITY,
+  REVOKED_IDENTITY,
 } from './host.js';
 import type { DaemonMemoryHostDeps } from './host.js';
 import { MemoryIdentities } from './identities.js';
@@ -170,6 +171,8 @@ export interface OpenMemoryDeps {
   /** The version boot records as probed; this build's own unless a test overrides it. */
   probedClaudeVersion?: string | null;
   now?: () => Date;
+  /** Whether a teammate still holds a usable token (XH-R3). */
+  hasAccess?: (human: string) => boolean;
 }
 
 const LAST_IMPORT_KEY = 'ledger-import:last';
@@ -303,6 +306,12 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           `personal memory unavailable: ${identitiesReason}`,
           'store'
         );
+      if (identity === REVOKED_IDENTITY)
+        throw new MemoryError(
+          'forbidden',
+          "this teammate's access was revoked",
+          'identity'
+        );
       return personal.personal(identity);
     },
     locatePersonal: (id) =>
@@ -318,6 +327,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     messaging: deps.messaging,
     ledgerStore: deps.ledgerStore,
     appendPolicyActivity: deps.appendPolicyActivity,
+    ...(deps.hasAccess === undefined ? {} : { hasAccess: deps.hasAccess }),
     identities,
     shared: () => stores.shared(),
     engine: () => {

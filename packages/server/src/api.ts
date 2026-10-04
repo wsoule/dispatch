@@ -5032,7 +5032,7 @@ export async function handleApi(
         return await issueTeamToken(req, ctx);
       }
       if (segments.length === 3 && method === 'DELETE') {
-        return revokeTeamToken(ctx, segments[2]);
+        return await revokeTeamToken(ctx, segments[2]);
       }
     }
 

@@ -12,6 +12,7 @@ import { join } from 'node:path';
 
 import type { ApiContext } from '../api.js';
 import { errorResponse, jsonResponse, readJsonBody } from '../api/http.js';
+import { revokeCascade } from '../api/revoke.js';
 import type { AuthTier } from '../tiers.js';
 import { AUTH_TIERS, isAuthTier, tierAllows } from '../tiers.js';
 import type { LicenseState } from './license.js';
@@ -90,7 +91,8 @@ function reissueRefusal(
   handle: string,
   existing: boolean
 ): Response | null {
-  if (!existing) return null;
+  // The owner's own handle is refused for everyone further down, with why.
+  if (!existing || handle === ctx.actorContext.member.handle) return null;
   if (ctx.caller?.appToken === true || ctx.caller?.handle === handle)
     return null;
   return errorResponse(
@@ -258,7 +260,11 @@ export async function issueTeamToken(
 // DELETE /api/team/tokens/:handle — revoke whatever that teammate holds. 404
 // rather than a silent 200 when there was nothing to revoke, so a typo in a
 // handle is visible instead of reading as success.
-export function revokeTeamToken(ctx: ApiContext, handle: string): Response {
+// Everything that acted for them goes with the token (XH-R3; api/revoke.ts).
+export async function revokeTeamToken(
+  ctx: ApiContext,
+  handle: string
+): Promise<Response> {
   const current = ctx.team.teammates.issuedTier(handle);
   if (current === null) {
     return errorResponse(404, `no issued token for "${handle}"`);
@@ -266,6 +272,7 @@ export function revokeTeamToken(ctx: ApiContext, handle: string): Response {
   const refused = exceedsCaller(ctx, current);
   if (refused !== null) return refused;
   ctx.team.teammates.revoke(handle);
+  await revokeCascade(ctx, handle);
   return jsonResponse({ ok: true, tier: current });
 }
 
