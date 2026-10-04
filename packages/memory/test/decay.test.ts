@@ -197,6 +197,21 @@ describe('decayStore', () => {
     expect(s.getEntry(ahead.id)?.decay).toBe('fresh');
   });
 
+  it('rewrites stored stamps from the future to the sweep time', () => {
+    const s = store();
+    const ahead = put(s, {
+      createdAt: at(30).now.toISOString(),
+      updatedAt: at(30).now.toISOString(),
+      lastRecalledAt: at(40).now.toISOString(),
+    });
+    decayStore(s, policy);
+    expect(s.getEntry(ahead.id)).toMatchObject({
+      createdAt: NOW.toISOString(),
+      updatedAt: NOW.toISOString(),
+      lastRecalledAt: NOW.toISOString(),
+    });
+  });
+
   it('leaves retired entries alone', () => {
     const s = store();
     const retired = put(s, {

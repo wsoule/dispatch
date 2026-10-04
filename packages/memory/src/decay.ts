@@ -96,6 +96,8 @@ export function decayStore(
   store.transaction(() => {
     result.anomaly = clockAnomaly(store.meta('last_decay_at'), nowMs);
     const sound = result.anomaly === null;
+    // A clock that ran fast left stamps ahead of now; a sound sweep pulls them back.
+    if (sound) store.clampFutureStamps(nowIso);
     const active = sound ? store.listEntries({ states: ['active'] }) : [];
     const staleBeforeSweep = sound
       ? store.listEntries({ states: ['stale'] })

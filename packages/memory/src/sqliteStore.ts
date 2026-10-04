@@ -466,6 +466,18 @@ export class SqliteMemoryStore implements MemoryStore {
     }));
   }
 
+  clampFutureStamps(nowIso: string): void {
+    for (const [table, column] of [
+      ['entries', 'created_at'],
+      ['entries', 'updated_at'],
+      ['entries', 'last_recalled_at'],
+      ['revisions', 'at'],
+    ] as const)
+      this.db
+        .prepare(`UPDATE ${table} SET ${column} = ? WHERE ${column} > ?`)
+        .run(nowIso, nowIso);
+  }
+
   pruneRecalls(beforeIso: string): number {
     return Number(
       this.db.prepare('DELETE FROM recalls WHERE at < ?').run(beforeIso).changes

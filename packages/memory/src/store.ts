@@ -104,6 +104,8 @@ export interface MemoryStore {
   recallsForRun(runId: string): RecallRow[];
   /** Deletes recall rows from before `beforeIso`; returns how many went. */
   pruneRecalls(beforeIso: string): number;
+  /** Pulls entry and revision stamps later than `nowIso` back to it. */
+  clampFutureStamps(nowIso: string): void;
   isTombstoned(origin: string): boolean;
   meta(key: string): string | null;
   setMeta(key: string, value: string): void;
