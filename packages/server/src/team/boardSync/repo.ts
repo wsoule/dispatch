@@ -48,6 +48,19 @@ const SEGMENT = /^\d{12}\.jsonl$/;
 // FW-R25: overrides every .gitattributes on the branch.
 const ATTRIBUTES =
   '* -text -eol -filter -merge -diff -ident -working-tree-encoding\n';
+// What fetch and push add to the person's config: no hooks, no LFS filter.
+const NETWORK_ARGS = [
+  '-c',
+  'core.hooksPath=/dev/null',
+  '-c',
+  'filter.lfs.process=',
+  '-c',
+  'filter.lfs.smudge=',
+  '-c',
+  'filter.lfs.clean=',
+  '-c',
+  'filter.lfs.required=false',
+];
 const ISOLATED_GIT_ENV = {
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1',
@@ -149,40 +162,10 @@ export interface ReadHints {
 
 export class SyncRepo {
   private readonly segmentCache = new Map<string, CachedSegment>();
-  private credentials: Promise<string[]> | null = null;
   private passBytes = 0;
   /** Where the next pass starts probing claim-only ids (FW-R26(4)). */
   private probeStart = 0;
   private readonly segmentInfo = new Map<string, SegmentInfo>();
-  // The person's credential helpers and sshCommand, read once from their own
-  // git config, as `-c` options for fetch and push.
-  private credentialArgs(): Promise<string[]> {
-    this.credentials ??= (async () => {
-      const out: string[] = [];
-      for (const key of ['credential.helper', 'core.sshCommand']) {
-        const res = await this.git(this.dir, [
-          'config',
-          '--global',
-          '--get-all',
-          key,
-        ]);
-        for (const value of res.stdout.split('\n'))
-          if (value.trim() !== '') out.push('-c', `${key}=${value.trim()}`);
-      }
-      const system = await this.git(this.dir, [
-        'config',
-        '--system',
-        '--get-all',
-        'credential.helper',
-      ]);
-      for (const value of system.stdout.split('\n'))
-        if (value.trim() !== '')
-          out.unshift('-c', `credential.helper=${value.trim()}`);
-      return out;
-    })();
-    return this.credentials;
-  }
-
   /** Merges given up for the remote tree since the last takeResets(). */
   private resets: string[] = [];
   /** Per replica, passes in a row whose reads the budget cut short. */
@@ -196,16 +179,16 @@ export class SyncRepo {
     private readonly git: AsyncGitRunner
   ) {}
 
-  // FW-R25: the sync clone is hostile. git runs with no global or system
-  // config, so nothing the branch names (a filter, a merge driver) has a
-  // definition; only fetch and push get the person's credential helpers.
+  // FW-R25: the sync clone is hostile. Checkout, merge and commit run with no
+  // global or system config, so nothing the branch names (a filter, a merge
+  // driver) has a definition. FW-R26(5): fetch and push alone run with the
+  // person's own config (credentials, url, http, includes), with hooks and
+  // LFS filters off.
   private async run(args: string[]): Promise<{ ok: boolean; out: string }> {
     const network = args[0] === 'fetch' || args[0] === 'push';
-    const res = await this.git(
-      this.dir,
-      network ? [...(await this.credentialArgs()), ...args] : args,
-      ISOLATED_GIT_ENV
-    );
+    const res = network
+      ? await this.git(this.dir, [...NETWORK_ARGS, ...args])
+      : await this.git(this.dir, args, ISOLATED_GIT_ENV);
     return { ok: res.status === 0, out: `${res.stdout}${res.stderr}`.trim() };
   }
 

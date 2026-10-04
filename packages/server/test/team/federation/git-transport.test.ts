@@ -591,6 +591,57 @@ describe('the writer and the republish, against what the branch holds', () => {
   });
 });
 
+describe('the git environment (FW-R25, FW-R26(5))', () => {
+  const originalHome = process.env.HOME;
+  const originalXdg = process.env.XDG_CONFIG_HOME;
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = originalXdg;
+  });
+  // A HOME whose .gitconfig includes another file.
+  const fakeHome = (config: string, extra: string): void => {
+    const home = join(dir, 'home');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, '.gitconfig'), config);
+    writeFileSync(join(home, 'extra.gitconfig'), extra);
+    process.env.HOME = home;
+    process.env.XDG_CONFIG_HOME = join(home, '.config');
+  };
+
+  it('fetches and pushes through the person’s insteadOf alias and include', async () => {
+    fakeHome(
+      `[include]\n\tpath = ${join(dir, 'home', 'extra.gitconfig')}\n[credential "https://example.com"]\n\thelper = !echo scoped\n`,
+      `[url "${remote}"]\n\tinsteadOf = team-board:\n`
+    );
+    const viaAlias = new SyncRepo(
+      join(dir, 'aliased'),
+      'team-board:',
+      'dispatch-sync',
+      A,
+      defaultAsyncGitRunner
+    );
+    await viaAlias.ensure();
+    await viaAlias.writeV2(chain(2));
+    expect((await viaAlias.exchange()).offline).toBeUndefined();
+    const b = clone('b', 'bob-0000000b');
+    await b.ensure();
+    expect(b.readV2(new Map()).map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('commits in the clone with none of the person’s global config', async () => {
+    fakeHome('[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n', '');
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(2));
+    expect((await a.exchange()).offline).toBeUndefined();
+    const b = clone('b', 'bob-0000000b');
+    await b.ensure();
+    expect(b.readV2(new Map()).map((e) => e.seq)).toEqual([1, 2]);
+  });
+});
+
 describe('GitFederationTransport', () => {
   it('publishes into one clone and pulls into another through the remote', async () => {
     const a = clone('a', A);
