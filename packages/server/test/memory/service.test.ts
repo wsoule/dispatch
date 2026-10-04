@@ -8,6 +8,7 @@ import {
 import type { DeliveryEngine } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -165,6 +166,72 @@ describe('restore health over several passes', () => {
     await t.memory.restoreStaged();
     expect(t.memory.restoreProblems()).toEqual([]);
     t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore retries and restarts', () => {
+  const lesson = (title: string) =>
+    newMemoryEntry(
+      {
+        scope: 'team',
+        kind: 'fact',
+        title,
+        body: `${title} body`,
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      createMemoryIds().entry(Date.now()),
+      new Date().toISOString()
+    );
+
+  it('keeps retrying a staging dir it could not empty until it can', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-retry-home-'))
+    );
+    const t = setup({ restoreDrainMs: 10 });
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const e = lesson('stuck');
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    chmodSync(staging, 0o500);
+    try {
+      await t.memory.restoreStaged();
+      expect(t.memory.restoreProblems()[0]).toContain('could not remove');
+    } finally {
+      chmodSync(staging, 0o700);
+    }
+    await waitFor(() => !existsSync(staging));
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+
+  it('shows the restore totals again after a restart', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-restart-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const e = lesson('kept');
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    await t.memory.restoreStaged();
+    t.memory.close();
+    const reopened = openMemory({
+      rootDir: t.root,
+      store: TaskStore.init(t.root),
+      events: new EventBus(),
+      ledgerStore: t.ledgerStore,
+      ...quietDaemon(t.root),
+      dbPath: join(t.root, 'memory.db'),
+    });
+    expect(reopened.health(null).restore).toMatchObject({ restored: 1 });
+    reopened.close();
     if (home === undefined) delete process.env.DISPATCH_HOME;
     else process.env.DISPATCH_HOME = home;
   });

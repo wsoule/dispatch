@@ -187,6 +187,11 @@ const PROBE_KEY = 'claude-probe-passed';
 const HOUR_MS = 3_600_000;
 // The pause between restore passes while staged files remain.
 const RESTORE_DRAIN_MS = 60_000;
+// A stuck file's retries back off to at most 2^this times the drain pause.
+const RESTORE_MAX_BACKOFF = 5;
+const RESTORE_STATE_KEY = 'restore:state';
+// The problem a handled file the restore could not remove carries.
+const COULD_NOT_REMOVE = 'handled, but could not remove';
 const UNLOADED_NOTE =
   'Your auto-memory directory is not active; save memories with memory_save.';
 const IMPORT_STATES = ['complete', 'failed', 'unconfirmed', 'running'] as const;
@@ -784,6 +789,39 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   >();
   let closed = false;
   // One restore pass; files past its limit drain on a timer, a batch at a time.
+  let restoreBackoff = 0;
+  // The restore's per-file record, kept in memory.db so health shows its
+  // totals after a restart.
+  const saveRestoreState = (): void => {
+    if (shared === null || lastRestore === null) return;
+    try {
+      shared.setMeta(
+        RESTORE_STATE_KEY,
+        JSON.stringify({
+          report: lastRestore,
+          outcomes: Object.fromEntries(restoreOutcomes),
+        })
+      );
+    } catch (err) {
+      console.error('dispatchd: saving the memory restore state failed', err);
+    }
+  };
+  try {
+    const raw = shared?.meta(RESTORE_STATE_KEY) ?? null;
+    if (raw !== null) {
+      const saved = JSON.parse(raw) as {
+        report: MemoryRestoreReport;
+        outcomes: Record<string, 'restored' | 'skipped'>;
+      };
+      lastRestore = saved.report;
+      for (const [file, outcome] of Object.entries(saved.outcomes))
+        restoreOutcomes.set(file, outcome);
+      for (const p of saved.report.problems)
+        restoreProblemsByFile.set(p.file, p);
+    }
+  } catch (err) {
+    console.error('dispatchd: reading the memory restore state failed', err);
+  }
   const restoreStaged = async (): Promise<MemoryRestoreReport | null> => {
     const dir = memoryRestoreDir(deps.rootDir);
     const visited = new Set<string>();
@@ -808,11 +846,13 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       if (!visited.has(file) && !existsSync(join(dir, file)))
         restoreProblemsByFile.delete(file);
     if (report === null) {
-      if (lastRestore !== null)
+      if (lastRestore !== null) {
         lastRestore = {
           ...lastRestore,
           problems: [...restoreProblemsByFile.values()],
         };
+        saveRestoreState();
+      }
       return null;
     }
     const counted = [...restoreOutcomes.values()];
@@ -822,13 +862,24 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       skipped: counted.filter((o) => o === 'skipped').length,
       problems: [...restoreProblemsByFile.values()],
     };
-    if (report.deferred > 0 && !closed && restoreTimer === null) {
-      restoreTimer = setTimeout(() => {
-        restoreTimer = null;
-        restoreStaged().catch((err: unknown) =>
-          console.error('dispatchd: memory restore failed', err)
-        );
-      }, deps.restoreDrainMs ?? RESTORE_DRAIN_MS);
+    saveRestoreState();
+    // Files past the per-pass limit drain next pass; a file it could not
+    // remove (a read-only staging dir) is retried on a backoff until it can.
+    const stuck = [...restoreProblemsByFile.values()].some((p) =>
+      p.detail.startsWith(COULD_NOT_REMOVE)
+    );
+    restoreBackoff = stuck && report.deferred === 0 ? restoreBackoff + 1 : 0;
+    if ((report.deferred > 0 || stuck) && !closed && restoreTimer === null) {
+      const base = deps.restoreDrainMs ?? RESTORE_DRAIN_MS;
+      restoreTimer = setTimeout(
+        () => {
+          restoreTimer = null;
+          restoreStaged().catch((err: unknown) =>
+            console.error('dispatchd: memory restore failed', err)
+          );
+        },
+        base * 2 ** Math.min(restoreBackoff, RESTORE_MAX_BACKOFF)
+      );
       restoreTimer.unref();
     }
     return report;
