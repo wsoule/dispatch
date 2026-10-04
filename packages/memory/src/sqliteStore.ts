@@ -331,7 +331,12 @@ export class SqliteMemoryStore implements MemoryStore {
     });
   }
 
-  updateEntry(entry: MemoryEntry, by: Address, cause: RevisionCause): void {
+  updateEntry(
+    entry: MemoryEntry,
+    by: Address,
+    cause: RevisionCause,
+    at?: string
+  ): void {
     this.transaction(() => {
       const current = this.getEntry(entry.id);
       if (current === null)
@@ -348,7 +353,7 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db
         .prepare(`UPDATE entries SET ${sets} WHERE id = ?`)
         .run(...entryParams(entry).slice(1), entry.id);
-      this.appendRevision(entry, by, cause);
+      this.appendRevision(entry, by, cause, at);
     });
   }
 
@@ -753,20 +758,14 @@ export class SqliteMemoryStore implements MemoryStore {
   private appendRevision(
     entry: MemoryEntry,
     by: Address,
-    cause: RevisionCause
+    cause: RevisionCause,
+    at: string = new Date().toISOString()
   ): void {
     this.db
       .prepare(
         'INSERT INTO revisions (memory_id, rev, snapshot_json, by_addr, cause, at) VALUES (?, ?, ?, ?, ?, ?)'
       )
-      .run(
-        entry.id,
-        entry.rev,
-        JSON.stringify(entry),
-        by,
-        cause,
-        new Date().toISOString()
-      );
+      .run(entry.id, entry.rev, JSON.stringify(entry), by, cause, at);
   }
 }
 

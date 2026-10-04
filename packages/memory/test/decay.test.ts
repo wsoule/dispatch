@@ -99,8 +99,7 @@ describe('decayStore', () => {
     put(s, { scope: 'team', updatedAt: ago(61) });
     put(s, { scope: 'project', updatedAt: ago(200) });
     expect(decayStore(s, policy).scopes).toEqual(['project', 'team']);
-    // The project entry was marked stale last pass; this one retires it.
-    expect(decayStore(s, policy).scopes).toEqual(['project']);
+    // The project entry was marked stale last pass; it retires 120 days on.
     expect(decayStore(s, policy).scopes).toEqual([]);
   });
 
@@ -126,7 +125,11 @@ describe('decayStore', () => {
       updatedAt: ago(400),
     });
     decayStore(s, policy);
-    decayStore(s, { ...policy, now: new Date(NOW.getTime() + DAY) });
+    s.setMeta(
+      'last_decay_at',
+      new Date(NOW.getTime() + 120 * DAY).toISOString()
+    );
+    decayStore(s, { ...policy, now: new Date(NOW.getTime() + 121 * DAY) });
     expect([pinned, human].map((e) => s.getEntry(e.id)?.decay)).toEqual([
       'fresh',
       'fresh',
@@ -142,38 +145,56 @@ describe('decayStore', () => {
     ]);
   });
 
-  it('retires only entries a previous sweep marked stale', () => {
+  const at = (days: number) => ({
+    ...policy,
+    now: new Date(NOW.getTime() + days * DAY),
+  });
+
+  // A lesson saved while the clock ran 200 days behind looks 200 days idle
+  // once it is corrected: it goes stale, but retires only 120 days later.
+  it('retires only once the sweep that marked it stale is retire-minus-stale days old', () => {
     const s = store();
-    const old = put(s, { updatedAt: ago(400), createdAt: ago(400) });
+    const old = put(s, { updatedAt: ago(200), createdAt: ago(200) });
     expect(decayStore(s, policy)).toMatchObject({ staled: 1, expired: 0 });
+    expect(decayStore(s, at(2))).toMatchObject({ expired: 0 });
+    s.setMeta('last_decay_at', at(119).now.toISOString());
+    expect(decayStore(s, at(119.5))).toMatchObject({ expired: 0 });
     expect(s.getEntry(old.id)?.decay).toBe('stale');
-    const next = { ...policy, now: new Date(NOW.getTime() + DAY) };
-    expect(decayStore(s, next)).toMatchObject({ staled: 0, expired: 1 });
+    s.setMeta('last_decay_at', at(120).now.toISOString());
+    expect(decayStore(s, at(120.5))).toMatchObject({ expired: 1 });
     expect(s.getEntry(old.id)?.decay).toBe('expired');
   });
 
-  it('only marks stale across a clock jump far past the sweep interval, and says why', () => {
-    const s = store();
-    const stale = put(s, { updatedAt: ago(30), decay: 'stale' });
-    const fresh = put(s, { updatedAt: ago(1) });
-    s.setMeta('last_decay_at', ago(1));
-    const jumped = new Date(NOW.getTime() + 3650 * DAY);
-    const out = decayStore(s, { ...policy, now: jumped });
-    expect(out).toMatchObject({ staled: 1, expired: 0 });
-    expect(out.anomaly).toContain('clock');
-    expect(s.getEntry(stale.id)?.decay).toBe('stale');
-    expect(s.getEntry(fresh.id)?.decay).toBe('stale');
-  });
-
-  it('only marks stale while any stamp is in the future', () => {
+  it('changes nothing across a clock jump far past the sweep interval, and says why', () => {
     const s = store();
     const stale = put(s, { updatedAt: ago(400), decay: 'stale' });
-    put(s, { updatedAt: ago(-30), createdAt: ago(-30) });
-    const out = decayStore(s, policy);
-    expect(out.expired).toBe(0);
-    expect(out.anomaly).toContain('future');
+    const fresh = put(s, { updatedAt: ago(1) });
+    s.setMeta('last_decay_at', ago(1));
+    const out = decayStore(s, at(3650));
+    expect(out).toMatchObject({ staled: 0, expired: 0 });
+    expect(out.anomaly).toContain('clock');
     expect(s.getEntry(stale.id)?.decay).toBe('stale');
-    expect(decayStore(s, policy).anomaly).toContain('future');
+    expect(s.getEntry(fresh.id)?.decay).toBe('fresh');
+    expect(decayStore(s, at(0)).anomaly).toContain('future');
+  });
+
+  it('clamps a future stamp to now, so it never freezes expiry for the store', () => {
+    const s = store();
+    // Marked stale by a sweep while the clock ran 200 days fast.
+    const skewed = put(s, { updatedAt: ago(400) });
+    s.setMeta('last_decay_at', at(199).now.toISOString());
+    decayStore(s, at(200));
+    expect(s.getEntry(skewed.id)?.decay).toBe('stale');
+    // Saved while the clock ran fast, and an old lesson a sweep marked stale.
+    const ahead = put(s, { updatedAt: at(30).now.toISOString() });
+    const old = put(s, { updatedAt: ago(400), decay: 'stale' });
+    // The clock comes back: one sweep stands down, the next works.
+    expect(decayStore(s, at(0)).anomaly).toContain('future');
+    const out = decayStore(s, at(1));
+    expect(out.anomaly).toBeNull();
+    expect(s.getEntry(old.id)?.decay).toBe('expired');
+    expect(s.getEntry(skewed.id)?.decay).toBe('stale');
+    expect(s.getEntry(ahead.id)?.decay).toBe('fresh');
   });
 
   it('leaves retired entries alone', () => {

@@ -83,7 +83,13 @@ export interface MemoryStore {
   ): SearchHit[];
   insertEntry(entry: MemoryEntry, by: Address, cause: RevisionCause): void;
   /** Refuses unless `entry.rev === current.rev + 1`. */
-  updateEntry(entry: MemoryEntry, by: Address, cause: RevisionCause): void;
+  /** `at` stamps the revision; now by default (decay passes its sweep's time). */
+  updateEntry(
+    entry: MemoryEntry,
+    by: Address,
+    cause: RevisionCause,
+    at?: string
+  ): void;
   deleteEntry(id: string, by: Address, at: string): void;
   revisions(id: string): Revision[];
   recordRecall(

@@ -21,11 +21,29 @@ export interface DecayResult {
   anomaly: string | null;
 }
 
-// "Use" is the later of the last recall that counted as use and the last change.
-function lastUse(e: MemoryEntry): string {
-  return e.lastRecalledAt !== null && e.lastRecalledAt > e.updatedAt
-    ? e.lastRecalledAt
-    : e.updatedAt;
+// "Use" is the later of the last recall that counted as use and the last
+// change, clamped to `now`: a stamp a fast clock wrote never reads as fresh use.
+function lastUse(e: MemoryEntry, nowIso: string): string {
+  const used =
+    e.lastRecalledAt !== null && e.lastRecalledAt > e.updatedAt
+      ? e.lastRecalledAt
+      : e.updatedAt;
+  return used > nowIso ? nowIso : used;
+}
+
+// When a sweep marked `e` stale (its last 'decay' revision to stale; the
+// entry's own stamp when none did), clamped to `now`.
+function staleSince(
+  store: MemoryStore,
+  e: MemoryEntry,
+  nowIso: string
+): string {
+  const marked = store
+    .revisions(e.id)
+    .filter((r) => r.cause === 'decay' && r.snapshot.decay === 'stale')
+    .at(-1)?.at;
+  const since = marked ?? e.updatedAt;
+  return since > nowIso ? nowIso : since;
 }
 
 // Pinned entries and human constraints written directly as memory never decay.
@@ -36,41 +54,36 @@ function exempt(e: MemoryEntry): boolean {
   );
 }
 
-// Why the clock cannot be trusted for retiring: a far gap since the last
-// sweep, or a stamp in the future. Null when it looks sound.
-function clockAnomaly(
-  entries: readonly MemoryEntry[],
-  lastSweep: string | null,
-  nowMs: number
-): string | null {
-  const limit = nowMs + FUTURE_SLACK_MS;
-  const last = lastSweep === null ? Number.NaN : Date.parse(lastSweep);
-  if (last > limit)
+// Why the clock cannot be trusted this pass: a far gap since the last sweep,
+// or a last sweep in the future. Null when it looks sound.
+function clockAnomaly(lastSweep: string | null, nowMs: number): string | null {
+  if (lastSweep === null) return null;
+  const last = Date.parse(lastSweep);
+  if (last > nowMs + FUTURE_SLACK_MS)
     return `clock anomaly: the last sweep (${lastSweep}) is in the future`;
   if (nowMs - last > MAX_SWEEP_GAP_DAYS * DAY_MS)
     return `clock anomaly: ${Math.round((nowMs - last) / DAY_MS)} days since the last sweep (${lastSweep})`;
-  for (const e of entries) {
-    for (const stamp of [e.createdAt, e.updatedAt, e.lastRecalledAt]) {
-      if (stamp !== null && Date.parse(stamp) > limit)
-        return `clock anomaly: entry ${e.id} has a stamp in the future (${stamp})`;
-    }
-  }
   return null;
 }
 
 // One decay pass over a store in one transaction: fresh → stale by idle time,
-// and stale → expired only for entries an earlier sweep marked stale, each step
-// a 'decay' revision; recalls older than a year go. A clock anomaly skips expiry.
+// and stale → expired once a sweep marked it stale at least retire − stale
+// days ago, each step a 'decay' revision; recalls older than a year go. A
+// clock anomaly changes nothing but the sweep stamp.
 export function decayStore(
   store: MemoryStore,
   input: { now: Date; staleAfterDays: number; retireAfterDays: number }
 ): DecayResult {
   const nowMs = input.now.getTime();
+  const nowIso = input.now.toISOString();
   const staleBefore = new Date(
     nowMs - input.staleAfterDays * DAY_MS
   ).toISOString();
   const expireBefore = new Date(
     nowMs - input.retireAfterDays * DAY_MS
+  ).toISOString();
+  const markedBefore = new Date(
+    nowMs - (input.retireAfterDays - input.staleAfterDays) * DAY_MS
   ).toISOString();
   const result: DecayResult = {
     staled: 0,
@@ -81,29 +94,31 @@ export function decayStore(
   };
   const changed = new Set<MemoryScope>();
   store.transaction(() => {
-    const active = store.listEntries({ states: ['active'] });
-    const staleBeforeSweep = store.listEntries({ states: ['stale'] });
-    result.anomaly = clockAnomaly(
-      [...active, ...staleBeforeSweep],
-      store.meta('last_decay_at'),
-      nowMs
-    );
+    result.anomaly = clockAnomaly(store.meta('last_decay_at'), nowMs);
+    const sound = result.anomaly === null;
+    const active = sound ? store.listEntries({ states: ['active'] }) : [];
+    const staleBeforeSweep = sound
+      ? store.listEntries({ states: ['stale'] })
+      : [];
     for (const e of active) {
-      if (exempt(e) || lastUse(e) >= staleBefore) continue;
+      if (exempt(e) || lastUse(e, nowIso) >= staleBefore) continue;
       store.updateEntry(
         { ...e, decay: 'stale', rev: e.rev + 1 },
         SYSTEM_ADDRESS,
-        'decay'
+        'decay',
+        nowIso
       );
       result.staled += 1;
       changed.add(e.scope);
     }
-    for (const e of result.anomaly === null ? staleBeforeSweep : []) {
-      if (exempt(e) || lastUse(e) >= expireBefore) continue;
+    for (const e of staleBeforeSweep) {
+      if (exempt(e) || lastUse(e, nowIso) >= expireBefore) continue;
+      if (staleSince(store, e, nowIso) > markedBefore) continue;
       store.updateEntry(
         { ...e, decay: 'expired', rev: e.rev + 1 },
         SYSTEM_ADDRESS,
-        'decay'
+        'decay',
+        nowIso
       );
       result.expired += 1;
       changed.add(e.scope);
@@ -111,7 +126,7 @@ export function decayStore(
     result.prunedRecalls = store.pruneRecalls(
       new Date(nowMs - RECALL_KEEP_DAYS * DAY_MS).toISOString()
     );
-    store.setMeta('last_decay_at', input.now.toISOString());
+    store.setMeta('last_decay_at', nowIso);
   });
   result.scopes = MEMORY_SCOPES.filter((scope) => changed.has(scope));
   return result;
