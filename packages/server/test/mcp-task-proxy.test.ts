@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { json } from './json.js';
-import { runGitSync } from './orchestrator/helpers.js';
+import { runGitSync, StallingExecutor } from './orchestrator/helpers.js';
 
 // The MCP task tools against a REAL running daemon.
 //
@@ -149,6 +149,7 @@ let fakeHome: string;
 let handle: ServerHandle;
 let baseUrl: string;
 let childEnv: Record<string, string>;
+let executor: StallingExecutor;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
 async function callTool(
@@ -198,6 +199,7 @@ beforeEach(async () => {
   // the real ~/.dispatch. The child inherits it through `process.env`.
   process.env.DISPATCH_HOME = fakeHome;
   root = initGitRepo('dispatch-mcp-proxy-');
+  executor = new StallingExecutor();
   handle = await startServer({
     rootDir: root,
     port: 0,
@@ -207,6 +209,7 @@ beforeEach(async () => {
     writeDaemonFile: true,
     webDistDir: null,
     boardSyncPeriodicMs: 10 * 60_000,
+    registerExecutors: (o) => o.registerExecutor('claude', executor),
   });
   baseUrl = `http://127.0.0.1:${handle.port}`;
   childEnv = { DISPATCH_HOME: fakeHome };
@@ -323,6 +326,36 @@ describe('task_save through a live daemon', () => {
     });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toBe('task not found: t-nope00');
+  });
+});
+
+// XH-R2: inside a run the tools present the run's own token, so a task the
+// run makes is the run's agent's, never the owner's.
+describe('task_save inside a run', () => {
+  it('credits agent:dispatch, never the owner', async () => {
+    const parent = await createTaskViaApi('parent');
+    const run = (await json(
+      await fetch(`${baseUrl}/api/tasks/${parent}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...appAuth() },
+        body: JSON.stringify({ executor: 'claude' }),
+      })
+    )) as { id: string };
+    const deadline = Date.now() + 4000;
+    while (executor.lastRunToken === undefined && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 20));
+    const tokenFile = join(fakeHome, 'run.token');
+    writeFileSync(tokenFile, executor.lastRunToken ?? '', { mode: 0o600 });
+
+    const result = await callTool(
+      'task_save',
+      { title: 'spawned by the run' },
+      {
+        env: { DISPATCH_RUN_TOKEN_FILE: tokenFile, DISPATCH_RUN_ID: run.id },
+      }
+    );
+    const meta = structured(result).meta as { id: string };
+    expect((await getTaskViaApi(meta.id)).meta.creator).toBe('agent:dispatch');
   });
 });
 

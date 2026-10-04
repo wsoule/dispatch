@@ -440,6 +440,9 @@ export interface ApiContext {
   /** True when the request presented the owner's app token. Set per request
    *  by handleApi. */
   ownerCredential?: boolean;
+  /** The live run whose own token made this request (XH-R2). `caller` is then
+   *  the agent token's identity and `viaAgentToken` is true. */
+  viaRun?: string;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -4853,6 +4856,19 @@ export function rejectUnauthorized(
   return null;
 }
 
+/** The run a presented token belongs to, and whether it is still live; null
+ *  when the token is a registry credential or no run's at all. */
+function runCredential(
+  ctx: ApiContext,
+  presented: string | null
+): { runId: string; live: boolean } | null {
+  if (presented === null || presented === '') return null;
+  if (ctx.tokens.registry.lookup(presented).kind !== 'unknown') return null;
+  const runId = ctx.messaging.runTokens.verify(presented);
+  if (runId === null) return null;
+  return { runId, live: ctx.orchestrator.isRunLive(runId) };
+}
+
 export async function handleApi(
   req: Request,
   daemonCtx: ApiContext
@@ -4905,31 +4921,51 @@ export async function handleApi(
     principal = principalResult.principal;
   }
 
+  // XH-R2: a run's MCP presents the run's own token, so a write is known to
+  // come from that run. It stands where the agent token does (request tier,
+  // no human behind it) and only while the run is live.
+  const run = runCredential(daemonCtx, presented);
+  if (run !== null && !run.live) {
+    return authErrorResponse(
+      401,
+      'run token for a finished run',
+      'auth_run_token_ended'
+    );
+  }
+
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(
-      req,
-      daemonCtx.tokens,
-      tier,
-      presented
-    );
+    const unauthorized =
+      run === null
+        ? rejectUnauthorized(req, daemonCtx.tokens, tier, presented)
+        : tierAllows('request', tier)
+          ? null
+          : authErrorResponse(
+              403,
+              wrongTierMessage(tier, 'request'),
+              'auth_insufficient_tier'
+            );
     if (unauthorized !== null) return unauthorized;
   }
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
-  const caller = daemonCtx.tokens.registry.resolve(presented);
+  const caller = daemonCtx.tokens.registry.resolve(
+    run === null ? presented : daemonCtx.tokens.agentToken
+  );
   // The shared agentToken resolves to the owner but is never a human; a
   // constant-time digest compare, as resolvePrincipal does.
   const viaAgentToken =
-    presented !== null &&
-    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
+    run !== null ||
+    (presented !== null &&
+      timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken)));
   const ownerCredential =
     presented !== null &&
     timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
   let ctx: ApiContext = daemonCtx;
   if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
+  if (run !== null) ctx = { ...ctx, viaRun: run.runId };
   if (principal !== undefined) ctx = { ...ctx, principal };
 
   try {

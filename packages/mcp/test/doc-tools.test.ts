@@ -119,7 +119,8 @@ class FakeDocsDaemon {
           body: raw === '' ? null : JSON.parse(raw),
         });
         if (url.pathname.startsWith('/api/tasks/')) {
-          if (auth !== SHARED)
+          // The request tier: the shared token, or a run's own (XH-R2).
+          if (auth !== SHARED && auth !== RUN_TOKEN)
             return Response.json({ error: 'unknown token' }, { status: 401 });
           return Response.json(this.task);
         }

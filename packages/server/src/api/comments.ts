@@ -21,7 +21,13 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 type CommentRouteContext = Pick<
   ApiContext,
-  'rootDir' | 'store' | 'events' | 'commentStore' | 'caller' | 'actorContext'
+  | 'rootDir'
+  | 'store'
+  | 'events'
+  | 'commentStore'
+  | 'caller'
+  | 'actorContext'
+  | 'viaRun'
 > &
   Partial<Pick<ApiContext, 'orchestrator'>>;
 
@@ -39,10 +45,10 @@ function commentsOf(ctx: CommentRouteContext): CommentStorePort {
  */
 function commentActor(ctx: CommentRouteContext, runId: unknown): string {
   if (ctx.caller?.agentToken !== true) return humanActor(ctx);
+  // A run's own token names its run; a body runId cannot override it.
+  const id = ctx.viaRun ?? runId;
   const run =
-    typeof runId === 'string'
-      ? (ctx.orchestrator?.getRun(runId) ?? null)
-      : null;
+    typeof id === 'string' ? (ctx.orchestrator?.getRun(id) ?? null) : null;
   return run === null ? 'agent' : ctx.actorContext.agentRef(run.meta.executor);
 }
 
