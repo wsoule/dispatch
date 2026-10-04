@@ -3338,6 +3338,16 @@ export class DocsService {
       store.setMeta('import:last', JSON.stringify(report));
       store.deleteImportSession(id);
     });
+    for (const name of names) {
+      if (name.contents.length === 0) continue;
+      const docs: string[] = [];
+      for (let k = 1; ; k++) {
+        const part = store.docByOrigin(importOrigin(name.key, k));
+        if (part === null) break;
+        docs.push(part.id);
+      }
+      report.docs.push({ name: name.key, docs });
+    }
     return report;
   }
 

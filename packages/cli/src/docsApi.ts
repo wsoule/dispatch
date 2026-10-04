@@ -53,7 +53,11 @@ export interface ImportReportInfo {
     reason: 'invalid' | 'too-large' | 'not UTF-8' | 'missing' | 'archived';
     detail: string;
   }[];
-  parity: { files: boolean; names: boolean };
+  parity: { files: boolean; names: boolean; images?: boolean };
+  // Each imported name's docs, after a commit; the CLI uploads their images to them.
+  docs?: { name: string; docs: string[] }[];
+  // Images an exported doc referenced: uploaded, and those whose bytes were not found.
+  images?: { referenced: number; uploaded: number; missing: number };
 }
 
 /** What POST /api/docs/:ref/publish answers: the task, and its run unless not dispatched. */
@@ -131,6 +135,11 @@ export interface DocsApi {
   remove(ref: string): Promise<void>;
   // A doc's stored image as bytes; null when the daemon has none of that name.
   asset(ref: string, name: string): Promise<Uint8Array | null>;
+  // Stores an image for a doc; the daemon names it by its bytes' hash.
+  putAsset(
+    ref: string,
+    bytes: Uint8Array
+  ): Promise<{ name: string; markdown: string }>;
   // Proposals to accepted docs the caller may see.
   proposals(params?: {
     doc?: string;
@@ -264,6 +273,19 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
       return res.status === 404
         ? null
         : new Uint8Array(await res.arrayBuffer());
+    },
+    putAsset: async (ref, bytes) => {
+      const res = await fetch(`${baseUrl}${docPath(ref)}/assets`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/octet-stream',
+          authorization: `Bearer ${token}`,
+        },
+        body: bytes,
+      });
+      const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw cliError(res.status, body);
+      return body as { name: string; markdown: string };
     },
     proposals: (p = {}) => {
       const q = new URLSearchParams();

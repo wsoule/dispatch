@@ -131,6 +131,16 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('uploads an image as raw octet-stream bytes to the doc', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    expect(
+      await api.putAsset('doc-1', new TextEncoder().encode('img'))
+    ).toEqual({ ok: true } as never);
+    expect(seen.map((s) => [s.method, s.path, s.type, s.body])).toEqual([
+      ['POST', '/api/docs/doc-1/assets', 'application/octet-stream', 'img'],
+    ]);
+  });
+
   it('promotes a personal doc by its ~handle', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await api.promote('~notes');

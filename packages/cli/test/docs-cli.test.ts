@@ -323,6 +323,85 @@ describe('dispatch docs import', () => {
   });
 });
 
+describe('dispatch docs import of an export with images', () => {
+  it('uploads the assets/<doc id>/ files, links them as asset:, and counts the missing', async () => {
+    const exported = join(tmpDir, 'export-images-in');
+    const id = 'doc-01K5ZZZZZZZZZZZZZZZZZZZZZY';
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1,
+    ]);
+    const name = `${new Bun.CryptoHasher('sha256').update(png).digest('hex')}.png`;
+    const gone = `${'e'.repeat(64)}.png`;
+    mkdirSync(join(exported, 'assets', id), { recursive: true });
+    writeFileSync(join(exported, 'assets', id, name), png);
+    const meta = {
+      id,
+      slug: 'shots',
+      title: 'Shots',
+      status: 'accepted',
+      rev: 'rev-1',
+      n: 1,
+      parents: [],
+      author: 'human:wyat',
+      cause: 'create',
+      createdAt: '2026-09-26T10:00:00.000Z',
+      hash: 'h',
+      links: [],
+      authors: ['human:wyat'],
+      updatedAt: '2026-09-27T10:00:00.000Z',
+    } as unknown as Parameters<typeof renderDocFile>[0];
+    const file = join(exported, 'shots.md');
+    writeFileSync(
+      file,
+      renderDocFile(
+        meta,
+        `# Shots\n![a](assets/${id}/${name})\n![b](assets/${id}/${gone})\n`
+      )
+    );
+    const sent: string[] = [];
+    const uploads: { doc: string; bytes: number[] }[] = [];
+    const api = {
+      openImport: (files: { hash: string }[]) =>
+        Promise.resolve({ id: 'imp-3', need: files.map((f) => f.hash) }),
+      putImportContent: (_id: string, _hash: string, bytes: Uint8Array) => {
+        sent.push(new TextDecoder().decode(bytes));
+        return Promise.resolve();
+      },
+      commitImport: (_id: string, dryRun: boolean) =>
+        Promise.resolve({
+          dryRun,
+          files: 1,
+          names: 1,
+          failedNames: 0,
+          errors: [],
+          parity: { files: true, names: true },
+          docs: [{ name: 'shots', docs: ['doc-new'] }],
+        }),
+      deleteImport: () => Promise.resolve(),
+      get: () =>
+        Promise.resolve({
+          text: `# Shots\n![a](asset:${name})\n![b](asset:${gone})\n`,
+        }),
+      putAsset: (doc: string, bytes: Uint8Array) => {
+        uploads.push({ doc, bytes: [...bytes] });
+        return Promise.resolve({ name, markdown: `![](asset:${name})` });
+      },
+    } as unknown as DocsApi;
+    const report = await importFiles(api, [file], { dryRun: false });
+    expect(sent[0]).toContain(`![a](asset:${name})`);
+    expect(sent[0]).toContain(`![b](asset:${gone})`);
+    expect(uploads).toEqual([{ doc: 'doc-new', bytes: [...png] }]);
+    expect(report.images).toEqual({ referenced: 2, uploaded: 1, missing: 1 });
+    expect(report.parity.images).toBe(false);
+    expect(report.errors).toContainEqual(
+      expect.objectContaining({
+        reason: 'missing',
+        detail: expect.stringContaining(gone),
+      })
+    );
+  });
+});
+
 describe('dispatch docs import with unreadable paths', () => {
   it('imports an exported doc by its frontmatter, and refuses a personal one', async () => {
     const exported = join(tmpDir, 'export-in');

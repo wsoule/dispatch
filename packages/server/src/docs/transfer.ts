@@ -46,6 +46,8 @@ export interface ImportReport {
   failedNames: number;
   errors: { path: string; reason: ImportErrorReason; detail: string }[];
   parity: { files: boolean; names: boolean };
+  // Each committed name's docs, its parts in order; empty on a dry run.
+  docs: { name: string; docs: string[] }[];
 }
 
 export interface NamePlan {
@@ -188,6 +190,7 @@ export function planImport(
     failedNames: 0,
     errors: [],
     parity: { files: false, names: false },
+    docs: [],
   };
   const groups = new Map<string, ImportFile[]>();
   for (const f of files) {
