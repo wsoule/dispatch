@@ -274,9 +274,18 @@ export function applyStagedRestore(
       report.problems.push({ file, detail: err.message });
     }
   }
-  if (report.problems.length === 0)
-    rmSync(restoreDir, { recursive: true, force: true });
-  else report.pending = clearHint(restoreDir);
+  if (report.problems.length === 0) {
+    // A staging directory that will not go is reported, never fatal.
+    try {
+      rmSync(restoreDir, { recursive: true, force: true });
+    } catch (err) {
+      report.problems.push({
+        file: '.',
+        detail: `restored, but could not remove the staging directory: ${(err as Error).message}`,
+      });
+      report.pending = clearHint(restoreDir);
+    }
+  } else report.pending = clearHint(restoreDir);
   service.recordRestore(report);
   return report;
 }

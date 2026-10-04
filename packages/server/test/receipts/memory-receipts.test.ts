@@ -443,6 +443,27 @@ describe('a staged memory restore', () => {
     ).toMatchObject({ restored: 0, skipped: 1 });
   });
 
+  it('records a staged file it may not remove as a problem and goes on', async () => {
+    const t = gatedEngine();
+    const files = [stage(lostEntry('one')), stage(lostEntry('two'))];
+    chmodSync(restoreDir, 0o500);
+    try {
+      const report = await applyStagedMemoryRestore(
+        t.engine,
+        t.shared,
+        restoreDir
+      );
+      expect(report?.restored).toBe(2);
+      expect(report?.problems.map((p) => p.file).sort()).toEqual(
+        [...files].sort()
+      );
+      expect(report?.problems[0].detail).toContain('could not remove');
+      expect(report?.pending).toContain(restoreDir);
+    } finally {
+      chmodSync(restoreDir, 0o700);
+    }
+  });
+
   it('records a staged file it may not read as a problem and goes on', async () => {
     const t = gatedEngine();
     const locked = lostEntry('locked');

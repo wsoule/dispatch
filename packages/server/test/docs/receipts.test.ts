@@ -369,6 +369,20 @@ describe('the boot restore', () => {
     }
   });
 
+  it('restores from a staging directory it may not empty, reporting it', () => {
+    const { service } = makeService();
+    stage('restored.md', 'body\n');
+    chmodSync(restoreDir, 0o500);
+    try {
+      const report = applyStagedRestore(service, restoreDir);
+      expect(report?.restored).toBe(1);
+      expect(report?.problems[0].detail).toContain('could not remove');
+      expect(report?.pending).toContain(restoreDir);
+    } finally {
+      chmodSync(restoreDir, 0o700);
+    }
+  });
+
   it('names no pending directory once every file applied', () => {
     const { service } = makeService();
     stage('restored.md', 'body\n');

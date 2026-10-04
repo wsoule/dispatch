@@ -264,7 +264,15 @@ export async function applyStagedMemoryRestore(
     }
     if (outcome === 'restored') report.restored++;
     else report.skipped++;
-    rmSync(join(restoreDir, file), { force: true });
+    // A file that will not go (a read-only staging dir) is reported, never fatal.
+    try {
+      rmSync(join(restoreDir, file), { force: true });
+    } catch (err) {
+      report.problems.push({
+        file,
+        detail: `handled, but could not remove: ${(err as Error).message}`,
+      });
+    }
   }
   // Only handled files went; anything else, even a file staged meanwhile, stays.
   if (readdirSync(restoreDir).length > 0)
@@ -275,9 +283,8 @@ export async function applyStagedMemoryRestore(
   else {
     try {
       rmdirSync(restoreDir);
-    } catch (err) {
-      // A file staged since the listing: it waits for the next boot.
-      if ((err as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw err;
+    } catch {
+      // A file staged since the listing, or a directory we may not remove.
       report.pending = clearHint(restoreDir);
     }
   }
