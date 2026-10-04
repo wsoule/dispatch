@@ -713,6 +713,7 @@ export class RosterService {
       this.fed.problem(p.subject, p.message);
       now.add(p.subject);
     }
+    if (view !== null) this.auditResolutions(view);
     for (const subject of this.recorded)
       if (!now.has(subject)) this.fed.clearProblem(subject);
     this.recorded = now;
@@ -993,6 +994,39 @@ export class RosterService {
       readLicenseKey(key, this.deps.licensePublicKey, this.deps.now()).kind ===
       'licensed'
     );
+  }
+
+  // A removal audited as it applied gets a second row once a fight decides
+  // it otherwise: the log says how each revocation ended (E).
+  private auditResolutions(view: RosterView): void {
+    if (view.resolution.size === 0) return;
+    for (const r of this.rows()) {
+      const resolution = view.resolution.get(r.hash);
+      if (resolution === undefined) continue;
+      const action = String(
+        (JSON.parse(r.body_json) as { action?: unknown }).action
+      );
+      const kind = AUDITED.get(action);
+      if (kind === undefined) continue;
+      const subject = `op:${r.replica}:${r.seq}`;
+      const last = this.fed.db
+        .query<{ detail_json: string }, [string, string]>(
+          'SELECT detail_json FROM fed_audit WHERE subject = ? AND kind = ? ORDER BY id DESC LIMIT 1'
+        )
+        .get(subject, kind);
+      if (last === null) continue;
+      const before = (JSON.parse(last.detail_json) as { resolution?: unknown })
+        .resolution;
+      if (before === resolution) continue;
+      this.fed.audit(kind, subject, {
+        replica: r.replica,
+        seq: r.seq,
+        hash: r.hash,
+        action,
+        resolution,
+        resolved: true,
+      });
+    }
   }
 
   private auditOp(entry: FederatedOp, hash: string): void {

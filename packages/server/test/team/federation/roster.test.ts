@@ -541,3 +541,39 @@ describe('the audit log', () => {
     expect(auditKinds(ada)).toContain('revocation');
   });
 });
+
+// E: a revocation audited as it applied gets a second row when a fight later
+// decides it otherwise.
+describe('revocation audit rows', () => {
+  it('records how a revocation fight resolved once it does', () => {
+    const ada = make('ada');
+    const bob = make('bob');
+    const cy = make('cy');
+    ada.roster.found('acme');
+    exchange(ada, bob, cy);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob), role: 'admin' });
+    ada.roster.admit(cy.fed.replica, { fingerprint: fp(cy) });
+    exchange(ada, bob, cy);
+    ada.roster.revoke(bob.fed.replica, 'first');
+    for (const r of [ada, bob, cy])
+      r.clock.now = new Date(r.clock.now.getTime() + 60_000);
+    bob.roster.revoke(cy.fed.replica, 'second');
+    feed(bob, cy);
+    feed(ada, cy);
+    feed(bob, cy);
+    const rows = cy.fed.db
+      .query<{ subject: string; detail_json: string }, []>(
+        "SELECT subject, detail_json FROM fed_audit WHERE kind = 'revocation' ORDER BY id"
+      )
+      .all()
+      .map((r) => ({
+        subject: r.subject,
+        resolution: (JSON.parse(r.detail_json) as { resolution?: string })
+          .resolution,
+      }));
+    const bobs = rows.filter((r) =>
+      r.subject.startsWith(`op:${bob.fed.replica}`)
+    );
+    expect(bobs.map((r) => r.resolution)).toEqual(['accepted', 'void']);
+  });
+});

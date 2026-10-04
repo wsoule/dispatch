@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS fed_unknown (replica TEXT NOT NULL, seq INTEGER NOT N
 CREATE TABLE IF NOT EXISTS fed_published (kind TEXT NOT NULL, ref TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (kind, ref));
 CREATE TABLE IF NOT EXISTS fed_quota (replica TEXT NOT NULL, hour TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (replica, hour));
 CREATE TABLE IF NOT EXISTS fed_problems (subject TEXT PRIMARY KEY, message TEXT NOT NULL, at TEXT NOT NULL);
+-- Notes a person acknowledged; the same message is not raised again.
+CREATE TABLE IF NOT EXISTS fed_problem_acks (subject TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (subject, message));
 CREATE TABLE IF NOT EXISTS fed_audit (id INTEGER PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL, detail_json TEXT NOT NULL);
 -- Which tasks each applied v2 task op touched, kept 30 days, so a revocation
 -- that cuts below ops already applied here can list them.

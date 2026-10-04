@@ -126,7 +126,13 @@ const ACTIONS = new Set([
   'close-legacy',
   'dismiss',
   'abandon-invite',
+  'problems',
 ]);
+
+// Notes a person may acknowledge: a race, a cut that cannot be checked, a
+// merge reset and a route's late failure. A halt, a key claim or a pause
+// stays until what caused it is gone.
+const ACKABLE = ['team:race:', 'team:cut:', 'transport:merge', 'team:route'];
 
 const STATUS: Record<RosterError['code'], number> = {
   forbidden: 403,
@@ -245,6 +251,20 @@ async function act(
   if (segments.length === 4 && segments[1] === 'keys') {
     const replica = segments[2] ?? '';
     return keyAction(fedCtx, service, replica, segments[3] ?? '', body);
+  }
+  if (
+    segments.length === 3 &&
+    segments[1] === 'problems' &&
+    segments[2] === 'ack'
+  ) {
+    const subject = need('subject');
+    if (!ACKABLE.some((p) => subject.startsWith(p)))
+      throw new RosterError(
+        'invalid',
+        `${subject} is not a note to acknowledge; it goes when its cause does`
+      );
+    fedCtx.fed.ackProblem(subject);
+    return { ok: true };
   }
   if (segments.length !== 2) return errorResponse(404, 'not found');
   switch (segments[1]) {

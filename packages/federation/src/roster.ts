@@ -1804,7 +1804,7 @@ function recoverStep(
   addPeople(ev, [key.handle]);
   if (ev.notes)
     ev.problems.push({
-      subject: `replica:${op.replica}`,
+      subject: `recovery:${op.replica}`,
       message: `${op.replica} became an admin with the recovery code`,
     });
 }
@@ -1945,12 +1945,13 @@ function notesOf(
     if (body !== 'unknown' || !standsAt(ev, op)) continue;
     unknown ??= { ...positionOf(op), hash: op.hash };
     const who = liftersOf(ev, admins, op);
-    const named = `${op.replica}'s roster op at seq ${op.seq} (${op.hash})`;
+    // Each way out names the command that takes it.
+    const named = `${op.replica}'s roster op at seq ${op.seq} with \`dispatch team dismiss ${op.replica} ${op.seq} ${op.hash}\``;
     const dismiss =
       who.length > 0 ? `${listed(who)} can dismiss ${named}, or ` : 'or ';
     problems.push({
       subject: at(op),
-      message: `${NEWER_ROSTER}, ${dismiss}an admin can revoke ${op.replica} below seq ${op.seq}`,
+      message: `${NEWER_ROSTER}, ${dismiss}an admin can revoke ${op.replica} with \`dispatch team keys revoke ${op.replica}\`, which cuts it below seq ${op.seq}`,
     });
   }
   return { unknown, problems };

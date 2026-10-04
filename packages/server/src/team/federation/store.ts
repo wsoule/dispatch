@@ -380,11 +380,30 @@ export class FedStore {
 
   /** The current problem for a subject, replacing any earlier one. */
   problem(subject: string, message: string): void {
+    // An acknowledged note stays quiet until it says something new.
+    const acked = this.db
+      .query<{ n: number }, [string, string]>(
+        'SELECT 1 AS n FROM fed_problem_acks WHERE subject = ? AND message = ?'
+      )
+      .get(subject, message);
+    if (acked !== null) return;
     this.db
       .query(
         'INSERT INTO fed_problems (subject, message, at) VALUES (?, ?, ?) ON CONFLICT(subject) DO UPDATE SET message = excluded.message, at = excluded.at'
       )
       .run(subject, message, this.now().toISOString());
+  }
+
+  /** Acknowledges a note: it goes, and the same message never comes back. */
+  ackProblem(subject: string): void {
+    const held = this.problems().find((p) => p.subject === subject);
+    if (held !== undefined)
+      this.db
+        .query(
+          'INSERT OR IGNORE INTO fed_problem_acks (subject, message, at) VALUES (?, ?, ?)'
+        )
+        .run(subject, held.message, this.now().toISOString());
+    this.clearProblem(subject);
   }
 
   clearProblem(subject: string): void {

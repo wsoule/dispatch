@@ -66,8 +66,8 @@ async function legacy(c: Cluster, handle: string): Promise<LegacyClient> {
   return l;
 }
 const halted = async (m: Member, replica: string) =>
-  (await problemsOf(m)).find((p) => p.subject === `replica:${replica}`)
-    ?.message ?? '';
+  (await problemsOf(m)).find((p) => p.subject === `halt:${replica}`)?.message ??
+  '';
 
 describe('board convergence over signed ops', () => {
   it(
@@ -170,7 +170,7 @@ describe('board convergence over signed ops', () => {
       for (const m of members) {
         expect(await m.handle.title(id)).toBe('pushed once');
         expect(
-          (await problemsOf(m)).filter((p) => p.subject.startsWith('replica:'))
+          (await problemsOf(m)).filter((p) => p.subject.startsWith('halt:'))
         ).toEqual([]);
       }
       await expectConverged(members, [boardProjection, rosterProjection]);

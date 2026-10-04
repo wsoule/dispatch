@@ -130,7 +130,7 @@ export function rekeyIfKeysLost(
       db.query(
         'INSERT INTO fed_problems (subject, message, at) VALUES (?, ?, ?) ON CONFLICT (subject) DO UPDATE SET message = excluded.message, at = excluded.at'
       ).run(
-        `replica:${old.value}`,
+        `rekey:${old.value}`,
         `This machine ${why} and joins again as ${next}: an admin must admit it, and should revoke ${revoke}. Changes and messages it had not published yet were dropped; make or send them again.`,
         new Date().toISOString()
       );

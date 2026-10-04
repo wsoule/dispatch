@@ -255,7 +255,7 @@ export class LegacyWindow {
     );
     if (claims.some((a) => !matches(a))) {
       fed.problem(
-        `replica:${replica}`,
+        `legacy:${replica}`,
         `${replica}'s v1 log was rewritten; nothing past the founding is read`
       );
       const bound =
@@ -272,7 +272,7 @@ export class LegacyWindow {
     }
     if (found === undefined) {
       out.waiting.add(replica);
-      fed.problem(`replica:${replica}`, `${replica} ${OLDER}`);
+      fed.problem(`legacy:${replica}`, `${replica} ${OLDER}`);
       return;
     }
     if (view.legacy.closed === null) {
@@ -285,7 +285,7 @@ export class LegacyWindow {
     if (refused.length === 0) return;
     out.refused.push(...refused);
     fed.problem(
-      `replica:${replica}`,
+      `legacy:${replica}`,
       `${replica} runs a Dispatch from before team federation; its changes are refused. Upgrade it.`
     );
   }

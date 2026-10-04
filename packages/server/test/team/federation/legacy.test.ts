@@ -186,7 +186,7 @@ describe('after closing', () => {
     expect(r.apply.map((o) => o.seq)).toEqual([1]);
     expect(r.refused.map((o) => o.seq)).toEqual([2, 3]);
     expect(
-      ada.fed.problems().filter((p) => p.subject === 'replica:old-00000099')
+      ada.fed.problems().filter((p) => p.subject === 'legacy:old-00000099')
     ).toHaveLength(1);
   });
 

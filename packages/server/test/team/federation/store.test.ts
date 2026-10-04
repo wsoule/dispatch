@@ -448,8 +448,7 @@ describe('a lost key file', () => {
         .problems()
         .some(
           (p) =>
-            p.subject === `replica:${old}` &&
-            p.message.includes(`revoke ${old}`)
+            p.subject === `rekey:${old}` && p.message.includes(`revoke ${old}`)
         )
     ).toBe(true);
     const key = fresh.append({ type: 'key', body: keyBody(fresh.keys) });
@@ -487,9 +486,7 @@ describe('a lost key file', () => {
         'replica.json',
       ].sort()
     );
-    const problem = fresh
-      .problems()
-      .find((p) => p.subject === `replica:${old}`);
+    const problem = fresh.problems().find((p) => p.subject === `rekey:${old}`);
     expect(problem?.message).toContain(`revoke ${old} and ${between.replica}`);
     reopened.close();
   });

@@ -241,6 +241,39 @@ describe('FederationService', () => {
     ).toBe(true);
   });
 
+  // E: each source of a replica's problem has its own subject, so a clock
+  // note never masks a security halt, nor the other way round.
+  it('keeps a halt and a clock problem for one replica side by side', async () => {
+    const {
+      remote,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    bob.clock.now = new Date(bob.clock.now.getTime() + 2 * 60 * 60 * 1000);
+    bob.store.create({ title: 'from ahead' });
+    await bob.service.syncNow();
+    await ada.service.syncNow();
+    const forged = bob.store.create({ title: 'honest' }).meta.id;
+    await bob.service.syncNow();
+    const seq = bob.fed.head()?.seq ?? 0;
+    remote.tamper(
+      bob.fed.replica,
+      seq,
+      (e) =>
+        ({
+          ...e,
+          body: { task: forged, kind: 'put', fields: { title: 'forged' } },
+        }) as typeof e
+    );
+    await ada.service.syncNow();
+    const subjects = ada.fed.problems().map((p) => p.subject);
+    expect(subjects).toContain(`clock:${bob.fed.replica}`);
+    expect(subjects).toContain(`halt:${bob.fed.replica}`);
+  });
+
   // FW-R23: a reader follows the prev chain, so a junk line with a high seq
   // and a duplicate of a real op neither halt a log nor hide later ops.
   it('follows the chain past a junk high seq and a duplicate', async () => {
@@ -524,11 +557,25 @@ describe('FederationService', () => {
         .problems()
         .some(
           (p) =>
-            p.subject === `replica:${bob.fed.replica}` &&
+            p.subject === `clock:${bob.fed.replica}` &&
             p.message.includes('ahead')
         )
     ).toBe(true);
     expect(auditKinds(ada)).toContain('clock-hold');
+    // E: one stable message while it waits, and none once the clock catches up.
+    const clockNotes = () =>
+      ada.fed
+        .problems()
+        .filter((p) => p.subject === `clock:${bob.fed.replica}`)
+        .map((p) => p.message);
+    const before = clockNotes();
+    ada.clock.now = new Date(ada.clock.now.getTime() + 60 * 1000);
+    await settle(ada);
+    expect(clockNotes()).toEqual(before);
+    expect(auditKinds(ada).filter((k) => k === 'clock-hold')).toHaveLength(1);
+    ada.clock.now = new Date(ada.clock.now.getTime() + 2 * 60 * 60 * 1000);
+    await settle(ada);
+    expect(clockNotes()).toEqual([]);
   });
 
   it('keeps an op of an unknown type in fed_unknown and moves on', async () => {
@@ -604,6 +651,27 @@ describe('FederationService', () => {
     expect((remote.logs.get(ada.fed.replica) ?? []).length).toBeGreaterThan(0);
   });
 
+  // E: a route's late sync failure is named until a sync goes through.
+  it('clears a route sync failure once a later pass succeeds', async () => {
+    const {
+      remote,
+      rs: [ada],
+    } = team('ada');
+    ada.roster.found('acme');
+    remote.offline = true;
+    await ada.service.syncNow();
+    ada.fed.problem('team:route', 'the sync after invite failed: offline');
+    await ada.service.syncNow();
+    expect(ada.fed.problems().some((p) => p.subject === 'team:route')).toBe(
+      true
+    );
+    remote.offline = false;
+    await ada.service.syncNow();
+    expect(ada.fed.problems().some((p) => p.subject === 'team:route')).toBe(
+      false
+    );
+  });
+
   // FW-R25: pending counts what never reached the remote, not the outbox.
   it('counts ops written but never pushed as pending', async () => {
     const {
@@ -649,7 +717,7 @@ describe('FederationService', () => {
         .problems()
         .some(
           (p) =>
-            p.subject === `replica:${ops.fed.replica}` &&
+            p.subject === `observer:${ops.fed.replica}` &&
             p.message.includes('an observer publishes only')
         )
     ).toBe(true);

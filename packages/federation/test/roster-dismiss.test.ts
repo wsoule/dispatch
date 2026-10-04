@@ -34,7 +34,7 @@ const NEWER =
   "a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue";
 const pauseProblem = (o: RosterOpRef, who: string) => ({
   subject: `op:${o.replica}:${o.seq}`,
-  message: `${NEWER}, ${who} can dismiss ${o.replica}'s roster op at seq ${o.seq} (${o.hash}), or an admin can revoke ${o.replica} below seq ${o.seq}`,
+  message: `${NEWER}, ${who} can dismiss ${o.replica}'s roster op at seq ${o.seq} with \`dispatch team dismiss ${o.replica} ${o.seq} ${o.hash}\`, or an admin can revoke ${o.replica} with \`dispatch team keys revoke ${o.replica}\`, which cuts it below seq ${o.seq}`,
 });
 const pauses = (v: RosterView) =>
   v.problems.some((p) => p.message.startsWith(NEWER));

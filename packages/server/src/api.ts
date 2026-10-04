@@ -4270,6 +4270,7 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['team', 'close-legacy'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
   {
     method: 'POST',
     segments: ['team', 'keys', '*', 'admit'],

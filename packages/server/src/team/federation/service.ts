@@ -337,6 +337,8 @@ export class FederationService {
       await transport.ack(this.watermarks());
       if (fed.outbox().length > 0) this.notifyLocalChange();
       this.lastSyncAt = now.toISOString();
+      // A route's late sync failure is over once a sync goes through.
+      fed.clearProblem('team:route');
       if (changed) this.opts.onBoardChanged();
       if (this.fast !== null && now < this.fast) this.schedule(FAST_PASS_MS);
     } catch (err) {
@@ -649,7 +651,7 @@ export class FederationService {
         : reason.includes('bad signature') || reason.includes('bodyHash')
           ? 'bad-signature'
           : 'halt';
-    const subject = `replica:${replica}`;
+    const subject = `halt:${replica}`;
     const { fed } = this.opts;
     // Re-read while blocked ops wait before it: one audit row per halt.
     if (
@@ -671,20 +673,9 @@ export class FederationService {
       fed.audit(kind, subject, { replica, reason });
   }
 
-  // Clears the replica's problem when it is a verification one; an observer's
-  // problem shares the subject and stays.
+  // The log reads again: its halt or stall problem (its own subject) goes.
   private clearHaltProblem(replica: string): void {
-    const subject = `replica:${replica}`;
-    const { fed } = this.opts;
-    if (
-      fed
-        .problems()
-        .some(
-          (p) =>
-            p.subject === subject && p.message.includes('fails verification')
-        )
-    )
-      fed.clearProblem(subject);
+    this.opts.fed.clearProblem(`halt:${replica}`);
   }
 
   // The races a new fold reveals: a revocation cutting below ops applied here
@@ -762,6 +753,9 @@ export class FederationService {
           fed.setCursor(replica, { head, halted });
         // The log reads again: its verification problem is over.
         if (heads.has(replica) && !v.flagged) this.clearHaltProblem(replica);
+        // Its ops apply again: its clock no longer runs ahead of this one.
+        if (heads.has(replica) && !blocked.has(replica))
+          fed.clearProblem(`clock:${replica}`);
         if (head !== null && heads.has(replica))
           fed.db
             .query(
@@ -803,7 +797,7 @@ export class FederationService {
     const observer = member?.observer ?? cut?.observer ?? false;
     if (observer && entry.type !== 'presence') {
       fed.problem(
-        `replica:${r}`,
+        `observer:${r}`,
         `${roster.label(r)} is an observer; an observer publishes only keys, presence and acks`
       );
       fed.audit('speaks-for', `op:${r}:${entry.seq}`, {
@@ -871,9 +865,10 @@ export class FederationService {
   // audit row when it is new.
   private clockProblem(replica: string, ahead: number): void {
     const { fed, roster } = this.opts;
-    const subject = `replica:${replica}`;
+    const subject = `clock:${replica}`;
     const device = printable(fed.pinned(replica)?.device ?? replica);
-    const message = `${roster.label(replica)}'s ${device} runs ${Math.round(ahead / 60_000)} minutes ahead; fix its clock`;
+    // One message while it waits, not a new one each minute it stays ahead.
+    const message = `${roster.label(replica)}'s ${device} runs more than an hour ahead, so its changes wait until this machine's clock reaches them; fix that machine's clock`;
     if (
       fed.problems().some((p) => p.subject === subject && p.message === message)
     )

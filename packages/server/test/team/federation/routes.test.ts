@@ -361,6 +361,66 @@ describe('a route whose pass does not finish', () => {
   });
 });
 
+describe('acknowledging a problem (E)', () => {
+  it('clears a race, cut or merge note for good, and never a halt', async () => {
+    const ada = testReplica('ada');
+    try {
+      ada.roster.found('acme');
+      const ctx = {
+        rootDir: ada.dir,
+        boardSync: {
+          syncNow: () => Promise.resolve(),
+          status: () => ({ lastError: null }),
+        },
+        federation: {
+          roster: ada.roster,
+          fed: ada.fed,
+          handle: 'ada',
+          device: 'laptop',
+          now: () => ada.clock.now,
+          remote: null,
+          label: (r: string) => r,
+          observer: () => null,
+        },
+      } as unknown as ApiContext;
+      const ack = (subject: string) =>
+        handleFederationRoute(
+          new Request('http://x/api/team/problems/ack', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ subject }),
+          }),
+          ctx,
+          ['team', 'problems', 'ack'],
+          'POST'
+        );
+      ada.fed.problem(
+        'team:race:bob-0000000b',
+        'bob touched t-1 above the cut'
+      );
+      ada.fed.problem('halt:bob-0000000b', "bob's log fails verification");
+      expect((await ack('team:race:bob-0000000b')).status).toBe(200);
+      expect((await ack('halt:bob-0000000b')).status).toBe(400);
+      ada.fed.problem(
+        'team:race:bob-0000000b',
+        'bob touched t-1 above the cut'
+      );
+      expect(ada.fed.problems().map((p) => p.subject)).toEqual([
+        'halt:bob-0000000b',
+      ]);
+      ada.fed.problem(
+        'team:race:bob-0000000b',
+        'bob touched t-2 above the cut'
+      );
+      expect(ada.fed.problems().map((p) => p.subject)).toContain(
+        'team:race:bob-0000000b'
+      );
+    } finally {
+      ada.close();
+    }
+  });
+});
+
 describe('a route against an offline remote', () => {
   it(
     'revokes from the last applied cut with a warning instead of hanging',
