@@ -394,13 +394,13 @@ export class FedStore {
   problem(subject: string, message: string): void {
     // FW-R26(6): an acknowledged note stays quiet while it says the same;
     // a new message drops the acknowledgement and shows.
-    const acked = this.db
+    const acknowledged = this.db
       .query<{ message: string }, [string]>(
         'SELECT message FROM fed_problem_acks WHERE subject = ?'
       )
       .get(subject);
-    if (acked !== null) {
-      if (acked.message === message) return;
+    if (acknowledged !== null) {
+      if (acknowledged.message === message) return;
       this.dropAck(subject);
     }
     this.db
