@@ -6,7 +6,10 @@ export interface TerminalProcess {
   readonly stdout: ReadableStream<Uint8Array>;
   readonly exited: Promise<number>;
   write(data: string): void;
+  /** Sends TERM and HUP to the child's process group. */
   kill(): void;
+  /** SIGKILLs the child's process group: for one that ignored `kill`. */
+  forceKill?(): void;
   /** Resizes the child's pty. Absent when the child has no pty to resize. */
   resize?(cols: number, rows: number): void;
 }
@@ -22,6 +25,20 @@ export interface SpawnTerminalOptions {
 }
 
 export type TerminalSpawner = (opts: SpawnTerminalOptions) => TerminalProcess;
+
+// Signals a child's process group (it leads one: a pty child starts its own
+// session, a piped one is spawned detached), falling back to the child alone.
+function signalGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // Already gone.
+    }
+  }
+}
 
 // Spawns on the calling thread; the daemon runs it on the terminal worker.
 export function spawnInThread(opts: SpawnTerminalOptions): TerminalProcess {
@@ -74,7 +91,11 @@ function spawnNativePty(opts: SpawnTerminalOptions): TerminalProcess {
       terminal?.write(data);
     },
     kill() {
-      proc.kill();
+      signalGroup(proc.pid, 'SIGHUP');
+      signalGroup(proc.pid, 'SIGTERM');
+    },
+    forceKill() {
+      signalGroup(proc.pid, 'SIGKILL');
     },
     resize(cols: number, rows: number) {
       if (terminal !== undefined && !terminal.closed) {
@@ -116,6 +137,8 @@ function spawnPiped(opts: SpawnTerminalOptions): TerminalProcess {
     stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
+    // Its own process group, so a kill reaches what it started too.
+    detached: true,
   });
   return {
     // Merged, because an error the child prints is output the person needs
@@ -131,7 +154,11 @@ function spawnPiped(opts: SpawnTerminalOptions): TerminalProcess {
       void proc.stdin.flush();
     },
     kill() {
-      proc.kill();
+      signalGroup(proc.pid, 'SIGHUP');
+      signalGroup(proc.pid, 'SIGTERM');
+    },
+    forceKill() {
+      signalGroup(proc.pid, 'SIGKILL');
     },
   };
 }

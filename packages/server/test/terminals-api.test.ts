@@ -120,6 +120,155 @@ describe('terminal spawn load', () => {
   }, 60_000);
 });
 
+// The terminal helper this daemon started (a child of this test process).
+function helperPid(): number | null {
+  const out = Bun.spawnSync([
+    'pgrep',
+    '-P',
+    String(process.pid),
+    '-f',
+    'terminalHostMain',
+  ])
+    .stdout.toString()
+    .trim();
+  return out === '' ? null : Number(out.split('\n')[0]);
+}
+
+function rssMb(pid: number): number {
+  const kb = Bun.spawnSync([
+    'ps',
+    '-o',
+    'rss=',
+    '-p',
+    String(pid),
+  ]).stdout.toString();
+  return Number(kb.trim()) / 1024;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function outputOf(id: string): Promise<string> {
+  const out = await json(await apiFetch(`/api/terminals/${id}/output`));
+  return decode(out.data as string);
+}
+
+describe('terminal helper under floods', () => {
+  it('keeps its memory bounded across 40 floods that are deleted mid-stream', async () => {
+    // Eight at a time, so output arrives faster than the daemon takes it in.
+    for (let round = 0; round < 5; round++) {
+      const ids = await Promise.all(
+        Array.from({ length: 8 }, async () => {
+          const created = await apiFetch('/api/terminals', {
+            method: 'POST',
+            body: JSON.stringify({
+              command: [
+                'sh',
+                '-c',
+                'head -c 1600000 /dev/zero | tr "\\0" x; sleep 5',
+              ],
+            }),
+          });
+          return ((await json(created)) as { id: string }).id;
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      for (const id of ids)
+        await apiFetch(`/api/terminals/${id}`, { method: 'DELETE' });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const pid = helperPid();
+    expect(pid).not.toBeNull();
+    const rss = rssMb(pid ?? 0);
+    console.log(`helper rss ${Math.round(rss)} MB`);
+    expect(rss).toBeLessThan(150);
+  }, 120_000);
+
+  it("delivers a short session's output within 500 ms while 3 sessions flood", async () => {
+    const floods = await Promise.all(
+      [1, 2, 3].map(
+        async () =>
+          (await json(
+            await apiFetch('/api/terminals', {
+              method: 'POST',
+              body: JSON.stringify({ command: ['sh', '-c', 'yes flood'] }),
+            })
+          )) as { id: string }
+      )
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const started = performance.now();
+    const quick = await json(
+      await apiFetch('/api/terminals', {
+        method: 'POST',
+        body: JSON.stringify({ command: ['sh', '-c', 'echo quick-one'] }),
+      })
+    );
+    let seen = '';
+    while (!seen.includes('quick-one') && performance.now() - started < 3000) {
+      seen = await outputOf(quick.id as string);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const took = performance.now() - started;
+    for (const f of floods)
+      await apiFetch(`/api/terminals/${f.id}`, { method: 'DELETE' });
+    expect(seen).toContain('quick-one');
+    expect(took).toBeLessThan(500);
+  }, 30_000);
+});
+
+describe('stubborn sessions', () => {
+  const stubborn = async (): Promise<{ id: string; pid: number }> => {
+    const created = await json(
+      await apiFetch('/api/terminals', {
+        method: 'POST',
+        body: JSON.stringify({
+          command: ['sh', '-c', 'trap "" TERM HUP; echo pid=$$; sleep 60'],
+        }),
+      })
+    );
+    let text = '';
+    for (let i = 0; i < 200 && !/pid=\d+/.test(text); i++) {
+      text = await outputOf(created.id as string);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return {
+      id: created.id as string,
+      pid: Number(/pid=(\d+)/.exec(text)?.[1]),
+    };
+  };
+  const goneWithin = async (pid: number, ms: number): Promise<boolean> => {
+    const deadline = performance.now() + ms;
+    while (performance.now() < deadline) {
+      if (!alive(pid)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return !alive(pid);
+  };
+
+  it('a DELETE kills a session that ignores TERM and HUP', async () => {
+    const { id, pid } = await stubborn();
+    expect(alive(pid)).toBe(true);
+    await apiFetch(`/api/terminals/${id}`, { method: 'DELETE' });
+    expect(await goneWithin(pid, 5000)).toBe(true);
+  }, 30_000);
+
+  it('a stopped daemon takes such a session down with it', async () => {
+    const { pid } = await stubborn();
+    await handle.stop();
+    handle = await startServer({ rootDir: root, port: 0 });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    expect(await goneWithin(pid, 5000)).toBe(true);
+  }, 30_000);
+});
+
 describe('terminal routes', () => {
   it('opens a session in the project root and lists it', async () => {
     const created = await apiFetch('/api/terminals', {
