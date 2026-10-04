@@ -23,6 +23,7 @@ import { basename, join } from 'node:path';
 
 import { daemonFileKey } from '../src/commands/daemon.js';
 import type { CliContext } from '../src/context.js';
+import { CliError } from '../src/context.js';
 import { makeProgram } from '../src/program.js';
 import { projectRoot } from '../src/projectRoot.js';
 
@@ -218,19 +219,58 @@ function stagingFor(fresh: string): string {
   );
 }
 
-// Restores `remote` into a fresh checkout; returns it and what the CLI printed.
+// Restores `remote` into a fresh checkout; returns it, what the CLI printed,
+// and the error a restore that reported problems ends with.
 async function restoreFresh(
   remote: string
-): Promise<{ fresh: string; lines: string[] }> {
+): Promise<{ fresh: string; lines: string[]; failed: unknown }> {
   const fresh = temp('dispatch-fresh-');
   git(fresh, 'init', '-q', '-b', 'main');
   const lines: string[] = [];
-  await makeProgram({ cwd: fresh, log: (l) => lines.push(l) }).parseAsync(
-    ['receipts', 'restore', '--from', remote],
-    { from: 'user' }
-  );
-  return { fresh, lines };
+  const failed: unknown = await makeProgram({
+    cwd: fresh,
+    log: (l) => lines.push(l),
+  })
+    .parseAsync(['receipts', 'restore', '--from', remote], { from: 'user' })
+    .then(
+      () => null,
+      (err: unknown) => err
+    );
+  return { fresh, lines, failed };
 }
+
+test('a restore that reports problems exits non-zero', async () => {
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch', 'docs'), { recursive: true });
+    writeFileSync(join(log, '.dispatch', 'docs', 'NOTES.txt.md'), 'x\n');
+    writeFileSync(
+      join(log, '.dispatch', 'docs', 'big.md'),
+      'x'.repeat(DOCS_LIMITS.receiptFileBytes + 1)
+    );
+  });
+  const { failed } = await restoreFresh(remote);
+  expect(failed).toBeInstanceOf(CliError);
+  expect((failed as CliError).exitCode).toBe(1);
+  expect((failed as CliError).message).toContain('problem');
+});
+
+test('a clean restore exits zero', async () => {
+  const { remote } = pushedLog();
+  expect((await restoreFresh(remote)).failed).toBeNull();
+});
+
+test('a killed restore’s temp clone is removed by the next restore', async () => {
+  const { remote } = pushedLog();
+  // A pid nobody holds: what a restore killed mid-clone leaves.
+  const dead = mkdtempSync(join(tmpdir(), 'dispatch-receipts-restore-999999-'));
+  const live = mkdtempSync(
+    join(tmpdir(), `dispatch-receipts-restore-${process.pid}-`)
+  );
+  dirs.push(dead, live);
+  await restoreFresh(remote);
+  expect(existsSync(dead)).toBe(false);
+  expect(existsSync(live)).toBe(true);
+});
 
 test('a symlinked doc file in the log is not staged', async () => {
   const secret = join(temp('dispatch-secret-'), 'secret.md');

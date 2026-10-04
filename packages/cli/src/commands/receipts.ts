@@ -43,6 +43,35 @@ function remoteUrl(root: string, cwd: string, from: string): string {
   return absoluteGitLocation(cwd, from);
 }
 
+// A restore clones into `<tmp>/<prefix><pid>-<random>`, so a later one can
+// tell a killed restore's clone from a live one's.
+const CLONE_PREFIX = 'dispatch-receipts-restore-';
+
+// Whether a process with this pid is running (EPERM: it is, as someone else).
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+// Removes the temp clones of restores whose process is gone.
+function removeStaleClones(): void {
+  let names: string[];
+  try {
+    names = readdirSync(tmpdir());
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const pid = Number(/^dispatch-receipts-restore-(\d+)-/.exec(name)?.[1]);
+    if (!Number.isInteger(pid) || pid <= 0 || alive(pid)) continue;
+    rmSync(join(tmpdir(), name), { recursive: true, force: true });
+  }
+}
+
 // `<id>.md` with an id shaped like @dispatch/memory's MEMORY_ID_PATTERN.
 const MEMORY_RECEIPT_NAME = /^mem-[0-9A-HJKMNP-TV-Z]{26}\.md$/;
 
@@ -123,7 +152,10 @@ export function registerReceiptsCommands(
           );
         }
         const url = remoteUrl(root, ctx.cwd, opts.from);
-        const dir = mkdtempSync(join(tmpdir(), 'dispatch-receipts-restore-'));
+        removeStaleClones();
+        const dir = mkdtempSync(
+          join(tmpdir(), `${CLONE_PREFIX}${process.pid}-`)
+        );
         try {
           const cloned = spawnSync(
             'git',
@@ -176,6 +208,11 @@ export function registerReceiptsCommands(
           for (const problem of result.problems) {
             ctx.log(`problem: ${problem.source}: ${problem.detail}`);
           }
+          const problems =
+            docs.problems.length +
+            memory.problems.length +
+            result.problems.length +
+            result.migration.problems.length;
           if (
             result.problems.length === 0 &&
             result.migration.problems.length === 0
@@ -187,6 +224,8 @@ export function registerReceiptsCommands(
               'Restored with the problems above; the project is not yet marked as database-backed. Fix them and run this again.'
             );
           }
+          if (problems > 0)
+            throw new CliError(`the restore reported ${problems} problem(s)`);
         } finally {
           rmSync(dir, { recursive: true, force: true });
         }
