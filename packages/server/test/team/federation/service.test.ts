@@ -672,6 +672,24 @@ describe('FederationService', () => {
     );
   });
 
+  // B: a roster pause stops applying, so the status says this machine is paused.
+  it('reports a roster pause as paused, naming how to lift it', async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const zap = bob.fed.append({
+      type: 'roster',
+      body: { rv: 9, action: 'zap' },
+    });
+    bob.roster.applyVerified(zap, opHash(zap));
+    await settle(bob, ada);
+    expect(ada.service.status().paused).toContain('dispatch team dismiss');
+  });
+
   // FW-R25: pending counts what never reached the remote, not the outbox.
   it('counts ops written but never pushed as pending', async () => {
     const {

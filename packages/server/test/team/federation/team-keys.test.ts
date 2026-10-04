@@ -95,6 +95,26 @@ function keys(over: Partial<Parameters<typeof assembleTeamKeys>[0]> = {}) {
 }
 
 describe('assembleTeamKeys', () => {
+  it('names the roster op a pause waits on, for a dismiss (FW-R8/R9)', () => {
+    expect(keys().pause).toBeNull();
+    const paused = keys({
+      view: {
+        ...view,
+        unknown: {
+          replica: 'bob-0000000b',
+          seq: 4,
+          hlc: '1790000000000.0000.bob-0000000b',
+          hash: 'h'.repeat(64),
+        },
+      } as never,
+    });
+    expect(paused.pause).toEqual({
+      replica: 'bob-0000000b',
+      seq: 4,
+      hash: 'h'.repeat(64),
+    });
+  });
+
   it('never shows the credentials in a remote or a transport error (G)', () => {
     const k = keys({
       remote: 'https://ada:ghp_secret@example.com/team/board.git',

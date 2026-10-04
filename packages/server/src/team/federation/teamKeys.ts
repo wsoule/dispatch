@@ -69,6 +69,9 @@ export interface TeamKeys {
   relayDisclosure: string;
   warnings: string[];
   problems: { subject: string; message: string; at: string }[];
+  /** The roster op no build here reads, which pauses applying until an
+   *  admin dismisses it or revokes its publisher (FW-R8/R9); else null. */
+  pause: { replica: string; seq: number; hash: string } | null;
 }
 
 export interface TeamKeysInput {
@@ -175,6 +178,14 @@ export function assembleTeamKeys(input: TeamKeysInput): TeamKeys {
     relayDisclosure: RELAY_DISCLOSURE,
     warnings: warnings(input, roster),
     problems: input.problems,
+    pause:
+      view?.unknown == null
+        ? null
+        : {
+            replica: view.unknown.replica,
+            seq: view.unknown.seq,
+            hash: view.unknown.hash,
+          },
   };
 }
 

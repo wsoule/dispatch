@@ -272,7 +272,7 @@ export class FederationService {
       problems: ledger.problems(),
       people: view?.people.length ?? this.people,
       seats: this.opts.seats(),
-      paused: this.paused,
+      paused: this.paused ?? this.rosterPause(view),
       teamId: roster.teamId(),
       founded: roster.founded(),
       legacyUntil: fed.meta('legacy_until'),
@@ -280,6 +280,17 @@ export class FederationService {
       transportHealth: transport.health(),
       federationProblems: fed.problems(),
     };
+  }
+
+  // A roster op this build cannot read stops every replica's ops applying:
+  // the pause problem's own words, which name the commands that lift it.
+  private rosterPause(view: RosterView | null): string | null {
+    const paused = view?.unknown;
+    if (paused == null) return null;
+    const note = this.opts.fed
+      .problems()
+      .find((p) => p.subject === `op:${paused.replica}:${paused.seq}`);
+    return `Board sync is paused on this machine: ${note?.message ?? `it cannot read ${paused.replica}'s roster op at seq ${paused.seq}`}`;
   }
 
   private now(): Date {

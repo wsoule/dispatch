@@ -1799,6 +1799,8 @@ export interface TeamKeys {
   relayDisclosure: string;
   warnings: string[];
   problems: TeamProblem[];
+  /** The roster op a pause waits on, for a dismiss (FW-R8/R9); else null. */
+  pause: { replica: string; seq: number; hash: string } | null;
 }
 
 /** A roster change's answer: a warning when it could not pull first,

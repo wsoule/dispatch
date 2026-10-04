@@ -107,6 +107,7 @@ describe('team federation bindings', () => {
       relayDisclosure: 'R',
       warnings: [],
       problems: [],
+      pause: null,
     } satisfies TeamKeys;
     const stub = stubFetch(keys);
     try {

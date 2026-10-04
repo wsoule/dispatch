@@ -91,6 +91,7 @@ const keys: TeamKeys = {
     'Only ada can admit, revoke or change the team. Make a second person an admin, or keep the recovery code safe.',
   ],
   problems: [],
+  pause: null,
 };
 
 describe('dispatch team keys output', () => {

@@ -793,6 +793,8 @@ export interface TeamKeys {
   relayDisclosure: string;
   warnings: string[];
   problems: { subject: string; message: string; at: string }[];
+  /** The roster op a pause waits on, for a dismiss (FW-R8/R9); else null. */
+  pause: { replica: string; seq: number; hash: string } | null;
 }
 
 /** Mirrors FederationStatus in packages/server/src/team/federation/service.ts.
