@@ -1,3 +1,4 @@
+import { getSection } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
@@ -92,7 +93,13 @@ export async function fanoutTask(
   };
 
   for (const variant of variants) {
-    const task = ctx.store.create(variantTaskInput(source, variant));
+    const created = ctx.store.create(variantTaskInput(source, variant));
+    // The Description went in at create; the criteria follow as their section.
+    const criteria = getSection(source.body, 'Acceptance Criteria');
+    const task =
+      criteria === ''
+        ? created
+        : ctx.store.update(created.meta.id, { acceptanceCriteria: criteria });
     // Before dispatch, so the clone's run gets an A2A task's fences.
     if (a2a) ctx.a2a?.markDerived(task.meta.id, taskId);
     // Refreshed per variant rather than once at the end: `dispatch` reads the
