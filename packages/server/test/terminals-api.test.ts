@@ -66,6 +66,60 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+describe('terminal spawn load', () => {
+  it('spawns 20 sessions without blocking the event loop', async () => {
+    // The first terminal starts the helper process; measure the 20 after it.
+    const warm = await apiFetch('/api/terminals', {
+      method: 'POST',
+      body: JSON.stringify({ command: ['true'] }),
+    });
+    await waitForExit((await json(warm)).id as string);
+    // The longest gap between ticks of a 5 ms timer, and /api/health probes
+    // running alongside: both stay short while the ptys spawn.
+    let last = performance.now();
+    let worstGap = 0;
+    const ticker = setInterval(() => {
+      const now = performance.now();
+      worstGap = Math.max(worstGap, now - last);
+      last = now;
+    }, 5);
+    let probing = true;
+    let worstHealth = 0;
+    const probe = (async () => {
+      while (probing) {
+        const started = performance.now();
+        await apiFetch('/api/health');
+        worstHealth = Math.max(worstHealth, performance.now() - started);
+      }
+    })();
+    const created = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        apiFetch('/api/terminals', {
+          method: 'POST',
+          body: JSON.stringify({ command: ['sh', '-c', 'echo up; sleep 0.2'] }),
+        })
+      )
+    );
+    // Long enough for every spawn and exit to happen inside the window.
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    probing = false;
+    await probe;
+    clearInterval(ticker);
+    expect(created.every((r) => r.status === 201)).toBe(true);
+    for (const r of created) {
+      const id = (await json(r)).id as string;
+      await waitForExit(id);
+      const out = await json(await apiFetch(`/api/terminals/${id}/output`));
+      expect(decode(out.data as string)).toContain('up');
+    }
+    console.log(
+      `worst loop gap ${Math.round(worstGap)} ms, worst health ${Math.round(worstHealth)} ms`
+    );
+    expect(worstGap).toBeLessThan(150);
+    expect(worstHealth).toBeLessThan(500);
+  }, 60_000);
+});
+
 describe('terminal routes', () => {
   it('opens a session in the project root and lists it', async () => {
     const created = await apiFetch('/api/terminals', {

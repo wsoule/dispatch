@@ -179,6 +179,7 @@ import { BoardSyncService } from './team/boardSync/service.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import type { Team } from './team/index.js';
 import { createTeam, syncSeats } from './team/index.js';
+import { hostSpawner } from './terminalHost.js';
 import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
@@ -1885,7 +1886,11 @@ async function bootServer(
   // readable the moment the app reconnects. Output is announced rather than
   // streamed: a client holds a byte cursor and pulls the increment, so a
   // dropped event costs a round trip and never a gap.
+  // Children spawn in a helper process, started on the first terminal: a pty
+  // spawn blocked the event loop for seconds under load.
+  const terminalHost = hostSpawner();
   const terminals = new TerminalRegistry(rootDir, {
+    spawn: terminalHost.spawn,
     onOutput: (terminalId) =>
       events.broadcast({ type: 'terminal.output', terminalId }),
     onExit: (terminalId) =>
@@ -2339,6 +2344,7 @@ async function bootServer(
       // Kills every child and flushes scrollback; the sessions stay in the
       // index so the next daemon hydrates them as `orphaned`.
       terminals.shutdown();
+      terminalHost.close();
       // Otherwise every session leaks a Chromium process.
       browsers.shutdown();
       boardSyncScheduler?.stop();

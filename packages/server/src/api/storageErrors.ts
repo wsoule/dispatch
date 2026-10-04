@@ -14,7 +14,7 @@ function pathOf(err: unknown): string {
 }
 
 // Whether `err` is SQLite reporting a lock another connection holds.
-export function isBusy(err: unknown): boolean {
+function isBusy(err: unknown): boolean {
   const code = codeOf(err);
   return code !== null && /^SQLITE_(BUSY|LOCKED)/.test(code);
 }
