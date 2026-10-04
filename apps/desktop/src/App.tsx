@@ -152,7 +152,8 @@ import { TooltipProvider } from '@/ui/tooltip';
 
 // The hosts a task page and a Flight Plan draw from, provided together so the shell's
 // provider stack stays one level deep.
-// The Inbox's doc query: team docs whose head is conflicted.
+// The Inbox's doc query: team docs whose head is conflicted or that carry a
+// Linear sync problem.
 const CONFLICTED_TEAM_DOCS = { conflicted: true, scope: 'team' } as const;
 
 function SurfaceHosts({

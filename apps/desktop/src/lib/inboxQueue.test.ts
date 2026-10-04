@@ -267,6 +267,35 @@ describe('inbox items', () => {
     expect(buildInbox(input()).docs ?? []).toEqual([]);
   });
 
+  test('titles a doc with a Linear sync problem as one, and keeps markers first', () => {
+    const problem =
+      "a Linear edit by lin-wyat at 2026-09-26T10:00:00.000Z was overwritten; see Linear's version history";
+    const doc = {
+      id: 'doc-2',
+      handle: 'spec',
+      title: 'Spec',
+      scope: 'team',
+      conflicted: false,
+      problem,
+      updatedAt: '2026-09-26T10:00:00.000Z',
+    } as unknown as DocSummary;
+    const [item] = buildInboxItems(
+      buildInbox(input({ conflictedDocs: [doc] })),
+      []
+    );
+    expect(inboxItemText(item)).toEqual({
+      id: 'spec',
+      title: 'Linear sync problem in Spec',
+      subtitle: problem,
+    });
+    const both = { ...doc, conflicted: true } as DocSummary;
+    const [marked] = buildInboxItems(
+      buildInbox(input({ conflictedDocs: [both] })),
+      []
+    );
+    expect(inboxItemText(marked).title).toBe('Conflict markers in Spec');
+  });
+
   const reviewRow = () => ({
     runId: 'r-1',
     taskId: 't-1',
