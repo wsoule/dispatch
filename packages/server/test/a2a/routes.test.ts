@@ -12,7 +12,7 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { runsDir } from '../../src/orchestrator/paths.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
-import { useTestAuth } from '../testAuth.js';
+import { rawFetch, useTestAuth } from '../testAuth.js';
 import { approvedClient, freePort, useSeedBase } from './seed.js';
 
 let home: string;
@@ -75,6 +75,32 @@ async function addClient(name: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('/api/a2a/clients', () => {
+  it('refuses the shared agent token: only a human adds a client', async () => {
+    const res = await rawFetch(`${base}/api/a2a/clients`, {
+      method: 'POST',
+      headers: {
+        ...json,
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ name: 'minted' }),
+    });
+    expect(res.status).toBe(403);
+    expect(handle.a2a.store!.clients()).toEqual([]);
+  });
+
+  it('caps the clients waiting for approval', async () => {
+    const add = (name: string) =>
+      fetch(`${base}/api/a2a/clients`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({ name }),
+      });
+    for (let i = 0; i < 10; i++) expect((await add(`p${i}`)).status).toBe(201);
+    expect((await add('one-more')).status).toBe(429);
+    // An approved client does not count against the cap.
+    expect((await approvedClient('approved')).token).toBeTruthy();
+  });
+
   beforeEach(boot);
 
   it('adds a client, shows the token once, and --approve answers the registration gate', async () => {
