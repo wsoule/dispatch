@@ -14,7 +14,11 @@ import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
 import type { FedStore } from './store.js';
 import { OpTooLargeError } from './store.js';
-import { assembleTeamKeys } from './teamKeys.js';
+import {
+  assembleTeamKeys,
+  redactCredentials,
+  withoutCredentials,
+} from './teamKeys.js';
 
 /** What api.ts's context carries once federation is wired (index.ts). */
 export interface FederationContext {
@@ -68,36 +72,30 @@ async function boundedPass(
   return done;
 }
 
-/** Board sync's status as `tier` may see it: below decide, without the
- *  transport's health, the team's problems or credentials in the remote (F-D29). */
+/** Board sync's status as `tier` may see it: below operator, without
+ *  credentials in the remote; below decide, also without the transport's
+ *  health or the team's problems (F-D29). */
 export function statusFor(
   status: object,
   tier: AuthTier
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...status };
+  if (tierAllows(tier, 'operator')) return out;
+  // Credentials in the remote are the operator's alone (G).
+  if (typeof out.remote === 'string')
+    out.remote = withoutCredentials(out.remote);
+  if (typeof out.lastError === 'string')
+    out.lastError = redactCredentials(out.lastError);
+  const health = out.transportHealth as { lastError?: unknown } | undefined;
+  if (typeof health?.lastError === 'string')
+    out.transportHealth = {
+      ...health,
+      lastError: redactCredentials(health.lastError),
+    };
   if (tierAllows(tier, 'decide')) return out;
   delete out.transportHealth;
   delete out.federationProblems;
-  if (typeof out.remote === 'string')
-    out.remote = withoutCredentials(out.remote);
   return out;
-}
-
-// A URL remote without its userinfo, query or fragment; an scp-style remote
-// (git@host:path) names a login, not a secret, and stays.
-function withoutCredentials(remote: string): string {
-  let url: URL;
-  try {
-    url = new URL(remote);
-  } catch {
-    return remote;
-  }
-  if (url.protocol === 'file:') return remote;
-  url.username = '';
-  url.password = '';
-  url.search = '';
-  url.hash = '';
-  return url.toString();
 }
 
 /** POST /api/board-sync/now: a pass, waited for at most passWaitMs, then the

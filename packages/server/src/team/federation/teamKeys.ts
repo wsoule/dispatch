@@ -165,10 +165,13 @@ export function assembleTeamKeys(input: TeamKeysInput): TeamKeys {
         .map((a) => a.replica)
         .filter((r) => !pins.has(r)),
     },
-    transport: health,
+    transport: { ...health, lastError: redactNullable(health.lastError) },
     license,
     pruningBlockers: pruningBlockers(input, roster, handleOf),
-    originWarning: input.remote === null ? null : originWarning(input.remote),
+    originWarning:
+      input.remote === null
+        ? null
+        : originWarning(withoutCredentials(input.remote)),
     relayDisclosure: RELAY_DISCLOSURE,
     warnings: warnings(input, roster),
     problems: input.problems,
@@ -228,4 +231,30 @@ function warnings(input: TeamKeysInput, roster: TeamKeys['roster']): string[] {
       'The sync branch is over 1 GiB. Switch to the relay, or start a fresh sync.repo.'
     );
   return out;
+}
+
+/** A URL remote without its userinfo, query or fragment; an scp-style remote
+ *  (git@host:path) names a login, not a secret, and stays. */
+export function withoutCredentials(remote: string): string {
+  let url: URL;
+  try {
+    url = new URL(remote);
+  } catch {
+    return remote;
+  }
+  if (url.protocol === 'file:') return remote;
+  url.username = '';
+  url.password = '';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
+/** Text (a git error, say) with any `scheme://user:secret@` userinfo cut. */
+export function redactCredentials(text: string): string {
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, '$1');
+}
+
+function redactNullable(text: string | null): string | null {
+  return text === null ? null : redactCredentials(text);
 }

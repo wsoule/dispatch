@@ -95,6 +95,17 @@ function keys(over: Partial<Parameters<typeof assembleTeamKeys>[0]> = {}) {
 }
 
 describe('assembleTeamKeys', () => {
+  it('never shows the credentials in a remote or a transport error (G)', () => {
+    const k = keys({
+      remote: 'https://ada:ghp_secret@example.com/team/board.git',
+      health: health({
+        lastError: "unable to access 'https://ada:ghp_secret@example.com/x/'",
+      }),
+    });
+    expect(JSON.stringify(k)).not.toContain('ghp_secret');
+    expect(k.originWarning).toContain('https://example.com/team/board.git');
+  });
+
   it('warns above 1 GiB of branch and recommends the relay or a fresh sync.repo', () => {
     expect(keys().warnings.some((w) => w.includes('GiB'))).toBe(false);
     const big = keys({

@@ -20,17 +20,29 @@ describe('statusFor', () => {
   const status = {
     enabled: true,
     remote: 'https://ada:ghp_secret@example.com/team/board.git?token=x',
-    transportHealth: { kind: 'git' },
+    lastError:
+      "fatal: unable to access 'https://ada:ghp_secret@example.com/team/board.git/'",
+    transportHealth: { kind: 'git', lastError: null },
     federationProblems: [],
     founded: true,
   };
-  it('keeps everything at the decide tier', () => {
-    expect(statusFor(status, 'decide')).toEqual(status);
+  it('keeps everything at the operator tier', () => {
+    expect(statusFor(status, 'operator')).toEqual(status);
+  });
+  it('keeps health and problems at the decide tier, without the credentials', () => {
+    expect(statusFor(status, 'decide')).toEqual({
+      ...status,
+      remote: 'https://example.com/team/board.git',
+      lastError:
+        "fatal: unable to access 'https://example.com/team/board.git/'",
+    });
   });
   it('drops health, problems and the remote credentials below it', () => {
     expect(statusFor(status, 'request')).toEqual({
       enabled: true,
       remote: 'https://example.com/team/board.git',
+      lastError:
+        "fatal: unable to access 'https://example.com/team/board.git/'",
       founded: true,
     });
     expect(
