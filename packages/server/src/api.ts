@@ -665,6 +665,12 @@ function validateTaskFields(
   return null;
 }
 
+/** XH-R2: a task a run creates, edits or dispatches through its own token
+ *  inherits that run's A2A provenance. */
+function inheritLineage(ctx: ApiContext, taskId: string): void {
+  if (ctx.viaRun !== undefined) ctx.a2a?.inherit(ctx.viaRun, taskId);
+}
+
 // The title and field checks POST /api/tasks runs, shared with A2A handoffs.
 export function validateTaskInput(
   rootDir: string,
@@ -714,6 +720,7 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
     creator: requestActor(ctx),
   });
   if (!created.ok) return errorResponse(400, created.error);
+  inheritLineage(ctx, created.doc.meta.id);
   ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
   return jsonResponse(created.doc, 201);
 }
@@ -824,6 +831,9 @@ async function updateTask(
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
   };
 
+  // Marked before the write: an A2A run's edit makes the task A2A-origin.
+  inheritLineage(ctx, id);
+
   // A gated A2A draft moves only through its gate; a decide-tier status
   // change answers it.
   if (ctx.a2a !== undefined) {
@@ -932,6 +942,8 @@ async function createRun(
   if (freshField !== undefined && typeof freshField !== 'boolean') {
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
+  // Before dispatch, so a run an A2A run starts is A2A-origin from its start.
+  if (task !== null) inheritLineage(ctx, taskId);
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
   // the raw fields go through untouched; the orchestrator resolves the
   // executor's own default model for a fresh run.

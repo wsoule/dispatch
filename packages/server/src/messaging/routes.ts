@@ -332,6 +332,34 @@ function liveRunRefusal(
   return null;
 }
 
+// XH-R2: no run may message an A2A-origin run, directly, through its task or
+// by replying into its thread; what one run reads must not reach a client.
+function a2aRunRefusal(
+  ctx: ApiContext,
+  principal: Principal,
+  addresses: readonly string[]
+): string | null {
+  if (principal.kind !== 'run') return null;
+  const self = principal.address.slice('run:'.length);
+  const ownTask = ctx.orchestrator.taskIdOfRun(self);
+  for (const address of addresses) {
+    let taskId: string | null = null;
+    if (address.startsWith('run:')) {
+      const runId = address.slice('run:'.length);
+      if (runId !== self) taskId = ctx.orchestrator.taskIdOfRun(runId);
+    } else if (address.startsWith('task:')) {
+      taskId = address.slice('task:'.length);
+    }
+    if (
+      taskId !== null &&
+      taskId !== ownTask &&
+      ctx.orchestrator.isA2ATask(taskId)
+    )
+      return `${address} came in over A2A; another run may not message it`;
+  }
+  return null;
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -343,7 +371,9 @@ export async function sendMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
-  const refusal = liveRunRefusal(ctx, principal, parsedInput.value.to);
+  const refusal =
+    liveRunRefusal(ctx, principal, parsedInput.value.to) ??
+    a2aRunRefusal(ctx, principal, parsedInput.value.to);
   if (refusal !== null) return errorResponse(403, refusal);
 
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
@@ -387,6 +417,11 @@ export async function replyToMessage(
   const parsedInput = parseReplyInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
   const target = ctx.messaging.engine.getMessage(id);
+  const refusal =
+    target === null || !ctx.messaging.engine.canRead(id, senderOf(principal))
+      ? null
+      : a2aRunRefusal(ctx, principal, [target.from, ...target.to]);
+  if (refusal !== null) return errorResponse(403, refusal);
   const result = await answeringWith(principal.ownerCredential === true, () =>
     ctx.messaging.engine.reply(id, parsedInput.value, senderOf(principal))
   );

@@ -34,6 +34,7 @@ import {
   ProposalGuard,
 } from './guards.js';
 import { handleProposal } from './handoff.js';
+import { A2ALineage } from './lineage.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
 import type { OutboundWorker } from './outbound.js';
 import { startOutbound } from './outbound.js';
@@ -113,9 +114,13 @@ export interface A2ABridge {
     caller: { tier: AuthTier; ref: string }
   ): Promise<PatchGuard>;
   proposalOpen(taskId: string): boolean;
-  // 'a2a' when a client handed the task off: its runs act for no one and
-  // read team memory only.
+  // 'a2a' when a client handed the task off, or an A2A run made, edited or
+  // dispatched it: its runs act for no one and read team memory only.
   taskOrigin(taskId: string): 'a2a' | null;
+  // XH-R2: marks `taskId` A2A-origin when run `runId` is; call it whenever a
+  // run creates, edits or dispatches a task.
+  inherit(runId: string, taskId: string): void;
+  readonly lineage: A2ALineage;
   // Puts every gated draft something moved back in Draft; returns how many.
   recheckProposals(): number;
   close(): Promise<void>;
@@ -182,6 +187,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     console.error(`dispatchd: ${dbError}`);
   }
 
+  const lineage = new A2ALineage(join(runsDir(rootDir), 'a2a-lineage.log'));
   // Installed before the a2a.db branch: a gated draft stays held either way.
   const guardDeps: GuardDeps = {
     engine: messaging.engine,
@@ -191,6 +197,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     updateTask: deps.updateTask,
     statuses: () => a2aConfig(rootDir).statuses,
     store,
+    lineage,
   };
   deps.orchestrator.setDispatchGuard((task) =>
     dispatchRefusal(guardDeps, task)
@@ -519,6 +526,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
     // The guards' evidence: a2a.db's row, else a handoff messages.db ties to the task.
     taskOrigin: (taskId) => (isA2ATask(guardDeps, taskId) ? 'a2a' : null),
+    inherit(runId, taskId) {
+      const parent = deps.orchestrator.taskIdOfRun(runId);
+      if (parent !== null && parent !== taskId && isA2ATask(guardDeps, parent))
+        lineage.mark(taskId);
+    },
+    lineage,
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
