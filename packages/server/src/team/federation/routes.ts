@@ -269,6 +269,14 @@ async function act(
         'invalid',
         `${subject} is not a note to acknowledge; it goes when its cause does`
       );
+    if (
+      subject.startsWith('team:cut:') &&
+      !tierAllows(ctx.caller?.tier ?? 'request', 'operator')
+    )
+      throw new RosterError(
+        'forbidden',
+        'acknowledging a revocation that cannot be checked needs the operator tier'
+      );
     fedCtx.fed.ackProblem(subject);
     return { ok: true };
   }

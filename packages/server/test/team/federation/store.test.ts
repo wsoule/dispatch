@@ -325,6 +325,25 @@ describe('pins, cursors, problems and the audit log', () => {
     ledger.close();
   });
 
+  // FW-R26(6): an acknowledgement holds per subject while its cause stays the
+  // same; a new message, or the cause clearing and coming back, shows again.
+  it('keeps an acknowledged note quiet until it changes or comes back', () => {
+    const ledger = new SyncLedger(join(dir, 'state.db'), 'ada');
+    const fed = new FedStore(ledger, generateReplicaKeys());
+    const subjects = () => fed.problems().map((p) => p.message);
+    fed.problem('team:race:bob-0000000b', 'one');
+    fed.ackProblem('team:race:bob-0000000b');
+    fed.problem('team:race:bob-0000000b', 'one');
+    expect(subjects()).toEqual([]);
+    fed.problem('team:race:bob-0000000b', 'two');
+    expect(subjects()).toEqual(['two']);
+    fed.ackProblem('team:race:bob-0000000b');
+    fed.clearProblem('team:race:bob-0000000b');
+    fed.problem('team:race:bob-0000000b', 'two');
+    expect(subjects()).toEqual(['two']);
+    ledger.close();
+  });
+
   it('stores a cursor, a halted one with no head included', () => {
     const ledger = new SyncLedger(join(dir, 'state.db'), 'ada');
     const fed = new FedStore(ledger, generateReplicaKeys());

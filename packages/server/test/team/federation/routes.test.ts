@@ -416,6 +416,23 @@ describe('acknowledging a problem (E)', () => {
       expect(ada.fed.problems().map((p) => p.subject)).toContain(
         'team:race:bob-0000000b'
       );
+      // FW-R26(6): an uncheckable cut is the operator's to acknowledge.
+      ada.fed.problem('team:cut:bob-0000000b', 'cannot be checked');
+      const asDecide = {
+        ...ctx,
+        caller: { tier: 'decide' },
+      } as unknown as ApiContext;
+      const refused = await handleFederationRoute(
+        new Request('http://x/api/team/problems/ack', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ subject: 'team:cut:bob-0000000b' }),
+        }),
+        asDecide,
+        ['team', 'problems', 'ack'],
+        'POST'
+      );
+      expect(refused.status).toBe(403);
     } finally {
       ada.close();
     }

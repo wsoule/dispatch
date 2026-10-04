@@ -392,13 +392,17 @@ export class FedStore {
 
   /** The current problem for a subject, replacing any earlier one. */
   problem(subject: string, message: string): void {
-    // An acknowledged note stays quiet until it says something new.
-    const acknowledged = this.db
-      .query<{ n: number }, [string, string]>(
-        'SELECT 1 AS n FROM fed_problem_acks WHERE subject = ? AND message = ?'
+    // FW-R26(6): an acknowledged note stays quiet while it says the same;
+    // a new message drops the acknowledgement and shows.
+    const acked = this.db
+      .query<{ message: string }, [string]>(
+        'SELECT message FROM fed_problem_acks WHERE subject = ?'
       )
-      .get(subject, message);
-    if (acknowledged !== null) return;
+      .get(subject);
+    if (acked !== null) {
+      if (acked.message === message) return;
+      this.dropAck(subject);
+    }
     this.db
       .query(
         'INSERT INTO fed_problems (subject, message, at) VALUES (?, ?, ?) ON CONFLICT(subject) DO UPDATE SET message = excluded.message, at = excluded.at'
@@ -406,20 +410,30 @@ export class FedStore {
       .run(subject, message, this.now().toISOString());
   }
 
-  /** Acknowledges a note: it goes, and the same message never comes back. */
+  /** Acknowledges a note: it goes while its cause stays the same. */
   ackProblem(subject: string): void {
     const held = this.problems().find((p) => p.subject === subject);
+    this.dropAck(subject);
     if (held !== undefined)
       this.db
         .query(
-          'INSERT OR IGNORE INTO fed_problem_acks (subject, message, at) VALUES (?, ?, ?)'
+          'INSERT INTO fed_problem_acks (subject, message, at) VALUES (?, ?, ?)'
         )
         .run(subject, held.message, this.now().toISOString());
-    this.clearProblem(subject);
+    this.db.query('DELETE FROM fed_problems WHERE subject = ?').run(subject);
   }
 
+  /** A note whose cause is gone; its acknowledgement goes too, so the next
+   *  time it comes back it shows. */
   clearProblem(subject: string): void {
     this.db.query('DELETE FROM fed_problems WHERE subject = ?').run(subject);
+    this.dropAck(subject);
+  }
+
+  private dropAck(subject: string): void {
+    this.db
+      .query('DELETE FROM fed_problem_acks WHERE subject = ?')
+      .run(subject);
   }
 
   problems(): { subject: string; message: string; at: string }[] {
