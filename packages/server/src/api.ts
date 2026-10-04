@@ -1451,6 +1451,14 @@ interface ReceiptsStatus {
   lastPush?: ReceiptsPush | null;
 }
 
+// The last receipt export, as a health problem when it failed.
+function receiptsProblems(ctx: ApiContext): string[] {
+  const last = ctx.receiptsScheduler?.lastResult() ?? null;
+  return last?.state === 'failed'
+    ? [`receipt log export failed: ${last.detail}`]
+    : [];
+}
+
 // Reads the exporter's retained last result. Its own null-vs-result
 // distinction is preserved: `disabled` means this project has no exporter at
 // all, `idle` means it has one that has not yet run.
@@ -4961,6 +4969,7 @@ export async function handleApi(
         problems: [
           ...ctx.cache.problems(),
           ...(identity.problem === null ? [] : [identity.problem]),
+          ...receiptsProblems(ctx),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.

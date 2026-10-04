@@ -185,6 +185,25 @@ describe('ReceiptsExporter', () => {
     expect(log(dir)).toHaveLength(2);
   });
 
+  it('clears a stale git lock a killed pass left, so exports keep committing', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    const dir = logDir();
+    const exporter = exporterFor(s);
+    await exporter.exportOnce(dir);
+    // What a kill -9 inside `git add` or `git commit` leaves behind.
+    writeFileSync(join(dir, '.git', 'index.lock'), '');
+    mkdirSync(join(dir, '.git', 'refs', 'heads'), { recursive: true });
+    writeFileSync(join(dir, '.git', 'refs', 'heads', 'main.lock'), '');
+    s.tasks.create({ kind: 'task', title: 'Second task' });
+
+    const result = await exporter.exportOnce(dir);
+
+    expect(result.state).toBe('committed');
+    expect(existsSync(join(dir, '.git', 'index.lock'))).toBe(false);
+    expect(log(dir)).toHaveLength(2);
+  });
+
   it('reports a failure instead of throwing out of the daemon', async () => {
     const s = stores();
     // A path that cannot be a directory, so `mkdir` inside ensureRepo fails.
