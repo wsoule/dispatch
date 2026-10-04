@@ -255,6 +255,42 @@ describe('messaging HTTP routes', () => {
     );
   });
 
+  it('a reply to my own message to a run that has since ended is held for its task', async () => {
+    const { runId, taskId } = await liveRun('Ends without writing back');
+    const mine = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`run:${runId}`],
+        kind: 'message',
+        body: 'try the cart first',
+      }),
+    });
+    expect(mine.status).toBe(201);
+    const { message } = await json<{ message: { id: string } }>(mine);
+    await handle.orchestrator.cancel(runId);
+
+    const reply = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`run:${runId}`],
+        kind: 'message',
+        body: 'still there?',
+        replyTo: message.id,
+      }),
+    });
+    expect(reply.status).toBe(201);
+    const sent = await json<{
+      message: { to: string[] };
+      deliveries: { recipient: string; state: string }[];
+    }>(reply);
+    expect(sent.message.to).toEqual([`task:${taskId}`]);
+    expect(sent.deliveries).toEqual([
+      expect.objectContaining({ recipient: `task:${taskId}`, state: 'held' }),
+    ]);
+  });
+
   it('a run joins a channel as its task; the channel list shows epic children implicitly', async () => {
     const { taskId } = await liveRun('Join a channel');
     const runToken = executor.lastRunToken;
@@ -624,8 +660,8 @@ describe('messaging HTTP routes', () => {
       sendRes
     );
 
-    // The engine itself rejects the reply — a stranger must never get to
-    // insert a message into a thread it wasn't addressed by or sender of.
+    // The engine itself rejects the reply, as it would for an absent id: a
+    // stranger never inserts into, or learns of, a thread it is not part of.
     const replyRes = await fetch(
       `${baseUrl}/api/messages/${sent.message.id}/reply`,
       {
@@ -634,7 +670,7 @@ describe('messaging HTTP routes', () => {
         body: JSON.stringify({ body: 'butting in' }),
       }
     );
-    expect(replyRes.status).toBe(403);
+    expect(replyRes.status).toBe(404);
     const replyBody = await json<{ error: string; field?: string }>(replyRes);
     expect(replyBody.field).toBe('replyTo');
 
@@ -757,6 +793,58 @@ describe('messaging HTTP routes', () => {
     expect(body.threads[0]).toHaveProperty('root');
     expect(body.threads[0]).toHaveProperty('last');
     expect(body.threads[0]).toHaveProperty('count');
+  });
+
+  it('GET /api/threads?about=task:<id> lists only threads the task or its runs took part in', async () => {
+    const { taskId } = await liveRun('About run');
+    const runToken = executor.lastRunToken;
+    expect(runToken).toBeDefined();
+    const post = (headers: Record<string, string>, body: unknown) =>
+      fetch(`${baseUrl}/api/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+
+    const fromRun = await json<{ message: { thread: string } }>(
+      await post(authHeaders(runToken!), {
+        to: ['human:test'],
+        kind: 'message',
+        body: 'from the run',
+      })
+    );
+    const toTask = await json<{ message: { thread: string } }>(
+      await post(
+        { 'content-type': 'application/json' },
+        { to: [`task:${taskId}`], kind: 'message', body: 'to the task' }
+      )
+    );
+    const other = await registerAndApprove('about-other');
+    await post(
+      { 'content-type': 'application/json' },
+      { to: [other.address], kind: 'message', body: 'unrelated' }
+    );
+
+    const res = await fetch(
+      `${baseUrl}/api/threads?about=${encodeURIComponent(`task:${taskId}`)}`
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{ threads: { thread: string }[] }>(res);
+    expect(body.threads.map((t) => t.thread).sort()).toEqual(
+      [fromRun.message.thread, toTask.message.thread].sort()
+    );
+  });
+
+  it('GET /api/threads?about= takes only a task address, and names the field when it is wrong', async () => {
+    for (const about of ['channel:general', 'task:nope']) {
+      const res = await fetch(
+        `${baseUrl}/api/threads?about=${encodeURIComponent(about)}`
+      );
+      expect(res.status).toBe(400);
+      expect(await json<{ field?: string }>(res)).toMatchObject({
+        field: 'about',
+      });
+    }
   });
 
   it('GET /api/decisions/open is for deciding humans only', async () => {
@@ -1062,7 +1150,7 @@ describe('messaging HTTP routes', () => {
     expect(body.approvedBy).toBeNull();
   });
 
-  it("an approved agent cannot answer another agent's registration gate (403, not a participant)", async () => {
+  it("an approved agent cannot answer another agent's registration gate (404, as for an absent id)", async () => {
     const pending = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
         method: 'POST',
@@ -1083,12 +1171,12 @@ describe('messaging HTTP routes', () => {
       headers: authHeaders(approved.token),
       body: JSON.stringify({ body: 'approve me', choice: 'approve' }),
     });
-    expect(replyRes.status).toBe(403);
+    expect(replyRes.status).toBe(404);
     const body = await json<{ error: string }>(replyRes);
-    expect(body.error).toContain('only a participant');
+    expect(body.error).toBe(`no message ${gate!.id}`);
   });
 
-  it('a request-tier teammate token cannot answer a gate question either (403, not a participant)', async () => {
+  it('a request-tier teammate token cannot answer a gate question either (404, as for an absent id)', async () => {
     const pending = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
         method: 'POST',
@@ -1108,9 +1196,9 @@ describe('messaging HTTP routes', () => {
       headers: authHeaders(teammateToken),
       body: JSON.stringify({ body: 'approve me', choice: 'approve' }),
     });
-    expect(replyRes.status).toBe(403);
+    expect(replyRes.status).toBe(404);
     const body = await json<{ error: string }>(replyRes);
-    expect(body.error).toContain('only a participant');
+    expect(body.error).toBe(`no message ${gate!.id}`);
   });
 
   it('registration caps name and client at 100 characters', async () => {
@@ -1332,8 +1420,57 @@ describe('messaging HTTP routes', () => {
     expect(retried.status).toBe(201);
   });
 
+  it('replays an Idempotency-Key after the daemon restarts', async () => {
+    const headers = {
+      'content-type': 'application/json',
+      'idempotency-key': 'restart-1',
+    };
+    const body = JSON.stringify({
+      to: ['human:test'],
+      kind: 'message',
+      body: 'once',
+    });
+    const first = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(first.status).toBe(201);
+    const { message } = await json<{ message: { id: string } }>(first);
+
+    await handle.stop();
+    handle = await startTestServer();
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const again = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(again.status).toBe(200);
+    const replay = await json<{ message: { id: string }; replayed?: boolean }>(
+      again
+    );
+    expect(replay.message.id).toBe(message.id);
+    expect(replay.replayed).toBe(true);
+  });
+
+  it('refuses a key over 200 bytes as 400 on idempotencyKey', async () => {
+    const res = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'é'.repeat(101),
+      },
+      body: JSON.stringify({ to: ['human:test'], kind: 'message', body: 'x' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json<{ field?: string }>(res)).field).toBe('idempotencyKey');
+  });
+
   it('the old question, scope, approval and message routes are gone', async () => {
-    // A real live run, so each old route reaches its handler today instead of 404ing on an unknown run.
+    // A live run, so a surviving route would answer 400, not 404.
     const { runId } = await liveRun('Old routes');
     const run = `/api/runs/${runId}`;
     for (const [method, path] of [
@@ -1672,7 +1809,7 @@ describe('messaging routes — direct unit coverage', () => {
         { body: 'mine' },
         { address: `run:${review.id}`, canDecide: false }
       )
-    ).rejects.toThrow('only a participant');
+    ).rejects.toThrow(`no message ${question.message.id}`);
     await orchestrator.cancel(review.id);
 
     const run = await orchestrator.dispatch(task.meta.id, 'claude', {});

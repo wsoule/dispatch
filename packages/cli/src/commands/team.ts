@@ -1,11 +1,10 @@
 import type { Command } from 'commander';
 
 import type { RosterAnswer, TeamKeys, TeamTier } from '../apiClient.js';
-import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenClient } from './appToken.js';
 import { readSecret } from './secret.js';
 
 const TIERS: readonly TeamTier[] = ['request', 'decide', 'operator'];
@@ -42,21 +41,8 @@ function day(iso: string | null): string {
   return iso === null ? '-' : iso.slice(0, 10);
 }
 
-/**
- * A client on the app token, attached to the daemon already running. Every
- * team command is decide-tier — handing out a credential is an adjudication —
- * so none of them may fall back to the agent token the way read commands do.
- */
-async function decideClient(
-  ctx: CliContext,
-  token: string | undefined,
-  command: string
-) {
-  const appToken = resolveAppToken(token, command);
-  const { baseUrl } = await attachToRunningDaemon(ctx);
-  return createApiClient(baseUrl, appToken);
-}
-
+// Every team command is decide-tier, since handing out a credential is an
+// adjudication, so each talks through the app token.
 export function registerTeamCommands(program: Command, ctx: CliContext): void {
   const team = program
     .command('team')
@@ -89,7 +75,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
           json?: boolean;
         }
       ) => {
-        const client = await decideClient(
+        const client = await appTokenClient(
           ctx,
           opts.token,
           'dispatch team invite'
@@ -125,7 +111,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .option('--json')
     .action(async (opts: { token?: string; json?: boolean }) => {
-      const client = await decideClient(
+      const client = await appTokenClient(
         ctx,
         opts.token,
         'dispatch team tokens'
@@ -157,7 +143,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
     )
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(async (handle: string, opts: { token?: string }) => {
-      const client = await decideClient(
+      const client = await appTokenClient(
         ctx,
         opts.token,
         'dispatch team revoke'
@@ -254,7 +240,7 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
   const tokenOption = '--token <token>';
   const tokenHelp = 'the daemon app token (or DISPATCH_APP_TOKEN)';
   const client = (opts: { token?: string }, command: string) =>
-    decideClient(ctx, opts.token, command);
+    appTokenClient(ctx, opts.token, command);
 
   team
     .command('found')

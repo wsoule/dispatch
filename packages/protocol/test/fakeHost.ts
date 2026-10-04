@@ -1,11 +1,52 @@
 import type { Address } from '../src/address.js';
+import type { Sender } from '../src/engine.js';
 import type { Message } from '../src/envelope.js';
 import type {
+  ExternalAdmission,
+  ExternalKind,
+  ExternalTarget,
+  FederationHooks,
   MessagingHost,
+  Placement,
   PolicyRequest,
   PolicyRuling,
   WakeResult,
 } from '../src/host.js';
+
+// Federation hooks whose answers a test sets; hlc() ticks a counter.
+export class FakeFederation implements FederationHooks {
+  placements = new Map<Address, Placement>();
+  remoteRuns = new Map<string, string>(); // runId -> taskId, as presence would say
+  labels = new Map<string, string>();
+  placed: { recipient: Address; replyTarget: string | null }[] = [];
+  problems: { subject: string; message: string }[] = [];
+  private ticks = 0;
+  constructor(readonly replica = 'wyat-0000000a') {}
+  problem(subject: string, message: string): void {
+    this.problems.push({ subject, message });
+  }
+  hlc(): string {
+    this.ticks += 1;
+    return `1758880000000.${String(this.ticks).padStart(4, '0')}.${this.replica}`;
+  }
+  placement(
+    target: { recipient: Address },
+    _message: Message,
+    replyTarget: Message | null
+  ): Placement {
+    this.placed.push({
+      recipient: target.recipient,
+      replyTarget: replyTarget?.id ?? null,
+    });
+    return this.placements.get(target.recipient) ?? { kind: 'local' };
+  }
+  remoteRunTask(runId: string): string | null {
+    return this.remoteRuns.get(runId) ?? null;
+  }
+  label(replica: string): string {
+    return this.labels.get(replica) ?? replica;
+  }
+}
 
 // A host whose world is plain maps; every hook call is recorded in `calls`.
 export class FakeHost implements MessagingHost {
@@ -22,6 +63,17 @@ export class FakeHost implements MessagingHost {
   ownerAddress: Address = 'human:wyat';
   clock = new Date('2026-09-23T10:00:00.000Z');
   calls: { hook: string; args: unknown[] }[] = [];
+  requests: PolicyRequest[] = [];
+  externals = new Map<Address, ExternalKind>();
+  federation?: FederationHooks;
+  admit:
+    | ((
+        target: ExternalTarget,
+        sender: Sender,
+        replyTarget: Message | null,
+        message: Message
+      ) => ExternalAdmission)
+    | null = null;
 
   startRun(taskId: string, runId: string): void {
     this.liveRuns.set(taskId, runId);
@@ -63,6 +115,7 @@ export class FakeHost implements MessagingHost {
   }
   decide(request: PolicyRequest): PolicyRuling {
     this.calls.push({ hook: 'decide', args: [request.type, request.target] });
+    this.requests.push(request);
     return this.ruling;
   }
   owner(): Address {
@@ -80,5 +133,22 @@ export class FakeHost implements MessagingHost {
   }
   now(): Date {
     return this.clock;
+  }
+  external(address: Address): ExternalKind | null {
+    return this.externals.get(address) ?? null;
+  }
+  admitExternal(
+    target: ExternalTarget,
+    sender: Sender,
+    replyTarget: Message | null,
+    message: Message
+  ): ExternalAdmission {
+    this.calls.push({
+      hook: 'admitExternal',
+      args: [target.recipient, target.via, target.field],
+    });
+    return this.admit === null
+      ? 'deliver'
+      : this.admit(target, sender, replyTarget, message);
   }
 }

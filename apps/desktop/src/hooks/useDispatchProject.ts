@@ -1,5 +1,6 @@
 import type {
   AgentSessionMeta,
+  AgentSummary,
   ApiClient,
   AuthTier,
   ConfirmResult,
@@ -41,9 +42,15 @@ import type {
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core/browser';
+import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import {
+  agentRosterKey,
+  mayChangeAgentRoster,
+  mutedAddresses,
+} from '../lib/agentRoster';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
   configChangedQueryKeys,
@@ -51,13 +58,14 @@ import {
   linearStatusKey,
   syncStatusKey,
 } from '../lib/configEvents';
-import type { DecideAvailability } from '../lib/daemonAuth';
+import type { DecideAvailability, MessageAccess } from '../lib/daemonAuth';
 import {
   assertCanDecide,
   assertCanMessage,
   credentialTier,
   daemonBaseUrl,
   decideAvailability,
+  messageAccess,
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
@@ -66,15 +74,16 @@ import { isFakeExecutorDevToolEnabled } from '../lib/devTools';
 import type { WorkEpicOptions } from '../lib/epicSession';
 import { epicPausedNotice } from '../lib/epicSession';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
-import type { RunQuestion } from '../lib/gates';
+import type { RunQuestion, RunScopeRequest } from '../lib/gates';
 import {
   approvalReply,
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  openGatesAfter,
   openGatesKey,
   questionsByRun,
-  scopeRequestIdsByRun,
+  scopeRequestsByRun,
 } from '../lib/gates';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import {
@@ -89,6 +98,7 @@ import { notify, setNotificationKinds } from '../lib/notifications';
 import type { PendingApproval } from '../lib/pendingApprovals';
 import { pendingApprovalsFromGates } from '../lib/pendingApprovals';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
+import { taskIdsWithOpenAsks } from '../lib/taskAsks';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
@@ -103,15 +113,49 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
+import { applyThreadEvent } from './useThreads';
 import { useTransitionNotifications } from './useTransitionNotifications';
-
-// A run's open scope gate; `requestId` is the gate message's id, which the
-// decision replies to.
-type PendingScopeRequest = { requestId: string };
 
 // Shared empty list, so the maps derived from the open gates keep their
 // identity while the query is loading or disabled.
 const NO_GATES: Message[] = [];
+
+// Drops an answered gate from the cached open list at once, so its card goes
+// before the refetch lands and cannot send a second answer to a closed gate.
+function dropOpenGate(
+  queryClient: QueryClient,
+  port: number | undefined,
+  gateId: string
+): void {
+  queryClient.setQueryData<{ items: Message[] }>(openGatesKey(port), (prev) =>
+    prev === undefined
+      ? prev
+      : { items: prev.items.filter((m) => m.id !== gateId) }
+  );
+}
+
+// The daemon's notice saying why a wake-requesting message woke nothing, read
+// from the sender's unread mail; null when there is none or it cannot be read.
+async function wakeNoticeFor(
+  client: ApiClient,
+  messageId: string
+): Promise<string | null> {
+  try {
+    const { items } = await client.getMailbox(undefined, [
+      'held',
+      'notified',
+      'pushed',
+    ]);
+    const notice = items.findLast(
+      ({ message }) =>
+        message.kind === 'notice' &&
+        message.refs.some((r) => r.type === 'message' && r.id === messageId)
+    );
+    return notice?.message.body ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
 // own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
@@ -235,6 +279,11 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
+  /** Why the daemon has not said who this window is, while its last answer failed;
+   *  `null` once it has, or while it is still asked. */
+  whoamiError: Error | null;
+  /** Asks the daemon who this window is again, after `whoamiError`. */
+  retryWhoami: () => void;
   /** The tier this window's credential carries. The daemon's own answer from
    *  `/api/whoami` wins once it arrives; until then (or if it never does, on a
    *  daemon without that route) it is read off the credential itself — see
@@ -484,10 +533,10 @@ export interface DispatchProjectData {
   notePlanId: string | null;
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
-  /** Run id -> the tool approval it is parked on, from the open gates. */
-  pendingApprovals: Map<string, PendingApproval>;
-  /** Run id -> the newest scope gate its agent is waiting on. */
-  pendingScopeRequests: Map<string, PendingScopeRequest>;
+  /** Run id -> each tool call it is parked on, oldest first, from the open gates. */
+  pendingApprovals: Map<string, PendingApproval[]>;
+  /** Run id -> the newest open scope gate its agent raised, live or ended. */
+  pendingScopeRequests: Map<string, RunScopeRequest>;
   handleDecideScopeRequest: (
     runId: string,
     requestId: string,
@@ -497,6 +546,8 @@ export interface DispatchProjectData {
   /** Whether this window holds the app token that scope decisions require, plus the notice
    * and restart affordance to show when it does not. */
   scopeDecide: DecideAvailability;
+  /** What this window may do on the message bus (send; answer gates), and why not. */
+  messageAccess: MessageAccess;
   /** Replaces an attached daemon with one this app spawns, to regain decide tier. Ends any
    * run in flight — gate on `scopeDecide.restart.safe`. */
   handleRestartDaemon: () => Promise<void>;
@@ -552,6 +603,13 @@ export interface DispatchProjectData {
     allow: boolean,
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
+  /** The full input of a call a run is parked on, which its gate may only preview. */
+  fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
+  /** The same for a call an Assistant conversation is parked on. */
+  fetchOverseerApprovalInput: (
+    conversation: string,
+    requestId: string
+  ) => Promise<unknown>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
   handleCancelRun: (runId: string) => Promise<void>;
   /** Asks a live run to wind down: it finishes its current operation, then stops,
@@ -967,7 +1025,11 @@ export function useDispatchProject(
   // Who this window is, as the daemon sees its credential. Fetched once per
   // connection — a credential does not change identity mid-session — and read
   // wherever the app has to tell "mine" from "a teammate's".
-  const { data: whoami } = useQuery({
+  const {
+    data: whoami,
+    error: whoamiError,
+    refetch: refetchWhoami,
+  } = useQuery({
     queryKey: whoamiQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
@@ -1012,7 +1074,7 @@ export function useDispatchProject(
     [openGates, runs]
   );
   const pendingScopeRequests = useMemo(
-    () => scopeRequestIdsByRun(openGates),
+    () => scopeRequestsByRun(openGates),
     [openGates]
   );
   // Keyed by run so a view holding one run finds its questions in one lookup.
@@ -1323,6 +1385,7 @@ export function useDispatchProject(
       },
       {
         onEvent: (event) => {
+          applyThreadEvent(queryClient, port, event);
           // Checked structurally (see isDecisionsChanged): the client's
           // ServerEvent union predates this broadcast, so a literal comparison
           // here would not typecheck. First in the chain because no later
@@ -1350,6 +1413,9 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: overseerKeyPrefix(port),
             });
+            // Who this window is: the answer never goes stale, so a whoami that
+            // failed while the daemon was coming up is asked again here.
+            void queryClient.invalidateQueries({ queryKey: whoamiQueryKey });
             // Presence too, and for a reason of its own: the daemon announces
             // this socket's arrival before the socket joins the event bus, so
             // the one event saying "you are here now" never reaches the window
@@ -1402,27 +1468,46 @@ export function useDispatchProject(
           } else if (event.type === 'message.new') {
             const message = event.message;
             const openGatesKeyNow = openGatesKey(port);
-            // Read before the invalidation below, which refetches the list.
+            // The cached list follows the event at once, so the fold below sees
+            // gates answered elsewhere and gates the refetch has not brought.
             const openNow =
-              queryClient.getQueryData<{ items: Message[] }>(openGatesKeyNow)
-                ?.items ?? NO_GATES;
+              queryClient.setQueryData<{ items: Message[] }>(
+                openGatesKeyNow,
+                (prev) => {
+                  if (prev === undefined) return prev;
+                  const items = openGatesAfter(prev.items, message);
+                  return items === prev.items ? prev : { items };
+                }
+              )?.items ?? NO_GATES;
             // Only a new blocking question or an answer opens or closes a gate.
             if (message.blocking || message.kind === 'answer') {
               void queryClient.invalidateQueries({ queryKey: openGatesKeyNow });
             }
-            // A window that cannot decide is not told about gates it cannot see;
-            // titles come from the cache, as this effect's `runs` can be stale.
-            const note = auth.canDecide
-              ? gateNotification(
-                  message,
-                  (runId) =>
-                    queryClient
-                      .getQueryData<RunMeta[]>(runsQueryKey)
-                      ?.find((r) => r.id === runId)?.taskTitle
-                )
-              : null;
+            // A window that cannot decide is not told about gates it cannot see,
+            // nor anyone about a muted agent; runs and roster come from the cache.
+            const muted = mutedAddresses(
+              queryClient.getQueryData<{ agents: AgentSummary[] }>(
+                agentRosterKey(port)
+              )?.agents ?? []
+            );
+            const note =
+              auth.canDecide && !muted.has(message.from)
+                ? gateNotification(
+                    message,
+                    (runId) =>
+                      queryClient
+                        .getQueryData<RunMeta[]>(runsQueryKey)
+                        ?.find((r) => r.id === runId)?.taskTitle
+                  )
+                : null;
             if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
               void notify(note.title, note.body, note.kind);
+            }
+            // A registration gate adds a pending agent; any answer may settle one.
+            if (mayChangeAgentRoster(message)) {
+              void queryClient.invalidateQueries({
+                queryKey: agentRosterKey(port),
+              });
             }
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
@@ -1681,6 +1766,7 @@ export function useDispatchProject(
     readyQueryKey,
     runsQueryKey,
     presenceQueryKey,
+    whoamiQueryKey,
     notesQueryKey,
     draftsQueryKey,
     agentSessionsQueryKey,
@@ -1727,10 +1813,10 @@ export function useDispatchProject(
     () =>
       deriveTaskAttentionById(
         latestRunByTaskId,
-        openQuestions,
+        taskIdsWithOpenAsks(runs ?? [], openQuestions, pendingScopeRequests),
         mergeQueue ?? null
       ),
-    [latestRunByTaskId, openQuestions, mergeQueue]
+    [latestRunByTaskId, runs, openQuestions, pendingScopeRequests, mergeQueue]
   );
 
   const handleUpdate = useCallback(
@@ -2015,11 +2101,36 @@ export function useDispatchProject(
         throw new Error('This approval is no longer waiting for you.');
       }
       await client.replyToMessage(gate.id, approvalReply(allow, opts));
+      dropOpenGate(queryClient, port, gate.id);
       void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, runsQueryKey, port, auth]
+  );
+
+  const fetchApprovalInput = useCallback(
+    async (runId: string, requestId: string): Promise<unknown> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      // The full input is decide-tier, like the gate it belongs to.
+      assertCanDecide(auth);
+      return (await client.fetchRunApproval(runId, requestId)).input;
+    },
+    [client, auth]
+  );
+
+  const fetchOverseerApprovalInput = useCallback(
+    async (conversation: string, requestId: string): Promise<unknown> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      assertCanDecide(auth);
+      const { pendingApprovals } = await client.getOverseer(conversation);
+      const parked = pendingApprovals.find((a) => a.requestId === requestId);
+      if (parked === undefined) {
+        throw new Error('The Assistant is no longer waiting on this call.');
+      }
+      return parked.input;
+    },
+    [client, auth]
   );
 
   const handleDecideScopeRequest = useCallback(
@@ -2037,6 +2148,7 @@ export function useDispatchProject(
         body: reason ?? '',
         choice: granted ? 'grant' : 'deny',
       });
+      dropOpenGate(queryClient, port, requestId);
       void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
@@ -2071,6 +2183,7 @@ export function useDispatchProject(
           ? { body: answer, choice: answer }
           : { body: answer }
       );
+      dropOpenGate(queryClient, port, questionId);
       void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
@@ -2138,15 +2251,11 @@ export function useDispatchProject(
     async (runId: string, text: string): Promise<void> => {
       if (client === null) return;
       assertCanMessage(auth);
-      const taskId =
-        queryClient
-          .getQueryData<RunMeta[]>(runsQueryKey)
-          ?.find((r) => r.id === runId)?.taskId ??
-        (await client.fetchRun(runId)).meta.taskId;
-      // A human's wake continues the task's work; the daemon wakes it inside
-      // the send, so the run it woke is already listed below.
-      await client.sendMessage({
-        to: [`task:${taskId}`],
+      const before = new Set((await client.fetchRuns()).map((r) => r.id));
+      // A human's wake of an ended run continues exactly that run, inside the
+      // send, so its continuation is already listed below.
+      const sent = await client.sendMessage({
+        to: [`run:${runId}`],
         kind: 'message',
         body: text,
         wake: 'request',
@@ -2155,19 +2264,26 @@ export function useDispatchProject(
       queryClient.setQueryData(runsQueryKey, runs);
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-      const live = runs.find(
-        (r) =>
-          r.taskId === taskId &&
-          (r.kind ?? 'execute') === 'execute' &&
-          !isTerminalRunState(r.state)
+      const continued = runs.find(
+        (r) => r.resumedFrom === runId && !before.has(r.id)
       );
-      if (live === undefined) {
-        throw new Error(
-          'The task did not wake. Your message is waiting for its next run.'
-        );
+      if (continued !== undefined) {
+        // Follow the continuation so the caller keeps showing the live run.
+        onRunDispatched?.(continued.id, continued.taskId);
+        return;
       }
-      // Follow the woken run so the caller keeps showing the one that's live.
-      onRunDispatched?.(live.id, taskId);
+      // A live run that took the message into its conversation simply got it.
+      if (
+        sent.deliveries.some(
+          (d) => d.recipient === `run:${runId}` && d.state === 'pushed'
+        )
+      ) {
+        return;
+      }
+      throw new Error(
+        (await wakeNoticeFor(client, sent.message.id)) ??
+          'The run did not continue. Your message is waiting for it.'
+      );
     },
     [
       client,
@@ -2697,6 +2813,7 @@ export function useDispatchProject(
     () => decideAvailability(auth, runs ?? []),
     [auth, runs]
   );
+  const access = useMemo(() => messageAccess(auth), [auth]);
 
   return {
     client,
@@ -2704,6 +2821,8 @@ export function useDispatchProject(
     daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
     presence: presence ?? [],
     me: whoami?.ref ?? null,
+    whoamiError,
+    retryWhoami: () => void refetchWhoami(),
     myTier: whoami?.tier ?? credentialTier(connection),
     attachedWithoutAppToken:
       connection !== undefined &&
@@ -2763,6 +2882,7 @@ export function useDispatchProject(
     pendingScopeRequests,
     handleDecideScopeRequest,
     scopeDecide,
+    messageAccess: access,
     handleRestartDaemon,
     openQuestions,
     decisions: decisionList ?? [],
@@ -2783,6 +2903,8 @@ export function useDispatchProject(
     handleSendDraftMessage,
     handleDispatch,
     handleApprove,
+    fetchApprovalInput,
+    fetchOverseerApprovalInput,
     handleSendMessage,
     handleCancelRun,
     handleStopRun,

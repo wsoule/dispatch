@@ -219,4 +219,41 @@ describe('ActorContext.resolve', () => {
       conflicted
     );
   });
+
+  it('never rewrites a roster that had an entry dropped', () => {
+    const root = fixture();
+    const file = join(root, '.dispatch', 'team.yml');
+    const yaml = `members:\n  - handle: ${'c'.repeat(65)}\n    email: long@x.com\n`;
+    writeFileSync(file, yaml);
+    const ctx = ActorContext.resolve(root, gitOk);
+    expect(ctx.droppedEmails).toEqual(['long@x.com']);
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+  });
+
+  it('keeps its known handle while its own entry is skipped', () => {
+    const root = fixture();
+    const file = join(root, '.dispatch', 'team.yml');
+    const gitAt = (email: string) => (args: string[]) =>
+      args.includes('user.email') ? email : 'Wyat';
+    expect(ActorContext.resolve(root, gitAt('wyat@old.com')).humanRef).toBe(
+      'human:wyat'
+    );
+
+    // Git's email changes and a hand edit breaks the entry's handle.
+    writeFileSync(
+      file,
+      'members:\n  - handle: Wyat\n    email: wyat@old.com\n    displayName: Wyat\n'
+    );
+    const skipped = ActorContext.resolve(root, gitAt('w.soule@new.com'));
+    expect(skipped.droppedEmails).toEqual(['wyat@old.com']);
+
+    // Once the owner fixes the entry, the known handle finds it again.
+    writeFileSync(
+      file,
+      'members:\n  - handle: wyat\n    email: wyat@old.com\n    displayName: Wyat\n'
+    );
+    const fixed = ActorContext.resolve(root, gitAt('w.soule@new.com'));
+    expect(fixed.humanRef).toBe('human:wyat');
+    expect(parseTeam(readFileSync(file, 'utf8'))).toHaveLength(1);
+  });
 });

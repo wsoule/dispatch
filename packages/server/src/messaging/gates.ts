@@ -66,11 +66,14 @@ export function openToolApprovalGate(
   );
 }
 
-// Open blocking questions some human is asked (decisions/open, the decision feed).
+// Open blocking questions a human on this machine is asked (decisions/open, the
+// decision feed); a question held only by a remote teammate is theirs.
 export function openHumanDecisions(engine: DeliveryEngine): Message[] {
   return engine
     .openBlocking()
-    .filter((m) => m.to.some((addr) => addr.startsWith('human:')));
+    .filter((m) =>
+      engine.deliveriesOf(m.id).some((d) => d.recipient.startsWith('human:'))
+    );
 }
 
 // Closes what a run's end leaves unanswerable: approvals parked on it, and what

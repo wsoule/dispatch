@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatch.foo/protocol/1.0.0-draft.1/schemas/delivery.schema.json",
+  "title": "DMP delivery",
+  "description": "One recipient's delivery of a message (section 6), with the member names the conformance kit observes (section 12.4.7).",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "message.schema.json#/$defs/identifier" },
+    "message": {
+      "description": "The id of the message delivered.",
+      "$ref": "message.schema.json#/$defs/identifier"
+    },
+    "recipient": { "$ref": "message.schema.json#/$defs/address" },
+    "session": {
+      "description": "The session the delivery is bound to, as a `run:` address, or null.",
+      "anyOf": [
+        { "$ref": "message.schema.json#/$defs/address" },
+        { "type": "null" }
+      ]
+    },
+    "via": {
+      "description": "The route that reached the recipient (section 3.7).",
+      "enum": ["direct", "channel"]
+    },
+    "state": {
+      "description": "A state of section 6.1. `forwarded` and `refused` are Appendix F's, exposed only by a host that implements it (section 11.8).",
+      "enum": [
+        "held",
+        "sending",
+        "pushed",
+        "notified",
+        "read",
+        "answered",
+        "forwarded",
+        "refused"
+      ]
+    },
+    "updatedAt": {
+      "description": "When the state last changed.",
+      "$ref": "message.schema.json#/$defs/timestamp"
+    }
+  },
+  "required": ["id", "message", "recipient", "session", "via", "state"],
+  "additionalProperties": false
+}

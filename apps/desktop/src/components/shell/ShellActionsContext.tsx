@@ -24,6 +24,8 @@ export interface CreateTaskPreset {
 export interface ShellActions {
   /** The full task page; `runId` pins Chat/Diff, else the task's latest run. */
   openTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
+  /** The Threads view; `messageId` opens the thread holding that message. */
+  openThread: (messageId: string | null) => void;
   /** The task peek dialog over the current view. */
   peekTask: (taskId: string) => void;
   /** Opens the creator, pre-filled from `preset` (see `createPreset`). */

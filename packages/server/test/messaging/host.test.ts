@@ -50,6 +50,7 @@ function makeHost(
     deliverToRun: [],
     notifyRun: [],
     wakeTask: [],
+    wakeRun: [],
   };
   const orchestrator: DaemonHostDeps['orchestrator'] = {
     liveRunIdForTask: () => null,
@@ -58,12 +59,16 @@ function makeHost(
     deliverToRun: (runId, text, from) => {
       calls.deliverToRun.push([runId, text, from]);
     },
-    notifyRun: (runId, digest) => {
-      calls.notifyRun.push([runId, digest]);
+    notifyRun: (runId, digest, messageId) => {
+      calls.notifyRun.push([runId, digest, messageId]);
     },
     wakeTask: (taskId, opts) => {
       calls.wakeTask.push([taskId, opts]);
       return Promise.reject(new Error('not implemented in this stub'));
+    },
+    wakeRun: (runId, opts) => {
+      calls.wakeRun.push([runId, opts]);
+      return { id: 'r-000009' } as RunMeta;
     },
     ...orchestratorOverrides,
   };
@@ -119,14 +124,32 @@ describe('DaemonMessagingHost.push', () => {
     let notified: Promise<void> | undefined;
     expect(() => {
       pushed = host.push('r-000001', 'rendered text', stubMessage());
-      notified = host.notify('r-000001', 'digest');
+      notified = host.notify('r-000001', 'digest', stubMessage());
     }).not.toThrow();
     await expect(pushed).rejects.toBe(refused);
     await expect(notified).rejects.toBe(refused);
   });
+
+  it('passes the message id with a digest, so the transcript entry can link its thread', async () => {
+    const { host, calls } = makeHost();
+    await host.notify('r-000001', '📬 digest', stubMessage({ id: 'm-333' }));
+    expect(calls.notifyRun).toEqual([['r-000001', '📬 digest', 'm-333']]);
+  });
 });
 
 describe('DaemonMessagingHost.decide', () => {
+  it("allows only a human's wake of one run", () => {
+    const { host } = makeHost();
+    const ruling = (from: string) =>
+      host.decide({
+        type: 'wake',
+        target: 'run:r-000001',
+        message: stubMessage({ from }),
+      });
+    expect(ruling('human:ada')).toBe('allow');
+    expect(ruling('run:r-000002')).toBe('deny');
+  });
+
   it('denies waking an epic', () => {
     const epic = store.create({ title: 'An epic', kind: 'epic' });
     const { host } = makeHost();
@@ -192,6 +215,43 @@ describe('DaemonMessagingHost.decide', () => {
     ).toBe('allow');
   });
 
+  it("sends a remote human's wake through the ladder instead of the human shortcut", () => {
+    const { host } = makeHost();
+    const id = store.create(
+      { title: 'remote wake' },
+      '2026-09-26T00:00:00.000Z'
+    ).meta.id;
+    const message = stubMessage({ from: 'human:ada', origin: 'ada-0000000a' });
+    expect(
+      host.decide({
+        type: 'wake',
+        target: `task:${id}`,
+        message,
+        origin: 'ada-0000000a',
+      })
+    ).toBe('ask');
+    expect(
+      host.decide({
+        type: 'wake',
+        target: `task:${id}`,
+        message: stubMessage({ from: 'human:ada' }),
+      })
+    ).toBe('allow');
+  });
+
+  it('denies a remote wake of a named run', () => {
+    const { host } = makeHost();
+    const message = stubMessage({ from: 'human:ada', origin: 'ada-0000000a' });
+    expect(
+      host.decide({
+        type: 'wake',
+        target: 'run:r-000001',
+        message,
+        origin: 'ada-0000000a',
+      })
+    ).toBe('deny');
+  });
+
   it("still asks at rung 3 for a critical task, whose risk caps the rung below wake's", () => {
     const task = store.create({ title: 'Risky work', risk: 'critical' });
     writeFileSync(
@@ -254,10 +314,53 @@ describe('DaemonMessagingHost.wake', () => {
     expect(result).toEqual({ ok: true, runId: 'r-000009' });
   });
 
-  it('refuses a non-task target', async () => {
+  it('refuses a target that is neither a task nor a run', async () => {
     const { host } = makeHost();
     const result = await host.wake('human:wyat', stubMessage());
     expect(result.ok).toBe(false);
+  });
+
+  it("continues exactly the run a human's wake names, and refuses anyone else's", async () => {
+    const { host, calls } = makeHost();
+    expect(
+      await host.wake('run:r-000001', stubMessage({ from: 'human:ada' }))
+    ).toEqual({ ok: true, runId: 'r-000009' });
+    expect(
+      (await host.wake('run:r-000001', stubMessage({ from: 'run:r-000002' })))
+        .ok
+    ).toBe(false);
+    expect(calls.wakeRun).toEqual([['r-000001', { actor: 'human:ada' }]]);
+  });
+
+  it('reports why a named run cannot be continued', async () => {
+    const { host } = makeHost({
+      wakeRun: () => {
+        throw new Error('run has been merged');
+      },
+    });
+    expect(
+      await host.wake('run:r-000001', stubMessage({ from: 'human:ada' }))
+    ).toEqual({ ok: false, reason: 'run has been merged' });
+  });
+
+  it("never continues a finished run for a remote human's wake", async () => {
+    const { host, calls } = makeHost();
+    await host.wake(
+      'task:t-abc123',
+      stubMessage({ from: 'human:ada', origin: 'ada-0000000a' })
+    );
+    expect(calls.wakeTask).toEqual([
+      ['t-abc123', { actor: 'agent:dispatch', continueFinished: false }],
+    ]);
+    expect(
+      (
+        await host.wake(
+          'run:r-000001',
+          stubMessage({ from: 'human:ada', origin: 'ada-0000000a' })
+        )
+      ).ok
+    ).toBe(false);
+    expect(calls.wakeRun).toEqual([]);
   });
 
   it('credits a human sender, who may continue a finished run; anyone else wakes as the system', async () => {

@@ -1,0 +1,45 @@
+---
+import Base from '../../../../layouts/Base.astro';
+import {
+  EXTENSION_NAMES,
+  extensionSection,
+} from '../../../../lib/extensionDoc';
+import type { ExtensionName } from '../../../../lib/extensionDoc';
+
+export function getStaticPaths() {
+  return EXTENSION_NAMES.map((name) => ({ params: { name } }));
+}
+const name = Astro.params.name as ExtensionName;
+const uri = `https://dispatch.foo/a2a/ext/${name}/v1`;
+---
+
+<Base title={`Dispatch A2A extension: ${name} v1`}>
+  <main class="container ext">
+    <h1 class="mono">{uri}</h1>
+    <pre>{extensionSection(name)}</pre>
+    <p class="caption">Licensed MIT; source: packages/a2a/docs/extensions.md</p>
+  </main>
+</Base>
+
+<style>
+  .ext {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    padding-top: var(--space-10);
+    padding-bottom: var(--space-10);
+  }
+  h1 {
+    font-size: var(--site-text-lg);
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+  }
+  pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--site-text-sm);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+</style>

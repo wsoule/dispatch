@@ -447,6 +447,7 @@ describe('overseer status tools', () => {
       toolName: 'Bash',
       input: { command: 'rm -rf /' },
       truncated: false,
+      floor: false,
     });
   });
 
@@ -613,7 +614,48 @@ describe('overseer mutating tools produce a pending action, never an effect', ()
     const action = h.registry.callMutatingTool('approve_run', { runId });
     expect(action.summary).toBe(`Approve Bash on run ${runId} ("Gated")`);
     expect(h.orchestrator.getRun(runId)?.meta.state).toBe('awaiting-approval');
-    expect(h.orchestrator.pendingApprovalFor(runId)).toBeDefined();
+    expect(h.orchestrator.pendingApprovalsFor(runId)).toHaveLength(1);
+  });
+
+  it('approve_run names the parked call it was given, and refuses one that is not parked', async () => {
+    const h = makeHarness();
+    const { runId } = await dispatchUntil(
+      h,
+      'Gated',
+      'gated',
+      'awaiting-approval'
+    );
+    const [parked] = h.orchestrator.pendingApprovalsFor(runId);
+
+    const action = h.registry.callMutatingTool('approve_run', {
+      runId,
+      requestId: parked.requestId,
+    });
+    expect(action.summary).toBe(`Approve Bash on run ${runId} ("Gated")`);
+    expect(() =>
+      h.registry.callMutatingTool('approve_run', {
+        runId,
+        requestId: 'req-nope',
+      })
+    ).toThrow(`run ${runId} is not parked on req-nope`);
+  });
+
+  // The human confirms the call the summary named; by then the run may have
+  // parked another, which the confirm must not answer instead.
+  it('approve_run and deny_run without a requestId pin the call they describe', async () => {
+    const h = makeHarness();
+    const { runId } = await dispatchUntil(
+      h,
+      'Gated',
+      'gated',
+      'awaiting-approval'
+    );
+    const [parked] = h.orchestrator.pendingApprovalsFor(runId);
+
+    const approve = h.registry.callMutatingTool('approve_run', { runId });
+    const deny = h.registry.callMutatingTool('deny_run', { runId });
+    expect(approve.input).toEqual({ runId, requestId: parked.requestId });
+    expect(deny.input).toEqual({ runId, requestId: parked.requestId });
   });
 
   it('deny_run carries the reason into the summary without denying yet', async () => {
@@ -724,7 +766,7 @@ describe('applyAction performs the real effect', () => {
     await waitFor(
       () => h.orchestrator.getRun(runId)?.meta.state === 'finished'
     );
-    expect(h.orchestrator.pendingApprovalFor(runId)).toBeUndefined();
+    expect(h.orchestrator.pendingApprovalsFor(runId)).toEqual([]);
   });
 
   it('approve_run answers the gate of the call the run is parked on, not an older one', async () => {

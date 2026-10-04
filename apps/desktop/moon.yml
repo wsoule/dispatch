@@ -79,6 +79,7 @@ tasks:
       - 'mcp:build'
       - 'protocol:build'
       - 'federation:build'
+      - 'a2a:build'
     # Cached by everything that changes the compiled binaries: the script,
     # the packages it compiles, and the signing identity plus the
     # entitlements it signs with (a signed run must never hydrate unsigned
@@ -89,6 +90,7 @@ tasks:
       - 'scripts/build-sidecars.ts'
       - 'src-tauri/entitlements/sidecar.plist'
       - '$APPLE_SIGNING_IDENTITY'
+      - '/packages/a2a/src/**/*'
       - '/packages/cli/src/**/*'
       - '/packages/core/src/**/*'
       - '/packages/federation/src/**/*'

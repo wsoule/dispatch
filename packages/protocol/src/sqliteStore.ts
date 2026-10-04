@@ -2,9 +2,10 @@ import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 
 import type { Address } from './address.js';
-import { gateOf } from './envelope.js';
-import type { JsonValue, Message, Ref } from './envelope.js';
-import { DELIVERY_STATES } from './store.js';
+import { hasGateData } from './constants.js';
+import { isSystemMarker } from './envelope.js';
+import type { JsonValue, Message, MessageKind, Ref } from './envelope.js';
+import { DELIVERY_STATES, REMOTE_STATES } from './store.js';
 import type {
   AgentRecord,
   AgentStatus,
@@ -14,6 +15,11 @@ import type {
   DeliveryState,
   DeliveryVia,
   MessageStore,
+  RemoteDelivery,
+  RemoteState,
+  SettledAs,
+  Settlement,
+  StoredMeta,
   ThreadSummary,
 } from './store.js';
 
@@ -34,6 +40,7 @@ CREATE TABLE IF NOT EXISTS recipients (
   message_id TEXT NOT NULL, position INTEGER NOT NULL, addr TEXT NOT NULL,
   PRIMARY KEY (message_id, position)
 );
+CREATE INDEX IF NOT EXISTS recipients_addr ON recipients (addr);
 CREATE TABLE IF NOT EXISTS deliveries (
   id TEXT PRIMARY KEY, message_id TEXT NOT NULL, recipient TEXT NOT NULL,
   run_id TEXT, via TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -56,6 +63,9 @@ CREATE TABLE IF NOT EXISTS agents (
 CREATE TABLE IF NOT EXISTS gate_effects (
   question_id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS voided_answers (
+  answer_id TEXT PRIMARY KEY, question_id TEXT NOT NULL, at TEXT NOT NULL
+);
 `;
 
 // Opens (creating if needed) a messages database and applies its schema;
@@ -70,8 +80,86 @@ export function openMessagesDb(path: string): SqliteDatabase {
     );
   }
   db.exec(DDL);
+  addIdemKey(db);
+  addFederationSchema(db);
   db.exec(`PRAGMA user_version = ${MESSAGES_DB_VERSION}`);
   return db;
+}
+
+// Additive, so an older build still opens and writes the file: its insert names
+// its columns and leaves idem_key NULL, which the partial index ignores.
+export function addIdemKey(db: SqliteDatabase): void {
+  if (!hasIdemKey(db)) {
+    try {
+      db.exec('ALTER TABLE messages ADD COLUMN idem_key TEXT');
+    } catch (err) {
+      // A daemon opening the same file at once may have added it first.
+      if (!hasIdemKey(db)) throw err;
+    }
+  }
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS messages_idem ON messages (from_addr, idem_key) WHERE idem_key IS NOT NULL'
+  );
+}
+
+function hasIdemKey(db: SqliteDatabase): boolean {
+  return messageColumns(db).has('idem_key');
+}
+
+function messageColumns(db: SqliteDatabase): Set<string> {
+  return new Set(
+    queryAll<{ name: string }>(db, 'PRAGMA table_info(messages)').map(
+      (c) => c.name
+    )
+  );
+}
+
+const FEDERATION_DDL = `
+CREATE TABLE IF NOT EXISTS remote_deliveries (
+  message_id TEXT NOT NULL, recipient TEXT NOT NULL, via TEXT NOT NULL,
+  state TEXT NOT NULL, homes_json TEXT NOT NULL, wake_at TEXT, refused_by TEXT,
+  updated_at TEXT NOT NULL, PRIMARY KEY (message_id, recipient)
+);
+CREATE INDEX IF NOT EXISTS remote_recipient ON remote_deliveries (recipient, state);
+CREATE TABLE IF NOT EXISTS settlements (
+  question_id TEXT PRIMARY KEY, answer_id TEXT, closed_reason TEXT,
+  settler TEXT NOT NULL, at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS early_settlements (
+  question_id TEXT NOT NULL, settler TEXT NOT NULL, answer_id TEXT,
+  closed_reason TEXT, at TEXT NOT NULL, PRIMARY KEY (question_id, settler)
+);
+`;
+const FEDERATION_COLUMNS = [
+  'origin',
+  'hlc',
+  'received_at',
+  'settled_as',
+] as const;
+const SETTLED_AS: readonly SettledAs[] = [
+  'pending',
+  'accepted',
+  'superseded',
+  'candidate',
+];
+
+// Additive, like addIdemKey: an older build names its columns on insert and
+// never reads these, so it keeps opening and writing the file.
+function addFederationSchema(db: SqliteDatabase): void {
+  const have = messageColumns(db);
+  for (const column of FEDERATION_COLUMNS) {
+    if (have.has(column)) continue;
+    try {
+      db.exec(`ALTER TABLE messages ADD COLUMN ${column} TEXT`);
+    } catch (err) {
+      // A daemon opening the same file at once may have added it first.
+      if (!messageColumns(db).has(column)) throw err;
+    }
+  }
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS messages_thread_hlc ON messages (thread, hlc, id)'
+  );
+  db.exec(FEDERATION_DDL);
 }
 
 interface MessageRow {
@@ -90,6 +178,10 @@ interface MessageRow {
   choice: string | null;
   wake: string;
   created_at: string;
+  origin: string | null;
+  hlc: string | null;
+  received_at: string | null;
+  settled_as: string | null;
 }
 interface DeliveryRow {
   id: string;
@@ -99,6 +191,23 @@ interface DeliveryRow {
   via: string;
   state: string;
   updated_at: string;
+}
+interface RemoteRow {
+  message_id: string;
+  recipient: string;
+  via: string;
+  state: string;
+  homes_json: string;
+  wake_at: string | null;
+  refused_by: string | null;
+  updated_at: string;
+}
+interface SettlementRow {
+  question_id: string;
+  answer_id: string | null;
+  closed_reason: string | null;
+  settler: string;
+  at: string;
 }
 interface AgentRow {
   addr: string;
@@ -143,11 +252,11 @@ export class SqliteMessageStore implements MessageStore {
     }
   }
 
-  insertMessage(m: Message): void {
+  insertMessage(m: Message, idemKey?: string, meta?: StoredMeta): void {
     this.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO messages (id, thread, reply_to, from_addr, session, kind, body, refs_json, data_json, urgent, blocking, choices_json, choice, wake, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO messages (id, thread, reply_to, from_addr, session, kind, body, refs_json, data_json, urgent, blocking, choices_json, choice, wake, created_at, idem_key, origin, hlc, received_at, settled_as) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           m.id,
@@ -164,7 +273,12 @@ export class SqliteMessageStore implements MessageStore {
           m.choices === undefined ? null : JSON.stringify(m.choices),
           m.choice ?? null,
           m.wake,
-          m.createdAt
+          m.createdAt,
+          idemKey ?? null,
+          m.origin ?? null,
+          m.hlc ?? null,
+          meta?.receivedAt ?? null,
+          meta?.settledAs ?? null
         );
       const insert = this.db.prepare(
         'INSERT INTO recipients (message_id, position, addr) VALUES (?,?,?)'
@@ -199,6 +313,8 @@ export class SqliteMessageStore implements MessageStore {
     if (row.choices_json !== null)
       message.choices = JSON.parse(row.choices_json) as string[];
     if (row.choice !== null) message.choice = row.choice;
+    if (row.origin !== null) message.origin = row.origin;
+    if (row.hlc !== null) message.hlc = row.hlc;
     return message;
   }
 
@@ -211,10 +327,52 @@ export class SqliteMessageStore implements MessageStore {
     return row === undefined ? null : this.toMessage(row);
   }
 
+  byIdemKey(from: Address, key: string): Message | null {
+    const row = queryOne<MessageRow>(
+      this.db,
+      'SELECT * FROM messages WHERE from_addr = ? AND idem_key = ?',
+      [from, key]
+    );
+    return row === undefined ? null : this.toMessage(row);
+  }
+
+  // Chunked so a long history never exceeds SQLite's bound-parameter limit.
+  idemKeysFor(messageIds: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    for (let i = 0; i < messageIds.length; i += 500) {
+      const chunk = messageIds.slice(i, i + 500);
+      const rows = queryAll<{ id: string; idem_key: string }>(
+        this.db,
+        `SELECT id, idem_key FROM messages WHERE idem_key IS NOT NULL AND id IN (${chunk.map(() => '?').join(',')})`,
+        chunk
+      );
+      for (const r of rows) out.set(r.id, r.idem_key);
+    }
+    return out;
+  }
+
+  messagesFrom(
+    address: Address,
+    sinceIso: string,
+    kinds?: MessageKind[]
+  ): Message[] {
+    const byKind =
+      kinds === undefined
+        ? ''
+        : ` AND kind IN (${kinds.map(() => '?').join(',')})`;
+    return queryAll<MessageRow>(
+      this.db,
+      `SELECT * FROM messages WHERE from_addr = ? AND created_at >= ?${byKind} ORDER BY id`,
+      [address, sinceIso, ...(kinds ?? [])]
+    ).map((r) => this.toMessage(r));
+  }
+
+  // Pre-federation rows have no clock and sort first; after that a reply
+  // always follows its question, whatever the machines' wall clocks say.
   thread(threadId: string): Message[] {
     return queryAll<MessageRow>(
       this.db,
-      'SELECT * FROM messages WHERE thread = ? ORDER BY id',
+      'SELECT * FROM messages WHERE thread = ? ORDER BY (hlc IS NOT NULL), hlc, id',
       [threadId]
     ).map((r) => this.toMessage(r));
   }
@@ -248,6 +406,14 @@ export class SqliteMessageStore implements MessageStore {
         d.state,
         d.updatedAt
       );
+  }
+
+  deleteDelivery(id: string): boolean {
+    return (
+      Number(
+        this.db.prepare('DELETE FROM deliveries WHERE id = ?').run(id).changes
+      ) > 0
+    );
   }
 
   private toDelivery(r: DeliveryRow): Delivery {
@@ -331,8 +497,27 @@ export class SqliteMessageStore implements MessageStore {
       .run(questionId, at);
   }
 
-  // SQL narrows to answered questions carrying typed data with no recorded
-  // effect; gateOf and the x-closed check then keep real, non-closed gates.
+  // Voids by kind, so the one-answer index frees and the question reopens; an
+  // older build that ignores the table still reads the row as a plain message.
+  voidAnswer(answerId: string, questionId: string, at: string): boolean {
+    return this.transaction(() => {
+      const changed = this.db
+        .prepare(
+          "UPDATE messages SET kind = 'message' WHERE id = ? AND reply_to = ? AND kind = 'answer'"
+        )
+        .run(answerId, questionId);
+      if (Number(changed.changes) === 0) return false;
+      this.db
+        .prepare(
+          'INSERT INTO voided_answers (answer_id, question_id, at) VALUES (?,?,?) ON CONFLICT (answer_id) DO NOTHING'
+        )
+        .run(answerId, questionId, at);
+      return true;
+    });
+  }
+
+  // SQL narrows to answered questions with gate data and no recorded effect;
+  // the engine keeps the types it implements, and system closes are dropped.
   unappliedAnsweredGates(): { question: Message; answer: Message }[] {
     const rows = queryAll<{ question_id: string; answer_id: string }>(
       this.db,
@@ -345,22 +530,29 @@ export class SqliteMessageStore implements MessageStore {
     return rows.flatMap((r) => {
       const question = this.getMessage(r.question_id);
       const answer = this.getMessage(r.answer_id);
-      if (question === null || answer === null || gateOf(question) === null)
+      if (question === null || answer === null || !hasGateData(question))
         return [];
-      const data = answer.data as { type?: unknown } | undefined;
-      return data?.type === 'x-closed' ? [] : [{ question, answer }];
+      return isSystemMarker(answer, 'x-closed') ? [] : [{ question, answer }];
     });
   }
 
-  countFrom(from: Address, sinceIso: string, urgentOnly: boolean): number {
+  // Counts by arrival, so a remote sender cannot dodge a quota by backdating createdAt.
+  countFrom(
+    from: Address,
+    sinceIso: string,
+    urgentOnly: boolean,
+    origin?: string
+  ): number {
     const row = queryOne<{ n: number }>(
       this.db,
-      `SELECT COUNT(*) AS n FROM messages WHERE from_addr = ? AND created_at >= ?${urgentOnly ? ' AND urgent = 1' : ''}`,
-      [from, sinceIso]
+      `SELECT COUNT(*) AS n FROM messages WHERE from_addr = ? AND COALESCE(received_at, created_at) >= ?${urgentOnly ? ' AND urgent = 1' : ''}${origin === undefined ? '' : ' AND origin = ?'}`,
+      origin === undefined ? [from, sinceIso] : [from, sinceIso, origin]
     );
     return row === undefined ? 0 : Number(row.n);
   }
 
+  // A remote agent:dispatch is an ordinary agent here, so only the local
+  // system address is excluded.
   countAgentAuthored(
     threadId: string,
     sinceIso: string,
@@ -368,10 +560,212 @@ export class SqliteMessageStore implements MessageStore {
   ): number {
     const row = queryOne<{ n: number }>(
       this.db,
-      "SELECT COUNT(*) AS n FROM messages WHERE thread = ? AND created_at >= ? AND from_addr != ? AND (from_addr LIKE 'run:%' OR from_addr LIKE 'agent:%')",
+      "SELECT COUNT(*) AS n FROM messages WHERE thread = ? AND COALESCE(received_at, created_at) >= ? AND (from_addr != ? OR origin IS NOT NULL) AND (from_addr LIKE 'run:%' OR from_addr LIKE 'agent:%')",
       [threadId, sinceIso, exclude]
     );
     return row === undefined ? 0 : Number(row.n);
+  }
+
+  settledAs(messageId: string): SettledAs | null {
+    const row = queryOne<{ settled_as: string | null }>(
+      this.db,
+      'SELECT settled_as FROM messages WHERE id = ?',
+      [messageId]
+    );
+    return row === undefined || row.settled_as === null
+      ? null
+      : oneOf(row.settled_as, SETTLED_AS, 'settled_as');
+  }
+
+  setSettled(
+    messageId: string,
+    kind: 'answer' | 'message',
+    settledAs: SettledAs | null
+  ): void {
+    this.db
+      .prepare('UPDATE messages SET kind = ?, settled_as = ? WHERE id = ?')
+      .run(kind, settledAs, messageId);
+  }
+
+  answerCandidates(
+    questionId: string
+  ): { message: Message; settledAs: SettledAs | null }[] {
+    return queryAll<MessageRow>(
+      this.db,
+      "SELECT * FROM messages WHERE reply_to = ? AND (kind = 'answer' OR settled_as IS NOT NULL) ORDER BY rowid",
+      [questionId]
+    ).map((r) => ({
+      message: this.toMessage(r),
+      settledAs:
+        r.settled_as === null
+          ? null
+          : oneOf(r.settled_as, SETTLED_AS, 'settled_as'),
+    }));
+  }
+
+  insertRemote(row: RemoteDelivery): boolean {
+    const result = this.db
+      .prepare(
+        'INSERT INTO remote_deliveries (message_id, recipient, via, state, homes_json, wake_at, refused_by, updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (message_id, recipient) DO NOTHING'
+      )
+      .run(
+        row.messageId,
+        row.recipient,
+        row.via,
+        row.state,
+        JSON.stringify(row.homes),
+        row.wakeAt,
+        JSON.stringify(row.refusedBy),
+        row.updatedAt
+      );
+    return Number(result.changes) > 0;
+  }
+
+  private toRemote(r: RemoteRow): RemoteDelivery {
+    return {
+      messageId: r.message_id,
+      recipient: r.recipient,
+      via: oneOf<DeliveryVia>(r.via, ['direct', 'channel'], 'via'),
+      state: oneOf(r.state, REMOTE_STATES, 'remote state'),
+      homes: JSON.parse(r.homes_json) as string[],
+      wakeAt: r.wake_at,
+      refusedBy:
+        r.refused_by === null ? [] : (JSON.parse(r.refused_by) as string[]),
+      updatedAt: r.updated_at,
+    };
+  }
+
+  remoteDeliveries(filter: {
+    messageId?: string;
+    recipient?: Address;
+    states?: RemoteState[];
+  }): RemoteDelivery[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (filter.messageId !== undefined) {
+      where.push('message_id = ?');
+      params.push(filter.messageId);
+    }
+    if (filter.recipient !== undefined) {
+      where.push('recipient = ?');
+      params.push(filter.recipient);
+    }
+    if (filter.states !== undefined) {
+      const placeholders = filter.states.map(() => '?').join(',');
+      where.push(`state IN (${placeholders.length > 0 ? placeholders : "''"})`);
+      params.push(...filter.states);
+    }
+    const sql = `SELECT * FROM remote_deliveries${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY message_id, recipient`;
+    return queryAll<RemoteRow>(this.db, sql, params).map((r) =>
+      this.toRemote(r)
+    );
+  }
+
+  setRemote(
+    messageId: string,
+    recipient: Address,
+    patch: { state?: RemoteState; refusedBy?: string[]; homes?: string[] },
+    at: string,
+    expected?: RemoteState
+  ): boolean {
+    const sets = ['updated_at = ?'];
+    const params: SqlValue[] = [at];
+    if (patch.state !== undefined) {
+      sets.push('state = ?');
+      params.push(patch.state);
+    }
+    if (patch.refusedBy !== undefined) {
+      sets.push('refused_by = ?');
+      params.push(JSON.stringify(patch.refusedBy));
+    }
+    if (patch.homes !== undefined) {
+      sets.push('homes_json = ?');
+      params.push(JSON.stringify(patch.homes));
+    }
+    params.push(messageId, recipient);
+    if (expected !== undefined) params.push(expected);
+    const result = this.db
+      .prepare(
+        `UPDATE remote_deliveries SET ${sets.join(', ')} WHERE message_id = ? AND recipient = ?${expected === undefined ? '' : ' AND state = ?'}`
+      )
+      .run(...params);
+    return Number(result.changes) > 0;
+  }
+
+  deleteRemote(messageId: string, recipient: Address): boolean {
+    return (
+      Number(
+        this.db
+          .prepare(
+            'DELETE FROM remote_deliveries WHERE message_id = ? AND recipient = ?'
+          )
+          .run(messageId, recipient).changes
+      ) > 0
+    );
+  }
+
+  settlement(questionId: string): Settlement | null {
+    const row = queryOne<SettlementRow>(
+      this.db,
+      'SELECT * FROM settlements WHERE question_id = ?',
+      [questionId]
+    );
+    return row === undefined ? null : toSettlement(row);
+  }
+
+  putSettlement(s: Settlement): void {
+    this.db
+      .prepare(
+        `INSERT INTO settlements (question_id, answer_id, closed_reason, settler, at) VALUES (?,?,?,?,?)
+      ON CONFLICT (question_id) DO UPDATE SET answer_id = excluded.answer_id, closed_reason = excluded.closed_reason,
+      settler = excluded.settler, at = excluded.at`
+      )
+      .run(s.questionId, s.answerId, s.closedReason, s.settler, s.at);
+  }
+
+  putEarlySettlement(s: Settlement): void {
+    this.db
+      .prepare(
+        `INSERT INTO early_settlements (question_id, settler, answer_id, closed_reason, at) VALUES (?,?,?,?,?)
+      ON CONFLICT (question_id, settler) DO UPDATE SET answer_id = excluded.answer_id,
+      closed_reason = excluded.closed_reason, at = excluded.at`
+      )
+      .run(s.questionId, s.settler, s.answerId, s.closedReason, s.at);
+  }
+
+  earlySettlements(questionId: string): Settlement[] {
+    return queryAll<SettlementRow>(
+      this.db,
+      'SELECT * FROM early_settlements WHERE question_id = ? ORDER BY at, settler',
+      [questionId]
+    ).map(toSettlement);
+  }
+
+  clearEarlySettlements(questionId: string): void {
+    this.db
+      .prepare('DELETE FROM early_settlements WHERE question_id = ?')
+      .run(questionId);
+  }
+
+  // The outbound scan's watermark is a rowid: messages rows are never deleted,
+  // so each new row's rowid is higher than every earlier one.
+  messagesAfter(
+    rowid: number,
+    limit: number
+  ): { rowid: number; message: Message }[] {
+    return queryAll<MessageRow & { rid: number }>(
+      this.db,
+      'SELECT rowid AS rid, * FROM messages WHERE rowid > ? AND origin IS NULL ORDER BY rowid LIMIT ?',
+      [rowid, limit]
+    ).map((r) => ({ rowid: Number(r.rid), message: this.toMessage(r) }));
+  }
+
+  maxRowid(): number {
+    const row = queryOne<{ n: number | null }>(
+      this.db,
+      'SELECT MAX(rowid) AS n FROM messages'
+    );
+    return row === undefined || row.n === null ? 0 : Number(row.n);
   }
 
   ensureChannel(name: string, at: string, auto: boolean): void {
@@ -393,12 +787,16 @@ export class SqliteMessageStore implements MessageStore {
     }));
   }
 
-  addMember(channel: string, member: Address, at: string): void {
-    this.db
-      .prepare(
-        'INSERT INTO members (channel, addr, joined_at) VALUES (?,?,?) ON CONFLICT (channel, addr) DO NOTHING'
-      )
-      .run(channel, member, at);
+  addMember(channel: string, member: Address, at: string): boolean {
+    return (
+      Number(
+        this.db
+          .prepare(
+            'INSERT INTO members (channel, addr, joined_at) VALUES (?,?,?) ON CONFLICT (channel, addr) DO NOTHING'
+          )
+          .run(channel, member, at).changes
+      ) > 0
+    );
   }
 
   removeMember(channel: string, member: Address): boolean {
@@ -488,26 +886,76 @@ export class SqliteMessageStore implements MessageStore {
     ).map((r) => this.toAgent(r));
   }
 
-  // Most recently active threads, newest first. Ids are time-sortable ulids,
-  // so MIN/MAX(id) per thread gives root and last with no self-join.
-  recentThreads(limit: number): ThreadSummary[] {
+  // Most recently active threads by local arrival (rowid), newest first.
+  // `about` keeps threads with a message from, to or delivered to one of those addresses.
+  recentThreads(limit: number, about?: readonly Address[]): ThreadSummary[] {
+    if (about !== undefined && about.length === 0) return [];
+    const params: SqlValue[] = [];
+    let where = '';
+    if (about !== undefined) {
+      const marks = about.map(() => '?').join(', ');
+      // Held mail rebound to a run keeps its task recipient; match it by run id.
+      const runIds = about
+        .filter((a) => a.startsWith('run:'))
+        .map((a) => a.slice('run:'.length));
+      const byRun =
+        runIds.length === 0
+          ? ''
+          : ` OR d.run_id IN (${runIds.map(() => '?').join(', ')})`;
+      where = `WHERE thread IN (
+        SELECT thread FROM messages WHERE from_addr IN (${marks})
+        UNION SELECT m.thread FROM messages m JOIN recipients r ON r.message_id = m.id WHERE r.addr IN (${marks})
+        UNION SELECT m.thread FROM messages m JOIN deliveries d ON d.message_id = m.id
+          WHERE d.recipient IN (${marks})${byRun})`;
+      params.push(...about, ...about, ...about, ...runIds);
+    }
+    params.push(limit);
     const rows = queryAll<{
       thread: string;
-      root_id: string;
-      last_id: string;
+      last_rowid: number;
       count: number;
     }>(
       this.db,
-      `SELECT thread, MIN(id) AS root_id, MAX(id) AS last_id, COUNT(*) AS count
-       FROM messages GROUP BY thread ORDER BY last_id DESC LIMIT ?`,
-      [limit]
+      `SELECT thread, MAX(rowid) AS last_rowid, COUNT(*) AS count
+       FROM messages ${where} GROUP BY thread ORDER BY last_rowid DESC LIMIT ?`,
+      params
     );
     return rows.flatMap((r) => {
-      const root = this.getMessage(r.root_id);
-      const last = this.getMessage(r.last_id);
+      // A thread's id is its root's id; a partial thread falls back to its
+      // earliest stored row, never to MIN(id) across skewed machines.
+      const root = this.getMessage(r.thread) ?? this.firstStored(r.thread);
+      const last = this.byRowid(Number(r.last_rowid));
       return root === null || last === null
         ? []
         : [{ thread: r.thread, root, last, count: Number(r.count) }];
     });
   }
+
+  private firstStored(threadId: string): Message | null {
+    const row = queryOne<MessageRow>(
+      this.db,
+      'SELECT * FROM messages WHERE thread = ? ORDER BY rowid LIMIT 1',
+      [threadId]
+    );
+    return row === undefined ? null : this.toMessage(row);
+  }
+
+  private byRowid(rowid: number): Message | null {
+    const row = queryOne<MessageRow>(
+      this.db,
+      'SELECT * FROM messages WHERE rowid = ?',
+      [rowid]
+    );
+    return row === undefined ? null : this.toMessage(row);
+  }
+}
+
+function toSettlement(r: SettlementRow): Settlement {
+  return {
+    questionId: r.question_id,
+    answerId: r.answer_id,
+    closedReason: r.closed_reason,
+    settler: r.settler,
+    at: r.at,
+  };
 }

@@ -284,6 +284,25 @@ describe('getImpact', () => {
   });
 });
 
+describe('fetchRunApproval', () => {
+  it("GETs the parked call's full input by run and request id", async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient('http://example.test').fetchRunApproval(
+        'r-1',
+        'req-1'
+      );
+      expect(stub.calls).toHaveLength(1);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/runs/r-1/approvals/req-1'
+      );
+      expect(stub.calls[0].init?.method ?? 'GET').toBe('GET');
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
 // Narrows a stubbed call's body to the JSON string request() always sends and
 // parses it, so tests can assert on the exact payload a method built.
 function sentJson(call: { init?: RequestInit }): unknown {

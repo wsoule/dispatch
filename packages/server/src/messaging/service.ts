@@ -33,20 +33,31 @@ import {
   openToolApprovalGate,
   SYSTEM_SENDER,
 } from './gates.js';
+import type { ExternalPolicy } from './host.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 import {
   applyScopeAnswer,
-  expireScopeGates,
   installScopePolicy,
   SCOPE_EXPIRY_SWEEP_MS,
+  sweepScopeGates,
 } from './scopePolicy.js';
 import {
   isStaleApproval,
   raiseToolApproval,
   toolApprovalDecision,
 } from './toolApproval.js';
+
+// Gate types dispatchd implements a handler for; a sub-project adds its type
+// here with its handler.
+const DISPATCH_GATE_TYPES = [
+  'tool-approval',
+  'scope',
+  'wake',
+  'agent-registration',
+  'overseer-action',
+] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.
 interface OverseerGateTarget {
@@ -75,6 +86,8 @@ export interface Messaging {
   // Replays crash-interrupted deliveries and gate effects; must run after
   // orchestrator.reconcileOnBoot() (index.ts says why).
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
+  // Installs (or with null removes) the A2A bridge's say on external recipients.
+  setExternalPolicy(policy: ExternalPolicy | null): void;
   close(): void;
 }
 
@@ -113,6 +126,8 @@ export function openMessaging(deps: {
   ledgerStore?: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
   // The task Activity line a policy grant writes; defaults to none.
   appendPolicyActivity?: (taskId: string, text: string) => void;
+  // How often the scope-gate sweep runs, and its clock; tests shorten both.
+  scopeExpiry?: { sweepMs?: number; now?: () => number };
 }): Messaging {
   const db = openMessagesDb(
     deps.dbPath ?? join(runsDir(deps.rootDir), 'messages.db')
@@ -162,7 +177,12 @@ export function openMessaging(deps: {
     );
     limits = { ...DEFAULT_MESSAGING };
   }
-  const engine = new DeliveryEngine({ store, host, limits });
+  const engine = new DeliveryEngine({
+    store,
+    host,
+    limits,
+    gateTypes: DISPATCH_GATE_TYPES,
+  });
 
   // Tells the sender of `about` why its wake did not happen, through its task
   // if its run has ended. Never throws: the gate's effect is already decided.
@@ -272,7 +292,10 @@ export function openMessaging(deps: {
     const result = await host.wake(target, first);
     if (result.ok) return;
     if (hasActiveRun(taskId)) {
-      blockedWakes.set(taskId, held);
+      // Kept beside, never over, wakes that blocked during the await.
+      const waiting = blockedWakes.get(taskId) ?? [];
+      const newer = waiting.filter((m) => !held.some((h) => h.id === m.id));
+      blockedWakes.set(taskId, [...held, ...newer]);
       return;
     }
     for (const m of held)
@@ -324,11 +347,15 @@ export function openMessaging(deps: {
     raise: (request) => {
       raiseToolApproval(engine, deps.ownerRef, request)
         .then((gate) => {
-          // The run ended, or its call was settled, while the gate was being written.
-          const pending = deps.orchestrator.pendingApprovalFor(request.runId);
+          // The run ended, or this call was settled, while the gate was being written.
           if (!deps.orchestrator.isRunLive(request.runId))
             closeGate(engine, gate.id, 'the run ended');
-          else if (pending?.requestId !== request.requestId)
+          else if (
+            deps.orchestrator.pendingApprovalFor(
+              request.runId,
+              request.requestId
+            ) === undefined
+          )
             closeGate(engine, gate.id, 'the call was already settled');
         })
         .catch((err: unknown) => {
@@ -459,12 +486,15 @@ export function openMessaging(deps: {
     );
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
-  const expiry = setInterval(() => {
-    expireScopeGates(engine, Date.now()).catch((err: unknown) =>
-      console.error('messaging: scope expiry failed', err)
+  // Grants what policy covers before expiring, so a covered gate is never denied.
+  const scopeSweep = setInterval(() => {
+    void sweepScopeGates(
+      engine,
+      scopeDeps,
+      () => deps.scopeExpiry?.now?.() ?? Date.now()
     );
-  }, SCOPE_EXPIRY_SWEEP_MS);
-  expiry.unref();
+  }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
+  scopeSweep.unref();
 
   // A run's end closes the gates nobody can act on any more, and retries (a
   // tick later, after its other end-of-run hooks) the wakes it blocked.
@@ -492,13 +522,14 @@ export function openMessaging(deps: {
       );
       return;
     }
-    const message = store.getMessage(e.delivery.messageId);
+    // Channel membership reaches no socket; only the federation router reads it.
+    if (e.type === 'membership') return;
+    const messageId = e.type === 'remote' ? e.messageId : e.delivery.messageId;
+    const deliveryId =
+      e.type === 'remote' ? `remote:${e.recipient}` : e.delivery.id;
+    const message = store.getMessage(messageId);
     deps.events.broadcast(
-      {
-        type: 'delivery.changed',
-        deliveryId: e.delivery.id,
-        messageId: e.delivery.messageId,
-      },
+      { type: 'delivery.changed', deliveryId, messageId },
       message === null ? () => false : messageAudience(store, message)
     );
   });
@@ -531,9 +562,13 @@ export function openMessaging(deps: {
       overseer = target;
     },
     recover: () => engine.recover(),
+    setExternalPolicy(policy) {
+      host.setExternalPolicy(policy);
+    },
     close() {
       overseer = null;
-      clearInterval(expiry);
+      host.setExternalPolicy(null);
+      clearInterval(scopeSweep);
       uninstallScopePolicy();
       unsubscribeRunStarted();
       unsubscribeRunTerminal();

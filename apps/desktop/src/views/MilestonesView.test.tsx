@@ -212,6 +212,7 @@ function shellWith(log: { presets: CreateTaskPreset[]; views: string[] }) {
   const noop = () => {};
   const actions = {
     openTask: noop,
+    openThread: noop,
     peekTask: noop,
     openCreateTask: (preset?: CreateTaskPreset) =>
       log.presets.push(preset ?? {}),

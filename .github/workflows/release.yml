@@ -129,7 +129,7 @@ jobs:
       - name: Build workspace packages
         run: >-
           moon run core:build client:build cli:build mcp:build protocol:build
-          federation:build
+          federation:build a2a:build
 
       # The signing certificate must be importable BEFORE the build: the
       # sidecar build script codesigns during tauri's beforeBuildCommand,

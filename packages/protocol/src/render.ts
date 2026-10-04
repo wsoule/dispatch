@@ -8,17 +8,36 @@ function refText(m: Message): string | null {
   return `refs: ${m.refs.map((r) => `${r.type}:${r.id}${r.at ? `@${r.at}` : ''}`).join(', ')}`;
 }
 
+// The sender as a header names it: a teammate's replica by its handle, an
+// external sender marked as such.
+function senderLabel(m: Message, external: boolean, remote?: string): string {
+  if (remote !== undefined) return `${m.from} (remote: ${remote})`;
+  return external ? `${m.from} (external)` : m.from;
+}
+
 // The text a pushed message becomes inside an agent's session: a labelled
 // header, then the body quoted line by line so it can never pass for a header.
-export function renderForAgent(m: Message): string {
+// An external or remote sender's carried lines (choices, choice, refs) are quoted too.
+export function renderForAgent(
+  m: Message,
+  external = false,
+  remote?: string
+): string {
+  const quote = (line: string) => `│ ${line}`;
   const tags = [m.kind, ...(m.urgent ? ['urgent'] : []), m.id].join(' · ');
-  const body = m.body.split(LINE_BREAK).map((line) => `│ ${line}`);
-  const lines = [`[message from ${m.from} · ${tags}]`, ...body];
+  const lines = [
+    `[message from ${senderLabel(m, external, remote)} · ${tags}]`,
+    ...m.body.split(LINE_BREAK).map(quote),
+  ];
   if (m.replyTo !== null) lines.push(`(in reply to ${m.replyTo})`);
-  if (m.choices !== undefined) lines.push(`choices: ${m.choices.join(' | ')}`);
-  if (m.choice !== undefined) lines.push(`choice: ${m.choice}`);
+  const carried: string[] = [];
+  if (m.choices !== undefined)
+    carried.push(`choices: ${m.choices.join(' | ')}`);
+  if (m.choice !== undefined) carried.push(`choice: ${m.choice}`);
   const refs = refText(m);
-  if (refs !== null) lines.push(refs);
+  if (refs !== null) carried.push(refs);
+  const quoteCarried = external || remote !== undefined;
+  lines.push(...(quoteCarried ? carried.map(quote) : carried));
   if (m.blocking)
     lines.push(
       `The sender is waiting. Answer with msg_reply(messageId: "${m.id}").`
@@ -36,9 +55,13 @@ export function firstLine(body: string): string {
 }
 
 // One line for a pulled (channel) message: where, who, the first line, the id.
-export function renderDigestLine(m: Message): string {
+export function renderDigestLine(
+  m: Message,
+  external = false,
+  remote?: string
+): string {
   const channel = m.to.find((a) => a.startsWith('channel:'));
   const where =
     channel === undefined ? '' : ` #${channel.slice('channel:'.length)} ·`;
-  return `📬${where} ${m.kind} from ${m.from}: ${firstLine(m.body)} (${m.id})`;
+  return `📬${where} ${m.kind} from ${senderLabel(m, external, remote)}: ${firstLine(m.body)} (${m.id})`;
 }

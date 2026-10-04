@@ -1,0 +1,55 @@
+name: Protocol change
+description:
+  Propose a change to the Dispatch Messaging Protocol (DMP) text, registries or
+  conformance vectors.
+labels: [protocol-change]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Security flaws in the protocol must not be filed here. Report them
+        privately (Security → Report a vulnerability); see SECURITY.md.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One paragraph.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+    validations:
+      required: true
+  - type: input
+    id: sections
+    attributes:
+      label: Sections
+      description: Numbered sections affected, e.g. 5.6, 11.6
+    validations:
+      required: true
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - editorial
+        - clarification
+        - additive
+        - breaking
+    validations:
+      required: true
+  - type: textarea
+    id: vectors
+    attributes:
+      label: Vectors
+      description: Vector ids to add, change or retire.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Implementation impact
+  - type: textarea
+    id: security
+    attributes:
+      label: Security notes

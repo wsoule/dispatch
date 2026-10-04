@@ -1,0 +1,323 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "read",
+  "vectors": [
+    {
+      "id": "core.read.can-read-participants",
+      "title": "The sender, a recipient, and every session that acts for either's work item may read a message",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["2.2", "4.6", "9.3"],
+      "given": {
+        "workItems": [
+          {
+            "id": "t-000001",
+            "liveSession": "run:r-000011",
+            "sessions": ["run:r-000001"]
+          },
+          {
+            "id": "t-000002",
+            "liveSession": "run:r-000002",
+            "sessions": ["run:r-000012"]
+          },
+          { "id": "t-000003", "liveSession": "run:r-000003" }
+        ],
+        "agents": [{ "address": "agent:wyat/claude", "status": "approved" }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-note",
+              "from": "run:r-000001",
+              "to": ["task:t-000002", "human:ada"],
+              "kind": "message",
+              "body": "the api moved"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-task",
+              "message": "m-note",
+              "recipient": "task:t-000002",
+              "session": null,
+              "state": "held"
+            },
+            {
+              "id": "d-ada",
+              "message": "m-note",
+              "recipient": "human:ada",
+              "session": null,
+              "state": "notified"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "run:r-000001", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "run:r-000011", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "human:ada", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "run:r-000002", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "run:r-000012", "canDecide": false }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": true } }
+        ]
+      }
+    },
+    {
+      "id": "core.read.can-read-not-bystanders",
+      "title": "A session of another work item, a human who does not decide and an agent may not read a message they take no part in",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["9.3", "13.5", "13.6"],
+      "given": {
+        "workItems": [
+          {
+            "id": "t-000001",
+            "liveSession": "run:r-000011",
+            "sessions": ["run:r-000001"]
+          },
+          {
+            "id": "t-000002",
+            "liveSession": "run:r-000002",
+            "sessions": ["run:r-000012"]
+          },
+          { "id": "t-000003", "liveSession": "run:r-000003" }
+        ],
+        "agents": [{ "address": "agent:wyat/claude", "status": "approved" }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-note",
+              "from": "run:r-000001",
+              "to": ["task:t-000002", "human:ada"],
+              "kind": "message",
+              "body": "the api moved"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-task",
+              "message": "m-note",
+              "recipient": "task:t-000002",
+              "session": null,
+              "state": "held"
+            },
+            {
+              "id": "d-ada",
+              "message": "m-note",
+              "recipient": "human:ada",
+              "session": null,
+              "state": "notified"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "run:r-000003", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "human:bob", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "agent:wyat/claude", "canDecide": false }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "readable": false } },
+          { "ok": true, "result": { "readable": false } },
+          { "ok": true, "result": { "readable": false } }
+        ]
+      }
+    },
+    {
+      "id": "core.read.can-read-any-as-a-deciding-principal",
+      "title": "The system address and a deciding human may read any message; the same human without the decide tier may not",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["5.2", "9.3"],
+      "given": {
+        "workItems": [
+          {
+            "id": "t-000001",
+            "liveSession": "run:r-000011",
+            "sessions": ["run:r-000001"]
+          },
+          {
+            "id": "t-000002",
+            "liveSession": "run:r-000002",
+            "sessions": ["run:r-000012"]
+          },
+          { "id": "t-000003", "liveSession": "run:r-000003" }
+        ],
+        "agents": [{ "address": "agent:wyat/claude", "status": "approved" }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-note",
+              "from": "run:r-000001",
+              "to": ["task:t-000002", "human:ada"],
+              "kind": "message",
+              "body": "the api moved"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-task",
+              "message": "m-note",
+              "recipient": "task:t-000002",
+              "session": null,
+              "state": "held"
+            },
+            {
+              "id": "d-ada",
+              "message": "m-note",
+              "recipient": "human:ada",
+              "session": null,
+              "state": "notified"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "human:bob", "canDecide": true }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "$system", "canDecide": true }
+        },
+        {
+          "op": "canRead",
+          "message": "m-note",
+          "as": { "address": "human:bob", "canDecide": false }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": false } }
+        ]
+      }
+    },
+    {
+      "id": "core.read.can-read-no-absent-id",
+      "title": "A message that does not exist is readable by no one, not even the system address",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["9.3", "13.5"],
+      "given": {
+        "workItems": [
+          {
+            "id": "t-000001",
+            "liveSession": "run:r-000011",
+            "sessions": ["run:r-000001"]
+          },
+          {
+            "id": "t-000002",
+            "liveSession": "run:r-000002",
+            "sessions": ["run:r-000012"]
+          },
+          { "id": "t-000003", "liveSession": "run:r-000003" }
+        ],
+        "agents": [{ "address": "agent:wyat/claude", "status": "approved" }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-note",
+              "from": "run:r-000001",
+              "to": ["task:t-000002", "human:ada"],
+              "kind": "message",
+              "body": "the api moved"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-task",
+              "message": "m-note",
+              "recipient": "task:t-000002",
+              "session": null,
+              "state": "held"
+            },
+            {
+              "id": "d-ada",
+              "message": "m-note",
+              "recipient": "human:ada",
+              "session": null,
+              "state": "notified"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "canRead",
+          "message": "m-absent",
+          "as": { "address": "$system", "canDecide": true }
+        },
+        {
+          "op": "canRead",
+          "message": "m-absent",
+          "as": { "address": "human:wyat", "canDecide": true }
+        },
+        {
+          "op": "canRead",
+          "message": "m-absent",
+          "as": { "address": "run:r-000001", "canDecide": false }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "readable": false } },
+          { "ok": true, "result": { "readable": false } },
+          { "ok": true, "result": { "readable": false } }
+        ]
+      }
+    }
+  ]
+}

@@ -8,9 +8,11 @@ import {
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  gateOf,
+  openGatesAfter,
   questionsByRun,
   runIdOf,
-  scopeRequestIdsByRun,
+  scopeRequestsByRun,
   toRunQuestion,
   toScopeRequest,
 } from './gates';
@@ -101,8 +103,10 @@ describe('gate adapters', () => {
         .get('r-1')
         ?.map((q) => q.id)
     ).toEqual(['m-q']);
-    expect(scopeRequestIdsByRun([scope]).get('r-1')).toEqual({
-      requestId: 'm-s',
+    expect(scopeRequestsByRun([scope]).get('r-1')).toMatchObject({
+      id: 'm-s',
+      runId: 'r-1',
+      paths: ['a.ts'],
     });
     expect(findToolApprovalGate([approval], 'r-1', 'req-1')?.id).toBe('m-a');
     expect(findToolApprovalGate([approval], 'r-1', 'req-2')).toBeNull();
@@ -110,7 +114,14 @@ describe('gate adapters', () => {
 
   it('keeps only awaiting-approval runs once runs have loaded', () => {
     expect(pendingApprovalsFromGates([approval], undefined).get('r-1')).toEqual(
-      { requestId: 'req-1', toolName: 'Bash', input: { command: 'ls' } }
+      [
+        {
+          requestId: 'req-1',
+          toolName: 'Bash',
+          input: { command: 'ls' },
+          truncated: false,
+        },
+      ]
     );
     expect(
       pendingApprovalsFromGates(
@@ -150,9 +161,7 @@ describe('gate adapters', () => {
       id: 'm-s2',
       createdAt: '2026-09-25T10:05:00.000Z',
     };
-    expect(scopeRequestIdsByRun([later, scope]).get('r-1')).toEqual({
-      requestId: 'm-s2',
-    });
+    expect(scopeRequestsByRun([later, scope]).get('r-1')?.id).toBe('m-s2');
   });
 
   it('finds overseer gates by conversation and action or request', () => {
@@ -256,5 +265,48 @@ describe('foldsIntoOpenApproval', () => {
       )
     ).toBe(false);
     expect(foldsIntoOpenApproval(wake, [approval])).toBe(false);
+  });
+});
+
+describe('openGatesAfter', () => {
+  const answer = (replyTo: string) =>
+    msg('m-ans', {
+      from: 'human:ada',
+      to: ['agent:dispatch'],
+      kind: 'answer',
+      blocking: false,
+      replyTo,
+      choice: 'approve',
+    });
+
+  // Answered in another window, the gate leaves the list before any refetch.
+  it('drops the gate an answer replies to', () => {
+    expect(openGatesAfter([approval, wake], answer('m-a'))).toEqual([wake]);
+  });
+
+  it('adds a new blocking message a human is asked, once', () => {
+    const open = openGatesAfter([approval], wake);
+    expect(open).toEqual([approval, wake]);
+    expect(openGatesAfter(open, wake)).toBe(open);
+  });
+
+  it('keeps the list for what opens or closes no human gate', () => {
+    const open = [approval];
+    expect(openGatesAfter(open, answer('m-unknown'))).toBe(open);
+    expect(
+      openGatesAfter(open, msg('m-agents', { to: ['agent:reviewer'] }))
+    ).toBe(open);
+    expect(
+      openGatesAfter(open, msg('m-plain', { kind: 'message', blocking: false }))
+    ).toBe(open);
+  });
+});
+
+describe('gateOf', () => {
+  it('narrows gate data and ignores plain, x- and malformed data', () => {
+    expect(gateOf(approval)?.type).toBe('tool-approval');
+    expect(gateOf(question)).toBeNull();
+    expect(gateOf({ ...question, data: { type: 'x-closed' } })).toBeNull();
+    expect(gateOf({ ...question, data: ['scope'] })).toBeNull();
   });
 });

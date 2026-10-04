@@ -46,8 +46,8 @@ export function openGatesKey(
   return ['dispatch-open-gates', port] as const;
 }
 
-// The message's gate payload, or null for a plain message or `x-` data.
-function gateOf(message: Message): GateData | null {
+/** A message's gate payload, or null for a plain message or `x-` data. */
+export function gateOf(message: Message): GateData | null {
   const data = message.data;
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return null;
@@ -124,10 +124,10 @@ export function questionsByRun(
   return byRun;
 }
 
-/** Each run's newest open scope gate; its message id is the request id. */
-export function scopeRequestIdsByRun(
+/** Each run's newest open scope gate; its message id is what a decision replies to. */
+export function scopeRequestsByRun(
   gates: readonly Message[]
-): Map<string, { requestId: string }> {
+): Map<string, RunScopeRequest> {
   const newest = new Map<string, RunScopeRequest>();
   for (const message of gates) {
     const request = toScopeRequest(message);
@@ -137,11 +137,7 @@ export function scopeRequestIdsByRun(
       newest.set(request.runId, request);
     }
   }
-  const ids = new Map<string, { requestId: string }>();
-  for (const [runId, request] of newest) {
-    ids.set(runId, { requestId: request.id });
-  }
-  return ids;
+  return newest;
 }
 
 /** The open tool-approval gate for one parked call: (run, request id) names it. */
@@ -248,6 +244,22 @@ export function gateNotification(
     body: firstLine(message.body),
     kind,
   };
+}
+
+/** The open gates once `message` lands (an answer closes its gate, a blocking
+ *  message to a human joins); `open` itself when nothing changes. */
+export function openGatesAfter(open: Message[], message: Message): Message[] {
+  if (message.kind === 'answer') {
+    const closed = message.replyTo;
+    return open.some((m) => m.id === closed)
+      ? open.filter((m) => m.id !== closed)
+      : open;
+  }
+  const asksHuman =
+    message.blocking && message.to.some((addr) => addr.startsWith('human:'));
+  return asksHuman && !open.some((m) => m.id === message.id)
+    ? [...open, message]
+    : open;
 }
 
 /** True when `message` is a tool approval for a run that already has another

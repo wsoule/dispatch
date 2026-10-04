@@ -112,6 +112,9 @@ export interface OverseerMutatingTool<Input = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<Input>;
+  /** Fills in at call time what the input leaves to the live state, so
+   *  `apply` acts on exactly what `describe` showed the human. */
+  pin?(ctx: OverseerToolContext, input: Input): Input;
   describe(ctx: OverseerToolContext, input: Input): string;
   apply(
     ctx: OverseerToolContext,
@@ -334,9 +337,11 @@ const pendingApprovalsTool: OverseerStatusTool<NoInput> = {
           taskTitle: run?.taskTitle ?? null,
           requestId: gate.requestId,
           toolName: gate.tool,
-          // At most an 8 KiB preview; `truncated` says when it was cut.
+          // At most an 8 KiB preview; `truncated` says when it was cut, and
+          // `floor` whether the full call is an irreversible act.
           input: gate.input,
           truncated: gate.truncated === true,
+          floor: gate.floor === true,
         },
       ];
     });
@@ -486,19 +491,47 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   },
 };
 
-// approve_run and deny_run answer the gate the run is parked on when the human
-// confirms, not a requestId the overseer saw earlier, which may be stale by then.
-function requireApproval(ctx: OverseerToolContext, runId: string) {
+// The parked call approve_run and deny_run act on: the named one, else the
+// run's oldest, which `pin` then names so the confirm answers that call.
+function requireApproval(
+  ctx: OverseerToolContext,
+  runId: string,
+  requestId: string | undefined
+) {
   const meta = requireRun(ctx, runId);
-  const pending = ctx.orchestrator.pendingApprovalFor(runId);
+  const pending =
+    requestId === undefined
+      ? ctx.orchestrator.pendingApprovalsFor(runId)[0]
+      : ctx.orchestrator.pendingApprovalFor(runId, requestId);
   if (pending === undefined) {
-    throw new OverseerToolError(`run is not awaiting approval: ${runId}`);
+    throw new OverseerToolError(
+      requestId === undefined
+        ? `run is not awaiting approval: ${runId}`
+        : `run ${runId} is not parked on ${requestId}`
+    );
   }
   return { meta, pending };
 }
 
+// A proposal's parked call, named even when the overseer left it to default.
+function pinParkedCall<Input extends { runId: string; requestId?: string }>(
+  ctx: OverseerToolContext,
+  input: Input
+): Input {
+  const { pending } = requireApproval(ctx, input.runId, input.requestId);
+  return { ...input, requestId: pending.requestId };
+}
+
+const REQUEST_ID_INPUT = z
+  .string()
+  .optional()
+  .describe(
+    "The parked call's requestId, from pending_approvals; defaults to the run's oldest parked call."
+  );
+
 const approveInput = z.object({
   runId: z.string().describe('The run (r-…) parked on a tool call.'),
+  requestId: REQUEST_ID_INPUT,
   scope: z
     .enum(['once', 'session'])
     .optional()
@@ -509,17 +542,21 @@ const approveInput = z.object({
 
 const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
   name: 'approve_run',
-  description:
-    'Allow the tool call a run is currently parked on, letting it continue.',
+  description: 'Allow a tool call a run is parked on, letting it continue.',
   inputSchema: approveInput,
+  pin: pinParkedCall,
   describe(ctx, input) {
-    const { meta, pending } = requireApproval(ctx, input.runId);
+    const { meta, pending } = requireApproval(
+      ctx,
+      input.runId,
+      input.requestId
+    );
     const scope =
       input.scope === 'session' ? ' for the rest of the session' : '';
     return `Approve ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${scope}`;
   },
   async apply(ctx, input, meta) {
-    const { pending } = requireApproval(ctx, input.runId);
+    const { pending } = requireApproval(ctx, input.runId, input.requestId);
     await ctx.messaging.answerRunApproval(
       input.runId,
       pending.requestId,
@@ -534,6 +571,7 @@ const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
 
 const denyInput = z.object({
   runId: z.string().describe('The run (r-…) parked on a tool call.'),
+  requestId: REQUEST_ID_INPUT,
   reason: z
     .string()
     .optional()
@@ -543,17 +581,22 @@ const denyInput = z.object({
 const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
   name: 'deny_run',
   description:
-    'Refuse the tool call a run is currently parked on. This ends the run as ' +
+    'Refuse a tool call a run is parked on. This ends the run as ' +
     'failed — the reason, if given, is what it reports as the failure.',
   inputSchema: denyInput,
+  pin: pinParkedCall,
   describe(ctx, input) {
-    const { meta, pending } = requireApproval(ctx, input.runId);
+    const { meta, pending } = requireApproval(
+      ctx,
+      input.runId,
+      input.requestId
+    );
     const why =
       input.reason === undefined ? '' : `: ${safeTitle(input.reason)}`;
     return `Deny ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${why}`;
   },
   async apply(ctx, input, meta) {
-    const { pending } = requireApproval(ctx, input.runId);
+    const { pending } = requireApproval(ctx, input.runId, input.requestId);
     await ctx.messaging.answerRunApproval(
       input.runId,
       pending.requestId,
@@ -732,7 +775,8 @@ export class OverseerToolRegistry {
     if (tool === undefined) {
       throw new OverseerToolError(`unknown mutating tool: ${name}`);
     }
-    const input = this.parse(tool, raw);
+    const parsed = this.parse(tool, raw);
+    const input = tool.pin?.(this.ctx, parsed) ?? parsed;
     // Throws on a target that doesn't exist or isn't in a state this tool can
     // act on, so the overseer finds out while it can still say something useful
     // — rather than the human confirming an action that was never going to work.

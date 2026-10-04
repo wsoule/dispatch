@@ -1,0 +1,29 @@
+{
+  "name": "@dispatch/protocol-spec",
+  "version": "1.0.0-draft.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "bin": {
+    "dmp-conformance": "./dist/bin.js"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --clean",
+    "registries": "bun scripts/registries.ts",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty",
+    "prepublishOnly": "moon run protocol-spec:prepublish"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "ajv": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  }
+}

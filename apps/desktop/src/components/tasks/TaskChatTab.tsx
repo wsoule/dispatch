@@ -1,18 +1,25 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { MessageSquare } from 'lucide-react';
+import { useMemo } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
-import { useScopeRequest } from '../../hooks/useScopeRequest';
 import type { RunQuestion } from '../../lib/gates';
-import { isTerminalRunState } from '../../lib/runState';
+import type { PendingApproval } from '../../lib/pendingApprovals';
+import {
+  askRunIdsForChat,
+  newestScopeRequestOf,
+  questionsOfRuns,
+} from '../../lib/taskAsks';
 import { RunLogView } from '../runs/RunLogView';
+import { useShellActions } from '../shell/ShellActionsContext';
 import { TabSkeleton } from './TabSkeleton';
 import { EmptyState } from '@/ui/chrome';
 
-// Shared empty array so a run with no open questions keeps the same prop
-// identity across renders.
+// Shared empty arrays so a run with nothing open keeps the same prop identity
+// across renders.
 const NO_QUESTIONS: RunQuestion[] = [];
+const NO_APPROVALS: PendingApproval[] = [];
 
 export interface TaskChatTabProps {
   data: DispatchProjectData;
@@ -30,19 +37,21 @@ export function TaskChatTab({
   selectedRun,
   onDispatch,
 }: TaskChatTabProps) {
-  const selectedId = selectedRun?.id;
-  // Read once and reused below for both the fetch and the decide call, so the
-  // two can never disagree about which request is pending.
-  const scopeRequestId =
-    selectedId !== undefined
-      ? data.pendingScopeRequests.get(selectedId)?.requestId
-      : undefined;
-  // The WS event only carries the id — this fetches the paths/reason.
-  const { request: pendingScopeRequest } = useScopeRequest(
-    data.client,
-    data.port,
-    selectedId,
-    scopeRequestId
+  const { openThread } = useShellActions();
+  // The selected run's open asks plus those of the task's ended execute runs,
+  // which stay open for the task whatever run is shown.
+  const askRunIds = useMemo(
+    () =>
+      selectedRun === undefined ? [] : askRunIdsForChat(data.runs, selectedRun),
+    [data.runs, selectedRun]
+  );
+  const questions = useMemo(() => {
+    const asked = questionsOfRuns(data.openQuestions, askRunIds);
+    return asked.length === 0 ? NO_QUESTIONS : asked;
+  }, [data.openQuestions, askRunIds]);
+  const scopeRequest = newestScopeRequestOf(
+    data.pendingScopeRequests,
+    askRunIds
   );
 
   if (selectedRun === undefined) {
@@ -76,31 +85,32 @@ export function TaskChatTab({
       <RunLogView
         meta={data.runDetail.meta}
         entries={data.runDetail.entries}
-        pendingApproval={data.pendingApprovals.get(selectedRun.id) ?? null}
+        pendingApprovals={
+          data.pendingApprovals.get(selectedRun.id) ?? NO_APPROVALS
+        }
         onApprove={(requestId, allow, opts) =>
           data.handleApprove(selectedRun.id, requestId, allow, opts)
         }
+        onLoadApprovalInput={(requestId) =>
+          data.fetchApprovalInput(selectedRun.id, requestId)
+        }
         onSendMessage={(text) => data.handleSendMessage(selectedRun.id, text)}
-        openQuestions={
-          // Terminal check as well as the list: a dropped socket must not
-          // leave a dead run still asking for an answer.
-          isTerminalRunState(selectedRun.state)
-            ? NO_QUESTIONS
-            : (data.openQuestions.get(selectedRun.id) ?? NO_QUESTIONS)
-        }
+        openQuestions={questions}
         onAnswerQuestion={(questionId, answer) =>
-          data.handleAnswerQuestion(selectedRun.id, questionId, answer)
+          data.handleAnswerQuestion(
+            questions.find((q) => q.id === questionId)?.runId ?? selectedRun.id,
+            questionId,
+            answer
+          )
         }
-        pendingScopeRequest={
-          isTerminalRunState(selectedRun.state) ? null : pendingScopeRequest
-        }
+        pendingScopeRequest={scopeRequest}
         onDecideScopeRequest={(granted) =>
-          // Undefined means it raced closed — nothing to send.
-          scopeRequestId === undefined
+          // Null means it closed since this render: nothing to send.
+          scopeRequest === null
             ? Promise.resolve()
             : data.handleDecideScopeRequest(
-                selectedRun.id,
-                scopeRequestId,
+                scopeRequest.runId,
+                scopeRequest.id,
                 granted
               )
         }
@@ -109,6 +119,9 @@ export function TaskChatTab({
         onRequestChanges={(text) =>
           data.handleRequestChanges(selectedRun.id, text)
         }
+        onOpenMessage={data.messageAccess.canMessage ? openThread : null}
+        me={data.me}
+        readsAllThreads={data.messageAccess.canDecide}
       />
     </div>
   );

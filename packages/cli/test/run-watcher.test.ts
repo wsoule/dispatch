@@ -103,6 +103,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     getAnswer: () => Promise.reject(new Error('not used')),
     replyToMessage: () => Promise.reject(new Error('not used')),
     sendMessage: () => Promise.reject(new Error('not used')),
+    getMailbox: () => Promise.reject(new Error('not used')),
     fanoutTask: () => Promise.reject(new Error('not used')),
     launchBrowser: () => Promise.reject(new Error('not used')),
     listBrowsers: () => Promise.reject(new Error('not used')),
@@ -271,6 +272,31 @@ describe('createRunWatcher', () => {
     w.socket().emitMessage({ type: 'run.changed' });
     await sleep(10);
     expect(w.banners()).toBe(2);
+    w.watcher.dispose();
+  });
+
+  it('names every call a parked run waits on, one banner each', async () => {
+    const second = {
+      ...gate,
+      id: 'm-second',
+      data: {
+        ...(gate.data as object),
+        requestId: 'fake-approval-2',
+        tool: 'write_file',
+      },
+    };
+    const appClient: ApiClient = {
+      ...makeClient(() => Promise.reject(new Error('not used'))),
+      openDecisions: () => Promise.resolve({ items: [gate, second] }),
+    };
+    const w = parkedWatcher(appClient);
+
+    w.watcher.setRunId('r-1');
+    await sleep(10);
+    expect(w.banners()).toBe(2);
+    expect(w.text()).toContain('approve: dispatch approve r-1 fake-approval-1');
+    expect(w.text()).toContain('approve: dispatch approve r-1 fake-approval-2');
+    expect(w.text()).toContain('tool:    write_file');
     w.watcher.dispose();
   });
 

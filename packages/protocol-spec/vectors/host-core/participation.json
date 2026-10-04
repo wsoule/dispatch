@@ -1,0 +1,406 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "participation",
+  "vectors": [
+    {
+      "id": "core.participation.absent-and-foreign-look-alike",
+      "title": "A reply to a message the sender does not take part in fails exactly like a reply to an absent id",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "9.3", "13.5"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "sessions": ["run:r-000002"] }
+        ],
+        "store": {
+          "messages": [
+            {
+              "id": "m-private",
+              "from": "human:wyat",
+              "to": ["task:t-000002"],
+              "kind": "question",
+              "body": "private?",
+              "blocking": true
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-private",
+              "message": "m-private",
+              "recipient": "task:t-000002",
+              "session": null,
+              "via": "direct",
+              "state": "held"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "x",
+            "replyTo": "m-private"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "x",
+            "replyTo": "m-absent"
+          }
+        },
+        {
+          "op": "canRead",
+          "message": "m-private",
+          "as": { "address": "run:r-000001", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-private",
+          "as": { "address": "run:r-000002", "canDecide": false }
+        },
+        {
+          "op": "canRead",
+          "message": "m-private",
+          "as": { "address": "human:wyat", "canDecide": true }
+        },
+        {
+          "op": "canRead",
+          "message": "m-private",
+          "as": { "address": "$system", "canDecide": true }
+        },
+        {
+          "op": "canRead",
+          "message": "m-absent",
+          "as": { "address": "human:wyat", "canDecide": true }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": true, "result": { "readable": false } },
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": true } },
+          { "ok": true, "result": { "readable": false } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.participation.a-bystander-session-cannot-reply",
+      "title": "A session of another work item can neither answer a question nor reply to a message it takes no part in, while a deciding human can",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "5.2"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000009", "liveSession": "run:r-000009" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "hello" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000009", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "mine" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000009", "canDecide": false },
+          "message": "$s2",
+          "input": { "body": "butting in" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "the first" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": true }
+        ],
+        "messages": [
+          { "id": "$s1", "kind": "question" },
+          { "id": "$s2", "kind": "message" },
+          { "id": "$s5", "kind": "answer", "replyTo": "$s1" }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.participation.comes-before-validation",
+      "title": "A non-participant's reply fails not-found before the target's kind, its choices, its gate or the reply's own fields are checked",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.5", "4.6", "13.5"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000009", "liveSession": "run:r-000009" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "notice", "body": "fyi" }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "choices": ["a", "b"]
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            },
+            "choices": ["approve", "deny"]
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000009", "canDecide": false },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "answer",
+            "body": "x",
+            "replyTo": "$s1"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000009", "canDecide": false },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "answer",
+            "body": "x",
+            "choice": "zzz",
+            "replyTo": "$s2"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000009", "canDecide": false },
+          "input": {
+            "to": ["$system"],
+            "kind": "answer",
+            "body": "",
+            "choice": "approve",
+            "replyTo": "$s3"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000009", "canDecide": false },
+          "input": {
+            "to": ["nope"],
+            "kind": "message",
+            "body": "x",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.participation.an-empty-reply-to-names-no-message",
+      "title": "An empty replyTo names no message, so it fails not-found at the participation step, before the input is validated",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.5", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["nope"],
+            "kind": "message",
+            "body": "",
+            "replyTo": ""
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000001"],
+            "kind": "message",
+            "body": "x",
+            "replyTo": ""
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.participation.a-reply-authorizes-before-its-target",
+      "title": "Replying to one message refuses an unauthorized sender on from whether or not the target exists",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.5", "4.6", "9.1", "13.5"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "agents": [
+          { "address": "agent:wyat/pending-bot", "status": "pending" },
+          { "address": "agent:wyat/old-bot", "status": "revoked" }
+        ],
+        "store": {
+          "messages": [
+            {
+              "id": "m-note",
+              "from": "human:wyat",
+              "to": ["agent:wyat/pending-bot", "agent:wyat/old-bot"],
+              "kind": "message",
+              "body": "hello"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-pending",
+              "message": "m-note",
+              "recipient": "agent:wyat/pending-bot",
+              "session": null,
+              "via": "direct",
+              "state": "held"
+            },
+            {
+              "id": "d-old",
+              "message": "m-note",
+              "recipient": "agent:wyat/old-bot",
+              "session": null,
+              "via": "direct",
+              "state": "held"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/pending-bot", "canDecide": false },
+          "message": "m-absent",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/pending-bot", "canDecide": false },
+          "message": "m-note",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/old-bot", "canDecide": false },
+          "message": "m-absent",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/old-bot", "canDecide": false },
+          "message": "m-note",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": true },
+          "message": "m-absent",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": true },
+          "message": "m-note",
+          "input": { "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } }
+        ],
+        "noOtherMessages": true
+      }
+    }
+  ]
+}

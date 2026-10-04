@@ -9,6 +9,7 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import { DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
 import type { CartoBinary } from '@dispatch/core/carto';
 
 import { floorCheckForToolInput } from '../../floor.js';
@@ -93,16 +94,8 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 
 // Auto-allowed with the edit tools under `acceptEdits`: gating them would make
 // the user approve a question before seeing it.
-export const MESSAGING_TOOLS: ReadonlySet<string> = new Set(
-  [
-    'msg_send',
-    'msg_reply',
-    'inbox_read',
-    'thread_read',
-    'channel_join',
-    'channel_leave',
-    'channel_list',
-  ].map((tool) => `mcp__dispatch__${tool}`)
+const MESSAGING_TOOLS: ReadonlySet<string> = new Set(
+  DISPATCH_MESSAGING_TOOLS.map((tool) => `mcp__dispatch__${tool}`)
 );
 
 // Claude Code tools that cannot do their job inside a dispatched run, removed

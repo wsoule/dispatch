@@ -63,6 +63,8 @@ export function dataWith(
     // passes `myTier`, the way it does before a connection exists.
     myTier: null,
     attachedWithoutAppToken: false,
+    whoamiError: null,
+    retryWhoami: () => {},
     tasks: [],
     runs: [],
     linearStatus: {

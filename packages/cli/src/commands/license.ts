@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import type { LicenseStatus } from '../apiClient.js';
 import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenClient, attachToRunningDaemon } from './appToken.js';
 
 /** The plan as a person reads it: who it covers and how full it is. */
 export function describeLicense(status: LicenseStatus): string[] {
@@ -51,11 +51,12 @@ export function registerLicenseCommands(
     )
     .option('--token <appToken>', 'the app token (default: DISPATCH_APP_TOKEN)')
     .action(async (key: string, opts: { token?: string }) => {
-      const appToken = resolveAppToken(opts.token, 'dispatch license set');
-      const { baseUrl } = await attachToRunningDaemon(ctx);
-      const status = await createApiClient(baseUrl, appToken).installLicense(
-        key
+      const client = await appTokenClient(
+        ctx,
+        opts.token,
+        'dispatch license set'
       );
+      const status = await client.installLicense(key);
       for (const line of describeLicense(status)) ctx.log(line);
     });
 }

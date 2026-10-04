@@ -12,6 +12,7 @@ analyse
 analysed
 anci
 APFS
+apikey
 appliable
 argmax
 arrayish
@@ -40,6 +41,7 @@ braindump
 browserslistrc
 bunfig
 bunx
+bytewise
 cacheinfo
 callsites
 capitalised
@@ -55,6 +57,7 @@ CFRG
 cfworker
 checkpointed
 chev
+choiceless
 chrono
 ciphertext
 clippy
@@ -225,6 +228,7 @@ jaccard
 jridgewell
 jsonpointer
 katex
+keepalives
 keepme
 keycap
 keycaps
@@ -353,6 +357,7 @@ RAII
 Railpack
 railwayignore
 readdirp
+reask
 reassignable
 reattribute
 reattributing

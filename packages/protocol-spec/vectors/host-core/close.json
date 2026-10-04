@@ -1,0 +1,255 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "close",
+  "vectors": [
+    {
+      "id": "core.close.answers-without-effect-or-deliveries",
+      "title": "Close is a system answer that applies no effect and delivers nothing; a second close conflicts",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.8", "5.4"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        { "op": "close", "question": "$s1", "reason": "the run ended" },
+        { "op": "close", "question": "$s1", "reason": "again" },
+        { "op": "openBlocking" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "conflict", "field": "replyTo" } },
+          { "ok": true, "result": { "messages": [] } }
+        ],
+        "messages": [
+          { "id": "$s1" },
+          {
+            "id": "$s2",
+            "from": "$system",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "data": { "type": "x-closed", "reason": "the run ended" }
+          }
+        ],
+        "noOtherMessages": true,
+        "deliveries": [
+          { "message": "$s1", "recipient": "human:wyat", "state": "answered" }
+        ],
+        "noDeliveries": ["$s2"],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "published", "message": "$s2" }
+        ],
+        "gateEffects": []
+      }
+    },
+    {
+      "id": "core.close.moves-the-question-to-answered",
+      "title": "Closing a question answers it to its sender with x-closed data and moves the question's deliveries to answered",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.8", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "blocking": true,
+            "choices": ["a", "b"]
+          }
+        },
+        { "op": "close", "question": "$s1", "reason": "done" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true, "result": { "message": "$s2" } }
+        ],
+        "messages": [
+          {
+            "id": "$s2",
+            "from": "$system",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "thread": "$s1",
+            "to": ["run:r-000001"],
+            "data": { "type": "x-closed", "reason": "done" }
+          }
+        ],
+        "deliveries": [
+          { "message": "$s1", "recipient": "human:wyat", "state": "answered" }
+        ],
+        "noDeliveries": ["$s2"]
+      }
+    },
+    {
+      "id": "core.close.an-absent-question-is-not-found",
+      "title": "Closing a message that does not exist fails not-found on replyTo",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.8"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [{ "op": "close", "question": "m-absent", "reason": "reason" }],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.close.an-answered-question-conflicts",
+      "title": "Closing a question that already has an answer fails conflict on replyTo",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.7", "4.8"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "blocking": true,
+            "choices": ["a", "b"]
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "a" }
+        },
+        { "op": "close", "question": "$s1", "reason": "too late" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "conflict", "field": "replyTo" } }
+        ],
+        "messages": [{ "id": "$s1" }, { "id": "$s2" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.close.a-non-question-is-invalid",
+      "title": "Closing a message that is not a question or handoff fails invalid on replyTo",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.8"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "notice", "body": "fyi" }
+        },
+        { "op": "close", "question": "$s1", "reason": "n/a" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": false, "error": { "code": "invalid", "field": "replyTo" } }
+        ],
+        "messages": [{ "id": "$s1" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.close.a-reply-after-close-conflicts",
+      "title": "An answer to a closed gate fails conflict on replyTo and runs no effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.7", "4.8"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        { "op": "close", "question": "$s1", "reason": "no longer needed" },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "conflict", "field": "replyTo" } }
+        ],
+        "messages": [{ "id": "$s1" }, { "id": "$s2" }],
+        "noOtherMessages": true,
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "published", "message": "$s2" }
+        ],
+        "gateEffects": []
+      }
+    }
+  ]
+}
