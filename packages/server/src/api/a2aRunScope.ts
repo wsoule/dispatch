@@ -21,19 +21,73 @@ export function a2aRunScope(
   return { runId, taskId };
 }
 
+// The messaging routes an A2A run uses, by method and path shape ('*' is any
+// one segment); the engine's participation and A2A rules still apply.
+const MESSAGING: readonly [string, readonly string[]][] = [
+  ['POST', ['messages']],
+  ['GET', ['messages', '*']],
+  ['POST', ['messages', '*', 'reply']],
+  ['GET', ['messages', '*', 'answer']],
+  ['GET', ['threads']],
+  ['GET', ['threads', '*']],
+  ['GET', ['mailbox']],
+  ['POST', ['deliveries', '*', 'read']],
+];
+
+function matches(pattern: readonly string[], segments: readonly string[]) {
+  return (
+    pattern.length === segments.length &&
+    pattern.every((p, i) => p === '*' || p === segments[i])
+  );
+}
+
 /**
- * Whether an A2A-origin run may see `taskId`: its own task, a task it made
- * A2A-origin itself, or a task that is not A2A-origin at all. Another client's
- * handoff, or another A2A run's work, it never sees.
+ * XH-R8: the routes an A2A-origin run's own token may use. Messaging; its own
+ * task (read, comments, amendments) and run (read, evidence, mutation
+ * results); findings on its own task; memory and docs under their A2A rules;
+ * and the config its MCP reads. Everything else is refused.
  */
-export function visibleToA2ARun(
-  ctx: ScopeContext,
+export function a2aRunAllows(
   scope: A2ARunScope,
-  taskId: string
+  method: string,
+  segments: readonly string[],
+  findingTask: string | null
 ): boolean {
-  if (taskId === scope.taskId) return true;
-  if (ctx.a2a?.taskOrigin(taskId) !== 'a2a') return true;
-  return ctx.a2a.lineage.markedBy(taskId) === scope.runId;
+  const [family, id, sub] = segments;
+  if (MESSAGING.some(([m, p]) => m === method && matches(p, segments)))
+    return true;
+  if (family === 'memory' || family === 'docs') return true;
+  if (segments.length === 1 && method === 'GET')
+    return family === 'config' || family === 'whoami' || family === 'health';
+  if (family === 'tasks' && id === scope.taskId) {
+    if (segments.length === 2) return method === 'GET';
+    if (sub === 'comments') return true;
+    return segments.length === 3 && sub === 'amend' && method === 'POST';
+  }
+  if (family === 'runs' && id === scope.runId) {
+    if (segments.length === 2) return method === 'GET';
+    return (
+      segments.length === 3 &&
+      method === 'POST' &&
+      (sub === 'evidence' || sub === 'mutations')
+    );
+  }
+  return (
+    family === 'findings' &&
+    segments.length === 1 &&
+    method === 'POST' &&
+    findingTask === scope.taskId
+  );
+}
+
+/** The `taskId` a JSON body names, read from a clone; null when absent. */
+export async function bodyTaskId(req: Request): Promise<string | null> {
+  try {
+    const body = (await req.clone().json()) as { taskId?: unknown };
+    return typeof body.taskId === 'string' ? body.taskId : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -47,6 +101,12 @@ export function lineageStore(
 ): TaskStorePort {
   return new Proxy(store, {
     get(target, prop) {
+      if (prop === 'amend') {
+        return (...args: Parameters<TaskStorePort['amend']>): TaskDoc => {
+          inherit(args[0]);
+          return target.amend(...args);
+        };
+      }
       if (prop === 'create') {
         return (...args: Parameters<TaskStorePort['create']>): TaskDoc => {
           const doc = target.create(...args);

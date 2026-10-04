@@ -46,9 +46,10 @@ import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import type { A2ARunScope } from './api/a2aRunScope.js';
 import {
+  a2aRunAllows,
   a2aRunScope,
+  bodyTaskId,
   lineageStore,
-  visibleToA2ARun,
 } from './api/a2aRunScope.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
@@ -454,8 +455,8 @@ export interface ApiContext {
   /** The live run whose own token made this request (XH-R2). `caller` is then
    *  the agent token's identity and `viaAgentToken` is true. */
   viaRun?: string;
-  /** Set when `viaRun` is A2A-origin: what it may read is narrowed to its own
-   *  task and the project's, and its task writes inherit its provenance. */
+  /** Set when `viaRun` is A2A-origin: it reaches only the XH-R8 allowlist
+   *  (api/a2aRunScope.ts), and its task writes inherit its provenance. */
   a2aRun?: A2ARunScope;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
@@ -4316,10 +4317,7 @@ async function getReadyTasks(
   if (fields !== null && fields !== 'meta' && fields !== 'id') {
     return errorResponse(400, `unknown fields: ${fields}`);
   }
-  const scope = ctx.a2aRun;
-  const ids = ctx.cache
-    .readyIds(statusModelFor(ctx.rootDir))
-    .filter((id) => scope === undefined || visibleToA2ARun(ctx, scope, id));
+  const ids = ctx.cache.readyIds(statusModelFor(ctx.rootDir));
   // Read before judging awaits, so the rows and readings are one snapshot.
   const stored =
     fields === 'id'
@@ -4881,39 +4879,6 @@ export function rejectUnauthorized(
   return null;
 }
 
-/** Why a route naming a task or run an A2A-origin run may not see answers 404
- *  (as an absent one would), or null to proceed. */
-function hiddenFromA2ARun(
-  ctx: ApiContext,
-  scope: A2ARunScope,
-  segments: readonly string[]
-): string | null {
-  const id = segments[1];
-  if (id === undefined) return null;
-  if (segments[0] === 'tasks' && /^t-/.test(id))
-    return visibleToA2ARun(ctx, scope, id) ? null : `task not found: ${id}`;
-  if (segments[0] === 'runs' && /^r-/.test(id)) {
-    const taskId = ctx.orchestrator.taskIdOfRun(id);
-    return taskId === null || visibleToA2ARun(ctx, scope, taskId)
-      ? null
-      : `run not found: ${id}`;
-  }
-  return null;
-}
-
-/** A task list as JSON text, narrowed to what an A2A-origin run may see. */
-function scopedTaskList(ctx: ApiContext, json: string): string {
-  const scope = ctx.a2aRun;
-  if (scope === undefined) return json;
-  const items = JSON.parse(json) as { meta?: { id?: string }; id?: string }[];
-  return JSON.stringify(
-    items.filter((t) => {
-      const id = t.meta?.id ?? t.id;
-      return id === undefined || visibleToA2ARun(ctx, scope, id);
-    })
-  );
-}
-
 /**
  * XH-R4: which decision feed items the caller may see. A deciding human sees
  * all of them; anyone else only the items they take part in: a gate whose
@@ -5069,8 +5034,26 @@ export async function handleApi(
         bridge?.inherit(scope.runId, taskId)
       ),
     };
-    const hidden = hiddenFromA2ARun(ctx, scope, segments);
-    if (hidden !== null) return errorResponse(404, hidden);
+    const findingTask =
+      segments[0] === 'findings' && method === 'POST'
+        ? await bodyTaskId(req)
+        : null;
+    if (!a2aRunAllows(scope, method, segments, findingTask)) {
+      return authErrorResponse(
+        403,
+        'an A2A-origin run reaches only its own task and run, messaging, memory and docs',
+        'auth_a2a_run_scope'
+      );
+    }
+    // Whatever task it may still write inherits its provenance (XH-R8).
+    const written =
+      method === 'GET'
+        ? null
+        : segments[0] === 'tasks'
+          ? segments[1]
+          : findingTask;
+    if (written !== undefined && written !== null)
+      ctx.a2a?.inherit(scope.runId, written);
   }
 
   try {
@@ -5469,14 +5452,10 @@ export async function handleApi(
         // `fields=meta` drops every body — the shape list views want.
         const fields = url.searchParams.get('fields');
         if (fields === null) {
-          return jsonTextResponse(
-            scopedTaskList(ctx, ctx.cache.queryJson(filter))
-          );
+          return jsonTextResponse(ctx.cache.queryJson(filter));
         }
         if (fields === 'meta') {
-          return jsonTextResponse(
-            scopedTaskList(ctx, ctx.cache.queryMetaJson(filter))
-          );
+          return jsonTextResponse(ctx.cache.queryMetaJson(filter));
         }
         return errorResponse(400, `unknown fields: ${fields}`);
       }
