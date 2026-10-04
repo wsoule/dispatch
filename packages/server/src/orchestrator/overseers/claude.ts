@@ -10,6 +10,7 @@ import type {
   Query,
   SdkMcpToolDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
+import { childEnv } from '@dispatch/core';
 import type { z } from 'zod';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
@@ -259,8 +260,8 @@ export class ClaudeOverseer implements OverseerBackend {
       // command then ran, held or not (reproduced against the bundled CLI).
       // Sub-agents run inside the turn instead, so a held call keeps the turn
       // open until the human answers. `env` replaces the CLI's environment,
-      // hence the spread.
-      env: { ...process.env, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' },
+      // so it is the daemon's own, less its tokens.
+      env: childEnv({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' }),
       mcpServers: {
         [SERVER_NAME]: createSdkMcpServer({
           name: SERVER_NAME,
