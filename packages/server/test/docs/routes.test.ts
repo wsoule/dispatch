@@ -586,6 +586,48 @@ describe('publish route', () => {
     expect(owner.status).toBe(200);
   });
 
+  it('returns the open publish for the same path instead of a 409, starting no second run', async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const first = await json<Published>(
+      await post('/docs/spec/publish', { path: 'docs/spec.md' })
+    );
+    const again = await post('/docs/spec/publish', { path: 'docs/spec.md' });
+    expect(again.status).toBe(200);
+    const out = await json<Published>(again);
+    expect(out.task).toBe(first.task);
+    expect(out.run).toBe(first.run);
+    expect(
+      handle.orchestrator.list().filter((r) => r.taskId === first.task)
+    ).toHaveLength(1);
+  });
+
+  it('dispatches an open publish with no run once the daemon starts again', async () => {
+    await handle.stop();
+    // No executor: the publish row is written but its run never starts.
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      webDistDir: null,
+      writeDaemonFile: false,
+      registerExecutors: () => {},
+    });
+    useTestAuth(handle);
+    base = `http://127.0.0.1:${handle.port}/api`;
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const out = await json<Published>(
+      await post('/docs/spec/publish', { path: 'docs/spec.md' })
+    );
+    expect(out.run).toBeNull();
+    await handle.stop();
+    handle = await boot(root, executor);
+    base = `http://127.0.0.1:${handle.port}/api`;
+    const runs = handle.orchestrator
+      .list()
+      .filter((r) => r.taskId === out.task);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].operator).toMatch(/^human:/);
+  });
+
   it('records no landing from a status alone: the task needs a merged run', async () => {
     await post('/docs', { title: 'Spec', body: '# Spec\n' });
     const out = await json<Published>(

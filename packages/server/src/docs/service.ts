@@ -42,7 +42,7 @@ import {
 import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
 import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 
 import type { Principal } from '../messaging/principal.js';
@@ -240,6 +240,11 @@ const ulid = createUlidFactory();
 
 function forbidden(message: string, field?: string): DocsError {
   return new DocsError('forbidden', message, field);
+}
+
+// A publish task's title; recovery finds a crash's orphan task by it.
+function publishTitle(handle: string, n: number, path: string): string {
+  return `Publish doc ${handle} (rev ${n}) to ${path}`;
 }
 
 function archivedError(): DocsError {
@@ -2526,15 +2531,31 @@ export class DocsService {
 
   // Seals the head and creates the elevated task that writes it to `path`: a
   // human asks, and a human merges, since elevated risk caps the merge rung.
+  // A pending row goes down before the task, so a crash between them is found
+  // at boot; the same doc, revision and path (or key) returns that publish.
   publish(
     actor: DocsActor,
     ref: string,
-    input: { path: string }
-  ): { task: string; doc: DocRecord } {
+    input: {
+      path: string;
+      idempotencyKey?: string;
+      dispatchAs?: { actor: string; operator: string | null };
+    }
+  ): { task: string; doc: DocRecord; existing: boolean } {
     const doc = this.resolve(actor, ref);
     if (actor.kind !== 'human') throw forbidden('humans publish docs', 'doc');
     if (doc.scope === 'personal')
       throw forbidden('personal docs are never published', 'doc');
+    const store = this.store();
+    const key = input.idempotencyKey;
+    const keyed =
+      key === undefined || key === ''
+        ? undefined
+        : store
+            .publishRows({ doc: doc.id, idemKey: key })
+            .find((r) => r.state !== 'pending');
+    if (keyed !== undefined)
+      return { task: keyed.task, doc: this.record(doc), existing: true };
     if (doc.status === 'archived') throw archivedError();
     if (doc.status !== 'accepted' && doc.unreviewed)
       throw new DocsError(
@@ -2543,20 +2564,35 @@ export class DocsService {
         'doc'
       );
     const path = validatePublishPath(this.host.rootDir, input.path);
-    const store = this.store();
     const open = store.publishRows({ doc: doc.id, state: 'open' })[0];
-    if (open !== undefined)
+    if (open !== undefined) {
+      if (open.path === path && open.rev === doc.headId)
+        return { task: open.task, doc: this.record(doc), existing: true };
       throw new DocsError(
         'conflict',
         `already publishing: ${open.task}`,
         'doc'
       );
+    }
     this.write(() => this.sealInTx(doc, this.headOf(doc)));
     const head = this.headOf(doc);
     const n = head.n ?? 0;
+    const pending: PublishRow = {
+      task: `pending:${randomUUID()}`,
+      doc: doc.id,
+      rev: head.id,
+      path,
+      state: 'pending',
+      commit: null,
+      createdAt: this.nowIso(),
+      reason: null,
+      idemKey: key === '' ? null : (key ?? null),
+      dispatchAs: input.dispatchAs ?? null,
+    };
+    this.write(() => store.putPublish(pending));
     const images = this.storedAssets(doc, head.body).length > 0;
     const task = this.host.createPublishTask({
-      title: `Publish doc ${doc.handle} (rev ${n}) to ${path}`,
+      title: publishTitle(doc.handle, n, path),
       body: `Dispatch has written revision ${n} of doc ${doc.handle} to ${path} in this worktree${images ? `, with its images under ${publishAssetsDir(path)}/` : ''}. Format and lint it with the repository's own tools, fix only formatting, and commit it as "docs: publish ${doc.handle} rev ${n}". Do not rewrite its content.`,
       writes: images ? [path, `${publishAssetsDir(path)}/**`] : [path],
       risk: 'elevated',
@@ -2571,16 +2607,8 @@ export class DocsService {
         false,
         at
       );
-      store.putPublish({
-        task,
-        doc: doc.id,
-        rev: head.id,
-        path,
-        state: 'open',
-        commit: null,
-        createdAt: at,
-        reason: null,
-      });
+      store.deletePublish(pending.task);
+      store.putPublish({ ...pending, task, state: 'open', createdAt: at });
       this.outbox.push({
         doc: doc.id,
         scope: doc.scope,
@@ -2590,7 +2618,52 @@ export class DocsService {
         summary: `publishing to ${path}`,
       });
     });
-    return { task, doc: this.record(doc) };
+    return { task, doc: this.record(doc), existing: false };
+  }
+
+  // Boot, before anything dispatches: a pending row is a publish a crash cut
+  // short. The task it created, if any, closes; then the row goes.
+  recoverPublishes(): void {
+    if (!this.available) return;
+    const store = this.store();
+    const owned = new Set(store.publishRows({}).map((r) => r.task));
+    for (const row of store.publishRows({ state: 'pending' })) {
+      const doc = store.doc(row.doc);
+      const n = store.revisionMeta(row.rev)?.n ?? 0;
+      const orphans =
+        doc === null
+          ? []
+          : this.host.findPublishTasks(publishTitle(doc.handle, n, row.path));
+      for (const task of orphans) {
+        if (owned.has(task)) continue;
+        try {
+          this.host.closePublishTask(
+            task,
+            'the daemon stopped before this publish was recorded; publish the doc again'
+          );
+        } catch (err) {
+          console.error(`docs: closing publish task ${task} failed`, err);
+        }
+      }
+      this.write(() => store.deletePublish(row.task));
+    }
+  }
+
+  // Open publishes that asked for a run, with who it starts as; the boot
+  // dispatches each one that has no run yet.
+  publishesToDispatch(): {
+    task: string;
+    actor: string;
+    operator: string | null;
+  }[] {
+    if (!this.available) return [];
+    return this.store()
+      .publishRows({ state: 'open' })
+      .flatMap((r) =>
+        r.dispatchAs === null || r.dispatchAs === undefined
+          ? []
+          : [{ task: r.task, ...r.dispatchAs }]
+      );
   }
 
   // Whether `taskId` runs an open publish; with docs.db closed it cannot be

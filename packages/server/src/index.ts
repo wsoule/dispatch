@@ -70,6 +70,7 @@ import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
 import { docsRestoreDir, openDocs } from './docs/open.js';
 import { docsReceiptsStep } from './docs/receipts.js';
+import { redispatchPublishes } from './docs/routes.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
@@ -1403,6 +1404,12 @@ async function bootServer(
       console.error('docs: recording publishes failed', err);
     }
   };
+  // A publish a crash cut short closes its orphan task before anything runs.
+  try {
+    docs.service.recoverPublishes();
+  } catch (err) {
+    console.error('docs: recovering publishes failed', err);
+  }
   syncDocPublishes();
   const unsubscribeDocPublishes = events.subscribe((event) => {
     if (event.type === 'task.changed') syncDocPublishes();
@@ -1469,6 +1476,12 @@ async function bootServer(
     await docs.service.reconcileGates();
   } catch (err) {
     console.error('dispatchd: doc gate reconcile failed', err);
+  }
+  // Open publishes a crash left with no run start now.
+  try {
+    await redispatchPublishes(docs.service, orchestrator);
+  } catch (err) {
+    console.error('dispatchd: publish redispatch failed', err);
   }
   // Before HTTP serves: the boot import carries every ledger lesson in before
   // the first dispatch, then proposals a crash left without a gate get one.

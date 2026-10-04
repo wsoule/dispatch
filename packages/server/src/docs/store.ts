@@ -110,6 +110,17 @@ const FTS_DDL =
 const LATER_COLUMNS: readonly { table: string; column: string; ddl: string }[] =
   [
     { table: 'publishes', column: 'reason', ddl: 'reason TEXT' },
+    { table: 'publishes', column: 'idem_key', ddl: 'idem_key TEXT' },
+    {
+      table: 'publishes',
+      column: 'dispatch_actor',
+      ddl: 'dispatch_actor TEXT',
+    },
+    {
+      table: 'publishes',
+      column: 'dispatch_operator',
+      ddl: 'dispatch_operator TEXT',
+    },
     { table: 'assets', column: 'checked_at', ddl: 'checked_at TEXT' },
   ];
 
@@ -199,11 +210,16 @@ export interface PublishRow {
   doc: string;
   rev: string;
   path: string;
-  state: 'open' | 'landed' | 'dropped' | 'failed';
+  // `pending` is written before the task exists, keyed `pending:<nonce>`.
+  state: 'pending' | 'open' | 'landed' | 'dropped' | 'failed';
   commit: string | null;
   createdAt: string;
   // Why a publish failed; null otherwise.
   reason: string | null;
+  // The Idempotency-Key the publish was asked with, kept across restarts.
+  idemKey?: string | null;
+  // Who its run starts as; null when the caller asked for no run.
+  dispatchAs?: { actor: string; operator: string | null } | null;
 }
 
 export interface RevisionRow {
@@ -1078,9 +1094,25 @@ export class SqliteDocStore {
 
   putPublish(p: PublishRow): void {
     this.run(
-      'INSERT OR REPLACE INTO publishes (task_id, doc_id, rev_id, path, state, "commit", created_at, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [p.task, p.doc, p.rev, p.path, p.state, p.commit, p.createdAt, p.reason]
+      'INSERT OR REPLACE INTO publishes (task_id, doc_id, rev_id, path, state, "commit", created_at, reason, idem_key, dispatch_actor, dispatch_operator) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        p.task,
+        p.doc,
+        p.rev,
+        p.path,
+        p.state,
+        p.commit,
+        p.createdAt,
+        p.reason,
+        p.idemKey ?? null,
+        p.dispatchAs?.actor ?? null,
+        p.dispatchAs?.operator ?? null,
+      ]
     );
+  }
+
+  deletePublish(task: string): void {
+    this.run('DELETE FROM publishes WHERE task_id = ?', [task]);
   }
 
   // Publish rows matching every given filter, newest first.
@@ -1088,6 +1120,7 @@ export class SqliteDocStore {
     doc?: string;
     task?: string;
     state?: PublishRow['state'];
+    idemKey?: string;
   }): PublishRow[] {
     const where: string[] = [];
     const params: SqlValue[] = [];
@@ -1095,6 +1128,7 @@ export class SqliteDocStore {
       ['doc_id', filter.doc],
       ['task_id', filter.task],
       ['state', filter.state],
+      ['idem_key', filter.idemKey],
     ] as const) {
       if (value === undefined) continue;
       where.push(`${column} = ?`);
@@ -1110,6 +1144,9 @@ export class SqliteDocStore {
       commit: string | null;
       created_at: string;
       reason: string | null;
+      idem_key: string | null;
+      dispatch_actor: string | null;
+      dispatch_operator: string | null;
     }>(
       `SELECT * FROM publishes${clause} ORDER BY created_at DESC, task_id DESC`,
       params
@@ -1122,6 +1159,11 @@ export class SqliteDocStore {
       commit: r.commit,
       createdAt: r.created_at,
       reason: r.reason,
+      idemKey: r.idem_key,
+      dispatchAs:
+        r.dispatch_actor === null
+          ? null
+          : { actor: r.dispatch_actor, operator: r.dispatch_operator },
     }));
   }
 

@@ -106,6 +106,8 @@ export interface DocsHost extends DocsGatePort {
   }): string;
   // Drops a publish task whose seed failed, so it never sits open with no run that can start.
   closePublishTask(taskId: string, reason: string): void;
+  // Open elevated tasks titled `title`: the orphans a crashed publish left.
+  findPublishTasks(title: string): string[];
   // How a publish task ended: landed only once a run's merge changed `path`;
   // failed when a merge landed nothing there; null while it is still open.
   // `seeded` is the text the publish wrote into the run's worktree.
@@ -226,6 +228,20 @@ export class DaemonDocsHost implements DocsHost {
     );
     this.deps.refreshTask?.(taskId);
     this.deps.events.broadcast({ type: 'task.changed', ids: [taskId] });
+  }
+
+  findPublishTasks(title: string): string[] {
+    const model = statusModelFor(this.rootDir);
+    return this.deps.store
+      .list()
+      .filter(
+        (t) =>
+          t.meta.title === title &&
+          t.meta.risk === 'elevated' &&
+          !isCanceledStatus(t.meta.status, model) &&
+          !isCompletedStatus(t.meta.status, model)
+      )
+      .map((t) => t.meta.id);
   }
 
   // A status alone never lands a publish (an agent may set any status): one of
