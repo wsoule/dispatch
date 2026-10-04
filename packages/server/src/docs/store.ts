@@ -196,6 +196,28 @@ export interface DocRow {
   indexedHash: string | null;
 }
 
+// A doc's link to the Linear document it syncs with (v2).
+export interface LinearDocRow {
+  docId: string;
+  documentId: string;
+  baseRev: string;
+  remoteUpdatedAt: string;
+}
+
+interface RawLinearDoc {
+  doc_id: string;
+  document_id: string;
+  base_rev: string;
+  remote_updated_at: string;
+}
+
+const toLinearDoc = (r: RawLinearDoc): LinearDocRow => ({
+  docId: r.doc_id,
+  documentId: r.document_id,
+  baseRev: r.base_rev,
+  remoteUpdatedAt: r.remote_updated_at,
+});
+
 // One image stored for a doc; its file is docs-assets/<doc>/<name>.
 export interface AssetRow {
   doc: string;
@@ -587,7 +609,11 @@ export class SqliteDocStore {
     ];
     const params: SqlValue[] = [...filter.ns, ...filter.statuses];
     if (filter.unreviewed === true) where.push('unreviewed = 1');
-    if (filter.conflicted === true) where.push('conflicted = 1');
+    // A doc with a sync problem needs a human as a conflicted one does.
+    if (filter.conflicted === true)
+      where.push(
+        "(conflicted = 1 OR id IN (SELECT substr(key, 9) FROM meta WHERE key LIKE 'problem:%'))"
+      );
     if (filter.ids !== undefined) {
       if (filter.ids.length === 0) return { rows: [], total: 0 };
       where.push(`id IN (${filter.ids.map(() => '?').join(', ')})`);
@@ -1409,6 +1435,35 @@ export class SqliteDocStore {
     return (
       this.one<{ value: string }>('SELECT value FROM meta WHERE key = ?', [key])
         ?.value ?? null
+    );
+  }
+
+  deleteMeta(key: string): void {
+    this.run('DELETE FROM meta WHERE key = ?', [key]);
+  }
+
+  // The Linear document a doc syncs with: its id, the last synced revision
+  // and the Linear `updatedAt` that revision matched.
+  linearDoc(docId: string): LinearDocRow | null {
+    const r = this.one<RawLinearDoc>(
+      'SELECT * FROM linear_docs WHERE doc_id = ?',
+      [docId]
+    );
+    return r === undefined ? null : toLinearDoc(r);
+  }
+
+  linearDocByDocument(documentId: string): LinearDocRow | null {
+    const r = this.one<RawLinearDoc>(
+      'SELECT * FROM linear_docs WHERE document_id = ?',
+      [documentId]
+    );
+    return r === undefined ? null : toLinearDoc(r);
+  }
+
+  putLinearDoc(row: LinearDocRow): void {
+    this.run(
+      'INSERT OR REPLACE INTO linear_docs (doc_id, document_id, base_rev, remote_updated_at) VALUES (?, ?, ?, ?)',
+      [row.docId, row.documentId, row.baseRev, row.remoteUpdatedAt]
     );
   }
 

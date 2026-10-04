@@ -82,6 +82,7 @@ import {
 } from './sections.js';
 import type {
   DocRow,
+  LinearDocRow,
   LinkRow,
   PublishRow,
   RevisionMeta,
@@ -401,6 +402,14 @@ function hasConflictMarkers(body: string): boolean {
     else if (stage === 2 && line.startsWith('>>>>>>> ')) return true;
   }
   return false;
+}
+
+const problemKey = (docId: string): string => `problem:${docId}`;
+
+// A doc's stored sync problem as DocRecord carries it, or nothing.
+function problemOf(store: SqliteDocStore, docId: string): { problem?: string } {
+  const problem = store.meta(problemKey(docId));
+  return problem === null ? {} : { problem };
 }
 
 export class DocsService {
@@ -747,6 +756,8 @@ export class DocsService {
       at: string;
       approval?: { by: string; policy?: { rung: number } };
       restores?: RevisionMeta;
+      // Text from outside Dispatch (Linear): unreviewed whoever it maps to.
+      external?: string;
     }
   ): RevisionRow {
     const store = this.store();
@@ -754,15 +765,17 @@ export class DocsService {
       meta === null
         ? { unreviewed: false, reviewed: false }
         : { unreviewed: meta.unreviewed, reviewed: store.hasReview(meta.id) };
-    const unreviewed = unreviewedAtCreation({
-      author: input.author,
-      cause: input.cause,
-      approval: input.approval ?? null,
-      unverifiedVia: false,
-      parents: input.parents.map((id) => state(store.revisionMeta(id))),
-      restores:
-        input.restores === undefined ? undefined : state(input.restores),
-    });
+    const unreviewed =
+      input.external !== undefined ||
+      unreviewedAtCreation({
+        author: input.author,
+        cause: input.cause,
+        approval: input.approval ?? null,
+        unverifiedVia: false,
+        parents: input.parents.map((id) => state(store.revisionMeta(id))),
+        restores:
+          input.restores === undefined ? undefined : state(input.restores),
+      });
     return {
       id: this.newId('rev'),
       docId,
@@ -781,7 +794,7 @@ export class DocsService {
       sealed: input.sealed,
       unreviewed,
       provisional: false,
-      via: null,
+      via: input.external ?? null,
       createdAt: input.at,
       updatedAt: input.at,
     };
@@ -933,6 +946,7 @@ export class DocsService {
               commit: doc.publishedCommit,
             },
       lastPublishPath: store.publishRows({ doc: doc.id })[0]?.path ?? null,
+      ...problemOf(store, doc.id),
       createdBy: doc.createdBy,
       createdAt: doc.createdAt,
       updatedBy: doc.updatedBy,
@@ -1006,7 +1020,8 @@ export class DocsService {
     actor: DocsActor,
     input: DocCreateInput,
     origin: string | null,
-    carries?: RevisionMeta
+    carries?: RevisionMeta,
+    external?: string
   ): DocSaveResult {
     const store = this.store();
     this.requireDraftWriter(actor);
@@ -1096,6 +1111,7 @@ export class DocsService {
         numbered: true,
         restores: carries,
         at,
+        ...(external === undefined ? {} : { external }),
       });
       store.insertRevision(rev);
       this.setHead(doc, rev, actor.address, at);
@@ -1141,6 +1157,8 @@ export class DocsService {
       next.cause !== 'revert' && this.isOpenTo(head, actor, now, cfg);
     return this.write(() => {
       const store = this.store();
+      // A human's own save settles a sync problem.
+      if (actor.kind === 'human') store.deleteMeta(problemKey(doc.id));
       if (amend) {
         const summary = cutUtf8(
           `${head.summary}; ${next.summary}`,
@@ -2153,6 +2171,8 @@ export class DocsService {
       doc.unreviewed = false;
       doc.reviewedRev = head.id;
       this.store().putDoc(doc);
+      // A human's review settles a sync problem too.
+      this.store().deleteMeta(problemKey(doc.id));
       this.outbox.push({
         doc: doc.id,
         scope: doc.scope,
@@ -2312,6 +2332,345 @@ export class DocsService {
     if (store.doc(id)?.scope === 'personal') return personal;
     if (store.tombstone(id)?.ns.startsWith('p:') === true) return personal;
     return null;
+  }
+
+  // ---- Linear documents (v2) -----------------------------------------------
+
+  // The actor a Linear change writes as: the mapped person's address, or
+  // agent:linear, as a draft writer of team docs and never anyone's personal ones.
+  private linearActor(author: string): DocsActor {
+    return {
+      principal: { address: author, canDecide: false, kind: 'human' },
+      address: author,
+      kind: 'human',
+      decider: false,
+      runKind: null,
+      taskId: null,
+      runTaskId: null,
+      runId: null,
+      operator: null,
+      a2aRun: false,
+    };
+  }
+
+  // The doc a Linear document syncs into, or null for none.
+  linearDocFor(documentId: string): string | null {
+    return this.store().linearDocByDocument(documentId)?.docId ?? null;
+  }
+
+  // Folds a Linear document into docs: a new one becomes a team draft linked
+  // to its task, a later edit merges against the head (diff3 from the last
+  // synced revision), and an accepted doc takes it as a proposal. Linear text
+  // is never a Dispatch human's, so every revision it makes reads unreviewed.
+  linearUpsert(
+    incoming: { id: string; title: string; content: string; updatedAt: string },
+    taskId: string | null,
+    author: string
+  ): 'created' | 'merged' | 'conflicted' | 'proposed' | 'unchanged' {
+    const store = this.store();
+    const origin = `linear:${incoming.id}`;
+    const body = splitForCap(normalizeDocText(incoming.content))[0] ?? '';
+    const state = store.linearDocByDocument(incoming.id);
+    if (state === null) {
+      if (store.tombstonedOrigin(origin)) return 'unchanged';
+      const title = this.linearTitle(incoming.title);
+      const made = this.createDoc(
+        this.linearActor(author),
+        {
+          title,
+          body,
+          scope: 'team',
+          links:
+            taskId !== null && this.host.exists({ type: 'task', id: taskId })
+              ? [{ target: { type: 'task', id: taskId }, rel: 'context' }]
+              : [],
+        },
+        origin,
+        undefined,
+        'linear'
+      );
+      const doc = store.doc(made.doc.id);
+      if (doc === null) throw new Error(`doc ${made.doc.id} vanished`);
+      this.write(() => {
+        this.sealInTx(doc, this.headOf(doc));
+        store.putLinearDoc({
+          docId: doc.id,
+          documentId: incoming.id,
+          baseRev: doc.headId,
+          remoteUpdatedAt: incoming.updatedAt,
+        });
+      });
+      return 'created';
+    }
+    const doc = store.doc(state.docId);
+    // Gone, personal (never synced) or archived: nothing to fold into.
+    if (doc === null || doc.scope !== 'team' || doc.status === 'archived')
+      return 'unchanged';
+    if (state.remoteUpdatedAt === incoming.updatedAt) return 'unchanged';
+    const base = store.revision(state.baseRev);
+    if (base !== null && base.body === body) {
+      this.write(() =>
+        store.putLinearDoc({ ...state, remoteUpdatedAt: incoming.updatedAt })
+      );
+      return 'unchanged';
+    }
+    if (this.gated(doc))
+      return this.linearPropose(
+        doc,
+        state,
+        body,
+        author,
+        origin,
+        incoming.updatedAt
+      );
+    return this.linearMerge(doc, state, body, author, incoming.updatedAt);
+  }
+
+  // A Linear title as a doc title: one line within the limit.
+  private linearTitle(title: string): string {
+    const line = cutUtf8(
+      title.replace(/\s+/g, ' ').trim(),
+      DOCS_LIMITS.titleBytes
+    ).trim();
+    return line !== '' ? line : 'Linear document';
+  }
+
+  // Merges incoming Linear text into an editable head: a clean result is a
+  // sync revision, a conflict a conflicted head with markers, and a result over
+  // the limits a conflicted head that keeps the local text with a note.
+  private linearMerge(
+    doc: DocRow,
+    state: LinearDocRow,
+    incoming: string,
+    author: string,
+    remoteUpdatedAt: string
+  ): 'merged' | 'conflicted' {
+    const store = this.store();
+    const at = this.nowIso();
+    return this.write(() => {
+      this.sealInTx(doc, this.headOf(doc));
+      const head = this.headOf(doc);
+      const base = store.revision(state.baseRev);
+      const merged = merge3(base?.body ?? '', head.body, incoming, {
+        head: head.id,
+        base: state.baseRev,
+        mine: `linear:${state.documentId}`,
+      });
+      let body: string;
+      let conflicted = false;
+      if (merged.clean && docBodyProblem(merged.body) === null) {
+        body = merged.body;
+      } else if (!merged.clean && docBodyProblem(merged.marked) === null) {
+        body = merged.marked;
+        conflicted = true;
+      } else {
+        body = `${head.body}${head.body.endsWith('\n') || head.body === '' ? '' : '\n'}[Linear's version of this doc is over the size limit and was not merged; see linear:${state.documentId}]\n`;
+        conflicted = true;
+      }
+      const rev = this.makeRevision(doc.id, {
+        parents: [head.id],
+        title: head.title,
+        body,
+        author,
+        cause: 'sync',
+        summary: conflicted ? 'Linear edit, conflicted' : 'Linear edit',
+        sealed: true,
+        numbered: true,
+        at,
+        external: 'linear',
+      });
+      rev.conflicted = conflicted;
+      store.insertRevision(rev);
+      this.setHead(doc, rev, author, at);
+      this.reindex(doc, rev);
+      this.rebuildMentions(doc, rev);
+      store.putDoc(doc);
+      store.putLinearDoc({ ...state, baseRev: rev.id, remoteUpdatedAt });
+      this.outbox.push({
+        doc: doc.id,
+        scope: doc.scope,
+        kind: 'sealed',
+        author,
+        rev: rev.id,
+        summary: rev.summary,
+      });
+      return conflicted ? 'conflicted' : 'merged';
+    });
+  }
+
+  // A Linear edit to an accepted doc waits as a proposal against the last
+  // synced revision, one per Linear document (amended in place), exempt from
+  // the per-author limits: Linear's editors are not decide-tier humans.
+  private linearPropose(
+    doc: DocRow,
+    state: LinearDocRow,
+    body: string,
+    author: string,
+    origin: string,
+    remoteUpdatedAt: string
+  ): 'proposed' {
+    const store = this.store();
+    const at = this.nowIso();
+    const open = store
+      .proposalRows({ doc: doc.id, states: ['open'] })
+      .find((p) => p.origin === origin);
+    let created: string | null = null;
+    this.write(() => {
+      if (open !== undefined) {
+        store.amendRevision(open.rev, {
+          title: doc.title,
+          body,
+          hash: sha256(body),
+          bytes: utf8Bytes(body),
+          summary: 'Linear edit',
+          updatedAt: at,
+        });
+      } else {
+        const rev = this.makeRevision(doc.id, {
+          parents: [state.baseRev],
+          title: doc.title,
+          body,
+          author,
+          cause: 'proposal',
+          summary: 'Linear edit',
+          sealed: true,
+          numbered: false,
+          at,
+          external: 'linear',
+        });
+        store.insertRevision(rev);
+        store.putProposal({
+          rev: rev.id,
+          doc: doc.id,
+          base: state.baseRev,
+          author,
+          operator: null,
+          runId: null,
+          taskId: null,
+          origin,
+          gate: null,
+          state: 'open',
+          decidedBy: null,
+          decidedByPolicy: null,
+          reason: null,
+          result: null,
+          createdAt: at,
+          decidedAt: null,
+        });
+        created = rev.id;
+      }
+      store.putLinearDoc({ ...state, remoteUpdatedAt });
+      this.outbox.push({
+        doc: doc.id,
+        scope: doc.scope,
+        kind: 'meta',
+        author,
+        rev: null,
+        summary: 'Linear edit proposed',
+      });
+    });
+    if (created !== null) void this.ensureGate(created);
+    return 'proposed';
+  }
+
+  // A Linear-origin team doc's sealed head and its sync state, for a push;
+  // null for any other doc (only docs that came from Linear push back).
+  linearPushSource(
+    docId: string
+  ): { state: LinearDocRow; head: RevisionRow; baseBody: string } | null {
+    const store = this.store();
+    const state = store.linearDoc(docId);
+    const doc = store.doc(docId);
+    if (state === null || doc === null || doc.scope !== 'team') return null;
+    if (doc.origin !== `linear:${state.documentId}`) return null;
+    this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    const baseBody = store.revision(state.baseRev)?.body ?? '';
+    return { state, head: this.headOf(doc), baseBody };
+  }
+
+  // After a push: the pushed revision is the base Linear now holds.
+  linearPushed(docId: string, revId: string, remoteUpdatedAt: string): void {
+    const store = this.store();
+    const state = store.linearDoc(docId);
+    if (state === null) return;
+    this.write(() =>
+      store.putLinearDoc({ ...state, baseRev: revId, remoteUpdatedAt })
+    );
+  }
+
+  // A sync problem a human must see; it lists the doc as conflicted until a
+  // human's save or review clears it.
+  recordProblem(docId: string, detail: string): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    if (doc === null) return;
+    this.write(() => {
+      store.setMeta(problemKey(docId), cutUtf8(detail, 500));
+      this.outbox.push({
+        doc: doc.id,
+        scope: doc.scope,
+        kind: 'meta',
+        author: SYSTEM_ADDRESS,
+        rev: null,
+        summary: 'sync problem',
+      });
+    });
+  }
+
+  // What "Share to Linear" sends: a decide-tier human's live team doc linked to
+  // a task. Refused before any Linear call otherwise.
+  linearShareSource(
+    actor: DocsActor,
+    ref: string
+  ): { docId: string; title: string; body: string; taskIds: string[] } {
+    const doc = this.resolve(actor, ref);
+    if (doc.scope !== 'team')
+      throw forbidden('personal docs never go to Linear', 'doc');
+    if (!actor.decider)
+      throw forbidden('only a decide-tier human shares a doc to Linear', 'doc');
+    if (doc.status === 'archived') throw archivedError();
+    const store = this.store();
+    if (
+      store.linearDoc(doc.id) !== null ||
+      doc.origin?.startsWith('linear:') === true
+    )
+      throw new DocsError('conflict', 'the doc is already in Linear', 'doc');
+    this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    const head = this.headOf(doc);
+    const taskIds = store
+      .links({ docId: doc.id })
+      .filter((l) => l.targetType === 'task')
+      .map((l) => l.targetId);
+    return { docId: doc.id, title: head.title, body: head.body, taskIds };
+  }
+
+  // After a share: the doc is Linear-origin, synced at its head.
+  linearShared(
+    docId: string,
+    documentId: string,
+    remoteUpdatedAt: string
+  ): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    if (doc === null) return;
+    this.write(() => {
+      doc.origin = `linear:${documentId}`;
+      store.putDoc(doc);
+      store.putLinearDoc({
+        docId,
+        documentId,
+        baseRev: doc.headId,
+        remoteUpdatedAt,
+      });
+      this.outbox.push({
+        doc: doc.id,
+        scope: doc.scope,
+        kind: 'meta',
+        author: SYSTEM_ADDRESS,
+        rev: null,
+        summary: 'shared to Linear',
+      });
+    });
   }
 
   // ---- memory overflow (v1) -------------------------------------------------

@@ -72,6 +72,9 @@ export interface DocRecord {
   } | null;
   // The path the newest publish asked for, so the publish dialog can offer it again.
   lastPublishPath: string | null;
+  // A sync problem a human should see (a Linear edit a push overwrote); cleared
+  // by a human's save or review. Absent when there is none.
+  problem?: string;
   createdBy: string;
   createdAt: string;
   updatedBy: string;
