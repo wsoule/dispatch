@@ -67,6 +67,7 @@ describe('TokenRegistry', () => {
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'operator',
+      appToken: true,
     });
     expect(reg.resolve('agent-aaa')).toEqual({
       handle: 'wyat',

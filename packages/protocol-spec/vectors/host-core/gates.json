@@ -851,8 +851,8 @@
       }
     },
     {
-      "id": "core.gates.memory-is-raised-by-the-system-or-a-deciding-human",
-      "title": "The system and a deciding human may raise a memory gate, whose raisedBy is system-or-decider; a human without the decide tier may not",
+      "id": "core.gates.memory-is-raised-only-by-the-system",
+      "title": "A deciding human or a human without the decide tier may not raise a memory gate, whose raisedBy is system; the system may",
       "class": "host-core",
       "level": "MUST",
       "profile": "dispatch",
@@ -920,24 +920,13 @@
       "then": {
         "steps": [
           { "ok": true },
-          { "ok": true },
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } },
           { "ok": false, "error": { "code": "forbidden", "field": "data" } }
         ],
         "messages": [
           {
             "id": "$s1",
             "from": "$system",
-            "data": {
-              "type": "memory",
-              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
-              "action": "add",
-              "scope": "project",
-              "kind": "convention"
-            }
-          },
-          {
-            "id": "$s2",
-            "from": "human:wyat",
             "data": {
               "type": "memory",
               "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",

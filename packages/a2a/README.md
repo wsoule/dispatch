@@ -71,6 +71,17 @@ behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced
   always carries the whole artifact (`append: false`, `lastChunk: true`), so
   replace your copy of it rather than appending.
 
+## Known limit: runs outside their token
+
+Inside Dispatch, provenance follows lineage: a task that an A2A-origin run
+creates, edits or dispatches is A2A-origin too, so its runs act for no one, and
+an A2A-origin run reads only its own A2A task. Both rest on the run presenting
+its own run token. A run that reads the daemon's shared agent token from the
+daemon file, or shells out to the `dispatch` CLI, escapes them: its tasks carry
+no lineage and its reads are not narrowed. Its writes are still credited to
+`agent:local-cli`, never the owner. This is accepted for now (XH-R7). Closing it
+needs sandboxing that denies runs the daemon file.
+
 ## Signed card
 
 dispatchd signs its card with an ES256 key kept per project in the 0600

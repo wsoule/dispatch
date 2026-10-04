@@ -21,7 +21,14 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 type CommentRouteContext = Pick<
   ApiContext,
-  'rootDir' | 'store' | 'events' | 'commentStore' | 'caller' | 'actorContext'
+  | 'rootDir'
+  | 'store'
+  | 'events'
+  | 'commentStore'
+  | 'caller'
+  | 'actorContext'
+  | 'viaRun'
+  | 'runActor'
 > &
   Partial<Pick<ApiContext, 'orchestrator'>>;
 
@@ -38,6 +45,7 @@ function commentsOf(ctx: CommentRouteContext): CommentStorePort {
  * who operates the daemon. Any other credential is its human.
  */
 function commentActor(ctx: CommentRouteContext, runId: unknown): string {
+  if (ctx.runActor !== undefined) return ctx.runActor;
   if (ctx.caller?.agentToken !== true) return humanActor(ctx);
   const run =
     typeof runId === 'string'
@@ -49,6 +57,8 @@ function commentActor(ctx: CommentRouteContext, runId: unknown): string {
 // Whether the caller may edit or delete a comment `author` wrote: their own,
 // or (for a human) one their own agents wrote.
 function mayModify(ctx: CommentRouteContext, author: string): boolean {
+  // A run edits only what it wrote itself.
+  if (ctx.runActor !== undefined) return author === ctx.runActor;
   if (ctx.caller?.agentToken === true) {
     const operator = ctx.caller.handle;
     return author === 'agent' || author.startsWith(`agent:${operator}/`);

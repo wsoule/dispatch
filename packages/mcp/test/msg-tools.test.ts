@@ -125,8 +125,9 @@ class FakeDaemon {
 
   private server: ReturnType<typeof Bun.serve> | undefined;
 
-  // Register and config take only the shared agentToken; every other route is
-  // a messaging route and takes only a run or approved agent token.
+  // Register takes only the shared agentToken, config that or a run's own
+  // token (XH-R2); every other route is a messaging route and takes only a
+  // run or approved agent token.
   private authFailure(req: Request, url: URL): Response | null {
     const token = (req.headers.get('authorization') ?? '').replace(
       /^Bearer /,
@@ -134,11 +135,10 @@ class FakeDaemon {
     );
     const sharedOnly =
       url.pathname === '/api/config' || url.pathname === '/api/agents/register';
-    if (
-      sharedOnly
-        ? token === SHARED_AGENT_TOKEN
-        : this.messagingTokens.has(token)
-    ) {
+    const accepted =
+      token === SHARED_AGENT_TOKEN ||
+      (url.pathname === '/api/config' && token === 'rt-secret');
+    if (sharedOnly ? accepted : this.messagingTokens.has(token)) {
       return null;
     }
     this.rejectedTokens.push(token);

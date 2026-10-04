@@ -567,6 +567,15 @@ export class SqliteMessageStore implements MessageStore {
     return row === undefined ? 0 : Number(row.n);
   }
 
+  countAgentThreadsFrom(from: Address, sinceIso: string): number {
+    const row = queryOne<{ n: number }>(
+      this.db,
+      "SELECT COUNT(*) AS n FROM messages m WHERE m.from_addr = ? AND m.thread = m.id AND COALESCE(m.received_at, m.created_at) >= ? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.message_id = m.id AND d.recipient LIKE 'human:%')",
+      [from, sinceIso]
+    );
+    return row === undefined ? 0 : Number(row.n);
+  }
+
   // A remote agent:dispatch is an ordinary agent here, so only the local
   // system address is excluded.
   countAgentAuthored(

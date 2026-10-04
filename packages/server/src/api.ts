@@ -45,6 +45,13 @@ import { isA2AClientToken } from './a2a/auth.js';
 import type { A2ABridge } from './a2a/bridge.js';
 import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
+import type { A2ARunScope } from './api/a2aRunScope.js';
+import {
+  a2aRunAllows,
+  a2aRunScope,
+  bodyTaskId,
+  lineageStore,
+} from './api/a2aRunScope.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
 import {
@@ -65,7 +72,12 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor, humanOperator } from './api/caller.js';
+import {
+  humanActor,
+  humanOperator,
+  requestActor,
+  runActorFor,
+} from './api/caller.js';
 import {
   addComment,
   addLegacyTaskNote,
@@ -136,7 +148,11 @@ import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
 import { checkDaemonIdentity } from './daemonfile.js';
-import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
+import type {
+  DecisionDisposition,
+  DecisionFeed,
+  DecisionItem,
+} from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
 import { handleDocsRoute } from './docs/routes.js';
 import type { DocsService } from './docs/service.js';
@@ -255,6 +271,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
   runMessageRefusal,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -448,6 +465,14 @@ export interface ApiContext {
   /** True when the request presented the owner's app token. Set per request
    *  by handleApi. */
   ownerCredential?: boolean;
+  /** The live run whose own token made this request (XH-R2). `caller` is then
+   *  the agent token's identity and `viaAgentToken` is true. */
+  viaRun?: string;
+  /** What `viaRun`'s writes are credited as (api/caller.ts runActorFor). */
+  runActor?: string;
+  /** Set when `viaRun` is A2A-origin: it reaches only the XH-R8 allowlist
+   *  (api/a2aRunScope.ts), and its task writes inherit its provenance. */
+  a2aRun?: A2ARunScope;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -670,6 +695,12 @@ function validateTaskFields(
   return null;
 }
 
+/** XH-R2: a task a run dispatches through its own token inherits that run's
+ *  A2A provenance; creates and edits inherit it through lineageStore. */
+function inheritLineage(ctx: ApiContext, taskId: string): void {
+  if (ctx.viaRun !== undefined) ctx.a2a?.inherit(ctx.viaRun, taskId);
+}
+
 // The title and field checks POST /api/tasks runs, shared with A2A handoffs.
 export function validateTaskInput(
   rootDir: string,
@@ -716,20 +747,14 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const input = parsed.value as CreateInput;
   const refused = a2aParentRefusal(ctx, input.parent);
   if (refused !== null) return refused;
-  // Credit whoever made the request unless the caller names a creator (a
-  // sync importing someone else's issue).
+  // Credited to whoever made the request; a body `creator` is ignored, since
+  // imports (Linear, A2A) write through the store in-process (XH-R2).
   const created = createTaskChecked(ctx, {
     ...input,
-    creator: input.creator ?? humanActor(ctx),
+    creator: requestActor(ctx),
   });
   if (!created.ok) return errorResponse(400, created.error);
-  // A task imported on someone else's behalf is not the caller's writing.
-  ctx.taskAuthorship?.created(
-    created.doc,
-    input.creator === undefined || input.creator === humanActor(ctx)
-      ? humanOperator(ctx)
-      : null
-  );
+  ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
   return jsonResponse(created.doc, 201);
 }
 
@@ -878,7 +903,7 @@ async function updateTask(
   // credited to the human whose credential made the call, never whatever the
   // client sent (an untrusted body must not be able to forge attribution).
   if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
-    patch.activityActor = humanActor(ctx);
+    patch.activityActor = requestActor(ctx);
   }
 
   const doc = ctx.store.update(id, patch);
@@ -950,6 +975,8 @@ async function createRun(
   if (freshField !== undefined && typeof freshField !== 'boolean') {
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
+  // Before dispatch, so a run an A2A run starts is A2A-origin from its start.
+  if (task !== null) inheritLineage(ctx, taskId);
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
   // the raw fields go through untouched; the orchestrator resolves the
   // executor's own default model for a fresh run.
@@ -960,7 +987,7 @@ async function createRun(
     fresh: freshField === true,
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
-    actor: humanActor(ctx),
+    actor: requestActor(ctx),
     // Who the run acts for: the credential's own human (the owner only on
     // the app token), never the shared agentToken.
     operator: humanOperator(ctx),
@@ -2084,7 +2111,7 @@ function sendReviewToAgent(
     resume
       ? {
           resume: true,
-          actor: humanActor(ctx),
+          actor: requestActor(ctx),
           operator: humanOperator(ctx),
         }
       : {}
@@ -3828,7 +3855,7 @@ async function startEpic(
   const operator = humanOperator(ctx);
   const session = await ctx.epicEngine.start(epicId, {
     ...checked.body,
-    startedBy: humanActor(ctx),
+    startedBy: requestActor(ctx),
     ...(operator === null ? {} : { operator }),
   });
   return jsonResponse(session, 201);
@@ -4884,6 +4911,53 @@ export function rejectUnauthorized(
   return null;
 }
 
+/**
+ * XH-R4: which decision feed items the caller may see. A deciding human sees
+ * all of them; anyone else only the items they take part in: a gate whose
+ * message they can read, a stalled run they are or act for, a capped fix loop
+ * on a task they created.
+ */
+function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
+  const agent = ctx.viaAgentToken === true;
+  if (!agent && tierAllows(ctx.caller?.tier ?? 'request', 'decide'))
+    return () => true;
+  const address =
+    ctx.viaRun !== undefined ? `run:${ctx.viaRun}` : requestActor(ctx);
+  // The bare agent token takes part in no conversation, so it reads none.
+  const reader =
+    agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
+  const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
+  return (item) => {
+    const source = item.id.slice(item.id.indexOf(':') + 1);
+    if (source.startsWith('m-'))
+      return reader !== null && ctx.messaging.engine.canRead(source, reader);
+    if (item.runId !== undefined) {
+      const run = runs.get(item.runId);
+      return (
+        address === `run:${item.runId}` ||
+        (run !== undefined &&
+          (runOperator(run) === address || run.dispatchedBy === address))
+      );
+    }
+    if (item.taskId !== undefined)
+      return ctx.cache.get(item.taskId)?.meta.creator === address;
+    return false;
+  };
+}
+
+/** The run a presented token belongs to, and whether it is still live; null
+ *  when the token is a registry credential or no run's at all. */
+function runCredential(
+  ctx: ApiContext,
+  presented: string | null
+): { runId: string; live: boolean } | null {
+  if (presented === null || presented === '') return null;
+  if (ctx.tokens.registry.lookup(presented).kind !== 'unknown') return null;
+  const runId = ctx.messaging.runTokens.verify(presented);
+  if (runId === null) return null;
+  return { runId, live: ctx.orchestrator.isRunLive(runId) };
+}
+
 export async function handleApi(
   req: Request,
   daemonCtx: ApiContext
@@ -4936,32 +5010,93 @@ export async function handleApi(
     principal = principalResult.principal;
   }
 
+  // XH-R2: a run's MCP presents the run's own token, so a write is known to
+  // come from that run. It stands where the agent token does (request tier,
+  // no human behind it) and only while the run is live.
+  const run = runCredential(daemonCtx, presented);
+  if (run !== null && !run.live) {
+    return authErrorResponse(
+      401,
+      'run token for a finished run',
+      'auth_run_token_ended'
+    );
+  }
+
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(
-      req,
-      daemonCtx.tokens,
-      tier,
-      presented
-    );
+    const unauthorized =
+      run === null
+        ? rejectUnauthorized(req, daemonCtx.tokens, tier, presented)
+        : tierAllows('request', tier)
+          ? null
+          : authErrorResponse(
+              403,
+              wrongTierMessage(tier, 'request'),
+              'auth_insufficient_tier'
+            );
     if (unauthorized !== null) return unauthorized;
   }
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
-  const caller = daemonCtx.tokens.registry.resolve(presented);
+  const caller = daemonCtx.tokens.registry.resolve(
+    run === null ? presented : daemonCtx.tokens.agentToken
+  );
   // The shared agentToken resolves to the owner but is never a human; a
   // constant-time digest compare, as resolvePrincipal does.
   const viaAgentToken =
-    presented !== null &&
-    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
+    run !== null ||
+    (presented !== null &&
+      timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken)));
   const ownerCredential =
     presented !== null &&
     timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
   let ctx: ApiContext = daemonCtx;
   if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
+  if (run !== null) {
+    const meta = ctx.orchestrator.list().find((r) => r.id === run.runId);
+    ctx = {
+      ...ctx,
+      viaRun: run.runId,
+      runActor: runActorFor(
+        run.runId,
+        meta === undefined ? null : runOperator(meta)
+      ),
+    };
+  }
   if (principal !== undefined) ctx = { ...ctx, principal };
+  const scope = run === null ? null : a2aRunScope(ctx, run.runId);
+  if (scope !== null) {
+    const bridge = ctx.a2a;
+    ctx = {
+      ...ctx,
+      a2aRun: scope,
+      store: lineageStore(ctx.store, (taskId) =>
+        bridge?.inherit(scope.runId, taskId)
+      ),
+    };
+    const findingTask =
+      segments[0] === 'findings' && method === 'POST'
+        ? await bodyTaskId(req)
+        : null;
+    if (!a2aRunAllows(scope, method, segments, findingTask)) {
+      return authErrorResponse(
+        403,
+        'an A2A-origin run reaches only its own task and run, messaging, memory and docs',
+        'auth_a2a_run_scope'
+      );
+    }
+    // Whatever task it may still write inherits its provenance (XH-R8).
+    const written =
+      method === 'GET'
+        ? null
+        : segments[0] === 'tasks'
+          ? segments[1]
+          : findingTask;
+    if (written !== undefined && written !== null)
+      ctx.a2a?.inherit(scope.runId, written);
+  }
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
@@ -5019,7 +5154,7 @@ export async function handleApi(
         return await issueTeamToken(req, ctx);
       }
       if (segments.length === 3 && method === 'DELETE') {
-        return revokeTeamToken(ctx, segments[2]);
+        return await revokeTeamToken(ctx, segments[2]);
       }
     }
 
@@ -5127,6 +5262,25 @@ export async function handleApi(
       // caller here would be a bug rather than an unauthenticated one.
       if (ctx.caller === undefined) {
         return errorResponse(401, 'credential resolves to no one');
+      }
+      // A run's own token is that run, never the owner its caller stands in
+      // for; an A2A run names no operator at all.
+      if (ctx.viaRun !== undefined) {
+        const meta = ctx.orchestrator.list().find((r) => r.id === ctx.viaRun);
+        const operator = meta === undefined ? null : runOperator(meta);
+        return jsonResponse({
+          ref: `run:${ctx.viaRun}`,
+          ...(ctx.a2aRun === undefined
+            ? {
+                operator:
+                  operator?.startsWith('human:') === true
+                    ? operator.slice('human:'.length)
+                    : null,
+              }
+            : {}),
+          tier: 'request',
+          runToken: true,
+        });
       }
       return jsonResponse(ctx.caller);
     }
@@ -5699,7 +5853,7 @@ export async function handleApi(
       ) {
         return jsonResponse(
           ctx.orchestrator.resumeRun(segments[1], {
-            actor: humanActor(ctx),
+            actor: requestActor(ctx),
             operator: humanOperator(ctx),
           }),
           201
@@ -5996,10 +6150,14 @@ export async function handleApi(
           );
         }
         return jsonResponse({
-          items: ctx.decisionFeed.list({
-            disposition: (raw ?? undefined) as DecisionDisposition | undefined,
-            includeResolved: url.searchParams.get('resolved') === '1',
-          }),
+          items: ctx.decisionFeed
+            .list({
+              disposition: (raw ?? undefined) as
+                | DecisionDisposition
+                | undefined,
+              includeResolved: url.searchParams.get('resolved') === '1',
+            })
+            .filter(decisionVisibleTo(ctx)),
         });
       }
     }

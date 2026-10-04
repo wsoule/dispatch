@@ -18,6 +18,7 @@ import { SYSTEM_SENDER } from '../messaging/gates.js';
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
 import { proposalKey } from './handoff.js';
+import type { A2ALineage } from './lineage.js';
 import { draftOfRoot } from './reconcile.js';
 
 // What the guards need; no BridgeDeps, because they must hold with a2a.db down.
@@ -30,6 +31,8 @@ export interface GuardDeps {
   statuses: () => HandoffStatuses;
   // Null when a2a.db could not be opened.
   store: A2AStore | null;
+  // Tasks A2A-origin by lineage (XH-R2); absent in tests that build bare deps.
+  lineage?: A2ALineage;
 }
 
 export interface OpenProposal {
@@ -78,8 +81,10 @@ export function openProposalFor(
 }
 
 // a2a.db answers when it links the task; otherwise (or while it fails) messages.db
-// must tie it to a handoff. Provenance text alone never counts.
+// must tie it to a handoff, or an A2A run must have made, edited or dispatched
+// it (lineage). Provenance text alone never counts.
 export function isA2ATask(deps: GuardDeps, taskId: string): boolean {
+  if (deps.lineage?.has(taskId) === true) return true;
   try {
     if ((deps.store?.taskForDispatchTask(taskId) ?? null) !== null) return true;
     if ((deps.store?.derivedFrom(taskId) ?? null) !== null) return true;

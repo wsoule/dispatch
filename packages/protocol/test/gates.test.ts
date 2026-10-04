@@ -144,10 +144,10 @@ describe('raise authority (C5)', () => {
     ).not.toThrow();
   });
 
-  it('keeps scope to sessions and widens memory to deciding humans', () => {
+  it('keeps scope to sessions and memory, like doc, to the system', () => {
     expect(GATE_RAISERS).toMatchObject({
       scope: 'session',
-      memory: 'system-or-decider',
+      memory: 'system',
       wake: 'system',
       'task-proposal': 'system',
       doc: 'system',
@@ -186,12 +186,9 @@ describe('memory gates', () => {
     data,
   };
 
-  it('accepts the exact shape from the system or a deciding human', () => {
+  it('accepts the exact shape from the system', () => {
     expect(() =>
       validateSendInput(memoryGate, SYSTEM_ADDRESS, true, null)
-    ).not.toThrow();
-    expect(() =>
-      validateSendInput(memoryGate, 'human:wyat', true, null)
     ).not.toThrow();
   });
 
@@ -231,14 +228,21 @@ describe('memory gates', () => {
     }
   });
 
-  // GATE_RAISERS.memory ('system-or-decider') refuses these.
-  it('may not be raised by a run or an agent', () => {
+  // GATE_RAISERS.memory ('system') refuses these (M5): a forged gate could
+  // name a proposal the system never raised.
+  it('may not be raised by a run, an agent or a deciding human', () => {
     expect(() =>
       validateSendInput(memoryGate, 'run:r-9f2c01', false, null)
     ).toThrow('only Dispatch may raise memory gates');
     expect(() =>
       validateSendInput(memoryGate, 'agent:wyat/claude', false, null)
     ).toThrow('only Dispatch may raise memory gates');
+    expect(() =>
+      validateSendInput(memoryGate, 'human:wyat', true, null)
+    ).toThrow('only Dispatch may raise memory gates');
+    expect(() =>
+      validateSendInput(memoryGate, SYSTEM_ADDRESS, true, null)
+    ).not.toThrow();
   });
 
   it('needs the decide tier to answer', () => {

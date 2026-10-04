@@ -6,7 +6,7 @@ import type {
   MemoryStore,
 } from '@dispatch/memory';
 import { isRestoredOrigin } from '@dispatch/memory';
-import { gateOf, isSystemMarker } from '@dispatch/protocol';
+import { gateOf, isSystemMarker, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { DeliveryEngine, Message, Ref } from '@dispatch/protocol';
 
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
@@ -23,14 +23,19 @@ export function memoryGateKind(
   return shared.getEntry(p.target)?.kind ?? 'fact';
 }
 
-// The open memory gate that names `proposalId`, if any.
+// The open memory gate the system raised for `proposalId`, if any. One from
+// anyone else is never adopted (M5): its text was not the system's.
 function openGateFor(
   engine: DeliveryEngine,
   proposalId: string
 ): Message | undefined {
   return engine.openBlocking().find((m) => {
     const gate = gateOf(m);
-    return gate?.type === 'memory' && gate.proposalId === proposalId;
+    return (
+      m.from === SYSTEM_ADDRESS &&
+      gate?.type === 'memory' &&
+      gate.proposalId === proposalId
+    );
   });
 }
 
@@ -81,7 +86,7 @@ export function memoryGateAnswer(
   answer: Message
 ): GateAnswer | null {
   const gate = gateOf(question);
-  if (gate?.type !== 'memory') return null;
+  if (gate?.type !== 'memory' || question.from !== SYSTEM_ADDRESS) return null;
   const expired =
     (answer.data as { type?: unknown } | undefined)?.type === 'x-expired' ||
     isSystemMarker(answer, 'x-closed');
@@ -128,10 +133,10 @@ export function closeStrayMemoryGates(
   for (const question of engine.openBlocking()) {
     const gate = gateOf(question);
     if (gate?.type !== 'memory') continue;
-    const reason = strayReason(
-      shared.getProposal(gate.proposalId),
-      question.id
-    );
+    const reason =
+      question.from === SYSTEM_ADDRESS
+        ? strayReason(shared.getProposal(gate.proposalId), question.id)
+        : 'only Dispatch raises memory gates';
     if (reason !== null && closeGate(engine, question.id, reason)) closed++;
   }
   return closed;

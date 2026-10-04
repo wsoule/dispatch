@@ -15,7 +15,7 @@ import {
 } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
-import { humanActor, humanOperator } from '../api/caller.js';
+import { humanOperator, requestActor } from '../api/caller.js';
 import { errorResponse, jsonResponse } from '../api/http.js';
 import { retryWhileBusy } from '../api/storageErrors.js';
 import { MAX_ASSET_BYTES } from './assets.js';
@@ -528,7 +528,7 @@ export async function handleDocsRoute(
                 ? {}
                 : {
                     dispatchAs: {
-                      actor: humanActor(ctx),
+                      actor: requestActor(ctx),
                       operator: humanOperator(ctx),
                     },
                   }),
@@ -546,7 +546,7 @@ export async function handleDocsRoute(
                   : b.dispatch === false
                     ? { run: null, dispatchError: null }
                     : await dispatchPublish(ctx, out.task, {
-                        actor: humanActor(ctx),
+                        actor: requestActor(ctx),
                         operator: humanOperator(ctx),
                       })),
               },

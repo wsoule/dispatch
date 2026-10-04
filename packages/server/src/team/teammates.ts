@@ -370,6 +370,13 @@ export class TeammateTokens implements CredentialSource {
     }));
   }
 
+  /** Whether `handle` holds a live, usable token right now: what an agent,
+   *  run or socket acting for them is checked against after a revoke. */
+  hasAccess(handle: string): boolean {
+    const now = this.clock().getTime();
+    return this.entries.some((e) => e.handle === handle && this.usable(e, now));
+  }
+
   /** The tier a teammate's issued token carries, or null when they hold
    *  none. */
   issuedTier(handle: string): AuthTier | null {

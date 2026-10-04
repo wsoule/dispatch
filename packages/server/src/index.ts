@@ -49,6 +49,7 @@ import {
   validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { storageErrorResponse } from './api/storageErrors.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
@@ -623,6 +624,8 @@ async function serveIndexHtml(
 interface SocketData extends SocketAudience {
   handle: string | null;
   release?: () => boolean;
+  /** The credential the socket opened with, re-resolved on every event (M2). */
+  token?: string;
 }
 
 // Constant-time, like principal.ts: /ws must tell the shared agent token
@@ -1035,6 +1038,24 @@ async function bootServer(
   const store: TaskStorePort = syncedStore ?? stores.tasks;
   const cache = new TaskCache();
   const events = new EventBus();
+  // M2: a socket's tier is what its credential holds now, not at upgrade; one
+  // whose credential was revoked or expired is closed on the next event.
+  // A detached socket's person is no longer present.
+  events.setAudienceCheck(
+    (client) => {
+      const data = client.data as SocketData | undefined;
+      if (data === undefined || data.token === undefined) return data ?? null;
+      const who = tokens.registry.resolve(data.token);
+      return who === null ? null : { ...data, ref: who.ref, tier: who.tier };
+    },
+    (client) => {
+      const data = client.data as SocketData | undefined;
+      const release = data?.release;
+      if (data === undefined || release === undefined) return;
+      data.release = undefined;
+      if (release()) events.broadcast({ type: 'presence.changed' });
+    }
+  );
 
   // Refresh + broadcast on any on-disk change, regardless of who made it:
   // the watcher names the tasks whose files changed, the cache re-reads just
@@ -1376,6 +1397,13 @@ async function bootServer(
   });
   // Memory opens before messaging.recover() because it registers the memory
   // gate's handler: an answer replayed with no handler is marked applied and lost.
+  const unsubscribeRevokedAsks = closeAsksOfRevoked(
+    messaging.engine,
+    (address) =>
+      speaksForRevoked(address, actorContext.member.handle, (handle) =>
+        team.teammates.hasAccess(handle)
+      )
+  );
   const memory = openMemory({
     rootDir,
     store,
@@ -1384,6 +1412,8 @@ async function bootServer(
     ledgerStore,
     messaging,
     ownerRef: actorContext.humanRef,
+    hasAccess: (human) =>
+      team.teammates.hasAccess(human.slice('human:'.length)),
     appendPolicyActivity,
     watchLedgerFile:
       stores.records === null
@@ -2134,6 +2164,7 @@ async function bootServer(
                 ref: who?.ref ?? null,
                 tier: who?.tier ?? null,
                 agentToken: isAgentToken(wsToken, tokens.agentToken),
+                ...(wsToken === null ? {} : { token: wsToken }),
               },
             })
           ) {
@@ -2335,6 +2366,7 @@ async function bootServer(
       clearInterval(externalMergeTimer);
       mergeQueue.stop();
       unsubscribeLinear();
+      unsubscribeRevokedAsks();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();

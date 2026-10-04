@@ -8,7 +8,7 @@ import type {
 import type { ApiContext } from '../api.js';
 import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import { ADJUDICATION_VERDICTS } from '../orchestrator/fixLoop.js';
-import { humanActor } from './caller.js';
+import { requestActor } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // Declared as `readonly string[]` (not the literal union) so a membership
@@ -97,7 +97,7 @@ export async function createFinding(
     line: typeof body.line === 'number' ? body.line : null,
     round: typeof body.round === 'number' ? body.round : undefined,
     recommendation: body.recommendation as FindingRecommendation | undefined,
-    raisedBy: humanActor(ctx),
+    raisedBy: requestActor(ctx),
   });
   ctx.events.broadcast({ type: 'finding.changed' });
   return jsonResponse(finding, 201);

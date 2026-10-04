@@ -156,6 +156,8 @@ export interface MessageStore {
     sinceIso: string,
     untilIso?: string
   ): number;
+  /** Threads `from` started since `sinceIso` whose deliveries reach no human. */
+  countAgentThreadsFrom(from: Address, sinceIso: string): number;
   /** Agent-authored messages in a thread by arrival; a remote `exclude` still counts. */
   countAgentAuthored(
     threadId: string,

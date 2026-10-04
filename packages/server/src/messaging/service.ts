@@ -194,7 +194,13 @@ export function openMessaging(deps: {
   const engine = new DeliveryEngine({
     store,
     host,
-    limits,
+    limits: {
+      ...limits,
+      // M4: fresh agent-to-agent threads count against the breaker's number
+      // too, and repeated wake asks for one target share a single gate.
+      agentThreadsPerHour: limits.agentTurnsPerThreadPerHour,
+      openWakeGatesPerTarget: 1,
+    },
     gateTypes: DISPATCH_GATE_TYPES,
   });
 
@@ -572,7 +578,8 @@ export function openMessaging(deps: {
     if (!e.message.to.some((addr) => addr.startsWith('human:'))) return;
     deps.orchestrator.logOutgoing(
       e.message.from.slice('run:'.length),
-      e.message
+      e.message,
+      messageAudience(store, e.message)
     );
   });
 
