@@ -328,15 +328,18 @@ function memoryStagingFor(fresh: string): string {
 }
 
 const MEMORY_FILE = 'mem-01K5Z6G0000000000000000000.md';
+// A memory receipt as the exporter writes one (the parts staging checks).
+const LESSON =
+  '---\nname: mem-01K5Z6G0000000000000000000\ndescription: "a lesson"\nmetadata:\n  dispatch:\n    scope: team\n    status: active\n---\n\na lesson\n';
 
 test('team memory in the log is staged for the daemon to propose again', async () => {
   const { remote } = pushedLog((log) => {
     mkdirSync(join(log, '.dispatch', 'memory'), { recursive: true });
-    writeFileSync(join(log, '.dispatch', 'memory', MEMORY_FILE), 'a lesson\n');
+    writeFileSync(join(log, '.dispatch', 'memory', MEMORY_FILE), LESSON);
   });
   const { fresh, lines } = await restoreFresh(remote);
   const staging = memoryStagingFor(fresh);
-  expect(readFileSync(join(staging, MEMORY_FILE), 'utf8')).toBe('a lesson\n');
+  expect(readFileSync(join(staging, MEMORY_FILE), 'utf8')).toBe(LESSON);
   expect(statSync(staging).mode & 0o777).toBe(0o700);
   expect(existsSync(stagingFor(fresh))).toBe(false);
   expect(lines).toContain(
@@ -352,7 +355,7 @@ test('symlinked, oversized or oddly named memory files are not staged, and are r
   const { remote } = pushedLog((log) => {
     const dir = join(log, '.dispatch', 'memory');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, MEMORY_FILE), 'a lesson\n');
+    writeFileSync(join(dir, MEMORY_FILE), LESSON);
     symlinkSync(secret, join(dir, leak));
     writeFileSync(join(dir, huge), 'x'.repeat(MEMORY_RECEIPT_FILE_BYTES + 1));
     writeFileSync(join(dir, 'notes.md'), 'not an entry\n');
@@ -364,6 +367,22 @@ test('symlinked, oversized or oddly named memory files are not staged, and are r
   expect(
     lines.some((l) => l.includes('notes.md') && l.includes('not named'))
   ).toBe(true);
+});
+
+test('a damaged memory receipt is not staged, and fails the restore', async () => {
+  const cut = 'mem-01K5Z6G0000000000000000003.md';
+  const { remote } = pushedLog((log) => {
+    const dir = join(log, '.dispatch', 'memory');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, MEMORY_FILE), LESSON);
+    writeFileSync(join(dir, cut), LESSON.slice(0, LESSON.indexOf('---\n\n')));
+  });
+  const { fresh, lines, failed } = await restoreFresh(remote);
+  expect(readdirSync(memoryStagingFor(fresh))).toEqual([MEMORY_FILE]);
+  expect(
+    lines.some((l) => l.includes(cut) && l.includes('not a memory receipt'))
+  ).toBe(true);
+  expect(failed).toBeInstanceOf(CliError);
 });
 
 test('a symlinked .dispatch/memory stages nothing', async () => {

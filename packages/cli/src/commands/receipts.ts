@@ -18,6 +18,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -72,6 +73,21 @@ function removeStaleClones(): void {
   }
 }
 
+// Why a memory file is not a receipt the daemon would take: it needs
+// terminated frontmatter whose dispatch block names a scope and a status.
+function memoryReceiptProblem(text: string): string | null {
+  const front = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(
+    text
+  );
+  if (
+    front === null ||
+    !/^\s+scope: \S/m.test(front[1]) ||
+    !/^\s+status: \S/m.test(front[1])
+  )
+    return 'not a memory receipt (frontmatter, scope or status missing)';
+  return null;
+}
+
 // `<id>.md` with an id shaped like @dispatch/memory's MEMORY_ID_PATTERN.
 const MEMORY_RECEIPT_NAME = /^mem-[0-9A-HJKMNP-TV-Z]{26}\.md$/;
 
@@ -82,7 +98,8 @@ function stageReceiptFiles(
   root: string,
   kind: 'docs' | 'memory',
   limit: number,
-  name: RegExp = /\.md$/
+  name: RegExp = /\.md$/,
+  invalid: (text: string) => string | null = () => null
 ): { staged: number; problems: string[] } {
   const rel = `.dispatch/${kind}`;
   const from = join(clone, '.dispatch', kind);
@@ -108,6 +125,11 @@ function stageReceiptFiles(
       }
       if (stat.size > limit) {
         problems.push(`${rel}/${f}: over ${limit} bytes; skipped`);
+        return false;
+      }
+      const why = invalid(readFileSync(join(from, f), 'utf8'));
+      if (why !== null) {
+        problems.push(`${rel}/${f}: ${why}; skipped`);
         return false;
       }
       return true;
@@ -198,7 +220,8 @@ export function registerReceiptsCommands(
             root,
             'memory',
             MEMORY_RECEIPT_FILE_BYTES,
-            MEMORY_RECEIPT_NAME
+            MEMORY_RECEIPT_NAME,
+            memoryReceiptProblem
           );
           if (memory.staged > 0)
             ctx.log(
