@@ -1,12 +1,12 @@
 {
   "aliases": {
-    "draft": "1.0.0-draft.1",
-    "latest": "1.0.0-draft.1"
+    "draft": "1.0.0-draft.2",
+    "latest": "1.0.0-draft.2"
   },
   "extensions": {
-    "envelope": "1.0.0-draft.1",
-    "gate": "1.0.0-draft.1",
-    "work": "1.0.0-draft.1"
+    "envelope": "1.0.0-draft.2",
+    "gate": "1.0.0-draft.2",
+    "work": "1.0.0-draft.2"
   },
   "versions": {
     "1.0.0-draft.1": {
@@ -41,6 +41,40 @@
         "spec/appendix-d-json-schemas.md": "33536ae43843f613d237fcc43aa344570625a6b041c5de8f637410bdeed6439e",
         "spec/appendix-e-examples.md": "d195a0135b79e1f2bbc762c63e797bfc891667d4d159e9156e9d00ef4140db19",
         "spec/appendix-f-federation.md": "7d71868ee58f6eb1f8011a24514609a971a48264ce2fe00b21570aeac5d12d1e"
+      }
+    },
+    "1.0.0-draft.2": {
+      "date": "2026-10-04",
+      "files": {
+        "registries/registries.json": "e984f2b620c690ad53e1b6a2b4e7cd4218b585a5c38ed58545e73eda4e306b26",
+        "schemas/adapter.schema.json": "eb1153229c7ac00224945f1053c1055d60daf33adf6b5449d4e13b6c4abe5911",
+        "schemas/delivery.schema.json": "37d64f41f09246a0ff6fb15007cddea343579122a74a252610a896ede82f83b2",
+        "schemas/gate-data.schema.json": "a8c54e71f9829ad53e0241361d29b44e421471fcd24fbce4dcbbdf2786ab97f4",
+        "schemas/message.schema.json": "9728a9dfe3f0b3fce484bbca2bfba8be0f85cd76e74247dcf011dba0aa4d065d",
+        "schemas/ref.schema.json": "87c0cf5c13d9ba77a59e5ec906f18d3ec72819342d1cb840dc4910658452f85a",
+        "schemas/send-input.schema.json": "4665814aa2169937d4a7c97e311e3b4f2a5755a87cae3d3fab6d9a150b7635c4",
+        "schemas/vector.schema.json": "3b238377bbe552cd8545643156d848d468cf7f6c352d863f0f26dba0303912e2",
+        "spec/00-front-matter.md": "e41fa2ed703d98d95549bc1eae87a620f2c41d5836e6422679fe010cf18a03d7",
+        "spec/01-introduction.md": "a5852fc58a4d9116267d024265ef34651638ebfbe2d257ed34bddeabb2c8f232",
+        "spec/02-terminology.md": "77c740aef4cf029745b0d88889ae9197fe76fb86c7dacbc516b0c08869246524",
+        "spec/03-addresses.md": "ddd8b10a571897cee21c0dac4edf872089526c500dd6d724178ed813d769188a",
+        "spec/04-messages.md": "ed6f4cefb247a13b5d38b69d27b0db6c9f6d12734ce73bafc84f715dd693750d",
+        "spec/05-gates.md": "d46b00c40e0c96cf5e2983b01e7064acf45cce24238e2bb94328a3cf6d141b2f",
+        "spec/06-delivery.md": "d9cd0b2d4cec1a0d40989483c4f860bb6417cfddeef53712fc01ad709471d040",
+        "spec/07-mailboxes-and-channels.md": "241358c7c94fd85b5242a6a914aee6dcdf372addeb0a80c93473da2146937c15",
+        "spec/08-a2a-binding.md": "857914eabc8897b70e6aa97b9b4163ab24241cbdf33b283439f5ba58108c8332",
+        "spec/09-identity-and-authorization.md": "01b0915d3a8f38efb7cb45a2785968b16061fd62518951b00cd0d71f4c339408",
+        "spec/10-errors.md": "5d45ec065e620ca34399fb4bdd96dcf035ed249e1d665b7ca1e0719e3ace6eec",
+        "spec/11-registries.md": "b075764fe98d9fda65ea832e4374aa833e98e7513f7d808f27f0078fbbf8cc2c",
+        "spec/12-conformance.md": "fe152e6006789392aa6c270e18b0607ee3313af113f8cfea62562b79ec767053",
+        "spec/13-security-and-privacy.md": "ac98182d2eeb53cb2e893851e73142d52c657865192c561bf9701233b4144276",
+        "spec/14-versioning.md": "630743ac6ab642e6144c126892a973d299546696810da2c6be0cf926a238dfd7",
+        "spec/appendix-a-daemon-api.md": "15e41605a89f009fcde90899e34dd23c266da0aec7fc40e7f5b83e3ebc7a26df",
+        "spec/appendix-b-agent-tools.md": "5ba501e67189c21c070827e0d59b9cb93bf32c98f5098290969f77a61f9457a8",
+        "spec/appendix-c-dispatch-profile.md": "fa29e274dfe1b909d2d46a170895ceff95edd16b4a9b42157856e3a49ccb1510",
+        "spec/appendix-d-json-schemas.md": "33536ae43843f613d237fcc43aa344570625a6b041c5de8f637410bdeed6439e",
+        "spec/appendix-e-examples.md": "d195a0135b79e1f2bbc762c63e797bfc891667d4d159e9156e9d00ef4140db19",
+        "spec/appendix-f-federation.md": "05ef8663a715dc46fde16de44d13d46ad7f892fdf5e6b6a6ea4b35f29d84fe75"
       }
     }
   }

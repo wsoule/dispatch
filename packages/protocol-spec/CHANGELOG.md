@@ -6,6 +6,8 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+## 1.0.0-draft.2 (2026-10-04)
+
 - [clarification] A host reads an `a2a:` entry in an inbound `to` as its owner,
   since a peer host writes `to` as its own name for the receiver; and only a 401
   or an `AUTH_*` 403 marks a peer failed, while another 403 fails the one
