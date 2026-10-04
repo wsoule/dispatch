@@ -18,6 +18,7 @@ import { GitFederationTransport, signedEntry } from './git.js';
 import { Homes } from './homes.js';
 import type { HomeTasks } from './homes.js';
 import { DaemonFederationHooks } from './hooks.js';
+import { Inbound } from './inbound.js';
 import { loadOrCreateKeys } from './keys.js';
 import { LegacyWindow } from './legacy.js';
 import { MailOut } from './mail.js';
@@ -108,6 +109,9 @@ export function wireAgentsAndChannels(
     messages: MessageStore;
     engine: DeliveryEngine;
     implicit: (channel: string) => Address[];
+    /** messaging.remoteMailPerReplicaPerHour */
+    perReplicaPerHour: number;
+    now: () => Date;
   }
 ): void {
   const { fed, roster, service } = federation;
@@ -126,6 +130,15 @@ export function wireAgentsAndChannels(
   service.addCollector(
     new MailOut({ fed, roster, homes: deps.homes, messages: deps.messages })
   );
+  const inbound = new Inbound({
+    fed,
+    roster,
+    engine: deps.engine,
+    perReplicaPerHour: deps.perReplicaPerHour,
+    now: deps.now,
+  });
+  service.register(inbound);
+  service.setInbox(inbound);
 }
 
 // Board sync as one daemon runs it: the signed roster, signed task ops, the

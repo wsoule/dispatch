@@ -1,5 +1,6 @@
 import {
   ActorContext,
+  DEFAULT_MESSAGING,
   describeDroppedEntry,
   formatMigrationReport,
   generateSyncedRunId,
@@ -1394,6 +1395,8 @@ async function bootServer(
       homes: mailFederation.homes,
       messages: messaging.store,
       engine: messaging.engine,
+      perReplicaPerHour: remoteMailQuota(rootDir),
+      now: federationNow,
       implicit: (channel) =>
         implicitEpicMembers(
           (epicId) => store.list({ parent: epicId }),
@@ -2233,3 +2236,13 @@ async function bootServer(
 
 export type { ApiContext } from './api.js';
 export { Orchestrator } from './orchestrator/orchestrator.js';
+
+// A teammate's hourly mail quota; a malformed config.yml keeps the default,
+// as messaging's own limits do.
+function remoteMailQuota(rootDir: string): number {
+  try {
+    return loadConfig(rootDir).messaging.remoteMailPerReplicaPerHour;
+  } catch {
+    return DEFAULT_MESSAGING.remoteMailPerReplicaPerHour;
+  }
+}

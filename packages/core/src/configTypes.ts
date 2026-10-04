@@ -428,12 +428,15 @@ export interface MessagingConfig {
   urgentPerHour: number;
   agentTurnsPerThreadPerHour: number;
   agentBlockingTimeoutSec: number;
+  /** Mail ops applied per clock hour from any one teammate's machine (federation). */
+  remoteMailPerReplicaPerHour: number;
 }
 
 export const DEFAULT_MESSAGING: MessagingConfig = {
   urgentPerHour: 10,
   agentTurnsPerThreadPerHour: 20,
   agentBlockingTimeoutSec: 600,
+  remoteMailPerReplicaPerHour: 600,
 };
 
 /** The skills an A2A agent card may offer. */

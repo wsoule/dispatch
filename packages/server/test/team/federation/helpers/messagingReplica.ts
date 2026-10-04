@@ -18,6 +18,8 @@ import { AgentSync } from '../../../../src/team/federation/agents.js';
 import { ChannelSync } from '../../../../src/team/federation/channels.js';
 import { Homes } from '../../../../src/team/federation/homes.js';
 import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js';
+import { Inbound } from '../../../../src/team/federation/inbound.js';
+import type { StateHooks } from '../../../../src/team/federation/inbound.js';
 import { MailOut } from '../../../../src/team/federation/mail.js';
 import { Presence } from '../../../../src/team/federation/presence.js';
 import type { RunInfo } from '../../../../src/team/federation/presence.js';
@@ -107,6 +109,14 @@ export interface MessagingReplica extends ServiceReplica {
   agents: AgentSync;
   channels: ChannelSync;
   mailOut: MailOut;
+  inbound: Inbound;
+  /** What the StateHooks were told, until Task 16 supplies them. */
+  stateCalls: {
+    refused: [string, string, string][];
+    received: [string, string][];
+  };
+  /** The engine's next `n` receives throw a store error. */
+  failReceives(n: number): void;
   /** A run starts here: live on the host, and its presence queued. */
   startRun(meta: RunInfo): void;
   /** `other`'s pass, then this replica's. */
@@ -116,6 +126,10 @@ export interface MessagingReplica extends ServiceReplica {
 export interface TeamOpts {
   /** Handles admitted as observers. */
   observers?: readonly string[];
+  /** Handles admitted as admins. */
+  admins?: readonly string[];
+  remoteMailPerReplicaPerHour?: number;
+  maxWaitingPerPublisher?: number;
 }
 
 // One daemon's board sync plus its messages.db, engine and the federation
@@ -123,9 +137,17 @@ export interface TeamOpts {
 export function messagingReplica(
   handle: string,
   remote: MemoryRemote = new MemoryRemote(),
-  v1: MemoryV1 = new MemoryV1()
+  v1: MemoryV1 = new MemoryV1(),
+  opts: TeamOpts = {}
 ): MessagingReplica {
-  const base = serviceReplica(handle, remote, v1);
+  const base = serviceReplica(
+    handle,
+    remote,
+    v1,
+    opts.maxWaitingPerPublisher === undefined
+      ? {}
+      : { maxWaitingPerPublisher: opts.maxWaitingPerPublisher }
+  );
   const db = openMessagesDb(join(base.dir, 'messages.db'));
   const messages = new SqliteMessageStore(db);
   const host = new TestMessagingHost(`human:${handle}`, base.clock);
@@ -180,6 +202,35 @@ export function messagingReplica(
     messages,
   });
   base.service.addCollector(mailOut);
+  const stateCalls: MessagingReplica['stateCalls'] = {
+    refused: [],
+    received: [],
+  };
+  const state: StateHooks = {
+    refused: (id, reason, origin) =>
+      stateCalls.refused.push([id, reason, origin]),
+    received: (message, origin) =>
+      stateCalls.received.push([message.id, origin]),
+  };
+  let failing = 0;
+  const receive = engine.receive.bind(engine);
+  engine.receive = (message, origin) => {
+    if (failing > 0) {
+      failing -= 1;
+      return Promise.reject(new Error('disk I/O error'));
+    }
+    return receive(message, origin);
+  };
+  const inbound = new Inbound({
+    fed: base.fed,
+    roster: base.roster,
+    engine,
+    perReplicaPerHour: opts.remoteMailPerReplicaPerHour ?? 600,
+    now: () => base.clock.now,
+    state,
+  });
+  base.service.register(inbound);
+  base.service.setInbox(inbound);
   const replica: MessagingReplica = {
     ...base,
     remote,
@@ -192,6 +243,11 @@ export function messagingReplica(
     agents,
     channels,
     mailOut,
+    inbound,
+    stateCalls,
+    failReceives: (n) => {
+      failing = n;
+    },
     startRun: (meta) => {
       host.startRun(meta.taskId, meta.id);
       presence.runStarted(meta);
@@ -228,7 +284,7 @@ export async function foundedTeamWith(
 ): Promise<MessagingReplica[]> {
   const remote = new MemoryRemote();
   const v1 = new MemoryV1();
-  const rs = handles.map((h) => messagingReplica(h, remote, v1));
+  const rs = handles.map((h) => messagingReplica(h, remote, v1, opts));
   const [founder, ...rest] = rs;
   if (founder === undefined) return rs;
   founder.roster.found('acme');
@@ -237,6 +293,9 @@ export async function foundedTeamWith(
     founder.roster.admit(r.fed.replica, {
       fingerprint: fp(r),
       observer: (opts.observers ?? []).includes(handles[i + 1] ?? ''),
+      ...((opts.admins ?? []).includes(handles[i + 1] ?? '')
+        ? { role: 'admin' as const }
+        : {}),
     });
   });
   await settleAll(rs);

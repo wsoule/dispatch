@@ -49,6 +49,9 @@ import type {
 export const CLOCK_GUARD_MS = MAX_CLOCK_LEAD_MS;
 /** An op this far ahead also names its machine's clock as wrong. */
 const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
+/** Queued messages one publisher may have before its mail waits unread. */
+const MAX_WAITING_PER_PUBLISHER = 1000;
+
 /** How soon the next pass runs while an asker waits (fastUntil). */
 const FAST_PASS_MS = 10_000;
 /** fed_applied rows kept for the revocation race (F-D34). */
@@ -142,6 +145,8 @@ export interface V1Branch extends V1Log {
 }
 
 export interface FederationServiceOptions {
+  /** Queued messages per publisher before its mail waits (tests lower it). */
+  maxWaitingPerPublisher?: number;
   store: SyncedTaskStore;
   ledger: SyncLedger;
   v1: V1Branch;
@@ -1005,6 +1010,14 @@ export class FederationService {
       this.applied += 1;
       return 'changed';
     }
+    // A publisher with this many messages queued waits, cursor unmoved.
+    if (
+      entry.type === 'mail' &&
+      this.inbox !== null &&
+      this.inbox.waiting(r) >=
+        (this.opts.maxWaitingPerPublisher ?? MAX_WAITING_PER_PUBLISHER)
+    )
+      return 'block';
     const handler = this.handlers.get(entry.type);
     if (handler !== undefined) {
       if (handler.stage(entry, ctx) === 'parked') this.park(entry, 'parked');
