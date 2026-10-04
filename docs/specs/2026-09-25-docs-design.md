@@ -1798,6 +1798,10 @@ fetched 2026-09-26).
   decide-tier human, on a doc linked to a task mapped to a Linear project or
   issue) calls `documentCreate` with that `projectId` or `issueId` and makes the
   doc Linear-origin. Team docs do not leak to Linear by default.
+- **Webhooks.** The P2 webhook subscribes to `Document` too; a delivered
+  create or update folds that one document at once (a removal leaves the
+  Dispatch doc alone), and a registration from before `Document` joined is
+  replaced on the next pass.
 - Echo suppression and the rate-limit pause are P2's own.
 - **Known limits.**
   - The integration's Linear user is the API key's own user, which is also the

@@ -84,6 +84,20 @@ export class LinearDocsAdapter {
     return out;
   }
 
+  // Folds the named documents, read one by one: what a webhook delivered.
+  async pullIds(ids: readonly string[]): Promise<number> {
+    let changed = 0;
+    for (const id of ids) {
+      const doc = await this.deps.port.document(id);
+      try {
+        if (this.fold(doc) !== 'unchanged') changed += 1;
+      } catch (err) {
+        console.error(`docs: Linear document ${id} was not synced`, err);
+      }
+    }
+    return changed;
+  }
+
   // Push narrows the window a non-conditional documentUpdate leaves, then
   // detects what it could not prevent (spec "Linear documents", Push).
   async push(docId: string): Promise<LinearPushResult> {

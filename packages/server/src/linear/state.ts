@@ -56,6 +56,8 @@ interface WebhookRecord {
   createdAt: string;
   /** Hooks for the other linked teams, all signing with the same secret. */
   more?: { teamId: string; id: string }[];
+  /** What the hooks subscribe to; absent on a registration predating Document. */
+  resourceTypes?: string[];
 }
 
 /** Every hook a registration holds, the primary team's first. */

@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { createHmac } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -191,5 +192,81 @@ describe('LinearSync documents', () => {
     expect(service.read(service.actorFor(OWNER), 'design').doc.origin).toBe(
       `linear:${id}`
     );
+  });
+});
+
+describe('LinearSync document webhooks', () => {
+  const HOOK_URL = 'https://dispatch.example.com/api/linear/webhook';
+  const deliver = (s: LinearSync, data: Record<string, unknown>) => {
+    const body = JSON.stringify({
+      action: 'update',
+      type: 'Document',
+      data,
+      webhookTimestamp: Date.now(),
+    });
+    const secret = readLinearState(root).webhook?.secret ?? '';
+    return s.handleWebhook(
+      body,
+      createHmac('sha256', secret).update(body).digest('hex')
+    );
+  };
+  const hooked = () =>
+    new LinearSync({
+      rootDir: root,
+      store,
+      cache: new TaskCache(),
+      events: new EventBus(),
+      client: fake,
+      webhookUrl: HOOK_URL,
+      webhookDebounceMs: 0,
+      pushDebounceMs: 60_000,
+      documents: {
+        adapter: (link) => new LinearDocsAdapter({ ...link, service }),
+        outstanding: () => service.linearOutstanding(),
+      },
+    });
+
+  it('subscribes to documents, and applies a delivered document edit at once', async () => {
+    const sync = hooked();
+    sync.start();
+    await sync.syncOnce();
+    const [hook] = [...fake.webhooks.values()];
+    expect(hook.resourceTypes).toContain('Document');
+    fake.documentList = [
+      {
+        id: 'doc-a',
+        title: 'Plan',
+        content: 'v1\n',
+        updatedAt: fake.stamp(),
+        updatedBy: null,
+        parent: { kind: 'issue', id: 'iss-1' },
+      },
+    ];
+    fake.calls = [];
+    expect(deliver(sync, { id: 'doc-a' }).status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await sync.idle();
+    expect(fake.calls).toContain('document');
+    expect(fake.calls).not.toContain('documents');
+    const plan = service.read(service.actorFor(OWNER), 'plan');
+    expect(plan.text).toBe('v1\n');
+    expect(plan.links.map((l) => l.target.id)).toEqual([taskId]);
+    await sync.stop();
+  });
+
+  it('re-registers a hook made before documents were subscribed', async () => {
+    const sync = hooked();
+    await sync.syncOnce();
+    const before = readLinearState(root).webhook;
+    if (before === null) throw new Error('no webhook registered');
+    // A registration from before Document joined the subscribed types.
+    const { resourceTypes: _types, ...legacy } = before;
+    writeLinearState(root, { ...readLinearState(root), webhook: legacy });
+    await sync.syncOnce();
+    const [hook] = [...fake.webhooks.values()];
+    expect(fake.webhooks.size).toBe(1);
+    expect(hook.resourceTypes).toContain('Document');
+    expect(readLinearState(root).webhook?.id).not.toBe(before.id);
+    await sync.stop();
   });
 });

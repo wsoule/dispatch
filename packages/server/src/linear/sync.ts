@@ -188,6 +188,8 @@ interface WebhookTargets {
   removedComments: Set<string>;
   /** A project changed: containers are re-read from the cursor. */
   containers: boolean;
+  /** Linear documents created or edited. */
+  documents: Set<string>;
 }
 
 function emptyTargets(): WebhookTargets {
@@ -197,6 +199,7 @@ function emptyTargets(): WebhookTargets {
     comments: new Set(),
     removedComments: new Set(),
     containers: false,
+    documents: new Set(),
   };
 }
 
@@ -632,7 +635,11 @@ export class LinearSync {
     else if (type === 'Comment') {
       (removed ? t.removedComments : t.comments).add(id);
     } else if (type === 'Project') t.containers = true;
-    else if (type === 'IssueLabel' || type === 'Cycle') {
+    // A deleted Linear document leaves its Dispatch doc as it is.
+    else if (type === 'Document') {
+      if (removed) return;
+      t.documents.add(id);
+    } else if (type === 'IssueLabel' || type === 'Cycle') {
       this.workspaceCache = null;
     } else return;
     if (this.webhookTimer !== null) clearTimeout(this.webhookTimer);
@@ -774,7 +781,11 @@ export class LinearSync {
 
   // Pulls Linear documents changed since the document cursor, then pushes
   // Linear-origin docs changed locally; an import reads every document once.
-  private async syncDocuments(run: Run): Promise<void> {
+  // `delivered` set, it folds only those documents (a webhook pass).
+  private async syncDocuments(
+    run: Run,
+    delivered?: ReadonlySet<string>
+  ): Promise<void> {
     const binding = this.deps.documents;
     if (binding === undefined) return;
     const { pass, session, state, ctx } = run;
@@ -801,6 +812,10 @@ export class LinearSync {
       problem: (_docId, detail) => summary.errors.push(detail),
     });
     try {
+      if (delivered !== undefined) {
+        if (run.mayPull) await adapter.pullIds([...delivered]);
+        return;
+      }
       if (run.mayPull) {
         // A link made before documents synced starts at the issue cursor, so
         // it does not pull the team's whole document history unasked.
@@ -1145,6 +1160,9 @@ export class LinearSync {
     if (webhook) {
       if (!baselining && mayPull) {
         await pass.guarded(() => this.applyTargets(run, opts.targets));
+        const delivered = opts.targets?.documents;
+        if (delivered !== undefined && delivered.size > 0 && !pass.stopped)
+          await pass.guarded(() => this.syncDocuments(run, delivered));
       }
     } else if (baselining) {
       const now = new Date().toISOString();
@@ -1321,6 +1339,7 @@ export class LinearSync {
       teamId: first.teamId,
       createdAt: new Date().toISOString(),
       ...(more.length === 0 ? {} : { more }),
+      resourceTypes: [...WEBHOOK_RESOURCE_TYPES],
     };
     if (hooks.length === session.teamIds.length) {
       state.webhookError = null;
@@ -1420,6 +1439,9 @@ export class LinearSync {
     if (!wanted) return current === null;
     if (current === null) return this.retrying(state);
     if (current.url !== url) return false;
+    // A registration missing a resource type we now subscribe to is redone.
+    const types = current.resourceTypes ?? [];
+    if (!WEBHOOK_RESOURCE_TYPES.every((t) => types.includes(t))) return false;
     const hooked = webhookHooks(current).map((h) => h.teamId);
     const covers =
       hooked.length === session.teamIds.length &&
