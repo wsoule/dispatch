@@ -151,6 +151,10 @@ interface CachedSegment {
   size: number;
   /** While a changed file's old prefix is checked, the size it had. */
   grewFrom: number | null;
+  /** The commit whose blob the consumed prefix was read from. */
+  commit: string | null;
+  /** A stamp git showed to be a pure append since `commit`, to resume at. */
+  appendStamp: string | null;
 }
 
 // What earlier reads learned of a segment, kept after its lines are dropped:
@@ -187,6 +191,8 @@ export class SyncRepo {
   private passBytes = 0;
   /** Where the next pass starts probing claim-only ids (FW-R26(4)). */
   private probeStart = 0;
+  /** The commit the clone is at, as verifyAppends last saw it. */
+  private head: string | null = null;
   /** The stamp of this replica's own files when last found clean. */
   private cleanStamp: string | null = null;
   /** Where the rotation of ids read in full, and of each id's tails, starts. */
@@ -801,6 +807,47 @@ export class SyncRepo {
     return this.scanCache.size;
   }
 
+  /**
+   * The git-verified append path: for each file read before whose stat
+   * changed, `git diff --unified=0` from the commit it was read at to HEAD.
+   * Only lines added after the lines already consumed make a pure append,
+   * which readV2 then resumes from the offset; anything else (a deletion, a
+   * change, an insertion in the consumed part) leaves the full re-read with
+   * its prefix check. Git's object hashes make the diff the truth.
+   */
+  async verifyAppends(): Promise<void> {
+    const head = await this.run(['rev-parse', 'HEAD']);
+    const commit = head.ok ? head.out.trim() : null;
+    if (commit !== null)
+      for (const [file, held] of this.segmentCache) {
+        if (held.commit === null || held.commit === commit) continue;
+        const st = lstatSync(file, { throwIfNoEntry: false });
+        if (st === undefined) continue;
+        const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+        if (stamp === held.stamp) continue;
+        const rel = file.slice(this.dir.length + 1);
+        const diff = await this.run([
+          'diff',
+          '--unified=0',
+          '--no-color',
+          // -diff in info/attributes marks every file binary; read it as text.
+          '--text',
+          '--no-ext-diff',
+          '--no-textconv',
+          held.commit,
+          commit,
+          '--',
+          rel,
+        ]);
+        // A line read only in part counts as read: nothing may land before it.
+        const { stream } = held;
+        const mid = stream.skipping || stream.partial.length > 0;
+        if (diff.ok && pureAppend(diff.out, stream.lines + (mid ? 1 : 0)))
+          held.appendStamp = stamp;
+      }
+    this.head = commit;
+  }
+
   /** Files seen far over the size any honest segment reaches, as
    *  `<replica>/<name>`, since the last call. */
   takeOversized(): string[] {
@@ -874,6 +921,17 @@ export class SyncRepo {
   ): number {
     let held = this.segmentCache.get(file);
     if (held !== undefined && held.floor > cursor) held = undefined;
+    if (
+      held !== undefined &&
+      held.stamp !== stamp &&
+      held.appendStamp === stamp
+    ) {
+      // Git showed only lines added after the consumed prefix: carry on from
+      // the offset, the running hash extended with the new bytes alone.
+      held.stamp = stamp;
+      held.appendStamp = null;
+      held.stream.done = false;
+    }
     if (held !== undefined && held.stamp !== stamp) {
       // FW-R30(1): the file changed, so its offset is not trusted. The read
       // starts over, checking the old consumed prefix as it goes; lines read
@@ -887,6 +945,7 @@ export class SyncRepo {
         ...old,
         stream: newStream(verify),
         grewFrom: verify === null ? null : old.size,
+        appendStamp: null,
       };
       this.segmentCache.set(file, held);
     }
@@ -900,11 +959,14 @@ export class SyncRepo {
         gave: false,
         size,
         grewFrom: null,
+        commit: null,
+        appendStamp: null,
       };
       this.segmentCache.set(file, held);
     }
     held.stamp = stamp;
     held.size = size;
+    held.commit = this.head;
     if (size > MAX_SEGMENT_READ) this.oversized.add(file);
     const h = held;
     const have = new Set(h.lines.map((l) => l.line));
@@ -1299,4 +1361,22 @@ function hintOrder(names: string[], cursor: number): string[] {
     if (Number(name.slice(0, 12)) <= cursor + 1) start = i;
   });
   return [...names.slice(start), ...names.slice(0, start).reverse()];
+}
+
+// Whether a `git diff --unified=0` only adds lines after the first `lines`
+// lines: every hunk removes nothing and inserts after line `lines` or later.
+function pureAppend(diff: string, lines: number): boolean {
+  const hunks = diff
+    .split('\n')
+    .filter((l) => l.startsWith('@@ '))
+    .map((l) => /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(l));
+  if (hunks.length === 0) return false;
+  if (/^(Binary files|old mode|new mode|deleted file|new file)/m.test(diff))
+    return false;
+  return hunks.every((h) => {
+    if (h === null) return false;
+    const start = Number(h[1]);
+    const removed = h[2] === undefined ? 1 : Number(h[2]);
+    return removed === 0 && start >= lines;
+  });
 }

@@ -109,6 +109,7 @@ export class GitFederationTransport implements FederationTransport {
     this.lastError = null;
     this.unpublished = 0;
     this.lastExchangeAt = this.deps.now().toISOString();
+    await this.deps.repo.verifyAppends();
     const entries = this.deps.repo.readV2(since, this.deps.readHints?.());
     this.deps.onStarved?.(this.deps.repo.starvedReplicas());
     const oversized = this.deps.repo.takeOversized();

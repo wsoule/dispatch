@@ -15,6 +15,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -1187,6 +1188,190 @@ describe('GitFederationTransport', () => {
       );
     expect(own.every((l) => l.startsWith('{"v":2'))).toBe(true);
     expect(own).toHaveLength(3);
+  });
+
+  // Git-verified appends: an honest writer's appends are read as just the
+  // new bytes, while a rewrite (the V1 shift) still reads from the start.
+  describe('the git-verified append path', () => {
+    const transport = (
+      repo: SyncRepo,
+      replica: string,
+      own: () => FederatedOp[]
+    ) =>
+      new GitFederationTransport({
+        repo,
+        replica,
+        signPriv: keys.signPriv,
+        verifyAcks: () => true,
+        acknowledgedBy: () => false,
+        ownLog: own,
+        now: () => new Date(),
+        readHints: () => ({ tier: () => 0 }),
+      });
+
+    it('reads only the new bytes of honest appends across 20 passes', async () => {
+      const w = clone('w', A);
+      const r = clone('r', 'bob-0000000b');
+      const ops = chain(320);
+      let published: FederatedOp[] = ops.slice(0, 300);
+      const tw = transport(w, A, () => published);
+      const tr = transport(r, 'bob-0000000b', () => []);
+      await w.ensure();
+      await r.ensure();
+      await tw.publish(published);
+      await tw.pull(new Map());
+      await tr.pull(new Map());
+      const seg = join(dir, 'r', 'fed', A, '000000000001.jsonl');
+      const first = r.lastPassBytes();
+      expect(first).toBeGreaterThan(50 * 1024);
+      for (let k = 300; k < 320; k++) {
+        published = ops.slice(0, k + 1);
+        await tw.publish([ops[k]]);
+        await tw.pull(new Map());
+        const before = statSync(seg).size;
+        const read = await tr.pull(new Map([[A, k]]));
+        expect(read.some((e) => e.seq === k + 1)).toBe(true);
+        // Exactly the appended line, nothing of the 150 KiB before it.
+        expect(r.lastPassBytes()).toBe(statSync(seg).size - before);
+      }
+    }, 60_000);
+
+    it('still reads a committed shift from the start, so H is found', async () => {
+      const r = clone('r', 'bob-0000000b');
+      await r.ensure();
+      const ops = chain(2);
+      const h = JSON.stringify(ops[1]);
+      const junk = `{"j":"${'x'.repeat(h.length - 8)}"}`;
+      const root = join(dir, 'r');
+      mkdirSync(join(root, 'fed', A), { recursive: true });
+      const seg = join(root, 'fed', A, '000000000001.jsonl');
+      const lines = (before: number, after: string) =>
+        `${JSON.stringify(ops[0])}\n${`${junk}\n`.repeat(before)}${h}\n${after}`;
+      // As if fetched: each version is a commit the reader's clone is at.
+      const commit = async (text: string) => {
+        writeFileSync(seg, text);
+        runGitSync(root, ['add', '-A']);
+        runGitSync(root, [
+          '-c',
+          'user.name=x',
+          '-c',
+          'user.email=x@x',
+          'commit',
+          '-q',
+          '-m',
+          'v',
+        ]);
+        await r.verifyAppends();
+      };
+      const read = () =>
+        r.readV2(new Map([[A, 1]]), {
+          tier: () => 0,
+          budget: 64 * 1024,
+          totalBudget: 64 * 1024,
+        });
+      await commit(lines(4000, `${junk}\n`.repeat(4000)));
+      expect(read().some((e) => e.seq === 2)).toBe(false);
+      await commit(
+        lines(
+          100,
+          `${junk}\n`.repeat(4000) + `${'p'.repeat(2 * 1024 * 1024)}\n`
+        )
+      );
+      // The diff deletes lines, so the read restarts at once and H is in the
+      // first pass's bytes; a trusted offset would pass it by.
+      expect(read().some((e) => e.seq === 2)).toBe(true);
+    });
+
+    it('restarts on lines inserted inside the read prefix', async () => {
+      const r = clone('r', 'bob-0000000b');
+      await r.ensure();
+      const ops = chain(2);
+      const h = JSON.stringify(ops[1]);
+      const junk = `{"j":"${'x'.repeat(h.length - 8)}"}\n`;
+      const root = join(dir, 'r');
+      mkdirSync(join(root, 'fed', A), { recursive: true });
+      const seg = join(root, 'fed', A, '000000000001.jsonl');
+      const commit = async (text: string) => {
+        writeFileSync(seg, text);
+        runGitSync(root, ['add', '-A']);
+        runGitSync(root, [
+          '-c',
+          'user.name=x',
+          '-c',
+          'user.email=x@x',
+          'commit',
+          '-q',
+          '-m',
+          'v',
+        ]);
+        await r.verifyAppends();
+      };
+      const read = () =>
+        r.readV2(new Map([[A, 1]]), {
+          tier: () => 0,
+          budget: 64 * 1024,
+          totalBudget: 64 * 1024,
+        });
+      const first = `${JSON.stringify(ops[0])}\n`;
+      await commit(first + junk.repeat(8000));
+      expect(read().some((e) => e.seq === 2)).toBe(false);
+      // Only additions, but at line 51: inside what was read, so no append.
+      await commit(
+        first +
+          junk.repeat(50) +
+          `${h}\n` +
+          junk.repeat(7950) +
+          junk.repeat(4000)
+      );
+      expect(read().some((e) => e.seq === 2)).toBe(true);
+    });
+
+    it('restarts on lines inserted before a line read only in part', async () => {
+      const r = clone('r', 'bob-0000000b');
+      await r.ensure();
+      const ops = chain(2);
+      const h = JSON.stringify(ops[1]);
+      const junk = `{"j":"${'x'.repeat(h.length - 8)}"}\n`;
+      const root = join(dir, 'r');
+      mkdirSync(join(root, 'fed', A), { recursive: true });
+      const seg = join(root, 'fed', A, '000000000001.jsonl');
+      const commit = async (text: string) => {
+        writeFileSync(seg, text);
+        runGitSync(root, ['add', '-A']);
+        runGitSync(root, [
+          '-c',
+          'user.name=x',
+          '-c',
+          'user.email=x@x',
+          'commit',
+          '-q',
+          '-m',
+          'v',
+        ]);
+        await r.verifyAppends();
+      };
+      const read = () =>
+        r.readV2(new Map([[A, 1]]), {
+          tier: () => 0,
+          budget: 64 * 1024,
+          totalBudget: 64 * 1024,
+        });
+      const first = `${JSON.stringify(ops[0])}\n`;
+      await commit(first + junk.repeat(8000));
+      read();
+      // The pass stopped part way into a line: insert H just before it.
+      const whole = Math.floor(
+        (r.lastPassBytes() - first.length) / junk.length
+      );
+      expect((r.lastPassBytes() - first.length) % junk.length).not.toBe(0);
+      await commit(
+        first + junk.repeat(whole) + `${h}\n` + junk.repeat(8000 - whole)
+      );
+      let seen = false;
+      for (let pass = 0; pass < 3 && !seen; pass++)
+        seen = read().some((e) => e.seq === 2);
+      expect(seen).toBe(true);
+    });
   });
 
   it('reports an unreachable remote without losing what it was given', async () => {

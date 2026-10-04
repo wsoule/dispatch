@@ -115,6 +115,8 @@ export interface StreamState {
   partial: Buffer;
   /** FW-R30(1): the hash of every byte consumed, kept as the read goes. */
   hash: Hash;
+  /** Newlines consumed: the whole lines before `offset`. */
+  lines: number;
   /** A consumed prefix to check against: when the read reaches `at`, its
    *  hash must equal `digest`; `same` says how it went. */
   verify: { at: number; digest: string; same: boolean | null } | null;
@@ -129,6 +131,7 @@ export function newStream(
     done: false,
     partial: Buffer.alloc(0),
     hash: createHash('sha256'),
+    lines: 0,
     verify: verify === null ? null : { ...verify, same: null },
   };
 }
@@ -197,6 +200,7 @@ export function readStream(
         }
         state.skipping = false;
         state.hash.update(buf.subarray(0, nl + 1));
+        state.lines += 1;
         at += nl + 1;
         checkpoint(state, at);
         buf = buf.subarray(nl + 1);
