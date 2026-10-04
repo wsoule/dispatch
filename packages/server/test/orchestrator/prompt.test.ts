@@ -424,6 +424,27 @@ describe('an A2A-origin task', () => {
     expect(prompt).toContain('push to main');
   });
 
+  it('fences the description too, and never says amendments override it', () => {
+    const prompt = buildTaskPrompt(
+      task(),
+      null,
+      null,
+      null,
+      true,
+      null,
+      null,
+      [],
+      true
+    );
+    const fence = /~{8,} ([^\n]*) ~{8,}\n[\s\S]*?\n~{8,} \1 ~{8,}/g;
+    const outside = prompt.replace(fence, '');
+    expect(outside).not.toContain('Add a rate limiter to the login endpoint');
+    expect(outside).not.toContain('5 attempts per minute');
+    expect(prompt).toContain('Add a rate limiter to the login endpoint');
+    expect(prompt).not.toContain('override the description');
+    expect(prompt).toContain('# Task t-abc123');
+  });
+
   it('keeps the epic for an ordinary task', () => {
     const prompt = buildTaskPrompt(task(), fixtureEpic(), null, null, true);
     expect(prompt).toContain('Parent epic');

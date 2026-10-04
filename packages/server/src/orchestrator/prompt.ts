@@ -50,17 +50,21 @@ export function renderCommentsSection(
 
 // Renders a task's recorded amendments after its description, with an
 // explicit line stating they take precedence over it where they conflict.
+// An A2A task's amendments are external text and claim no precedence.
 function renderAmendmentsSection(
   amendmentsText: string,
   external: boolean
 ): string {
-  return [
-    '## Amendments',
-    'These amendments override the description where they conflict.',
-    external
-      ? untrustedFenced('amendments to an A2A task', amendmentsText)
-      : untrustedBlock(amendmentsText),
-  ].join('\n\n');
+  return external
+    ? [
+        '## Amendments',
+        untrustedFenced('amendments to an A2A task', amendmentsText),
+      ].join('\n\n')
+    : [
+        '## Amendments',
+        'These amendments override the description where they conflict.',
+        untrustedBlock(amendmentsText),
+      ].join('\n\n');
 }
 
 // Builds the exact prompt handed to an executor for a dispatched task — its
@@ -91,9 +95,12 @@ export function buildTaskPrompt(
   const bodyForPrompt =
     amendmentsText === '' ? task.body : removeSection(task.body, 'Amendments');
 
+  // An A2A task's spec came from a client, however a decider edited it since.
   const sections: string[] = [
     `# Task ${task.meta.id}: ${untrustedInline(task.meta.title)}`,
-    bodyForPrompt.trim(),
+    a2aOrigin
+      ? untrustedFenced('the A2A task as written', bodyForPrompt.trim())
+      : bodyForPrompt.trim(),
   ];
 
   if (amendmentsText !== '') {

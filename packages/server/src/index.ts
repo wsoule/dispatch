@@ -1542,7 +1542,6 @@ async function bootServer(
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
   });
   docsHost.bindA2AOrigin((taskId) => a2a.taskOrigin(taskId) === 'a2a');
-  orchestrator.setA2AOrigin((taskId) => a2a.taskOrigin(taskId) === 'a2a');
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
