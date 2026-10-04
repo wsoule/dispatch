@@ -1,5 +1,6 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { childEnv } from '@dispatch/core';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -116,6 +117,7 @@ const cliVersions = new Map<string, { mtimeMs: number; version: string }>();
 async function spawnVersion(exe: string): Promise<string | null> {
   try {
     const proc = Bun.spawn([exe, '--version'], {
+      env: childEnv(),
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'ignore',

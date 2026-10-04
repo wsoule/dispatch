@@ -1,9 +1,9 @@
+import { childEnv } from '@dispatch/core';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { childEnv } from '../src/childEnv.js';
 import { spawnCodexAppServer } from '../src/orchestrator/codexAppServer.js';
 import { experimentOptions } from '../src/orchestrator/executors/claude.js';
 import { TerminalRegistry } from '../src/terminals.js';

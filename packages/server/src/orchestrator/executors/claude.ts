@@ -10,10 +10,10 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { DISPATCH_MCP_TOOLS, DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
+import { childEnv } from '@dispatch/core';
 import type { CartoBinary } from '@dispatch/core/carto';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
-import { childEnv } from '../../childEnv.js';
 import { floorCheckForToolInput } from '../../floor.js';
 import {
   claudeMemorySettings,

@@ -7,6 +7,7 @@ import type {
 } from '@dispatch/core';
 import {
   assetNames,
+  childEnv,
   LINK_RELS,
   parseDocFile,
   renderDocFile,
@@ -378,6 +379,7 @@ function runEditor(file: string): number {
   const [cmd, ...args] = (editor ?? 'vi').trim().split(/\s+/);
   return (
     spawnSync(cmd, [...args, file], {
+      env: childEnv(),
       stdio: 'inherit',
       shell: false,
     }).status ?? 1

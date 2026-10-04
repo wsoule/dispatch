@@ -1,5 +1,6 @@
 import {
   absoluteGitLocation,
+  childEnv,
   DEFAULT_RECEIPTS_BRANCH,
   DOCS_LIMITS,
   formatMigrationReport,
@@ -39,6 +40,7 @@ function remoteUrl(root: string, cwd: string, from: string): string {
   const res = spawnSync('git', ['remote', 'get-url', '--', from], {
     cwd: root,
     encoding: 'utf8',
+    env: childEnv(),
   });
   if (res.status === 0) return absoluteGitLocation(root, res.stdout.trim());
   return absoluteGitLocation(cwd, from);
@@ -182,7 +184,7 @@ export function registerReceiptsCommands(
           const cloned = spawnSync(
             'git',
             ['clone', '-q', '--depth', '1', '--branch', opts.branch, url, dir],
-            { encoding: 'utf8' }
+            { encoding: 'utf8', env: childEnv() }
           );
           if (cloned.status !== 0) {
             throw new CliError(

@@ -1,5 +1,6 @@
 import type { DispatchConfig, PackageManager } from '@dispatch/core';
 import {
+  childEnv,
   detectPackageManager,
   detectPreviewCommand,
   previewEnv,
@@ -125,7 +126,7 @@ function spawnDetached(input: {
 }): PreviewProcess {
   const child = spawn('bash', ['-lc', input.command], {
     cwd: input.cwd,
-    env: { ...process.env, ...input.env },
+    env: childEnv(input.env),
     detached: true,
     stdio: 'ignore',
   });

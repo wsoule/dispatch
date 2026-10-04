@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import type { Subprocess } from 'bun';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -69,6 +70,7 @@ export function hostSpawner(): HostSpawner {
   const start = (): Subprocess => {
     if (host !== null) return host;
     const started = Bun.spawn(hostCommand(), {
+      env: childEnv(),
       stdin: 'ignore',
       stdout: 'inherit',
       stderr: 'inherit',

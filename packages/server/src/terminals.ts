@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import { randomUUID } from 'node:crypto';
 import {
   existsSync,
@@ -10,7 +11,6 @@ import {
 import { platform } from 'node:os';
 import { join } from 'node:path';
 
-import { childEnv } from './childEnv.js';
 import { terminalScrollbackPath, terminalsDir } from './orchestrator/paths.js';
 import { spawnInThread } from './terminalSpawn.js';
 import type { TerminalProcess, TerminalSpawner } from './terminalSpawn.js';

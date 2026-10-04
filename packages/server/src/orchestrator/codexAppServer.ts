@@ -1,8 +1,7 @@
+import { childEnv } from '@dispatch/core';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
-
-import { childEnv } from '../childEnv.js';
 
 type JsonRpcId = number | string;
 

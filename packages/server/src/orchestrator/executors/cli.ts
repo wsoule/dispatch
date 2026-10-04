@@ -1,6 +1,6 @@
 import type { ExecutorCommand } from '@dispatch/core';
+import { childEnv } from '@dispatch/core';
 
-import { childEnv } from '../../childEnv.js';
 import { FLOOR_COMMAND_ACTIONS } from '../../floor.js';
 import type {
   Executor,
