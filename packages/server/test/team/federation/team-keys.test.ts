@@ -2,6 +2,7 @@ import type { RosterView } from '@dispatch/federation';
 import { describe, expect, it } from 'bun:test';
 
 import {
+  rewroteSelf,
   starvedProblems,
   transportProblem,
 } from '../../../src/team/federation/daemon.js';
@@ -196,6 +197,27 @@ describe('starvation notes', () => {
       );
       starvedProblems(ada.fed, []);
       expect(ada.fed.problems()).toEqual([]);
+    } finally {
+      ada.close();
+    }
+  });
+});
+
+// FW-R30(2): once the owner rewrote its own files, their bloat note is gone.
+describe('the owner rewriting its own files', () => {
+  it('clears the bloat note on its own files and says it rewrote them', () => {
+    const ada = testReplica('ada');
+    try {
+      const own = ada.fed.replica;
+      transportProblem(ada.fed, true, 'bloat', own, 'padded');
+      transportProblem(ada.fed, true, 'bloat', 'bob-0000000b', 'padded');
+      rewroteSelf(ada.fed, own);
+      expect(
+        ada.fed
+          .problems()
+          .map((p) => p.subject)
+          .sort()
+      ).toEqual(['transport:bloat:bob-0000000b', 'transport:rewrite:self']);
     } finally {
       ada.close();
     }

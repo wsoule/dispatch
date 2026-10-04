@@ -413,17 +413,27 @@ export class SyncRepo {
       const file = join(dir, name);
       const size = lstatSync(file, { throwIfNoEntry: false })?.size ?? 0;
       const state = newStream();
-      readStream(file, state, size + 1, MAX_LINE_BYTES, (line) => {
-        const entry = parseEntry(line);
-        let hash = '';
-        try {
-          hash = entry === null ? '' : opHash(entry);
-        } catch {
-          hash = '';
+      readStream(
+        file,
+        state,
+        size + 1,
+        MAX_LINE_BYTES,
+        (line) => {
+          const entry = parseEntry(line);
+          let hash = '';
+          try {
+            hash = entry === null ? '' : opHash(entry);
+          } catch {
+            hash = '';
+          }
+          if (entry?.replica !== this.replica || !mine.has(hash)) dirty = true;
+        },
+        // A line over the cap is never one of its own ops.
+        () => {
+          dirty = true;
         }
-        if (entry?.replica !== this.replica || !mine.has(hash)) dirty = true;
-      });
-      if (state.offset < size) dirty = true;
+      );
+      if (state.offset < size || state.skipping) dirty = true;
       if (dirty) break;
     }
     if (!dirty || own.length === 0) {
@@ -852,6 +862,8 @@ export class SyncRepo {
       if (st === undefined) continue;
       const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
       if (stamp === held.stamp) continue;
+      // Grown past the cap by stat alone: no diff of it could fit.
+      if (st.size - held.size > MAX_DIFF_BYTES) continue;
       const paths = byBase.get(held.commit) ?? new Map();
       paths.set(file.slice(this.dir.length + 1), {
         held,

@@ -1190,6 +1190,61 @@ describe('GitFederationTransport', () => {
     expect(own).toHaveLength(3);
   });
 
+  // FW-R30(2): a line over the 1 MiB cap in the owner's own file is caught
+  // too, so the owner rewrites its file and the bloat problem clears.
+  it('rewrites its own files clean of a line over the line cap', async () => {
+    const a = clone('a', A);
+    const ops = chain(3);
+    const rewrites: string[] = [];
+    const ta = new GitFederationTransport({
+      repo: a,
+      replica: A,
+      signPriv: keys.signPriv,
+      verifyAcks: () => true,
+      acknowledgedBy: () => false,
+      ownLog: () => ops,
+      onRewriteSelf: () => rewrites.push('self'),
+      now: () => new Date(),
+    });
+    await a.ensure();
+    await ta.publish(ops);
+    await ta.pull(new Map());
+    const raw = join(dir, 'raw');
+    runGitSync(dir, ['clone', '-q', '-b', 'dispatch-sync', remote, raw]);
+    const seg = join(raw, 'fed', A, '000000000001.jsonl');
+    const [first, ...rest] = readFileSync(seg, 'utf8').trim().split('\n');
+    // Only an oversized line, between its own lines: nothing else is off.
+    writeFileSync(
+      seg,
+      `${first}\n${'p'.repeat(2 * 1024 * 1024)}\n${rest.join('\n')}\n`
+    );
+    runGitSync(raw, ['add', '-A']);
+    runGitSync(raw, [
+      '-c',
+      'user.name=x',
+      '-c',
+      'user.email=x@x',
+      'commit',
+      '-q',
+      '-m',
+      'plant',
+    ]);
+    runGitSync(raw, ['push', '-q', 'origin', 'HEAD:dispatch-sync']);
+    await ta.pull(new Map());
+    await ta.ack(new Map());
+    await ta.pull(new Map());
+    expect(rewrites).toEqual(['self']);
+    const own = readdirSync(join(dir, 'a', 'fed', A))
+      .filter((f) => f.endsWith('.jsonl'))
+      .flatMap((f) =>
+        readFileSync(join(dir, 'a', 'fed', A, f), 'utf8')
+          .trim()
+          .split('\n')
+      );
+    expect(own).toHaveLength(3);
+    expect(own.every((l) => l.length < 4096)).toBe(true);
+  });
+
   // Git-verified appends: an honest writer's appends are read as just the
   // new bytes, while a rewrite (the V1 shift) still reads from the start.
   describe('the git-verified append path', () => {
@@ -1274,6 +1329,25 @@ describe('GitFederationTransport', () => {
       read();
       // Killed past the cap: every file read again from byte 0.
       expect(r.lastPassBytes()).toBe(100 * (20 * 209 + 209));
+    }, 60_000);
+
+    it('skips the numstat for a file grown past the diff cap by stat alone', async () => {
+      const { calls, files, commit } = await hundred();
+      const huge = files[0];
+      const line = `{"j":"${'z'.repeat(900 * 1024)}"}\n`;
+      for (let n = 0; n < 19; n++) appendFileSync(huge, line);
+      for (const f of files.slice(1))
+        appendFileSync(f, `{"j":"${'y'.repeat(200)}"}\n`);
+      calls.length = 0;
+      await commit();
+      const rel = huge.slice(join(dir, 'r').length + 1);
+      const diffs = calls.filter((c) => c[0] === 'diff');
+      expect(diffs.length).toBeGreaterThan(0);
+      // The others are still verified; the grown one never reaches git.
+      expect(diffs.some((c) => c.includes(rel))).toBe(false);
+      expect(
+        diffs.some((c) => c.some((p) => p.endsWith('000000001001.jsonl')))
+      ).toBe(true);
     }, 60_000);
 
     it('falls back to full re-reads past 16 MiB of diff in a pass', async () => {

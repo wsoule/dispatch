@@ -128,11 +128,9 @@ export function buildFederation(deps: FederationDeps): Federation {
       onPruned: (seqs) => fed.stubLog(seqs),
       readHints: () => readHints(fed, roster),
       onStarved: (replicas) => starvedProblems(fed, replicas, roster.founded()),
-      onRewriteSelf: () =>
-        fed.problem(
-          'transport:rewrite:self',
-          "someone with push access changed this machine's own files on the sync branch; Dispatch wrote them afresh from this machine's log. Check who can push to the sync branch."
-        ),
+      onRewriteSelf: () => {
+        rewroteSelf(fed, ledger.replica);
+      },
       onRewritten: (replicas) => {
         for (const replica of replicas)
           transportProblem(
@@ -219,6 +217,16 @@ function readHints(fed: FedStore, roster: RosterService): ReadHints {
       return pin !== null && signedEntry(e, pin.signPub);
     },
   };
+}
+
+// The owner wrote its own files afresh: say so, and drop the bloat note on
+// them, as the padding went with the rewrite.
+export function rewroteSelf(fed: FedStore, own: string): void {
+  fed.problem(
+    'transport:rewrite:self',
+    "someone with push access changed this machine's own files on the sync branch; Dispatch wrote them afresh from this machine's log. Check who can push to the sync branch."
+  );
+  fed.clearProblem(`transport:bloat:${own}`);
 }
 
 // A problem per replica whose reads the budget keeps cutting short; cleared

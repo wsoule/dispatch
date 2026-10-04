@@ -35,6 +35,29 @@ describe('readStream', () => {
     expect(lines).toEqual(['{"a":1}', '{"b":2}']);
   });
 
+  it('reports each skipped line over the cap with its offset and length', () => {
+    const file = join(dir, 'skipped.jsonl');
+    const big = 'x'.repeat(3 * 1024 * 1024);
+    const mid = 'y'.repeat(1024 * 1024 + 10);
+    writeFileSync(file, `{"a":1}\n${big}\n{"b":2}\n${mid}\n{"c":3}\n`);
+    const skipped: Array<[number, number]> = [];
+    const state = newStream();
+    // Small budgets, so the 3 MiB line spans passes.
+    for (let n = 0; n < 40 && !state.done; n++)
+      readStream(
+        file,
+        state,
+        256 * 1024,
+        1024 * 1024,
+        () => undefined,
+        (at, length) => skipped.push([at, length])
+      );
+    expect(skipped).toEqual([
+      [8, big.length],
+      [8 + big.length + 1 + 8, mid.length],
+    ]);
+  });
+
   it('reads the lines before appended bloat, and resumes over passes within a budget', () => {
     const file = join(dir, 'appended.jsonl');
     writeFileSync(

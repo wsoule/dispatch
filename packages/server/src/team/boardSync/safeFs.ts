@@ -108,6 +108,8 @@ export interface StreamState {
   offset: number;
   /** Inside a line over the cap, discarding to its end. */
   skipping: boolean;
+  /** Where the line being skipped starts. */
+  skipFrom: number;
   /** At the end of the file as last read. */
   done: boolean;
   /** The start of a line the last read stopped inside, kept (under the line
@@ -128,6 +130,7 @@ export function newStream(
   return {
     offset: 0,
     skipping: false,
+    skipFrom: 0,
     done: false,
     partial: Buffer.alloc(0),
     hash: createHash('sha256'),
@@ -159,7 +162,9 @@ export function readStream(
   state: StreamState,
   budget: number,
   lineCap: number,
-  onLine: (line: string) => void
+  onLine: (line: string) => void,
+  /** Each line skipped as over the cap: its offset and length. */
+  onSkip?: (at: number, length: number) => void
 ): number {
   let fd: number;
   try {
@@ -197,6 +202,9 @@ export function readStream(
         if (!state.skipping && nl <= lineCap) {
           const line = buf.subarray(0, nl).toString('utf8');
           if (line.trim() !== '') onLine(line);
+        } else {
+          const from = state.skipping ? state.skipFrom : at;
+          onSkip?.(from, at + nl - from);
         }
         state.skipping = false;
         state.hash.update(buf.subarray(0, nl + 1));
@@ -207,6 +215,7 @@ export function readStream(
       }
       if (buf.length > lineCap) {
         // A line past the cap: drop what is held and skip to its end.
+        if (!state.skipping) state.skipFrom = at;
         state.skipping = true;
         state.hash.update(buf);
         at += buf.length;
