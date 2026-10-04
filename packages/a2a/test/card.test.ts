@@ -1,4 +1,4 @@
-import { AgentCard } from '@a2a-js/sdk';
+import { AgentCard, verifyAgentCardSignature } from '@a2a-js/sdk';
 import { describe, expect, it } from 'bun:test';
 import { flattenedVerify, importJWK } from 'jose';
 import { generateKeyPairSync } from 'node:crypto';
@@ -203,7 +203,8 @@ describe('signed cards', () => {
   it('signs the RFC 8785 form of the full served card, so a plain JCS verifier passes', async () => {
     const { served, signatures, privateJwk, publicJwk, jku } =
       await signedServedCard();
-    expect(signatures).toHaveLength(1);
+    // Ours over the full card first, then one over the SDK's canonical form.
+    expect(signatures).toHaveLength(2);
     const header = JSON.parse(
       Buffer.from(signatures[0].protected, 'base64url').toString('utf8')
     ) as Record<string, string>;
@@ -216,6 +217,20 @@ describe('signed cards', () => {
     ).resolves.toBe(true);
     await expect(
       standardVerify({ ...served, name: 'Evil API' }, publicJwk)
+    ).rejects.toThrow();
+  });
+
+  it('also carries a signature the SDK 1.2.0 verifier accepts', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    const sdkVerify = verifyAgentCardSignature((kid) => {
+      expect(kid).toBe('k1');
+      return Promise.resolve(publicJwk);
+    });
+    await expect(
+      sdkVerify(AgentCard.fromJSON(served))
+    ).resolves.toBeUndefined();
+    await expect(
+      sdkVerify(AgentCard.fromJSON({ ...served, name: 'Evil API' }))
     ).rejects.toThrow();
   });
 

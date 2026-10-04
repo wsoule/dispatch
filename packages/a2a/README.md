@@ -82,6 +82,19 @@ signing off with a warning in the listener status, and nothing is written.
 Losing the credentials file makes a new key, so the `kid` changes and clients
 that pinned the old key must fetch the JWKS again.
 
+The card carries two signatures, made with the same key:
+
+1. `signatures[0]` covers the RFC 8785 (JCS) form of the whole card as served,
+   minus `signatures`. It is the one that pins the auth fields:
+   `securitySchemes` and `securityRequirements`. A standard JCS verifier checks
+   it, and so does `verifyCardSignature` in this package.
+2. `signatures[1]` covers the canonical form of `@a2a-js/sdk` 1.2.0, so the
+   SDK's `verifyAgentCardSignature` accepts the card. That form leaves out
+   `securitySchemes`, `securityRequirements` and every empty value, so this
+   signature does not protect how a client authenticates.
+
+A client that relies on the auth scheme should verify `signatures[0]`.
+
 ## Outbound address checks
 
 Every outbound contact (a peer's card, its interface, a push webhook) resolves

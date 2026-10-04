@@ -1,4 +1,4 @@
-import { AgentCard } from '@a2a-js/sdk';
+import { AgentCard, generateAgentCardSignature } from '@a2a-js/sdk';
 import type { A2ASkill } from '@dispatch/core';
 import type { JsonValue } from '@dispatch/protocol';
 import { FlattenedSign, flattenedVerify, importJWK } from 'jose';
@@ -152,9 +152,9 @@ function jcs(value: unknown): string {
     .join(',')}}`;
 }
 
-// What a card signature covers: the card exactly as served, minus
-// `signatures`, in JCS. The SDK 1.2.0 canonical form drops securitySchemes and
-// securityRequirements, so a swapped auth scheme would still verify.
+// What Dispatch's own card signature covers: the card exactly as served,
+// minus `signatures`, in JCS. The SDK 1.2.0 canonical form drops
+// securitySchemes and securityRequirements, so its signature cannot pin them.
 function canonicalCard(card: Record<string, unknown>): string {
   const served = AgentCard.toJSON(AgentCard.fromJSON(card)) as Record<
     string,
@@ -177,24 +177,33 @@ export function unsignedCardEtag(inputs: CardInputs): string {
   return cardEtag(AgentCard.fromJSON(unsignedCardJson(inputs)));
 }
 
-// A JWS over the JCS-canonical card (spec:791-794, A2A §8.4); ES256, with the
-// key's kid and the jku its JWKS is served at.
+// Two JWS (spec:791-794, A2A §8.4), ES256 with the key's kid and jku. The
+// first covers the full card's JCS form, auth fields included; the second
+// covers the SDK 1.2.0 canonical form, so SDK verifiers accept the card.
 export async function signCard(
   unsigned: Record<string, JsonValue>,
   key: { privateJwk: Record<string, JsonValue>; kid: string; jku: string }
 ): Promise<CardSignatureJson[]> {
+  const header = { alg: 'ES256', kid: key.kid, jku: key.jku, typ: 'JOSE' };
   const jws = await new FlattenedSign(
     new TextEncoder().encode(canonicalCard(unsigned))
   )
-    .setProtectedHeader({
-      alg: 'ES256',
-      kid: key.kid,
-      jku: key.jku,
-      typ: 'JOSE',
-    })
+    .setProtectedHeader(header)
     .sign(await importJWK(key.privateJwk as JWK, 'ES256'));
+  const sdkSign = generateAgentCardSignature(
+    key.privateJwk as unknown as Parameters<
+      typeof generateAgentCardSignature
+    >[0],
+    header
+  );
+  const sdkSigned = AgentCard.toJSON(
+    await sdkSign(AgentCard.fromJSON(unsigned))
+  ) as { signatures?: CardSignatureJson[] };
   // A protected header is always set above, so jose always returns one.
-  return [{ protected: jws.protected ?? '', signature: jws.signature }];
+  return [
+    { protected: jws.protected ?? '', signature: jws.signature },
+    ...(sdkSigned.signatures ?? []),
+  ];
 }
 
 // Whether any of a served card's signatures verifies over its JCS form under
