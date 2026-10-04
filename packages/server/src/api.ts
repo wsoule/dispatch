@@ -44,6 +44,12 @@ import { isA2AClientToken } from './a2a/auth.js';
 import type { A2ABridge } from './a2a/bridge.js';
 import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
+import type { A2ARunScope } from './api/a2aRunScope.js';
+import {
+  a2aRunScope,
+  lineageStore,
+  visibleToA2ARun,
+} from './api/a2aRunScope.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
 import {
@@ -443,6 +449,9 @@ export interface ApiContext {
   /** The live run whose own token made this request (XH-R2). `caller` is then
    *  the agent token's identity and `viaAgentToken` is true. */
   viaRun?: string;
+  /** Set when `viaRun` is A2A-origin: what it may read is narrowed to its own
+   *  task and the project's, and its task writes inherit its provenance. */
+  a2aRun?: A2ARunScope;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -665,8 +674,8 @@ function validateTaskFields(
   return null;
 }
 
-/** XH-R2: a task a run creates, edits or dispatches through its own token
- *  inherits that run's A2A provenance. */
+/** XH-R2: a task a run dispatches through its own token inherits that run's
+ *  A2A provenance; creates and edits inherit it through lineageStore. */
 function inheritLineage(ctx: ApiContext, taskId: string): void {
   if (ctx.viaRun !== undefined) ctx.a2a?.inherit(ctx.viaRun, taskId);
 }
@@ -720,7 +729,6 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
     creator: requestActor(ctx),
   });
   if (!created.ok) return errorResponse(400, created.error);
-  inheritLineage(ctx, created.doc.meta.id);
   ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
   return jsonResponse(created.doc, 201);
 }
@@ -830,9 +838,6 @@ async function updateTask(
     ...withoutLegacyMilestone(requested),
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
   };
-
-  // Marked before the write: an A2A run's edit makes the task A2A-origin.
-  inheritLineage(ctx, id);
 
   // A gated A2A draft moves only through its gate; a decide-tier status
   // change answers it.
@@ -4306,7 +4311,10 @@ async function getReadyTasks(
   if (fields !== null && fields !== 'meta' && fields !== 'id') {
     return errorResponse(400, `unknown fields: ${fields}`);
   }
-  const ids = ctx.cache.readyIds(statusModelFor(ctx.rootDir));
+  const scope = ctx.a2aRun;
+  const ids = ctx.cache
+    .readyIds(statusModelFor(ctx.rootDir))
+    .filter((id) => scope === undefined || visibleToA2ARun(ctx, scope, id));
   // Read before judging awaits, so the rows and readings are one snapshot.
   const stored =
     fields === 'id'
@@ -4868,6 +4876,39 @@ export function rejectUnauthorized(
   return null;
 }
 
+/** Why a route naming a task or run an A2A-origin run may not see answers 404
+ *  (as an absent one would), or null to proceed. */
+function hiddenFromA2ARun(
+  ctx: ApiContext,
+  scope: A2ARunScope,
+  segments: readonly string[]
+): string | null {
+  const id = segments[1];
+  if (id === undefined) return null;
+  if (segments[0] === 'tasks' && /^t-/.test(id))
+    return visibleToA2ARun(ctx, scope, id) ? null : `task not found: ${id}`;
+  if (segments[0] === 'runs' && /^r-/.test(id)) {
+    const taskId = ctx.orchestrator.taskIdOfRun(id);
+    return taskId === null || visibleToA2ARun(ctx, scope, taskId)
+      ? null
+      : `run not found: ${id}`;
+  }
+  return null;
+}
+
+/** A task list as JSON text, narrowed to what an A2A-origin run may see. */
+function scopedTaskList(ctx: ApiContext, json: string): string {
+  const scope = ctx.a2aRun;
+  if (scope === undefined) return json;
+  const items = JSON.parse(json) as { meta?: { id?: string }; id?: string }[];
+  return JSON.stringify(
+    items.filter((t) => {
+      const id = t.meta?.id ?? t.id;
+      return id === undefined || visibleToA2ARun(ctx, scope, id);
+    })
+  );
+}
+
 /** The run a presented token belongs to, and whether it is still live; null
  *  when the token is a registry credential or no run's at all. */
 function runCredential(
@@ -4979,6 +5020,19 @@ export async function handleApi(
   if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
   if (run !== null) ctx = { ...ctx, viaRun: run.runId };
   if (principal !== undefined) ctx = { ...ctx, principal };
+  const scope = run === null ? null : a2aRunScope(ctx, run.runId);
+  if (scope !== null) {
+    const bridge = ctx.a2a;
+    ctx = {
+      ...ctx,
+      a2aRun: scope,
+      store: lineageStore(ctx.store, (taskId) =>
+        bridge?.inherit(scope.runId, taskId)
+      ),
+    };
+    const hidden = hiddenFromA2ARun(ctx, scope, segments);
+    if (hidden !== null) return errorResponse(404, hidden);
+  }
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
@@ -5376,10 +5430,14 @@ export async function handleApi(
         // `fields=meta` drops every body — the shape list views want.
         const fields = url.searchParams.get('fields');
         if (fields === null) {
-          return jsonTextResponse(ctx.cache.queryJson(filter));
+          return jsonTextResponse(
+            scopedTaskList(ctx, ctx.cache.queryJson(filter))
+          );
         }
         if (fields === 'meta') {
-          return jsonTextResponse(ctx.cache.queryMetaJson(filter));
+          return jsonTextResponse(
+            scopedTaskList(ctx, ctx.cache.queryMetaJson(filter))
+          );
         }
         return errorResponse(400, `unknown fields: ${fields}`);
       }

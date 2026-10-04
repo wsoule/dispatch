@@ -11,22 +11,25 @@ import { call, liveRun, startRun, useWorld } from './world.js';
 
 const world = useWorld();
 
-// An approved client handoff's task, dispatched by the owner: an A2A run.
-async function a2aRun(
-  w: World
-): Promise<{ taskId: string; runId: string; runToken: string }> {
+// A client's handoff, approved by the owner; returns its task.
+async function handoff(
+  w: World,
+  client: string,
+  body: string,
+  title: string
+): Promise<string> {
   useTestAuth(w.handle);
   useSeedBase(w.base);
-  const { caller } = await approvedClient('acme');
+  const { caller } = await approvedClient(client);
   const opened = await w.handle.a2a.port!.open(caller, {
-    clientMessageId: 'c-h1',
+    clientMessageId: `c-${client}`,
     contextId: null,
     kind: 'handoff',
     to: null,
     replyTo: null,
-    body: 'Please add limits.',
+    body,
     refs: [],
-    work: { skill: 'handoff', title: 'Rate-limit uploads' },
+    work: { skill: 'handoff', title },
   });
   if (opened.kind !== 'task') throw new Error('expected a task');
   const row = w.handle.a2a.store!.getTask(opened.taskId)!;
@@ -35,7 +38,19 @@ async function a2aRun(
     { body: '', choice: 'approve' },
     { address: 'human:test', canDecide: true }
   );
-  const taskId = row.dispatchTask!;
+  return row.dispatchTask!;
+}
+
+// An approved client handoff's task, dispatched by the owner: an A2A run.
+async function a2aRun(
+  w: World
+): Promise<{ taskId: string; runId: string; runToken: string }> {
+  const taskId = await handoff(
+    w,
+    'acme',
+    'Please add limits.',
+    'Rate-limit uploads'
+  );
   const run = await startRun(w, w.app, taskId);
   expect(run.meta.operator ?? null).toBeNull();
   return { taskId, runId: run.runId, runToken: run.runToken };
@@ -92,6 +107,106 @@ describe('A2A lineage', () => {
       title: 'ordinary child',
     });
     expect(origin(w, child.json.meta.id)).toBeNull();
+  });
+});
+
+describe('what an A2A run reads', () => {
+  it("never another A2A task: only its own, its own children and the project's", async () => {
+    const w = world();
+    const owner = await call(w, w.app, 'POST', '/api/tasks', {
+      title: 'owner task',
+    });
+    const other = await handoff(
+      w,
+      'globex',
+      'PRIVATE-HANDOFF: our merger term sheet',
+      'PRIVATE-TITLE secret project'
+    );
+    const a2a = await a2aRun(w);
+    const child = await call(w, a2a.runToken, 'POST', '/api/tasks', {
+      title: 'my child',
+    });
+
+    for (const path of ['/api/tasks', '/api/tasks?fields=meta']) {
+      const list = await call(w, a2a.runToken, 'GET', path);
+      expect(list.status).toBe(200);
+      expect(list.text).not.toContain('PRIVATE-');
+      const ids = (list.json as { meta: { id: string } }[]).map(
+        (t) => t.meta.id
+      );
+      expect(ids).toContain(a2a.taskId);
+      expect(ids).toContain(child.json.meta.id);
+      expect(ids).toContain(owner.json.meta.id);
+      expect(ids).not.toContain(other);
+    }
+    expect(
+      (await call(w, a2a.runToken, 'GET', `/api/tasks/${other}`)).status
+    ).toBe(404);
+    const patch = await call(w, a2a.runToken, 'PATCH', `/api/tasks/${other}`, {
+      appendActivity: 'x',
+    });
+    expect(patch.status).toBe(404);
+    expect(patch.text).not.toContain('PRIVATE-');
+    expect(
+      (await call(w, a2a.runToken, 'GET', `/api/tasks/${other}/comments`))
+        .status
+    ).toBe(404);
+    expect(
+      (await call(w, a2a.runToken, 'GET', `/api/tasks/${a2a.taskId}`)).status
+    ).toBe(200);
+    expect(
+      (await call(w, a2a.runToken, 'GET', `/api/tasks/${child.json.meta.id}`))
+        .status
+    ).toBe(200);
+    // The owner still sees every task.
+    expect((await call(w, w.app, 'GET', `/api/tasks/${other}`)).status).toBe(
+      200
+    );
+  });
+});
+
+describe('lineage through every way a run makes tasks', () => {
+  it('a fan-out by an A2A run is refused or yields only A2A-origin tasks', async () => {
+    const w = world();
+    const a2a = await a2aRun(w);
+    const fan = await call(
+      w,
+      a2a.runToken,
+      'POST',
+      `/api/tasks/${a2a.taskId}/fanout`,
+      {
+        variants: [
+          { executor: 'claude', model: 'one' },
+          { executor: 'claude', model: 'two' },
+        ],
+      }
+    );
+    // The A2A lane may refuse a run's fan-out outright; either is contained.
+    expect([201, 403]).toContain(fan.status);
+    if (fan.status === 201) {
+      for (const v of fan.json.variants as {
+        task: { meta: { id: string } };
+        run: { operator?: string | null } | null;
+      }[]) {
+        expect(origin(w, v.task.meta.id)).toBe('a2a');
+        expect(v.run?.operator ?? null).toBeNull();
+      }
+    }
+  });
+
+  it('a subtask an A2A run files under any parent is A2A-origin', async () => {
+    const w = world();
+    const epic = await call(w, w.app, 'POST', '/api/tasks', {
+      title: 'owner epic',
+      kind: 'epic',
+    });
+    const a2a = await a2aRun(w);
+    const sub = await call(w, a2a.runToken, 'POST', '/api/tasks', {
+      title: 'sub',
+      parent: epic.json.meta.id,
+    });
+    expect(sub.status).toBe(201);
+    expect(origin(w, sub.json.meta.id)).toBe('a2a');
   });
 });
 

@@ -18,20 +18,24 @@ describe('A2ALineage', () => {
     const file = join(dir, 'runs', 'a2a-lineage.log');
     const first = new A2ALineage(file);
     expect(first.has('t-abc123')).toBe(false);
-    first.mark('t-abc123');
-    first.mark('t-abc123');
+    first.mark('t-abc123', 'r-run001');
+    first.mark('t-abc123', 'r-run002');
     expect(first.has('t-abc123')).toBe(true);
     const reopened = new A2ALineage(file);
     expect(reopened.has('t-abc123')).toBe(true);
+    // The first run to mark a task keeps it.
+    expect(reopened.markedBy('t-abc123')).toBe('r-run001');
     expect(reopened.has('t-other1')).toBe(false);
   });
 
   it('skips a line that is not a task id', () => {
     const file = join(dir, 'a2a-lineage.log');
-    appendFileSync(file, 't-aaa111\n{garbage\nt-bbb222\n');
+    appendFileSync(file, 't-aaa111\n{garbage\nt-bbb222 r-x1\nt-ccc3');
     const lineage = new A2ALineage(file);
     expect(lineage.has('t-aaa111')).toBe(true);
     expect(lineage.has('t-bbb222')).toBe(true);
+    expect(lineage.markedBy('t-bbb222')).toBe('r-x1');
+    expect(lineage.markedBy('t-aaa111')).toBeNull();
     expect(lineage.has('{garbage')).toBe(false);
   });
 });

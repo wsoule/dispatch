@@ -529,7 +529,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     inherit(runId, taskId) {
       const parent = deps.orchestrator.taskIdOfRun(runId);
       if (parent !== null && parent !== taskId && isA2ATask(guardDeps, parent))
-        lineage.mark(taskId);
+        lineage.mark(taskId, runId);
     },
     lineage,
     recheckProposals: () => proposals.recheck(),
