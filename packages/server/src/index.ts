@@ -49,6 +49,7 @@ import {
   validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
@@ -1393,6 +1394,13 @@ async function bootServer(
   });
   // Memory opens before messaging.recover() because it registers the memory
   // gate's handler: an answer replayed with no handler is marked applied and lost.
+  const unsubscribeRevokedAsks = closeAsksOfRevoked(
+    messaging.engine,
+    (address) =>
+      speaksForRevoked(address, actorContext.member.handle, (handle) =>
+        team.teammates.hasAccess(handle)
+      )
+  );
   const memory = openMemory({
     rootDir,
     store,
@@ -2337,6 +2345,7 @@ async function bootServer(
       clearInterval(externalMergeTimer);
       mergeQueue.stop();
       unsubscribeLinear();
+      unsubscribeRevokedAsks();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();

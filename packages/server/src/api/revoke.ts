@@ -1,6 +1,6 @@
 import { isClientAddress } from '@dispatch/a2a';
 import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import type { Message } from '@dispatch/protocol';
+import type { DeliveryEngine, Message } from '@dispatch/protocol';
 
 import type { ApiContext } from '../api.js';
 import { closeGate } from '../messaging/gates.js';
@@ -107,4 +107,42 @@ function proposer(ctx: CascadeContext, question: Message): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * Whether `address` speaks for a teammate who no longer holds a usable token:
+ * `human:<handle>` or one of their `agent:<handle>/…`. The owner never does.
+ */
+export function speaksForRevoked(
+  address: string,
+  ownerHandle: string,
+  hasAccess: (handle: string) => boolean
+): boolean {
+  const match = /^(?:human:([^/]+)|agent:([^/]+)\/.+)$/.exec(address);
+  const handle = match?.[1] ?? match?.[2];
+  return handle !== undefined && handle !== ownerHandle && !hasAccess(handle);
+}
+
+/**
+ * XH-R3: a question that lands after its sender was revoked (a request that
+ * passed auth before the revoke and wrote after its cascade) is closed on
+ * arrival, as the cascade would have closed it. Returns its unsubscribe.
+ */
+export function closeAsksOfRevoked(
+  engine: DeliveryEngine,
+  revoked: (address: string) => boolean
+): () => void {
+  return engine.subscribe((e) => {
+    if (e.type !== 'message' || !e.message.blocking) return;
+    const { id, from } = e.message;
+    if (!revoked(from)) return;
+    // After the send that emitted this has finished with the store.
+    queueMicrotask(() => {
+      try {
+        closeGate(engine, id, `${from}'s access was revoked`);
+      } catch (err) {
+        console.error(`dispatchd: could not close ${id} on revoke`, err);
+      }
+    });
+  });
 }

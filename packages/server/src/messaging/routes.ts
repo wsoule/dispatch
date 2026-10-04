@@ -31,6 +31,7 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
+import { speaksForRevoked } from '../api/revoke.js';
 import { runMessageRefusal } from '../orchestrator/types.js';
 import { answeringWith, openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
@@ -360,6 +361,16 @@ function a2aRunRefusal(
   return null;
 }
 
+// XH-R3: whether the principal's teammate lost access after handleApi
+// resolved it; the cascade and closeAsksOfRevoked cover what lands anyway.
+function revokedSince(ctx: ApiContext, principal: Principal): boolean {
+  return speaksForRevoked(
+    principal.address,
+    ctx.actorContext.member.handle,
+    (handle) => ctx.team.teammates.hasAccess(handle)
+  );
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -371,6 +382,12 @@ export async function sendMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
+  // The body may arrive after a revoke this credential's check predates.
+  if (revokedSince(ctx, principal))
+    return jsonResponse(
+      { error: "this credential's access was revoked", code: 'auth_revoked' },
+      401
+    );
   const refusal =
     liveRunRefusal(ctx, principal, parsedInput.value.to) ??
     a2aRunRefusal(ctx, principal, parsedInput.value.to);

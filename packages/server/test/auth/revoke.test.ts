@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { rawFetch } from '../testAuth.js';
 import { call, invite, liveRun, useWorld, waitFor } from './world.js';
 
 // XH-R3: revoking a teammate takes everything that acted for them with it:
@@ -131,6 +132,52 @@ describe('revoking a teammate', () => {
     ] as const) {
       expect((await call(w, run.runToken, method, path, body)).status).toBe(
         401
+      );
+    }
+  });
+
+  it('an ask racing the revoke is refused, or lands and is closed', async () => {
+    const w = world();
+    const ada = await invite(w, 'ada@x.io', 'decide');
+    // The ask's headers (and so its credential) reach the daemon before the
+    // revoke; its body only after the revoke's cascade has run.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"to":["human:test"],'));
+        await gate;
+        controller.enqueue(
+          new TextEncoder().encode(
+            '"kind":"question","blocking":true,"body":"late ask"}'
+          )
+        );
+        controller.close();
+      },
+    });
+    const ask = rawFetch(`${w.base}/api/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${ada.token}`,
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(
+      (await call(w, w.app, 'DELETE', `/api/team/tokens/${ada.handle}`)).status
+    ).toBe(200);
+    release?.();
+    const res = await ask;
+    expect([201, 401, 403]).toContain(res.status);
+    if (res.status === 201) {
+      const { message } = (await res.json()) as { message: { id: string } };
+      await waitFor(
+        () =>
+          !w.handle.messaging.engine
+            .openBlocking()
+            .some((m) => m.id === message.id)
       );
     }
   });
