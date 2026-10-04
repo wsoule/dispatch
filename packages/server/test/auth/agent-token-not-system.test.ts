@@ -69,4 +69,39 @@ describe('what the agent token writes', () => {
     });
     expect(sent.status).toBe(403);
   });
+
+  it('cannot be impersonated by an agent registered as local-cli', async () => {
+    const w = world();
+    const reg = await call(w, w.agent, 'POST', '/api/agents/register', {
+      name: 'local-cli',
+      client: 'x',
+    });
+    expect(reg.status).toBe(201);
+    // A registration always lives under a handle: agent:<handle>/<name>.
+    expect(reg.json.address).toBe('agent:test/local-cli');
+    expect(reg.json.address).not.toBe('agent:local-cli');
+    await call(
+      w,
+      w.app,
+      'POST',
+      `/api/agents/${encodeURIComponent(reg.json.address)}/approve`
+    );
+    // It writes as itself, and nothing it sends counts as the system.
+    const sent = await call(w, reg.json.token, 'POST', '/api/messages', {
+      to: ['human:test'],
+      kind: 'message',
+      body: 'hi',
+    });
+    expect(sent.json.message.from).toBe('agent:test/local-cli');
+    expect(isDecidingAuthor(sent.json.message.from)).toBe(false);
+    const forged = await call(w, reg.json.token, 'POST', '/api/messages', {
+      to: ['human:test'],
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      body: 'x',
+      data: { type: 'doc', doc: 'doc-x', proposal: 'rev-x' },
+    });
+    expect(forged.status).toBe(403);
+  });
 });

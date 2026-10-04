@@ -30,6 +30,26 @@ describe('the urgent quota for runs', () => {
     // …and a run for someone else keeps its own.
     expect((await urgent(adas.runToken)).json.message.urgent).toBe(true);
   });
+
+  it('is one quota across three runs of one operator', async () => {
+    const w = world();
+    const runs = [
+      await liveRun(w, w.app, 'a'),
+      await liveRun(w, w.app, 'b'),
+      await liveRun(w, w.app, 'c'),
+    ];
+    let kept = 0;
+    for (let i = 0; i < 15; i++) {
+      const r = await call(w, runs[i % 3].runToken, 'POST', '/api/messages', {
+        to: ['human:test'],
+        kind: 'message',
+        body: `u${i}`,
+        urgent: true,
+      });
+      if (r.json.message.urgent === true) kept++;
+    }
+    expect(kept).toBe(10);
+  });
 });
 
 async function approvedAgent(w: ReturnType<typeof world>, name: string) {
