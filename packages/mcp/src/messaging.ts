@@ -58,7 +58,7 @@ export async function messagingErrorText(res: Response): Promise<string> {
 type MessagingFetchOutcome =
   | { ok: true; res: Response; kind: MessagingCredential['kind'] }
   | { ok: false; transient: true; message: string }
-  | { ok: false; transient: false; result: ToolOutcome };
+  | { ok: false; transient: false; result: ToolOutcome; daemonDown?: true };
 
 // The auth `code` a messaging route's 401 body carries, when it parses
 // (see packages/server/src/messaging/principal.ts's resolvePrincipal).
@@ -99,6 +99,7 @@ export async function messagingFetch(
       ok: false,
       transient: false,
       result: toolError('dispatchd not running — no one to message'),
+      daemonDown: true,
     };
   }
   const clientName = server.server.getClientVersion()?.name;
@@ -238,7 +239,10 @@ async function pollForAnswer(
       }
     );
     if (!outcome.ok) {
-      if (!outcome.transient) return { kind: 'error', result: outcome.result };
+      // A daemon that went down mid-wait is restarting: the question survives
+      // it, so keep polling until the budget runs out.
+      if (!outcome.transient && outcome.daemonDown !== true)
+        return { kind: 'error', result: outcome.result };
       if (await abortableSleep(timing.errorDelayMs, signal)) break;
       continue;
     }

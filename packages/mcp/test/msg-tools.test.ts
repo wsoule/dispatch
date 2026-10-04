@@ -701,6 +701,42 @@ describe('msg_send (blocking)', () => {
     expect(result.structuredContent?.note).toBe(SCOPE_EXPIRED_NOTE);
   });
 
+  it('rides out a daemon restart mid-wait and returns the answer the new daemon holds', async () => {
+    const first = new FakeDaemon();
+    first.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    daemon = first;
+    writeFakeDaemonFile(first.start());
+    const client = await connectClient(root);
+    // Once the first poll lands, the daemon goes down and a new one comes up.
+    const restart = (async () => {
+      while (first.answerPolls < 1) await new Promise((r) => setTimeout(r, 10));
+      first.stop();
+      await new Promise((r) => setTimeout(r, 200));
+      const second = new FakeDaemon();
+      second.answerAfterPolls = 0;
+      daemon = second;
+      writeFakeDaemonFile(second.start());
+    })();
+
+    const result = (await client.callTool(
+      {
+        name: 'msg_send',
+        arguments: {
+          to: ['human:wyat'],
+          kind: 'question',
+          body: 'which db?',
+          blocking: true,
+        },
+      },
+      undefined,
+      { timeout: 20_000 }
+    )) as ToolCallResult;
+    await restart;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toEqual(daemon.answerValue);
+  }, 30_000);
+
   it('stops polling immediately on a non-retryable 4xx instead of riding out the budget', async () => {
     daemon = new FakeDaemon();
     daemon.answerStatus = 403;
