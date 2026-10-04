@@ -970,3 +970,65 @@ describe('foldRoster', () => {
     expect(isCovered(v, A2)).toBe(false);
   });
 });
+
+// FW-R26(1): rival claims on one id are decided in the one fold, in fold
+// order: the first accepted admit binds; later admits naming it are void,
+// and ops its other claims signed are not its own.
+describe('rival key claims', () => {
+  const mine = (k: KeyInfo) => ({ ...k });
+  const real: KeyInfo = mine(keys.get(B) as KeyInfo);
+  const ground: KeyInfo = {
+    replica: B,
+    handle: 'cy',
+    signPub: 'sign-ground',
+    fingerprint: 'FP-0-ground',
+  };
+  const signed = (o: RosterOpRef, signPub: string): RosterOpRef => ({
+    ...o,
+    signPub,
+  });
+  const claims = new Map<string, readonly KeyInfo[]>([
+    [A, [keys.get(A) as KeyInfo]],
+    [B, [ground, real]],
+    [C, [keys.get(C) as KeyInfo]],
+  ]);
+  const foldClaims = (ops: RosterOpRef[]) =>
+    foldRoster({
+      founder: { replica: A, seq: 1 },
+      ops: [signed(FOUND, `sign-${A}`), ...ops],
+      keys: new Map([[A, keys.get(A) as KeyInfo]]),
+      claims,
+      now: new Date(T0 + DAY),
+      licensePublicKey: null,
+    });
+
+  it("binds the first accepted admit's key, voids a later own-device admit, and ignores the other claim's ops", () => {
+    const v = foldClaims([
+      signed(admit(A, 2, 100, B, 'admin'), `sign-${A}`),
+      signed(admit(A, 3, 200, C), `sign-${A}`),
+      signed(
+        op(C, 1, 300, {
+          action: 'admit',
+          replica: B,
+          handle: 'cy',
+          role: 'member',
+          fingerprint: ground.fingerprint,
+        }),
+        `sign-${C}`
+      ),
+      // Signed by the rival claim on B's id: not B's.
+      signed(revoke(B, 1, 400, A, 0), ground.signPub),
+      // Signed by B's admitted key: B's own.
+      signed(revoke(B, 2, 500, C, 1), real.signPub),
+    ]);
+    expect(v.members.get(B)).toMatchObject({ handle: 'bob', role: 'admin' });
+    expect(v.boundKeys.get(B)).toBe(real.signPub);
+    expect(v.members.has(A)).toBe(true);
+    expect(v.revoked.has(C)).toBe(true);
+  });
+
+  it('binds the claim a pending id is admitted under, whatever order the claims came in', () => {
+    const v = foldClaims([signed(admit(A, 2, 100, B), `sign-${A}`)]);
+    expect(v.boundKeys.get(B)).toBe(real.signPub);
+  });
+});

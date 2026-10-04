@@ -2,6 +2,7 @@ import {
   buildOp,
   fingerprint,
   generateReplicaKeys,
+  opHash,
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -37,9 +38,9 @@ function claim(
   remote: MemoryRemote,
   replica: string,
   ms: number,
-  fields: { handle?: string; device?: string } = {}
+  fields: { handle?: string; device?: string } = {},
+  k = generateReplicaKeys()
 ): void {
-  const k = generateReplicaKeys();
   const op = buildOp(
     {
       replica,
@@ -180,5 +181,149 @@ describe('rival key claims (FW-R24)', () => {
       expect(r.fed.claims('eve-0000000e')).toEqual([]);
       expect(r.fed.claims('zed-0000000f')).toEqual([]);
     }
+  });
+
+  // FW-R26(1), the re-verify's R7: a member grinds a key whose fingerprint
+  // sorts first, claims bob's id with handle mal, and admits it as an own
+  // device. The first accepted admit of bob's id binds; mal's is void.
+  it('R7: a later own-device admit naming a held id is void, whatever its fingerprint', async () => {
+    const {
+      remote,
+      make,
+      rs: [ada, bob, mal],
+    } = team('ada', 'bob', 'mal');
+    ada.roster.found('acme');
+    await settle(ada, bob, mal);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob), role: 'admin' });
+    ada.roster.admit(mal.fed.replica, { fingerprint: fp(mal) });
+    await settle(ada, bob, mal);
+    let k = generateReplicaKeys();
+    while (fingerprint(k.signPub, k.sealPub).localeCompare(fp(bob)) >= 0)
+      k = generateReplicaKeys();
+    const ground = fingerprint(k.signPub, k.sealPub);
+    claim(
+      remote,
+      bob.fed.replica,
+      ada.clock.now.getTime(),
+      { handle: 'mal' },
+      k
+    );
+    const forged = mal.fed.append({
+      type: 'roster',
+      body: {
+        rv: 1,
+        action: 'admit',
+        replica: bob.fed.replica,
+        handle: 'mal',
+        role: 'member',
+        fingerprint: ground,
+      },
+    });
+    mal.roster.applyVerified(forged, opHash(forged));
+    await mal.service.syncNow();
+    await settle(ada, bob);
+    bob.roster.revoke(mal.fed.replica, 'grinding keys');
+    const cy = make('cy');
+    await settle(bob, ada, cy);
+    ada.roster.admit(cy.fed.replica, { fingerprint: fp(cy) });
+    await settle(ada, bob, cy);
+    for (const r of [ada, cy]) {
+      const view = r.roster.view();
+      expect(view?.members.get(bob.fed.replica)).toMatchObject({
+        handle: 'bob',
+        role: 'admin',
+      });
+      expect(r.fed.pinned(bob.fed.replica)?.fingerprint).toBe(fp(bob));
+      expect(view?.revoked.has(mal.fed.replica)).toBe(true);
+    }
+  });
+
+  // FW-R26(2), R9: four bogus claims put before an id fill the per-id cap on
+  // a later joiner; a claim an admit names is never dropped by the cap.
+  it('R9: an admitted key is kept however many bogus claims precede it', async () => {
+    const {
+      remote,
+      make,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    for (let n = 0; n < 4; n++)
+      claim(remote, bob.fed.replica, ada.clock.now.getTime());
+    const cy = make('cy');
+    await settle(ada, bob, cy);
+    ada.roster.admit(cy.fed.replica, { fingerprint: fp(cy) });
+    await settle(ada, bob, cy);
+    const id = bob.store.create({ title: 'from bob' }).meta.id;
+    await settle(bob, ada, cy);
+    expect(cy.fed.pinned(bob.fed.replica)?.fingerprint).toBe(fp(bob));
+    expect(title(cy, id)).toBe('from bob');
+  });
+
+  // R9b: the same on the revoker's id must not reopen a revocation.
+  it("R9b: bogus claims on the revoker's id do not undo a revocation for a new joiner", async () => {
+    const {
+      remote,
+      make,
+      rs: [ada, bob, mal],
+    } = team('ada', 'bob', 'mal');
+    ada.roster.found('acme');
+    await settle(ada, bob, mal);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    ada.roster.admit(mal.fed.replica, { fingerprint: fp(mal) });
+    await settle(ada, bob, mal);
+    ada.roster.revoke(mal.fed.replica, 'left');
+    await settle(ada, bob, mal);
+    for (let n = 0; n < 4; n++)
+      claim(remote, ada.fed.replica, ada.clock.now.getTime());
+    const late = mal.store.create({ title: 'after the revocation' }).meta.id;
+    await mal.service.syncNow();
+    const cy = make('cy');
+    await settle(ada, cy);
+    ada.roster.admit(cy.fed.replica, { fingerprint: fp(cy) });
+    await settle(ada, bob, cy);
+    expect(cy.roster.view()?.revoked.has(mal.fed.replica)).toBe(true);
+    expect(title(cy, late)).toBeUndefined();
+  });
+
+  // FW-R26(3): undecided claims show as waiting.
+  it('lists the claims on an undecided id as waiting', async () => {
+    const {
+      remote,
+      make,
+      rs: [ada],
+    } = team('ada');
+    ada.roster.found('acme');
+    await ada.service.syncNow();
+    const cy = make('cy');
+    await settle(ada, cy);
+    claim(remote, cy.fed.replica, ada.clock.now.getTime());
+    await settle(ada);
+    const waiting = ada.roster
+      .waitingClaims()
+      .filter((w) => w.replica === cy.fed.replica);
+    expect(waiting.map((w) => w.fingerprint).sort()).toHaveLength(2);
+  });
+
+  // I1: rival claims cost no fold of their own.
+  it('keeps a pass fast with 125 disputed ids', async () => {
+    const {
+      remote,
+      rs: [ada],
+    } = team('ada');
+    ada.roster.found('acme');
+    await ada.service.syncNow();
+    for (let n = 0; n < 125; n++) {
+      const id = `x${String(n).padStart(3, '0')}-${String(n).padStart(8, '0')}`;
+      claim(remote, id, ada.clock.now.getTime(), { handle: 'x' });
+      claim(remote, id, ada.clock.now.getTime(), { handle: 'x' });
+    }
+    await ada.service.syncNow();
+    await ada.service.syncNow();
+    const started = performance.now();
+    await ada.service.syncNow();
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });

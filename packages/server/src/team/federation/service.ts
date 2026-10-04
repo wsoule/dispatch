@@ -166,6 +166,8 @@ interface Verified {
 
 export class FederationService {
   private lastSyncAt: string | null = null;
+  /** Per undecided id, the lines and roster it was last read with. */
+  private readonly undecidedSeen = new Map<string, string>();
   private lastError: string | null = null;
   private paused: string | null = null;
   private people = 0;
@@ -435,7 +437,11 @@ export class FederationService {
               (entry.type !== 'key' && entry.type !== 'roster')
             )
               continue;
-            if (this.opts.roster.applyVerified(entry, hash) === 'held') break;
+            const named = entry.type === 'key' && namesItself(list, k);
+            if (
+              this.opts.roster.applyVerified(entry, hash, { named }) === 'held'
+            )
+              break;
           }
         }
       }
@@ -549,20 +555,38 @@ export class FederationService {
   private verify(entries: LogEntry[]): Map<string, Verified> {
     const { fed, roster } = this.opts;
     const out = new Map<string, Verified>();
+    // An undecided id whose lines and roster are as last pass costs nothing.
+    const rosterRows =
+      fed.db
+        .query<{ n: number }, []>('SELECT COUNT(*) AS n FROM fed_roster')
+        .get()?.n ?? 0;
     for (const [replica, list] of byReplica(entries)) {
       if (replica === fed.replica) continue;
+      const undecided = fed.pinned(replica) === null;
+      const seen = undecided ? claimListKey(list, rosterRows) : null;
+      if (seen !== null && this.undecidedSeen.get(replica) === seen) {
+        out.set(replica, { entries: [], halted: null, flagged: false });
+        continue;
+      }
       // FW-R24: every self-signed key op claims the id; the roster decides
       // which key it speaks with, and only that key's chain is read.
       for (const k of keyOps(list))
-        if (roster.applyVerified(k, opHash(k)) === 'held') break;
+        if (
+          roster.applyVerified(k, opHash(k), {
+            named: namesItself(list, k),
+          }) === 'held'
+        )
+          break;
       const cursor = fed.cursor(replica);
       if (cursor.halted !== null) continue;
       const pinned = fed.pinned(replica);
       if (pinned === null) {
         this.readClaims(replica, list);
+        if (seen !== null) this.undecidedSeen.set(replica, seen);
         out.set(replica, { entries: [], halted: null, flagged: false });
         continue;
       }
+      this.undecidedSeen.delete(replica);
       const rival = this.rivalOf(
         replica,
         list,
@@ -1052,6 +1076,31 @@ function chainFrom(
     key ??= keyOpSignPub(first);
     at = { seq: first.seq, hash: opHash(first), hlc: first.hlc };
   }
+}
+
+// What an undecided id's read depends on: its lines and how many roster ops
+// this machine holds (an admit may since name one of its claims).
+function claimListKey(list: readonly LogEntry[], rosterRows: number): string {
+  const hashes = list.map((e) => {
+    try {
+      return opHash(e);
+    } catch {
+      return '';
+    }
+  });
+  return `${rosterRows}:${hashes.sort().join(',')}`;
+}
+
+// Whether k's own chain founds a team or recovers: roster ops that name the
+// key that signs them, so its claim is never dropped by the cap (FW-R26(2)).
+function namesItself(list: readonly LogEntry[], k: FederatedOp): boolean {
+  const key = keyOpSignPub(k);
+  if (key === null) return false;
+  return chainFrom(list, null, key).chain.some((e) => {
+    if (e.type !== 'roster' || isStub(e)) return false;
+    const action = (e.body as { action?: unknown } | undefined)?.action;
+    return action === 'found' || action === 'recover';
+  });
 }
 
 // The log's key ops that verify with the key each carries: its claims.

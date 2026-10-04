@@ -565,7 +565,11 @@ export class RosterService {
 
   /** Records a verified key or roster op, then re-folds, records and audits it.
    *  One stamped too far ahead is held (FW-R21): the caller stops there. */
-  applyVerified(entry: FederatedOp, hash: string): 'applied' | 'held' {
+  applyVerified(
+    entry: FederatedOp,
+    hash: string,
+    opts: { named?: boolean } = {}
+  ): 'applied' | 'held' {
     const subject = `op:${entry.replica}:${entry.seq}`;
     // This machine's own ops are never held (FW-R22(5)): after its wall clock
     // steps back, its chain's clock is still ahead of it.
@@ -586,7 +590,7 @@ export class RosterService {
       this.fed.clearProblem(subject);
     this.fed.observe(entry.hlc);
     if (entry.type === 'key') {
-      this.pinKey(entry);
+      this.pinKey(entry, opts.named === true);
       return 'applied';
     }
     if (entry.type !== 'roster') return 'applied';
@@ -628,12 +632,11 @@ export class RosterService {
       if (list === undefined) claims.set(c.replica, [c]);
       else list.push(c);
     }
+    // Until the fold binds them, an id with one claim reads with it.
     const decided = new Map<string, PinnedKey>();
-    const disputed: string[] = [];
     for (const [replica, list] of claims) {
       const [only] = list;
       if (list.length === 1 && only !== undefined) decided.set(replica, only);
-      else disputed.push(replica);
     }
     this.decided = decided;
     const founder = this.fed.meta('founder');
@@ -651,42 +654,34 @@ export class RosterService {
       .get(founder)
       ?.find((c) => c.signPub === found?.sign_pub);
     if (found === undefined || founderKey === undefined) return null;
-    decided.set(founder, founderKey);
-    const run = (keys: ReadonlyMap<string, PinnedKey>): RosterView =>
-      foldRoster({
-        founder: { replica: founder, seq: founderSeq },
-        ops: rows
-          .filter((r) => keys.get(r.replica)?.signPub === r.sign_pub)
-          .map((r) => ({
-            replica: r.replica,
-            seq: r.seq,
-            hlc: r.hlc,
-            hash: r.hash,
-            body: JSON.parse(r.body_json) as RosterBody,
-          })),
-        keys: keyInfos(keys),
-        now: this.deps.now(),
-        licensePublicKey: this.deps.licensePublicKey,
-      });
-    let view = run(decided);
-    for (const replica of disputed.filter((r) => r !== founder).sort()) {
-      const list = [...(claims.get(replica) ?? [])].sort((a, b) =>
-        a.fingerprint.localeCompare(b.fingerprint)
-      );
-      for (const c of list) {
-        const trial = new Map(decided).set(replica, c);
-        const v = run(trial);
-        // Admitted under this key, even if revoked since.
-        const held =
-          v.members.has(replica) ||
-          (v.revoked.get(replica)?.handle ?? null) !== null;
-        if (held) {
-          decided.set(replica, c);
-          view = v;
-          break;
-        }
-      }
+    // FW-R26(1): one fold, every claim and every op with its signer; the
+    // fold binds each id to the claim its first accepted admit or recover
+    // names, and only that claim's ops count after.
+    const infos = new Map<string, KeyInfo[]>();
+    for (const [replica, list] of claims) infos.set(replica, list.map(infoOf));
+    const view = foldRoster({
+      founder: { replica: founder, seq: founderSeq },
+      ops: rows.map((r) => ({
+        replica: r.replica,
+        seq: r.seq,
+        hlc: r.hlc,
+        hash: r.hash,
+        body: JSON.parse(r.body_json) as RosterBody,
+        signPub: r.sign_pub,
+      })),
+      keys: keyInfos(new Map([[founder, founderKey]])),
+      claims: infos,
+      now: this.deps.now(),
+      licensePublicKey: this.deps.licensePublicKey,
+    });
+    for (const [replica, signPub] of view.boundKeys) {
+      const key = claims.get(replica)?.find((c) => c.signPub === signPub);
+      if (key !== undefined) decided.set(replica, key);
     }
+    // A disputed id nobody admitted speaks with none of its claims yet.
+    for (const [replica, list] of claims)
+      if (list.length > 1 && !view.boundKeys.has(replica))
+        decided.delete(replica);
     return view;
   }
 
@@ -833,7 +828,9 @@ export class RosterService {
     this.applyVerified(op, opHash(op));
   }
 
-  private pinKey(entry: FederatedOp): void {
+  // `named`: the key's own chain founds the team or recovers with it, which
+  // names the claim as surely as an admit does (FW-R26(2)).
+  private pinKey(entry: FederatedOp, named = false): void {
     const body = entry.body as unknown as KeyBody;
     // M1: a label nobody could print safely makes no claim.
     if (
@@ -843,24 +840,73 @@ export class RosterService {
       keyFieldsProblem(body.handle, body.device, body.build) !== null
     )
       return;
-    const claimed = this.fed.claim({
-      replica: entry.replica,
-      handle: body.handle,
-      device: body.device,
-      build: body.build,
-      signPub: body.signPub,
-      sealPub: body.sealPub,
-      fingerprint: fingerprint(body.signPub, body.sealPub),
-      keySeq: entry.seq,
-      legacy: body.legacy,
-      ...(body.invite === undefined ? {} : { invite: body.invite }),
-    });
+    const fp = fingerprint(body.signPub, body.sealPub);
+    const claimed = this.fed.claim(
+      {
+        replica: entry.replica,
+        handle: body.handle,
+        device: body.device,
+        build: body.build,
+        signPub: body.signPub,
+        sealPub: body.sealPub,
+        fingerprint: fp,
+        keySeq: entry.seq,
+        legacy: body.legacy,
+        ...(body.invite === undefined ? {} : { invite: body.invite }),
+      },
+      named || this.namesFingerprint(entry.replica, fp)
+    );
     if (claimed === 'full')
       this.fed.problem(
         `key:${entry.replica}`,
         `more than ${MAX_KEY_CLAIMS} keys claim replica ${entry.replica}; later claims are ignored`
       );
-    if (claimed === 'new') this.refresh();
+    if (claimed === 'new') {
+      if (named) this.refresh();
+      else this.noteClaim(entry.replica);
+    }
+  }
+
+  // An unnamed claim costs no fold (FW-R26(2)): an id with one claim reads
+  // with it, one with rivals with none until the fold binds it; the view
+  // folds again when next read.
+  private noteClaim(replica: string): void {
+    const bound = this.cached?.boundKeys.has(replica) === true;
+    if (!bound) {
+      const list = this.fed.claims(replica);
+      const [only] = list;
+      if (list.length === 1 && only !== undefined) this.fed.decideOne(only);
+      else this.fed.leaveUndecided(replica);
+    }
+    this.cached = undefined;
+  }
+
+  // Whether a roster op on the branch admits `replica` with this fingerprint.
+  private namesFingerprint(replica: string, fp: string): boolean {
+    return this.rows().some((r) => {
+      const body = JSON.parse(r.body_json) as {
+        action?: unknown;
+        replica?: unknown;
+        fingerprint?: unknown;
+      };
+      return (
+        body.action === 'admit' &&
+        body.replica === replica &&
+        body.fingerprint === fp
+      );
+    });
+  }
+
+  /** Each claim on an id the roster has not admitted yet, rival claims
+   *  included (FW-R26(3)), for `waiting`. */
+  waitingClaims(): PinnedKey[] {
+    const view = this.view();
+    const pending = new Set(view?.pending ?? []);
+    return this.fed
+      .claims()
+      .filter((c) =>
+        view === null ? c.replica !== this.me : pending.has(c.replica)
+      );
   }
 
   /** The claim on `replica` with this signing key. */
@@ -1173,15 +1219,19 @@ function fromCrockford32(text: string, bytes: number): Buffer | null {
 // The fold's view of each decided key.
 function keyInfos(keys: ReadonlyMap<string, PinnedKey>): Map<string, KeyInfo> {
   const out = new Map<string, KeyInfo>();
-  for (const [replica, pin] of keys)
-    out.set(replica, {
-      replica,
-      handle: pin.handle,
-      signPub: pin.signPub,
-      fingerprint: pin.fingerprint,
-      ...(pin.invite === undefined ? {} : { invite: pin.invite }),
-    });
+  for (const [replica, pin] of keys) out.set(replica, infoOf(pin));
   return out;
+}
+
+// One claim as the fold reads it.
+function infoOf(pin: PinnedKey): KeyInfo {
+  return {
+    replica: pin.replica,
+    handle: pin.handle,
+    signPub: pin.signPub,
+    fingerprint: pin.fingerprint,
+    ...(pin.invite === undefined ? {} : { invite: pin.invite }),
+  };
 }
 
 // This machine's device or build as its key op carries it: printable, never empty.

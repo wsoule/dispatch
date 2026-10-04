@@ -290,7 +290,9 @@ describe('pins, cursors, problems and the audit log', () => {
     for (const k of ['T', 'U', 'V'])
       expect(fed.claim({ ...pin, signPub: k })).toBe('new');
     expect(fed.claim({ ...pin, signPub: 'W' })).toBe('full');
-    expect(fed.claims('bob-0000000b')).toHaveLength(MAX_KEY_CLAIMS);
+    // FW-R26(2): a claim a roster op names is never dropped by the cap.
+    expect(fed.claim({ ...pin, signPub: 'N' }, true)).toBe('new');
+    expect(fed.claims('bob-0000000b')).toHaveLength(MAX_KEY_CLAIMS + 1);
     expect(fed.pinned('bob-0000000b')).toBeNull();
     const withHistory = {
       ...pin,

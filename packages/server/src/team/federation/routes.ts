@@ -471,6 +471,7 @@ function teamKeys(
     view: roster.view(),
     foundings: roster.founded() ? [] : roster.foundingsSeen(),
     pins: fed.pins(),
+    waiting: fedCtx.roster.waitingClaims(),
     replicas,
     health: status.transportHealth,
     problems: fed.problems(),

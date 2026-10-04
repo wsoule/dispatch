@@ -79,6 +79,8 @@ export interface TeamKeysInput {
   view: RosterView | null;
   foundings: TeamKeys['foundings'];
   pins: PinnedKey[];
+  /** Every claim on an id not yet admitted (RosterService.waitingClaims). */
+  waiting?: PinnedKey[];
   replicas: { replica: string; lastHlc: string; skewMs: number }[];
   health: TransportHealth;
   problems: TeamKeys['problems'];
@@ -117,18 +119,24 @@ export function assembleTeamKeys(input: TeamKeysInput): TeamKeys {
       };
     }
   );
+  // Every claim on a pending id, rival claims included (FW-R26(3)): an
+  // admin picks by the fingerprint its owner reads out.
   const waiting: TeamKeys['waiting'] = (view?.pending ?? []).flatMap((r) => {
-    const pin = pins.get(r);
-    if (pin === undefined) return [];
-    return [
-      {
-        replica: r,
-        handle: pin.handle,
-        device: printable(pin.device),
-        fingerprint: pin.fingerprint,
-        invitedBy: view?.invitedBy.get(r) ?? null,
-      },
-    ];
+    const claims = (input.waiting ?? []).filter((c) => c.replica === r);
+    const listed = claims.length > 0 ? claims : [pins.get(r)];
+    return listed.flatMap((pin) =>
+      pin === undefined
+        ? []
+        : [
+            {
+              replica: r,
+              handle: pin.handle,
+              device: printable(pin.device),
+              fingerprint: pin.fingerprint,
+              invitedBy: view?.invitedBy.get(r) ?? null,
+            },
+          ]
+    );
   });
   const invites: TeamKeys['invites'] = [...(view?.invites.values() ?? [])]
     .filter((i) => Date.parse(i.expires) > now.getTime())

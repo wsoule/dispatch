@@ -19,6 +19,8 @@ export const LEGACY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export interface RosterOpRef extends Position {
   hash: string;
   body: RosterBody;
+  /** The key that signed it, one of its replica id's claims (FW-R26). */
+  signPub?: string;
 }
 
 /** What the fold needs of a replica's pinned key. */
@@ -35,6 +37,10 @@ export interface FoldInput {
   founder: { replica: string; seq: number };
   ops: readonly RosterOpRef[];
   keys: ReadonlyMap<string, KeyInfo>;
+  /** Every key claimed per replica id (FW-R26): the fold binds an id to the
+   *  claim its first accepted admit or recover names. Absent, `keys` is the
+   *  one claim of each id. */
+  claims?: ReadonlyMap<string, readonly KeyInfo[]>;
   now: Date;
   licensePublicKey: string | null;
   /** The relay never pauses: it folds the same roster, ops it cannot read left inert. */
@@ -99,6 +105,9 @@ export interface RosterView {
   invites: ReadonlyMap<string, Invite>;
   /** Pending replica → the handle whose invite its key op proves. */
   invitedBy: ReadonlyMap<string, string>;
+  /** Each id's key as the fold bound it, by signing key (FW-R26): the
+   *  founder's by the found, others' by the first accepted admit or recover. */
+  boundKeys: ReadonlyMap<string, string>;
   recoveryPub: string;
   license: LicenseState;
   licenseBy: string | null;
@@ -192,7 +201,8 @@ interface Context {
   found: { op: RosterOpRef; body: Action<'found'> };
   teamId: string;
   deadlineMs: number;
-  /** Each replica's lowest Known(1) roster op seq, where a pending recover goes. */
+  /** Each claim's lowest Known(1) roster op seq (firstKey), where a pending
+   *  recover goes. */
   firstSeq: ReadonlyMap<string, number>;
   /** The replicas whose rights a removal's cut can change, its target included. */
   reach: (cut: Removal) => ReadonlySet<string>;
@@ -223,6 +233,8 @@ interface Evaluation {
   people: string[];
   peopleSeen: Set<string>;
   hostCuts: Map<string, HostCut[]>;
+  /** Each id's key, bound by its founding, first accepted admit or recover. */
+  bound: Map<string, KeyInfo>;
   /** Whether this evaluation keeps problems; only the one the view shows does. */
   notes: boolean;
   problems: Problem[];
@@ -376,7 +388,12 @@ function finalFold(
   later: LaterPairs
 ): { final: Folded; dismisses: Dismiss[]; valid: Set<Eligible> } {
   const all = dedupe(input.ops)
-    .sort(comparePositions)
+    .sort((a, b) => {
+      // Two claims' ops at one position: the hash decides, the same everywhere.
+      const byPosition = comparePositions(a, b);
+      if (byPosition !== 0) return byPosition;
+      return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
+    })
     .map((op) => itemOf(op, later));
   const shared = sharedOf(input, all);
   const dismisses = dismissesOf(all);
@@ -1052,8 +1069,8 @@ function sharedOf(input: FoldInput, all: readonly Item[]): Shared {
   for (const { op, kind } of all.slice(all.indexOf(found.item)))
     if (kind === 'known')
       firstSeq.set(
-        op.replica,
-        Math.min(op.seq, firstSeq.get(op.replica) ?? op.seq)
+        firstKey(op),
+        Math.min(op.seq, firstSeq.get(firstKey(op)) ?? op.seq)
       );
   const index = new Map<Position, number>(all.map((i, n) => [i.op, n]));
   return {
@@ -1081,7 +1098,16 @@ function provesOf(input: FoldInput, teamId: string): Context['proves'] {
     const id = `${recover.hash}\n${pub}`;
     const known = seen.get(id);
     if (known !== undefined) return known;
-    const key = input.keys.get(recover.replica);
+    const key =
+      recover.signPub === undefined
+        ? input.keys.get(recover.replica)
+        : (
+            input.claims?.get(recover.replica) ?? [
+              ...(input.keys.has(recover.replica)
+                ? [input.keys.get(recover.replica) as KeyInfo]
+                : []),
+            ]
+          ).find((c) => c.signPub === recover.signPub);
     const signed = `${TAG.recovery}\n${teamId}\n${recover.replica}\n${key?.signPub ?? ''}`;
     const ok = key !== undefined && verifyText(pub, signed, proof);
     seen.set(id, ok);
@@ -1093,7 +1119,7 @@ function provesOf(input: FoldInput, teamId: string): Context['proves'] {
 function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
   const { all, ...rest } = shared;
   const items = all.filter((i) => !without.has(i));
-  const righted = rightedOf(items, shared.found.op, shared.input.keys);
+  const righted = rightedOf(items, shared.found.op, shared.input);
   // Filtered once here, so no fold of rights walks a void publisher's ops.
   const granting = items.filter(
     ({ op, body }) =>
@@ -1116,17 +1142,22 @@ function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
 function rightedOf(
   items: readonly Item[],
   founding: RosterOpRef,
-  keys: FoldInput['keys']
+  input: FoldInput
 ): Set<string> {
+  const claims = (r: string): readonly KeyInfo[] =>
+    input.claims?.get(r) ??
+    (input.keys.has(r) ? [input.keys.get(r) as KeyInfo] : []);
   const out = new Set([founding.replica]);
   for (const { op, body } of items)
-    if (isAction(body, 'recover') && keys.has(op.replica)) out.add(op.replica);
+    if (isAction(body, 'recover') && claims(op.replica).length > 0)
+      out.add(op.replica);
   for (let grew = true; grew; ) {
     grew = false;
     for (const { op, body } of items) {
       if (!isAction(body, 'admit') || !out.has(op.replica)) continue;
       if (out.has(body.replica)) continue;
-      if (keys.get(body.replica)?.fingerprint !== body.fingerprint) continue;
+      if (!claims(body.replica).some((c) => c.fingerprint === body.fingerprint))
+        continue;
       out.add(body.replica);
       grew = true;
     }
@@ -1201,7 +1232,9 @@ function reachOf(
 function dedupe(ops: readonly RosterOpRef[]): RosterOpRef[] {
   const bySeq = new Map<string, RosterOpRef>();
   for (const op of ops) {
-    const key = `${op.replica}\n${op.seq}`;
+    // One op per claim and seq: a rival claim's op never displaces one of
+    // another claim's (FW-R26).
+    const key = `${op.replica}\n${op.signPub ?? ''}\n${op.seq}`;
     const seen = bySeq.get(key);
     if (seen === undefined || op.hash < seen.hash) bySeq.set(key, op);
   }
@@ -1366,7 +1399,38 @@ const positionOf = (op: Position): Position => ({
 
 // The handle a replica's key asks for, or the one its id carries.
 function handleOf(ctx: Context, replica: string): string {
-  return ctx.input.keys.get(replica)?.handle ?? personOf(replica);
+  const claims = claimsOf(ctx, replica);
+  return (
+    ctx.input.keys.get(replica)?.handle ??
+    (claims.length === 1 ? claims[0]?.handle : undefined) ??
+    personOf(replica)
+  );
+}
+
+// Every key claimed for `replica` (FW-R26), else its one pinned key.
+function claimsOf(
+  ctx: Pick<Context, 'input'>,
+  replica: string
+): readonly KeyInfo[] {
+  const { input } = ctx;
+  return (
+    input.claims?.get(replica) ??
+    (input.keys.has(replica) ? [input.keys.get(replica) as KeyInfo] : [])
+  );
+}
+
+// The claim that signed `op`; without signers, its replica's pinned key.
+function keyOfOp(
+  ctx: Pick<Context, 'input'>,
+  op: RosterOpRef
+): KeyInfo | undefined {
+  if (op.signPub === undefined) return ctx.input.keys.get(op.replica);
+  return claimsOf(ctx, op.replica).find((c) => c.signPub === op.signPub);
+}
+
+// firstSeq's key: a replica's claim, since each claim's chain is its own.
+function firstKey(op: RosterOpRef): string {
+  return `${op.replica}\n${op.signPub ?? ''}`;
 }
 
 function personOf(replica: string): string {
@@ -1479,6 +1543,7 @@ function evaluate(
     people: [],
     peopleSeen: new Set(),
     hostCuts: new Map(),
+    bound: new Map(),
     notes,
     problems: [],
   };
@@ -1506,6 +1571,20 @@ function step(
 ): void {
   // An unreadable op grants nothing; notesOf decides whether it pauses.
   if (body === 'unknown') return;
+  // Once an id is bound, an op its other claims signed is not its own.
+  const bound = ev.bound.get(op.replica);
+  if (
+    bound !== undefined &&
+    op.signPub !== undefined &&
+    op.signPub !== bound.signPub
+  ) {
+    note(
+      ev,
+      op,
+      `${op.replica}'s roster op at seq ${op.seq} is signed by a key this team did not admit; ignored`
+    );
+    return;
+  }
   if (isAction(body, 'found')) {
     foundStep(ctx, ev, op, body);
     return;
@@ -1623,11 +1702,13 @@ function foundStep(
   body: Action<'found'>
 ): void {
   if (op !== ctx.found.op) {
-    const fp = ctx.input.keys.get(op.replica)?.fingerprint ?? 'no pinned key';
+    const fp = keyOfOp(ctx, op)?.fingerprint ?? 'no pinned key';
     note(ev, op, `a second founding by ${op.replica} (${fp}), ignored`);
     return;
   }
-  const handle = handleOf(ctx, op.replica);
+  const key = keyOfOp(ctx, op);
+  if (key !== undefined) ev.bound.set(op.replica, key);
+  const handle = key?.handle ?? handleOf(ctx, op.replica);
   const pos = positionOf(op);
   ev.holders.set(op.replica, {
     handle,
@@ -1648,20 +1729,27 @@ function admitStep(
   body: Action<'admit'>,
   rights: Rights
 ): void {
-  const key = ctx.input.keys.get(body.replica);
+  // FW-R26(1): once an id is held, every later admit naming it is void,
+  // whoever signs it and whatever fingerprint it names.
+  if (ev.holders.has(body.replica)) {
+    const held = ev.bound.get(body.replica);
+    if (held !== undefined && held.fingerprint !== body.fingerprint)
+      note(
+        ev,
+        op,
+        `${body.replica} is already admitted with key ${held.fingerprint}; this admit naming ${body.fingerprint} is void`
+      );
+    return;
+  }
+  const candidates = claimsOf(ctx, body.replica);
+  const key = candidates.find((c) => c.fingerprint === body.fingerprint);
   if (key === undefined) {
     note(
       ev,
       op,
-      `the admit of ${body.replica} names fingerprint ${body.fingerprint}, but no key of ${body.replica} is pinned; ignored`
-    );
-    return;
-  }
-  if (key.fingerprint !== body.fingerprint) {
-    note(
-      ev,
-      op,
-      `the admit of ${body.replica} names fingerprint ${body.fingerprint}, but its key's is ${key.fingerprint}; ignored`
+      candidates.length === 0
+        ? `the admit of ${body.replica} names fingerprint ${body.fingerprint}, but no key of ${body.replica} is pinned; ignored`
+        : `the admit of ${body.replica} names fingerprint ${body.fingerprint}, but its key's is ${candidates.map((c) => c.fingerprint).join(' or ')}; ignored`
     );
     return;
   }
@@ -1669,7 +1757,6 @@ function admitStep(
     note(ev, op, `${body.replica} was revoked and is never admitted again`);
     return;
   }
-  if (ev.holders.has(body.replica)) return;
   const hosts = [...(body.hosts ?? [])];
   const observer = body.observer === true;
   // Every roster op an observer publishes is void, so an observer admin would
@@ -1696,6 +1783,7 @@ function admitStep(
     return;
   }
   const pos = positionOf(op);
+  ev.bound.set(body.replica, key);
   ev.holders.set(body.replica, {
     handle: body.handle,
     hosts,
@@ -1758,7 +1846,7 @@ function recoverStep(
   op: RosterOpRef,
   body: Action<'recover'>
 ): void {
-  const key = ctx.input.keys.get(op.replica);
+  const key = keyOfOp(ctx, op);
   if (ev.holders.has(op.replica)) {
     note(ev, op, `${op.replica} is already admitted; its recover is ignored`);
     return;
@@ -1767,7 +1855,7 @@ function recoverStep(
     note(ev, op, `${op.replica} was revoked and is never admitted again`);
     return;
   }
-  if (ctx.firstSeq.get(op.replica) !== op.seq) {
+  if (ctx.firstSeq.get(firstKey(op)) !== op.seq) {
     note(ev, op, `${op.replica}'s recover is not its first roster op; ignored`);
     return;
   }
@@ -1793,6 +1881,7 @@ function recoverStep(
   }
   const pos = positionOf(op);
   ev.usedRecovery.add(ev.recoveryPub);
+  ev.bound.set(op.replica, key);
   ev.holders.set(op.replica, {
     handle: key.handle,
     hosts: [],
@@ -1997,21 +2086,24 @@ function viewOf(
       since: h.since,
     });
   }
-  const pending = [...input.keys.keys()]
+  const pending = [
+    ...new Set([...input.keys.keys(), ...(input.claims?.keys() ?? [])]),
+  ]
     .filter((r) => !ev.holders.has(r) && !revoked.has(r))
     .sort();
 
   const invitedBy = new Map<string, string>();
-  for (const replica of pending) {
-    const key = input.keys.get(replica);
-    const proof = key?.invite;
-    if (key === undefined || proof === undefined) continue;
-    const invite = ev.invites.get(proof.id);
-    if (invite === undefined || invite.handle !== key.handle) continue;
-    const signed = `${TAG.invite}\n${ctx.teamId}\n${replica}\n${key.signPub}`;
-    if (!verifyText(invite.pub, signed, proof.sig)) continue;
-    invitedBy.set(replica, ev.holders.get(invite.by)?.handle ?? invite.by);
-  }
+  for (const replica of pending)
+    for (const key of claimsOf(ctx, replica)) {
+      const proof = key.invite;
+      if (proof === undefined) continue;
+      const invite = ev.invites.get(proof.id);
+      if (invite === undefined || invite.handle !== key.handle) continue;
+      const signed = `${TAG.invite}\n${ctx.teamId}\n${replica}\n${key.signPub}`;
+      if (!verifyText(invite.pub, signed, proof.sig)) continue;
+      invitedBy.set(replica, ev.holders.get(invite.by)?.handle ?? invite.by);
+      break;
+    }
 
   // The latest shared license that verifies, else the free tier.
   let license: LicenseState = { kind: 'free', seats: FREE_SEATS };
@@ -2054,6 +2146,7 @@ function viewOf(
     pending,
     invites: ev.invites,
     invitedBy,
+    boundKeys: new Map([...ev.bound].map(([r, k]) => [r, k.signPub])),
     recoveryPub: ev.recoveryPub,
     license,
     licenseBy,

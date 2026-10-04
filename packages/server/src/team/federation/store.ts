@@ -268,11 +268,12 @@ export class FedStore {
   }
 
   /** Records a self-signed key op as a claim on its replica id: 'full' when
-   *  the id already holds MAX_KEY_CLAIMS others. */
-  claim(key: PinnedKey): 'new' | 'same' | 'full' {
+   *  the id already holds MAX_KEY_CLAIMS others and no roster op names it. */
+  claim(key: PinnedKey, named = false): 'new' | 'same' | 'full' {
     const held = this.claims(key.replica);
     if (held.some((c) => c.signPub === key.signPub)) return 'same';
-    if (held.length >= MAX_KEY_CLAIMS) return 'full';
+    // FW-R26(2): a claim a roster op names is never dropped by the cap.
+    if (!named && held.length >= MAX_KEY_CLAIMS) return 'full';
     this.insertKey('fed_key_claims', key);
     return 'new';
   }
@@ -305,6 +306,17 @@ export class FedStore {
         return was !== undefined && was !== k.signPub;
       })
       .map((k) => k.replica);
+  }
+
+  /** Decides one id's key on its own, without a fold. */
+  decideOne(key: PinnedKey): void {
+    this.db.query('DELETE FROM fed_keys WHERE replica = ?').run(key.replica);
+    this.insertKey('fed_keys', key);
+  }
+
+  /** Leaves an id undecided: rival claims, none bound yet. */
+  leaveUndecided(replica: string): void {
+    this.db.query('DELETE FROM fed_keys WHERE replica = ?').run(replica);
   }
 
   private insertKey(
