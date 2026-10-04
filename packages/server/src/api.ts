@@ -134,7 +134,11 @@ import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
 import { checkDaemonIdentity } from './daemonfile.js';
-import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
+import type {
+  DecisionDisposition,
+  DecisionFeed,
+  DecisionItem,
+} from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
 import { handleDocsRoute } from './docs/routes.js';
 import type { DocsService } from './docs/service.js';
@@ -253,6 +257,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
   runMessageRefusal,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -4909,6 +4914,41 @@ function scopedTaskList(ctx: ApiContext, json: string): string {
   );
 }
 
+/**
+ * XH-R4: which decision feed items the caller may see. A deciding human sees
+ * all of them; anyone else only the items they take part in: a gate whose
+ * message they can read, a stalled run they are or act for, a capped fix loop
+ * on a task they created.
+ */
+function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
+  const agent = ctx.viaAgentToken === true;
+  if (!agent && tierAllows(ctx.caller?.tier ?? 'request', 'decide'))
+    return () => true;
+  const address =
+    ctx.viaRun !== undefined ? `run:${ctx.viaRun}` : requestActor(ctx);
+  // The bare agent token's actor is the messaging system's own address, so it
+  // is never a reader: it takes part in no conversation.
+  const reader =
+    agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
+  const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
+  return (item) => {
+    const source = item.id.slice(item.id.indexOf(':') + 1);
+    if (source.startsWith('m-'))
+      return reader !== null && ctx.messaging.engine.canRead(source, reader);
+    if (item.runId !== undefined) {
+      const run = runs.get(item.runId);
+      return (
+        address === `run:${item.runId}` ||
+        (run !== undefined &&
+          (runOperator(run) === address || run.dispatchedBy === address))
+      );
+    }
+    if (item.taskId !== undefined)
+      return ctx.cache.get(item.taskId)?.meta.creator === address;
+    return false;
+  };
+}
+
 /** The run a presented token belongs to, and whether it is still live; null
  *  when the token is a registry credential or no run's at all. */
 function runCredential(
@@ -6064,10 +6104,14 @@ export async function handleApi(
           );
         }
         return jsonResponse({
-          items: ctx.decisionFeed.list({
-            disposition: (raw ?? undefined) as DecisionDisposition | undefined,
-            includeResolved: url.searchParams.get('resolved') === '1',
-          }),
+          items: ctx.decisionFeed
+            .list({
+              disposition: (raw ?? undefined) as
+                | DecisionDisposition
+                | undefined,
+              includeResolved: url.searchParams.get('resolved') === '1',
+            })
+            .filter(decisionVisibleTo(ctx)),
         });
       }
     }

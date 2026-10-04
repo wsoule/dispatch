@@ -45,7 +45,7 @@ import { join } from 'node:path';
 
 import { spawnGitSync } from '../blockingGit.js';
 import type { TaskCache } from '../cache.js';
-import type { EventBus } from '../events.js';
+import type { EventBus, SocketAudience } from '../events.js';
 import { FindingStore } from '../findings.js';
 import type { FindingStorePort } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
@@ -686,7 +686,13 @@ export class Orchestrator {
   }
 
   // A run's own message to a human, logged on its transcript.
-  logOutgoing(runId: string, message: { id: string; body: string }): void {
+  // `audience` scopes the run.log frame to the message's participants: a DM
+  // never reaches other sockets (XH-R4).
+  logOutgoing(
+    runId: string,
+    message: { id: string; body: string },
+    audience?: (who: SocketAudience | undefined) => boolean
+  ): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
     const entry: NormalizedEntry = {
@@ -701,7 +707,7 @@ export class Orchestrator {
     this.bestEffort(`logging an outgoing message for run ${runId}`, () => {
       this.transcriptFor(runId).appendEntry(entry);
     });
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry }, audience);
   }
 
   // deliverToRun for a non-interrupting channel digest: logged the same way,

@@ -565,7 +565,8 @@ export function openMessaging(deps: {
     if (!e.message.to.some((addr) => addr.startsWith('human:'))) return;
     deps.orchestrator.logOutgoing(
       e.message.from.slice('run:'.length),
-      e.message
+      e.message,
+      messageAudience(store, e.message)
     );
   });
 
