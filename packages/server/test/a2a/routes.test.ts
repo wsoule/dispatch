@@ -467,6 +467,45 @@ describe('decline and revocation', () => {
     expect(handle.a2a.store!.getTask(two.taskId)?.state).toBe('FAILED');
   });
 
+  it('keeps a revoked client revoked: approving it again is a conflict', async () => {
+    const { caller } = await approvedClient('acme');
+    const at = (verb: string) =>
+      fetch(
+        `${base}/api/agents/${encodeURIComponent(caller.address)}/${verb}`,
+        { method: 'POST' }
+      );
+    expect((await at('revoke')).status).toBe(200);
+    expect((await at('approve')).status).toBe(409);
+    expect(handle.messaging.store.getAgent(caller.address)?.status).toBe(
+      'revoked'
+    );
+  });
+
+  it('closes a revoked client’s open task-proposal gates', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-h1',
+      contextId: null,
+      kind: 'handoff',
+      to: null,
+      replyTo: null,
+      body: 'Please add limits.',
+      refs: [],
+      work: { skill: 'handoff', title: 'Rate-limit uploads' },
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const gate = handle.a2a.store!.getTask(opened.taskId)!.gate!;
+    const isOpen = () =>
+      handle.messaging.engine.openBlocking().some((m) => m.id === gate);
+    expect(isOpen()).toBe(true);
+    await fetch(
+      `${base}/api/agents/${encodeURIComponent(caller.address)}/revoke`,
+      { method: 'POST' }
+    );
+    expect(isOpen()).toBe(false);
+  });
+
   it('deletes a revoked client’s push configs, secrets included', async () => {
     const { caller } = await approvedClient('acme');
     const port = handle.a2a.port!;

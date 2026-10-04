@@ -112,8 +112,8 @@ export interface A2ABridge {
   applySettings(next: ListenerSettings): Promise<ListenerStatus>;
   disable(): Promise<ListenerStatus>;
   listening(): boolean;
-  // Closes a revoked client's unanswered asks as the system ("client
-  // revoked"); its handoff gates stay open for the owner.
+  // Closes a revoked client's unanswered asks and open task-proposal gates
+  // as the system ("client revoked").
   clientRevoked(address: string): void;
   // The proposal guards; each works with a2a.db down.
   guardTaskPatch(
@@ -533,10 +533,13 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         console.error(`dispatchd: could not list ${address}'s A2A tasks`, err);
       }
       for (const row of rows) {
-        if (row.skill !== 'ask' || TERMINAL_STATES.has(row.state)) continue;
+        if (TERMINAL_STATES.has(row.state)) continue;
+        // An ask closes its root question; a handoff, its open proposal gate.
+        const question = row.skill === 'ask' ? row.id : row.gate;
+        if (question === null) continue;
         try {
           // False when an answer got there first; the recompute shows which.
-          closeGate(messaging.engine, row.id, 'client revoked');
+          closeGate(messaging.engine, question, 'client revoked');
           watch?.recompute(row.id);
         } catch (err) {
           console.error(`dispatchd: could not close A2A task ${row.id}`, err);
