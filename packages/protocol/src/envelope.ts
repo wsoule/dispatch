@@ -374,6 +374,12 @@ export function validateSendInput(
       input.choices.some((c) => typeof c !== 'string'))
   )
     invalid('choices', 'expected a list of strings');
+  if (
+    input.replyTo !== undefined &&
+    input.replyTo !== null &&
+    typeof input.replyTo !== 'string'
+  )
+    invalid('replyTo', 'expected a message id or null');
   if (!Array.isArray(input.to) || input.to.length === 0)
     invalid('to', 'at least one recipient');
   if (input.to.length > MAX_RECIPIENTS)

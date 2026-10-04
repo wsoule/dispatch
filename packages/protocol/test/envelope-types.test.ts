@@ -47,6 +47,10 @@ describe('validateSendInput on non-string and non-object input', () => {
     { ...ok, session: 5 },
     { ...ok, choice: 5 },
     { ...ok, replyTo: 5 },
+    { ...ok, replyTo: {} },
+    { ...ok, replyTo: [] },
+    { ...ok, replyTo: Object.create(null) },
+    { ...ok, replyTo: [Object.create(null)] },
     { ...ok, idempotencyKey: {} },
   ];
   for (const [i, input] of inputs.entries()) {

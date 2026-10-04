@@ -6,6 +6,18 @@ import { useEffect } from 'react';
 import { Markdown } from './Markdown';
 
 describe('Markdown', () => {
+  test('a linked remote image is plain text, never a link inside a link', () => {
+    const { container } = render(
+      <Markdown
+        content={'[![badge](https://ci.example/b.svg)](https://ci.example)'}
+      />
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelectorAll('a')).toHaveLength(1);
+    expect(container.querySelector('a a')).toBeNull();
+    expect(container.textContent).toContain('[image: badge]');
+  });
+
   test('never loads a remote image: an agent-written pixel becomes a link', () => {
     const { container } = render(
       <Markdown

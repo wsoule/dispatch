@@ -4,7 +4,7 @@ import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { LinkedImage } from './LinkedImage';
+import { LinkedImage, MarkdownLink } from './LinkedImage';
 import { cn } from '@/lib/utils';
 import type { CodeBlockLanguage } from '@/ui/ai/code-block';
 import { CodeBlock } from '@/ui/ai/code-block';
@@ -139,9 +139,7 @@ export function Markdown({
         components={{
           img: imgComponent,
           a: ({ children, href }) => (
-            <a href={href} target="_blank" rel="noreferrer">
-              {children}
-            </a>
+            <MarkdownLink href={href}>{children}</MarkdownLink>
           ),
           code: ({ children }) => (
             <code className="bg-surface-quaternary rounded-[4px] px-1 py-0.5 font-mono text-[0.85em]">
