@@ -140,6 +140,13 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
           subtitle={problem.message}
         />
       ))}
+      {(status.federationProblems ?? []).map((problem) => (
+        <SettingsRow
+          key={problem.subject}
+          title={`Team: ${problem.subject}`}
+          subtitle={problem.message}
+        />
+      ))}
     </SettingsGroup>
   );
 }

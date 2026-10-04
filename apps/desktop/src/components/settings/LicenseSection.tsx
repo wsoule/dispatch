@@ -1,4 +1,4 @@
-import type { LicenseStatus } from '@dispatch/client';
+import type { LicenseStatus, TeamKeys } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound } from 'lucide-react';
 import { useState } from 'react';
@@ -42,6 +42,19 @@ export function LicenseSection({ data }: LicenseSectionProps) {
     },
     enabled: client !== null,
   });
+  // A founded team shares one key (Task 13); without board sync, or on a
+  // daemon without federation, this query fails and the team rows stay away.
+  const team = useQuery({
+    queryKey: ['team-keys', client?.baseUrl],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.getTeamKeys();
+    },
+    enabled: client !== null,
+    retry: false,
+  });
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +62,22 @@ export function LicenseSection({ data }: LicenseSectionProps) {
   const status = license.data;
   if (status === undefined) return null;
   const canInstall = myTier === 'operator';
+
+  async function share() {
+    if (client === null || sharing) return;
+    setSharing(true);
+    setShareError(null);
+    try {
+      await client.shareTeamLicense();
+      await queryClient.invalidateQueries({
+        queryKey: ['team-keys', client.baseUrl],
+      });
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSharing(false);
+    }
+  }
 
   async function install() {
     const trimmed = draft.trim();
@@ -91,6 +120,17 @@ export function LicenseSection({ data }: LicenseSectionProps) {
           )}
         </SettingsRow>
       </SettingsGroup>
+
+      {team.data?.team != null && (
+        <TeamLicenseGroup
+          keys={team.data}
+          licensed={status.kind === 'licensed'}
+          canShare={canInstall}
+          sharing={sharing}
+          error={shareError}
+          onShare={() => void share()}
+        />
+      )}
 
       <SettingsGroup title="License key" keywords="install" requires="none">
         {canInstall ? (
@@ -135,5 +175,65 @@ export function LicenseSection({ data }: LicenseSectionProps) {
         )}
       </SettingsGroup>
     </>
+  );
+}
+
+interface TeamLicenseGroupProps {
+  keys: TeamKeys;
+  licensed: boolean;
+  canShare: boolean;
+  sharing: boolean;
+  error: string | null;
+  onShare: () => void;
+}
+
+/** The team's key: whose the team uses, and Share with the team on an
+ *  admin's machine that holds a licensed key. */
+function TeamLicenseGroup({
+  keys,
+  licensed,
+  canShare,
+  sharing,
+  error,
+  onShare,
+}: TeamLicenseGroupProps) {
+  const mine = keys.roster.find((m) => m.replica === keys.machine.replica);
+  const shared = keys.license;
+  return (
+    <SettingsGroup title="Team" keywords="share license team" requires="none">
+      {shared !== null && shared.sharedBy !== null && (
+        <SettingsRow
+          title={`Your team uses ${shared.sharedBy}'s key: ${shared.org ?? 'a license'}, ${shared.seats} people`}
+        />
+      )}
+      {licensed && mine?.role === 'admin' && (
+        <SettingsRow
+          title="Share this key with the team"
+          subtitle="Every machine on the team then counts seats by it."
+          locked={!canShare}
+          control={
+            canShare ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={sharing}
+                onClick={onShare}
+              >
+                Share with the team
+              </Button>
+            ) : undefined
+          }
+        >
+          {error !== null && (
+            <p role="alert" className="text-state-failed mt-1.5 text-[13px]">
+              {error}
+            </p>
+          )}
+        </SettingsRow>
+      )}
+      {licensed && mine?.role === 'member' && (
+        <SettingsRow title="Ask an admin to share this key with your team" />
+      )}
+    </SettingsGroup>
   );
 }
