@@ -140,6 +140,7 @@ const ACKNOWLEDGEABLE = [
   'team:route',
   'observer:',
   'transport:read:',
+  'transport:bloat:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {

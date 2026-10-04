@@ -6,6 +6,7 @@ import {
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   existsSync,
@@ -23,12 +24,16 @@ import type { Watermarks } from '../federation/transport.js';
 import type { BoardOp } from './engine.js';
 import {
   listDir,
+  newStream,
   ownFile,
   readCapped,
   readHead,
+  readRange,
+  readStream,
   realDir,
   regularFile,
 } from './safeFs.js';
+import type { StreamState } from './safeFs.js';
 
 // The git half of board sync: a clone of one branch, where every replica keeps
 // an append-only log of the changes it made, `ops/<replica>.jsonl`.
@@ -72,6 +77,12 @@ const MAX_SEGMENT_READ = SEGMENT_MAX_BYTES + MAX_OP_BYTES;
 const MAX_ACKS_READ = 1024 * 1024;
 // FW-R23: fresh segment bytes one pass reads per replica; the rest wait.
 const READ_BUDGET_BYTES = 2 * MAX_SEGMENT_READ;
+// FW-R29(1): lines over this are skipped, and the first file of a pass reads
+// at least this much, so a bloated file only ever costs time.
+const MAX_LINE_BYTES = 1024 * 1024;
+const MIN_STREAM_CHUNK = 256 * 1024;
+// FW-R29(3): what every full scan together may read in one pass.
+const SCAN_PASS_BYTES = 32 * 1024 * 1024;
 // FW-R25: fresh bytes a pass reads across all replicas, the unknown ids it
 // probes for a key op, and how much of each file a probe reads.
 const TOTAL_READ_BYTES = 32 * 1024 * 1024;
@@ -126,6 +137,13 @@ interface CachedSegment {
   stamp: string;
   floor: number;
   lines: { line: string; entry: LogEntry }[];
+  /** FW-R29(1): how far the file is read, resumed on the next pass. */
+  stream: StreamState;
+  /** The 4 KiB before stream.offset, to tell an append from a rewrite. */
+  tail: string;
+  /** The last line read, and whether any line above the floor was signed. */
+  last: LogEntry | null;
+  gave: boolean;
 }
 
 // What earlier reads learned of a segment, kept after its lines are dropped:
@@ -162,6 +180,14 @@ export class SyncRepo {
   private passBytes = 0;
   /** Where the next pass starts probing claim-only ids (FW-R26(4)). */
   private probeStart = 0;
+  /** Files read this daemon's life far over a segment's size (FW-R29(1)). */
+  private readonly oversized = new Set<string>();
+  /** FW-R29(3): the full scans' resumable reads, and this pass's budget. */
+  private readonly scanCache = new Map<
+    string,
+    { stamp: string; stream: StreamState; tail: string; entries: LogEntry[] }
+  >();
+  private scanLeft = SCAN_PASS_BYTES;
   /** Per probed id, which of its files the next probe starts at. */
   private readonly probeFileStart = new Map<string, number>();
   private readonly segmentInfo = new Map<string, SegmentInfo>();
@@ -378,6 +404,7 @@ export class SyncRepo {
     const out: LogEntry[] = [];
     const live = new Set<string>();
     this.passBytes = 0;
+    this.scanLeft = SCAN_PASS_BYTES;
     const all = listDir(root).filter(
       (r) => REPLICA_ID.test(r) && realDir(join(root, r))
     );
@@ -409,7 +436,10 @@ export class SyncRepo {
       const stale = files.filter(({ file, stamp }) => {
         const held = this.segmentCache.get(file);
         return (
-          held === undefined || held.stamp !== stamp || held.floor > cursor
+          held === undefined ||
+          held.stamp !== stamp ||
+          held.floor > cursor ||
+          !held.stream.done
         );
       });
       const rank = (file: string): [number, number] => {
@@ -436,14 +466,27 @@ export class SyncRepo {
       let spent = 0;
       let cut = false;
       for (const [n, f] of order.entries()) {
-        const over = spent + f.size > budget || this.passBytes + f.size > total;
-        if (over && (n > 0 || this.passBytes > 0)) {
+        // FW-R29(1): files stream from where they stopped, within the budget;
+        // the first file of a pass always gets a chunk, so reads progress.
+        const allowance = Math.min(budget - spent, total - this.passBytes);
+        if (allowance <= 0 && (n > 0 || this.passBytes > 0)) {
           cut = true;
           continue;
         }
-        spent += f.size;
-        this.passBytes += f.size;
-        this.readSegment(f.file, f.stamp, replica, cursor, signed);
+        const used = this.readSegment(
+          f.file,
+          f.stamp,
+          f.size,
+          replica,
+          cursor,
+          signed,
+          this.passBytes === 0
+            ? Math.max(allowance, MIN_STREAM_CHUNK)
+            : allowance
+        );
+        spent += used;
+        this.passBytes += used;
+        if (this.segmentCache.get(f.file)?.stream.done !== true) cut = true;
       }
       this.cutPasses.set(
         replica,
@@ -497,10 +540,12 @@ export class SyncRepo {
       .join(',');
   }
 
-  /** Every complete line of these replicas' segments (every replica when
-   *  null), read whole within the per-file cap and outside every pass budget:
-   *  FW-R28's scan for a named key op no probe found. */
-  scanFull(replicas: readonly string[] | null): LogEntry[] {
+  /** The key and roster ops in these replicas' segments (every replica when
+   *  null), streamed in resumable steps within one byte budget all scans share each
+   *  pass (FW-R29(3)): FW-R28's search for a named key op or a founding no
+   *  probe found. Returns what has been read so far. */
+  scanFull(replicas: readonly string[] | null, budget?: number): LogEntry[] {
+    if (budget !== undefined) this.scanLeft = budget;
     const root = join(this.dir, FED_DIR);
     const ids =
       replicas ??
@@ -508,12 +553,57 @@ export class SyncRepo {
     const out: LogEntry[] = [];
     for (const replica of ids) {
       if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
-      for (const name of this.segments(replica))
-        for (const line of completeLines(join(root, replica, name))) {
-          const entry = parseEntry(line);
-          if (entry?.replica === replica) out.push(entry);
+      for (const name of this.segments(replica)) {
+        const file = join(root, replica, name);
+        const st = lstatSync(file, { throwIfNoEntry: false });
+        if (st === undefined) continue;
+        const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+        let held = this.scanCache.get(file);
+        if (
+          held !== undefined &&
+          held.stamp !== stamp &&
+          (st.size < held.stream.offset ||
+            tailOf(file, held.stream.offset) !== held.tail)
+        )
+          held = undefined;
+        if (held === undefined) {
+          held = { stamp, stream: newStream(), tail: '', entries: [] };
+          this.scanCache.set(file, held);
         }
+        const changed = held.stamp !== stamp;
+        held.stamp = stamp;
+        if (!held.stream.done || changed) {
+          if (this.scanLeft > 0) {
+            const h = held;
+            this.scanLeft -= readStream(
+              file,
+              h.stream,
+              this.scanLeft,
+              MAX_LINE_BYTES,
+              (line) => {
+                const entry = parseEntry(line);
+                if (
+                  entry?.replica === replica &&
+                  (entry.type === 'key' || entry.type === 'roster')
+                )
+                  h.entries.push(entry);
+              }
+            );
+            h.tail = tailOf(file, h.stream.offset);
+          }
+        }
+        out.push(...held.entries);
+      }
     }
+    return out;
+  }
+
+  /** Files seen far over the size any honest segment reaches, as
+   *  `<replica>/<name>`, since the last call. */
+  takeOversized(): string[] {
+    const root = join(this.dir, FED_DIR);
+    const out = [...this.oversized].map((f) => f.slice(root.length + 1));
+    this.oversized.clear();
     return out;
   }
 
@@ -567,32 +657,69 @@ export class SyncRepo {
   }
 
   // Reads one segment into the cache and records what it showed.
+  // Reads one segment onward from where it stopped, up to `allowance` bytes,
+  // into the cache; returns the bytes read. A file rewritten under the read
+  // (its bytes before the offset changed) starts over.
   private readSegment(
     file: string,
     stamp: string,
+    size: number,
     replica: string,
     cursor: number,
-    signed: (e: LogEntry) => boolean
-  ): void {
-    const held: CachedSegment = { stamp, floor: cursor, lines: [] };
-    let last: LogEntry | null = null;
-    let gave = false;
-    for (const line of completeLines(file)) {
-      const entry = parseEntry(line);
-      last = entry;
-      if (entry?.replica !== replica || entry.seq <= cursor) continue;
-      held.lines.push({ line, entry });
-      if (signed(entry)) gave = true;
+    signed: (e: LogEntry) => boolean,
+    allowance: number
+  ): number {
+    let held = this.segmentCache.get(file);
+    if (
+      held !== undefined &&
+      (held.floor > cursor ||
+        (held.stamp !== stamp &&
+          (size < held.stream.offset ||
+            tailOf(file, held.stream.offset) !== held.tail)))
+    )
+      held = undefined;
+    if (held === undefined) {
+      held = {
+        stamp,
+        floor: cursor,
+        lines: [],
+        stream: newStream(),
+        tail: '',
+        last: null,
+        gave: false,
+      };
+      this.segmentCache.set(file, held);
     }
-    this.segmentCache.set(file, held);
-    const before = this.segmentInfo.get(file);
-    this.segmentInfo.set(file, {
-      lastOwnSeq:
-        last !== null && last.replica === replica && signed(last)
-          ? last.seq
-          : null,
-      idle: gave ? 0 : (before?.idle ?? 0) + 1,
-    });
+    held.stamp = stamp;
+    if (size > MAX_SEGMENT_READ) this.oversized.add(file);
+    const h = held;
+    const used = readStream(
+      file,
+      h.stream,
+      allowance,
+      MAX_LINE_BYTES,
+      (line) => {
+        const entry = parseEntry(line);
+        h.last = entry;
+        if (entry?.replica !== replica || entry.seq <= cursor) return;
+        h.lines.push({ line, entry });
+        if (signed(entry)) h.gave = true;
+      }
+    );
+    h.tail = tailOf(file, h.stream.offset);
+    if (h.stream.done) {
+      const before = this.segmentInfo.get(file);
+      const last = h.last;
+      this.segmentInfo.set(file, {
+        lastOwnSeq:
+          last !== null && last.replica === replica && signed(last)
+            ? last.seq
+            : null,
+        idle: h.gave ? 0 : (before?.idle ?? 0) + 1,
+      });
+      h.gave = false;
+    }
+    return used;
   }
 
   // Keeps the whole read cache under MAX_CACHE_BYTES, dropping files in
@@ -926,4 +1053,15 @@ function hintOrder(names: string[], cursor: number): string[] {
     if (Number(name.slice(0, 12)) <= cursor + 1) start = i;
   });
   return [...names.slice(start), ...names.slice(0, start).reverse()];
+}
+
+// The 4 KiB before `offset` in a file, as hex: equal after an append, not
+// after a rewrite of what was read.
+function tailOf(file: string, offset: number): string {
+  if (offset === 0) return '';
+  const start = Math.max(0, offset - 4096);
+  const bytes = readRange(file, start, offset - start);
+  return bytes === null
+    ? 'unreadable'
+    : createHash('sha256').update(bytes).digest('hex');
 }

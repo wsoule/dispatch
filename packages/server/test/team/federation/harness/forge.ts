@@ -169,3 +169,25 @@ export function rivalClaimFile(
   mkdirSync(join(dir, 'fed', replica), { recursive: true });
   writeFileSync(join(dir, 'fed', replica, name), `${JSON.stringify(op)}\n`);
 }
+
+/** Bloats every segment of `replica`: `bytes` of junk appended after its
+ *  lines, or put before them. */
+export function bloatSegments(
+  dir: string,
+  replica: string,
+  bytes: number,
+  where: 'append' | 'prepend'
+): void {
+  const segDir = join(dir, 'fed', replica);
+  for (const name of readdirSync(segDir).filter((n) =>
+    /^\d{12}\.jsonl$/.test(n)
+  )) {
+    const file = join(segDir, name);
+    const junk = `${'x'.repeat(bytes)}\n`;
+    const text = readFileSync(file, 'utf8');
+    writeFileSync(
+      file,
+      where === 'append' ? `${text}${junk}` : `${junk}${text}`
+    );
+  }
+}

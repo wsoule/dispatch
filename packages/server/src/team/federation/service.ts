@@ -62,6 +62,7 @@ const CLAIM_PREFIX_OPS = 8;
 // waits doubling up to this long, unless the files it reads change.
 const SCAN_EAGER = 3;
 const SCAN_MAX_WAIT_MS = 30 * 60 * 1000;
+const SCAN_MIN_INTERVAL_MS = 60 * 1000;
 // One bad-signature or halt audit row per replica in this window.
 const AUDIT_WINDOW_MS = 10 * 60 * 1000;
 
@@ -174,7 +175,7 @@ export class FederationService {
   /** Backoff per full scan (FW-R28), by what it looks for. */
   private readonly scans = new Map<
     string,
-    { attempts: number; nextAt: number; stamp: string }
+    { attempts: number; nextAt: number; stamp: string; lastAt: number | null }
   >();
   /** Per undecided id, the lines and roster it was last read with. */
   private readonly undecidedSeen = new Map<string, string>();
@@ -488,16 +489,26 @@ export class FederationService {
     const stamp = this.opts.transport.stamp(replicas);
     const now = this.now().getTime();
     let st = this.scans.get(key);
-    if (st === undefined || st.stamp !== stamp) {
-      st = { attempts: 0, nextAt: 0, stamp };
+    if (st === undefined) {
+      st = { attempts: 0, nextAt: 0, stamp, lastAt: null };
       this.scans.set(key, st);
+    } else if (st.stamp !== stamp) {
+      // A change to its files scans again, but never sooner than a minute
+      // after the last scan (FW-R29(3)).
+      st.stamp = stamp;
+      st.attempts = SCAN_EAGER;
+      st.nextAt = (st.lastAt ?? 0) + SCAN_MIN_INTERVAL_MS;
     }
     if (now < st.nextAt) return false;
     st.attempts += 1;
+    st.lastAt = now;
     if (st.attempts >= SCAN_EAGER)
       st.nextAt =
         now +
-        Math.min(SCAN_MAX_WAIT_MS, 60_000 * 2 ** (st.attempts - SCAN_EAGER));
+        Math.min(
+          SCAN_MAX_WAIT_MS,
+          SCAN_MIN_INTERVAL_MS * 2 ** (st.attempts - SCAN_EAGER)
+        );
     return true;
   }
 

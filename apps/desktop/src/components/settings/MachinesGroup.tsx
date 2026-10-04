@@ -25,6 +25,7 @@ const ACKNOWLEDGEABLE = [
   'team:route',
   'observer:',
   'transport:read:',
+  'transport:bloat:',
 ];
 // Each problem source in words, by its subject's prefix (FW-R25 subjects).
 const PROBLEM_TITLES: [string, string][] = [
@@ -40,6 +41,7 @@ const PROBLEM_TITLES: [string, string][] = [
   ['transport:merge', 'Sync branch reset'],
   ['transport:commit', 'Could not commit to the sync clone'],
   ['transport:read:', 'Slow reads'],
+  ['transport:bloat:', 'Padded file on the sync branch'],
   ['recovery:', 'Admin by recovery code'],
   ['rekey:', 'This machine joined again'],
   ['op:', 'Roster change'],

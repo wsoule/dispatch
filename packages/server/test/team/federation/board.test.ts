@@ -20,6 +20,7 @@ import {
 import type { Cluster, Member } from './harness/cluster.js';
 import {
   appendSignedOp,
+  bloatSegments,
   forgeLastTaskLine,
   prependJunk,
   rivalClaimFile,
@@ -507,6 +508,68 @@ describe('board convergence over signed ops', () => {
         body: JSON.stringify({ fingerprint: machine.fingerprint }),
       });
       expect([admitted.status, admitted.body?.error]).toEqual([200, undefined]);
+    },
+    SLOW
+  );
+
+  // FW-R29(1), the re-verify's R14b: megabytes of junk in each of an offline
+  // revoker's segments, after or before its lines, never hide its revocation.
+  for (const where of ['append', 'prepend'] as const)
+    it(
+      `keeps an offline revoker's revocation past ${where}ed bloat in its segments`,
+      async () => {
+        const c = await team(['ada', 'bob', 'mal']);
+        const [ada, bob, mal] = c.members as [Member, Member, Member];
+        const bobId = await bob.handle.replica();
+        const malId = await mal.handle.replica();
+        await ada.handle.api(`/api/team/keys/${bobId}/role`, {
+          method: 'POST',
+          body: JSON.stringify({ role: 'admin' }),
+        });
+        await quiesce(c.members);
+        await bob.handle.api(`/api/team/keys/${malId}/revoke`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'left' }),
+        });
+        await quiesce(c.members);
+        await bob.handle.stop();
+        const late = await mal.handle.create('after the revocation');
+        await quiesce([ada, mal]);
+        editRemote(c.remote, (dir) =>
+          bloatSegments(dir, bobId, 6 * 1024 * 1024, where)
+        );
+        const cy = await c.add('cy');
+        await quiesce([ada, mal, cy]);
+        await ada.handle.admit(cy.handle);
+        await quiesce([ada, mal, cy]);
+        expect(await cy.handle.title(late)).toBeNull();
+        expect(
+          (await cy.handle.keys()).roster.map((r) => r.replica)
+        ).not.toContain(malId);
+        expect(
+          (await problemsOf(cy)).some(
+            (p) => p.subject === `transport:bloat:${bobId}`
+          )
+        ).toBe(true);
+      },
+      SLOW
+    );
+
+  // FW-R29(2), R11c: a 70 KiB junk first line in the founder's segment, past
+  // the probe window, never leaves an invite-less joiner unfounded.
+  it(
+    "finds the founding past a 70 KiB junk first line in the founder's segment",
+    async () => {
+      const c = await team(['ada']);
+      const [ada] = c.members as [Member];
+      const adaId = await ada.handle.replica();
+      const teamId = (await ada.handle.keys()).team?.id;
+      editRemote(c.remote, (dir) =>
+        bloatSegments(dir, adaId, 70 * 1024, 'prepend')
+      );
+      const cy = await c.add('cy');
+      await quiesce(c.members);
+      expect((await cy.handle.keys()).team?.id).toBe(teamId);
     },
     SLOW
   );

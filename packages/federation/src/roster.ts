@@ -108,6 +108,9 @@ export interface RosterView {
   /** Each id's key as the fold bound it, by signing key (FW-R26): the
    *  founder's by the found, others' by the first accepted admit or recover. */
   boundKeys: ReadonlyMap<string, string>;
+  /** FW-R29(3): admits the fold would accept but for a key no claim
+   *  carries, which a daemon looks for. */
+  missingKeys: readonly { replica: string; fingerprint: string }[];
   recoveryPub: string;
   license: LicenseState;
   licenseBy: string | null;
@@ -235,6 +238,8 @@ interface Evaluation {
   hostCuts: Map<string, HostCut[]>;
   /** Each id's key, bound by its founding, first accepted admit or recover. */
   bound: Map<string, KeyInfo>;
+  /** Admits the fold would accept but for a key no claim carries. */
+  missingKeys: { replica: string; fingerprint: string }[];
   /** Whether this evaluation keeps problems; only the one the view shows does. */
   notes: boolean;
   problems: Problem[];
@@ -1544,6 +1549,7 @@ function evaluate(
     peopleSeen: new Set(),
     hostCuts: new Map(),
     bound: new Map(),
+    missingKeys: [],
     notes,
     problems: [],
   };
@@ -1744,6 +1750,21 @@ function admitStep(
   const candidates = claimsOf(ctx, body.replica);
   const key = candidates.find((c) => c.fingerprint === body.fingerprint);
   if (key === undefined) {
+    // FW-R29(3): an admit this fold would accept but for a key no read has
+    // found is named, so the daemon looks for that key and nothing else.
+    const own = ev.holders.get(op.replica)?.handle;
+    const ownDevice =
+      rights.member &&
+      own === body.handle &&
+      own === personOf(body.replica) &&
+      body.role === 'member' &&
+      (body.hosts ?? []).length === 0 &&
+      body.observer !== true;
+    if ((rights.admin || ownDevice) && !revokedBefore(ev, body.replica, op))
+      ev.missingKeys.push({
+        replica: body.replica,
+        fingerprint: body.fingerprint,
+      });
     note(
       ev,
       op,
@@ -2149,6 +2170,7 @@ function viewOf(
     invites: ev.invites,
     invitedBy,
     boundKeys: new Map([...ev.bound].map(([r, k]) => [r, k.signPub])),
+    missingKeys: ev.missingKeys.filter((m) => !ev.holders.has(m.replica)),
     recoveryPub: ev.recoveryPub,
     license,
     licenseBy,

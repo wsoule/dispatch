@@ -273,21 +273,23 @@ describe('the read budget (FW-R23 hint)', () => {
     const a = clone('a', A);
     await a.ensure();
     await a.writeV2(chain(9), { ops: 3, bytes: 1024 * 1024 });
-    const budget =
-      Buffer.byteLength(
-        readFileSync(join(dir, 'a', 'fed', A, '000000000004.jsonl'), 'utf8')
-      ) + 1;
-    // One segment's budget reads one new segment per pass.
+    // Each segment padded with 600 KiB of junk lines after its ops.
+    for (const name of ['000000000001', '000000000004', '000000000007'])
+      appendFileSync(
+        join(dir, 'a', 'fed', A, `${name}.jsonl`),
+        `${'j'.repeat(1023)}\n`.repeat(600)
+      );
+    const budget = 300 * 1024;
+    // The first pass reads the segment named for cursor + 1 first.
     expect(seqs(a.readV2(new Map([[A, 4]]), { budget }))).toEqual([5, 6]);
-    expect(seqs(a.readV2(new Map([[A, 4]]), { budget }))).toEqual([
-      5, 6, 7, 8, 9,
-    ]);
-    // A reader from the start, with nothing cached, works forward the same way.
-    const fresh = clone('a', A);
-    expect(seqs(fresh.readV2(new Map(), { budget }))).toEqual([1, 2, 3]);
-    expect(seqs(fresh.readV2(new Map(), { budget }))).toEqual([
-      1, 2, 3, 4, 5, 6,
-    ]);
+    expect(a.lastPassBytes()).toBeLessThanOrEqual(budget);
+    // Later passes resume within the budget and reach the rest.
+    let seen: number[] = [];
+    for (let pass = 0; pass < 10; pass++) {
+      seen = seqs(a.readV2(new Map([[A, 4]]), { budget }));
+      expect(a.lastPassBytes()).toBeLessThanOrEqual(budget);
+    }
+    expect(seen).toEqual([5, 6, 7, 8, 9]);
   });
 
   it('holds no more than the budget in cache, and drops lines the cursor has passed', async () => {
@@ -331,7 +333,7 @@ describe('the read budget (FW-R23 hint)', () => {
       for (const n of [11, 12, 13, 14])
         writeFileSync(
           join(segDir, `0000000000${n}.jsonl`),
-          `${'x'.repeat(budget)}${k}\n`
+          `${'x'.repeat(300 * 1024)}${k}\n`
         );
       await a.writeV2([ops[10 + k]]);
       const next = read().find(
@@ -538,6 +540,24 @@ describe('the read budget (FW-R23 hint)', () => {
     expect(a.stampOf([A])).toBe(before);
     await a.writeV2([ops[1]]);
     expect(a.stampOf([A])).not.toBe(before);
+  });
+
+  // FW-R29(3): the full scans read in resumable steps within one budget a pass.
+  it('scans in resumable steps within a shared budget, past a bloated file', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(1));
+    const seg = join(dir, 'a', 'fed', A, '000000000001.jsonl');
+    const text = readFileSync(seg, 'utf8');
+    writeFileSync(seg, `${'p'.repeat(3 * 1024 * 1024)}\n${text}`);
+    let found: number[] = [];
+    let passes = 0;
+    while (found.length === 0 && passes < 40) {
+      found = a.scanFull([A], 256 * 1024).map((e) => e.seq);
+      passes += 1;
+    }
+    expect(found).toEqual([1]);
+    expect(passes).toBeGreaterThan(10);
   });
 
   it('sees an append to a segment it already read', async () => {

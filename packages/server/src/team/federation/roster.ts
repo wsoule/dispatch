@@ -900,32 +900,18 @@ export class RosterService {
     });
   }
 
-  /** FW-R28: each (id, fingerprint) an admitted member's admit names that no
-   *  stored claim carries. */
+  /** FW-R28: each (id, fingerprint) an admit the fold would accept names that
+   *  no stored claim carries. */
   missingNamedKeys(): { replica: string; fingerprint: string }[] {
-    const view = this.view();
-    if (view === null) return [];
+    // FW-R29(3): only admits the fold would accept count, never ones it
+    // refuses, so nobody's invalid admits cost a scan.
     const out = new Map<string, { replica: string; fingerprint: string }>();
-    for (const r of this.rows()) {
-      if (!view.members.has(r.replica)) continue;
-      if (view.boundKeys.get(r.replica) !== r.sign_pub) continue;
-      const body = JSON.parse(r.body_json) as {
-        action?: unknown;
-        replica?: unknown;
-        fingerprint?: unknown;
-      };
+    for (const m of this.view()?.missingKeys ?? []) {
       if (
-        body.action !== 'admit' ||
-        typeof body.replica !== 'string' ||
-        typeof body.fingerprint !== 'string'
+        this.fed.claims(m.replica).some((c) => c.fingerprint === m.fingerprint)
       )
         continue;
-      const { replica, fingerprint: fp } = body as {
-        replica: string;
-        fingerprint: string;
-      };
-      if (this.fed.claims(replica).some((c) => c.fingerprint === fp)) continue;
-      out.set(`${replica}\n${fp}`, { replica, fingerprint: fp });
+      out.set(`${m.replica}\n${m.fingerprint}`, m);
     }
     return [...out.values()];
   }

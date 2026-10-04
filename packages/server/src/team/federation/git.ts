@@ -32,6 +32,8 @@ export interface GitTransportDeps {
   onCommit?: (failed: string | null) => void;
   /** A merge reset the clone to the remote tree; own files were written back. */
   onReset?: (why: string) => void;
+  /** Segment files read far over a segment's size, as `<replica>/<name>`. */
+  onOversized?: (files: string[]) => void;
   /** Replicas whose reads the budget cut short on consecutive pulls. */
   onStarved?: (replicas: string[]) => void;
   now: () => Date;
@@ -105,6 +107,8 @@ export class GitFederationTransport implements FederationTransport {
     this.lastExchangeAt = this.deps.now().toISOString();
     const entries = this.deps.repo.readV2(since, this.deps.readHints?.());
     this.deps.onStarved?.(this.deps.repo.starvedReplicas());
+    const oversized = this.deps.repo.takeOversized();
+    if (oversized.length > 0) this.deps.onOversized?.(oversized);
     return entries;
   }
 

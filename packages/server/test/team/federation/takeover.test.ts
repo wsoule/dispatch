@@ -353,6 +353,8 @@ describe('rival key claims (FW-R24)', () => {
     ).toBe(true);
     remote.gone.delete(bobKey);
     remote.hidden.add(bobKey);
+    // Its files changed: the next scan comes a minute after the last.
+    cy.clock.now = new Date(cy.clock.now.getTime() + 61 * 1000);
     await settle(cy);
     expect(cy.fed.pinned(bob.fed.replica)?.fingerprint).toBe(fp(bob));
     expect(
@@ -362,7 +364,7 @@ describe('rival key claims (FW-R24)', () => {
 
   // The full scan for a missing key backs off: three passes in a row, then
   // doubling waits up to 30 minutes, and at once when that id's files change.
-  it('backs off the scan for a missing key, and scans at once when its files change', async () => {
+  it('backs off the scan for a missing key, and scans a minute on when its files change', async () => {
     const {
       remote,
       make,
@@ -394,10 +396,73 @@ describe('rival key claims (FW-R24)', () => {
     expect(scans()).toBe(waited + 1);
     await pass();
     expect(scans()).toBe(waited + 1);
-    // A change under bob's id: scan again at once.
+    // A change under bob's id scans again, a minute after the last scan.
     bob.store.create({ title: 'touches bob' });
     await bob.service.syncNow();
     await pass();
+    expect(scans()).toBe(waited + 1);
+    cy.clock.now = new Date(cy.clock.now.getTime() + 61 * 1000);
+    await pass();
     expect(scans()).toBe(waited + 2);
+  });
+
+  // FW-R29(3), the re-verify's R15: admits the fold refuses trigger no scan,
+  // and a stamp change never scans sooner than a minute after the last.
+  it('scans only for keys an accepted admit names, at most once a minute', async () => {
+    const {
+      remote,
+      make,
+      rs: [ada, bob, mal],
+    } = team('ada', 'bob', 'mal');
+    ada.roster.found('acme');
+    await settle(ada, bob, mal);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    ada.roster.admit(mal.fed.replica, { fingerprint: fp(mal) });
+    await settle(ada, bob, mal);
+    const cy = make('cy');
+    await settle(ada, mal, cy);
+    const transport = (
+      cy.service as unknown as { opts: { transport: { scans: number } } }
+    ).opts.transport;
+    // 30 admits mal may not make: other people's ids, unknown keys.
+    for (let n = 0; n < 30; n++) {
+      const op = mal.fed.append({
+        type: 'roster',
+        body: {
+          rv: 1,
+          action: 'admit',
+          replica: `dan-${String(n).padStart(8, '0')}`,
+          handle: 'dan',
+          role: 'member',
+          fingerprint: `FP-${n}`,
+        },
+      });
+      mal.roster.applyVerified(op, opHash(op));
+    }
+    await mal.service.syncNow();
+    const before = transport.scans;
+    for (let n = 0; n < 8; n++) await cy.service.syncNow();
+    expect(transport.scans - before).toBe(0);
+    // An accepted admit naming a key on no file: scans back off, and a change
+    // to that id's files does not bring the next scan under a minute.
+    const bobKey = (remote.logs.get(bob.fed.replica) ?? []).find(
+      (e) => e.type === 'key'
+    );
+    if (bobKey === undefined) throw new Error('no key op for bob');
+    remote.gone.add(bobKey);
+    const dee = make('dee');
+    await settle(ada, dee);
+    const deeScans = (
+      dee.service as unknown as { opts: { transport: { scans: number } } }
+    ).opts.transport;
+    for (let n = 0; n < 4; n++) await dee.service.syncNow();
+    const settled = deeScans.scans;
+    bob.store.create({ title: 'touches bob' });
+    await bob.service.syncNow();
+    await dee.service.syncNow();
+    expect(deeScans.scans).toBe(settled);
+    dee.clock.now = new Date(dee.clock.now.getTime() + 61 * 1000);
+    await dee.service.syncNow();
+    expect(deeScans.scans).toBe(settled + 1);
   });
 });

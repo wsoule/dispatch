@@ -128,6 +128,15 @@ export function buildFederation(deps: FederationDeps): Federation {
       onPruned: (seqs) => fed.stubLog(seqs),
       readHints: () => readHints(fed, roster),
       onStarved: (replicas) => starvedProblems(fed, replicas),
+      onOversized: (files) => {
+        for (const file of files) {
+          const replica = file.slice(0, file.indexOf('/'));
+          fed.problem(
+            `transport:bloat:${replica}`,
+            `fed/${file} on the sync branch is far larger than any segment Dispatch writes: someone with push access padded it. Its lines are still read, slowly; remove the padding from the branch.`
+          );
+        }
+      },
       onCommit: (failed) => {
         if (failed === null) fed.clearProblem('transport:commit');
         else
@@ -176,10 +185,12 @@ function readHints(fed: FedStore, roster: RosterService): ReadHints {
     ...(view === null ? [] : [view.founder]),
     ...roster.missingNamedKeys().map((m) => m.replica),
   ]);
+  // FW-R29(2): before founding, every id is streamed in full, in resumable steps,
+  // for its key and found ops; the probe window is only a fast path.
   const tier = (r: string): number =>
     r === fed.replica || members?.has(r) === true
       ? 0
-      : named.has(r) || heads.has(r)
+      : view === null || named.has(r) || heads.has(r)
         ? 1
         : 2;
   return {
