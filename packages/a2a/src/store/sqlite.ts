@@ -178,6 +178,21 @@ export interface A2AStore {
   // Disables a config at once (a refused address). Disabling, here or at ten
   // failures, also drops the config's token and credentials.
   disablePushConfig(taskId: string, id: string, at: string): void;
+  // A delivery still owed to a config: its retries so far and when the next
+  // is due, kept so a restart resumes rather than forgets.
+  getPushPending(
+    taskId: string,
+    id: string
+  ): { tries: number; nextAt: string } | null;
+  setPushPending(
+    taskId: string,
+    id: string,
+    tries: number,
+    nextAt: string
+  ): void;
+  clearPushPending(taskId: string, id: string): void;
+  // Tasks that still have a live push config.
+  pushConfigTaskIds(): string[];
   putHost(row: HostRow): void;
   // Oldest first, revoked rows included.
   hosts(): HostRow[];
@@ -220,6 +235,10 @@ CREATE TABLE IF NOT EXISTS push_configs (
   PRIMARY KEY (task_id, id)
 );
 CREATE INDEX IF NOT EXISTS push_client ON push_configs (client);
+CREATE TABLE IF NOT EXISTS push_pending (
+  task_id TEXT NOT NULL, id TEXT NOT NULL, tries INTEGER NOT NULL, next_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, id)
+);
 CREATE TABLE IF NOT EXISTS hosts (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, public_url TEXT NOT NULL,
   created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
@@ -795,7 +814,50 @@ export class SqliteA2AStore implements A2AStore {
     );
   }
 
+  getPushPending(
+    taskId: string,
+    id: string
+  ): { tries: number; nextAt: string } | null {
+    const r = queryOne<{ tries: number; next_at: string }>(
+      this.db,
+      'SELECT tries, next_at FROM push_pending WHERE task_id = ? AND id = ?',
+      [taskId, id]
+    );
+    return r === undefined
+      ? null
+      : { tries: Number(r.tries), nextAt: r.next_at };
+  }
+
+  setPushPending(
+    taskId: string,
+    id: string,
+    tries: number,
+    nextAt: string
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO push_pending (task_id, id, tries, next_at) VALUES (?,?,?,?)
+         ON CONFLICT (task_id, id) DO UPDATE SET tries = excluded.tries, next_at = excluded.next_at`
+      )
+      .run(taskId, id, tries, nextAt);
+  }
+
+  clearPushPending(taskId: string, id: string): void {
+    this.db
+      .prepare('DELETE FROM push_pending WHERE task_id = ? AND id = ?')
+      .run(taskId, id);
+  }
+
+  pushConfigTaskIds(): string[] {
+    return queryAll<{ task_id: string }>(
+      this.db,
+      'SELECT DISTINCT task_id FROM push_configs WHERE disabled_at IS NULL ORDER BY task_id',
+      []
+    ).map((r) => r.task_id);
+  }
+
   deletePushConfig(taskId: string, id: string): boolean {
+    this.clearPushPending(taskId, id);
     return (
       Number(
         this.db
@@ -806,6 +868,11 @@ export class SqliteA2AStore implements A2AStore {
   }
 
   deletePushConfigsOf(client: Address): number {
+    this.db
+      .prepare(
+        'DELETE FROM push_pending WHERE (task_id, id) IN (SELECT task_id, id FROM push_configs WHERE client = ?)'
+      )
+      .run(client);
     return Number(
       this.db.prepare('DELETE FROM push_configs WHERE client = ?').run(client)
         .changes

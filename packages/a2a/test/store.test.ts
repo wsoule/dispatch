@@ -402,3 +402,26 @@ describe('hosts', () => {
     ]);
   });
 });
+
+describe('push_pending', () => {
+  it('keeps a retry until cleared, and goes with its config', () => {
+    store.putPushConfig(push('a'));
+    store.putPushConfig(push('b', { client: 'agent:wyat/a2a.other' }));
+    expect(store.pushConfigTaskIds()).toEqual(['m-1']);
+    store.setPushPending('m-1', 'a', 1, '2026-09-25T10:00:10.000Z');
+    store.setPushPending('m-1', 'a', 2, '2026-09-25T10:01:10.000Z');
+    store.setPushPending('m-1', 'b', 1, '2026-09-25T10:00:10.000Z');
+    expect(store.getPushPending('m-1', 'a')).toEqual({
+      tries: 2,
+      nextAt: '2026-09-25T10:01:10.000Z',
+    });
+    store.deletePushConfig('m-1', 'a');
+    expect(store.getPushPending('m-1', 'a')).toBeNull();
+    store.deletePushConfigsOf('agent:wyat/a2a.other');
+    expect(store.getPushPending('m-1', 'b')).toBeNull();
+    store.putPushConfig(push('c'));
+    store.setPushPending('m-1', 'c', 1, '2026-09-25T10:00:10.000Z');
+    store.clearPushPending('m-1', 'c');
+    expect(store.getPushPending('m-1', 'c')).toBeNull();
+  });
+});

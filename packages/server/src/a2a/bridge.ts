@@ -31,6 +31,7 @@ import { replayTranscript } from '../orchestrator/transcript.js';
 import type { AuthTier } from '../tiers.js';
 import { RunResultsMemo } from './artifacts.js';
 import { bridgeExternalPolicy } from './external.js';
+import { gatherFacts } from './facts.js';
 import type { GuardDeps, PatchGuard } from './guards.js';
 import {
   dispatchRefusal,
@@ -315,6 +316,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       ...(deps.mark === undefined ? {} : { mark: deps.mark }),
       ...(deps.track === undefined ? {} : { track: deps.track }),
     });
+    try {
+      push.resume((row) => gatherFacts(bridgeDeps, row));
+    } catch (err) {
+      console.error('dispatchd: A2A push resume failed', err);
+    }
     try {
       // Its gate sends finish in the background and log their own failures.
       reconcileA2A(bridgeDeps, hub);

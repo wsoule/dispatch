@@ -223,6 +223,23 @@ export class PushWorker {
     }
   }
 
+  // At boot: a task that finished while its final event was still owed gets
+  // that event once, after which its configs are deleted. Open tasks are
+  // re-pushed by the watch's boot recompute, resuming any kept retry state.
+  resume(factsOf: (row: TaskRow) => TaskFacts): void {
+    for (const taskId of this.deps.store.pushConfigTaskIds()) {
+      const row = this.deps.store.getTask(taskId);
+      if (row === null || !TERMINAL_STATES.has(row.state)) continue;
+      try {
+        this.onChanged(row, factsOf(row), { force: true });
+      } catch (err) {
+        console.error(
+          `a2a: resuming push for ${taskId} failed: ${err instanceof Error ? err.name : 'error'}`
+        );
+      }
+    }
+  }
+
   // Tasks whose last pushed snapshot is kept (tests).
   snapshotCount(): number {
     return this.last.size;
@@ -233,8 +250,24 @@ export class PushWorker {
       await Promise.allSettled([...this.chains.values()]);
   }
 
+  // The first attempt picks up a retry count and due time a restart kept.
   private chain(config: PushConfigRow, event: StreamResponseJson): void {
-    this.then(config, () => this.attempt(config, event, 0));
+    this.then(config, async () => {
+      const kept = this.deps.store.getPushPending(config.taskId, config.id);
+      if (kept !== null) {
+        const due = Date.parse(kept.nextAt) - this.nowMs();
+        const longest = Math.max(
+          0,
+          ...(this.deps.delaysMs ?? PUSH_LIMITS.retryDelaysMs)
+        );
+        if (due > 0) await wait(Math.min(due, longest));
+      }
+      await this.attempt(config, event, kept?.tries ?? 0);
+    });
+  }
+
+  private nowMs(): number {
+    return (this.deps.now?.() ?? new Date()).getTime();
   }
 
   // Appends `step` to the config's chain, after everything already queued.
@@ -270,9 +303,11 @@ export class PushWorker {
     });
     if (result.ok) {
       this.deps.store.recordPushResult(config.taskId, config.id, true, at());
+      this.deps.store.clearPushPending(config.taskId, config.id);
       return;
     }
     if (result.refused) {
+      this.deps.store.clearPushPending(config.taskId, config.id);
       this.deps.store.disablePushConfig(config.taskId, config.id, at());
       console.error(
         `a2a: push config ${config.id} of ${config.taskId} disabled: ${result.error}`
@@ -286,9 +321,21 @@ export class PushWorker {
       at(),
       PUSH_LIMITS.failuresBeforeDisable
     );
-    if (updated === null || updated.disabledAt !== null) return;
     const delay = (this.deps.delaysMs ?? PUSH_LIMITS.retryDelaysMs)[tries];
-    if (delay === undefined) return;
+    if (
+      updated === null ||
+      updated.disabledAt !== null ||
+      delay === undefined
+    ) {
+      this.deps.store.clearPushPending(config.taskId, config.id);
+      return;
+    }
+    this.deps.store.setPushPending(
+      config.taskId,
+      config.id,
+      tries + 1,
+      new Date(this.nowMs() + delay).toISOString()
+    );
     await wait(delay);
     await this.attempt(config, event, tries + 1);
   }
