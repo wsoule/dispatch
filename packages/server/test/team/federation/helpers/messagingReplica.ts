@@ -1,0 +1,212 @@
+import {
+  DeliveryEngine,
+  openMessagesDb,
+  SqliteMessageStore,
+} from '@dispatch/protocol';
+import type {
+  Address,
+  FederationHooks,
+  Message,
+  MessagingHost,
+  PolicyRuling,
+  WakeResult,
+} from '@dispatch/protocol';
+import { fingerprint } from '@dispatch/protocol/federation';
+import { join } from 'node:path';
+
+import { Homes } from '../../../../src/team/federation/homes.js';
+import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js';
+import { Presence } from '../../../../src/team/federation/presence.js';
+import type { RunInfo } from '../../../../src/team/federation/presence.js';
+import { MemoryRemote } from './memoryTransport.js';
+import { MemoryV1, serviceReplica } from './serviceReplica.js';
+import type { ServiceReplica } from './serviceReplica.js';
+
+// A MessagingHost over plain maps: live runs by task, and every push, notify
+// and wake recorded.
+class TestMessagingHost implements MessagingHost {
+  readonly liveRuns = new Map<string, string>(); // taskId -> runId
+  readonly runTasks = new Map<string, string>(); // runId -> taskId
+  readonly auxRuns = new Set<string>(); // live runs with no task
+  readonly pushed: { runId: string; messageId: string }[] = [];
+  readonly notified: { runId: string; messageId: string }[] = [];
+  readonly woken: { target: Address; messageId: string }[] = [];
+  readonly humans: { actor: Address; messageId: string }[] = [];
+  ruling: PolicyRuling = 'allow';
+  federation?: FederationHooks;
+
+  constructor(
+    private readonly human: Address,
+    private readonly clock: { now: Date }
+  ) {}
+
+  startRun(taskId: string | null, runId: string): void {
+    if (taskId === null) this.auxRuns.add(runId);
+    else {
+      this.liveRuns.set(taskId, runId);
+      this.runTasks.set(runId, taskId);
+    }
+  }
+  endRun(taskId: string): void {
+    this.liveRuns.delete(taskId);
+  }
+  liveRunFor(taskId: string): string | null {
+    return this.liveRuns.get(taskId) ?? null;
+  }
+  isLiveRun(runId: string): boolean {
+    return (
+      this.auxRuns.has(runId) || [...this.liveRuns.values()].includes(runId)
+    );
+  }
+  taskOfRun(runId: string): string | null {
+    return this.runTasks.get(runId) ?? null;
+  }
+  push(runId: string, _rendered: string, message: Message): Promise<void> {
+    this.pushed.push({ runId, messageId: message.id });
+    return Promise.resolve();
+  }
+  notify(runId: string, _digest: string, message: Message): Promise<void> {
+    this.notified.push({ runId, messageId: message.id });
+    return Promise.resolve();
+  }
+  notifyHuman(actor: Address, message: Message): void {
+    this.humans.push({ actor, messageId: message.id });
+  }
+  wake(target: Address, message: Message): Promise<WakeResult> {
+    this.woken.push({ target, messageId: message.id });
+    return Promise.resolve({ ok: false, reason: 'no runs in this test' });
+  }
+  decide(): PolicyRuling {
+    return this.ruling;
+  }
+  owner(): Address {
+    return this.human;
+  }
+  implicitMembers(): Address[] {
+    return [];
+  }
+  onAnswered(): Promise<void> {
+    return Promise.resolve();
+  }
+  now(): Date {
+    return this.clock.now;
+  }
+}
+
+export interface MessagingReplica extends ServiceReplica {
+  remote: MemoryRemote;
+  messages: SqliteMessageStore;
+  engine: DeliveryEngine;
+  host: TestMessagingHost;
+  homes: Homes;
+  hooks: DaemonFederationHooks;
+  presence: Presence;
+  /** A run starts here: live on the host, and its presence queued. */
+  startRun(meta: RunInfo): void;
+  /** `other`'s pass, then this replica's. */
+  settleWith(other: MessagingReplica): Promise<void>;
+}
+
+export interface TeamOpts {
+  /** Handles admitted as observers. */
+  observers?: readonly string[];
+}
+
+// One daemon's board sync plus its messages.db, engine and the federation
+// pieces messaging needs, wired as index.ts wires them.
+export function messagingReplica(
+  handle: string,
+  remote: MemoryRemote = new MemoryRemote(),
+  v1: MemoryV1 = new MemoryV1()
+): MessagingReplica {
+  const base = serviceReplica(handle, remote, v1);
+  const db = openMessagesDb(join(base.dir, 'messages.db'));
+  const messages = new SqliteMessageStore(db);
+  const host = new TestMessagingHost(`human:${handle}`, base.clock);
+  const homes = new Homes({
+    fed: base.fed,
+    roster: base.roster,
+    tasks: base.store,
+  });
+  const knowsRun = (run: string) =>
+    host.runTasks.has(run) || host.auxRuns.has(run);
+  const presence = new Presence({
+    fed: base.fed,
+    roster: base.roster,
+    build: '0.40.0',
+    device: `${handle}-laptop`,
+    knowsRun,
+    isLive: (run) => host.isLiveRun(run),
+    now: () => base.clock.now,
+  });
+  base.service.register(presence);
+  base.service.addCollector(presence);
+  const hooks = new DaemonFederationHooks({
+    ledger: base.ledger,
+    fed: base.fed,
+    roster: base.roster,
+    homes,
+    messages: () => messages,
+    knowsRun,
+  });
+  host.federation = hooks;
+  const engine = new DeliveryEngine({ store: messages, host });
+  const replica: MessagingReplica = {
+    ...base,
+    remote,
+    messages,
+    engine,
+    host,
+    homes,
+    hooks,
+    presence,
+    startRun: (meta) => {
+      host.startRun(meta.taskId, meta.id);
+      presence.runStarted(meta);
+    },
+    settleWith: async (other) => {
+      await other.service.syncNow();
+      await base.service.syncNow();
+    },
+    close: () => {
+      db.close();
+      base.close();
+    },
+  };
+  return replica;
+}
+
+const fp = (r: MessagingReplica) =>
+  fingerprint(r.fed.keys.signPub, r.fed.keys.sealPub);
+
+// Runs a pass on each replica in turn, three times.
+async function settleAll(rs: readonly MessagingReplica[]): Promise<void> {
+  for (let round = 0; round < 3; round++)
+    for (const r of rs) await r.service.syncNow();
+}
+
+/** A team on one remote: founded by the first handle, the rest admitted. */
+export function foundedTeam(...handles: string[]): Promise<MessagingReplica[]> {
+  return foundedTeamWith({}, ...handles);
+}
+
+export async function foundedTeamWith(
+  opts: TeamOpts,
+  ...handles: string[]
+): Promise<MessagingReplica[]> {
+  const remote = new MemoryRemote();
+  const v1 = new MemoryV1();
+  const rs = handles.map((h) => messagingReplica(h, remote, v1));
+  const [founder, ...rest] = rs;
+  if (founder === undefined) return rs;
+  founder.roster.found('acme');
+  await settleAll(rs);
+  rest.forEach((r, i) => {
+    founder.roster.admit(r.fed.replica, {
+      fingerprint: fp(r),
+      observer: (opts.observers ?? []).includes(handles[i + 1] ?? ''),
+    });
+  });
+  await settleAll(rs);
+  return rs;
+}

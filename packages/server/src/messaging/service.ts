@@ -1,6 +1,10 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch/core';
 import { DEFAULT_MESSAGING, loadConfig } from '@dispatch/core';
-import type { Message, MessageStore } from '@dispatch/protocol';
+import type {
+  FederationHooks,
+  Message,
+  MessageStore,
+} from '@dispatch/protocol';
 import {
   DeliveryEngine,
   gateOf,
@@ -100,6 +104,9 @@ function messageAudience(
   const participants = new Set<string>([message.from, ...message.to]);
   for (const d of store.deliveries({ messageId: message.id }))
     participants.add(d.recipient);
+  // A recipient on a teammate's machine follows the thread here too.
+  for (const r of store.remoteDeliveries({ messageId: message.id }))
+    participants.add(r.recipient);
   return (who) => {
     if (who === undefined || who.agentToken) return false;
     if (
@@ -128,6 +135,9 @@ export function openMessaging(deps: {
   appendPolicyActivity?: (taskId: string, text: string) => void;
   // How often the scope-gate sweep runs, and its clock; tests shorten both.
   scopeExpiry?: { sweepMs?: number; now?: () => number };
+  // Federation's hooks, and a nudge for the next pass once mail is stored.
+  federation?: FederationHooks;
+  onFederatedMessage?: () => void;
 }): Messaging {
   const db = openMessagesDb(
     deps.dbPath ?? join(runsDir(deps.rootDir), 'messages.db')
@@ -157,6 +167,7 @@ export function openMessaging(deps: {
       // message.new already reaches the desktop over the EventBus; no OS
       // notification is raised for a human's message yet.
     },
+    ...(deps.federation === undefined ? {} : { federation: deps.federation }),
     onWakeFailed: (target, message) => {
       const taskId = target.slice('task:'.length);
       if (!hasActiveRun(taskId)) return;
@@ -520,6 +531,7 @@ export function openMessaging(deps: {
         { type: 'message.new', message: e.message },
         messageAudience(store, e.message)
       );
+      deps.onFederatedMessage?.();
       return;
     }
     // Channel membership reaches no socket; only the federation router reads it.

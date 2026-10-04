@@ -100,9 +100,10 @@ export interface FederationStatus extends SyncStatus {
   federationProblems: { subject: string; message: string; at: string }[];
 }
 
-/** Run and agent evidence from this pull's verified ops (Task 14 fills it). */
-interface Evidence {
-  runs: Map<string, string>;
+/** Run and agent claims among this pull's verified ops: run id -> every
+ *  replica claiming it, agent address -> its publisher. */
+export interface Evidence {
+  runs: Map<string, string[]>;
   agents: Map<string, string>;
 }
 
@@ -866,7 +867,7 @@ export class FederationService {
       const ctx: StageContext = {
         view,
         now,
-        evidence: { runs: new Map(), agents: new Map() },
+        evidence: evidenceOf(verified),
       };
       this.restage(ctx);
       const blocked = new Set<string>();
@@ -1235,4 +1236,27 @@ function keyOpSignPub(e: LogEntry): string | null {
   if (e.type !== 'key' || isStub(e)) return null;
   const body = e.body as { signPub?: unknown } | undefined;
   return typeof body?.signPub === 'string' ? body.signPub : null;
+}
+
+// The run and agent claims a pull's verified ops make, read before any is
+// staged, so a run claimed twice in one pull binds to neither.
+function evidenceOf(verified: Map<string, Verified>): Evidence {
+  const evidence: Evidence = { runs: new Map(), agents: new Map() };
+  for (const [replica, v] of verified)
+    for (const { entry } of v.entries) {
+      if (isStub(entry)) continue;
+      const body = entry.body as Record<string, unknown> | undefined;
+      if (body === undefined) continue;
+      if (
+        entry.type === 'presence' &&
+        body['kind'] === 'run' &&
+        typeof body['run'] === 'string'
+      ) {
+        const claims = evidence.runs.get(body['run']) ?? [];
+        if (!claims.includes(replica)) claims.push(replica);
+        evidence.runs.set(body['run'], claims);
+      } else if (entry.type === 'agent' && typeof body['address'] === 'string')
+        evidence.agents.set(body['address'], replica);
+    }
+  return evidence;
 }

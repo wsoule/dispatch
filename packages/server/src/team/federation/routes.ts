@@ -131,7 +131,7 @@ const ACTIONS = new Set([
 ]);
 
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
-// merge reset and a route's late failure. A halt, a key claim or a pause
+// merge reset, a route's late failure, a message note and a run conflict. A halt, a key claim or a pause
 // stays until what caused it is gone.
 const ACKNOWLEDGEABLE = [
   'team:race:',
@@ -142,6 +142,9 @@ const ACKNOWLEDGEABLE = [
   'transport:read:',
   'transport:bloat:',
   'transport:rewrite:',
+  // FW-R31(3): a message note and a run conflict can be acknowledged.
+  'message:',
+  'run-conflict:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {

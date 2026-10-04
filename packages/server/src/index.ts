@@ -158,7 +158,10 @@ import { SyncLedger } from './team/boardSync/ledger.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import { appendAuditToReceipts } from './team/federation/audit.js';
 import type { Federation } from './team/federation/daemon.js';
-import { buildFederation } from './team/federation/daemon.js';
+import {
+  buildFederation,
+  wireMessagingFederation,
+} from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
 import type { FederationContext } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
@@ -1332,6 +1335,40 @@ async function bootServer(
     registerCodexIfInstalled(orchestrator);
     registerCliExecutors(orchestrator, rootDir);
   }
+  // Federated mail (F2): homes, run presence and the engine's hooks. The
+  // presence hooks go in before messaging's own, so a run's live op is
+  // queued before held mail reaches it.
+  const messagesRef: { current: Messaging | null } = { current: null };
+  const mailFederation =
+    federation === null || syncLedger === null
+      ? null
+      : wireMessagingFederation(federation, {
+          ledger: syncLedger,
+          tasks: store,
+          build: packageJson.version,
+          device: hostname().split('.')[0] ?? 'machine',
+          knowsRun: (id) => orchestrator.getRun(id) !== null,
+          isLive: (id) => orchestrator.isRunLive(id),
+          messages: () => messagesRef.current?.store ?? null,
+          now: federationNow,
+        });
+  if (mailFederation !== null) {
+    const { presence } = mailFederation;
+    orchestrator.onRunStarted((meta) => {
+      presence.runStarted({
+        id: meta.id,
+        taskId: meta.taskId,
+        kind: runKind(meta),
+      });
+    });
+    orchestrator.onRunTerminal((meta) => {
+      presence.runEnded({
+        id: meta.id,
+        taskId: meta.taskId,
+        kind: runKind(meta),
+      });
+    });
+  }
   // Messaging opens once the orchestrator exists (it mints run tokens and
   // hears onRunStarted); its recover() waits for reconcileOnBoot() below.
   const messaging = openMessaging({
@@ -1342,7 +1379,14 @@ async function bootServer(
     ownerRef: actorContext.humanRef,
     ledgerStore,
     appendPolicyActivity: policyActivityAppender({ store, cache, events }),
+    ...(mailFederation === null
+      ? {}
+      : {
+          federation: mailFederation.hooks,
+          onFederatedMessage: () => boardSync?.notifyLocalChange(),
+        }),
   });
+  messagesRef.current = messaging;
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the

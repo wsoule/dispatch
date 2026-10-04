@@ -527,6 +527,16 @@ export class RosterService {
 
   // ---- queries ----
 
+  /** FW-R31(4): mail leaves only once this machine is admitted under a
+   *  firm founding pin; a provisional pin is no team yet. */
+  mailReady(): boolean {
+    return (
+      this.founded() &&
+      this.fed.meta('founder_pin') === 'firm' &&
+      this.isAdmitted(this.me)
+    );
+  }
+
   isAdmitted(replica: string): boolean {
     return this.view()?.members.has(replica) === true;
   }
