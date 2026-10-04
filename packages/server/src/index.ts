@@ -1915,6 +1915,7 @@ async function bootServer(
     orchestrator,
     actorContext,
     reviewComments,
+    specLine: (taskId) => docs.service.specLine(taskId),
   });
 
   // Verification as its own dispatched run kind, exercising finished work
@@ -1925,6 +1926,7 @@ async function bootServer(
     cache,
     events,
     orchestrator,
+    specLine: (taskId) => docs.service.specLine(taskId),
   });
 
   // Constructed after ReviewRunner on purpose: terminal hooks fire in

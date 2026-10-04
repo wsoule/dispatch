@@ -60,7 +60,7 @@ import type { DiffChunk } from './merge.js';
 import { diffChunks, merge3 } from './merge.js';
 import { applyOps } from './ops.js';
 import type { IndexLine, InlineSpec } from './prompt.js';
-import { renderDocsSection } from './prompt.js';
+import { indexLineText, renderDocsSection } from './prompt.js';
 import {
   publishAssetsDir,
   seedAsset,
@@ -3681,6 +3681,21 @@ export class DocsService {
   }
 
   // The ## Docs lines a run of `taskId` acting as `actor` would get.
+  // The task's own team spec as one index line for review and verify prompts;
+  // never a parent's or a personal spec. Null when there is none or docs fail.
+  specLine(taskId: string): string | null {
+    if (!this.available) return null;
+    try {
+      const own = this.taskDocs(this.overseerActor(), taskId).filter(
+        (c) => c.depth === 0 && c.rel === 'spec' && c.row.scope === 'team'
+      );
+      const line = this.toIndexLines(own.slice(0, 1))[0];
+      return line === undefined ? null : indexLineText(line);
+    } catch {
+      return null;
+    }
+  }
+
   indexLines(actor: DocsActor, taskId: string): IndexLine[] {
     return this.toIndexLines(this.taskDocs(actor, taskId));
   }

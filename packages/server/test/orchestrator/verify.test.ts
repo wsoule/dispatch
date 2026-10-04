@@ -91,6 +91,20 @@ function promptInput(
 }
 
 describe('buildVerificationPrompt', () => {
+  it('names the task spec as one line when the task has one', () => {
+    const text = buildVerificationPrompt(
+      promptInput({
+        specLine: '- spec · auth · accepted · rev 2 · 1 KB: Auth: x',
+      })
+    );
+    expect(text).toContain(
+      '## The task\'s spec\n- spec · auth · accepted · rev 2 · 1 KB: Auth: x\nJudge the work against it: doc_read("auth") reads it.'
+    );
+    expect(buildVerificationPrompt(promptInput())).not.toContain(
+      "## The task's spec"
+    );
+  });
+
   it('names the checkout and the exact output path', () => {
     const prompt = buildVerificationPrompt(promptInput());
     expect(prompt).toContain('/worktrees/r-1');
@@ -225,7 +239,10 @@ class ScriptedVerifier implements Executor {
   }
 }
 
-function setupVerify(verifier: Executor): {
+function setupVerify(
+  verifier: Executor,
+  specLine?: (taskId: string) => string | null
+): {
   orchestrator: Orchestrator;
   runner: VerificationRunner;
   store: TaskStore;
@@ -247,6 +264,7 @@ function setupVerify(verifier: Executor): {
     cache,
     events,
     orchestrator,
+    ...(specLine === undefined ? {} : { specLine }),
   });
   return { orchestrator, runner, store };
 }
@@ -273,6 +291,41 @@ describe('VerificationRunner', () => {
     });
     expect(result.skipped).toBe(true);
     expect(orchestrator.list()).toEqual([]);
+  });
+
+  it("puts the task's spec line in the prompt, and none when reading it throws", async () => {
+    mkdirSync(join(repo, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'verify:\n  command: bun run dev\n'
+    );
+    const verifier = new ScriptedVerifier(null);
+    const { runner, store } = setupVerify(
+      verifier,
+      () => '- spec · auth · accepted · rev 2 · 1 KB: Auth: x'
+    );
+    const task = store.create({ title: 'with a spec' });
+    await runner.startVerification({
+      operator: null,
+      taskId: task.meta.id,
+      head: commitHead(),
+    });
+    await waitFor(() => verifier.lastPrompt !== '');
+    expect(verifier.lastPrompt).toContain(
+      "## The task's spec\n- spec · auth · accepted · rev 2 · 1 KB: Auth: x"
+    );
+    const failing = new ScriptedVerifier(null);
+    const second = setupVerify(failing, () => {
+      throw new Error('docs.db is busy');
+    });
+    const other = second.store.create({ title: 'no spec' });
+    await second.runner.startVerification({
+      operator: null,
+      taskId: other.meta.id,
+      head: runGitSync(repo, ['rev-parse', 'HEAD']).trim(),
+    });
+    await waitFor(() => failing.lastPrompt !== '');
+    expect(failing.lastPrompt).not.toContain("## The task's spec");
   });
 
   it('records a structured pass and marks the task exercised', async () => {

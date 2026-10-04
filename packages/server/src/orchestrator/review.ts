@@ -24,7 +24,13 @@ import type { ReviewCommentStore } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
 import { reviewDir, reviewOutputPath, reviewPackagePath } from './paths.js';
-import { untrustedBlock, untrustedFenced, untrustedInline } from './prompt.js';
+import {
+  specLineOf,
+  specSection,
+  untrustedBlock,
+  untrustedFenced,
+  untrustedInline,
+} from './prompt.js';
 import type { RunMeta } from './types.js';
 import { OrchestratorNotFoundError, runKind } from './types.js';
 
@@ -128,6 +134,8 @@ export interface ReviewPromptInput {
   dependentsTruncated: boolean;
   mirrors: string[];
   mirrorsTruncated: boolean;
+  // The task's own team spec as one docs index line, when it has one.
+  specLine?: string | null;
 }
 
 export interface ParsedReviewFinding {
@@ -665,6 +673,8 @@ export function buildReviewPrompt(input: ReviewPromptInput): string {
     ].join('\n'),
     evidenceSection(input),
   ];
+  const spec = specSection(input.specLine);
+  if (spec !== null) sections.push(spec);
 
   const dependencyScope = dependencyScopeSection(input);
   if (dependencyScope !== null) sections.push(dependencyScope);
@@ -789,6 +799,8 @@ export interface ReviewRunnerContext {
   orchestrator: Orchestrator;
   actorContext: ActorContext;
   reviewComments: ReviewCommentStore;
+  // The task's own team spec as one docs index line (docs' specLine).
+  specLine?: (taskId: string) => string | null;
 }
 
 interface PendingReview {
@@ -891,6 +903,7 @@ export class ReviewRunner {
           dependentsTruncated: dependents.truncated,
           mirrors: mirrors.list,
           mirrorsTruncated: mirrors.truncated,
+          specLine: specLineOf(this.ctx.specLine, task.meta.id),
         });
       },
     });
