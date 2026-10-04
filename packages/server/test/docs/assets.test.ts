@@ -342,6 +342,19 @@ describe('the asset store', () => {
     expect(service.asset(as(OWNER), 'img', kept.name).mime).toBe('image/png');
   });
 
+  it('reads a daemon stopped for days as a pause, not a clock jump', () => {
+    const made = service.create(as(OWNER), { title: 'Img', body: 'x\n' });
+    const dropped = service.putAsset(as(OWNER), 'img', JPEG);
+    sweepEvery12h(service, host, 28);
+    // Off for three days, then back: the sweep deletes as usual.
+    host.advance(3 * 24 * 60);
+    service.sweep();
+    expect(() => service.asset(as(OWNER), 'img', dropped.name)).toThrow(
+      'not found'
+    );
+    expect(made.doc.id).toBeTruthy();
+  });
+
   it('deletes no image while an image stamp is in the future', () => {
     service.create(as(OWNER), { title: 'Img', body: 'x\n' });
     service.sweep();

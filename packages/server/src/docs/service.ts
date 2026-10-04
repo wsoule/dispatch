@@ -213,6 +213,8 @@ const DEFAULT_ASSET_LIMITS = {
   projectBytes: 2 * 1024 * 1024 * 1024,
 };
 const ASSET_TTL_DAYS = 30;
+// A gap since the last image sweep past this reads as a clock jump.
+const ASSET_MAX_SWEEP_GAP_DAYS = 7;
 // A doc line to a run, as live notices are: at most 160 characters.
 const RUN_LINE_CHARS = 160;
 // Mergeability answers kept, per (proposal body, head).
@@ -242,8 +244,9 @@ function forbidden(message: string, field?: string): DocsError {
   return new DocsError('forbidden', message, field);
 }
 
-// Why the clock cannot be trusted to age images: a day or more since the last
-// sweep (it runs every minute), or a stamp in the future. Null when sound.
+// Why the clock cannot be trusted to age images: over a week since the last
+// sweep (a daemon stopped for a weekend is a pause, not a jump), or a stamp
+// in the future. Null when sound.
 function assetClockAnomaly(
   lastSweep: string | null,
   newest: string | null,
@@ -253,7 +256,7 @@ function assetClockAnomaly(
   if (lastSweep !== null) {
     const last = Date.parse(lastSweep);
     if (last > limit) return `clock anomaly: the last sweep is in the future`;
-    if (now.getTime() - last > DAY_MS)
+    if (now.getTime() - last > ASSET_MAX_SWEEP_GAP_DAYS * DAY_MS)
       return `clock anomaly: ${lastSweep} was the last sweep`;
   }
   if (newest !== null && Date.parse(newest) > limit)
