@@ -1391,6 +1391,7 @@ async function bootServer(
   messagesRef.current = messaging;
   if (federation !== null && mailFederation !== null)
     wireAgentsAndChannels(federation, {
+      homes: mailFederation.homes,
       messages: messaging.store,
       engine: messaging.engine,
       implicit: (channel) =>

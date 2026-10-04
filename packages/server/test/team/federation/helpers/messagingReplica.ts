@@ -18,6 +18,7 @@ import { AgentSync } from '../../../../src/team/federation/agents.js';
 import { ChannelSync } from '../../../../src/team/federation/channels.js';
 import { Homes } from '../../../../src/team/federation/homes.js';
 import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js';
+import { MailOut } from '../../../../src/team/federation/mail.js';
 import { Presence } from '../../../../src/team/federation/presence.js';
 import type { RunInfo } from '../../../../src/team/federation/presence.js';
 import { MemoryRemote } from './memoryTransport.js';
@@ -105,6 +106,7 @@ export interface MessagingReplica extends ServiceReplica {
   presence: Presence;
   agents: AgentSync;
   channels: ChannelSync;
+  mailOut: MailOut;
   /** A run starts here: live on the host, and its presence queued. */
   startRun(meta: RunInfo): void;
   /** `other`'s pass, then this replica's. */
@@ -171,6 +173,13 @@ export function messagingReplica(
     base.service.register(sync);
     base.service.addCollector(sync);
   }
+  const mailOut = new MailOut({
+    fed: base.fed,
+    roster: base.roster,
+    homes,
+    messages,
+  });
+  base.service.addCollector(mailOut);
   const replica: MessagingReplica = {
     ...base,
     remote,
@@ -182,6 +191,7 @@ export function messagingReplica(
     presence,
     agents,
     channels,
+    mailOut,
     startRun: (meta) => {
       host.startRun(meta.taskId, meta.id);
       presence.runStarted(meta);

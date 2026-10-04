@@ -146,6 +146,11 @@ export class FedStore {
 
   // Mints the next v2 op, past the v1 counter and chained to the head; the op,
   // the head and the caller's writes under its stamp land in one transaction.
+  /** Runs `fn` as one state.db transaction. */
+  atomically<T>(fn: () => T): T {
+    return this.ledger.atomically(fn);
+  }
+
   append(input: AppendInput): FederatedOp {
     return this.ledger.atomically(() => {
       const head = this.head();

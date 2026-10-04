@@ -20,6 +20,7 @@ import type { HomeTasks } from './homes.js';
 import { DaemonFederationHooks } from './hooks.js';
 import { loadOrCreateKeys } from './keys.js';
 import { LegacyWindow } from './legacy.js';
+import { MailOut } from './mail.js';
 import { Presence } from './presence.js';
 import { RosterService } from './roster.js';
 import { FederationService } from './service.js';
@@ -98,11 +99,12 @@ export function wireMessagingFederation(
   return { homes, presence, hooks };
 }
 
-// The agent roster and channel memberships across daemons, once messaging
-// is open: both publish each pass and project after it.
+// The agent roster, channel memberships and outbound mail, once messaging
+// is open: each publishes in the pass, and the syncs project after it.
 export function wireAgentsAndChannels(
   federation: Federation,
   deps: {
+    homes: Homes;
     messages: MessageStore;
     engine: DeliveryEngine;
     implicit: (channel: string) => Address[];
@@ -121,6 +123,9 @@ export function wireAgentsAndChannels(
     service.register(sync);
     service.addCollector(sync);
   }
+  service.addCollector(
+    new MailOut({ fed, roster, homes: deps.homes, messages: deps.messages })
+  );
 }
 
 // Board sync as one daemon runs it: the signed roster, signed task ops, the

@@ -114,6 +114,9 @@ export class RosterService {
     { code: string; expires: string; at: number }
   >();
 
+  private readonly joined: (() => void)[] = [];
+  private joinedTold = false;
+
   constructor(private readonly deps: RosterDeps) {}
 
   private get fed(): FedStore {
@@ -530,11 +533,22 @@ export class RosterService {
   /** FW-R31(4): mail leaves only once this machine is admitted under a
    *  firm founding pin; a provisional pin is no team yet. */
   mailReady(): boolean {
-    return (
+    const ready =
       this.founded() &&
       this.fed.meta('founder_pin') === 'firm' &&
-      this.isAdmitted(this.me)
-    );
+      this.isAdmitted(this.me);
+    // The first time it holds, before anything is placed remote by it.
+    if (ready && !this.joinedTold) {
+      this.joinedTold = true;
+      for (const listener of this.joined) listener();
+    }
+    return ready;
+  }
+
+  /** Told once this machine is first firmly in a team (mailReady), before
+   *  any mail leaves: where the mail watermark starts. */
+  onTeamJoined(listener: () => void): void {
+    this.joined.push(listener);
   }
 
   isAdmitted(replica: string): boolean {
