@@ -363,6 +363,17 @@ export function validateSendInput(
   options: ValidateOptions = {}
 ): void {
   const known = options.gateTypes ?? PACKAGE_GATE_TYPES;
+  // A JSON body can hold any shape: check the containers before reading them.
+  if (typeof input !== 'object' || input === null || Array.isArray(input))
+    invalid('input', 'expected an object');
+  if (input.refs !== undefined && !Array.isArray(input.refs))
+    invalid('refs', 'expected a list');
+  if (
+    input.choices !== undefined &&
+    (!Array.isArray(input.choices) ||
+      input.choices.some((c) => typeof c !== 'string'))
+  )
+    invalid('choices', 'expected a list of strings');
   if (!Array.isArray(input.to) || input.to.length === 0)
     invalid('to', 'at least one recipient');
   if (input.to.length > MAX_RECIPIENTS)
@@ -370,6 +381,7 @@ export function validateSendInput(
   input.to.forEach((addr, i) => parseAddress(addr, `to[${i}]`));
 
   const kind = input.kind;
+  if (typeof kind !== 'string') invalid('kind', 'expected a string');
   if (
     !(BUILT_IN_KINDS as readonly string[]).includes(kind) &&
     !X_KIND.test(kind)
@@ -397,6 +409,8 @@ export function validateSendInput(
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
   refs.forEach((ref, i) => {
+    if (typeof ref !== 'object' || ref === null)
+      invalid(`refs[${i}]`, 'expected { type, id }');
     const registered = (REF_TYPES as readonly string[]).includes(ref.type);
     // A peer's newer ref type is kept, not refused, so a minor version can add one.
     const receivedOk = options.origin === 'received' && isIdentifier(ref.type);

@@ -31,6 +31,9 @@ const utf8Length = (s: string): number =>
 // Parses one address string; `field` names the input slot in the error so an
 // agent can see exactly which recipient it got wrong.
 export function parseAddress(raw: string, field = 'to'): ParsedAddress {
+  // A JSON body can hold anything where an address belongs.
+  if (typeof raw !== 'string')
+    throw new MessagingError('invalid', 'expected an address string', field);
   const bad = (why: string): never => {
     throw new MessagingError(
       'invalid',
