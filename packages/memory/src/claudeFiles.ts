@@ -6,7 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { cutUtf8, MEMORY_LIMITS, utf8Bytes } from './limits.js';
 import type { RankContext } from './rank.js';
 import { reachTags } from './render.js';
-import { displayState, MEMORY_KINDS } from './types.js';
+import { displayState, MEMORY_KINDS, MEMORY_SCOPES } from './types.js';
 import type { MemoryEntry, MemoryKind } from './types.js';
 
 type ClaudeType = 'feedback' | 'project' | 'reference';
@@ -314,7 +314,11 @@ function strictDispatch(text: string): {
 } {
   const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
   const match = FRONTMATTER.exec(source);
-  if (match === null) return { dispatch: {}, problem: null };
+  if (match === null)
+    return {
+      dispatch: {},
+      problem: 'frontmatter: missing or not terminated by ---',
+    };
   try {
     const front = record(
       parseYaml(match[1] ?? '', {
@@ -344,15 +348,21 @@ export function parseReceiptFile(
   const kind = MEMORY_KINDS.find((k) => k === dispatch.kind) ?? 'fact';
   const raw = dispatch.status;
   const status = typeof raw === 'string' ? raw.trim().toLowerCase() : undefined;
-  const statusProblem =
-    raw === undefined || typeof raw === 'string'
-      ? null
-      : 'status: expected a string';
+  // A receipt always carries both; a file without them is damaged, not a lesson.
+  const fieldProblem =
+    typeof dispatch.scope !== 'string' ||
+    !MEMORY_SCOPES.some((s) => s === dispatch.scope)
+      ? 'scope: missing or unknown'
+      : raw === undefined || status === ''
+        ? 'status: missing'
+        : typeof raw === 'string'
+          ? null
+          : 'status: expected a string';
   return {
     ...parseMemoryFile(text, fileName),
     kind,
     status: status === '' ? undefined : status,
-    problem: problem ?? statusProblem,
+    problem: problem ?? fieldProblem,
   };
 }
 

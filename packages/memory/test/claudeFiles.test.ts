@@ -468,6 +468,19 @@ describe('receipt files', () => {
     ).toStartWith('frontmatter: ');
   });
 
+  it('refuse a damaged file: no terminated frontmatter, or no scope or status', () => {
+    const text = renderReceiptFile(entry);
+    const damaged = [
+      ['just a body', 'frontmatter'],
+      [text.slice(0, text.indexOf('\n---\n') + 1), 'frontmatter'],
+      [text.replace('    scope: team\n', ''), 'scope'],
+      [text.replace('    status: active\n', ''), 'status'],
+      [text.replace('    status: active', '    status: ""'), 'status'],
+    ] as const;
+    for (const [file, field] of damaged)
+      expect(parseReceiptFile(file, 'x.md').problem).toStartWith(`${field}:`);
+  });
+
   it('read an unknown or missing kind as a fact', () => {
     const text = renderReceiptFile(entry);
     const forged = text.replace('    kind: hazard', '    kind: root');

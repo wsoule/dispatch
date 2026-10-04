@@ -442,6 +442,28 @@ describe('a staged memory restore', () => {
     ).toMatchObject({ restored: 0, skipped: 1 });
   });
 
+  it('reports a truncated or stripped receipt as a problem, never a proposal', async () => {
+    const t = gatedEngine();
+    const cut = lostEntry('cut off');
+    const full = renderReceiptFile(cut);
+    stage(cut, full.slice(0, full.indexOf('\n---\n') + 1));
+    const bare = lostEntry('no status');
+    stage(bare, renderReceiptFile(bare).replace(/ {4}status: .*\n/, ''));
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report?.restored).toBe(0);
+    expect(report?.problems.map((p) => [p.file, p.detail]).sort()).toEqual(
+      [
+        [`${cut.id}.md`, 'frontmatter: missing or not terminated by ---'],
+        [`${bare.id}.md`, 'status: missing'],
+      ].sort()
+    );
+    expect(t.shared.listProposals()).toHaveLength(0);
+  });
+
   it('refuses symlinks, oversized files, foreign names and broken input, and keeps the staging', async () => {
     const t = gatedEngine();
     const good = lostEntry('good');
