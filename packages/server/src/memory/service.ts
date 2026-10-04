@@ -137,6 +137,8 @@ export interface MemoryService extends MemoryPromptPort {
   }): Promise<ClaudeImportReport>;
   /** Boot, after messaging.recover(): proposes the team memory `dispatch receipts restore` staged. */
   restoreStaged(): Promise<MemoryRestoreReport | null>;
+  /** The files the last restore could not take, as /api/health problem lines. */
+  restoreProblems(): string[];
   /** Boot, after messaging.recover(): raises unsent gates, closes strays, sweeps Claude exports, then starts decay. */
   recover(): Promise<{ raised: number; closed: number }>;
   health(principal: Principal | null): MemoryHealth;
@@ -237,6 +239,23 @@ function readLastImport(
   } catch {
     return null;
   }
+}
+
+// One process's restore so far: this pass's counts added to the earlier
+// passes', and its problems by file, a newer pass's reading winning.
+function withTotals(
+  before: MemoryRestoreReport | null,
+  pass: MemoryRestoreReport
+): MemoryRestoreReport {
+  if (before === null) return pass;
+  const problems = new Map(before.problems.map((p) => [p.file, p]));
+  for (const p of pass.problems) problems.set(p.file, p);
+  return {
+    ...pass,
+    restored: before.restored + pass.restored,
+    skipped: before.skipped + pass.skipped,
+    problems: [...problems.values()],
+  };
 }
 
 /**
@@ -784,7 +803,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       deps.restoreBatch
     );
     if (report === null) return null;
-    lastRestore = report;
+    lastRestore = withTotals(lastRestore, report);
     if (report.deferred > 0 && !closed && restoreTimer === null) {
       restoreTimer = setTimeout(() => {
         restoreTimer = null;
@@ -848,6 +867,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     },
     importClaude,
     restoreStaged,
+    restoreProblems: () =>
+      (lastRestore?.problems ?? []).map(
+        (p) => `memory restore: ${p.file}: ${p.detail}`
+      ),
     bindDocsOverflow: async (port) => {
       // Counts docs refusing (null), so the recovery is done only once every
       // note it asked about went to a doc.

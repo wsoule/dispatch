@@ -96,6 +96,33 @@ describe('restoring staged team memory', () => {
     expect(first?.pending).not.toContain('restart');
     await waitFor(() => !existsSync(staging));
     expect(t.memory.shared?.listProposals()).toHaveLength(3);
+    // Health counts every pass, not just the last one.
+    expect(t.memory.health(null).restore).toMatchObject({
+      restored: 3,
+      deferred: 0,
+      problems: [],
+    });
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore problems', () => {
+  it('names each staged file a restore could not take, for /api/health', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-problem-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, 'notes.md'), 'stray\n');
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toEqual([
+      'memory restore: notes.md: not a memory receipt file name',
+    ]);
     t.memory.close();
     if (home === undefined) delete process.env.DISPATCH_HOME;
     else process.env.DISPATCH_HOME = home;

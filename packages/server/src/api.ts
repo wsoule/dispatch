@@ -4972,6 +4972,7 @@ export async function handleApi(
           ...(identity.problem === null ? [] : [identity.problem]),
           ...receiptsProblems(ctx),
           ...ctx.team.teammates.problems(),
+          ...ctx.memory.restoreProblems(),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.
