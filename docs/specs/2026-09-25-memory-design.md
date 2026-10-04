@@ -1946,9 +1946,9 @@ interface MemoryOp {
   - **Skipped.** A receipt whose `status` begins with `retired`, after trimming
     and lower-casing, is skipped, as are ids or origins already held and content
     conflicts.
-  - **At most 50 per boot.** Handled files leave the staging directory, which is
-    removed only once empty. The rest wait for the next boot, and problem files
-    stay with a hint.
+  - **At most 50 per pass.** Handled files leave the staging directory, which is
+    removed only once empty. The rest are proposed by further passes a minute
+    apart, and problem files stay with a hint.
   - **Health.** The last report is served as `restore` in `/api/memory/health`.
 
 ## Failure handling

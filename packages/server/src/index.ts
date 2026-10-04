@@ -1499,7 +1499,7 @@ async function bootServer(
       console.error(`dispatchd: memory restore: ${p.file}: ${p.detail}`);
     if (restored !== null && restored.deferred > 0)
       console.error(
-        `dispatchd: memory restore: ${restored.deferred} staged file(s) wait for the next boot`
+        `dispatchd: memory restore: ${restored.deferred} staged file(s) are proposed in batches over the next minutes`
       );
   } catch (err) {
     console.error('dispatchd: memory restore failed', err);

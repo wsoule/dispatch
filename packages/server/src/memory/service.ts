@@ -170,6 +170,10 @@ export interface OpenMemoryDeps {
   /** The version boot records as probed; this build's own unless a test overrides it. */
   probedClaudeVersion?: string | null;
   now?: () => Date;
+  /** Most staged restore files one pass proposes; the receipts default otherwise. */
+  restoreBatch?: number;
+  /** How long between restore passes while staged files remain. */
+  restoreDrainMs?: number;
 }
 
 const LAST_IMPORT_KEY = 'ledger-import:last';
@@ -179,6 +183,8 @@ const CUTOVER_SWEPT_KEY = 'ledger-cutover-swept-at';
 // The oldest Claude Code version the live probe passed on.
 const PROBE_KEY = 'claude-probe-passed';
 const HOUR_MS = 3_600_000;
+// The pause between restore passes while staged files remain.
+const RESTORE_DRAIN_MS = 60_000;
 const UNLOADED_NOTE =
   'Your auto-memory directory is not active; save memories with memory_save.';
 const IMPORT_STATES = ['complete', 'failed', 'unconfirmed', 'running'] as const;
@@ -767,6 +773,29 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   };
 
   let lastRestore: MemoryRestoreReport | null = null;
+  let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  let closed = false;
+  // One restore pass; files past its limit drain on a timer, a batch at a time.
+  const restoreStaged = async (): Promise<MemoryRestoreReport | null> => {
+    const report = await applyStagedMemoryRestore(
+      engine,
+      shared,
+      memoryRestoreDir(deps.rootDir),
+      deps.restoreBatch
+    );
+    if (report === null) return null;
+    lastRestore = report;
+    if (report.deferred > 0 && !closed && restoreTimer === null) {
+      restoreTimer = setTimeout(() => {
+        restoreTimer = null;
+        restoreStaged().catch((err: unknown) =>
+          console.error('dispatchd: memory restore failed', err)
+        );
+      }, deps.restoreDrainMs ?? RESTORE_DRAIN_MS);
+      restoreTimer.unref();
+    }
+    return report;
+  };
   const unsubscribe = deps.events.subscribe((event) => {
     if (event.type === 'ledger.changed') importQuietly();
   });
@@ -818,15 +847,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       }
     },
     importClaude,
-    restoreStaged: async () => {
-      const report = await applyStagedMemoryRestore(
-        engine,
-        shared,
-        memoryRestoreDir(deps.rootDir)
-      );
-      if (report !== null) lastRestore = report;
-      return report;
-    },
+    restoreStaged,
     bindDocsOverflow: async (port) => {
       // Counts docs refusing (null), so the recovery is done only once every
       // note it asked about went to a doc.
@@ -888,6 +909,8 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           : null,
     }),
     close: () => {
+      closed = true;
+      if (restoreTimer !== null) clearTimeout(restoreTimer);
       clearInterval(exportSweep);
       clearInterval(preflightTimer);
       claudeExport?.close();

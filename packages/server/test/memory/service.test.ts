@@ -1,8 +1,19 @@
 import { TaskStore } from '@dispatch/core';
 import type { Principal } from '@dispatch/memory';
+import {
+  createMemoryIds,
+  newMemoryEntry,
+  renderReceiptFile,
+} from '@dispatch/memory';
 import type { DeliveryEngine } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +21,7 @@ import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { PROBED_CLAUDE_CODE_VERSION } from '../../src/memory/claudeModes.js';
+import { memoryRestoreDir } from '../../src/memory/receipts.js';
 import { openMemory, overseerMemory } from '../../src/memory/service.js';
 import type { OpenMemoryDeps } from '../../src/memory/service.js';
 import { GateHandlers } from '../../src/messaging/gates.js';
@@ -53,6 +65,42 @@ function setup(over: Partial<OpenMemoryDeps> = {}) {
   });
   return { root, memory, ledgerStore, events, seen };
 }
+
+describe('restoring staged team memory', () => {
+  it('drains files past the per-pass limit on a timer, not only at the next boot', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-drain-home-'))
+    );
+    const t = setup({ restoreBatch: 1, restoreDrainMs: 10 });
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const ids = createMemoryIds();
+    for (const title of ['one', 'two', 'three']) {
+      const e = newMemoryEntry(
+        {
+          scope: 'team',
+          kind: 'fact',
+          title,
+          body: `${title} body`,
+          author: 'human:wyat',
+          trust: 'human',
+        },
+        ids.entry(Date.now()),
+        new Date().toISOString()
+      );
+      writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    }
+    const first = await t.memory.restoreStaged();
+    expect(first).toMatchObject({ restored: 1, deferred: 2 });
+    expect(first?.pending).not.toContain('restart');
+    await waitFor(() => !existsSync(staging));
+    expect(t.memory.shared?.listProposals()).toHaveLength(3);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
 
 describe('openMemory', () => {
   it('imports at boot and again on ledger.changed, announcing a team change', () => {

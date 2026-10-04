@@ -151,7 +151,7 @@ export function memoryReceiptsStep(
 export interface MemoryRestoreReport {
   restored: number;
   skipped: number;
-  // Files left staged past the per-boot limit, for the next boot.
+  // Files left staged past the per-pass limit, for the next drain pass.
   deferred: number;
   problems: { file: string; detail: string }[];
   // Where the kept staging directory is and how to clear it; null once removed.
@@ -222,8 +222,8 @@ async function restoreFile(
   }
 }
 
-// Most proposals one boot raises; the rest wait staged for the next boot.
-const RESTORE_PER_BOOT = 50;
+// Most proposals one pass raises; the rest wait for the service's next drain.
+const RESTORE_PER_PASS = 50;
 
 // Applies the receipt files the CLI staged, removing each once handled, up to
 // `limit` proposals. Null when nothing is staged or memory is unavailable.
@@ -231,7 +231,7 @@ export async function applyStagedMemoryRestore(
   engine: MemoryEngine | null,
   shared: MemoryStore | null,
   restoreDir: string,
-  limit = RESTORE_PER_BOOT
+  limit = RESTORE_PER_PASS
 ): Promise<MemoryRestoreReport | null> {
   if (engine === null || shared === null || !existsSync(restoreDir))
     return null;
@@ -260,7 +260,10 @@ export async function applyStagedMemoryRestore(
   }
   // Only handled files went; anything else, even a file staged meanwhile, stays.
   if (readdirSync(restoreDir).length > 0)
-    report.pending = clearHint(restoreDir);
+    report.pending =
+      report.problems.length === 0
+        ? `${report.deferred} staged file(s) in ${restoreDir} are proposed in batches over the next minutes`
+        : clearHint(restoreDir);
   else {
     try {
       rmdirSync(restoreDir);
