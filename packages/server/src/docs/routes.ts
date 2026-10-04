@@ -589,6 +589,12 @@ export async function handleDocsRoute(
           if (bytes instanceof Response) return bytes;
           return jsonResponse(docs.putAsset(actor, ref, bytes), 201);
         }
+        case 'share-linear':
+          return await write(async () => {
+            await body();
+            const documentId = await ctx.linearSync.shareDocument(actor, ref);
+            return jsonResponse({ documentId }, 201);
+          });
         case 'promote':
           return await write(async () => {
             await body();

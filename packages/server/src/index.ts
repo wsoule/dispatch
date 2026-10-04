@@ -71,6 +71,7 @@ import {
 } from './depmap.js';
 import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
+import { LinearDocsAdapter } from './docs/linear.js';
 import { docsRestoreDir, openDocs } from './docs/open.js';
 import { docsReceiptsStep } from './docs/receipts.js';
 import { redispatchPublishes } from './docs/routes.js';
@@ -1886,6 +1887,11 @@ async function bootServer(
     localHumanRef: actorContext.humanRef,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
+    documents: {
+      adapter: (link) =>
+        new LinearDocsAdapter({ ...link, service: docs.service }),
+      outstanding: () => docs.service.linearOutstanding(),
+    },
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
