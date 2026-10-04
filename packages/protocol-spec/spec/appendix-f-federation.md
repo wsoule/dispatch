@@ -78,8 +78,9 @@ interface OpStub extends OpHeader {
   rewritten or forked log fails to verify, and halts at the op that fails.
 - **The clock.** An op's `hlc` names its own replica after the second dot, and
   exceeds the previous op's, comparing milliseconds and counter as numbers. A
-  replica adopts the latest clock it accepts, up to 5 minutes ahead of its own
-  wall clock.
+  replica adopts the latest clock it accepts. An op stamped more than 5 minutes
+  ahead of the replica's own wall clock is neither applied nor adopted; it
+  waits, and its publisher's later ops behind it, until the clock catches up.
 - **Size.** A serialized op is at most 1 MiB, a sealed op names at most 256
   recipients, and a state op carries at most 500 entries. A message always fits,
   since its body and data are at most 64 KiB each ([§4.5](04-messages.md#s4.5)).

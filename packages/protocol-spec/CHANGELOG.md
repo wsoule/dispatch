@@ -91,6 +91,9 @@ vector ids (see §14.2).
   as `key`, 16 lowercase hex digits; after the agent re-registers under a new
   key, an answer to a gate for an earlier one has no effect (App. C.3). Vector:
   `core.answers.an-agent-registration-gate-names-its-key`.
+- [editorial] Appendix F says an op stamped more than 5 minutes ahead of a
+  replica's wall clock waits until the clock catches up, rather than being
+  applied (§F.1).
 
 ## 1.0.0-draft.1 (2026-09-28)
 
