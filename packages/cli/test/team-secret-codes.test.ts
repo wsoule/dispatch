@@ -58,6 +58,13 @@ beforeEach(async () => {
           },
         });
       posted.push({ path: url.pathname, body: await req.json() });
+      if (url.pathname === '/api/team/found')
+        return Response.json({
+          teamId: 'a'.repeat(32),
+          recoveryCode: 'RECOVERY-CODE',
+          fingerprint: 'JOIN-7QX2-K9PA-M3TD-0W4R-HB8E',
+          pending: true,
+        });
       return Response.json({ ok: true, pending: true });
     },
   });
@@ -115,5 +122,13 @@ describe('secret codes stay out of argv', () => {
     }
     expect(failed).toBe(true);
     expect(posted).toEqual([]);
+  });
+
+  // F: found prints its pending note beside the recovery code.
+  it('team found prints the recovery code and that its sync still runs', async () => {
+    await run('team', 'found');
+    const text = lines.join('\n');
+    expect(text).toContain('RECOVERY-CODE');
+    expect(text).toContain('goes out once a sync reaches the remote');
   });
 });

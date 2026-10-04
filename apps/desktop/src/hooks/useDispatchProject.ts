@@ -1382,6 +1382,8 @@ export function useDispatchProject(
         void queryClient.invalidateQueries({ queryKey: configQueryKey });
         void queryClient.invalidateQueries({ queryKey: readyQueryKey });
         void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+        // A teammate's change may come with roster ops: Settings → Machines.
+        void queryClient.invalidateQueries({ queryKey: ['team-keys'] });
       },
       {
         onEvent: (event) => {

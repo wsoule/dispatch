@@ -1,3 +1,4 @@
+import { ApiError } from '@dispatch/client';
 import type { TeamKeys } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -39,6 +40,23 @@ const base: TeamKeys = {
 };
 const founded: TeamKeys = {
   ...base,
+  // This machine is the team's admin, so its admin controls show.
+  roster: [
+    {
+      replica: 'ada-0000000a',
+      handle: 'ada',
+      device: 'laptop',
+      build: '0.40.0',
+      role: 'admin',
+      rank: 0,
+      hosts: [],
+      observer: false,
+      recovered: false,
+      fingerprint: base.machine.fingerprint,
+      lastSeen: null,
+      skewMs: null,
+    },
+  ],
   team: {
     id: 'a'.repeat(32),
     name: 'acme',
@@ -72,6 +90,14 @@ function mount(
     revokeReplica: mock(ok),
     dismissRosterOp: mock(ok),
     ackProblem: mock(() => Promise.resolve()),
+    inviteToTeam: mock(() =>
+      Promise.resolve({ code: 'di1.invite-code', expires: '2026-10-11' })
+    ),
+    newRecoveryCode: mock(() =>
+      Promise.resolve({ recoveryCode: 'NEW-RECOVERY-CODE' })
+    ),
+    closeLegacy: mock(ok),
+    setReplicaHosts: mock(ok),
   };
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -228,4 +254,116 @@ test('shows nothing while board sync is off', async () => {
   const client = mount(() => Promise.reject(new Error('board sync is not on')));
   await waitFor(() => expect(client.getTeamKeys).toHaveBeenCalled());
   expect(screen.queryByText(/board sync is not on/)).toBeNull();
+});
+
+test('hides Dismiss below the operator tier and says to ask an admin', async () => {
+  mount(
+    {
+      ...founded,
+      pause: { replica: 'bob-0000000b', seq: 4, hash: 'h'.repeat(64) },
+    },
+    'decide'
+  );
+  expect(
+    await screen.findByText(/ask an admin to dismiss the op/)
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole('button', { name: "Dismiss bob-0000000b's op" })
+  ).toBeNull();
+});
+
+test("hides admin controls on a member's machine", async () => {
+  const member = {
+    ...founded,
+    roster: founded.roster.map((m) => ({ ...m, role: 'member' as const })),
+    waiting: [
+      {
+        replica: 'cy-0000000c',
+        handle: 'cy',
+        device: 'mini',
+        fingerprint: 'CCCC-CCCC-CCCC-CCCC-CCCC-CCCC',
+        invitedBy: null,
+      },
+    ],
+  };
+  mount(member);
+  expect(await screen.findByText('Waiting: cy on mini')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Admit cy' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Create invite' })).toBeNull();
+});
+
+test('invites a handle and shows the code once; makes a new recovery code', async () => {
+  const client = mount(founded);
+  fireEvent.change(await screen.findByLabelText('Handle to invite'), {
+    target: { value: 'dee' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+  expect(await screen.findByText('di1.invite-code')).toBeTruthy();
+  expect(client.inviteToTeam).toHaveBeenCalledWith('dee');
+  fireEvent.click(screen.getByRole('button', { name: 'New recovery code' }));
+  expect(await screen.findByText('NEW-RECOVERY-CODE')).toBeTruthy();
+});
+
+test('closes the legacy window and sets the hosts a machine serves', async () => {
+  const client = mount({
+    ...founded,
+    legacy: {
+      until: '2026-10-26T00:00:00.000Z',
+      closed: false,
+      olderBuilds: [],
+    },
+    roster: [
+      ...founded.roster,
+      {
+        replica: 'box-0000000d',
+        handle: 'box',
+        device: 'server',
+        build: '0.40.0',
+        role: 'member',
+        rank: null,
+        hosts: [],
+        observer: false,
+        recovered: false,
+        fingerprint: 'DDDD',
+        lastSeen: null,
+        skewMs: null,
+      },
+    ],
+  });
+  fireEvent.click(await screen.findByRole('button', { name: 'Close now' }));
+  await waitFor(() => expect(client.closeLegacy).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText('Hosts for box'), {
+    target: { value: 'eve, fay' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save hosts for box' }));
+  await waitFor(() =>
+    expect(client.setReplicaHosts).toHaveBeenCalledWith('box-0000000d', [
+      'eve',
+      'fay',
+    ])
+  );
+});
+
+test('titles each problem by its source in words', async () => {
+  mount({
+    ...founded,
+    problems: [
+      { subject: 'halt:bob-0000000b', message: 'fails verification', at: 'x' },
+    ],
+  });
+  expect(
+    await screen.findByText('Log stopped verifying: bob-0000000b')
+  ).toBeTruthy();
+});
+
+test('explains the tier instead of showing a refused request', async () => {
+  const refused = new ApiError(
+    'needs the decide tier',
+    403,
+    'auth_insufficient_tier'
+  );
+  mount(() => Promise.reject(refused));
+  expect(
+    await screen.findByText(/Changing settings needs Can approve access/)
+  ).toBeTruthy();
 });

@@ -1,9 +1,10 @@
 import type { TeamKeys } from '@dispatch/client';
+import { isInsufficientTier } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
-import { useSettingsAccess } from './access';
+import { NEEDS_DECIDE, useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
@@ -16,12 +17,41 @@ interface MachinesGroupProps {
 // The daemon's answer while board sync is off: there is no team to show.
 const SYNC_OFF = 'board sync is not on';
 // Notes a person may acknowledge; mirrors the server's list in routes.ts.
+// team:cut: needs the operator tier there too.
 const ACKNOWLEDGEABLE = [
   'team:race:',
   'team:cut:',
   'transport:merge',
   'team:route',
+  'observer:',
+  'transport:read:',
 ];
+// Each problem source in words, by its subject's prefix (FW-R25 subjects).
+const PROBLEM_TITLES: [string, string][] = [
+  ['halt:', 'Log stopped verifying'],
+  ['clock:', 'Clock ahead'],
+  ['observer:', 'Observer edit dropped'],
+  ['legacy:', 'Older Dispatch build'],
+  ['key:', 'Rival keys for one machine'],
+  ['team:race:', 'Changes kept after a revocation'],
+  ['team:cut:', 'Revocation that cannot be checked'],
+  ['team:route', 'A change has not synced yet'],
+  ['team:founding', 'Founding not readable'],
+  ['transport:merge', 'Sync branch reset'],
+  ['transport:commit', 'Could not commit to the sync clone'],
+  ['transport:read:', 'Slow reads'],
+  ['recovery:', 'Admin by recovery code'],
+  ['rekey:', 'This machine joined again'],
+  ['op:', 'Roster change'],
+];
+
+/** A problem row's title: its source in words, and the machine it is about. */
+function problemTitle(subject: string): string {
+  const hit = PROBLEM_TITLES.find(([prefix]) => subject.startsWith(prefix));
+  if (hit === undefined) return subject;
+  const rest = subject.slice(hit[0].length).replace(/^:/, '');
+  return rest === '' ? hit[1] : `${hit[1]}: ${rest}`;
+}
 
 /** A fingerprint as typed: case and dashes do not matter. */
 function sameFingerprint(typed: string, fingerprint: string): boolean {
@@ -40,8 +70,8 @@ function branchSize(bytes: number): string {
 /**
  * Settings → Team → Machines: the signed team of machines that sync this
  * board (`dispatch team keys` for someone who does not live in a terminal).
- * The decide tier sees every fact; only the operator gets the controls, as
- * every roster change signs with this machine's key.
+ * The decide tier sees every fact; changes need the operator tier, and the
+ * ones an admin signs show only on an admin's machine.
  */
 export function MachinesGroup({ data }: MachinesGroupProps) {
   const { client } = data;
@@ -55,12 +85,19 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
       return client.getTeamKeys();
     },
     enabled: client !== null,
+    // Sync off and a lower tier are answers, not failures to retry; the
+    // 30 s refetch covers a passing error.
+    retry: false,
     refetchInterval: 30_000,
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
+  const [shown, setShown] = useState<{ title: string; code: string } | null>(
+    null
+  );
   const [typed, setTyped] = useState<Record<string, string>>({});
+  const [inviteFor, setInviteFor] = useState('');
+  const [hostsDraft, setHostsDraft] = useState<Record<string, string>>({});
   const [confirming, setConfirming] = useState<{
     replica: string;
     handle: string;
@@ -94,21 +131,33 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
     if (message.includes(SYNC_OFF)) return null;
     return (
       <SettingsGroup title="Machines" keywords="team keys" requires="none">
-        <SettingsRow
-          title="Couldn’t read the team"
-          subtitle={<span className="text-state-failed">{message}</span>}
-        />
+        {isInsufficientTier(keys.error) ? (
+          <SettingsRow
+            title="The team's machines"
+            subtitle={NEEDS_DECIDE}
+            locked={NEEDS_DECIDE}
+          />
+        ) : (
+          <SettingsRow
+            title="Couldn’t read the team"
+            subtitle={<span className="text-state-failed">{message}</span>}
+          />
+        )}
       </SettingsGroup>
     );
   }
   const k: TeamKeys = keys.data;
   const api = client;
   if (api === null) return null;
+  const isAdmin =
+    k.roster.find((m) => m.replica === k.machine.replica)?.role === 'admin';
+  // What an admin signs: this tier, on an admin's machine.
+  const canAdmin = canOperate && isAdmin;
 
   return (
     <SettingsGroup
       title="Machines"
-      keywords="team keys fingerprint admit revoke found"
+      keywords="team keys fingerprint admit revoke found invite recovery hosts"
       hint="The machines that sync this board, each with its own key. Compare a fingerprint out loud before admitting anyone."
       requires="none"
     >
@@ -142,7 +191,10 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
               onClick={() =>
                 void act(async () => {
                   const founded = await api.foundTeam();
-                  setRecoveryCode(founded.recoveryCode);
+                  setShown({
+                    title: 'Recovery code',
+                    code: founded.recoveryCode,
+                  });
                 })
               }
             >
@@ -151,20 +203,22 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           }
         />
       )}
-      {recoveryCode !== null && (
+      {shown !== null && (
         <SettingsRow
-          title="Recovery code"
-          subtitle="Store this where you keep other recovery codes; it is the only way back in if every admin machine is lost. It is shown once."
+          title={shown.title}
+          subtitle={
+            shown.title === 'Recovery code'
+              ? 'Store this where you keep other recovery codes; it is the only way back in if every admin machine is lost. It is shown once.'
+              : 'Send it privately; it works for 7 days, and admission still compares fingerprints.'
+          }
           stacked
           control={
             <div className="flex items-center gap-2">
-              <span className="font-mono text-[12px]">{recoveryCode}</span>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setRecoveryCode(null)}
-              >
-                I stored it
+              <span className="font-mono text-[12px] break-all">
+                {shown.code}
+              </span>
+              <Button size="sm" variant="ghost" onClick={() => setShown(null)}>
+                Done
               </Button>
             </div>
           }
@@ -196,72 +250,147 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             }
           />
         ))}
-      {k.roster.map((m) => (
+      {canAdmin && k.team !== null && (
         <SettingsRow
-          key={m.replica}
-          title={
-            <span className="flex items-center gap-1.5">
-              {m.handle} on {m.device}
-              <Pill>{m.observer ? 'observer' : m.role}</Pill>
-              {m.recovered && <Pill>recovered</Pill>}
-            </span>
-          }
-          subtitle={[
-            m.replica,
-            `build ${m.build}`,
-            m.lastSeen === null
-              ? 'not seen yet'
-              : `seen ${m.lastSeen.slice(0, 10)}`,
-            ...(m.skewMs !== null && Math.abs(m.skewMs) > 60_000
-              ? [`clock ${Math.round(m.skewMs / 60_000)} min off`]
-              : []),
-            ...(m.hosts.length > 0 ? [`hosts ${m.hosts.join(', ')}`] : []),
-          ].join(' · ')}
+          title="Invite a machine"
+          subtitle="Its owner runs `dispatch team join` and pastes the code; you then compare fingerprints and admit it."
           control={
             <span className="flex items-center gap-2">
-              <span className="font-mono text-[12px]">{m.fingerprint}</span>
-              {canOperate && m.replica !== k.machine.replica && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(() =>
-                        api.setReplicaRole(
-                          m.replica,
-                          m.role === 'admin' ? 'member' : 'admin'
-                        )
-                      )
-                    }
-                  >
-                    {m.role === 'admin' ? 'Make member' : 'Make admin'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      setConfirming({
-                        replica: m.replica,
-                        handle: m.handle,
-                        reason: 'revoked',
-                      })
-                    }
-                  >
-                    Revoke
-                  </Button>
-                </>
-              )}
+              <Input
+                aria-label="Handle to invite"
+                placeholder="handle"
+                className="h-7 w-36 text-[12px]"
+                value={inviteFor}
+                onChange={(e) => setInviteFor(e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || inviteFor.trim() === ''}
+                onClick={() =>
+                  void act(async () => {
+                    const invite = await api.inviteToTeam(inviteFor.trim());
+                    setShown({
+                      title: `Invite code for ${inviteFor.trim()}`,
+                      code: invite.code,
+                    });
+                    setInviteFor('');
+                  })
+                }
+              >
+                Create invite
+              </Button>
             </span>
           }
         />
-      ))}
+      )}
+      {k.roster.map((m) => {
+        const draft = hostsDraft[m.replica] ?? m.hosts.join(', ');
+        const other = m.replica !== k.machine.replica;
+        return (
+          <SettingsRow
+            key={m.replica}
+            title={
+              <span className="flex items-center gap-1.5">
+                {m.handle} on {m.device}
+                <Pill>{m.observer ? 'observer' : m.role}</Pill>
+                {m.recovered && <Pill>recovered</Pill>}
+              </span>
+            }
+            subtitle={[
+              m.replica,
+              `build ${m.build}`,
+              m.lastSeen === null
+                ? 'not seen yet'
+                : `seen ${m.lastSeen.slice(0, 10)}`,
+              ...(m.skewMs !== null && Math.abs(m.skewMs) > 60_000
+                ? [`clock ${Math.round(m.skewMs / 60_000)} min off`]
+                : []),
+              ...(m.hosts.length > 0 ? [`hosts ${m.hosts.join(', ')}`] : []),
+            ].join(' · ')}
+            control={
+              <span className="flex items-center gap-2">
+                <span className="font-mono text-[12px]">{m.fingerprint}</span>
+                {canAdmin && other && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        void act(() =>
+                          api.setReplicaRole(
+                            m.replica,
+                            m.role === 'admin' ? 'member' : 'admin'
+                          )
+                        )
+                      }
+                    >
+                      {m.role === 'admin' ? 'Make member' : 'Make admin'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setConfirming({
+                          replica: m.replica,
+                          handle: m.handle,
+                          reason: 'revoked',
+                        })
+                      }
+                    >
+                      Revoke
+                    </Button>
+                  </>
+                )}
+              </span>
+            }
+          >
+            {canAdmin && !m.observer && (
+              <span className="mt-1 flex items-center gap-2">
+                <Input
+                  aria-label={`Hosts for ${m.handle}`}
+                  placeholder="handles this machine serves, comma-separated"
+                  className="h-7 w-72 text-[12px]"
+                  value={draft}
+                  onChange={(e) =>
+                    setHostsDraft((d) => ({
+                      ...d,
+                      [m.replica]: e.target.value,
+                    }))
+                  }
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Save hosts for ${m.handle}`}
+                  disabled={busy || draft === m.hosts.join(', ')}
+                  onClick={() =>
+                    void act(() =>
+                      api.setReplicaHosts(
+                        m.replica,
+                        draft
+                          .split(',')
+                          .map((h) => h.trim())
+                          .filter((h) => h !== '')
+                      )
+                    )
+                  }
+                >
+                  Save hosts
+                </Button>
+              </span>
+            )}
+          </SettingsRow>
+        );
+      })}
       {k.waiting.map((w) => {
-        const value = typed[w.replica] ?? '';
+        const id = `${w.replica}-${w.fingerprint}`;
+        const value = typed[id] ?? '';
         const matches = sameFingerprint(value, w.fingerprint);
         return (
           <SettingsRow
-            key={w.replica}
+            key={id}
             title={`Waiting: ${w.handle} on ${w.device}`}
             subtitle={
               <span className="flex flex-col gap-0.5">
@@ -273,7 +402,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
               </span>
             }
             control={
-              canOperate ? (
+              canAdmin ? (
                 <span className="flex items-center gap-2">
                   <Input
                     aria-label={`Fingerprint for ${w.handle}`}
@@ -281,7 +410,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
                     className="h-7 w-56 font-mono text-[12px]"
                     value={value}
                     onChange={(e) =>
-                      setTyped((t) => ({ ...t, [w.replica]: e.target.value }))
+                      setTyped((t) => ({ ...t, [id]: e.target.value }))
                     }
                   />
                   <Button
@@ -320,6 +449,39 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
               ? `Still on an older build: ${k.legacy.olderBuilds.join(', ')}`
               : 'Every machine has upgraded.'
           }
+          control={
+            canAdmin ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => void act(() => api.closeLegacy())}
+              >
+                Close now
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+      {canAdmin && k.team !== null && (
+        <SettingsRow
+          title="Recovery code"
+          subtitle="A new code replaces the old one, which stops working."
+          control={
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  const { recoveryCode } = await api.newRecoveryCode();
+                  setShown({ title: 'Recovery code', code: recoveryCode });
+                })
+              }
+            >
+              New recovery code
+            </Button>
+          }
         />
       )}
       {k.transport.sizeBytes !== null && (
@@ -332,7 +494,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           key={b.replica}
           title={`${b.handle} has not acknowledged since ${b.lastAck === null ? 'it was admitted' : b.lastAck.slice(0, 10)}; it blocks pruning.`}
           control={
-            canOperate ? (
+            canAdmin ? (
               <Button
                 size="sm"
                 variant="ghost"
@@ -379,24 +541,32 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           }
         />
       )}
-      {k.pause !== null && canOperate && (
+      {k.pause !== null && (
         <SettingsRow
           title="Paused on a roster change this build cannot read"
-          subtitle="Upgrade Dispatch here, or, as an admin, dismiss the op so no build applies it."
+          subtitle={
+            canAdmin
+              ? 'Upgrade Dispatch here, or dismiss the op so no build applies it.'
+              : 'Upgrade Dispatch here, or ask an admin to dismiss the op.'
+          }
           control={
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label={`Dismiss ${k.pause.replica}'s op`}
-              disabled={busy}
-              onClick={() => {
-                const p = k.pause;
-                if (p !== null)
-                  void act(() => api.dismissRosterOp(p.replica, p.seq, p.hash));
-              }}
-            >
-              Dismiss
-            </Button>
+            canAdmin ? (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={`Dismiss ${k.pause.replica}'s op`}
+                disabled={busy}
+                onClick={() => {
+                  const p = k.pause;
+                  if (p !== null)
+                    void act(() =>
+                      api.dismissRosterOp(p.replica, p.seq, p.hash)
+                    );
+                }}
+              >
+                Dismiss
+              </Button>
+            ) : undefined
           }
         />
       )}
@@ -409,27 +579,31 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
           title={<span className="text-(--state-waiting-fg)">{w}</span>}
         />
       ))}
-      {k.problems.map((p) => (
-        <SettingsRow
-          key={p.subject}
-          title={p.subject}
-          subtitle={p.message}
-          control={
-            // Acknowledging is decide-tier, which every viewer here holds.
-            ACKNOWLEDGEABLE.some((a) => p.subject.startsWith(a)) ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-label={`Acknowledge ${p.subject}`}
-                disabled={busy}
-                onClick={() => void act(() => api.ackProblem(p.subject))}
-              >
-                Acknowledge
-              </Button>
-            ) : undefined
-          }
-        />
-      ))}
+      {k.problems.map((p) => {
+        const canAcknowledge =
+          ACKNOWLEDGEABLE.some((a) => p.subject.startsWith(a)) &&
+          (canOperate || !p.subject.startsWith('team:cut:'));
+        return (
+          <SettingsRow
+            key={p.subject}
+            title={problemTitle(p.subject)}
+            subtitle={p.message}
+            control={
+              canAcknowledge ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Acknowledge ${p.subject}`}
+                  disabled={busy}
+                  onClick={() => void act(() => api.ackProblem(p.subject))}
+                >
+                  Acknowledge
+                </Button>
+              ) : undefined
+            }
+          />
+        );
+      })}
       {error !== null && (
         <SettingsRow
           title="That change didn’t go through"
