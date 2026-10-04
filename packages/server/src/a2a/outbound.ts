@@ -115,6 +115,16 @@ function addressRefusal(err: unknown): string | null {
   return null;
 }
 
+// A refused credential: 401, or a 403 whose reason is AUTH_*. Any other 403
+// (FORBIDDEN_ADDRESS, say) fails only the message.
+function authRefusal(err: unknown): boolean {
+  if (!(err instanceof PeerHttpError)) return false;
+  return (
+    err.status === 401 ||
+    (err.status === 403 && (err.reason ?? '').startsWith('AUTH_'))
+  );
+}
+
 // The outbound worker (spec:1444-1531): relays held a2a: deliveries one at a
 // time per peer, at most `concurrency` peers at once, then follows each peer
 // task and records what the peer says. What to record and when to retry come
@@ -452,8 +462,7 @@ export class OutboundWorker {
     }
     if (
       (err instanceof MessagingError && err.field === 'token') ||
-      status === 401 ||
-      status === 403
+      authRefusal(err)
     ) {
       // Parked: the peer is auth-failed and its deliveries wait for `enable`.
       this.deps.store.putOutbound({
@@ -762,7 +771,7 @@ export class OutboundWorker {
         return true;
       }
       const status = err instanceof PeerHttpError ? err.status : null;
-      if (status === 401 || status === 403) {
+      if (authRefusal(err)) {
         this.deps.markAuthFailed(row.alias);
         return true;
       }

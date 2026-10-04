@@ -120,8 +120,10 @@ export class PeerClient {
       if (box.network) throw new PeerHttpError(null, shortMessage(raw));
       const status =
         box.status !== null && box.status >= 400 ? box.status : 400;
-      // The one A2A reason the worker acts on: a peer that no longer speaks 1.0 gets its card refreshed.
-      const reason = versionNotSupported(err) ? 'VERSION_NOT_SUPPORTED' : null;
+      // The worker acts on VERSION_NOT_SUPPORTED (a card refresh) and AUTH_* (a failed credential).
+      const reason = versionNotSupported(err)
+        ? 'VERSION_NOT_SUPPORTED'
+        : (box.reason ?? null);
       throw new PeerHttpError(
         status,
         shortMessage(`HTTP ${status}: ${raw}`),

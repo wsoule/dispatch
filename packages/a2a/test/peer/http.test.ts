@@ -67,6 +67,24 @@ beforeAll(() => {
           status: 429,
           headers: { 'retry-after': '120' },
         });
+      if (path === '/refused')
+        return Response.json(
+          {
+            error: {
+              code: 403,
+              status: 'PERMISSION_DENIED',
+              message: 'not reachable',
+              details: [
+                {
+                  '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                  reason: 'FORBIDDEN_ADDRESS',
+                  domain: 'dispatch.foo',
+                },
+              ],
+            },
+          },
+          { status: 403 }
+        );
       if (path === '/slow') {
         await Bun.sleep(300);
         return new Response('late');
@@ -194,7 +212,24 @@ describe('peerFetch', () => {
         )
       ).status
     ).toBe(429);
-    expect(b).toEqual({ status: 429, retryAfterSec: 120, network: false });
+    expect(b).toEqual({
+      status: 429,
+      retryAfterSec: 120,
+      network: false,
+      reason: null,
+    });
+  });
+
+  it('records an error body’s ErrorInfo reason and still hands the body on', async () => {
+    const b = box();
+    const res = await peerFetch({ headers: {}, timeoutMs: 1000, box: b })(
+      `${base}/refused`
+    );
+    expect(res.status).toBe(403);
+    expect(b.reason).toBe('FORBIDDEN_ADDRESS');
+    expect(await res.json()).toMatchObject({
+      error: { message: 'not reachable' },
+    });
   });
 
   it('times out on the headers as a network failure (status null)', async () => {

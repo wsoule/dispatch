@@ -21,6 +21,26 @@ export interface StatusBox {
   status: number | null;
   retryAfterSec: number | null;
   network: boolean;
+  // The google.rpc.ErrorInfo reason of an error response, when it names one.
+  reason?: string | null;
+}
+
+const ERROR_INFO = 'type.googleapis.com/google.rpc.ErrorInfo';
+
+// The first ErrorInfo reason in an A2A error body, or null.
+function errorInfoReason(text: string): string | null {
+  try {
+    const details = (
+      JSON.parse(text) as { error?: { details?: unknown } } | null
+    )?.error?.details;
+    if (!Array.isArray(details)) return null;
+    for (const d of details as Record<string, unknown>[])
+      if (d['@type'] === ERROR_INFO && typeof d.reason === 'string')
+        return d.reason;
+  } catch {
+    // Not JSON: no reason.
+  }
+  return null;
 }
 
 // Exactly `localhost`, ::1 or a 127/8 IPv4 literal; `127.0.0.1.example` is a name.
@@ -300,7 +320,7 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
       }
       // An event stream lives on its idle timeout and the caller's signal.
       if (stream) clear();
-      return guardedBody(res, {
+      const guarded = guardedBody(res, {
         ac,
         maxBytes: stream
           ? Number.POSITIVE_INFINITY
@@ -308,6 +328,15 @@ export function peerFetch(o: PeerFetchOptions): typeof fetch {
         box: o.box,
         idleMs: stream ? (o.idleMs ?? STREAM_IDLE_MS) : null,
         done: clear,
+      });
+      if (res.status < 400 || o.box === undefined) return guarded;
+      // Read here so the caller learns the reason the SDK's error drops.
+      const text = await guarded.text();
+      o.box.reason = errorInfoReason(text);
+      return new Response(text, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: res.headers,
       });
     } catch (err) {
       clear();

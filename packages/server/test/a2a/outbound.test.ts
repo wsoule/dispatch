@@ -222,6 +222,30 @@ describe('failures', () => {
     await waitFor(() => notices().some((b) => b.includes('a2a:fixture')));
   });
 
+  it('fails only the message on FORBIDDEN_ADDRESS: the peer stays active and the sender is told', async () => {
+    peer.refuseRecipient = true;
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'failed');
+    expect(f.store.getPeer('fixture')?.status).toBe('active');
+    expect(engine().answerOf(q.id)).toMatchObject({ from: 'agent:dispatch' });
+    await waitFor(() =>
+      notices().some((b) => b.includes('a2a:fixture refused the message'))
+    );
+  });
+
+  it('marks the peer auth-failed on a 403 with an AUTH_ reason', async () => {
+    peer.revoked = true;
+    await ask();
+    await waitFor(() => f.store.getPeer('fixture')?.status === 'auth-failed');
+  });
+
+  it('fails only the message on a 403 without an AUTH_ reason', async () => {
+    peer.status = 403;
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'failed');
+    expect(f.store.getPeer('fixture')?.status).toBe('active');
+  });
+
   it('marks the peer auth-failed on 401, keeps the delivery held, and resumes on enable', async () => {
     await setPeerEnabled(f.peerDeps(), 'fixture', true, 'wrong-token');
     const q = await ask();

@@ -14,6 +14,7 @@ import type {
 import { handleA2A, IpLimiter } from '@dispatch/a2a';
 import { DEFAULT_A2A } from '@dispatch/core';
 import type { Message } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch/protocol';
 
 const CALLER: Caller = {
   address: 'agent:peer/a2a.dispatch',
@@ -66,6 +67,10 @@ export class FixturePeer implements BridgePort {
   /** HTTP message sends and task reads received, deduped or not. */
   sends = 0;
   taskReads = 0;
+  /** Refuses every token as a revoked client (403 AUTH_AGENT_REVOKED). */
+  revoked = false;
+  /** Refuses every opening message's recipient (403 FORBIDDEN_ADDRESS). */
+  refuseRecipient = false;
   /** Delays each message send by this long, to hold a relay in flight. */
   sendDelayMs = 0;
   url = '';
@@ -170,14 +175,21 @@ export class FixturePeer implements BridgePort {
 
   authenticate(bearer: string): Promise<AuthResult> {
     return Promise.resolve(
-      bearer === 'peer-token'
-        ? { ok: true, caller: CALLER }
-        : {
+      this.revoked
+        ? {
             ok: false,
-            status: 401,
-            reason: 'AUTH_INVALID_TOKEN',
-            message: 'unknown token',
+            status: 403,
+            reason: 'AUTH_AGENT_REVOKED',
+            message: 'revoked',
           }
+        : bearer === 'peer-token'
+          ? { ok: true, caller: CALLER }
+          : {
+              ok: false,
+              status: 401,
+              reason: 'AUTH_INVALID_TOKEN',
+              message: 'unknown token',
+            }
     );
   }
 
@@ -198,6 +210,14 @@ export class FixturePeer implements BridgePort {
   }
 
   open(_caller: Caller, input: OpenInput): Promise<OpenResult> {
+    if (this.refuseRecipient)
+      return Promise.reject(
+        new MessagingError(
+          'forbidden',
+          'not reachable from this client',
+          'to[0]'
+        )
+      );
     const known = this.byClientId.get(input.clientMessageId);
     if (known !== undefined)
       return Promise.resolve({ kind: 'task', taskId: known });
