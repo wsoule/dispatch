@@ -138,6 +138,8 @@ const ACKNOWLEDGEABLE = [
   'team:cut:',
   'transport:merge',
   'team:route',
+  'observer:',
+  'transport:read:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {

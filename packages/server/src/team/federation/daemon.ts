@@ -192,6 +192,6 @@ function starvedProblems(fed: FedStore, replicas: string[]): void {
   for (const replica of replicas)
     fed.problem(
       `${prefix}${replica}`,
-      `${replica}'s files on the sync branch are more than one pass can read; files that add nothing to its log may be crowding it out`
+      `${replica}'s files on the sync branch are more than one pass can read, so its changes arrive slowly; files that add nothing to its log may be crowding it out. Someone with push access should remove the files under fed/${replica}/ its owner did not write.`
     );
 }

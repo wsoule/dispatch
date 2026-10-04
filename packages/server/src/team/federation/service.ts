@@ -803,6 +803,12 @@ export class FederationService {
             );
       }
       if (this.applyV1Filtered(v1Ops)) changed = true;
+      // An observer note goes once its replica is no observer any more.
+      for (const p of fed.problems()) {
+        if (!p.subject.startsWith('observer:')) continue;
+        const r = p.subject.slice('observer:'.length);
+        if (view.members.get(r)?.observer !== true) fed.clearProblem(p.subject);
+      }
       fed.db
         .query('DELETE FROM fed_applied WHERE at < ?')
         .run(new Date(now.getTime() - APPLIED_RETENTION_MS).toISOString());
@@ -833,7 +839,7 @@ export class FederationService {
     if (observer && entry.type !== 'presence') {
       fed.problem(
         `observer:${r}`,
-        `${roster.label(r)} is an observer; an observer publishes only keys, presence and acks`
+        `${roster.label(r)} is an observer, so its ${entry.type} change at seq ${entry.seq} was dropped: an observer publishes only keys, presence and acks. If it should edit, revoke it (\`dispatch team keys revoke ${r}\`) and admit it again as a member; else acknowledge this.`
       );
       fed.audit('speaks-for', `op:${r}:${entry.seq}`, {
         replica: r,

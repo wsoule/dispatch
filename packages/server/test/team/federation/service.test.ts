@@ -740,6 +740,15 @@ describe('FederationService', () => {
         )
     ).toBe(true);
     expect(auditKinds(ada)).toContain('speaks-for');
+    // The note names what to do, and goes once the replica is no observer.
+    const note = () =>
+      ada.fed
+        .problems()
+        .find((p) => p.subject === `observer:${ops.fed.replica}`);
+    expect(note()?.message).toContain('dispatch team keys revoke');
+    ada.roster.revoke(ops.fed.replica, 'done');
+    await settle(ada);
+    expect(note()).toBeUndefined();
   });
 
   it('lists the tasks a revoked replica touched above the cut on a replica that already applied them', async () => {

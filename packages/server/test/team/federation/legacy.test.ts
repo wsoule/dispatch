@@ -206,7 +206,13 @@ describe('after closing', () => {
     const late = legacy.filterV1(log.readV1('old-00000099'));
     expect(late.apply.map((o) => o.seq)).toEqual([]);
     expect(
-      ada.fed.problems().some((p) => p.message.includes('was rewritten'))
+      ada.fed
+        .problems()
+        .some(
+          (p) =>
+            p.message.includes('was rewritten') &&
+            p.message.includes('dispatch team close-legacy')
+        )
     ).toBe(true);
   });
 });

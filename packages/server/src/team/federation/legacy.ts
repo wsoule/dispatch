@@ -256,7 +256,7 @@ export class LegacyWindow {
     if (claims.some((a) => !matches(a))) {
       fed.problem(
         `legacy:${replica}`,
-        `${replica}'s v1 log was rewritten; nothing past the founding is read`
+        `${replica}'s v1 log was rewritten, so nothing past the founding is read from it: have its owner upgrade Dispatch, which signs its changes, or close the window with \`dispatch team close-legacy\``
       );
       const bound =
         found !== undefined && matches(found) ? found.throughSeq : 0;
