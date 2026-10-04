@@ -250,6 +250,46 @@ describe('signed cards', () => {
     await expect(standardVerify(noRequirement, publicJwk)).rejects.toThrow();
   });
 
+  it('never takes the SDK-form signature for its own, so stripping both auth fields fails', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    const {
+      securitySchemes: _s,
+      securityRequirements: _r,
+      ...stripped
+    } = served;
+    await expect(
+      verifyCardSignature(stripped, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(false);
+    const sdkOnly = {
+      ...stripped,
+      signatures: (served.signatures as unknown[]).slice(1),
+    };
+    await expect(
+      verifyCardSignature(sdkOnly, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(false);
+  });
+
+  it('marks its own signature in the protected header', async () => {
+    const { signatures } = await signedServedCard();
+    const typ = (i: number) =>
+      (
+        JSON.parse(
+          Buffer.from(signatures[i].protected, 'base64url').toString('utf8')
+        ) as { typ: string }
+      ).typ;
+    expect(typ(0)).toBe('dispatch-card+jws');
+    expect(typ(1)).toBe('JOSE');
+  });
+
+  it('verifies the card as received: a field added outside the schema breaks it', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    await expect(
+      verifyCardSignature({ ...served, 'x-pay-to': 'attacker' }, () =>
+        Promise.resolve(publicJwk)
+      )
+    ).resolves.toBe(false);
+  });
+
   it('keeps one ETag with and without signatures, and never puts the JWKS in the card', () => {
     const signed = {
       ...SIGNED,

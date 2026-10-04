@@ -84,16 +84,19 @@ that pinned the old key must fetch the JWKS again.
 
 The card carries two signatures, made with the same key:
 
-1. `signatures[0]` covers the RFC 8785 (JCS) form of the whole card as served,
-   minus `signatures`. It is the one that pins the auth fields:
-   `securitySchemes` and `securityRequirements`. A standard JCS verifier checks
-   it, and so does `verifyCardSignature` in this package.
-2. `signatures[1]` covers the canonical form of `@a2a-js/sdk` 1.2.0, so the
-   SDK's `verifyAgentCardSignature` accepts the card. That form leaves out
-   `securitySchemes`, `securityRequirements` and every empty value, so this
-   signature does not protect how a client authenticates.
+1. `signatures[0]` has `typ: "dispatch-card+jws"` in its protected header. It
+   covers the RFC 8785 (JCS) form of the card's JSON exactly as served, minus
+   `signatures`. Every field is covered, the auth fields `securitySchemes` and
+   `securityRequirements` included. A standard JCS verifier checks it, and so
+   does `verifyCardSignature` in this package, which accepts no other signature.
+2. `signatures[1]` has `typ: "JOSE"` and covers the canonical form of
+   `@a2a-js/sdk` 1.2.0, so the SDK's `verifyAgentCardSignature` accepts the
+   card. That form leaves out `securitySchemes`, `securityRequirements`, every
+   empty value and any field outside the SDK's card schema, so this signature
+   does not protect how a client authenticates.
 
-A client that relies on the auth scheme should verify `signatures[0]`.
+A client that relies on the auth scheme should verify `signatures[0]`, picked by
+its `typ`, against the card as received.
 
 ## Outbound address checks
 

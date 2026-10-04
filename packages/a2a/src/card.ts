@@ -152,17 +152,20 @@ function jcs(value: unknown): string {
     .join(',')}}`;
 }
 
-// What Dispatch's own card signature covers: the card exactly as served,
-// minus `signatures`, in JCS. The SDK 1.2.0 canonical form drops
-// securitySchemes and securityRequirements, so its signature cannot pin them.
-function canonicalCard(card: Record<string, unknown>): string {
-  const served = AgentCard.toJSON(AgentCard.fromJSON(card)) as Record<
-    string,
-    unknown
-  >;
-  delete served.signatures;
-  return jcs(served);
+// The served card's JSON, as AgentCard.toJSON writes it.
+function servedForm(card: Record<string, unknown>): Record<string, unknown> {
+  return AgentCard.toJSON(AgentCard.fromJSON(card)) as Record<string, unknown>;
 }
+
+// JCS of a card's JSON exactly as given, minus `signatures`: what Dispatch's
+// own signature covers, every field included.
+function canonicalCard(json: Record<string, unknown>): string {
+  const { signatures: _signatures, ...rest } = json;
+  return jcs(rest);
+}
+
+// The protected-header `typ` that marks Dispatch's own card signature.
+const DISPATCH_CARD_TYP = 'dispatch-card+jws';
 
 // A strong ETag over the canonical card without its signatures, so a changed
 // card busts caches while a re-signed one (ES256 is randomized) does not.
@@ -185,10 +188,11 @@ export async function signCard(
   key: { privateJwk: Record<string, JsonValue>; kid: string; jku: string }
 ): Promise<CardSignatureJson[]> {
   const header = { alg: 'ES256', kid: key.kid, jku: key.jku, typ: 'JOSE' };
+  // Signed as served, so the bytes a client fetches are the bytes covered.
   const jws = await new FlattenedSign(
-    new TextEncoder().encode(canonicalCard(unsigned))
+    new TextEncoder().encode(canonicalCard(servedForm(unsigned)))
   )
-    .setProtectedHeader(header)
+    .setProtectedHeader({ ...header, typ: DISPATCH_CARD_TYP })
     .sign(await importJWK(key.privateJwk as JWK, 'ES256'));
   const sdkSign = generateAgentCardSignature(
     key.privateJwk as unknown as Parameters<
@@ -206,8 +210,9 @@ export async function signCard(
   ];
 }
 
-// Whether any of a served card's signatures verifies over its JCS form under
-// the key `keyFor` returns for the signature's kid.
+// Whether Dispatch's own signature (typ DISPATCH_CARD_TYP; never the
+// SDK-form one, which leaves the auth fields out) verifies over the card's
+// JSON as received, under the key `keyFor` returns for its kid.
 export async function verifyCardSignature(
   served: Record<string, unknown>,
   keyFor: (kid: string, jku: string | undefined) => Promise<JWK>
@@ -220,8 +225,9 @@ export async function verifyCardSignature(
     try {
       const header = JSON.parse(
         Buffer.from(sig.protected, 'base64url').toString('utf8')
-      ) as { kid?: string; jku?: string };
-      if (header.kid === undefined) continue;
+      ) as { kid?: string; jku?: string; typ?: string };
+      if (header.kid === undefined || header.typ !== DISPATCH_CARD_TYP)
+        continue;
       const key = await importJWK(
         await keyFor(header.kid, header.jku),
         'ES256'
