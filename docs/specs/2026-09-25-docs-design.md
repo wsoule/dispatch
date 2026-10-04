@@ -1797,11 +1797,15 @@ fetched 2026-09-26).
 - **Only docs that came from Linear push back.** "Share to Linear" (a
   decide-tier human, on a doc linked to a task mapped to a Linear project or
   issue) calls `documentCreate` with that `projectId` or `issueId` and makes the
-  doc Linear-origin. Team docs do not leak to Linear by default.
-- **Webhooks.** The P2 webhook subscribes to `Document` too; a delivered
-  create or update folds that one document at once (a removal leaves the
-  Dispatch doc alone), and a registration from before `Document` joined is
-  replaced on the next pass.
+  doc Linear-origin. Team docs do not leak to Linear by default. It is
+  `dispatch docs share-linear <ref>` and a Share to Linear button on the doc
+  page; both show the route's refusals. A push that overwrote a Linear edit
+  stores a sync problem, shown on the doc page and as an Inbox item ("Linear
+  sync problem in <title>") until a human saves or reviews.
+- **Webhooks.** The P2 webhook subscribes to `Document` too; a delivered create
+  or update folds that one document at once (a removal leaves the Dispatch doc
+  alone), and a registration from before `Document` joined is replaced on the
+  next pass.
 - Echo suppression and the rate-limit pause are P2's own.
 - **Known limits.**
   - The integration's Linear user is the API key's own user, which is also the
