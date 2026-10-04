@@ -185,6 +185,25 @@ describe('ReceiptsExporter', () => {
     expect(log(dir)).toHaveLength(2);
   });
 
+  it('clears a stale git lock a killed pass left, so exports keep committing', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    const dir = logDir();
+    const exporter = exporterFor(s);
+    await exporter.exportOnce(dir);
+    // What a kill -9 inside `git add` or `git commit` leaves behind.
+    writeFileSync(join(dir, '.git', 'index.lock'), '');
+    mkdirSync(join(dir, '.git', 'refs', 'heads'), { recursive: true });
+    writeFileSync(join(dir, '.git', 'refs', 'heads', 'main.lock'), '');
+    s.tasks.create({ kind: 'task', title: 'Second task' });
+
+    const result = await exporter.exportOnce(dir);
+
+    expect(result.state).toBe('committed');
+    expect(existsSync(join(dir, '.git', 'index.lock'))).toBe(false);
+    expect(log(dir)).toHaveLength(2);
+  });
+
   it('reports a failure instead of throwing out of the daemon', async () => {
     const s = stores();
     // A path that cannot be a directory, so `mkdir` inside ensureRepo fails.
@@ -516,6 +535,38 @@ describe('ReceiptsScheduler', () => {
     }
     throw new Error(`the receipt log never reached ${count} commit(s)`);
   }
+
+  it('retries a failed export on a backoff instead of waiting for the sweep', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    let failures = 2;
+    const flaky: AsyncGitRunner = (cwd, args) => {
+      if (args.includes('commit') && failures > 0) {
+        failures -= 1;
+        return Promise.resolve({
+          status: 1,
+          stdout: '',
+          stderr: 'disk hiccup',
+        });
+      }
+      return runAsync(cwd, args);
+    };
+    const scheduler = new ReceiptsScheduler({
+      rootDir: root,
+      stores: s,
+      actor: ActorContext.resolve(root, gitReaderFor(root)),
+      run: flaky,
+      events: new EventBus(),
+      debounceMs: 5,
+      sweepMs: 60 * 60_000,
+      retryMs: [20, 40, 60],
+    });
+    expect((await scheduler.exportNow())?.state).toBe('failed');
+    await waitForCommits(defaultReceiptsDir(root), 1);
+    expect(failures).toBe(0);
+    expect(scheduler.lastResult()?.state).toBe('committed');
+    await scheduler.stop();
+  });
 
   it('exports once at boot', async () => {
     const s = stores();

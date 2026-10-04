@@ -1,3 +1,5 @@
+import { childEnv } from '@dispatch/core';
+
 import { markBlockingSection } from './watchdog.js';
 
 export interface BlockingGitOptions {
@@ -47,7 +49,7 @@ export function spawnGitSync(
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    ...(opts.env !== undefined ? { env: opts.env } : {}),
+    env: opts.env ?? childEnv(),
     ...(opts.timeoutMs !== undefined
       ? { timeout: opts.timeoutMs, killSignal: 'SIGKILL' as const }
       : {}),

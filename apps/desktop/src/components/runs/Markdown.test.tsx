@@ -6,6 +6,34 @@ import { useEffect } from 'react';
 import { Markdown } from './Markdown';
 
 describe('Markdown', () => {
+  test('a linked remote image is plain text, never a link inside a link', () => {
+    const { container } = render(
+      <Markdown
+        content={'[![badge](https://ci.example/b.svg)](https://ci.example)'}
+      />
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelectorAll('a')).toHaveLength(1);
+    expect(container.querySelector('a a')).toBeNull();
+    expect(container.textContent).toContain('[image: badge]');
+  });
+
+  test('never loads a remote image: an agent-written pixel becomes a link', () => {
+    const { container } = render(
+      <Markdown
+        content={
+          '![pixel](https://tracker.example/p.png?u=1) ![x](data:image/png;base64,AAAA)'
+        }
+      />
+    );
+    expect(container.querySelector('img')).toBeNull();
+    const link = container.querySelector('a');
+    expect(link?.getAttribute('href')).toBe(
+      'https://tracker.example/p.png?u=1'
+    );
+    expect(container.textContent).toContain('[image: pixel]');
+  });
+
   // Regression: rehype-highlight used to pre-tokenize fenced blocks into <span> elements, so
   // the code renderer's String(children) produced "[object Object]" instead of the source.
   test('a fenced ts block renders its code verbatim', () => {

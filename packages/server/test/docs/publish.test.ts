@@ -430,6 +430,92 @@ describe('publish', () => {
     expect(service.read(as(OWNER), 'spec').doc.published).toBeNull();
   });
 
+  // A fresh service over the same docs.db and host, as a restarted daemon sees them.
+  const restart = (): DocsService =>
+    new DocsService({
+      store,
+      host,
+      ownerRef: 'human:wyat',
+      config: () => ({ config: DEFAULT_TEST_CONFIG, warnings: [] }),
+    });
+
+  it('closes a publish task a crash left with no row, and lets a new publish start', () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    host.crashAfterCreate = true;
+    expect(() =>
+      service.publish(as(OWNER), 'spec', { path: 'docs/spec.md' })
+    ).toThrow('crash');
+    host.crashAfterCreate = false;
+    const orphan = host.createdTasks[0].id;
+    expect(store.publishRows({ task: orphan })).toEqual([]);
+    const after = restart();
+    after.recoverPublishes();
+    expect(host.closedTasks).toEqual([
+      {
+        task: orphan,
+        reason: expect.stringContaining('publish the doc again'),
+      },
+    ]);
+    expect(store.publishRows({})).toEqual([]);
+    expect(
+      after.publish(as(OWNER), 'spec', { path: 'docs/spec.md' }).task
+    ).not.toBe(orphan);
+  });
+
+  it('clears a pending publish a crash left before its task existed', () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    host.crashBeforeCreate = true;
+    expect(() =>
+      service.publish(as(OWNER), 'spec', { path: 'docs/spec.md' })
+    ).toThrow('crash');
+    host.crashBeforeCreate = false;
+    expect(store.publishRows({})).toHaveLength(1);
+    restart().recoverPublishes();
+    expect(host.closedTasks).toEqual([]);
+    expect(store.publishRows({})).toEqual([]);
+  });
+
+  it('returns the open publish for the same doc, revision and path instead of a conflict', () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    const first = service.publish(as(OWNER), 'spec', { path: 'docs/spec.md' });
+    const again = service.publish(as(OWNER), 'spec', { path: 'docs/spec.md' });
+    expect(again.task).toBe(first.task);
+    expect(again.existing).toBe(true);
+    expect(host.createdTasks).toHaveLength(1);
+    expect(() =>
+      service.publish(as(OWNER), 'spec', { path: 'docs/other.md' })
+    ).toThrow(`already publishing: ${first.task}`);
+  });
+
+  it('replays a persisted idempotency key after a restart, even once the publish ended', () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    const first = service.publish(as(OWNER), 'spec', {
+      path: 'docs/spec.md',
+      idempotencyKey: 'k-1',
+    });
+    host.outcomes.set(first.task, { state: 'dropped' });
+    service.syncPublishes();
+    const replay = restart().publish(as(OWNER), 'spec', {
+      path: 'docs/spec.md',
+      idempotencyKey: 'k-1',
+    });
+    expect(replay).toMatchObject({ task: first.task, existing: true });
+    expect(host.createdTasks).toHaveLength(1);
+  });
+
+  it('lists open publishes that asked for a run, for the boot to dispatch again', () => {
+    service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
+    service.create(as(OWNER), { title: 'Other', body: '# Other\n' });
+    const { task } = service.publish(as(OWNER), 'spec', {
+      path: 'docs/spec.md',
+      dispatchAs: { actor: 'human:wyat', operator: null },
+    });
+    service.publish(as(OWNER), 'other', { path: 'docs/other.md' });
+    expect(restart().publishesToDispatch()).toEqual([
+      { task, actor: 'human:wyat', operator: null },
+    ]);
+  });
+
   it('records a dropped publish task as dropped, leaving the doc unpublished', () => {
     service.create(as(OWNER), { title: 'Spec', body: '# Spec\n' });
     const { task } = service.publish(as(OWNER), 'spec', {

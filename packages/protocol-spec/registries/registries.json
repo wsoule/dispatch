@@ -435,7 +435,8 @@
       "data": {
         "agent": "address",
         "client": "string",
-        "requestedBy": "address, optional"
+        "requestedBy": "address, optional",
+        "key": "string, optional"
       },
       "effect": "approve or refuse the agent (C.3)",
       "vectors": ["core.answers.a-human-decides-an-agent-registration-gate"]

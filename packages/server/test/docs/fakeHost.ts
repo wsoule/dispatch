@@ -237,9 +237,13 @@ export class FakeDocsHost implements DocsHost {
   openDocGates(): { id: string; proposal: string }[] {
     return this.openGates;
   }
+  // Simulated crash points around the task's creation.
+  crashBeforeCreate = false;
+  crashAfterCreate = false;
   createPublishTask(
     input: Parameters<DocsHost['createPublishTask']>[0]
   ): string {
+    if (this.crashBeforeCreate) throw new Error('crash before the task');
     const id = `t-pub-${this.createdTasks.length + 1}`;
     this.createdTasks.push({ ...input, id });
     this.tasks.set(id, {
@@ -250,7 +254,16 @@ export class FakeDocsHost implements DocsHost {
       risk: input.risk,
       labels: [],
     });
+    if (this.crashAfterCreate) throw new Error('crash after the task');
     return id;
+  }
+  findPublishTasks(title: string): string[] {
+    return this.createdTasks
+      .filter(
+        (t) =>
+          t.title === title && !this.closedTasks.some((c) => c.task === t.id)
+      )
+      .map((t) => t.id);
   }
   closePublishTask(task: string, reason: string): void {
     this.closedTasks.push({ task, reason });

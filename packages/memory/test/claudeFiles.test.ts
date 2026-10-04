@@ -468,6 +468,36 @@ describe('receipt files', () => {
     ).toStartWith('frontmatter: ');
   });
 
+  it('refuse a damaged file: no terminated frontmatter, or no scope or status', () => {
+    const text = renderReceiptFile(entry);
+    const damaged = [
+      ['just a body', 'frontmatter'],
+      [text.slice(0, text.indexOf('\n---\n') + 1), 'frontmatter'],
+      [text.replace('    scope: team\n', ''), 'scope'],
+      [text.replace('    status: active\n', ''), 'status'],
+      [text.replace('    status: active', '    status: ""'), 'status'],
+    ] as const;
+    for (const [file, field] of damaged)
+      expect(parseReceiptFile(file, 'x.md').problem).toStartWith(`${field}:`);
+  });
+
+  it('refuse pathological frontmatter fast: oversized, or deeply nested flow', () => {
+    const big = `---\ndescription: ${'[a'.repeat(32 * 1024)}\n---\nbody\n`;
+    const deep = `---\ndescription: ${'[a'.repeat(200)}\n---\nbody\n`;
+    for (const text of [big, deep]) {
+      const started = performance.now();
+      expect(parseReceiptFile(text, 'x.md').problem).toStartWith(
+        'frontmatter:'
+      );
+      const parsed = parseMemoryFile(text, 'x.md');
+      expect(performance.now() - started).toBeLessThan(100);
+      expect(parsed.title).not.toContain('[a[a');
+    }
+    // Ordinary flow lists still read.
+    const listed = `---\nname: a\ntags: [x, [y, z]]\ndescription: fine\n---\nbody\n`;
+    expect(parseMemoryFile(listed, 'x.md').title).toBe('fine');
+  });
+
   it('read an unknown or missing kind as a fact', () => {
     const text = renderReceiptFile(entry);
     const forged = text.replace('    kind: hazard', '    kind: root');

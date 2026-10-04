@@ -106,6 +106,48 @@ describe('docs routes', () => {
     expect((await rawFetch(`${base}/docs`)).status).toBe(401);
   });
 
+  it('retries a busy docs.db off the event loop, then answers 503 with Retry-After', async () => {
+    const other = openSqliteDb(join(runsDir(root), 'docs.db'));
+    other.exec('BEGIN IMMEDIATE');
+    // Released while the route waits between attempts: the retry lands.
+    setTimeout(() => other.exec('ROLLBACK'), 150);
+    const started = performance.now();
+    const health = fetch(`${base}/health`);
+    const created = post('/docs', { title: 'Busy', body: 'x\n' });
+    expect((await health).status).toBe(200);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect((await created).status).toBe(201);
+    other.exec('BEGIN IMMEDIATE');
+    try {
+      const busy = await post('/docs', { title: 'Never', body: 'x\n' });
+      expect(busy.status).toBe(503);
+      expect(busy.headers.get('retry-after')).toBe('1');
+    } finally {
+      other.exec('ROLLBACK');
+      other.close();
+    }
+  });
+
+  it('keeps health fast while 20 parallel writes wait out a docs.db lock', async () => {
+    const other = openSqliteDb(join(runsDir(root), 'docs.db'));
+    other.exec('BEGIN IMMEDIATE');
+    setTimeout(() => other.exec('ROLLBACK'), 300);
+    const writes = Array.from({ length: 20 }, (_, i) =>
+      post('/docs', { title: `Parallel ${i}`, body: 'x\n' })
+    );
+    let worst = 0;
+    for (let i = 0; i < 5; i++) {
+      const started = performance.now();
+      expect((await fetch(`${base}/health`)).status).toBe(200);
+      worst = Math.max(worst, performance.now() - started);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    const statuses = (await Promise.all(writes)).map((r) => r.status);
+    other.close();
+    expect(worst).toBeLessThan(200);
+    expect(statuses.every((s) => s === 201)).toBe(true);
+  });
+
   it('creates, reads, edits, lists and deletes a team doc', async () => {
     const created = await post('/docs', {
       title: 'Auth refactor',
@@ -584,6 +626,48 @@ describe('publish route', () => {
       body: JSON.stringify({ risk: 'critical' }),
     });
     expect(owner.status).toBe(200);
+  });
+
+  it('returns the open publish for the same path instead of a 409, starting no second run', async () => {
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const first = await json<Published>(
+      await post('/docs/spec/publish', { path: 'docs/spec.md' })
+    );
+    const again = await post('/docs/spec/publish', { path: 'docs/spec.md' });
+    expect(again.status).toBe(200);
+    const out = await json<Published>(again);
+    expect(out.task).toBe(first.task);
+    expect(out.run).toBe(first.run);
+    expect(
+      handle.orchestrator.list().filter((r) => r.taskId === first.task)
+    ).toHaveLength(1);
+  });
+
+  it('dispatches an open publish with no run once the daemon starts again', async () => {
+    await handle.stop();
+    // No executor: the publish row is written but its run never starts.
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      webDistDir: null,
+      writeDaemonFile: false,
+      registerExecutors: () => {},
+    });
+    useTestAuth(handle);
+    base = `http://127.0.0.1:${handle.port}/api`;
+    await post('/docs', { title: 'Spec', body: '# Spec\n' });
+    const out = await json<Published>(
+      await post('/docs/spec/publish', { path: 'docs/spec.md' })
+    );
+    expect(out.run).toBeNull();
+    await handle.stop();
+    handle = await boot(root, executor);
+    base = `http://127.0.0.1:${handle.port}/api`;
+    const runs = handle.orchestrator
+      .list()
+      .filter((r) => r.taskId === out.task);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].operator).toMatch(/^human:/);
   });
 
   it('records no landing from a status alone: the task needs a merged run', async () => {

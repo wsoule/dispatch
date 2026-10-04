@@ -182,6 +182,17 @@ describe('open revisions', () => {
     expect(store.revision(b.rev.id)?.sealed).toBe(true);
   });
 
+  it('starts a new revision after the clock steps back past the open head', () => {
+    const made = service.create(as(OWNER), { title: 'A', body: 'x\n' });
+    host.advance(-120);
+    const next = service.saveBody(as(OWNER), 'a', {
+      baseRev: made.rev.id,
+      body: 'y\n',
+    });
+    expect(next.rev.id).not.toBe(made.rev.id);
+    expect(store.revision(made.rev.id)?.body).toBe('x\n');
+  });
+
   it('seals every write when coalesceMinutes is 0', () => {
     ({ service, host, store } = makeService({ coalesceMinutes: 0 }));
     const made = service.create(service.actorFor(OWNER), {

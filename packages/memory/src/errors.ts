@@ -30,3 +30,17 @@ export class MemoryError extends Error {
     return MEMORY_ERROR_STATUS[this.code];
   }
 }
+
+// Another writer held the database past the short busy wait; retry shortly.
+export class MemoryBusyError extends MemoryError {
+  constructor() {
+    super('unavailable', 'the memory database is busy; retry shortly', 'store');
+    this.name = 'MemoryBusyError';
+  }
+}
+
+// Whether `err` is SQLite reporting a lock another connection holds.
+export function isSqliteBusy(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^SQLITE_(BUSY|LOCKED)/.test(code);
+}

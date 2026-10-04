@@ -131,6 +131,16 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('uploads an image as raw octet-stream bytes to the doc', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    expect(
+      await api.putAsset('doc-1', new TextEncoder().encode('img'))
+    ).toEqual({ ok: true } as never);
+    expect(seen.map((s) => [s.method, s.path, s.type, s.body])).toEqual([
+      ['POST', '/api/docs/doc-1/assets', 'application/octet-stream', 'img'],
+    ]);
+  });
+
   it('promotes a personal doc by its ~handle', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await api.promote('~notes');
@@ -179,5 +189,27 @@ describe('createDocsApi', () => {
     await expect(api.get('missing')).rejects.toThrow(
       'doc missing not found (field: doc)'
     );
+  });
+});
+
+describe('a dispatchd lost mid-import', () => {
+  it('says so in one sentence instead of the runtime connect error', async () => {
+    const gone = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(),
+    });
+    const port = gone.port;
+    await gone.stop(true);
+    const api = createDocsApi(`http://127.0.0.1:${port}`, 'app-token');
+    for (const step of [
+      () => api.openImport([], undefined),
+      () => api.putImportContent('imp-1', 'abc', new Uint8Array([1])),
+      () => api.commitImport('imp-1', false),
+    ]) {
+      const err: unknown = await step().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).message).toContain('lost dispatchd mid-import');
+    }
   });
 });

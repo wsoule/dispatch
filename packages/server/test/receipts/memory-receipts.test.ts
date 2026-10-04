@@ -7,6 +7,7 @@ import {
 import type { MemoryEntry, MemoryScope } from '@dispatch/memory';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -440,6 +441,73 @@ describe('a staged memory restore', () => {
     expect(
       await applyStagedMemoryRestore(t.engine, t.shared, restoreDir)
     ).toMatchObject({ restored: 0, skipped: 1 });
+  });
+
+  it('records a staged file it may not remove as a problem and goes on', async () => {
+    const t = gatedEngine();
+    const files = [stage(lostEntry('one')), stage(lostEntry('two'))];
+    chmodSync(restoreDir, 0o500);
+    try {
+      const report = await applyStagedMemoryRestore(
+        t.engine,
+        t.shared,
+        restoreDir
+      );
+      expect(report?.restored).toBe(2);
+      expect(report?.problems.map((p) => p.file).sort()).toEqual(
+        [...files].sort()
+      );
+      expect(report?.problems[0].detail).toContain('could not remove');
+      expect(report?.pending).toContain(restoreDir);
+    } finally {
+      chmodSync(restoreDir, 0o700);
+    }
+  });
+
+  it('records a staged file it may not read as a problem and goes on', async () => {
+    const t = gatedEngine();
+    const locked = lostEntry('locked');
+    const file = stage(locked);
+    stage(lostEntry('readable'));
+    chmodSync(join(restoreDir, file), 0o000);
+    try {
+      const report = await applyStagedMemoryRestore(
+        t.engine,
+        t.shared,
+        restoreDir
+      );
+      expect(report?.restored).toBe(1);
+      expect(report?.problems).toEqual([
+        { file, detail: expect.stringContaining('EACCES') },
+      ]);
+    } finally {
+      chmodSync(join(restoreDir, file), 0o600);
+    }
+  });
+
+  it('reports a truncated or stripped receipt as a problem, never a proposal', async () => {
+    const t = gatedEngine();
+    const cut = lostEntry('cut off');
+    const full = renderReceiptFile(cut);
+    stage(cut, full.slice(0, full.indexOf('\n---\n') + 1));
+    const bare = lostEntry('no status');
+    stage(bare, renderReceiptFile(bare).replace(/ {4}status: .*\n/, ''));
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report?.restored).toBe(0);
+    const byFile = (a: string[], b: string[]) => a[0].localeCompare(b[0]);
+    expect(
+      report?.problems.map((p) => [p.file, p.detail]).sort(byFile)
+    ).toEqual(
+      [
+        [`${cut.id}.md`, 'frontmatter: missing or not terminated by ---'],
+        [`${bare.id}.md`, 'status: missing'],
+      ].sort(byFile)
+    );
+    expect(t.shared.listProposals()).toHaveLength(0);
   });
 
   it('refuses symlinks, oversized files, foreign names and broken input, and keeps the staging', async () => {

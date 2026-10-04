@@ -194,6 +194,19 @@ describe('importLedger', () => {
     expect(run(store, [first, second]).memory.imported).toBe(2);
   });
 
+  it('imports a lesson the ledger holds twice only once, counting the copy', () => {
+    const store = fresh();
+    const same = {
+      title: 'pnpm 11 ignores onlyBuiltDependencies',
+      detail: 'use allowBuilds',
+    };
+    const report = run(store, [row(same), row(same), row()]);
+    expect(report.outcome).toBe('ok');
+    expect(report.memory).toMatchObject({ imported: 2, duplicates: 1 });
+    expect(store.countEntries()).toBe(2);
+    expect(renderImportReport(report)).toContain('duplicates 1');
+  });
+
   // A hard-deleted import never comes back on the next ledger change.
   it('keeps tombstoned origins gone', () => {
     const store = fresh();

@@ -158,7 +158,9 @@ export function openMemoryDb(
     );
   }
   try {
-    db.exec('PRAGMA busy_timeout = 5000');
+    // No synchronous wait: a locked write throws MemoryBusyError at once and
+    // its caller retries asynchronously.
+    db.exec('PRAGMA busy_timeout = 0');
     const minReader = readMinReader(db);
     if (minReader !== null && minReader > MEMORY_DB_VERSION) {
       throw new MemoryError(

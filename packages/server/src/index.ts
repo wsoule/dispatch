@@ -49,6 +49,7 @@ import {
   validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
@@ -70,6 +71,7 @@ import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
 import { docsRestoreDir, openDocs } from './docs/open.js';
 import { docsReceiptsStep } from './docs/receipts.js';
+import { redispatchPublishes } from './docs/routes.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
@@ -177,6 +179,7 @@ import { BoardSyncService } from './team/boardSync/service.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import type { Team } from './team/index.js';
 import { createTeam, syncSeats } from './team/index.js';
+import { hostSpawner } from './terminalHost.js';
 import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
@@ -1403,6 +1406,12 @@ async function bootServer(
       console.error('docs: recording publishes failed', err);
     }
   };
+  // A publish a crash cut short closes its orphan task before anything runs.
+  try {
+    docs.service.recoverPublishes();
+  } catch (err) {
+    console.error('docs: recovering publishes failed', err);
+  }
   syncDocPublishes();
   const unsubscribeDocPublishes = events.subscribe((event) => {
     if (event.type === 'task.changed') syncDocPublishes();
@@ -1470,6 +1479,12 @@ async function bootServer(
   } catch (err) {
     console.error('dispatchd: doc gate reconcile failed', err);
   }
+  // Open publishes a crash left with no run start now.
+  try {
+    await redispatchPublishes(docs.service, orchestrator);
+  } catch (err) {
+    console.error('dispatchd: publish redispatch failed', err);
+  }
   // Before HTTP serves: the boot import carries every ledger lesson in before
   // the first dispatch, then proposals a crash left without a gate get one.
   try {
@@ -1485,7 +1500,7 @@ async function bootServer(
       console.error(`dispatchd: memory restore: ${p.file}: ${p.detail}`);
     if (restored !== null && restored.deferred > 0)
       console.error(
-        `dispatchd: memory restore: ${restored.deferred} staged file(s) wait for the next boot`
+        `dispatchd: memory restore: ${restored.deferred} staged file(s) are proposed in batches over the next minutes`
       );
   } catch (err) {
     console.error('dispatchd: memory restore failed', err);
@@ -1871,7 +1886,11 @@ async function bootServer(
   // readable the moment the app reconnects. Output is announced rather than
   // streamed: a client holds a byte cursor and pulls the increment, so a
   // dropped event costs a round trip and never a gap.
+  // Children spawn in a helper process, started on the first terminal: a pty
+  // spawn blocked the event loop for seconds under load.
+  const terminalHost = hostSpawner();
   const terminals = new TerminalRegistry(rootDir, {
+    spawn: terminalHost.spawn,
     onOutput: (terminalId) =>
       events.broadcast({ type: 'terminal.output', terminalId }),
     onExit: (terminalId) =>
@@ -2204,6 +2223,8 @@ async function bootServer(
       // never carry stack traces — log server-side, return opaque JSON.
       error(err) {
         console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
+        const storage = storageErrorResponse(err);
+        if (storage !== null) return storage;
         return new Response(JSON.stringify({ error: 'internal error' }), {
           status: 500,
           headers: {
@@ -2323,6 +2344,7 @@ async function bootServer(
       // Kills every child and flushes scrollback; the sessions stay in the
       // index so the next daemon hydrates them as `orphaned`.
       terminals.shutdown();
+      terminalHost.close();
       // Otherwise every session leaks a Chromium process.
       browsers.shutdown();
       boardSyncScheduler?.stop();

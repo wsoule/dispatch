@@ -2,6 +2,7 @@ import { DOCS_LIMITS, parseDocFile, renderDocFile } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -350,6 +351,36 @@ describe('the boot restore', () => {
       (service.health(service.actorFor(OWNER)).restore as { pending: string })
         .pending
     ).toContain(restoreDir);
+  });
+
+  it('records a file it may not read as a problem and still restores the rest', () => {
+    const { service } = makeService();
+    stage('restored.md', 'body\n');
+    writeFileSync(join(restoreDir, 'locked.md'), 'secret');
+    chmodSync(join(restoreDir, 'locked.md'), 0o000);
+    try {
+      const report = applyStagedRestore(service, restoreDir);
+      expect(report?.restored).toBe(1);
+      expect(report?.problems).toEqual([
+        { file: 'locked.md', detail: expect.stringContaining('EACCES') },
+      ]);
+    } finally {
+      chmodSync(join(restoreDir, 'locked.md'), 0o600);
+    }
+  });
+
+  it('restores from a staging directory it may not empty, reporting it', () => {
+    const { service } = makeService();
+    stage('restored.md', 'body\n');
+    chmodSync(restoreDir, 0o500);
+    try {
+      const report = applyStagedRestore(service, restoreDir);
+      expect(report?.restored).toBe(1);
+      expect(report?.problems[0].detail).toContain('could not remove');
+      expect(report?.pending).toContain(restoreDir);
+    } finally {
+      chmodSync(restoreDir, 0o700);
+    }
   });
 
   it('names no pending directory once every file applied', () => {

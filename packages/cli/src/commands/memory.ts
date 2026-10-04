@@ -19,13 +19,32 @@ const BULK_ORIGINS = ['ledger', 'claude'] as const;
 
 type TokenOpts = { token?: string };
 
+// C0 and C1 controls (tab and newline aside) and bidi overrides.
+function isControl(ch: string): boolean {
+  const c = ch.codePointAt(0) ?? 0;
+  return (
+    (c <= 0x1f && c !== 0x09 && c !== 0x0a) ||
+    (c >= 0x7f && c <= 0x9f) ||
+    (c >= 0x202a && c <= 0x202e) ||
+    (c >= 0x2066 && c <= 0x2069)
+  );
+}
+
+// Memory text with every control character dropped, so a stored escape
+// sequence can never drive the terminal it is printed to.
+function printable(text: string): string {
+  let out = '';
+  for (const ch of text) if (!isControl(ch)) out += ch;
+  return out;
+}
+
 function entryLine(e: MemoryEntry): string {
-  return `${e.handle}  ${e.kind}  ${e.scope}  ${e.state}  ${e.title}`;
+  return `${e.handle}  ${e.kind}  ${e.scope}  ${e.state}  ${printable(e.title)}`;
 }
 
 function proposalLine(p: MemoryProposal): string {
   const about = p.content?.title ?? p.target ?? '';
-  return `${p.id}  ${p.state}  ${p.action}  ${p.scope}  ${about}`;
+  return `${p.id}  ${p.state}  ${p.action}  ${p.scope}  ${printable(about)}`;
 }
 
 // What a save, retire or promote did; a proposal says where a human decides it.
@@ -135,7 +154,7 @@ export function registerMemoryCommands(
       ctx.log(
         `trust ${e.trust}  by ${e.author}  rev ${e.rev}  recalled ${read.recallCount}`
       );
-      if (e.body !== '') ctx.log(`\n${e.body}`);
+      if (e.body !== '') ctx.log(`\n${printable(e.body)}`);
     });
 
   memory

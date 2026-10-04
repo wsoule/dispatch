@@ -53,7 +53,11 @@ export interface ImportReportInfo {
     reason: 'invalid' | 'too-large' | 'not UTF-8' | 'missing' | 'archived';
     detail: string;
   }[];
-  parity: { files: boolean; names: boolean };
+  parity: { files: boolean; names: boolean; images?: boolean };
+  // Each imported name's docs, after a commit; the CLI uploads their images to them.
+  docs?: { name: string; docs: string[] }[];
+  // Images an exported doc referenced: uploaded, and those whose bytes were not found.
+  images?: { referenced: number; uploaded: number; missing: number };
 }
 
 /** What POST /api/docs/:ref/publish answers: the task, and its run unless not dispatched. */
@@ -131,6 +135,11 @@ export interface DocsApi {
   remove(ref: string): Promise<void>;
   // A doc's stored image as bytes; null when the daemon has none of that name.
   asset(ref: string, name: string): Promise<Uint8Array | null>;
+  // Stores an image for a doc; the daemon names it by its bytes' hash.
+  putAsset(
+    ref: string,
+    bytes: Uint8Array
+  ): Promise<{ name: string; markdown: string }>;
   // Proposals to accepted docs the caller may see.
   proposals(params?: {
     doc?: string;
@@ -167,6 +176,19 @@ function cliError(status: number, body: unknown): CliError {
 function isDocConflict(body: unknown): body is DocConflict {
   const reason = (body as { reason?: unknown } | null)?.reason;
   return reason === 'merge-conflict' || reason === 'base-changed';
+}
+
+// An import step whose request never reached dispatchd (it stopped, or was
+// never there) fails with what to do, not the runtime's connect error.
+async function importStep<T>(step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (err) {
+    if (err instanceof CliError) throw err;
+    throw new CliError(
+      'lost dispatchd mid-import; nothing was committed, run it again'
+    );
+  }
 }
 
 export function createDocsApi(baseUrl: string, token: string): DocsApi {
@@ -265,6 +287,19 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
         ? null
         : new Uint8Array(await res.arrayBuffer());
     },
+    putAsset: async (ref, bytes) => {
+      const res = await fetch(`${baseUrl}${docPath(ref)}/assets`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/octet-stream',
+          authorization: `Bearer ${token}`,
+        },
+        body: bytes,
+      });
+      const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) throw cliError(res.status, body);
+      return body as { name: string; markdown: string };
+    },
     proposals: (p = {}) => {
       const q = new URLSearchParams();
       if (p.doc !== undefined) q.set('doc', p.doc);
@@ -272,32 +307,37 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
       return json('GET', withQuery('/api/docs/proposals', q));
     },
     openImport: (files, link) =>
-      json(
-        'POST',
-        '/api/docs/imports',
-        link === undefined ? { files } : { files, link }
+      importStep(() =>
+        json(
+          'POST',
+          '/api/docs/imports',
+          link === undefined ? { files } : { files, link }
+        )
       ),
     // Raw bytes, not JSON: the daemon takes contents only as octet-stream.
-    putImportContent: async (id, hash, bytes) => {
-      const res = await fetch(
-        `${baseUrl}/api/docs/imports/${encodeURIComponent(id)}/contents/${encodeURIComponent(hash)}`,
-        {
-          method: 'PUT',
-          headers: {
-            'content-type': 'application/octet-stream',
-            authorization: `Bearer ${token}`,
-          },
-          body: bytes,
-        }
-      );
-      if (!res.ok)
-        throw cliError(res.status, await res.json().catch(() => null));
-    },
+    putImportContent: (id, hash, bytes) =>
+      importStep(async () => {
+        const res = await fetch(
+          `${baseUrl}/api/docs/imports/${encodeURIComponent(id)}/contents/${encodeURIComponent(hash)}`,
+          {
+            method: 'PUT',
+            headers: {
+              'content-type': 'application/octet-stream',
+              authorization: `Bearer ${token}`,
+            },
+            body: bytes,
+          }
+        );
+        if (!res.ok)
+          throw cliError(res.status, await res.json().catch(() => null));
+      }),
     commitImport: (id, dryRun) =>
-      json(
-        'POST',
-        `/api/docs/imports/${encodeURIComponent(id)}/commit${dryRun ? '?dryRun=1' : ''}`,
-        {}
+      importStep(() =>
+        json(
+          'POST',
+          `/api/docs/imports/${encodeURIComponent(id)}/commit${dryRun ? '?dryRun=1' : ''}`,
+          {}
+        )
       ),
     deleteImport: async (id) => {
       await call('DELETE', `/api/docs/imports/${encodeURIComponent(id)}`);

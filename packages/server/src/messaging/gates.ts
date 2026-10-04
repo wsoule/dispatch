@@ -50,6 +50,11 @@ export class GateHandlers {
 }
 
 // Closes an open question as the system; false when an answer got there first.
+/** Which registration a card decides: a prefix of the agent row's token hash. */
+export function registrationKey(tokenHash: string): string {
+  return tokenHash.slice(0, 16);
+}
+
 export function closeGate(
   engine: DeliveryEngine,
   questionId: string,

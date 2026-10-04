@@ -68,7 +68,7 @@ types below, and a host that claims the profile declares all eight
 | -------------------- | ----------------- | ------------------------------ | ------------------------------------------------------------------------------ |
 | `tool-approval`      | system            | approve, approve-session, deny | `requestId`, `runId` or `conversation`, `tool`, `input`, `truncated`?, `floor` |
 | `scope`              | session           | grant, deny                    | `paths`, `reason`                                                              |
-| `agent-registration` | system            | approve, deny                  | `agent`, `client`, `requestedBy`?                                              |
+| `agent-registration` | system            | approve, deny                  | `agent`, `client`, `requestedBy`?, `key`?                                      |
 | `overseer-action`    | system            | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
 | `task-proposal`      | system            | approve, decline               | `task`, `proposedBy`, `message`                                                |
 | `memory`             | system-or-decider | approve, reject                | `proposalId`, `action`, `scope`, `kind`                                        |
@@ -111,8 +111,10 @@ denies one that no one decided within 29 minutes, with an `x-expired` marker
 **`agent-registration`.** The system raises it to the owner when an agent
 install registers: `agent` is the address it asks for, `client` the program it
 runs in, and `requestedBy` the human who asked, under whose handle it registers.
-`approve` approves the agent; `deny` revokes it. Vector:
-`core.answers.a-human-decides-an-agent-registration-gate`.
+`key`, when present, names the registration the gate decides (16 lowercase hex
+digits); after the agent re-registers under a new key, an answer to a gate for
+an earlier key has no effect. `approve` approves the agent; `deny` revokes it.
+Vector: `core.answers.a-human-decides-an-agent-registration-gate`.
 
 **`overseer-action`.** The system raises it to the owner when Dispatch's
 overseer, the project's own assistant, wants to take an action it queued:

@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -107,7 +108,7 @@ export async function spawnWithDeadline(
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    ...(env !== undefined ? { env } : {}),
+    env: env ?? childEnv(),
   });
   // The pipes are read through cancellable readers rather than awaited to
   // EOF: a killed `git` can leave an `ssh` grandchild holding both ends open,

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
@@ -52,6 +53,8 @@ export interface PersistedToken {
 export interface TokenStore {
   load: () => PersistedToken[];
   save: (tokens: PersistedToken[]) => void;
+  /** What went wrong with the file, for /api/health. */
+  problems?: () => string[];
 }
 
 interface Entry {
@@ -95,42 +98,61 @@ function validExpiry(value: unknown): boolean {
 }
 
 /** A TokenStore over one JSON file, written 0600 because even hashes are
- *  nobody else's business. A missing or unreadable file loads as empty: the
- *  worst outcome is that teammates must be issued fresh tokens, never that
- *  the daemon refuses to boot. */
+ *  nobody else's business. A missing file loads as empty; an unreadable one is
+ *  moved aside to `.corrupt-<ts>` with a problem, so a save never overwrites
+ *  credentials someone may still recover. Saves go through a temp file and a
+ *  rename, so a crash leaves the old file or the new one, never half of one. */
 export function fileTokenStore(path: string): TokenStore {
+  const problems: string[] = [];
+  // Reads the file; null when it is missing, 'unreadable' when it will not parse.
+  const read = (): unknown[] | null | 'unreadable' => {
+    if (!existsSync(path)) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+      return Array.isArray(parsed) ? parsed : 'unreadable';
+    } catch {
+      return 'unreadable';
+    }
+  };
+  const moveAside = (): void => {
+    const aside = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    renameSync(path, aside);
+    const problem = `team token file ${path} was unreadable; moved to ${aside}. Issue teammates fresh tokens, or repair it and restart.`;
+    problems.push(problem);
+    console.error(`dispatchd: ${problem}`);
+  };
   return {
     load: () => {
-      if (!existsSync(path)) return [];
-      try {
-        const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-        if (!Array.isArray(parsed)) return [];
-        return parsed.filter(
-          (t): t is PersistedToken =>
-            typeof t === 'object' &&
-            t !== null &&
-            typeof (t as PersistedToken).handle === 'string' &&
-            isAuthTier((t as PersistedToken).tier) &&
-            typeof (t as PersistedToken).hash === 'string' &&
-            /^[0-9a-f]{64}$/.test((t as PersistedToken).hash) &&
-            validExpiry((t as PersistedToken).expiresAt)
-        );
-      } catch {
-        console.error(
-          `dispatchd: ignoring unreadable team token file ${path}; issue teammates fresh tokens`
-        );
+      const parsed = read();
+      if (parsed === null) return [];
+      if (parsed === 'unreadable') {
+        moveAside();
         return [];
       }
+      return parsed.filter(
+        (t): t is PersistedToken =>
+          typeof t === 'object' &&
+          t !== null &&
+          typeof (t as PersistedToken).handle === 'string' &&
+          isAuthTier((t as PersistedToken).tier) &&
+          typeof (t as PersistedToken).hash === 'string' &&
+          /^[0-9a-f]{64}$/.test((t as PersistedToken).hash) &&
+          validExpiry((t as PersistedToken).expiresAt)
+      );
     },
     save: (tokens) => {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+      if (read() === 'unreadable') moveAside();
+      const temp = `${path}.tmp-${process.pid}`;
+      writeFileSync(temp, JSON.stringify(tokens, null, 2), { mode: 0o600 });
       try {
-        chmodSync(path, 0o600);
+        chmodSync(temp, 0o600);
       } catch {
         // A filesystem without POSIX modes is not a reason to fail the write.
       }
+      renameSync(temp, path);
     },
+    problems: () => [...problems],
   };
 }
 
@@ -271,6 +293,11 @@ export class TeammateTokens implements CredentialSource {
   }
 
   /** How many people have access now, the operator included. */
+  /** What went wrong with the token file, for /api/health. */
+  problems(): string[] {
+    return this.store.problems?.() ?? [];
+  }
+
   peopleWithAccess(): number {
     const now = this.clock().getTime();
     return (

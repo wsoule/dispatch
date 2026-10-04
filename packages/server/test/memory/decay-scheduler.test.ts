@@ -280,10 +280,11 @@ describe('startDecayScheduler', () => {
     idle(s.shared, 'project', 61);
     idle(s.personal.personal('self'), 'personal', 200);
     const [summary] = await sweep(s.deps);
+    // The 200-day entry goes stale now; only a later sweep may retire it.
     expect(summary).toMatchObject({
       stores: 2,
       staled: 3,
-      expired: 1,
+      expired: 0,
       skipped: [],
     });
     expect(s.host.changes).toEqual([
@@ -391,7 +392,7 @@ describe('startDecayScheduler', () => {
     const self = s.personal.personal('self');
     s.personal.personal(OTHER);
     await waitFor(() => existsSync(join(dir, 'self.db.bak')));
-    expect(self.getEntry(old.id)?.decay).toBe('expired');
+    expect(self.getEntry(old.id)?.decay).toBe('stale');
     await pause(30);
     expect(existsSync(join(dir, `${OTHER}.db.bak`))).toBe(false);
     scheduler.stop();

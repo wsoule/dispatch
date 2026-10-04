@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -373,6 +374,7 @@ export class GitRepo {
     try {
       const proc = Bun.spawn(['git', '--literal-pathspecs', ...args, '-'], {
         cwd: this.cwd,
+        env: childEnv(),
         stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',

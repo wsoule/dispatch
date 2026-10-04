@@ -58,7 +58,7 @@ export async function messagingErrorText(res: Response): Promise<string> {
 type MessagingFetchOutcome =
   | { ok: true; res: Response; kind: MessagingCredential['kind'] }
   | { ok: false; transient: true; message: string }
-  | { ok: false; transient: false; result: ToolOutcome };
+  | { ok: false; transient: false; result: ToolOutcome; daemonDown?: true };
 
 // The auth `code` a messaging route's 401 body carries, when it parses
 // (see packages/server/src/messaging/principal.ts's resolvePrincipal).
@@ -99,6 +99,7 @@ export async function messagingFetch(
       ok: false,
       transient: false,
       result: toolError('dispatchd not running — no one to message'),
+      daemonDown: true,
     };
   }
   const clientName = server.server.getClientVersion()?.name;
@@ -238,7 +239,10 @@ async function pollForAnswer(
       }
     );
     if (!outcome.ok) {
-      if (!outcome.transient) return { kind: 'error', result: outcome.result };
+      // A daemon that went down mid-wait is restarting: the question survives
+      // it, so keep polling until the budget runs out.
+      if (!outcome.transient && outcome.daemonDown !== true)
+        return { kind: 'error', result: outcome.result };
       if (await abortableSleep(timing.errorDelayMs, signal)) break;
       continue;
     }
@@ -310,6 +314,14 @@ function isScopeData(data: unknown): boolean {
 }
 
 // POST /api/messages, then (when `blocking`) long-polls for its answer.
+// The pause a 503's Retry-After names (seconds), capped at 5 s; 1 s when absent.
+function retryAfterMs(res: Response): number {
+  const seconds = Number(res.headers.get('retry-after') ?? '1');
+  return Number.isFinite(seconds) && seconds >= 0
+    ? Math.min(seconds, 5) * 1000
+    : 1000;
+}
+
 async function msgSend(
   rootDir: string,
   server: McpServer,
@@ -332,6 +344,11 @@ async function msgSend(
   });
   let sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
   if (!sent.ok && sent.transient) {
+    sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
+  } else if (sent.ok && sent.res.status === 503) {
+    // A busy daemon asks for a retry: once, after the pause it names.
+    const pause = retryAfterMs(sent.res);
+    await new Promise((r) => setTimeout(r, pause));
     sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
   }
   if (!sent.ok) return fetchFailed(sent, 'msg_send');

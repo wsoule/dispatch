@@ -2,6 +2,7 @@ import type { ApiClient } from '@dispatch/client';
 import { useEffect, useState } from 'react';
 
 import { assetNameOf } from '../../lib/docAssets';
+import { LinkedImage } from '../runs/LinkedImage';
 
 interface AssetImageProps {
   client: Pick<ApiClient, 'fetchDocAsset'>;
@@ -52,26 +53,5 @@ export function AssetImage({ client, docId, src, alt }: AssetImageProps) {
       );
     return url === null ? null : <img src={url} alt={alt ?? ''} />;
   }
-  // A remote image would load from someone else's server on every view (a
-  // tracking pixel), so it is shown as a link, never fetched.
-  if (src === undefined || src === '') return null;
-  const label = `[image: ${alt !== undefined && alt !== '' ? alt : src}]`;
-  // Linked only over http(s); any other scheme (javascript:, data:) is text.
-  return isWebUrl(src) ? (
-    <a href={src} target="_blank" rel="noreferrer noopener">
-      {label}
-    </a>
-  ) : (
-    <span>{label}</span>
-  );
-}
-
-// Whether `src` parses as an absolute http: or https: URL.
-function isWebUrl(src: string): boolean {
-  try {
-    const { protocol } = new URL(src);
-    return protocol === 'http:' || protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return <LinkedImage src={src} alt={alt} />;
 }

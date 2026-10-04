@@ -210,6 +210,12 @@ function restoreProblem(meta: DocFileMeta, body: string): string | null {
 // Applies the receipt files the CLI staged: a held or deleted id is skipped, a
 // bad hash or a broken input rule is a problem, and the directory goes once
 // every file applied. Null when nothing is staged or docs are unavailable.
+// Why a staged file could not be read, with its errno code.
+export function unreadable(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException).code;
+  return `unreadable (${code ?? 'error'}): ${(err as Error).message}`;
+}
+
 export function applyStagedRestore(
   service: DocsService,
   restoreDir: string
@@ -224,19 +230,27 @@ export function applyStagedRestore(
   };
   for (const file of stagedFiles(restoreDir).filter((f) => f.endsWith('.md'))) {
     const path = join(restoreDir, file);
-    const stat = lstatSync(path);
-    if (!stat.isFile()) {
-      report.problems.push({ file, detail: 'not a regular file' });
+    let text: string;
+    try {
+      const stat = lstatSync(path);
+      if (!stat.isFile()) {
+        report.problems.push({ file, detail: 'not a regular file' });
+        continue;
+      }
+      if (stat.size > DOCS_LIMITS.receiptFileBytes) {
+        report.problems.push({
+          file,
+          detail: `over ${DOCS_LIMITS.receiptFileBytes} bytes`,
+        });
+        continue;
+      }
+      text = readFileSync(path, 'utf8');
+    } catch (err) {
+      // One file this process may not read never stops the rest.
+      report.problems.push({ file, detail: unreadable(err) });
       continue;
     }
-    if (stat.size > DOCS_LIMITS.receiptFileBytes) {
-      report.problems.push({
-        file,
-        detail: `over ${DOCS_LIMITS.receiptFileBytes} bytes`,
-      });
-      continue;
-    }
-    const parsed = parseDocFile(readFileSync(path, 'utf8'));
+    const parsed = parseDocFile(text);
     if ('error' in parsed) {
       report.problems.push({ file, detail: parsed.error });
       continue;
@@ -260,9 +274,18 @@ export function applyStagedRestore(
       report.problems.push({ file, detail: err.message });
     }
   }
-  if (report.problems.length === 0)
-    rmSync(restoreDir, { recursive: true, force: true });
-  else report.pending = clearHint(restoreDir);
+  if (report.problems.length === 0) {
+    // A staging directory that will not go is reported, never fatal.
+    try {
+      rmSync(restoreDir, { recursive: true, force: true });
+    } catch (err) {
+      report.problems.push({
+        file: '.',
+        detail: `restored, but could not remove the staging directory: ${(err as Error).message}`,
+      });
+      report.pending = clearHint(restoreDir);
+    }
+  } else report.pending = clearHint(restoreDir);
   service.recordRestore(report);
   return report;
 }

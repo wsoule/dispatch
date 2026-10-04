@@ -20,6 +20,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import { unreadable } from '../docs/receipts.js';
 import { runsDir } from '../orchestrator/paths.js';
 import type { ReceiptsStep } from '../receipts/exporter.js';
 
@@ -151,7 +152,7 @@ export function memoryReceiptsStep(
 export interface MemoryRestoreReport {
   restored: number;
   skipped: number;
-  // Files left staged past the per-boot limit, for the next boot.
+  // Files left staged past the per-pass limit, for the next drain pass.
   deferred: number;
   problems: { file: string; detail: string }[];
   // Where the kept staging directory is and how to clear it; null once removed.
@@ -180,12 +181,19 @@ async function restoreFile(
   const id = receiptId(file);
   if (id === null) return { problem: 'not a memory receipt file name' };
   const path = join(restoreDir, file);
-  const stat = lstatSync(path);
-  if (!stat.isFile()) return { problem: 'not a regular file' };
-  if (stat.size > MEMORY_RECEIPT_FILE_BYTES)
-    return { problem: `over ${MEMORY_RECEIPT_FILE_BYTES} bytes` };
-  if (shared.getEntry(id) !== null) return 'skipped';
-  const parsed = parseReceiptFile(readFileSync(path, 'utf8'), file);
+  let text: string;
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile()) return { problem: 'not a regular file' };
+    if (stat.size > MEMORY_RECEIPT_FILE_BYTES)
+      return { problem: `over ${MEMORY_RECEIPT_FILE_BYTES} bytes` };
+    if (shared.getEntry(id) !== null) return 'skipped';
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    // One file this process may not read never stops the rest.
+    return { problem: unreadable(err) };
+  }
+  const parsed = parseReceiptFile(text, file);
   if (parsed.problem !== null) return { problem: parsed.problem };
   // A retired lesson stays retired: only live ones come back.
   if (parsed.status?.startsWith('retired') === true) return 'skipped';
@@ -222,8 +230,8 @@ async function restoreFile(
   }
 }
 
-// Most proposals one boot raises; the rest wait staged for the next boot.
-const RESTORE_PER_BOOT = 50;
+// Most proposals one pass raises; the rest wait for the service's next drain.
+const RESTORE_PER_PASS = 50;
 
 // Applies the receipt files the CLI staged, removing each once handled, up to
 // `limit` proposals. Null when nothing is staged or memory is unavailable.
@@ -231,7 +239,12 @@ export async function applyStagedMemoryRestore(
   engine: MemoryEngine | null,
   shared: MemoryStore | null,
   restoreDir: string,
-  limit = RESTORE_PER_BOOT
+  limit = RESTORE_PER_PASS,
+  // Hears each staged file this pass looked at, and what became of it.
+  onFile: (
+    file: string,
+    outcome: 'restored' | 'skipped' | 'problem'
+  ) => void = () => {}
 ): Promise<MemoryRestoreReport | null> {
   if (engine === null || shared === null || !existsSync(restoreDir))
     return null;
@@ -250,23 +263,34 @@ export async function applyStagedMemoryRestore(
       break;
     }
     const outcome = await restoreFile(engine, shared, restoreDir, file);
+    onFile(file, typeof outcome === 'string' ? outcome : 'problem');
     if (typeof outcome !== 'string') {
       report.problems.push({ file, detail: outcome.problem });
       continue;
     }
     if (outcome === 'restored') report.restored++;
     else report.skipped++;
-    rmSync(join(restoreDir, file), { force: true });
+    // A file that will not go (a read-only staging dir) is reported, never fatal.
+    try {
+      rmSync(join(restoreDir, file), { force: true });
+    } catch (err) {
+      report.problems.push({
+        file,
+        detail: `handled, but could not remove: ${(err as Error).message}`,
+      });
+    }
   }
   // Only handled files went; anything else, even a file staged meanwhile, stays.
   if (readdirSync(restoreDir).length > 0)
-    report.pending = clearHint(restoreDir);
+    report.pending =
+      report.problems.length === 0
+        ? `${report.deferred} staged file(s) in ${restoreDir} are proposed in batches over the next minutes`
+        : clearHint(restoreDir);
   else {
     try {
       rmdirSync(restoreDir);
-    } catch (err) {
-      // A file staged since the listing: it waits for the next boot.
-      if ((err as NodeJS.ErrnoException).code !== 'ENOTEMPTY') throw err;
+    } catch {
+      // A file staged since the listing, or a directory we may not remove.
       report.pending = clearHint(restoreDir);
     }
   }

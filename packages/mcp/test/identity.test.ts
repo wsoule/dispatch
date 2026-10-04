@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -28,7 +29,7 @@ class FakeDaemon {
     token: 'freshly-minted-token',
     status: 'pending',
   };
-  registerCalls: { name: string; client: string }[] = [];
+  registerCalls: { name: string; client: string; rekey?: boolean }[] = [];
   /** Delays the register response, to widen the window for a concurrent
    *  call's in-flight dedup to actually observe this one still pending. */
   registerDelayMs = 0;
@@ -239,6 +240,36 @@ describe('messagingCredential (cached agent token)', () => {
     expect(result).toEqual({
       error: expect.stringContaining('dispatchd not running'),
     });
+  });
+});
+
+describe('messagingCredential (unreadable cache)', () => {
+  it('moves an unreadable cache aside and re-keys the same name, keeping the last 3 copies', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(root, daemon.start());
+    const name = agentName(process.env, 'Claude Code', hostname());
+    const path = agentTokenFilePath(root, name);
+    mkdirSync(dirname(path), { recursive: true });
+    for (let i = 0; i < 4; i++)
+      writeFileSync(`${path}.corrupt-${1000 + i}`, 'old');
+    writeFileSync(path, '{"token": "trunc');
+
+    const result = await messagingCredential(root, 'Claude Code');
+    expect(result).toMatchObject({ token: 'freshly-minted-token' });
+    expect(daemon.registerCalls).toEqual([
+      { name, client: 'Claude Code', rekey: true },
+    ]);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
+      token: 'freshly-minted-token',
+    });
+    const aside = readdirSync(dirname(path)).filter((f) =>
+      f.includes('.corrupt-')
+    );
+    expect(aside).toHaveLength(3);
+    expect(aside).not.toContain(`${name}.json.corrupt-1000`);
+    expect(readdirSync(dirname(path)).some((f) => f.includes('.tmp'))).toBe(
+      false
+    );
   });
 });
 

@@ -34,7 +34,7 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
-import { MemoryError } from '@dispatch/memory';
+import { MemoryBusyError, MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -114,6 +114,7 @@ import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import {
   closeTerminal,
   createTerminal,
@@ -1449,6 +1450,14 @@ interface ReceiptsStatus {
   lastExportedAt: string | null;
   /** The last push to `receipts.remote`; absent or null when there is none. */
   lastPush?: ReceiptsPush | null;
+}
+
+// The last receipt export, as a health problem when it failed.
+function receiptsProblems(ctx: ApiContext): string[] {
+  const last = ctx.receiptsScheduler?.lastResult() ?? null;
+  return last?.state === 'failed'
+    ? [`receipt log export failed: ${last.detail}`]
+    : [];
 }
 
 // Reads the exporter's retained last result. Its own null-vs-result
@@ -4961,6 +4970,9 @@ export async function handleApi(
         problems: [
           ...ctx.cache.problems(),
           ...(identity.problem === null ? [] : [identity.problem]),
+          ...receiptsProblems(ctx),
+          ...ctx.team.teammates.problems(),
+          ...ctx.memory.restoreProblems(),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.
@@ -6661,8 +6673,13 @@ export async function handleApi(
     if (err instanceof MemoryError) {
       const body: { error: string; field?: string } = { error: err.message };
       if (err.field !== undefined) body.field = err.field;
-      return jsonResponse(body, err.status);
+      const res = jsonResponse(body, err.status);
+      if (err instanceof MemoryBusyError) res.headers.set('retry-after', '1');
+      return res;
     }
+    // A busy database is 503 to retry; a write the disk refused is 507.
+    const storage = storageErrorResponse(err);
+    if (storage !== null) return storage;
     throw err;
   }
 }
