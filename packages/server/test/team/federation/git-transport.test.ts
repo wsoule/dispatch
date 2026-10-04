@@ -588,6 +588,53 @@ describe('the read budget (FW-R23 hint)', () => {
     expect(a.takeRewritten()).toEqual([A]);
   });
 
+  // FW-R29 follow-up: tail reads have their own 8 MiB a pass; the file whose
+  // last line is the member's head goes first, so 100 changing junk files
+  // never keep its new op out.
+  it('reads the head file’s tail first within 8 MiB, past 100 changing junk files', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(6);
+    await a.writeV2(ops.slice(0, 2));
+    const segDir = join(dir, 'a', 'fed', A);
+    const tier = () => 0;
+    let cursor = 2;
+    let head = opHash(ops[1]);
+    a.readV2(new Map([[A, cursor]]), { tier, heads: new Map([[A, head]]) });
+    for (let k = 2; k < 6; k++) {
+      for (let n = 0; n < 100; n++)
+        writeFileSync(
+          join(segDir, `${String(100 + n).padStart(12, '0')}.jsonl`),
+          `${'z'.repeat(50 * 1024 * k)}${k}\n`
+        );
+      // The member's own file rewritten too, junk growing in front.
+      const seg = join(segDir, '000000000001.jsonl');
+      const lines = readFileSync(seg, 'utf8')
+        .split('\n')
+        .filter((l) => l.startsWith('{'))
+        .join('\n');
+      writeFileSync(
+        seg,
+        `${'q'.repeat(2 * 1024 * 1024)}${k}\n${lines}\n${JSON.stringify(ops[k])}\n`
+      );
+      let got = false;
+      for (let pass = 0; pass < 2 && !got; pass++) {
+        got = a
+          .readV2(new Map([[A, cursor]]), {
+            tier,
+            heads: new Map([[A, head]]),
+            budget: 64 * 1024,
+            totalBudget: 64 * 1024,
+          })
+          .some((e) => e.seq === k + 1);
+        expect(a.lastTailBytes()).toBeLessThanOrEqual(8 * 1024 * 1024);
+      }
+      expect([k, got]).toEqual([k, true]);
+      cursor = k + 1;
+      head = opHash(ops[k]);
+    }
+  });
+
   // FW-R29 follow-up: the scan cache forgets files no longer on the branch.
   it('forgets scanned files that are gone', async () => {
     const a = clone('a', A);

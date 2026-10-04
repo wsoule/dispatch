@@ -83,6 +83,7 @@ const MAX_LINE_BYTES = 1024 * 1024;
 const MIN_STREAM_CHUNK = 256 * 1024;
 // How much of each member file's end is read first, every pass it changed.
 const TAIL_BYTES = 1024 * 1024;
+const TAIL_PASS_BYTES = 8 * 1024 * 1024;
 // FW-R29(3): what every full scan together may read in one pass.
 const SCAN_PASS_BYTES = 32 * 1024 * 1024;
 // FW-R25: fresh bytes a pass reads across all replicas, the unknown ids it
@@ -196,8 +197,13 @@ export class SyncRepo {
   /** Each file's tail lines, by its stat stamp. */
   private readonly tails = new Map<
     string,
-    { stamp: string; lines: { line: string; entry: LogEntry }[] }
+    {
+      stamp: string;
+      size: number;
+      lines: { line: string; entry: LogEntry; hash: string }[];
+    }
   >();
+  private tailBytes = 0;
   /** Per probed id, which of its files the next probe starts at. */
   private readonly probeFileStart = new Map<string, number>();
   private readonly segmentInfo = new Map<string, SegmentInfo>();
@@ -415,6 +421,7 @@ export class SyncRepo {
     const live = new Set<string>();
     this.passBytes = 0;
     this.scanLeft = SCAN_PASS_BYTES;
+    this.tailBytes = 0;
     const all = listDir(root).filter(
       (r) => REPLICA_ID.test(r) && realDir(join(root, r))
     );
@@ -504,9 +511,28 @@ export class SyncRepo {
       );
       const seen = new Set<string>();
       // FW-R29: the end of each file first, where new ops land, whatever was
-      // put before them; chainFrom takes them with the rest.
-      for (const { file, stamp } of files)
-        for (const { line, entry } of this.tailLines(file, stamp, replica))
+      // put before them; chainFrom takes them with the rest. Tails have their
+      // own budget: the file whose last line is the head goes first, then the
+      // files that grew most.
+      const grew = (f: { file: string; size: number }) =>
+        f.size - (this.tails.get(f.file)?.size ?? 0);
+      const holdsHead = (file: string) =>
+        head !== undefined &&
+        (this.tails
+          .get(file)
+          ?.lines.some((l) => l.entry.prev === head || l.hash === head) ??
+          false);
+      const tailOrder = [...files].sort((x, y) => {
+        const byHead = Number(holdsHead(y.file)) - Number(holdsHead(x.file));
+        return byHead !== 0 ? byHead : grew(y) - grew(x);
+      });
+      for (const { file, stamp, size } of tailOrder)
+        for (const { line, entry } of this.tailLines(
+          file,
+          stamp,
+          size,
+          replica
+        ))
           if (entry.seq > cursor && !seen.has(line)) {
             seen.add(line);
             out.push(entry);
@@ -625,26 +651,41 @@ export class SyncRepo {
   private tailLines(
     file: string,
     stamp: string,
+    size: number,
     replica: string
-  ): { line: string; entry: LogEntry }[] {
+  ): { line: string; entry: LogEntry; hash: string }[] {
     const held = this.tails.get(file);
     if (held?.stamp === stamp) return held.lines;
-    const st = lstatSync(file, { throwIfNoEntry: false });
-    const size = st?.size ?? 0;
     const start = Math.max(0, size - TAIL_BYTES);
+    // Out of this pass's tail budget: the old lines stand until next pass.
+    if (this.tailBytes + (size - start) > TAIL_PASS_BYTES)
+      return held?.lines ?? [];
     const bytes = readRange(file, start, size - start);
-    const lines: { line: string; entry: LogEntry }[] = [];
+    this.tailBytes += bytes?.length ?? 0;
+    const lines: { line: string; entry: LogEntry; hash: string }[] = [];
     if (bytes !== null) {
       let text = bytes.toString('utf8');
       if (start > 0) text = text.slice(text.indexOf('\n') + 1);
       const end = text.lastIndexOf('\n');
       for (const line of end < 0 ? [] : text.slice(0, end).split('\n')) {
         const entry = parseEntry(line);
-        if (entry?.replica === replica) lines.push({ line, entry });
+        if (entry?.replica !== replica) continue;
+        let hash = '';
+        try {
+          hash = opHash(entry);
+        } catch {
+          continue;
+        }
+        lines.push({ line, entry, hash });
       }
     }
-    this.tails.set(file, { stamp, lines });
+    this.tails.set(file, { stamp, size, lines });
     return lines;
+  }
+
+  /** Tail bytes the last readV2 read (TAIL_PASS_BYTES a pass at most). */
+  lastTailBytes(): number {
+    return this.tailBytes;
   }
 
   /** Replicas whose files were rewritten rather than appended to, since the
