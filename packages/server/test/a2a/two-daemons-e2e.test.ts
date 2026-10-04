@@ -118,6 +118,8 @@ it('a run’s MCP question to another Dispatch daemon gets its owner’s answer'
     questionId = q?.id ?? '';
     return q !== undefined;
   }, 10_000);
+  // The sender follows the task by stream: the receiver sees it subscribe.
+  await waitFor(() => (receiver.a2a.watch?.count() ?? 0) > 0, 10_000);
   const reply = await fetch(
     `http://127.0.0.1:${receiver.port}/api/messages/${questionId}/reply`,
     { method: 'POST', headers: json, body: JSON.stringify({ body: 'Final.' }) }
