@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -80,9 +81,20 @@ function readStoredToken(path: string): StoredAgentToken | null {
   return null;
 }
 
+// Through a temp file and a rename, so a crash never leaves half a cache file.
 function writeStoredToken(path: string, value: StoredAgentToken): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
+  const temp = `${path}.tmp-${process.pid}`;
+  writeFileSync(temp, JSON.stringify(value), { mode: 0o600 });
+  renameSync(temp, path);
+}
+
+// Moves a cache file that exists but will not read aside, answering whether it
+// did: its name stays registered, so the caller re-keys under a fresh one.
+function setAsideUnreadable(path: string): boolean {
+  if (!existsSync(path) || readStoredToken(path) !== null) return false;
+  renameSync(path, `${path}.corrupt-${Date.now()}`);
+  return true;
 }
 
 // Self-heal step: drops the cached token the daemon just called unknown, but
@@ -142,12 +154,19 @@ async function registerAgent(
   rootDir: string,
   daemon: DaemonFileInfo,
   name: string,
-  clientName: string | undefined
+  clientName: string | undefined,
+  registered: string = name
 ): Promise<MessagingCredential | { error: string }> {
   const key = `${rootDir}\u0000${name}`;
   const existing = inFlightRegistrations.get(key);
   if (existing !== undefined) return existing;
-  const promise = doRegisterAgent(rootDir, daemon, name, clientName);
+  const promise = doRegisterAgent(
+    rootDir,
+    daemon,
+    name,
+    clientName,
+    registered
+  );
   inFlightRegistrations.set(key, promise);
   try {
     return await promise;
@@ -162,7 +181,8 @@ async function doRegisterAgent(
   rootDir: string,
   daemon: DaemonFileInfo,
   name: string,
-  clientName: string | undefined
+  clientName: string | undefined,
+  registered: string
 ): Promise<MessagingCredential | { error: string }> {
   let res: Response;
   try {
@@ -170,7 +190,7 @@ async function doRegisterAgent(
       method: 'POST',
       headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
       body: JSON.stringify({
-        name,
+        name: registered,
         client:
           clientName !== undefined && clientName.trim() !== ''
             ? clientName
@@ -259,5 +279,10 @@ export async function messagingCredential(
         'dispatchd not running — cannot register this agent identity. Start it with: dispatch serve',
     };
   }
-  return registerAgent(rootDir, daemon, name, clientName);
+  // The old name still holds the lost token, so a damaged cache registers a
+  // new one, cached at the same path.
+  const registered = setAsideUnreadable(agentTokenFilePath(rootDir, name))
+    ? `${name.slice(0, 35)}-${randomBytes(2).toString('hex')}`
+    : name;
+  return registerAgent(rootDir, daemon, name, clientName, registered);
 }

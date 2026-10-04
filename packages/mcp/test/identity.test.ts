@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -239,6 +240,33 @@ describe('messagingCredential (cached agent token)', () => {
     expect(result).toEqual({
       error: expect.stringContaining('dispatchd not running'),
     });
+  });
+});
+
+describe('messagingCredential (unreadable cache)', () => {
+  it('moves an unreadable cache aside and re-keys under a fresh name, instead of a 409 dead end', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(root, daemon.start());
+    const name = agentName(process.env, 'Claude Code', hostname());
+    const path = agentTokenFilePath(root, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '{"token": "trunc');
+
+    const result = await messagingCredential(root, 'Claude Code');
+    expect(result).toMatchObject({ token: 'freshly-minted-token' });
+    expect(daemon.registerCalls).toHaveLength(1);
+    expect(daemon.registerCalls[0].name).toMatch(
+      new RegExp(`^${name.replace('.', '\\.')}-[0-9a-f]{4}$`)
+    );
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({
+      token: 'freshly-minted-token',
+    });
+    expect(
+      readdirSync(dirname(path)).filter((f) => f.includes('.corrupt-'))
+    ).toHaveLength(1);
+    expect(readdirSync(dirname(path)).some((f) => f.includes('.tmp'))).toBe(
+      false
+    );
   });
 });
 
