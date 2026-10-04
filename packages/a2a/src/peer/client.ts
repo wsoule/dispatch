@@ -126,9 +126,10 @@ export class PeerClient {
         : (box.reason ?? null);
       throw new PeerHttpError(
         status,
-        shortMessage(`HTTP ${status}: ${raw}`),
+        `the peer answered HTTP ${status}`,
         box.retryAfterSec,
-        reason
+        reason,
+        shortMessage(raw)
       );
     }
   }

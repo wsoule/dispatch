@@ -22,7 +22,7 @@ import {
   UnresolvedHostError,
 } from '@dispatch/a2a';
 import type { A2AConfig } from '@dispatch/core';
-import { CredentialsUnreadableError } from '@dispatch/core';
+import { CredentialsUnreadableError, untrustedFenced } from '@dispatch/core';
 import type {
   Delivery,
   DeliveryEngine,
@@ -525,23 +525,27 @@ export class OutboundWorker {
       d.via,
       status === null
         ? `could not reach a2a:${row.alias} for 24 h`
-        : `a2a:${row.alias} refused the message: ${reason}`,
-      status !== null
+        : `a2a:${row.alias} refused the message (HTTP ${status})`,
+      status !== null,
+      err instanceof PeerHttpError ? err.peerText : null
     );
   }
 
   // Closes a direct question or handoff; tells the sender otherwise, or also.
+  // `reason` is Dispatch's own words; a peer's text rides only in the notice,
+  // fenced as external.
   private async giveUp(
     message: Message,
     via: 'direct' | 'channel',
     reason: string,
-    alsoNotice: boolean
+    alsoNotice: boolean,
+    peerText: string | null = null
   ): Promise<void> {
     const closable =
       via === 'direct' &&
       (message.kind === 'question' || message.kind === 'handoff');
     if (closable) this.closeQuietly(message.id, reason);
-    if (!closable || alsoNotice) await this.notice(message, reason);
+    if (!closable || alsoNotice) await this.notice(message, reason, peerText);
   }
 
   private closeQuietly(questionId: string, reason: string): void {
@@ -553,14 +557,22 @@ export class OutboundWorker {
     }
   }
 
-  private async notice(about: Message, body: string): Promise<void> {
+  private async notice(
+    about: Message,
+    body: string,
+    external: string | null = null
+  ): Promise<void> {
+    const text =
+      external === null || external === ''
+        ? body
+        : `${body}\n\n${untrustedFenced('external text, not from Dispatch', external)}`;
     await this.deps.engine
       .send(
         {
           to: [this.deps.engine.deliverableAddress(about.from)],
           kind: 'notice',
           replyTo: about.id,
-          body,
+          body: text,
           refs: [{ type: 'message', id: about.id }],
         },
         SYSTEM
@@ -867,7 +879,8 @@ export class OutboundWorker {
         this.finish(row, 'failed', reason);
         await this.notice(
           original,
-          `could not record a2a:${row.alias}'s reply: ${reason}`
+          `could not record a2a:${row.alias}'s reply`,
+          reason
         );
         return;
       }

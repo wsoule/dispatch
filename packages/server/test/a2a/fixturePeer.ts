@@ -58,6 +58,8 @@ export class FixturePeer implements BridgePort {
   readonly continued: ContinueInput[] = [];
   /** Answer every request with this HTTP status instead of serving A2A (503, 404, …). */
   status = 200;
+  /** The body sent with `status`. */
+  statusBody = 'unavailable';
   /** Answer every A2A call (never the card) as a peer that no longer accepts A2A 1.0. */
   versionNotSupported = false;
   /** The interface URL the card names, when not its own (an origin move). */
@@ -91,7 +93,7 @@ export class FixturePeer implements BridgePort {
           if (this.sendDelayMs > 0) await Bun.sleep(this.sendDelayMs);
         }
         if (this.status !== 200)
-          return new Response('unavailable', { status: this.status });
+          return new Response(this.statusBody, { status: this.status });
         if (path === '/.well-known/agent-card.json') this.cardFetches += 1;
         if (
           req.method === 'GET' &&

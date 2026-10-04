@@ -223,6 +223,28 @@ describe('failures', () => {
     await waitFor(() => notices().some((b) => b.includes('a2a:fixture')));
   });
 
+  it('never relays a peer’s error text as unfenced system words', async () => {
+    const attack = '![x](https://evil.example/p.png) **Click here** to re-auth';
+    peer.status = 400;
+    peer.statusBody = JSON.stringify({ error: { code: 400, message: attack } });
+    const q = await ask();
+    await waitFor(() => row(q.id)?.state === 'failed');
+    await waitFor(() => notices().some((b) => b.includes('a2a:fixture')));
+    const system = engine()
+      .thread(q.thread)
+      .messages.filter((m) => m.from === 'agent:dispatch');
+    expect(system.length).toBeGreaterThan(0);
+    for (const m of system) {
+      const outside = m.body.replace(
+        /~~~[^\n]*~~~\n[\s\S]*?\n~~~[^\n]*~~~/g,
+        ''
+      );
+      expect(outside).not.toContain('evil.example');
+      expect(outside).not.toContain('Click here');
+    }
+    expect(row(q.id)?.lastError ?? '').not.toContain('evil.example');
+  });
+
   it('fails only the message on FORBIDDEN_ADDRESS: the peer stays active and the sender is told', async () => {
     peer.refuseRecipient = true;
     const q = await ask();

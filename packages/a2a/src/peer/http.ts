@@ -5,12 +5,14 @@ import type { GuardOptions } from './guard.js';
 import { pinPublicUrl, UnresolvedHostError } from './guard.js';
 
 // A peer (or a card URL) failed: status null for network errors and timeouts.
+// `message` is Dispatch's words; whatever the peer said is in `peerText`.
 export class PeerHttpError extends Error {
   constructor(
     readonly status: number | null,
     message: string,
     readonly retryAfterSec: number | null = null,
-    readonly reason: string | null = null
+    readonly reason: string | null = null,
+    readonly peerText: string | null = null
   ) {
     super(message);
     this.name = 'PeerHttpError';
