@@ -1,5 +1,6 @@
-import { AgentCard, verifyAgentCardSignature } from '@a2a-js/sdk';
+import { AgentCard } from '@a2a-js/sdk';
 import { describe, expect, it } from 'bun:test';
+import { flattenedVerify, importJWK } from 'jose';
 import { generateKeyPairSync } from 'node:crypto';
 
 import {
@@ -12,6 +13,7 @@ import {
   signCard,
   unsignedCardEtag,
   unsignedCardJson,
+  verifyCardSignature,
 } from '../src/card.js';
 import type { CardInputs } from '../src/port.js';
 import { handoffStatuses, namedStatusVocabulary } from '../src/statuses.js';
@@ -156,35 +158,81 @@ function keyPair() {
 }
 
 describe('signed cards', () => {
-  it('signs the canonical card so the SDK verifies it, and a changed card fails', async () => {
+  // A verifier written from RFC 8785 alone: the served card minus
+  // `signatures`, keys sorted, ECMAScript string and number forms.
+  function referenceJcs(v: unknown): string {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return `[${v.map(referenceJcs).join(',')}]`;
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${referenceJcs(o[k])}`)
+      .join(',')}}`;
+  }
+  async function standardVerify(
+    served: Record<string, unknown>,
+    publicJwk: Record<string, string>
+  ): Promise<void> {
+    const { signatures, ...rest } = served as {
+      signatures: { protected: string; signature: string }[];
+    };
+    const payload = Buffer.from(referenceJcs(rest)).toString('base64url');
+    await flattenedVerify(
+      { payload, ...signatures[0] },
+      await importJWK(publicJwk, 'ES256')
+    );
+  }
+
+  async function signedServedCard(over: Partial<CardInputs> = {}) {
     const { privateJwk, publicJwk } = keyPair();
     const jku = 'https://acme-agent.example.com/.well-known/jwks.json';
-    const signatures = await signCard(unsignedCardJson(SIGNED), {
-      privateJwk,
-      kid: 'k1',
-      jku,
-    });
+    const signatures = await signCard(
+      unsignedCardJson({ ...SIGNED, ...over }),
+      {
+        privateJwk,
+        kid: 'k1',
+        jku,
+      }
+    );
+    const served = JSON.parse(
+      JSON.stringify(cardJson({ ...SIGNED, ...over, signatures }))
+    ) as Record<string, unknown>;
+    return { served, signatures, privateJwk, publicJwk, jku };
+  }
+
+  it('signs the RFC 8785 form of the full served card, so a plain JCS verifier passes', async () => {
+    const { served, signatures, privateJwk, publicJwk, jku } =
+      await signedServedCard();
     expect(signatures).toHaveLength(1);
     const header = JSON.parse(
       Buffer.from(signatures[0].protected, 'base64url').toString('utf8')
     ) as Record<string, string>;
     expect(header).toMatchObject({ alg: 'ES256', kid: 'k1', jku });
     expect(JSON.stringify(signatures)).not.toContain(String(privateJwk.d));
-    const verify = verifyAgentCardSignature((kid) => {
-      expect(kid).toBe('k1');
-      return Promise.resolve(publicJwk);
-    });
+    expect(served).toHaveProperty('securitySchemes');
+    await expect(standardVerify(served, publicJwk)).resolves.toBeUndefined();
     await expect(
-      verify(AgentCard.fromJSON(buildCardJson({ ...SIGNED, signatures })))
-    ).resolves.toBeUndefined();
+      verifyCardSignature(served, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(true);
     await expect(
-      verify(
-        AgentCard.fromJSON({
-          ...buildCardJson({ ...SIGNED, signatures }),
-          name: 'Evil API',
-        })
-      )
+      standardVerify({ ...served, name: 'Evil API' }, publicJwk)
     ).rejects.toThrow();
+  });
+
+  it('breaks when the auth scheme or its requirement is swapped', async () => {
+    const { served, publicJwk } = await signedServedCard();
+    const swapped = {
+      ...served,
+      securitySchemes: {
+        bearer: { apiKeySecurityScheme: { location: 'header', name: 'X-Key' } },
+      },
+    };
+    await expect(standardVerify(swapped, publicJwk)).rejects.toThrow();
+    await expect(
+      verifyCardSignature(swapped, () => Promise.resolve(publicJwk))
+    ).resolves.toBe(false);
+    const unrequired = { ...served, securityRequirements: [] };
+    await expect(standardVerify(unrequired, publicJwk)).rejects.toThrow();
   });
 
   it('keeps one ETag with and without signatures, and never puts the JWKS in the card', () => {

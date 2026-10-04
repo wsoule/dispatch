@@ -16,6 +16,7 @@ export {
   JWKS_PATH,
   offeredSkills,
   signCard,
+  verifyCardSignature,
   unsignedCardEtag,
   unsignedCardJson,
 } from './card.js';

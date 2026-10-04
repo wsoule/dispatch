@@ -1,10 +1,8 @@
-import {
-  AgentCard,
-  canonicalizeAgentCard,
-  generateAgentCardSignature,
-} from '@a2a-js/sdk';
+import { AgentCard } from '@a2a-js/sdk';
 import type { A2ASkill } from '@dispatch/core';
 import type { JsonValue } from '@dispatch/protocol';
+import { FlattenedSign, flattenedVerify, importJWK } from 'jose';
+import type { JWK } from 'jose';
 import { createHash } from 'node:crypto';
 
 import type { CardInputs, CardSignatureJson } from './port.js';
@@ -141,18 +139,36 @@ export function cardJson(inputs: CardInputs): unknown {
   return AgentCard.toJSON(buildCard(inputs));
 }
 
+// RFC 8785 (JCS): object keys sorted by UTF-16 code unit, strings and numbers
+// in their ECMAScript JSON forms, no whitespace.
+function jcs(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(jcs).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .filter((k) => record[k] !== undefined)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${jcs(record[k])}`)
+    .join(',')}}`;
+}
+
+// What a card signature covers: the card exactly as served, minus
+// `signatures`, in JCS. The SDK 1.2.0 canonicalizer drops securitySchemes and
+// securityRequirements, so a swapped auth scheme would still verify.
+function canonicalCard(card: Record<string, unknown>): string {
+  const served = AgentCard.toJSON(AgentCard.fromJSON(card)) as Record<
+    string,
+    unknown
+  >;
+  delete served.signatures;
+  return jcs(served);
+}
+
 // A strong ETag over the canonical card without its signatures, so a changed
 // card busts caches while a re-signed one (ES256 is randomized) does not.
 export function cardEtag(card: AgentCard): string {
   const digest = createHash('sha256')
-    .update(
-      canonicalizeAgentCard(
-        AgentCard.fromJSON({
-          ...(AgentCard.toJSON(card) as Record<string, unknown>),
-          signatures: [],
-        })
-      )
-    )
+    .update(canonicalCard(AgentCard.toJSON(card) as Record<string, unknown>))
     .digest('hex');
   return `"${digest.slice(0, 16)}"`;
 }
@@ -161,20 +177,54 @@ export function unsignedCardEtag(inputs: CardInputs): string {
   return cardEtag(AgentCard.fromJSON(unsignedCardJson(inputs)));
 }
 
-// A JWS over the JCS-canonical card (spec:791-794, A2A §8.4) with the SDK's
-// signer; ES256, with the key's kid and the jku its JWKS is served at.
+// A JWS over the JCS-canonical card (spec:791-794, A2A §8.4); ES256, with the
+// key's kid and the jku its JWKS is served at.
 export async function signCard(
   unsigned: Record<string, JsonValue>,
   key: { privateJwk: Record<string, JsonValue>; kid: string; jku: string }
 ): Promise<CardSignatureJson[]> {
-  const sign = generateAgentCardSignature(
-    key.privateJwk as unknown as Parameters<
-      typeof generateAgentCardSignature
-    >[0],
-    { alg: 'ES256', kid: key.kid, jku: key.jku, typ: 'JOSE' }
-  );
-  const signed = AgentCard.toJSON(await sign(AgentCard.fromJSON(unsigned))) as {
-    signatures?: CardSignatureJson[];
-  };
-  return signed.signatures ?? [];
+  const jws = await new FlattenedSign(
+    new TextEncoder().encode(canonicalCard(unsigned))
+  )
+    .setProtectedHeader({
+      alg: 'ES256',
+      kid: key.kid,
+      jku: key.jku,
+      typ: 'JOSE',
+    })
+    .sign(await importJWK(key.privateJwk as JWK, 'ES256'));
+  // A protected header is always set above, so jose always returns one.
+  return [{ protected: jws.protected ?? '', signature: jws.signature }];
+}
+
+// Whether any of a served card's signatures verifies over its JCS form under
+// the key `keyFor` returns for the signature's kid.
+export async function verifyCardSignature(
+  served: Record<string, unknown>,
+  keyFor: (kid: string, jku: string | undefined) => Promise<JWK>
+): Promise<boolean> {
+  const signatures = Array.isArray(served.signatures)
+    ? (served.signatures as CardSignatureJson[])
+    : [];
+  const payload = Buffer.from(canonicalCard(served)).toString('base64url');
+  for (const sig of signatures) {
+    try {
+      const header = JSON.parse(
+        Buffer.from(sig.protected, 'base64url').toString('utf8')
+      ) as { kid?: string; jku?: string };
+      if (header.kid === undefined) continue;
+      const key = await importJWK(
+        await keyFor(header.kid, header.jku),
+        'ES256'
+      );
+      await flattenedVerify(
+        { payload, protected: sig.protected, signature: sig.signature },
+        key
+      );
+      return true;
+    } catch {
+      // Try the next signature.
+    }
+  }
+  return false;
 }
