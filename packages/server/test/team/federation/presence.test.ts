@@ -54,6 +54,19 @@ describe('presence', () => {
     ).not.toContain('presence');
   });
 
+  // FW-R31(4) for every publish: nothing goes to a team this machine is
+  // not firmly in.
+  it('publishes no presence while the founding pin is not firm', async () => {
+    open = await foundedTeam('ada', 'bob');
+    at(1).fed.setMeta('founder_pin', 'auto');
+    const before = at(1).fed.head()?.seq;
+    at(1).startRun({ id: 'r-0000000000b1', taskId: null, kind: 'review' });
+    at(1).presence.collect(
+      new Date(at(1).clock.now.getTime() + 2 * 60 * 60 * 1000)
+    );
+    expect(at(1).fed.head()?.seq).toBe(before);
+  });
+
   it('binds a run id to its first claimant and refuses a second claim with a problem', async () => {
     open = await foundedTeam('ada', 'bob', 'cy');
     at(1).startRun({
@@ -105,6 +118,30 @@ describe('presence', () => {
       .find((x) => x.message.includes('r-0000000000ab'));
     expect(p?.message).toContain('bob');
     expect(p?.message).toContain('cy');
+  });
+
+  // A conflict is not a race to post next: a later update from one claimant
+  // alone binds nothing until the conflict settles.
+  it('keeps a conflicted run unbound until all but one claimant is revoked', async () => {
+    open = await foundedTeam('ada', 'bob', 'cy');
+    const run = 'r-0000000000ac';
+    at(1).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    at(2).startRun({ id: run, taskId: 't-00000a01', kind: 'execute' });
+    await at(1).service.syncNow();
+    await at(2).service.syncNow();
+    await at(0).service.syncNow();
+    expect(at(0).hooks.remoteRunTask(run)).toBeNull();
+    // Bob alone posts again: still conflicted.
+    at(1).presence.waitingOn(run, 'ada');
+    await at(0).settleWith(at(1));
+    expect(at(0).hooks.remoteRunTask(run)).toBeNull();
+    expect(at(0).homes.taskLiveRun('t-00000a01')).toBeNull();
+    // Cy is revoked: bob's next update binds it.
+    at(0).roster.revoke(at(2).fed.replica, 'claimed a run it does not run');
+    await at(0).service.syncNow();
+    at(1).presence.waitingOn(run, null);
+    await at(0).settleWith(at(1));
+    expect(at(0).hooks.remoteRunTask(run)).toBe('t-00000a01');
   });
 
   it('refuses a claim on a run this machine is running', async () => {

@@ -38,6 +38,12 @@ export function speaksFor(input: {
       )
       .get(p.id);
     if (bound !== null) return bound.replica === replica;
+    const contested = fed.db
+      .query<{ run: string }, [string]>(
+        'SELECT run FROM fed_run_conflicts WHERE run = ?'
+      )
+      .get(p.id);
+    if (contested !== null) return false;
     const claims = evidence.runs.get(p.id);
     if (claims === undefined) return null;
     return claims.length === 1 && claims[0] === replica;

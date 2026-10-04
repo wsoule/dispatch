@@ -41,7 +41,8 @@ export class AgentSync implements Collector, OpHandler {
   /** Publishes each local agent row that differs from what went out last. */
   collect(): void {
     const { fed, roster, messages } = this.deps;
-    if (fed.head() === null || !roster.isAdmitted(fed.replica)) return;
+    // FW-R31(4): nothing goes to a team this machine is not firmly in.
+    if (fed.head() === null || !roster.mailReady()) return;
     for (const a of messages.agents()) {
       if (a.tokenHash.startsWith(REMOTE_TOKEN_PREFIX)) continue;
       if (isFederationLocalAddress(a.address)) continue;

@@ -56,6 +56,15 @@ describe('agents across daemons', () => {
     expect(JSON.stringify(ops)).not.toContain('a'.repeat(64));
   });
 
+  it('publishes no agent while the founding pin is not firm', async () => {
+    open = await foundedTeam('ada', 'bob');
+    at(1).fed.setMeta('founder_pin', 'auto');
+    const before = at(1).fed.head()?.seq;
+    at(1).messages.putAgent(agent('agent:bob/codex'));
+    at(1).agents.collect();
+    expect(at(1).fed.head()?.seq).toBe(before);
+  });
+
   it('publishes a change once, and again only when it changes', async () => {
     open = await foundedTeam('ada', 'bob');
     const agentOps = () =>

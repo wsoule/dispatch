@@ -148,15 +148,8 @@ export class Presence implements Collector, OpHandler {
       );
       return 'dropped';
     }
-    if (bound === null && claims.length > 1) {
-      const names = claims.map((r) => roster.label(r)).sort();
-      this.conflict(
-        body.run,
-        `${names.join(' and ')} each claim run ${body.run} first; it is bound to neither`,
-        claims
-      );
+    if (bound === null && this.contested(body.run, claims, ctx))
       return 'dropped';
-    }
     fed.db
       .query(
         'INSERT OR REPLACE INTO fed_runs (run, replica, task, run_kind, live, waiting_on, hlc) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -173,6 +166,54 @@ export class Presence implements Collector, OpHandler {
     if (body.live && body.runKind === 'execute' && body.task !== null)
       this.deps.onLiveRun?.(body.task, p, op.hlc);
     return 'applied';
+  }
+
+  // Whether an unbound run is contested: two first claims in one pull open a
+  // conflict, and it stays open, whoever posts next, until at most `p` still
+  // stands among its claimants (an admin revoked the rest).
+  private contested(run: string, claims: string[], ctx: StageContext): boolean {
+    const { fed, roster } = this.deps;
+    const held = fed.db
+      .query<{ replicas_json: string }, [string]>(
+        'SELECT replicas_json FROM fed_run_conflicts WHERE run = ?'
+      )
+      .get(run);
+    const all = [
+      ...new Set([
+        ...(held === null ? [] : (JSON.parse(held.replicas_json) as string[])),
+        ...claims,
+      ]),
+    ].sort();
+    if (held === null && all.length < 2) return false;
+    const standing = all.filter(
+      (r) => ctx.view.members.has(r) && !ctx.view.revoked.has(r)
+    );
+    if (
+      standing.length === 1 &&
+      claims.length === 1 &&
+      standing[0] === claims[0]
+    ) {
+      fed.db.query('DELETE FROM fed_run_conflicts WHERE run = ?').run(run);
+      fed.clearProblem(`run-conflict:${run}`);
+      return false;
+    }
+    fed.db
+      .query(
+        'INSERT OR REPLACE INTO fed_run_conflicts (run, replicas_json) VALUES (?, ?)'
+      )
+      .run(run, JSON.stringify(all));
+    if (held === null)
+      this.conflict(
+        run,
+        `${all
+          .map((r) => roster.label(r))
+          .sort()
+          .join(
+            ' and '
+          )} each claim run ${run} first; it is bound to neither until an admin revokes all but one`,
+        all
+      );
+    return true;
   }
 
   // FW-R31(3): the run-conflict note can be acknowledged.
@@ -220,14 +261,11 @@ export class Presence implements Collector, OpHandler {
     this.deps.changed?.();
   }
 
-  // Presence goes out only once this machine is admitted: a pending
-  // replica's chain must stay its key op then its first roster op, which is
-  // all a reader reads of it (FW-R26(4)).
+  // Presence goes out only once this machine is admitted under a firm pin
+  // (FW-R31(4)); a pending replica's chain stays its key op then its first
+  // roster op, all a reader reads of it (FW-R26(4)).
   private canPublish(): boolean {
-    return (
-      this.deps.fed.head() !== null &&
-      this.deps.roster.isAdmitted(this.deps.fed.replica)
-    );
+    return this.deps.fed.head() !== null && this.deps.roster.mailReady();
   }
 
   private row(run: string): RunRow | null {

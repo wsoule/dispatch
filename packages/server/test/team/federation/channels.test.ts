@@ -31,6 +31,15 @@ describe('channels across daemons', () => {
     expect(at(0).messages.members('ops')).toEqual(['human:bob']);
   });
 
+  it('publishes no membership while the founding pin is not firm', async () => {
+    open = await foundedTeam('ada', 'bob');
+    at(1).fed.setMeta('founder_pin', 'auto');
+    const before = at(1).fed.head()?.seq;
+    at(1).engine.join('ops', 'human:bob');
+    at(1).channels.collect();
+    expect(at(1).fed.head()?.seq).toBe(before);
+  });
+
   it('keeps the newer of a join and a leave made concurrently', async () => {
     open = await foundedTeam('ada', 'bob');
     at(0).engine.join('ops', 'human:cy');

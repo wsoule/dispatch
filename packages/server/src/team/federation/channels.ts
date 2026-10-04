@@ -58,7 +58,8 @@ export class ChannelSync implements Collector, OpHandler {
    *  heard of, so channels that predate the founding carry over. */
   collect(): void {
     const { fed, roster, messages } = this.deps;
-    if (fed.head() === null || !roster.isAdmitted(fed.replica)) return;
+    // FW-R31(4): nothing goes to a team this machine is not firmly in.
+    if (fed.head() === null || !roster.mailReady()) return;
     if (!this.seeded) {
       this.seeded = true;
       for (const { name } of messages.channels())
