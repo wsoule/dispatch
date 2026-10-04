@@ -430,8 +430,14 @@ export function openSqliteDb(dbPath: string): SqliteDatabase {
   // usual pairing — a crash can lose the last commit, never corrupt.
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
+  // A short wait rides out another writer's commit without stalling the event
+  // loop; past it SQLITE_BUSY surfaces, and the API answers 503 to retry.
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   return db;
 }
+
+/** How long a statement waits on a locked database before SQLITE_BUSY. */
+export const SQLITE_BUSY_TIMEOUT_MS = 100;
 
 export function openDispatchDb(dbPath: string): SqliteDatabase {
   const db = openSqliteDb(dbPath);

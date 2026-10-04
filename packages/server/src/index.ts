@@ -49,6 +49,7 @@ import {
   validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
@@ -2217,6 +2218,8 @@ async function bootServer(
       // never carry stack traces — log server-side, return opaque JSON.
       error(err) {
         console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
+        const storage = storageErrorResponse(err);
+        if (storage !== null) return storage;
         return new Response(JSON.stringify({ error: 'internal error' }), {
           status: 500,
           headers: {

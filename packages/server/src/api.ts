@@ -114,6 +114,7 @@ import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import {
   closeTerminal,
   createTerminal,
@@ -6672,6 +6673,9 @@ export async function handleApi(
       if (err.field !== undefined) body.field = err.field;
       return jsonResponse(body, err.status);
     }
+    // A busy database is 503 to retry; a write the disk refused is 507.
+    const storage = storageErrorResponse(err);
+    if (storage !== null) return storage;
     throw err;
   }
 }
