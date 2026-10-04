@@ -326,4 +326,37 @@ describe('rival key claims (FW-R24)', () => {
     await ada.service.syncNow();
     expect(performance.now() - started).toBeLessThan(200);
   });
+
+  // FW-R28: a key an admitted member's admit names that no read found is
+  // scanned for outside the caps, with a problem while it is missing.
+  it('scans for a named key no read found, and names it while it is missing', async () => {
+    const {
+      remote,
+      make,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const bobKey = (remote.logs.get(bob.fed.replica) ?? []).find(
+      (e) => e.type === 'key'
+    );
+    if (bobKey === undefined) throw new Error('no key op for bob');
+    remote.gone.add(bobKey);
+    const cy = make('cy');
+    await settle(ada, cy);
+    expect(
+      cy.fed
+        .problems()
+        .some((p) => p.subject === `key:missing:${bob.fed.replica}`)
+    ).toBe(true);
+    remote.gone.delete(bobKey);
+    remote.hidden.add(bobKey);
+    await settle(cy);
+    expect(cy.fed.pinned(bob.fed.replica)?.fingerprint).toBe(fp(bob));
+    expect(
+      cy.fed.problems().some((p) => p.subject.startsWith('key:missing:'))
+    ).toBe(false);
+  });
 });

@@ -1,7 +1,13 @@
 import type { JsonValue } from '@dispatch/protocol';
-import { buildOp, opHash, stubOf } from '@dispatch/protocol/federation';
+import {
+  buildOp,
+  generateReplicaKeys,
+  opHash,
+  stubOf,
+  ZERO_HASH,
+} from '@dispatch/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { Member } from './cluster.js';
@@ -120,4 +126,46 @@ export function appendSignedOp(
     `${readFileSync(file, 'utf8')}${JSON.stringify(built)}\n`
   );
   return built;
+}
+
+/** Puts a junk line before everything in the replica's first segment. */
+export function prependJunk(dir: string, replica: string): void {
+  const segDir = join(dir, 'fed', replica);
+  const first = readdirSync(segDir)
+    .filter((n) => /^\d{12}\.jsonl$/.test(n))
+    .sort()[0];
+  if (first === undefined) throw new Error(`no segment for ${replica}`);
+  const file = join(segDir, first);
+  writeFileSync(file, `{"junk":true}\n${readFileSync(file, 'utf8')}`);
+}
+
+/** A key op claiming `replica`'s id with a key of its own, in a file named
+ *  `name` under that id: a rival claim no roster op names. */
+export function rivalClaimFile(
+  dir: string,
+  replica: string,
+  name: string,
+  ms: number
+): void {
+  const k = generateReplicaKeys();
+  const op = buildOp(
+    {
+      replica,
+      seq: 1,
+      prev: ZERO_HASH,
+      hlc: `${String(ms).padStart(13, '0')}.0000.${replica}`,
+      type: 'key',
+      body: {
+        handle: 'mallory',
+        device: 'x',
+        build: '0',
+        signPub: k.signPub,
+        sealPub: k.sealPub,
+        legacy: null,
+      },
+    },
+    k.signPriv
+  );
+  mkdirSync(join(dir, 'fed', replica), { recursive: true });
+  writeFileSync(join(dir, 'fed', replica, name), `${JSON.stringify(op)}\n`);
 }

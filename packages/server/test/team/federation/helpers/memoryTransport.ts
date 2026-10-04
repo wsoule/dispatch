@@ -14,6 +14,10 @@ export class MemoryRemote {
   /** Publishes land in the clone but every push is refused (a git merge
    *  that keeps failing): they wait as unpublished. */
   rejectPush = false;
+  /** Lines a pull's probes never reach, which only a full scan finds. */
+  hidden = new Set<LogEntry>();
+  /** Lines on no file at all. */
+  gone = new Set<LogEntry>();
   tamper(
     replica: string,
     seq: number,
@@ -60,8 +64,20 @@ export class MemoryTransport implements FederationTransport {
     this.lastError = null;
     return Promise.resolve(
       [...this.remote.logs].flatMap(([r, log]) =>
-        log.filter((e) => e.seq > (since.get(r) ?? 0))
+        log.filter(
+          (e) =>
+            e.seq > (since.get(r) ?? 0) &&
+            !this.remote.hidden.has(e) &&
+            !this.remote.gone.has(e)
+        )
       )
+    );
+  }
+  scan(replicas: readonly string[] | null): Promise<LogEntry[]> {
+    return Promise.resolve(
+      [...this.remote.logs]
+        .filter(([r]) => replicas === null || replicas.includes(r))
+        .flatMap(([, log]) => log.filter((e) => !this.remote.gone.has(e)))
     );
   }
   ack(): Promise<void> {

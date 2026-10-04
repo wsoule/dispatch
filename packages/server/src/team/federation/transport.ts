@@ -22,6 +22,10 @@ export interface FederationTransport {
   publish(ops: FederatedOp[]): Promise<void>;
   pull(since: Watermarks): Promise<LogEntry[]>;
   ack(through: Watermarks): Promise<void>;
+  /** Every line on the branch from these replicas' files (all ids when
+   *  null), outside the per-pass caps: for a key op a roster op names that
+   *  no probe found (FW-R28). */
+  scan(replicas: readonly string[] | null): Promise<LogEntry[]>;
   /** Who the transport sees connected, or null when it cannot tell (git). */
   presence(): { replica: string; since: string }[] | null;
   health(): TransportHealth;

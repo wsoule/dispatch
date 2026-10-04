@@ -478,6 +478,56 @@ describe('the read budget (FW-R23 hint)', () => {
     expect(a.lastPassBytes()).toBeGreaterThan(24 * 1024 * 1024);
   });
 
+  // FW-R28: a probe finds a key op anywhere in a file's head, in any file,
+  // so neither a junk first line nor junk files named first hide it.
+  it('finds an unknown id’s key op behind a junk line and behind 16 junk files', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const keyOpFor = (id: string) => {
+      const k = generateReplicaKeys();
+      return buildOp(
+        {
+          replica: id,
+          seq: 1,
+          prev: ZERO_HASH,
+          hlc: `0000000002000.0000.${id}`,
+          type: 'key',
+          body: {
+            handle: 'x',
+            device: 'x',
+            build: '0',
+            signPub: k.signPub,
+            sealPub: k.sealPub,
+            legacy: null,
+          },
+        },
+        k.signPriv
+      );
+    };
+    const lined = 'bob-0000000b';
+    mkdirSync(join(dir, 'a', 'fed', lined), { recursive: true });
+    writeFileSync(
+      join(dir, 'a', 'fed', lined, '000000000001.jsonl'),
+      `{"junk":true}\n${JSON.stringify(keyOpFor(lined))}\n`
+    );
+    const filed = 'cy-0000000c';
+    mkdirSync(join(dir, 'a', 'fed', filed), { recursive: true });
+    for (let n = 1; n <= 16; n++)
+      writeFileSync(
+        join(dir, 'a', 'fed', filed, `${String(n).padStart(12, '0')}.jsonl`),
+        '{"junk":true}\n'
+      );
+    writeFileSync(
+      join(dir, 'a', 'fed', filed, '000000000017.jsonl'),
+      `${JSON.stringify(keyOpFor(filed))}\n`
+    );
+    const read = a.readV2(new Map(), { tier: () => 2, maxUnknown: 8 });
+    const keyed = new Set(
+      read.filter((e) => e.type === 'key').map((e) => e.replica)
+    );
+    expect([...keyed].sort()).toEqual([lined, filed]);
+  });
+
   it('sees an append to a segment it already read', async () => {
     const a = clone('a', A);
     await a.ensure();

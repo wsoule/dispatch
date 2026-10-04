@@ -166,9 +166,22 @@ function readHints(fed: FedStore, roster: RosterService): ReadHints {
     if (row.hash !== null) heads.set(row.replica, row.hash);
   // FW-R26(4): admitted members first, then other ids with a cursor; an id
   // with only a claim is read to its key op and first roster op, a few a pass.
-  const members = roster.view()?.members;
+  const view = roster.view();
+  const members = view?.members;
+  // FW-R28: an id an accepted admit, recover or the founding names is read
+  // as a member, as is one an admit names whose key no read has found yet.
+  const named = new Set<string>([
+    ...(view?.boundKeys.keys() ?? []),
+    ...(view?.revoked.keys() ?? []),
+    ...(view === null ? [] : [view.founder]),
+    ...roster.missingNamedKeys().map((m) => m.replica),
+  ]);
   const tier = (r: string): number =>
-    r === fed.replica || members?.has(r) === true ? 0 : heads.has(r) ? 1 : 2;
+    r === fed.replica || members?.has(r) === true
+      ? 0
+      : named.has(r) || heads.has(r)
+        ? 1
+        : 2;
   return {
     heads,
     tier,

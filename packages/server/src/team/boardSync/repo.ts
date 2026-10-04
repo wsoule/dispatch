@@ -3,6 +3,7 @@ import {
   opHash,
   REPLICA_ID,
   stubOf,
+  ZERO_HASH,
 } from '@dispatch/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 import {
@@ -76,10 +77,6 @@ const READ_BUDGET_BYTES = 2 * MAX_SEGMENT_READ;
 const TOTAL_READ_BYTES = 32 * 1024 * 1024;
 const MAX_UNKNOWN_IDS = 8;
 const KEY_PROBE_BYTES = 64 * 1024;
-// Files of an unknown id whose first line a probe reads, and the key ops it
-// keeps (an id's honest key op may sit behind junk files named before it).
-const MAX_KEY_PROBES = 16;
-const MAX_PROBED_KEYS = 4;
 // The whole read cache, across replicas.
 const MAX_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_V1_READ = 256 * 1024 * 1024;
@@ -165,6 +162,8 @@ export class SyncRepo {
   private passBytes = 0;
   /** Where the next pass starts probing claim-only ids (FW-R26(4)). */
   private probeStart = 0;
+  /** Per probed id, which of its files the next probe starts at. */
+  private readonly probeFileStart = new Map<string, number>();
   private readonly segmentInfo = new Map<string, SegmentInfo>();
   /** Merges given up for the remote tree since the last takeResets(). */
   private resets: string[] = [];
@@ -479,42 +478,72 @@ export class SyncRepo {
     return out;
   }
 
+  /** Every complete line of these replicas' segments (every replica when
+   *  null), read whole within the per-file cap and outside every pass budget:
+   *  FW-R28's scan for a named key op no probe found. */
+  scanFull(replicas: readonly string[] | null): LogEntry[] {
+    const root = join(this.dir, FED_DIR);
+    const ids =
+      replicas ??
+      listDir(root).filter((r) => REPLICA_ID.test(r) && realDir(join(root, r)));
+    const out: LogEntry[] = [];
+    for (const replica of ids) {
+      if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
+      for (const name of this.segments(replica))
+        for (const line of completeLines(join(root, replica, name))) {
+          const entry = parseEntry(line);
+          if (entry?.replica === replica) out.push(entry);
+        }
+    }
+    return out;
+  }
+
   /** Fresh segment bytes the last readV2 read. */
   lastPassBytes(): number {
     return this.passBytes;
   }
 
-  // A claim-only or unknown id's key ops, each with its chain's first roster
-  // op: the first lines of its first MAX_KEY_PROBES files, KEY_PROBE_BYTES
-  // each.
+  // FW-R28: a claim-only or unknown id's key ops, found anywhere in each
+  // file's first KEY_PROBE_BYTES, each with the next roster op after it (its
+  // chain's first, which may be its recover). Every file, in no name order,
+  // within the pass budget, from where the last pass stopped.
   private probeKeyOps(
     root: string,
     replica: string,
     total: number
   ): LogEntry[] {
     const out: LogEntry[] = [];
-    for (const name of this.segments(replica).slice(0, MAX_KEY_PROBES)) {
+    const names = this.segments(replica);
+    const start =
+      names.length === 0
+        ? 0
+        : (this.probeFileStart.get(replica) ?? 0) % names.length;
+    const turn = [...names.slice(start), ...names.slice(0, start)];
+    let read = 0;
+    for (const name of turn) {
       if (this.passBytes + KEY_PROBE_BYTES > total) break;
+      read += 1;
       const head = readHead(join(root, replica, name), KEY_PROBE_BYTES);
       if (head === null) continue;
       this.passBytes += Buffer.byteLength(head);
       const lines = head
         .slice(0, Math.max(0, head.lastIndexOf('\n')))
         .split('\n');
-      const first = parseEntry(lines[0] ?? '');
-      if (first?.replica !== replica || first.type !== 'key') continue;
-      out.push(first);
-      // The chain's first roster op, which may be its recover.
-      for (const line of lines.slice(1)) {
+      let wantRoster = false;
+      for (const line of lines) {
         const entry = parseEntry(line);
         if (entry?.replica !== replica) continue;
-        if (entry.type === 'roster') {
+        if (entry.type === 'key' && entry.prev === ZERO_HASH) {
           out.push(entry);
-          break;
+          wantRoster = true;
+        } else if (wantRoster && entry.type === 'roster') {
+          out.push(entry);
+          wantRoster = false;
         }
       }
-      if (out.filter((e) => e.type === 'key').length >= MAX_PROBED_KEYS) break;
     }
+    // Cut short by the pass budget: the next probe starts where this stopped.
+    this.probeFileStart.set(replica, start + read);
     return out;
   }
 

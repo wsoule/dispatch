@@ -900,6 +900,46 @@ export class RosterService {
     });
   }
 
+  /** FW-R28: each (id, fingerprint) an admitted member's admit names that no
+   *  stored claim carries. */
+  missingNamedKeys(): { replica: string; fingerprint: string }[] {
+    const view = this.view();
+    if (view === null) return [];
+    const out = new Map<string, { replica: string; fingerprint: string }>();
+    for (const r of this.rows()) {
+      if (!view.members.has(r.replica)) continue;
+      if (view.boundKeys.get(r.replica) !== r.sign_pub) continue;
+      const body = JSON.parse(r.body_json) as {
+        action?: unknown;
+        replica?: unknown;
+        fingerprint?: unknown;
+      };
+      if (
+        body.action !== 'admit' ||
+        typeof body.replica !== 'string' ||
+        typeof body.fingerprint !== 'string'
+      )
+        continue;
+      const { replica, fingerprint: fp } = body as {
+        replica: string;
+        fingerprint: string;
+      };
+      if (this.fed.claims(replica).some((c) => c.fingerprint === fp)) continue;
+      out.set(`${replica}\n${fp}`, { replica, fingerprint: fp });
+    }
+    return [...out.values()];
+  }
+
+  /** FW-R28: the team a held invite names while no founding of it is seen. */
+  awaitedTeam(): string | null {
+    const invite = this.bindingInvite();
+    if (invite === null) return null;
+    const seen = this.foundings().some(
+      (f) => f.hash.slice(0, 32) === invite.teamId
+    );
+    return seen ? null : invite.teamId;
+  }
+
   /** Each claim on an id the roster has not admitted yet, rival claims
    *  included (FW-R26(3)), for `waiting`. */
   waitingClaims(): PinnedKey[] {

@@ -21,6 +21,8 @@ import type { Cluster, Member } from './harness/cluster.js';
 import {
   appendSignedOp,
   forgeLastTaskLine,
+  prependJunk,
+  rivalClaimFile,
   stubLastTaskLine,
 } from './harness/forge.js';
 import { legacyClient, olderBuildEdit } from './harness/legacyClient.js';
@@ -425,6 +427,86 @@ describe('board convergence over signed ops', () => {
           w.replica.startsWith('mal-')
         )
       ).toBe(false);
+    },
+    SLOW
+  );
+
+  // FW-R28, the re-verify's R11a: one junk line before bob's key op must not
+  // hide bob, and with him his revocation of mal, from a new machine.
+  it(
+    "finds a member's key op behind a junk line, so a new machine keeps his revocation",
+    async () => {
+      const c = await team(['ada', 'bob', 'mal']);
+      const [ada, bob, mal] = c.members as [Member, Member, Member];
+      const bobId = await bob.handle.replica();
+      const malId = await mal.handle.replica();
+      await ada.handle.api(`/api/team/keys/${bobId}/role`, {
+        method: 'POST',
+        body: JSON.stringify({ role: 'admin' }),
+      });
+      await quiesce(c.members);
+      await bob.handle.api(`/api/team/keys/${malId}/revoke`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'left' }),
+      });
+      await quiesce(c.members);
+      const fromBob = await bob.handle.create('from bob');
+      const late = await mal.handle.create('after the revocation');
+      await quiesce(c.members);
+      editRemote(c.remote, (dir) => prependJunk(dir, bobId));
+      const cy = await c.add('cy');
+      await quiesce(c.members);
+      await ada.handle.admit(cy.handle);
+      await quiesce(c.members);
+      expect(await cy.handle.title(fromBob)).toBe('from bob');
+      expect(await cy.handle.title(late)).toBeNull();
+      expect(
+        (await cy.handle.keys()).roster.map((r) => r.replica)
+      ).not.toContain(malId);
+    },
+    SLOW
+  );
+
+  // R11b: the same on the founder's segment must not leave a new machine
+  // unfounded.
+  it(
+    "finds the founding behind a junk line in the founder's segment",
+    async () => {
+      const c = await team(['ada']);
+      const [ada] = c.members as [Member];
+      const adaId = await ada.handle.replica();
+      const teamId = (await ada.handle.keys()).team?.id;
+      editRemote(c.remote, (dir) => prependJunk(dir, adaId));
+      const cy = await c.add('cy');
+      await quiesce(c.members);
+      expect((await cy.handle.keys()).team?.id).toBe(teamId);
+    },
+    SLOW
+  );
+
+  // N2, the re-verify's R13: four unnamed claims on a new machine's id are
+  // stored first; the admin still admits its real key.
+  it(
+    'admits a new machine by fingerprint past unnamed claims stored before its key',
+    async () => {
+      const c = await team(['ada']);
+      const [ada] = c.members as [Member];
+      const dee = await c.add('dee');
+      const deeId = (await dee.handle.keys()).machine.replica;
+      dee.handle.partition(true);
+      editRemote(c.remote, (dir) => {
+        for (let n = 1; n <= 4; n++)
+          rivalClaimFile(dir, deeId, `00000000000${n}.jsonl`, ada.clock.ms);
+      });
+      await quiesce([ada]);
+      dee.handle.partition(false);
+      await quiesce(c.members);
+      const { machine } = await dee.handle.keys();
+      const admitted = await ada.handle.api(`/api/team/keys/${deeId}/admit`, {
+        method: 'POST',
+        body: JSON.stringify({ fingerprint: machine.fingerprint }),
+      });
+      expect([admitted.status, admitted.body?.error]).toEqual([200, undefined]);
     },
     SLOW
   );

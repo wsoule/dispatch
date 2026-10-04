@@ -6,6 +6,7 @@ import {
 } from '@dispatch/federation';
 import type { LogCursor, RosterView } from '@dispatch/federation';
 import {
+  fingerprint as fingerprintOf,
   hlcWallMs,
   isStub,
   MAX_CLOCK_LEAD_MS,
@@ -346,6 +347,7 @@ export class FederationService {
       const verified = this.verify(entries);
       this.afterFold(before);
       const changed = this.stage(verified, v1Ops, now);
+      await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
       await transport.ack(this.watermarks());
       if (fed.outbox().length > 0) this.notifyLocalChange();
@@ -421,33 +423,91 @@ export class FederationService {
         return;
       }
       const claims = this.opts.fed.claims().length;
-      for (const [replica, list] of byReplica(entries)) {
-        if (replica === this.opts.fed.replica) continue;
-        // Each key op's chain on its own: a rival claim never hides a founding.
-        for (const k of keyOps(list)) {
-          const r = verifyLog(
-            replica,
-            chainFrom(list, null, keyOpSignPub(k)).chain,
-            { head: null, halted: null },
-            null
-          );
-          for (const { entry, hash } of r.accepted) {
-            if (
-              isStub(entry) ||
-              (entry.type !== 'key' && entry.type !== 'roster')
-            )
-              continue;
-            const named = entry.type === 'key' && namesItself(list, k);
-            if (
-              this.opts.roster.applyVerified(entry, hash, { named }) === 'held'
-            )
-              break;
-          }
-        }
-      }
+      this.readFoundings(entries);
       if (this.opts.fed.claims().length === claims) break;
     }
+    // FW-R28: a held invite names a team whose founding no read has shown;
+    // every file is scanned until it shows, with a problem while it is missing.
+    const awaited = this.opts.roster.awaitedTeam();
+    if (!this.opts.roster.founded() && awaited !== null) {
+      this.readFoundings(await this.opts.transport.scan(null));
+      if (this.opts.roster.awaitedTeam() === null)
+        this.opts.fed.clearProblem('team:founding');
+      else
+        this.opts.fed.problem(
+          'team:founding',
+          `the invite this machine joined with is for team ${awaited}, whose founding is on no file of the sync branch this machine can read yet; it keeps looking. Check the invite came from this repository's team.`
+        );
+    }
     if (this.opts.fed.outbox().length > 0) this.notifyLocalChange();
+  }
+
+  // Each key op's chain on its own, its key and roster ops applied: a rival
+  // claim never hides a founding.
+  private readFoundings(entries: LogEntry[]): void {
+    for (const [replica, list] of byReplica(entries)) {
+      if (replica === this.opts.fed.replica) continue;
+      for (const k of keyOps(list)) {
+        const r = verifyLog(
+          replica,
+          chainFrom(list, null, keyOpSignPub(k)).chain,
+          { head: null, halted: null },
+          null
+        );
+        for (const { entry, hash } of r.accepted) {
+          if (
+            isStub(entry) ||
+            (entry.type !== 'key' && entry.type !== 'roster')
+          )
+            continue;
+          const named = entry.type === 'key' && namesItself(list, k);
+          if (this.opts.roster.applyVerified(entry, hash, { named }) === 'held')
+            break;
+        }
+      }
+    }
+  }
+
+  /** FW-R28: the key op an admit names that no probe found, from a scan of
+   *  that id's files outside the caps; true once a claim with it is held. */
+  async findKey(replica: string, fingerprint: string): Promise<boolean> {
+    const entries = await this.opts.transport.scan([replica]);
+    for (const k of keyOps(entries.filter((e) => e.replica === replica))) {
+      const body = k.body as { signPub?: unknown; sealPub?: unknown };
+      if (
+        typeof body.signPub !== 'string' ||
+        typeof body.sealPub !== 'string' ||
+        fingerprintOf(body.signPub, body.sealPub) !== fingerprint
+      )
+        continue;
+      this.opts.roster.applyVerified(k, opHash(k), { named: true });
+    }
+    return this.opts.fed
+      .claims(replica)
+      .some((c) => c.fingerprint === fingerprint);
+  }
+
+  // FW-R28: every key an admitted member's admit names but no read has
+  // stored is looked for in its id's files, with a problem while missing.
+  private async findNamedKeys(): Promise<void> {
+    const { fed, roster } = this.opts;
+    const missing = roster.missingNamedKeys();
+    for (const { replica, fingerprint } of missing) {
+      const found = await this.findKey(replica, fingerprint);
+      const subject = `key:missing:${replica}`;
+      if (found) fed.clearProblem(subject);
+      else
+        fed.problem(
+          subject,
+          `an admit names key ${fingerprint} for ${replica}, but no file of the sync branch this machine can read holds it yet; it keeps looking. If it never shows, revoke ${replica} and admit its machine again.`
+        );
+    }
+    for (const p of fed.problems())
+      if (
+        p.subject.startsWith('key:missing:') &&
+        !missing.some((m) => `key:missing:${m.replica}` === p.subject)
+      )
+        fed.clearProblem(p.subject);
   }
 
   // The people the license covers on the v1 branch, as BoardSyncService did.

@@ -383,6 +383,14 @@ async function keyAction(
     case 'admit': {
       if (typeof body.fingerprint !== 'string')
         throw new RosterError('invalid', 'fingerprint is required');
+      // FW-R28: junk claims stored first never keep out the real key; its
+      // id's files are scanned for the fingerprint before any refusal.
+      if (
+        !fedCtx.fed
+          .claims(replica)
+          .some((c) => c.fingerprint === body.fingerprint)
+      )
+        await service.findKey(replica, body.fingerprint);
       const role = body.role === 'admin' ? 'admin' : 'member';
       const hosts = Array.isArray(body.hosts)
         ? body.hosts.filter((h): h is string => typeof h === 'string')
