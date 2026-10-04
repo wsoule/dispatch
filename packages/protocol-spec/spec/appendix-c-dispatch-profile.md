@@ -71,7 +71,7 @@ types below, and a host that claims the profile declares all eight
 | `agent-registration` | system            | approve, deny                  | `agent`, `client`, `requestedBy`?                                              |
 | `overseer-action`    | system            | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
 | `task-proposal`      | system            | approve, decline               | `task`, `proposedBy`, `message`                                                |
-| `memory`             | system-or-decider | approve, reject                | `proposalId`, `action`, `scope`, `kind`                                        |
+| `memory`             | system            | approve, reject                | `proposalId`, `action`, `scope`, `kind`                                        |
 | `doc`                | system            | approve, reject                | `doc`, `proposal`, `taskId`?, `runId`?                                         |
 
 **`tool-approval`.** The system raises it to the owner as a blocking question
@@ -132,8 +132,9 @@ and the client's task is rejected ([§8.7](08-a2a-binding.md#s8.7)). Vectors:
 **`memory`.** A proposed memory entry waits on it
 ([§B.3](appendix-b-agent-tools.md#sB.3)). The system raises it to the owner when
 a principal proposes to add, supersede or retire a `project` or `team` entry and
-the project's autonomy policy does not accept the proposal itself; a deciding
-human may raise one too. Its shape is fixed ([§5.3](05-gates.md#s5.3)): kind
+the project's autonomy policy does not accept the proposal itself; only the
+system raises one, so a gate never names a proposal the system did not raise.
+Its shape is fixed ([§5.3](05-gates.md#s5.3)): kind
 `question`, `blocking` true, `choices` exactly `approve` then `reject`, and data
 `{ "type": "memory", "proposalId", "action", "scope", "kind" }`. `proposalId` is
 `mp-` and an uppercase ULID, and names the proposal, whose text stays with the
@@ -145,7 +146,7 @@ members of its data are not checked. `approve` applies the proposal; `reject`
 discards it. The system rejects a proposal no one decided within the project's
 memory `proposalTtlDays` (14 by default) with an `x-expired` marker
 ([§C.4](appendix-c-dispatch-profile.md#sC.4)). Vectors:
-`core.gates.memory-is-raised-by-the-system-or-a-deciding-human`,
+`core.gates.memory-is-raised-only-by-the-system`,
 `core.gates.memory-is-refused-from-a-session-or-an-agent`,
 `core.gates.memory-needs-a-deciding-answer`,
 `env.envelope.a-memory-gate-names-a-proposal`,
