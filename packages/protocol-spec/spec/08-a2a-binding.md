@@ -167,6 +167,8 @@ message, and MUST apply these rules on top of [§4.5](04-messages.md#s4.5):
 - Each `to` entry is one line of at most 512 bytes, at most 50 of them; each
   choice and the choice are one line of at most 200 bytes, at most 20 choices;
   `blocking` is a boolean. A violation is `invalid` on the field or its slot.
+- An `a2a:` entry is how a peer host names this host
+  ([§8.9](08-a2a-binding.md#s8.9)), so it reads as the owner, once.
 - A client may address only the humans on its recipient list, which is the owner
   unless a deciding principal named others when approving the client, and the
   work items of its own approved handoffs. Anything else is `forbidden` on
@@ -551,7 +553,9 @@ title. On acceptance the delivery moves from `held` to `pushed`. Vector:
 `a2a.peers.a-delivery-to-a-peer-is-held`. A network error or a 5xx is retried
 with backoff; after 24 hours the host gives up, closing a question and sending
 the sender of any other kind a notice. A 4xx is not retried: the sender gets the
-peer's error as a notice, and a question is closed.
+peer's error as a notice, and a question is closed. Only a 401, or a 403 whose
+`ErrorInfo` reason starts with `AUTH_`, marks the peer failed; any other 403
+fails the one message like any 4xx.
 
 **Replies.** The host follows each open task of a peer, by stream or by polling,
 and records each peer event as at most one message from the peer, through the

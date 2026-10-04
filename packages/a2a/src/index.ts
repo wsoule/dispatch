@@ -78,6 +78,7 @@ export type {
 } from './ext.js';
 export {
   checkInboundRecipients,
+  peerSelfAddressed,
   checkReachClient,
   CLIENT_NAME_PREFIX,
   clientNameFor,

@@ -26,6 +26,7 @@ import {
   encodePageToken,
   matchChoice,
   offeredSkills,
+  peerSelfAddressed,
   statusReply,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
@@ -156,7 +157,10 @@ export class DaemonBridgePort implements BridgePort {
         return [target.from];
     }
     const client = this.deps.store.getClient(caller.address);
-    const list = input.to ?? [this.deps.ownerRef];
+    const list = peerSelfAddressed(
+      input.to ?? [this.deps.ownerRef],
+      this.deps.ownerRef
+    );
     checkInboundRecipients(list, {
       allowedHumans: [this.deps.ownerRef, ...(client?.recipients ?? [])],
       approvedTasks: this.approvedTasks(caller),
