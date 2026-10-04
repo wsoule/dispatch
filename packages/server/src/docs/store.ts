@@ -1080,6 +1080,16 @@ export class SqliteDocStore {
   }
 
   // An image found referenced at `atIso`; the sweep skips it until that is old.
+  // The newest image stamp, so a sweep can tell a clock that ran fast.
+  newestAssetAt(): string | null {
+    return (
+      this.all<{ at: string | null }>(
+        'SELECT MAX(created_at) AS at FROM assets',
+        []
+      )[0]?.at ?? null
+    );
+  }
+
   markAssetChecked(docId: string, name: string, atIso: string): void {
     this.run('UPDATE assets SET checked_at = ? WHERE doc_id = ? AND name = ?', [
       atIso,

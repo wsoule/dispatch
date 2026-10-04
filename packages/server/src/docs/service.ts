@@ -242,6 +242,25 @@ function forbidden(message: string, field?: string): DocsError {
   return new DocsError('forbidden', message, field);
 }
 
+// Why the clock cannot be trusted to age images: a day or more since the last
+// sweep (it runs every minute), or a stamp in the future. Null when sound.
+function assetClockAnomaly(
+  lastSweep: string | null,
+  newest: string | null,
+  now: Date
+): string | null {
+  const limit = now.getTime() + 5 * 60_000;
+  if (lastSweep !== null) {
+    const last = Date.parse(lastSweep);
+    if (last > limit) return `clock anomaly: the last sweep is in the future`;
+    if (now.getTime() - last > DAY_MS)
+      return `clock anomaly: ${lastSweep} was the last sweep`;
+  }
+  if (newest !== null && Date.parse(newest) > limit)
+    return `clock anomaly: an image is stamped ${newest}, in the future`;
+  return null;
+}
+
 // A publish task's title; recovery finds a crash's orphan task by it.
 function publishTitle(handle: string, n: number, path: string): string {
   return `Publish doc ${handle} (rev ${n}) to ${path}`;
@@ -2500,6 +2519,15 @@ export class DocsService {
     const root = this.deps.assetsDir;
     const store = this.deps.store;
     if (root === undefined || store === null) return;
+    const anomaly = assetClockAnomaly(
+      store.meta('sweep:last'),
+      store.newestAssetAt(),
+      now
+    );
+    if (anomaly !== null) {
+      console.error(`docs: image sweep skipped: ${anomaly}`);
+      return;
+    }
     const cutoff = new Date(
       now.getTime() - ASSET_TTL_DAYS * DAY_MS
     ).toISOString();

@@ -99,6 +99,8 @@ describe('decayStore', () => {
     put(s, { scope: 'team', updatedAt: ago(61) });
     put(s, { scope: 'project', updatedAt: ago(200) });
     expect(decayStore(s, policy).scopes).toEqual(['project', 'team']);
+    // The project entry was marked stale last pass; this one retires it.
+    expect(decayStore(s, policy).scopes).toEqual(['project']);
     expect(decayStore(s, policy).scopes).toEqual([]);
   });
 
@@ -124,6 +126,7 @@ describe('decayStore', () => {
       updatedAt: ago(400),
     });
     decayStore(s, policy);
+    decayStore(s, { ...policy, now: new Date(NOW.getTime() + DAY) });
     expect([pinned, human].map((e) => s.getEntry(e.id)?.decay)).toEqual([
       'fresh',
       'fresh',
@@ -137,6 +140,40 @@ describe('decayStore', () => {
       [2, 'decay'],
       [3, 'decay'],
     ]);
+  });
+
+  it('retires only entries a previous sweep marked stale', () => {
+    const s = store();
+    const old = put(s, { updatedAt: ago(400), createdAt: ago(400) });
+    expect(decayStore(s, policy)).toMatchObject({ staled: 1, expired: 0 });
+    expect(s.getEntry(old.id)?.decay).toBe('stale');
+    const next = { ...policy, now: new Date(NOW.getTime() + DAY) };
+    expect(decayStore(s, next)).toMatchObject({ staled: 0, expired: 1 });
+    expect(s.getEntry(old.id)?.decay).toBe('expired');
+  });
+
+  it('only marks stale across a clock jump far past the sweep interval, and says why', () => {
+    const s = store();
+    const stale = put(s, { updatedAt: ago(30), decay: 'stale' });
+    const fresh = put(s, { updatedAt: ago(1) });
+    s.setMeta('last_decay_at', ago(1));
+    const jumped = new Date(NOW.getTime() + 3650 * DAY);
+    const out = decayStore(s, { ...policy, now: jumped });
+    expect(out).toMatchObject({ staled: 1, expired: 0 });
+    expect(out.anomaly).toContain('clock');
+    expect(s.getEntry(stale.id)?.decay).toBe('stale');
+    expect(s.getEntry(fresh.id)?.decay).toBe('stale');
+  });
+
+  it('only marks stale while any stamp is in the future', () => {
+    const s = store();
+    const stale = put(s, { updatedAt: ago(400), decay: 'stale' });
+    put(s, { updatedAt: ago(-30), createdAt: ago(-30) });
+    const out = decayStore(s, policy);
+    expect(out.expired).toBe(0);
+    expect(out.anomaly).toContain('future');
+    expect(s.getEntry(stale.id)?.decay).toBe('stale');
+    expect(decayStore(s, policy).anomaly).toContain('future');
   });
 
   it('leaves retired entries alone', () => {

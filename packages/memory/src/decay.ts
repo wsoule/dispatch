@@ -6,6 +6,10 @@ import type { MemoryEntry, MemoryScope } from './types.js';
 
 const DAY_MS = 86_400_000;
 const RECALL_KEEP_DAYS = 365;
+// Sweeps run daily; a gap past this reads as a clock jump, not a pause.
+const MAX_SWEEP_GAP_DAYS = 7;
+// Skew tolerated before a stamp counts as from the future.
+const FUTURE_SLACK_MS = 5 * 60_000;
 
 export interface DecayResult {
   staled: number;
@@ -13,6 +17,8 @@ export interface DecayResult {
   prunedRecalls: number;
   /** The scopes of the entries it changed, in MEMORY_SCOPES order. */
   scopes: MemoryScope[];
+  /** Why this pass only marked stale (a clock anomaly); null otherwise. */
+  anomaly: string | null;
 }
 
 // "Use" is the later of the last recall that counted as use and the last change.
@@ -30,8 +36,31 @@ function exempt(e: MemoryEntry): boolean {
   );
 }
 
-// One decay pass over a store in one transaction: fresh → stale → expired by
-// idle time, each step a 'decay' revision, then recalls older than a year go.
+// Why the clock cannot be trusted for retiring: a far gap since the last
+// sweep, or a stamp in the future. Null when it looks sound.
+function clockAnomaly(
+  entries: readonly MemoryEntry[],
+  lastSweep: string | null,
+  nowMs: number
+): string | null {
+  const limit = nowMs + FUTURE_SLACK_MS;
+  const last = lastSweep === null ? Number.NaN : Date.parse(lastSweep);
+  if (last > limit)
+    return `clock anomaly: the last sweep (${lastSweep}) is in the future`;
+  if (nowMs - last > MAX_SWEEP_GAP_DAYS * DAY_MS)
+    return `clock anomaly: ${Math.round((nowMs - last) / DAY_MS)} days since the last sweep (${lastSweep})`;
+  for (const e of entries) {
+    for (const stamp of [e.createdAt, e.updatedAt, e.lastRecalledAt]) {
+      if (stamp !== null && Date.parse(stamp) > limit)
+        return `clock anomaly: entry ${e.id} has a stamp in the future (${stamp})`;
+    }
+  }
+  return null;
+}
+
+// One decay pass over a store in one transaction: fresh → stale by idle time,
+// and stale → expired only for entries an earlier sweep marked stale, each step
+// a 'decay' revision; recalls older than a year go. A clock anomaly skips expiry.
 export function decayStore(
   store: MemoryStore,
   input: { now: Date; staleAfterDays: number; retireAfterDays: number }
@@ -48,10 +77,18 @@ export function decayStore(
     expired: 0,
     prunedRecalls: 0,
     scopes: [],
+    anomaly: null,
   };
   const changed = new Set<MemoryScope>();
   store.transaction(() => {
-    for (const e of store.listEntries({ states: ['active'] })) {
+    const active = store.listEntries({ states: ['active'] });
+    const staleBeforeSweep = store.listEntries({ states: ['stale'] });
+    result.anomaly = clockAnomaly(
+      [...active, ...staleBeforeSweep],
+      store.meta('last_decay_at'),
+      nowMs
+    );
+    for (const e of active) {
       if (exempt(e) || lastUse(e) >= staleBefore) continue;
       store.updateEntry(
         { ...e, decay: 'stale', rev: e.rev + 1 },
@@ -61,7 +98,7 @@ export function decayStore(
       result.staled += 1;
       changed.add(e.scope);
     }
-    for (const e of store.listEntries({ states: ['stale'] })) {
+    for (const e of result.anomaly === null ? staleBeforeSweep : []) {
       if (exempt(e) || lastUse(e) >= expireBefore) continue;
       store.updateEntry(
         { ...e, decay: 'expired', rev: e.rev + 1 },
