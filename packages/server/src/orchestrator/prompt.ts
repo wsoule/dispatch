@@ -23,7 +23,9 @@ const PROMPT_COMMENT_CHARS = 8000;
 // earlier runs and teammates left with task_comment. Keeps the newest that fit
 // the budget and says how many older ones it left out. Null when there are none.
 export function renderCommentsSection(
-  comments: readonly TaskComment[]
+  comments: readonly TaskComment[],
+  // An A2A-origin task: the whole thread is fenced as external text.
+  external = false
 ): string | null {
   if (comments.length === 0) return null;
   const kept: string[] = [];
@@ -36,20 +38,28 @@ export function renderCommentsSection(
     used += entry.length;
   }
   const omitted = comments.length - kept.length;
+  const entries = kept.reverse();
   return [
     '## Comments',
     ...(omitted > 0 ? [`(${String(omitted)} earlier comments omitted.)`] : []),
-    ...kept.reverse(),
+    ...(external
+      ? [untrustedFenced('comments on an A2A task', entries.join('\n\n'))]
+      : entries),
   ].join('\n\n');
 }
 
 // Renders a task's recorded amendments after its description, with an
 // explicit line stating they take precedence over it where they conflict.
-function renderAmendmentsSection(amendmentsText: string): string {
+function renderAmendmentsSection(
+  amendmentsText: string,
+  external: boolean
+): string {
   return [
     '## Amendments',
     'These amendments override the description where they conflict.',
-    untrustedBlock(amendmentsText),
+    external
+      ? untrustedFenced('amendments to an A2A task', amendmentsText)
+      : untrustedBlock(amendmentsText),
   ].join('\n\n');
 }
 
@@ -71,7 +81,9 @@ export function buildTaskPrompt(
   // The rendered `## Docs` section; null when docs are off or nothing links.
   docsSection: string | null = null,
   // The task's comment thread, oldest first; its newest entries join the prompt.
-  comments: readonly TaskComment[] = []
+  comments: readonly TaskComment[] = [],
+  // An A2A-origin task (XH-R5): amendments and comments fenced, no epic.
+  a2aOrigin = false
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -85,13 +97,13 @@ export function buildTaskPrompt(
   ];
 
   if (amendmentsText !== '') {
-    sections.push(renderAmendmentsSection(amendmentsText));
+    sections.push(renderAmendmentsSection(amendmentsText, a2aOrigin));
   }
 
-  const commentsSection = renderCommentsSection(comments);
+  const commentsSection = renderCommentsSection(comments, a2aOrigin);
   if (commentsSection !== null) sections.push(commentsSection);
 
-  if (parentEpic !== null) {
+  if (parentEpic !== null && !a2aOrigin) {
     sections.push(
       `## Parent epic: ${parentEpic.meta.id} — ${untrustedInline(parentEpic.meta.title)}\n\n${parentEpic.body.trim()}`
     );

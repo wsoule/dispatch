@@ -451,6 +451,8 @@ export class Orchestrator {
     null;
   // Why a task may not run right now, or null (see setDispatchGuard).
   private dispatchGuard: ((task: TaskDoc) => string | null) | null = null;
+  // Whether a task came in over A2A (see setA2AOrigin).
+  private a2aOrigin: ((taskId: string) => boolean) | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -552,6 +554,12 @@ export class Orchestrator {
   // asks. A returned string refuses the run with that reason.
   setDispatchGuard(guard: ((task: TaskDoc) => string | null) | null): void {
     this.dispatchGuard = guard;
+  }
+
+  // Installed at boot: an A2A-origin task's prompt fences its amendments and
+  // comments and carries no epic context.
+  setA2AOrigin(isA2A: ((taskId: string) => boolean) | null): void {
+    this.a2aOrigin = isA2A;
   }
 
   // A gated A2A draft never runs, whichever entry point is asked.
@@ -5471,8 +5479,9 @@ export class Orchestrator {
     executorName: string,
     runId: string
   ): (memorySection: string | null) => string {
+    const a2aOrigin = this.a2aOrigin?.(task.meta.id) ?? false;
     let parentEpic: TaskDoc | null = null;
-    if (task.meta.parent !== null) {
+    if (task.meta.parent !== null && !a2aOrigin) {
       try {
         parentEpic = this.ctx.store.get(task.meta.parent);
       } catch (err) {
@@ -5494,7 +5503,8 @@ export class Orchestrator {
         dispatchTools,
         humanRef,
         docs,
-        comments
+        comments,
+        a2aOrigin
       );
   }
 
