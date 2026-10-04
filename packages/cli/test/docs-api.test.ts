@@ -149,6 +149,14 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('shares a doc to Linear', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await api.shareLinear('spec');
+    expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
+      ['POST', '/api/docs/spec/share-linear', '{}'],
+    ]);
+  });
+
   it('publishes a doc to a repo path, dispatching unless told not to', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await api.publish('spec', { path: 'docs/spec.md' });
