@@ -845,6 +845,9 @@ export async function registerAgent(
   );
 }
 
+// How many registrations one namespace (agent:<handle>/) may have pending.
+const MAX_PENDING_REGISTRATIONS = 10;
+
 // A registration already checked for its name: the agent row, its token and
 // the owner gate that approves it.
 export interface AgentRegistration {
@@ -897,6 +900,24 @@ export async function registerAgentRow(
       response: errorResponse(
         409,
         `${address} is already registered (${existing.status}) — ask a human to revoke it first`
+      ),
+    };
+  }
+
+  // M4: each namespace may hold only so many registrations awaiting the
+  // owner, so a token cannot flood Needs you with approval gates.
+  const namespace = address.slice(0, address.indexOf('/') + 1);
+  const pending = ctx.messaging.store
+    .agents()
+    .filter(
+      (a) => a.status === 'pending' && a.address.startsWith(namespace)
+    ).length;
+  if (pending >= MAX_PENDING_REGISTRATIONS) {
+    return {
+      ok: false,
+      response: errorResponse(
+        429,
+        `${pending} registrations under ${namespace}* already await approval; ask a human to approve or deny them first`
       ),
     };
   }

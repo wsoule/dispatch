@@ -79,3 +79,54 @@ describe('the urgent quota', () => {
     expect(third.message.urgent).toBe(false);
   });
 });
+
+describe('opt-in guardrails', () => {
+  it('caps the new threads an agent starts among agents in an hour', async () => {
+    engine = new DeliveryEngine({
+      store,
+      host,
+      limits: { agentThreadsPerHour: 2 },
+    });
+    const toAgent: SendInput = {
+      to: ['task:t-000002'],
+      kind: 'message',
+      body: 'fresh',
+    };
+    await engine.send(toAgent, run1);
+    await engine.send(toAgent, run1);
+    await expect(engine.send(toAgent, run1)).rejects.toMatchObject({
+      code: 'limited',
+    });
+    // A thread that includes a human is not an agent-to-agent thread.
+    await engine.send(
+      { to: ['human:wyat', 'task:t-000002'], kind: 'message', body: 'fyi' },
+      run1
+    );
+    // And off by default, as the spec's breaker counts only replies.
+    const open = new DeliveryEngine({ store, host });
+    await open.send(toAgent, run1);
+  });
+
+  it('keeps one open wake gate per target', async () => {
+    engine = new DeliveryEngine({
+      store,
+      host,
+      limits: { openWakeGatesPerTarget: 1 },
+    });
+    host.ruling = 'ask';
+    const wake: SendInput = {
+      to: ['task:t-000009'],
+      kind: 'message',
+      body: 'wake up',
+      wake: 'request',
+    };
+    await engine.send(wake, run1);
+    await engine.send(wake, run1);
+    const gates = engine
+      .openBlocking()
+      .filter(
+        (m) => (m.data as { type?: string } | undefined)?.type === 'wake'
+      );
+    expect(gates.length).toBe(1);
+  });
+});

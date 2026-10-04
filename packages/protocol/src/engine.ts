@@ -8,6 +8,7 @@ import type { Address } from './address.js';
 import { gateTypeOf, hasGateData, isDecidingAuthor } from './constants.js';
 import {
   checkIdempotencyKey,
+  gateOf,
   isIdentifier,
   isSystemMarker,
   validateSendInput,
@@ -51,11 +52,20 @@ import { createUlidFactory } from './ulid.js';
 export interface EngineLimits {
   urgentPerHour: number;
   agentTurnsPerThreadPerHour: number;
+  /** New threads an agent-authored sender may start among agents and
+   *  sessions (no human recipient) per hour. A host's own guardrail beyond
+   *  the spec's breaker, which counts replies only; off by default. */
+  agentThreadsPerHour: number;
+  /** Open wake gates one target may have at once; a further ask is merged
+   *  into the open gate, its message held as before. Off by default. */
+  openWakeGatesPerTarget: number;
 }
 
 export const DEFAULT_LIMITS: EngineLimits = {
   urgentPerHour: 10,
   agentTurnsPerThreadPerHour: 20,
+  agentThreadsPerHour: Number.POSITIVE_INFINITY,
+  openWakeGatesPerTarget: Number.POSITIVE_INFINITY,
 };
 
 /** Who is sending, as the host authenticated them. */
@@ -352,6 +362,7 @@ export class DeliveryEngine {
       origin: options.origin ?? 'local',
     });
     await this.checkBreaker(replyTarget, sender);
+    this.checkNewThreads(input, replyTarget, sender);
     // The breaker await lets a duplicate commit first, so look again before the
     // answered check: a raced retry replays rather than meeting conflict.
     const raced = key === undefined ? null : this.replay(sender.address, key);
@@ -2030,6 +2041,12 @@ export class DeliveryEngine {
           `Waking ${d.recipient} was not allowed. Your message is waiting for it.`
         );
       } else {
+        // Merged into an open gate for the same target: approving it wakes the
+        // target, and this message is already held for it.
+        if (
+          this.openWakeGates(d.recipient) >= this.limits.openWakeGatesPerTarget
+        )
+          continue;
         const label = this.remoteLabel(message);
         const who =
           label === undefined
@@ -2049,6 +2066,39 @@ export class DeliveryEngine {
         );
       }
     }
+  }
+
+  // Rejects a new agent-to-agent thread past the sender's hourly allowance,
+  // so starting fresh threads cannot sidestep the reply breaker.
+  private checkNewThreads(
+    input: SendInput,
+    replyTarget: Message | null,
+    sender: Sender
+  ): void {
+    if (
+      replyTarget !== null ||
+      !isAgentAuthored(sender.address) ||
+      input.to.some((to) => to.startsWith('human:'))
+    )
+      return;
+    const started = this.store.countAgentThreadsFrom(
+      sender.address,
+      this.hourAgoIso()
+    );
+    if (started < this.limits.agentThreadsPerHour) return;
+    throw new MessagingError(
+      'limited',
+      `${sender.address} started ${started} threads with agents this hour; message a human or wait`,
+      'to'
+    );
+  }
+
+  // How many wake gates for `target` are still open.
+  private openWakeGates(target: Address): number {
+    return this.openBlocking().filter((m) => {
+      const gate = gateOf(m);
+      return gate?.type === 'wake' && gate.target === target;
+    }).length;
   }
 
   // Rejects an agent reply past the thread's hourly agent turns, flagging the owner

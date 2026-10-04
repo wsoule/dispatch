@@ -150,6 +150,8 @@ export interface MessageStore {
   ): number;
   /** Messages created since `sinceIso` with a delivery to `recipient`; the per-peer quota. */
   countDeliveredTo(recipient: Address, sinceIso: string): number;
+  /** Threads `from` started since `sinceIso` whose deliveries reach no human. */
+  countAgentThreadsFrom(from: Address, sinceIso: string): number;
   /** Agent-authored messages in a thread by arrival; a remote `exclude` still counts. */
   countAgentAuthored(
     threadId: string,
