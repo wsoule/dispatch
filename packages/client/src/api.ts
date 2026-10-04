@@ -936,6 +936,7 @@ export interface LedgerImportReport {
     truncated: number;
     alreadyImported: number;
     alreadyDeleted: number;
+    duplicates: number;
   };
   audit: Record<string, number>;
   damaged: number;

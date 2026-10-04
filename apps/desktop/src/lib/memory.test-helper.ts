@@ -100,6 +100,7 @@ export function report(
       truncated: 0,
       alreadyImported: 0,
       alreadyDeleted: 0,
+      duplicates: 0,
     },
     audit: {
       total: 315,
