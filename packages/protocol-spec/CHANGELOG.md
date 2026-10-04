@@ -6,6 +6,8 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+## 1.0.0-draft.2 (2026-10-04)
+
 - [clarification] A host reads an `a2a:` entry in an inbound `to` as its owner,
   since a peer host writes `to` as its own name for the receiver; and only a 401
   or an `AUTH_*` 403 marks a peer failed, while another 403 fails the one
@@ -87,6 +89,13 @@ vector ids (see §14.2).
   provisional any more. Vectors: `a2a.peers.parses-an-alias`,
   `a2a.peers.an-alias-is-at-most-40-characters`,
   `a2a.peers.a-delivery-to-a-peer-is-held`.
+- [additive] An `agent-registration` gate may name the registration it decides
+  as `key`, 16 lowercase hex digits; after the agent re-registers under a new
+  key, an answer to a gate for an earlier one has no effect (App. C.3). Vector:
+  `core.answers.an-agent-registration-gate-names-its-key`.
+- [editorial] Appendix F says an op stamped more than 5 minutes ahead of a
+  replica's wall clock waits until the clock catches up, rather than being
+  applied (§F.1).
 
 ## 1.0.0-draft.1 (2026-09-28)
 

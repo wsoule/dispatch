@@ -65,11 +65,11 @@ The editor tells every implementation listed here about a protocol security fix
 7 days before it is released, through the security contact listed with it.
 
 - **Dispatch**, the reference implementation (`@dispatch-foo/protocol`, with
-  `@dispatch-foo/a2a` for the A2A binding): implements DMP 1.0.0-draft.1 (Core,
+  `@dispatch-foo/a2a` for the A2A binding): implements DMP 1.0.0-draft.2 (Core,
   Dispatch profile), with declared deviations. Its reports:
-  [Core and Dispatch profile](https://github.com/wsoule/dispatch/blob/main/packages/protocol-spec/reports/dispatch-1.0.0-draft.1.json)
+  [Core and Dispatch profile](https://github.com/wsoule/dispatch/blob/main/packages/protocol-spec/reports/dispatch-1.0.0-draft.2.json)
   and
-  [A2A binding](https://github.com/wsoule/dispatch/blob/main/packages/protocol-spec/reports/dispatch-a2a-1.0.0-draft.1.json).
+  [A2A binding](https://github.com/wsoule/dispatch/blob/main/packages/protocol-spec/reports/dispatch-a2a-1.0.0-draft.2.json).
   The A2A binding passes every `a2a-binding` vector and is reported as
   `vectors-only` until an A2A TCK run is attested (§12.3). Security contact:
   [SECURITY.md](https://github.com/wsoule/dispatch/blob/main/.github/SECURITY.md).
