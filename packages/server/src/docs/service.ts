@@ -705,7 +705,10 @@ export class DocsService {
     return rev;
   }
 
+  // A head stamped after `now` (the clock stepped back) counts as expired, so
+  // the next save starts a revision instead of overwriting it.
   private expired(rev: RevisionMeta, now: Date, cfg: DocsConfig): boolean {
+    if (now.getTime() < Date.parse(rev.updatedAt)) return true;
     const idle =
       now.getTime() - Date.parse(rev.updatedAt) >= cfg.coalesceMinutes * 60_000;
     return idle || now.getTime() - Date.parse(rev.createdAt) >= MAX_OPEN_AGE_MS;
