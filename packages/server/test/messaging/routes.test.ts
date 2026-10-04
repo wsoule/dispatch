@@ -1030,6 +1030,51 @@ describe('messaging HTTP routes', () => {
     );
   });
 
+  it('re-keys the same name on the owner machine, retiring the old token', async () => {
+    const first = await registerAndApprove('lost cache');
+    const register = (rekey: boolean) =>
+      fetch(`${baseUrl}/api/agents/register`, {
+        method: 'POST',
+        headers: authHeaders(handle.tokens.agentToken),
+        body: JSON.stringify({ name: 'lost cache', client: 'codex', rekey }),
+      });
+    expect((await register(false)).status).toBe(409);
+    const res = await register(true);
+    expect(res.status).toBe(201);
+    const again = await json<{
+      address: string;
+      token: string;
+      status: string;
+    }>(res);
+    expect(again.address).toBe(first.address);
+    expect(again.token).not.toBe(first.token);
+    expect(again.status).toBe('pending');
+    const old = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(first.token),
+      body: JSON.stringify({ to: ['human:test'], kind: 'message', body: 'hi' }),
+    });
+    expect(old.status).toBe(401);
+    // A teammate's token cannot re-key the owner's agent.
+    const issued = await json<{ token: string }>(
+      await fetch(`${baseUrl}/api/team/tokens`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com', tier: 'request' }),
+      })
+    );
+    const teammate = await fetch(`${baseUrl}/api/agents/register`, {
+      method: 'POST',
+      headers: authHeaders(issued.token),
+      body: JSON.stringify({
+        name: 'lost cache',
+        client: 'codex',
+        rekey: true,
+      }),
+    });
+    expect(teammate.status).toBe(403);
+  });
+
   it('register -> pending 403 -> approve via app token -> send works', async () => {
     const registered = await json<{
       address: string;

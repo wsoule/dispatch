@@ -775,7 +775,11 @@ export async function registerAgent(
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { name?: unknown; client?: unknown };
+  const body = parsed.value as {
+    name?: unknown;
+    client?: unknown;
+    rekey?: unknown;
+  };
   const displayName = registrationField(body.name, 'name');
   if (!displayName.ok) return errorResponse(400, displayName.error);
   const client = registrationField(body.client, 'client');
@@ -795,6 +799,12 @@ export async function registerAgent(
   }
   const requester = humanActor(ctx);
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
+  if (body.rekey !== undefined && typeof body.rekey !== 'boolean')
+    return errorResponse(400, 'invalid rekey: expected a boolean');
+  if (body.rekey === true) {
+    const refused = rekeyAgent(ctx, address);
+    if (refused !== null) return refused;
+  }
   const reg = await registerAgentRow(ctx, {
     name,
     displayName: displayName.value,
@@ -808,6 +818,26 @@ export async function registerAgent(
     { address: reg.address, token: reg.token, status: reg.record.status },
     201
   );
+}
+
+// Retires `address`'s row so the same name can register again: an agent on
+// the owner's machine (the daemon file's token, or the app token) whose cached
+// token was lost. Null when it may go ahead; the refusal otherwise.
+function rekeyAgent(ctx: ApiContext, address: string): Response | null {
+  if (ctx.viaAgentToken !== true && ctx.ownerCredential !== true)
+    return errorResponse(
+      403,
+      "only an agent on the owner's machine may re-key its name"
+    );
+  const existing = ctx.messaging.store.getAgent(address);
+  if (existing === null || existing.status === 'revoked') return null;
+  if (isInternalAgent(existing))
+    return errorResponse(
+      409,
+      `${address} is Dispatch's own agent; register under another name`
+    );
+  ctx.messaging.store.putAgent({ ...existing, status: 'revoked' });
+  return null;
 }
 
 // A registration already checked for its name: the agent row, its token and
