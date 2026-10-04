@@ -309,16 +309,42 @@ describe('the tier ladder', () => {
   it('nobody hands out more than they hold', async () => {
     const lead = await issued({ email: 'grace@example.com', tier: 'decide' });
 
-    // A decide-tier lead can invite reviewers at their own level or below…
-    expect((await invite({ email: 'ada@example.com' }, lead)).status).toBe(201);
+    // A decide-tier lead may re-issue their own token at their own level…
+    const own = await invite({ handle: 'grace', tier: 'decide' }, lead);
+    expect(own.status).toBe(201);
+    const fresh = ((await own.json()) as { token: string }).token;
+    // …but minting themselves operator would be a shell by another name.
     expect(
-      (await invite({ email: 'mary@example.com', tier: 'decide' }, lead)).status
-    ).toBe(201);
-    // …but minting an operator token would be a shell by another name.
-    expect(
-      (await invite({ email: 'eve@example.com', tier: 'operator' }, lead))
-        .status
+      (await invite({ handle: 'grace', tier: 'operator' }, fresh)).status
     ).toBe(403);
+  });
+
+  it('only the owner issues a credential for someone else (XH-R1)', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+    const ops = await issued({ email: 'linus@example.com', tier: 'operator' });
+
+    // Re-issuing Carol's token would hand Bob her identity.
+    for (const body of [
+      { handle: 'carol', tier: 'decide' },
+      { handle: 'carol', tier: 'request' },
+      { email: 'carol@example.com', tier: 'request' },
+    ]) {
+      const res = await invite(body, bob);
+      expect(res.status).toBe(403);
+      expect(JSON.stringify(await res.json())).not.toContain('"token"');
+    }
+    // Nor may a lead or a teammate operator invite someone new.
+    expect((await invite({ email: 'ada@example.com' }, bob)).status).toBe(403);
+    expect((await invite({ email: 'ada@example.com' }, ops)).status).toBe(403);
+    expect((await invite({ handle: 'carol' }, ops)).status).toBe(403);
+
+    // Carol still holds her own token, and it still names her.
+    const me = await get('/api/whoami', carol);
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('carol');
+    // The owner still re-issues for anyone.
+    expect((await invite({ handle: 'carol' })).status).toBe(201);
   });
 
   it('nor replaces or revokes a token above their own tier', async () => {
