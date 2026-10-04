@@ -360,6 +360,13 @@ describe('rival key claims (FW-R24)', () => {
     expect(
       cy.fed.problems().some((p) => p.subject.startsWith('key:missing:'))
     ).toBe(false);
+    // The scan found its key and let go of what it read (FW-R30(5)).
+    const forgotten = (
+      cy.service as unknown as {
+        opts: { transport: { forgotten: (readonly string[] | null)[] } };
+      }
+    ).opts.transport.forgotten;
+    expect(forgotten).toContainEqual([bob.fed.replica]);
   });
 
   // The full scan for a missing key backs off: three passes in a row, then

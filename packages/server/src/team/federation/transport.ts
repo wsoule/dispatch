@@ -29,6 +29,8 @@ export interface FederationTransport {
   /** A cheap stamp of those replicas' files that changes when they do, so a
    *  backed-off scan runs again at once. */
   stamp(replicas: readonly string[] | null): string;
+  /** Drops what the full scans hold for these replicas (all when null). */
+  forgetScans(replicas: readonly string[] | null): void;
   /** Who the transport sees connected, or null when it cannot tell (git). */
   presence(): { replica: string; since: string }[] | null;
   health(): TransportHealth;

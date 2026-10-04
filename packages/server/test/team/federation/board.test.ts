@@ -546,9 +546,12 @@ describe('board convergence over signed ops', () => {
         expect(
           (await cy.handle.keys()).roster.map((r) => r.replica)
         ).not.toContain(malId);
+        // Named per id once founded, or in the one note before (FW-R30(5)).
         expect(
           (await problemsOf(cy)).some(
-            (p) => p.subject === `transport:bloat:${bobId}`
+            (p) =>
+              p.subject.startsWith('transport:bloat:') &&
+              p.message.includes(bobId)
           )
         ).toBe(true);
       },

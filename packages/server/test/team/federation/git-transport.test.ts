@@ -310,7 +310,8 @@ describe('the read budget (FW-R23 hint)', () => {
     expect(a.cachedBytes()).toBeLessThanOrEqual(budget);
     expect(a.cachedBytes()).toBeGreaterThan(0);
     a.readV2(new Map([[A, 9]]), { budget });
-    expect(a.cachedBytes()).toBe(0);
+    // Every line is behind the cursor; only a line a read stopped inside stays.
+    expect(a.cachedBytes() - a.partialBytes()).toBe(0);
   });
 
   // I2: junk files named past the cursor, rewritten every pass, must not
@@ -635,6 +636,118 @@ describe('the read budget (FW-R23 hint)', () => {
     }
   });
 
+  // FW-R30(1), the re-verify's U4: junk lines as long as an honest op are
+  // deleted before it mid-read, so it shifts behind the offset under an
+  // identical 4 KiB window, and over 1 MiB is padded after it. A resume is
+  // trusted only once the whole consumed prefix verifies, so it is still read.
+  it('never loses an op shifted behind the resume offset', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(2);
+    const h = JSON.stringify(ops[1]);
+    const junk = `{"j":"${'x'.repeat(h.length - 8)}"}`;
+    expect(junk.length).toBe(h.length);
+    mkdirSync(join(dir, 'a', 'fed', A), { recursive: true });
+    const seg = join(dir, 'a', 'fed', A, '000000000001.jsonl');
+    const lines = (before: number, after: string) =>
+      `${JSON.stringify(ops[0])}\n${`${junk}\n`.repeat(before)}${h}\n${after}`;
+    // Over 1 MiB after H from the start, so no tail read reaches it.
+    writeFileSync(seg, lines(4000, `${junk}\n`.repeat(4000)));
+    const tier = () => 0;
+    const read = () =>
+      a.readV2(new Map([[A, 1]]), {
+        tier,
+        budget: 64 * 1024,
+        totalBudget: 64 * 1024,
+      });
+    // Part way into the junk before H.
+    expect(read().some((e) => e.seq === 2)).toBe(false);
+    // Delete junk lines before H, so it lands behind the offset, and pad
+    // over 1 MiB after it.
+    writeFileSync(
+      seg,
+      lines(100, `${junk}\n`.repeat(4000) + `${'p'.repeat(2 * 1024 * 1024)}\n`)
+    );
+    let seen = false;
+    for (let pass = 0; pass < 80 && !seen; pass++)
+      seen = read().some((e) => e.seq === 2);
+    expect(seen).toBe(true);
+  });
+
+  // FW-R30(3), U1: unterminated lines just under the line cap, in many files,
+  // never hold more than 16 MiB of partial lines, and the cache counts them.
+  it('caps partial lines across files and counts them', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const fed = join(dir, 'a', 'fed');
+    for (let n = 0; n < 30; n++) {
+      const id = `uuu-${String(n).padStart(8, '0')}`;
+      mkdirSync(join(fed, id), { recursive: true });
+      writeFileSync(
+        join(fed, id, '000000000001.jsonl'),
+        'u'.repeat(900 * 1024)
+      );
+    }
+    for (let pass = 0; pass < 3; pass++) {
+      a.readV2(new Map(), { tier: () => 1 });
+      expect(a.partialBytes()).toBeLessThanOrEqual(16 * 1024 * 1024);
+      expect(a.cachedBytes()).toBeGreaterThanOrEqual(a.partialBytes());
+    }
+  });
+
+  // FW-R30(4), U3: before founding, growing junk ids never starve the
+  // founder's: ids rotate and each gets a fair share.
+  it('reaches every id past growing rewritten files before founding', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const fed = join(dir, 'a', 'fed');
+    const ids = Array.from(
+      { length: 13 },
+      (_, n) => `aaa-${String(n).padStart(8, '0')}`
+    );
+    const keyOps = new Map(
+      ids.map((id) => {
+        const k = generateReplicaKeys();
+        const op = buildOp(
+          {
+            replica: id,
+            seq: 1,
+            prev: ZERO_HASH,
+            hlc: `0000000002000.0000.${id}`,
+            type: 'key',
+            body: {
+              handle: 'x',
+              device: 'x',
+              build: '0',
+              signPub: k.signPub,
+              sealPub: k.sealPub,
+              legacy: null,
+            },
+          },
+          k.signPriv
+        );
+        return [id, op];
+      })
+    );
+    const seen = new Set<string>();
+    for (let pass = 0; pass < 13 && seen.size < ids.length; pass++) {
+      // Each file rewritten bigger every pass, its key op at the very end.
+      for (const id of ids) {
+        mkdirSync(join(fed, id), { recursive: true });
+        writeFileSync(
+          join(fed, id, '000000000001.jsonl'),
+          `${pass}\n${`${'g'.repeat(1023)}\n`.repeat(1200 + 64 * pass)}${JSON.stringify(keyOps.get(id))}\n`
+        );
+      }
+      for (const e of a.readV2(new Map(), {
+        tier: () => 1,
+        totalBudget: 1024 * 1024,
+      }))
+        if (e.type === 'key') seen.add(e.replica);
+    }
+    expect(seen.size).toBe(ids.length);
+  });
+
   // FW-R29 follow-up: the scan cache forgets files no longer on the branch.
   it('forgets scanned files that are gone', async () => {
     const a = clone('a', A);
@@ -644,6 +757,21 @@ describe('the read budget (FW-R23 hint)', () => {
     expect(a.scanCacheSize()).toBe(1);
     rmSync(join(dir, 'a', 'fed', A, '000000000001.jsonl'));
     a.scanFull([A], 1024 * 1024);
+    expect(a.scanCacheSize()).toBe(0);
+  });
+
+  // FW-R30(5): a scan that found its key, or a founding, lets go of its reads.
+  it('forgets the scans of a replica, or of all', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(1));
+    a.scanFull([A], 1024 * 1024);
+    a.forgetScans(['bob-0000000b']);
+    expect(a.scanCacheSize()).toBe(1);
+    a.forgetScans([A]);
+    expect(a.scanCacheSize()).toBe(0);
+    a.scanFull(null, 1024 * 1024);
+    a.forgetScans(null);
     expect(a.scanCacheSize()).toBe(0);
   });
 
@@ -1005,6 +1133,60 @@ describe('GitFederationTransport', () => {
     const fresh = clone('fresh', 'bob-0000000b');
     await fresh.ensure();
     expect(fresh.readV2(new Map()).map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  // FW-R30(2): the owner keeps its own files clean: lines someone put in, or
+  // padding, are rewritten away from its own log, and it says so.
+  it('rewrites its own files clean from its log when someone changed them', async () => {
+    const a = clone('a', A);
+    const ops = chain(3);
+    const rewrites: string[] = [];
+    const ta = new GitFederationTransport({
+      repo: a,
+      replica: A,
+      signPriv: keys.signPriv,
+      verifyAcks: () => true,
+      acknowledgedBy: () => false,
+      ownLog: () => ops,
+      onRewriteSelf: () => rewrites.push('self'),
+      now: () => new Date(),
+    });
+    await a.ensure();
+    await ta.publish(ops);
+    await ta.pull(new Map());
+    const raw = join(dir, 'raw');
+    runGitSync(dir, ['clone', '-q', '-b', 'dispatch-sync', remote, raw]);
+    const seg = join(raw, 'fed', A, '000000000001.jsonl');
+    const [first, ...rest] = readFileSync(seg, 'utf8').trim().split('\n');
+    writeFileSync(
+      seg,
+      `${first}\n{"junk":true}\n${rest.join('\n')}\n${'p'.repeat(2 * 1024 * 1024)}\n`
+    );
+    runGitSync(raw, ['add', '-A']);
+    runGitSync(raw, [
+      '-c',
+      'user.name=x',
+      '-c',
+      'user.email=x@x',
+      'commit',
+      '-q',
+      '-m',
+      'plant',
+    ]);
+    runGitSync(raw, ['push', '-q', 'origin', 'HEAD:dispatch-sync']);
+    await ta.pull(new Map());
+    await ta.ack(new Map());
+    await ta.pull(new Map());
+    expect(rewrites).toEqual(['self']);
+    const own = readdirSync(join(dir, 'a', 'fed', A))
+      .filter((f) => f.endsWith('.jsonl'))
+      .flatMap((f) =>
+        readFileSync(join(dir, 'a', 'fed', A, f), 'utf8')
+          .trim()
+          .split('\n')
+      );
+    expect(own.every((l) => l.startsWith('{"v":2'))).toBe(true);
+    expect(own).toHaveLength(3);
   });
 
   it('reports an unreachable remote without losing what it was given', async () => {

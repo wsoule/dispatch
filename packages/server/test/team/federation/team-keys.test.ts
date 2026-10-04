@@ -1,7 +1,10 @@
 import type { RosterView } from '@dispatch/federation';
 import { describe, expect, it } from 'bun:test';
 
-import { starvedProblems } from '../../../src/team/federation/daemon.js';
+import {
+  starvedProblems,
+  transportProblem,
+} from '../../../src/team/federation/daemon.js';
 import {
   assembleTeamKeys,
   BRANCH_SIZE_WARN_BYTES,
@@ -193,6 +196,37 @@ describe('starvation notes', () => {
       );
       starvedProblems(ada.fed, []);
       expect(ada.fed.problems()).toEqual([]);
+    } finally {
+      ada.close();
+    }
+  });
+});
+
+// FW-R30(5): before founding, per-id transport notes gather into one a kind.
+describe('transport notes before founding', () => {
+  it('raises one note per kind, listing the ids', () => {
+    const ada = testReplica('ada');
+    try {
+      for (const r of ['aaa-00000001', 'aaa-00000002'])
+        transportProblem(ada.fed, false, 'bloat', r, 'padded');
+      starvedProblems(ada.fed, ['aaa-00000003', 'aaa-00000004'], false);
+      const subjects = ada.fed
+        .problems()
+        .map((p) => p.subject)
+        .sort();
+      expect(subjects).toEqual([
+        'transport:bloat:before-founding',
+        'transport:read:before-founding',
+      ]);
+      expect(
+        ada.fed
+          .problems()
+          .find((p) => p.subject === 'transport:bloat:before-founding')?.message
+      ).toContain('(aaa-00000001, aaa-00000002)');
+      transportProblem(ada.fed, true, 'bloat', 'aaa-00000001', 'padded');
+      expect(ada.fed.problems().map((p) => p.subject)).toContain(
+        'transport:bloat:aaa-00000001'
+      );
     } finally {
       ada.close();
     }

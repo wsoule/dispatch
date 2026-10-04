@@ -1,3 +1,5 @@
+import type { Hash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   constants,
@@ -111,10 +113,36 @@ export interface StreamState {
   /** The start of a line the last read stopped inside, kept (under the line
    *  cap) so a line longer than one pass's budget still completes. */
   partial: Buffer;
+  /** FW-R30(1): the hash of every byte consumed, kept as the read goes. */
+  hash: Hash;
+  /** A consumed prefix to check against: when the read reaches `at`, its
+   *  hash must equal `digest`; `same` says how it went. */
+  verify: { at: number; digest: string; same: boolean | null } | null;
 }
 
-export function newStream(): StreamState {
-  return { offset: 0, skipping: false, done: false, partial: Buffer.alloc(0) };
+export function newStream(
+  verify: { at: number; digest: string } | null = null
+): StreamState {
+  return {
+    offset: 0,
+    skipping: false,
+    done: false,
+    partial: Buffer.alloc(0),
+    hash: createHash('sha256'),
+    verify: verify === null ? null : { ...verify, same: null },
+  };
+}
+
+/** The hash of what a stream has consumed so far. */
+export function consumedDigest(state: StreamState): string {
+  return state.hash.copy().digest('hex');
+}
+
+// Notes a stream reaching, or passing, the prefix it must match.
+function checkpoint(state: StreamState, at: number): void {
+  const v = state.verify;
+  if (v === null || v.same !== null || at < v.at) return;
+  v.same = at === v.at && consumedDigest(state) === v.digest;
 }
 
 const STREAM_CHUNK = 256 * 1024;
@@ -168,13 +196,17 @@ export function readStream(
           if (line.trim() !== '') onLine(line);
         }
         state.skipping = false;
+        state.hash.update(buf.subarray(0, nl + 1));
         at += nl + 1;
+        checkpoint(state, at);
         buf = buf.subarray(nl + 1);
       }
       if (buf.length > lineCap) {
         // A line past the cap: drop what is held and skip to its end.
         state.skipping = true;
+        state.hash.update(buf);
         at += buf.length;
+        checkpoint(state, at);
         buf = Buffer.alloc(0);
       }
       carry = Buffer.from(buf);

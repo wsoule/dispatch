@@ -445,14 +445,17 @@ export class FederationService {
       this.scanDue(`founding\n${awaited}`, null)
     ) {
       this.readFoundings(await this.opts.transport.scan(null));
-      if (this.opts.roster.awaitedTeam() === null)
+      if (this.opts.roster.awaitedTeam() === null) {
         this.opts.fed.clearProblem('team:founding');
-      else
+        this.opts.transport.forgetScans(null);
+      } else
         this.opts.fed.problem(
           'team:founding',
           `the invite this machine joined with is for team ${awaited}, whose founding is on no file of the sync branch this machine can read yet; it keeps looking. Check the invite came from this repository's team.`
         );
     }
+    // Founded: the scans for a founding are over (FW-R30(5)).
+    if (this.opts.roster.founded()) this.opts.transport.forgetScans(null);
     if (this.opts.fed.outbox().length > 0) this.notifyLocalChange();
   }
 
@@ -526,9 +529,11 @@ export class FederationService {
         continue;
       this.opts.roster.applyVerified(k, opHash(k), { named: true });
     }
-    return this.opts.fed
+    const found = this.opts.fed
       .claims(replica)
       .some((c) => c.fingerprint === fingerprint);
+    if (found) this.opts.transport.forgetScans([replica]);
+    return found;
   }
 
   // FW-R28: every key an admitted member's admit names but no read has

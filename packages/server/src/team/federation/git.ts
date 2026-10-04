@@ -32,6 +32,8 @@ export interface GitTransportDeps {
   onCommit?: (failed: string | null) => void;
   /** A merge reset the clone to the remote tree; own files were written back. */
   onReset?: (why: string) => void;
+  /** This replica's own files were changed by someone and written afresh. */
+  onRewriteSelf?: () => void;
   /** Replicas whose files were rewritten rather than appended to. */
   onRewritten?: (replicas: string[]) => void;
   /** Segment files read far over a segment's size, as `<replica>/<name>`. */
@@ -116,6 +118,10 @@ export class GitFederationTransport implements FederationTransport {
     return entries;
   }
 
+  forgetScans(replicas: readonly string[] | null): void {
+    this.deps.repo.forgetScans(replicas);
+  }
+
   stamp(replicas: readonly string[] | null): string {
     return this.deps.repo.stampOf(replicas);
   }
@@ -133,6 +139,9 @@ export class GitFederationTransport implements FederationTransport {
     };
     // Own files a branch writer turned into symlinks come back as ours (N2).
     if ((await this.deps.repo.repairOwn()) > 0) await this.republish();
+    // FW-R30(2): its own files hold only its own log, or are written afresh.
+    if (await this.deps.repo.cleanOwn(this.deps.ownLog()))
+      this.deps.onRewriteSelf?.();
     const sig = signText(
       this.deps.signPriv,
       `${TAG.ack}\n${canonicalize(body)}`

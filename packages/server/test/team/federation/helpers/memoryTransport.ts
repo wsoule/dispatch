@@ -73,6 +73,11 @@ export class MemoryTransport implements FederationTransport {
       )
     );
   }
+  /** Scans forgotten, for the tests. */
+  forgotten: (readonly string[] | null)[] = [];
+  forgetScans(replicas: readonly string[] | null): void {
+    this.forgotten.push(replicas);
+  }
   /** Calls to scan, for the backoff tests. */
   scans = 0;
   stamp(replicas: readonly string[] | null): string {

@@ -6,7 +6,6 @@ import {
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
-import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   existsSync,
@@ -23,6 +22,7 @@ import type { AsyncGitRunner } from '../../sync/worktree.js';
 import type { Watermarks } from '../federation/transport.js';
 import type { BoardOp } from './engine.js';
 import {
+  consumedDigest,
   listDir,
   newStream,
   ownFile,
@@ -84,6 +84,8 @@ const MIN_STREAM_CHUNK = 256 * 1024;
 // How much of each member file's end is read first, every pass it changed.
 const TAIL_BYTES = 1024 * 1024;
 const TAIL_PASS_BYTES = 8 * 1024 * 1024;
+// FW-R30(3): all partial lines together.
+const MAX_PARTIAL_BYTES = 16 * 1024 * 1024;
 // FW-R29(3): what every full scan together may read in one pass.
 const SCAN_PASS_BYTES = 32 * 1024 * 1024;
 // FW-R25: fresh bytes a pass reads across all replicas, the unknown ids it
@@ -142,13 +144,13 @@ interface CachedSegment {
   lines: { line: string; entry: LogEntry }[];
   /** FW-R29(1): how far the file is read, resumed on the next pass. */
   stream: StreamState;
-  /** The 4 KiB before stream.offset, to tell an append from a rewrite. */
-  tail: string;
   /** The last line read, and whether any line above the floor was signed. */
   last: LogEntry | null;
   gave: boolean;
   /** The file's size when last read. */
   size: number;
+  /** While a changed file's old prefix is checked, the size it had. */
+  grewFrom: number | null;
 }
 
 // What earlier reads learned of a segment, kept after its lines are dropped:
@@ -185,12 +187,17 @@ export class SyncRepo {
   private passBytes = 0;
   /** Where the next pass starts probing claim-only ids (FW-R26(4)). */
   private probeStart = 0;
+  /** The stamp of this replica's own files when last found clean. */
+  private cleanStamp: string | null = null;
+  /** Where the rotation of ids read in full, and of each id's tails, starts. */
+  private fullStart = 0;
+  private readonly tailStart = new Map<string, number>();
   /** Files read this daemon's life far over a segment's size (FW-R29(1)). */
   private readonly oversized = new Set<string>();
   /** FW-R29(3): the full scans' resumable reads, and this pass's budget. */
   private readonly scanCache = new Map<
     string,
-    { stamp: string; stream: StreamState; tail: string; entries: LogEntry[] }
+    { stamp: string; stream: StreamState; entries: LogEntry[] }
   >();
   private scanLeft = SCAN_PASS_BYTES;
   private readonly rewritten = new Set<string>();
@@ -355,6 +362,58 @@ export class SyncRepo {
     return links.length;
   }
 
+  /** FW-R30(2): whether this replica's own segments hold only lines of its
+   *  own log; if not (lines put in, padding, a shift), they are removed and
+   *  the log written afresh from `own`, committed. True when it rewrote. */
+  async cleanOwn(own: readonly LogEntry[]): Promise<boolean> {
+    // Read only when its own files changed since they were last found clean.
+    const stamp = this.stampOf([this.replica]);
+    if (stamp === this.cleanStamp) return false;
+    const mine = new Set<string>();
+    for (const e of own)
+      try {
+        mine.add(opHash(e));
+      } catch {
+        // An entry of its own log always hashes; nothing to keep otherwise.
+      }
+    const dir = join(this.dir, FED_DIR, this.replica);
+    const names = this.segments(this.replica);
+    let dirty = false;
+    for (const name of names) {
+      const file = join(dir, name);
+      const size = lstatSync(file, { throwIfNoEntry: false })?.size ?? 0;
+      const state = newStream();
+      readStream(file, state, size + 1, MAX_LINE_BYTES, (line) => {
+        const entry = parseEntry(line);
+        let hash = '';
+        try {
+          hash = entry === null ? '' : opHash(entry);
+        } catch {
+          hash = '';
+        }
+        if (entry?.replica !== this.replica || !mine.has(hash)) dirty = true;
+      });
+      if (state.offset < size) dirty = true;
+      if (dirty) break;
+    }
+    if (!dirty || own.length === 0) {
+      this.cleanStamp = stamp;
+      return false;
+    }
+    await this.run([
+      'rm',
+      '--cached',
+      '-q',
+      // Paths git no longer tracks are fine to miss.
+      '--ignore-unmatch',
+      '--',
+      ...names.map((n) => join(FED_DIR, this.replica, n)),
+    ]);
+    for (const name of names) rmSync(join(dir, name), { force: true });
+    await this.writeV2(own);
+    return true;
+  }
+
   /** Appends this replica's v2 ops to its current segment, rolling over at
    *  the limits, and commits; the next exchange pushes them. */
   async writeV2(
@@ -426,9 +485,18 @@ export class SyncRepo {
       (r) => REPLICA_ID.test(r) && realDir(join(root, r))
     );
     const tiers = new Map(all.map((r) => [r, tierOf(r)]));
-    const full = all
-      .filter((r) => (tiers.get(r) ?? 2) < 2)
-      .sort((x, y) => (tiers.get(x) ?? 0) - (tiers.get(y) ?? 0));
+    // FW-R30(4): members first; the other ids read in full rotate across
+    // passes, so no listing order starves one.
+    const members = all.filter((r) => (tiers.get(r) ?? 2) === 0);
+    const others = all.filter((r) => (tiers.get(r) ?? 2) === 1);
+    const turn = others.length === 0 ? 0 : this.fullStart % others.length;
+    this.fullStart = turn + 1;
+    const full = [...members, ...others.slice(turn), ...others.slice(0, turn)];
+    // Each of those others gets a fair share of the pass.
+    const share = Math.max(
+      MIN_STREAM_CHUNK,
+      Math.floor(total / Math.max(1, others.length))
+    );
     // Claim-only and unknown ids: a few a pass, from where the last stopped.
     const probe = all.filter((r) => (tiers.get(r) ?? 2) >= 2);
     const cap = Math.min(hints.maxUnknown ?? MAX_UNKNOWN_IDS, probe.length);
@@ -485,7 +553,9 @@ export class SyncRepo {
       for (const [n, f] of order.entries()) {
         // FW-R29(1): files stream from where they stopped, within the budget;
         // the first file of a pass always gets a chunk, so reads progress.
-        const allowance = Math.min(budget - spent, total - this.passBytes);
+        const cap =
+          (tiers.get(replica) ?? 0) === 0 ? budget : Math.min(budget, share);
+        const allowance = Math.min(cap - spent, total - this.passBytes);
         if (allowance <= 0 && (n > 0 || this.passBytes > 0)) {
           cut = true;
           continue;
@@ -514,18 +584,39 @@ export class SyncRepo {
       // put before them; chainFrom takes them with the rest. Tails have their
       // own budget: the file whose last line is the head goes first, then the
       // files that grew most.
-      const grew = (f: { file: string; size: number }) =>
-        f.size - (this.tails.get(f.file)?.size ?? 0);
+      // FW-R30(4): the head's file first, then files whose tail held a key
+      // or found op, then the rest in a rotating order; growth never wins.
       const holdsHead = (file: string) =>
         head !== undefined &&
         (this.tails
           .get(file)
           ?.lines.some((l) => l.entry.prev === head || l.hash === head) ??
           false);
-      const tailOrder = [...files].sort((x, y) => {
-        const byHead = Number(holdsHead(y.file)) - Number(holdsHead(x.file));
-        return byHead !== 0 ? byHead : grew(y) - grew(x);
-      });
+      const holdsFounding = (file: string) =>
+        this.tails
+          .get(file)
+          ?.lines.some(
+            (l) =>
+              l.entry.type === 'key' ||
+              (l.entry.type === 'roster' &&
+                ('body' in l.entry
+                  ? (l.entry.body as { action?: unknown } | undefined)?.action
+                  : undefined) === 'found')
+          ) ?? false;
+      const tailRank = (file: string) =>
+        holdsHead(file) ? 0 : holdsFounding(file) ? 1 : 2;
+      const spin =
+        files.length === 0
+          ? 0
+          : (this.tailStart.get(replica) ?? 0) % files.length;
+      this.tailStart.set(replica, spin + 1);
+      const rotated = [...files.slice(spin), ...files.slice(0, spin)];
+      const tailOrder = rotated
+        .map((f, i) => ({ ...f, i }))
+        .sort((x, y) => {
+          const byRank = tailRank(x.file) - tailRank(y.file);
+          return byRank !== 0 ? byRank : x.i - y.i;
+        });
       for (const { file, stamp, size } of tailOrder)
         for (const { line, entry } of this.tailLines(
           file,
@@ -552,7 +643,10 @@ export class SyncRepo {
           held.lines = held.lines.filter((l) => l.entry.seq > cursor);
           held.floor = cursor;
         }
-        const bytes = held.lines.reduce((sum, l) => sum + l.line.length, 0);
+        // A partial line counts toward the cache too (FW-R30(3)).
+        const bytes =
+          held.lines.reduce((sum, l) => sum + l.line.length, 0) +
+          held.stream.partial.length;
         if (kept + bytes > budget) this.segmentCache.delete(file);
         else kept += bytes;
       }
@@ -561,6 +655,7 @@ export class SyncRepo {
       out.push(...this.probeKeyOps(root, replica, total));
     for (const map of [this.segmentCache, this.segmentInfo, this.tails])
       for (const file of map.keys()) if (!live.has(file)) map.delete(file);
+    this.capPartials();
     this.capCache();
     return out;
   }
@@ -607,38 +702,32 @@ export class SyncRepo {
         if (st === undefined) continue;
         const stamp = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
         let held = this.scanCache.get(file);
-        if (
-          held !== undefined &&
-          held.stamp !== stamp &&
-          (st.size < held.stream.offset ||
-            tailOf(file, held.stream.offset) !== held.tail)
-        )
-          held = undefined;
-        if (held === undefined) {
-          held = { stamp, stream: newStream(), tail: '', entries: [] };
-          this.scanCache.set(file, held);
-        }
-        const changed = held.stamp !== stamp;
-        held.stamp = stamp;
-        if (!held.stream.done || changed) {
-          if (this.scanLeft > 0) {
-            const h = held;
-            this.scanLeft -= readStream(
-              file,
-              h.stream,
-              this.scanLeft,
-              MAX_LINE_BYTES,
-              (line) => {
-                const entry = parseEntry(line);
-                if (
-                  entry?.replica === replica &&
-                  (entry.type === 'key' || entry.type === 'roster')
-                )
-                  h.entries.push(entry);
+        // A changed file is scanned again from the start (FW-R30(1)); what
+        // it gave before stays, each op once.
+        if (held !== undefined && held.stamp !== stamp)
+          held = { ...held, stamp, stream: newStream() };
+        held ??= { stamp, stream: newStream(), entries: [] };
+        this.scanCache.set(file, held);
+        if (!held.stream.done && this.scanLeft > 0) {
+          const h = held;
+          const have = new Set(h.entries.map((e) => JSON.stringify(e)));
+          this.scanLeft -= readStream(
+            file,
+            h.stream,
+            this.scanLeft,
+            MAX_LINE_BYTES,
+            (line) => {
+              const entry = parseEntry(line);
+              if (
+                entry?.replica === replica &&
+                (entry.type === 'key' || entry.type === 'roster') &&
+                !have.has(line)
+              ) {
+                have.add(line);
+                h.entries.push(entry);
               }
-            );
-            h.tail = tailOf(file, h.stream.offset);
-          }
+            }
+          );
         }
         out.push(...held.entries);
       }
@@ -694,6 +783,17 @@ export class SyncRepo {
     const out = [...this.rewritten].sort();
     this.rewritten.clear();
     return out;
+  }
+
+  /** Drops the full scans' reads of these replicas' files (all when null):
+   *  after a scan found what it looked for, and once founded (FW-R30(5)). */
+  forgetScans(replicas: readonly string[] | null): void {
+    const root = join(this.dir, FED_DIR);
+    for (const file of [...this.scanCache.keys()]) {
+      const replica = file.slice(root.length + 1).split('/')[0] ?? '';
+      if (replicas === null || replicas.includes(replica))
+        this.scanCache.delete(file);
+    }
   }
 
   /** How many files the full scans hold, for tests. */
@@ -773,27 +873,33 @@ export class SyncRepo {
     allowance: number
   ): number {
     let held = this.segmentCache.get(file);
-    const rewritten =
-      held !== undefined &&
-      held.stamp !== stamp &&
-      (size < held.stream.offset ||
-        tailOf(file, held.stream.offset) !== held.tail);
-    // A file that grew but whose read bytes changed was rewritten, not
-    // appended to (pruning only ever shrinks one): named, and read anew.
-    if (rewritten && held !== undefined && size >= held.size)
-      this.rewritten.add(replica);
-    if (held !== undefined && (held.floor > cursor || rewritten))
-      held = undefined;
+    if (held !== undefined && held.floor > cursor) held = undefined;
+    if (held !== undefined && held.stamp !== stamp) {
+      // FW-R30(1): the file changed, so its offset is not trusted. The read
+      // starts over, checking the old consumed prefix as it goes; lines read
+      // already stay, and a line seen twice is handed over once.
+      const old = held;
+      const verify =
+        old.stream.offset > 0
+          ? { at: old.stream.offset, digest: consumedDigest(old.stream) }
+          : null;
+      held = {
+        ...old,
+        stream: newStream(verify),
+        grewFrom: verify === null ? null : old.size,
+      };
+      this.segmentCache.set(file, held);
+    }
     if (held === undefined) {
       held = {
         stamp,
         floor: cursor,
         lines: [],
         stream: newStream(),
-        tail: '',
         last: null,
         gave: false,
         size,
+        grewFrom: null,
       };
       this.segmentCache.set(file, held);
     }
@@ -801,6 +907,7 @@ export class SyncRepo {
     held.size = size;
     if (size > MAX_SEGMENT_READ) this.oversized.add(file);
     const h = held;
+    const have = new Set(h.lines.map((l) => l.line));
     const used = readStream(
       file,
       h.stream,
@@ -810,11 +917,19 @@ export class SyncRepo {
         const entry = parseEntry(line);
         h.last = entry;
         if (entry?.replica !== replica || entry.seq <= cursor) return;
+        if (have.has(line)) return;
+        have.add(line);
         h.lines.push({ line, entry });
         if (signed(entry)) h.gave = true;
       }
     );
-    h.tail = tailOf(file, h.stream.offset);
+    // An old prefix that no longer matches, in a file that grew, was
+    // rewritten, not appended to (pruning only ever shrinks a file).
+    const same = h.stream.verify?.same ?? null;
+    if (h.grewFrom !== null && same !== null) {
+      if (!same && size >= h.grewFrom) this.rewritten.add(replica);
+      h.grewFrom = null;
+    }
     if (h.stream.done) {
       const before = this.segmentInfo.get(file);
       const last = h.last;
@@ -828,6 +943,19 @@ export class SyncRepo {
       h.gave = false;
     }
     return used;
+  }
+
+  // FW-R30(3): partial lines are capped in total; the oldest go first, and a
+  // file whose partial goes reads again from its start.
+  private capPartials(): void {
+    let total = this.partialBytes();
+    for (const cache of [this.scanCache, this.segmentCache])
+      for (const [file, held] of cache) {
+        if (total <= MAX_PARTIAL_BYTES) return;
+        if (held.stream.partial.length === 0) continue;
+        total -= held.stream.partial.length;
+        cache.delete(file);
+      }
   }
 
   // Keeps the whole read cache under MAX_CACHE_BYTES, dropping files in
@@ -857,9 +985,19 @@ export class SyncRepo {
 
   /** Characters of segment lines the read cache holds. */
   cachedBytes(): number {
-    let total = 0;
+    let total = this.partialBytes();
     for (const held of this.segmentCache.values())
       for (const l of held.lines) total += l.line.length;
+    return total;
+  }
+
+  /** Bytes held as the starts of lines a read stopped inside (FW-R30(3)). */
+  partialBytes(): number {
+    let total = 0;
+    for (const held of this.segmentCache.values())
+      total += held.stream.partial.length;
+    for (const held of this.scanCache.values())
+      total += held.stream.partial.length;
     return total;
   }
 
@@ -1161,15 +1299,4 @@ function hintOrder(names: string[], cursor: number): string[] {
     if (Number(name.slice(0, 12)) <= cursor + 1) start = i;
   });
   return [...names.slice(start), ...names.slice(0, start).reverse()];
-}
-
-// The 4 KiB before `offset` in a file, as hex: equal after an append, not
-// after a rewrite of what was read.
-function tailOf(file: string, offset: number): string {
-  if (offset === 0) return '';
-  const start = Math.max(0, offset - 4096);
-  const bytes = readRange(file, start, offset - start);
-  return bytes === null
-    ? 'unreadable'
-    : createHash('sha256').update(bytes).digest('hex');
 }

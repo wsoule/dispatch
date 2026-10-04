@@ -127,19 +127,30 @@ export function buildFederation(deps: FederationDeps): Federation {
       ownLog: () => fed.ownLog(),
       onPruned: (seqs) => fed.stubLog(seqs),
       readHints: () => readHints(fed, roster),
-      onStarved: (replicas) => starvedProblems(fed, replicas),
+      onStarved: (replicas) => starvedProblems(fed, replicas, roster.founded()),
+      onRewriteSelf: () =>
+        fed.problem(
+          'transport:rewrite:self',
+          "someone with push access changed this machine's own files on the sync branch; Dispatch wrote them afresh from this machine's log. Check who can push to the sync branch."
+        ),
       onRewritten: (replicas) => {
         for (const replica of replicas)
-          fed.problem(
-            `transport:rewrite:${replica}`,
+          transportProblem(
+            fed,
+            roster.founded(),
+            'rewrite',
+            replica,
             `${replica}'s files on the sync branch were rewritten, not appended to, as no Dispatch writes them: someone with push access is changing them. Its new ops are still read from the end of each file; check who can push.`
           );
       },
       onOversized: (files) => {
         for (const file of files) {
           const replica = file.slice(0, file.indexOf('/'));
-          fed.problem(
-            `transport:bloat:${replica}`,
+          transportProblem(
+            fed,
+            roster.founded(),
+            'bloat',
+            replica,
             `fed/${file} on the sync branch is far larger than any segment Dispatch writes: someone with push access padded it. Its lines are still read, slowly; remove the padding from the branch.`
           );
         }
@@ -212,8 +223,23 @@ function readHints(fed: FedStore, roster: RosterService): ReadHints {
 
 // A problem per replica whose reads the budget keeps cutting short; cleared
 // once its reads fit again.
-export function starvedProblems(fed: FedStore, replicas: string[]): void {
+export function starvedProblems(
+  fed: FedStore,
+  replicas: string[],
+  founded = true
+): void {
   const prefix = 'transport:read:';
+  // Before founding, one note for every id (FW-R30(5)).
+  if (!founded) {
+    const subject = `${prefix}before-founding`;
+    if (replicas.length === 0) fed.clearProblem(subject);
+    else
+      fed.problem(
+        subject,
+        `${replicas.length} ids on the sync branch have more files than one pass can read; someone with push access may be crowding them out. (${[...replicas].sort().join(', ')})`
+      );
+    return;
+  }
   for (const p of fed.problems())
     if (
       p.subject.startsWith(prefix) &&
@@ -225,4 +251,40 @@ export function starvedProblems(fed: FedStore, replicas: string[]): void {
       `${prefix}${replica}`,
       `${replica}'s files on the sync branch are more than one pass can read, so its changes arrive slowly; files that add nothing to its log may be crowding it out. Someone with push access should remove the files under fed/${replica}/ its owner did not write.`
     );
+}
+
+// The kinds of per-id transport note, in words, for the one note per kind
+// raised before founding.
+const TRANSPORT_KINDS: Record<string, string> = {
+  rewrite: 'had their files rewritten, not appended to',
+  bloat: 'have files far larger than any segment Dispatch writes',
+};
+
+/** A per-id transport note. Before founding, when anyone can make ids, they
+ *  are gathered into one note per kind (FW-R30(5)). */
+export function transportProblem(
+  fed: FedStore,
+  founded: boolean,
+  kind: string,
+  replica: string,
+  message: string
+): void {
+  if (founded) {
+    fed.problem(`transport:${kind}:${replica}`, message);
+    return;
+  }
+  const subject = `transport:${kind}:before-founding`;
+  const held = fed.problems().find((p) => p.subject === subject);
+  const ids = new Set(
+    held?.message
+      .match(/\(([^)]*)\)$/)?.[1]
+      ?.split(', ')
+      .filter((r) => r !== '') ?? []
+  );
+  ids.add(replica);
+  const listed = [...ids].sort();
+  fed.problem(
+    subject,
+    `${listed.length} ids on the sync branch ${TRANSPORT_KINDS[kind] ?? kind}; someone with push access put them there. Check who can push to the sync branch. (${listed.join(', ')})`
+  );
 }
