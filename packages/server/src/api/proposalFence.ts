@@ -14,8 +14,14 @@ export function decidingHuman(
 }
 
 // The task writes an open A2A proposal fences (XH-R5): the task itself, and
-// its amendments, comments and attachments.
-const FENCED = new Set(['amend', 'comment', 'comments', 'attachments']);
+// its amendments, comments and attachments, and an enrich run over its text.
+const FENCED = new Set([
+  'amend',
+  'comment',
+  'comments',
+  'attachments',
+  'enrich',
+]);
 
 /** 409 for a write below the decide tier to a task whose A2A proposal is
  *  still open; null when the write may go ahead. */

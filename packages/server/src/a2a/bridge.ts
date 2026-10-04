@@ -125,6 +125,8 @@ export interface A2ABridge {
   // 'a2a' when a client handed the task off: its runs act for no one and
   // read team memory only.
   taskOrigin(taskId: string): 'a2a' | null;
+  // Records that `taskId` was made from the A2A task `sourceTaskId`.
+  markDerived(taskId: string, sourceTaskId: string): void;
   // Puts every gated draft something moved back in Draft; returns how many.
   recheckProposals(): number;
   close(): Promise<void>;
@@ -552,6 +554,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
     // The guards' evidence: a2a.db's row, else a handoff messages.db ties to the task.
     taskOrigin: (taskId) => (isA2ATask(guardDeps, taskId) ? 'a2a' : null),
+    markDerived: (taskId, sourceTaskId) =>
+      store?.markDerived(taskId, sourceTaskId, new Date().toISOString()),
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {

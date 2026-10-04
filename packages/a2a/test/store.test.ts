@@ -433,3 +433,12 @@ describe('push_pending', () => {
     expect(store.getPushPending('m-1', 'c')).toBeNull();
   });
 });
+
+describe('derived_tasks', () => {
+  it('keeps the A2A task a clone was made from', () => {
+    expect(store.derivedFrom('t-clone1')).toBeNull();
+    store.markDerived('t-clone1', 't-source', '2026-09-25T10:00:00.000Z');
+    store.markDerived('t-clone1', 't-other', '2026-09-25T11:00:00.000Z');
+    expect(store.derivedFrom('t-clone1')).toBe('t-source');
+  });
+});

@@ -82,6 +82,7 @@ export function openProposalFor(
 export function isA2ATask(deps: GuardDeps, taskId: string): boolean {
   try {
     if ((deps.store?.taskForDispatchTask(taskId) ?? null) !== null) return true;
+    if ((deps.store?.derivedFrom(taskId) ?? null) !== null) return true;
   } catch (err) {
     console.error(`dispatchd: could not read ${taskId}'s A2A record`, err);
   }
@@ -173,6 +174,17 @@ export async function guardTaskPatch(
   }
   if (!deciding && unapprovedHandoff(deps, deps.tasks.get(taskId)))
     return { ok: false, status: 409, error: unapproved(taskId) };
+  // An A2A task's spec is the client's words; only a decider rewrites it.
+  const specEdit =
+    patch.description !== undefined ||
+    patch.body !== undefined ||
+    patch.acceptanceCriteria !== undefined;
+  if (!deciding && specEdit && isA2ATask(deps, taskId))
+    return {
+      ok: false,
+      status: 403,
+      error: "editing an A2A task's description or body needs the decide tier",
+    };
   // Moving an A2A task under another epic changes what its runs see (XH-R5).
   if (!deciding && patch.parent !== undefined && isA2ATask(deps, taskId))
     return {

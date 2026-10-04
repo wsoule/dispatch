@@ -194,6 +194,9 @@ export interface A2AStore {
   clearPushPending(taskId: string, id: string): void;
   // Tasks that still have a live push config.
   pushConfigTaskIds(): string[];
+  // A Dispatch task made from an A2A task (a fanout clone) keeps its origin.
+  markDerived(taskId: string, sourceTaskId: string, at: string): void;
+  derivedFrom(taskId: string): string | null;
   putHost(row: HostRow): void;
   // Oldest first, revoked rows included.
   hosts(): HostRow[];
@@ -236,6 +239,9 @@ CREATE TABLE IF NOT EXISTS push_configs (
   PRIMARY KEY (task_id, id)
 );
 CREATE INDEX IF NOT EXISTS push_client ON push_configs (client);
+CREATE TABLE IF NOT EXISTS derived_tasks (
+  task_id TEXT PRIMARY KEY, source_task TEXT NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS push_pending (
   task_id TEXT NOT NULL, id TEXT NOT NULL, tries INTEGER NOT NULL, next_at TEXT NOT NULL,
   PRIMARY KEY (task_id, id)
@@ -847,6 +853,24 @@ export class SqliteA2AStore implements A2AStore {
     this.db
       .prepare('DELETE FROM push_pending WHERE task_id = ? AND id = ?')
       .run(taskId, id);
+  }
+
+  markDerived(taskId: string, sourceTaskId: string, at: string): void {
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO derived_tasks (task_id, source_task, created_at) VALUES (?,?,?)'
+      )
+      .run(taskId, sourceTaskId, at);
+  }
+
+  derivedFrom(taskId: string): string | null {
+    return (
+      queryOne<{ s: string }>(
+        this.db,
+        'SELECT source_task AS s FROM derived_tasks WHERE task_id = ?',
+        [taskId]
+      )?.s ?? null
+    );
   }
 
   pushConfigTaskIds(): string[] {

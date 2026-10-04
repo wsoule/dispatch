@@ -13,6 +13,7 @@ import {
   loadConfig,
   PRIORITIES,
   TaskParseError,
+  untrustedFenced,
   updateConfig,
 } from '@dispatch/core';
 import type {
@@ -4344,7 +4345,8 @@ function getInboxTriage(ctx: ApiContext): Response {
  * failure mode to avoid is an agent helpfully rewriting a carefully-worded acceptance criterion
  * into something vaguer.
  */
-function buildTaskEnrichPrompt(task: TaskDoc): string {
+// An A2A task's spec (a2a) is fenced as a client's words.
+export function buildTaskEnrichPrompt(task: TaskDoc, a2a = false): string {
   // The two spec sections only — `task.body` verbatim would carry the template's empty
   // headings (so no task ever looks empty) and the agent-written Activity log.
   const existing = [
@@ -4359,7 +4361,7 @@ function buildTaskEnrichPrompt(task: TaskDoc): string {
     `Title: ${task.meta.title}`,
     existing === ''
       ? 'It currently has no description at all.'
-      : `Its current description and criteria:\n\n${existing}`,
+      : `Its current description and criteria:\n\n${a2a ? untrustedFenced('an A2A client wrote this', existing) : existing}`,
     'Read enough of this repository to ground it: which files and functions are actually ' +
       'involved, what the code does today, and what would have to change. Then propose exactly ' +
       "ONE task, and no epic, keeping this task's title and intent. " +
@@ -4381,7 +4383,7 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     return errorResponse(404, `task not found: ${id}`);
   }
   const record = ctx.planManager.startPlan(
-    buildTaskEnrichPrompt(task),
+    buildTaskEnrichPrompt(task, ctx.a2a?.taskOrigin(id) === 'a2a'),
     'claude',
     undefined,
     'enrich',
@@ -5312,6 +5314,9 @@ export async function handleApi(
     }
 
     if (segments[0] === 'tasks') {
+      // One fence for every write to a task an open A2A proposal holds.
+      const fenced = proposalWriteRefusal(ctx, method, segments);
+      if (fenced !== null) return fenced;
       // Before any `:id` sub-route below, and matched on its own literal so
       // "fanout" is never read as a run id.
       if (
@@ -5412,9 +5417,6 @@ export async function handleApi(
       ) {
         return jsonResponse(cachedReadiness(ctx));
       }
-      // One fence for every write to a task an open A2A proposal holds.
-      const fenced = proposalWriteRefusal(ctx, method, segments);
-      if (fenced !== null) return fenced;
       if (segments.length === 2 && method === 'GET') {
         const doc = ctx.cache.get(segments[1]);
         return doc !== null
