@@ -128,6 +128,13 @@ export function buildFederation(deps: FederationDeps): Federation {
       onPruned: (seqs) => fed.stubLog(seqs),
       readHints: () => readHints(fed, roster),
       onStarved: (replicas) => starvedProblems(fed, replicas),
+      onRewritten: (replicas) => {
+        for (const replica of replicas)
+          fed.problem(
+            `transport:rewrite:${replica}`,
+            `${replica}'s files on the sync branch were rewritten, not appended to, as no Dispatch writes them: someone with push access is changing them. Its new ops are still read from the end of each file; check who can push.`
+          );
+      },
       onOversized: (files) => {
         for (const file of files) {
           const replica = file.slice(0, file.indexOf('/'));

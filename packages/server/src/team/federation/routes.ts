@@ -141,6 +141,7 @@ const ACKNOWLEDGEABLE = [
   'observer:',
   'transport:read:',
   'transport:bloat:',
+  'transport:rewrite:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {

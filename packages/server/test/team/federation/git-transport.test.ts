@@ -280,8 +280,11 @@ describe('the read budget (FW-R23 hint)', () => {
         `${'j'.repeat(1023)}\n`.repeat(600)
       );
     const budget = 300 * 1024;
-    // The first pass reads the segment named for cursor + 1 first.
-    expect(seqs(a.readV2(new Map([[A, 4]]), { budget }))).toEqual([5, 6]);
+    // The first pass reads the segment named for cursor + 1 first (and every
+    // file's tail, where new ops land).
+    expect(seqs(a.readV2(new Map([[A, 4]]), { budget }))).toEqual(
+      expect.arrayContaining([5, 6])
+    );
     expect(a.lastPassBytes()).toBeLessThanOrEqual(budget);
     // Later passes resume within the budget and reach the rest.
     let seen: number[] = [];
@@ -558,6 +561,43 @@ describe('the read budget (FW-R23 hint)', () => {
     }
     expect(found).toEqual([1]);
     expect(passes).toBeGreaterThan(10);
+  });
+
+  // FW-R29 follow-up: a member's file rewritten every pass with growing junk
+  // in front still hands over the ops appended at its end, and is named.
+  it("reads a member's new ops from its tail though its file is rewritten every pass", async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(8);
+    await a.writeV2(ops.slice(0, 2));
+    const seg = join(dir, 'a', 'fed', A, '000000000001.jsonl');
+    const budget = 256 * 1024;
+    const tier = () => 0;
+    a.readV2(new Map([[A, 2]]), { budget, tier });
+    for (let k = 2; k < 6; k++) {
+      const lines = readFileSync(seg, 'utf8');
+      const junk = `${'j'.repeat(1000)}\n`.repeat(600 * (k - 1));
+      writeFileSync(seg, `${junk}${lines}${JSON.stringify(ops[k])}\n`);
+      let got = false;
+      for (let pass = 0; pass < 2 && !got; pass++)
+        got = a
+          .readV2(new Map([[A, k]]), { budget, tier })
+          .some((e) => e.seq === k + 1);
+      expect([k, got]).toEqual([k, true]);
+    }
+    expect(a.takeRewritten()).toEqual([A]);
+  });
+
+  // FW-R29 follow-up: the scan cache forgets files no longer on the branch.
+  it('forgets scanned files that are gone', async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    await a.writeV2(chain(1));
+    a.scanFull([A], 1024 * 1024);
+    expect(a.scanCacheSize()).toBe(1);
+    rmSync(join(dir, 'a', 'fed', A, '000000000001.jsonl'));
+    a.scanFull([A], 1024 * 1024);
+    expect(a.scanCacheSize()).toBe(0);
   });
 
   it('sees an append to a segment it already read', async () => {

@@ -81,6 +81,8 @@ const READ_BUDGET_BYTES = 2 * MAX_SEGMENT_READ;
 // at least this much, so a bloated file only ever costs time.
 const MAX_LINE_BYTES = 1024 * 1024;
 const MIN_STREAM_CHUNK = 256 * 1024;
+// How much of each member file's end is read first, every pass it changed.
+const TAIL_BYTES = 1024 * 1024;
 // FW-R29(3): what every full scan together may read in one pass.
 const SCAN_PASS_BYTES = 32 * 1024 * 1024;
 // FW-R25: fresh bytes a pass reads across all replicas, the unknown ids it
@@ -144,6 +146,8 @@ interface CachedSegment {
   /** The last line read, and whether any line above the floor was signed. */
   last: LogEntry | null;
   gave: boolean;
+  /** The file's size when last read. */
+  size: number;
 }
 
 // What earlier reads learned of a segment, kept after its lines are dropped:
@@ -188,6 +192,12 @@ export class SyncRepo {
     { stamp: string; stream: StreamState; tail: string; entries: LogEntry[] }
   >();
   private scanLeft = SCAN_PASS_BYTES;
+  private readonly rewritten = new Set<string>();
+  /** Each file's tail lines, by its stat stamp. */
+  private readonly tails = new Map<
+    string,
+    { stamp: string; lines: { line: string; entry: LogEntry }[] }
+  >();
   /** Per probed id, which of its files the next probe starts at. */
   private readonly probeFileStart = new Map<string, number>();
   private readonly segmentInfo = new Map<string, SegmentInfo>();
@@ -493,6 +503,14 @@ export class SyncRepo {
         cut ? (this.cutPasses.get(replica) ?? 0) + 1 : 0
       );
       const seen = new Set<string>();
+      // FW-R29: the end of each file first, where new ops land, whatever was
+      // put before them; chainFrom takes them with the rest.
+      for (const { file, stamp } of files)
+        for (const { line, entry } of this.tailLines(file, stamp, replica))
+          if (entry.seq > cursor && !seen.has(line)) {
+            seen.add(line);
+            out.push(entry);
+          }
       let kept = 0;
       for (const { file } of files) {
         const held = this.segmentCache.get(file);
@@ -515,7 +533,7 @@ export class SyncRepo {
     }
     for (const replica of probed)
       out.push(...this.probeKeyOps(root, replica, total));
-    for (const map of [this.segmentCache, this.segmentInfo])
+    for (const map of [this.segmentCache, this.segmentInfo, this.tails])
       for (const file of map.keys()) if (!live.has(file)) map.delete(file);
     this.capCache();
     return out;
@@ -551,6 +569,10 @@ export class SyncRepo {
       replicas ??
       listDir(root).filter((r) => REPLICA_ID.test(r) && realDir(join(root, r)));
     const out: LogEntry[] = [];
+    // Files gone from the branch leave the scan cache.
+    for (const file of [...this.scanCache.keys()])
+      if (lstatSync(file, { throwIfNoEntry: false }) === undefined)
+        this.scanCache.delete(file);
     for (const replica of ids) {
       if (!REPLICA_ID.test(replica) || !realDir(join(root, replica))) continue;
       for (const name of this.segments(replica)) {
@@ -596,6 +618,46 @@ export class SyncRepo {
       }
     }
     return out;
+  }
+
+  // The complete lines in the last TAIL_BYTES of a file, from its first full
+  // line there; read again only when the file changed.
+  private tailLines(
+    file: string,
+    stamp: string,
+    replica: string
+  ): { line: string; entry: LogEntry }[] {
+    const held = this.tails.get(file);
+    if (held?.stamp === stamp) return held.lines;
+    const st = lstatSync(file, { throwIfNoEntry: false });
+    const size = st?.size ?? 0;
+    const start = Math.max(0, size - TAIL_BYTES);
+    const bytes = readRange(file, start, size - start);
+    const lines: { line: string; entry: LogEntry }[] = [];
+    if (bytes !== null) {
+      let text = bytes.toString('utf8');
+      if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+      const end = text.lastIndexOf('\n');
+      for (const line of end < 0 ? [] : text.slice(0, end).split('\n')) {
+        const entry = parseEntry(line);
+        if (entry?.replica === replica) lines.push({ line, entry });
+      }
+    }
+    this.tails.set(file, { stamp, lines });
+    return lines;
+  }
+
+  /** Replicas whose files were rewritten rather than appended to, since the
+   *  last call (FW-R29). */
+  takeRewritten(): string[] {
+    const out = [...this.rewritten].sort();
+    this.rewritten.clear();
+    return out;
+  }
+
+  /** How many files the full scans hold, for tests. */
+  scanCacheSize(): number {
+    return this.scanCache.size;
   }
 
   /** Files seen far over the size any honest segment reaches, as
@@ -670,13 +732,16 @@ export class SyncRepo {
     allowance: number
   ): number {
     let held = this.segmentCache.get(file);
-    if (
+    const rewritten =
       held !== undefined &&
-      (held.floor > cursor ||
-        (held.stamp !== stamp &&
-          (size < held.stream.offset ||
-            tailOf(file, held.stream.offset) !== held.tail)))
-    )
+      held.stamp !== stamp &&
+      (size < held.stream.offset ||
+        tailOf(file, held.stream.offset) !== held.tail);
+    // A file that grew but whose read bytes changed was rewritten, not
+    // appended to (pruning only ever shrinks one): named, and read anew.
+    if (rewritten && held !== undefined && size >= held.size)
+      this.rewritten.add(replica);
+    if (held !== undefined && (held.floor > cursor || rewritten))
       held = undefined;
     if (held === undefined) {
       held = {
@@ -687,10 +752,12 @@ export class SyncRepo {
         tail: '',
         last: null,
         gave: false,
+        size,
       };
       this.segmentCache.set(file, held);
     }
     held.stamp = stamp;
+    held.size = size;
     if (size > MAX_SEGMENT_READ) this.oversized.add(file);
     const h = held;
     const used = readStream(

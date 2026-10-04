@@ -32,6 +32,8 @@ export interface GitTransportDeps {
   onCommit?: (failed: string | null) => void;
   /** A merge reset the clone to the remote tree; own files were written back. */
   onReset?: (why: string) => void;
+  /** Replicas whose files were rewritten rather than appended to. */
+  onRewritten?: (replicas: string[]) => void;
   /** Segment files read far over a segment's size, as `<replica>/<name>`. */
   onOversized?: (files: string[]) => void;
   /** Replicas whose reads the budget cut short on consecutive pulls. */
@@ -109,6 +111,8 @@ export class GitFederationTransport implements FederationTransport {
     this.deps.onStarved?.(this.deps.repo.starvedReplicas());
     const oversized = this.deps.repo.takeOversized();
     if (oversized.length > 0) this.deps.onOversized?.(oversized);
+    const rewritten = this.deps.repo.takeRewritten();
+    if (rewritten.length > 0) this.deps.onRewritten?.(rewritten);
     return entries;
   }
 
