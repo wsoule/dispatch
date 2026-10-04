@@ -1,7 +1,10 @@
+import { DEFAULT_A2A } from '@dispatch/core';
 import { afterAll, beforeAll, expect, it } from 'bun:test';
 
 import { HttpBridgePort } from '../../src/http/port.js';
 import { PORT_CLIENT_HEADER } from '../../src/http/wire.js';
+import { handleA2A } from '../../src/server/handle.js';
+import { IpLimiter } from '../../src/server/limits.js';
 
 const seen: {
   method: string;
@@ -155,4 +158,48 @@ it('turns the watch stream into change calls and reconnects when it ends', async
 it('has no push configs', () => {
   const asPort: import('../../src/port.js').BridgePort = port;
   expect(asPort.pushConfigs).toBeUndefined();
+});
+
+// A standalone host whose daemon is down answers 503, and logs no stack.
+it('answers 503 without a stack when the daemon cannot be reached', async () => {
+  const down = new HttpBridgePort({
+    daemonUrl: 'http://127.0.0.1:1',
+    hostToken: 'host-token',
+    publicUrl: 'https://relay.example.com',
+  });
+  const logged: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args);
+  };
+  let res: Response;
+  try {
+    res = await handleA2A(
+      new Request('https://relay.example.com/a2a/v1/message:send', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer client-token',
+          'A2A-Version': '1.0',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      }),
+      down,
+      {
+        basePath: '/a2a/v1',
+        policy: DEFAULT_A2A,
+        clientIp: '127.0.0.1',
+        limiter: new IpLimiter(),
+      }
+    );
+  } finally {
+    console.error = original;
+  }
+  expect(res.status).toBe(503);
+  const text = await res.text();
+  expect(text).not.toContain('    at ');
+  expect(JSON.stringify(logged)).not.toContain('    at ');
+  expect(logged.some((args) => args.some((a) => a instanceof Error))).toBe(
+    false
+  );
 });

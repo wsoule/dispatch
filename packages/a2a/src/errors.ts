@@ -51,6 +51,14 @@ const FORBIDDEN_REASONS: Record<string, string> = {
 const ENVELOPE_FIELD =
   /^(to|kind|replyTo|blocking|choices|choice|refs|urgent|wake)(\[|\.|$)/;
 
+// The daemon behind a standalone host cannot be reached; answered 503.
+export class DaemonUnavailableError extends Error {
+  constructor() {
+    super('the Dispatch daemon is unavailable; retry later');
+    this.name = 'DaemonUnavailableError';
+  }
+}
+
 // Carries a finished Response through a throw (415, 413).
 export class HttpFailure extends Error {
   constructor(readonly response: Response) {
@@ -180,6 +188,10 @@ export function errorResponse(err: unknown): Response {
   if (err instanceof HttpFailure) return err.response;
   if (err instanceof A2AError) return a2aErrorResponse(err);
   if (err instanceof MessagingError) return messagingErrorResponse(err);
+  if (err instanceof DaemonUnavailableError) {
+    console.error(`a2a: ${err.message}`);
+    return status(503, 'UNAVAILABLE', err.message, [], { 'retry-after': '5' });
+  }
   console.error('a2a: request failed', err);
   return status(500, 'INTERNAL', 'internal error', []);
 }
