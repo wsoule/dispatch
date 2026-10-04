@@ -179,7 +179,10 @@ class FakeDaemon {
             this.sendResponses.length - 1
           );
           const resp = this.sendResponses[idx];
-          return Response.json(resp.body, { status: resp.status });
+          return Response.json(resp.body, {
+            status: resp.status,
+            ...(resp.status === 503 ? { headers: { 'retry-after': '0' } } : {}),
+          });
         }
 
         const answer = /^\/api\/messages\/([^/]+)\/answer$/.exec(url.pathname);
@@ -588,6 +591,43 @@ describe('msg_send (network error)', () => {
     expect(second?.headers['idempotency-key']).toBe(
       first?.headers['idempotency-key']
     );
+  });
+});
+
+describe('msg_send (busy daemon)', () => {
+  it('retries once on 503 after Retry-After, with the same Idempotency-Key', async () => {
+    daemon = new FakeDaemon();
+    const ok = daemon.sendResponses[0];
+    daemon.sendResponses = [
+      { status: 503, body: { error: 'the database is busy; retry shortly' } },
+      ok,
+    ];
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(daemon.sendCalls).toHaveLength(2);
+    expect(daemon.sendCalls[1]?.headers['idempotency-key']).toBe(
+      daemon.sendCalls[0]?.headers['idempotency-key']
+    );
+  });
+
+  it('gives up after one retry', async () => {
+    daemon = new FakeDaemon();
+    daemon.sendResponses = [
+      { status: 503, body: { error: 'the database is busy; retry shortly' } },
+    ];
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(daemon.sendCalls).toHaveLength(2);
   });
 });
 

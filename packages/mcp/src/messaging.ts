@@ -314,6 +314,14 @@ function isScopeData(data: unknown): boolean {
 }
 
 // POST /api/messages, then (when `blocking`) long-polls for its answer.
+// The pause a 503's Retry-After names (seconds), capped at 5 s; 1 s when absent.
+function retryAfterMs(res: Response): number {
+  const seconds = Number(res.headers.get('retry-after') ?? '1');
+  return Number.isFinite(seconds) && seconds >= 0
+    ? Math.min(seconds, 5) * 1000
+    : 1000;
+}
+
 async function msgSend(
   rootDir: string,
   server: McpServer,
@@ -336,6 +344,11 @@ async function msgSend(
   });
   let sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
   if (!sent.ok && sent.transient) {
+    sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
+  } else if (sent.ok && sent.res.status === 503) {
+    // A busy daemon asks for a retry: once, after the pause it names.
+    const pause = retryAfterMs(sent.res);
+    await new Promise((r) => setTimeout(r, pause));
     sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
   }
   if (!sent.ok) return fetchFailed(sent, 'msg_send');
