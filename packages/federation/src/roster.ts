@@ -1765,12 +1765,14 @@ function admitStep(
     note(ev, op, `${body.replica} is an observer, never an admin; ignored`);
     return;
   }
-  // A member may admit only a device of their own, as a plain member.
+  // A member may admit only a device of their own, as a plain member: an id
+  // whose handle part is theirs, whose claim carries their handle (FW-R27).
   const own = ev.holders.get(op.replica)?.handle;
   const ownDevice =
     rights.member &&
     own === key.handle &&
     own === body.handle &&
+    own === personOf(body.replica) &&
     body.role === 'member' &&
     hosts.length === 0 &&
     !observer;

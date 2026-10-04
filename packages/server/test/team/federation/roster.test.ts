@@ -1,4 +1,11 @@
-import { fingerprint, hlcWallMs, opHash } from '@dispatch/protocol/federation';
+import {
+  buildOp,
+  fingerprint,
+  generateReplicaKeys,
+  hlcWallMs,
+  opHash,
+  ZERO_HASH,
+} from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import {
@@ -575,5 +582,45 @@ describe('revocation audit rows', () => {
       r.subject.startsWith(`op:${bob.fed.replica}`)
     );
     expect(bobs.map((r) => r.resolution)).toEqual(['accepted', 'void']);
+  });
+});
+
+// FW-R27: a member's own-device admit names only an id with their handle.
+describe('own-device admits', () => {
+  it("refuses a member's own-device admit of another person's pending id", () => {
+    const ada = make('ada');
+    const mal = make('mal');
+    const dan = make('dan');
+    ada.roster.found('acme');
+    exchange(ada, mal, dan);
+    ada.roster.admit(mal.fed.replica, { fingerprint: fp(mal) });
+    exchange(ada, mal, dan);
+    // mal's own key op under dan's id, carrying mal's handle.
+    const k = generateReplicaKeys();
+    const squat = buildOp(
+      {
+        replica: dan.fed.replica,
+        seq: 1,
+        prev: ZERO_HASH,
+        hlc: `${String(mal.clock.now.getTime()).padStart(13, '0')}.0000.${dan.fed.replica}`,
+        type: 'key',
+        body: {
+          handle: 'mal',
+          device: 'x',
+          build: '0',
+          signPub: k.signPub,
+          sealPub: k.sealPub,
+          legacy: null,
+        },
+      },
+      k.signPriv
+    );
+    mal.roster.applyVerified(squat, opHash(squat));
+    expect(() =>
+      mal.roster.admit(dan.fed.replica, {
+        fingerprint: fingerprint(k.signPub, k.sealPub),
+        handle: 'mal',
+      })
+    ).toThrow(expect.objectContaining({ code: 'forbidden' }));
   });
 });

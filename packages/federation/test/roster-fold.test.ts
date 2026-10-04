@@ -1032,3 +1032,74 @@ describe('rival key claims', () => {
     expect(v.boundKeys.get(B)).toBe(real.signPub);
   });
 });
+
+// FW-R27: an own-device admit names only an id with the member's own handle,
+// and only a claim whose key op carries that handle.
+describe('own-device admits', () => {
+  const C2 = 'cy-00000011';
+  const info = (replica: string, handle: string, tag: string): KeyInfo => ({
+    replica,
+    handle,
+    signPub: `sign-${tag}`,
+    fingerprint: `FP-${tag}`,
+  });
+  const dee = info(D, 'dee', D);
+  const squat = info(D, 'cy', 'squat');
+  const cyTwo = info(C2, 'cy', C2);
+  const signed = (o: RosterOpRef, signPub: string): RosterOpRef => ({
+    ...o,
+    signPub,
+  });
+  const ownAdmit = (seq: number, ms: number, target: string, fp: string) =>
+    signed(
+      op(C, seq, ms, {
+        action: 'admit',
+        replica: target,
+        handle: 'cy',
+        role: 'member',
+        fingerprint: fp,
+      }),
+      `sign-${C}`
+    );
+  const foldOwn = (ops: RosterOpRef[]) =>
+    foldRoster({
+      founder: { replica: A, seq: 1 },
+      ops: [signed(FOUND, `sign-${A}`), ...ops],
+      keys: new Map([[A, keys.get(A) as KeyInfo]]),
+      claims: new Map<string, readonly KeyInfo[]>([
+        [A, [keys.get(A) as KeyInfo]],
+        [C, [keys.get(C) as KeyInfo]],
+        [D, [squat, dee]],
+        [C2, [cyTwo]],
+      ]),
+      now: new Date(T0 + DAY),
+      licensePublicKey: null,
+    });
+
+  it("voids a member's own-device admit of another person's pending id", () => {
+    const v = foldOwn([
+      signed(admit(A, 2, 100, C), `sign-${A}`),
+      ownAdmit(1, 200, D, squat.fingerprint),
+      signed(
+        op(A, 3, 300, {
+          action: 'admit',
+          replica: D,
+          handle: 'dee',
+          role: 'member',
+          fingerprint: dee.fingerprint,
+        }),
+        `sign-${A}`
+      ),
+    ]);
+    expect(v.members.get(D)).toMatchObject({ handle: 'dee' });
+    expect(v.boundKeys.get(D)).toBe(dee.signPub);
+  });
+
+  it("admits a member's own device under its own handle", () => {
+    const v = foldOwn([
+      signed(admit(A, 2, 100, C), `sign-${A}`),
+      ownAdmit(1, 200, C2, cyTwo.fingerprint),
+    ]);
+    expect(v.members.get(C2)).toMatchObject({ handle: 'cy', role: 'member' });
+  });
+});

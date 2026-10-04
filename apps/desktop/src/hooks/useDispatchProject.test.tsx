@@ -416,6 +416,20 @@ test('a task change does not invalidate overseer records', async () => {
   ).toBe(false);
 });
 
+// A teammate's change may come with roster ops, so Settings → Machines reads
+// the team again on every task change.
+test('a task change refetches the team keys', async () => {
+  const queryClient = await mountConnected();
+  const teamKey = ['team-keys', `http://127.0.0.1:${PORT}`];
+  queryClient.setQueryData(teamKey, { problems: [] });
+
+  act(() => {
+    sink?.onChange();
+  });
+
+  expect(queryClient.getQueryState(teamKey)?.isInvalidated).toBe(true);
+});
+
 // A registration is a gate message and approving it anywhere (Needs you, the
 // CLI) sends an answer; either may change a row the settings roster shows.
 test('a registration or an answer invalidates the agent roster', async () => {

@@ -395,9 +395,12 @@ export class RosterService {
     const hosts = opts.hosts ?? [];
     const observer = opts.observer === true;
     const mine = view.members.get(this.me);
+    // FW-R27: an id whose handle part is this member's, under a claim that
+    // carries that handle.
     const ownDevice =
       mine?.handle === handle &&
       pinned.handle === handle &&
+      replica.replace(/-[0-9a-f]{8}$/, '') === handle &&
       role === 'member' &&
       hosts.length === 0 &&
       !observer;
