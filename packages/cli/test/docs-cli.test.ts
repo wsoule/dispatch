@@ -24,6 +24,7 @@ import { dirname, join } from 'node:path';
 import { daemonFilePath } from '../src/commands/daemon.js';
 import {
   acceptRestored,
+  checkImportReport,
   editLoop,
   exportDocs,
   importFiles,
@@ -871,5 +872,22 @@ describe('dispatch docs handles', () => {
       'publishing notes to docs/specs/notes.md: task t-pub-1, run r-9',
       'publishing notes to docs/notes.md: task t-pub-1 (not dispatched)',
     ]);
+  });
+});
+
+describe('checkImportReport', () => {
+  const base = { parity: { files: true, names: true } } as ImportReportInfo;
+  it('passes a clean report, and fails on a mismatch or a missing image', () => {
+    expect(() => checkImportReport(base)).not.toThrow();
+    expect(() =>
+      checkImportReport({ ...base, parity: { files: false, names: true } })
+    ).toThrow('parity mismatch');
+    expect(() =>
+      checkImportReport({
+        ...base,
+        parity: { files: true, names: true, images: false },
+        images: { referenced: 2, uploaded: 1, missing: 1 },
+      })
+    ).toThrow('1 image(s) missing');
   });
 });

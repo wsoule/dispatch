@@ -309,6 +309,16 @@ export async function importFiles(
   }
 }
 
+// Fails the import command on a parity mismatch, or when an image is missing.
+export function checkImportReport(r: ImportReportInfo): void {
+  if (!r.parity.files || !r.parity.names)
+    throw new CliError('parity mismatch; nothing was imported');
+  if (r.parity.images === false)
+    throw new CliError(
+      `${r.images?.missing ?? 0} image(s) missing; the docs were imported without them`
+    );
+}
+
 function printReport(ctx: CliContext, r: ImportReportInfo): void {
   ctx.log(
     `${r.dryRun ? 'dry run: ' : ''}${r.files} files, ${r.names} names, ${r.distinctContents} distinct contents`
@@ -834,8 +844,7 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
           { link: o.link, dryRun: o.dryRun === true }
         );
         printReport(ctx, report);
-        if (!report.parity.files || !report.parity.names)
-          throw new CliError('parity mismatch; nothing was imported');
+        checkImportReport(report);
       }
     );
 
