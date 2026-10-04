@@ -34,7 +34,7 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
-import { MemoryError } from '@dispatch/memory';
+import { MemoryBusyError, MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -6671,7 +6671,9 @@ export async function handleApi(
     if (err instanceof MemoryError) {
       const body: { error: string; field?: string } = { error: err.message };
       if (err.field !== undefined) body.field = err.field;
-      return jsonResponse(body, err.status);
+      const res = jsonResponse(body, err.status);
+      if (err instanceof MemoryBusyError) res.headers.set('retry-after', '1');
+      return res;
     }
     // A busy database is 503 to retry; a write the disk refused is 507.
     const storage = storageErrorResponse(err);

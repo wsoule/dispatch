@@ -13,7 +13,7 @@ import {
 
 import type { ManifestRow } from './claudeFiles.js';
 import { memoryContentHash } from './contentHash.js';
-import { MemoryError } from './errors.js';
+import { isSqliteBusy, MemoryBusyError, MemoryError } from './errors.js';
 import { cutUtf8 } from './limits.js';
 import type { SearchMode } from './schema.js';
 import type {
@@ -215,10 +215,15 @@ export class SqliteMemoryStore implements MemoryStore {
   }
 
   // BEGIN IMMEDIATE takes the write lock up front, so two daemons sharing a
-  // personal file queue behind busy_timeout instead of failing mid-write.
+  // personal file never fail mid-write; past the short busy wait it throws
+  // MemoryBusyError, and callers retry off the event loop.
   transaction<T>(fn: () => T): T {
     if (this.depth > 0) return fn();
-    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+    } catch (err) {
+      throw isSqliteBusy(err) ? new MemoryBusyError() : err;
+    }
     this.depth++;
     try {
       const out = fn();
@@ -226,7 +231,7 @@ export class SqliteMemoryStore implements MemoryStore {
       return out;
     } catch (err) {
       this.db.exec('ROLLBACK');
-      throw err;
+      throw isSqliteBusy(err) ? new MemoryBusyError() : err;
     } finally {
       this.depth--;
     }

@@ -158,7 +158,6 @@ export function openMemoryDb(
     );
   }
   try {
-    db.exec('PRAGMA busy_timeout = 5000');
     const minReader = readMinReader(db);
     if (minReader !== null && minReader > MEMORY_DB_VERSION) {
       throw new MemoryError(

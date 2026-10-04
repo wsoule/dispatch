@@ -1,6 +1,11 @@
 export const MEMORY_PACKAGE_VERSION = '0.1.0';
 export { memoryContentHash, normalizeTitle } from './contentHash.js';
-export { MEMORY_ERROR_STATUS, MemoryError } from './errors.js';
+export {
+  isSqliteBusy,
+  MEMORY_ERROR_STATUS,
+  MemoryBusyError,
+  MemoryError,
+} from './errors.js';
 export type { MemoryErrorCode } from './errors.js';
 export {
   HANDLE_PATTERN,

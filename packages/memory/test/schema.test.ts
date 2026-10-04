@@ -10,8 +10,9 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { MemoryError } from '../src/errors.js';
+import { MemoryBusyError, MemoryError } from '../src/errors.js';
 import { MEMORY_DB_VERSION, openMemoryDb } from '../src/schema.js';
+import { SqliteMemoryStore } from '../src/sqliteStore.js';
 
 // Only the file-backed cases set `dir`; the ':memory:' ones leave it unset.
 let dir: string | undefined;
@@ -36,6 +37,28 @@ describe('openMemoryDb', () => {
     const { db, search } = openMemoryDb(':memory:', { fts: 'off' });
     expect(search).toBe('like');
     db.close();
+  });
+
+  it('waits at most 100 ms on a busy file, then refuses as busy instead of stalling', () => {
+    const path = tempDb();
+    const opened = openMemoryDb(path);
+    const [row] = opened.db.prepare('PRAGMA busy_timeout').all() as {
+      timeout: number;
+    }[];
+    expect(row.timeout).toBeLessThanOrEqual(100);
+    const store = new SqliteMemoryStore(opened);
+    const other = openSqliteDb(path);
+    other.exec('BEGIN IMMEDIATE');
+    const started = performance.now();
+    try {
+      expect(() => store.transaction(() => 1)).toThrow(MemoryBusyError);
+    } finally {
+      other.exec('ROLLBACK');
+      other.close();
+    }
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(store.transaction(() => 2)).toBe(2);
+    opened.db.close();
   });
 
   it('makes the database and its WAL files 0600', () => {
