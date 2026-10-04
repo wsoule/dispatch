@@ -57,6 +57,14 @@ describe('sniffImage', () => {
   });
 });
 
+// Sweeps twice a day for `days`, as a running daemon would (far more often).
+function sweepEvery12h(svc: DocsService, h: FakeDocsHost, days: number): void {
+  for (let i = 0; i < days * 2; i++) {
+    h.advance(12 * 60);
+    svc.sweep();
+  }
+}
+
 describe('the asset store', () => {
   let service: DocsService;
   let host: FakeDocsHost;
@@ -317,13 +325,14 @@ describe('the asset store', () => {
       'image/jpeg'
     );
     host.advance(31 * 24 * 60);
-    // A month since the last sweep reads as a clock jump: nothing goes yet.
+    // A month since the last sweep reads as a clock jump: nothing goes until
+    // a full 30 days of clock have passed since it, sweep after sweep.
     service.sweep();
+    sweepEvery12h(service, host, 29);
     expect(service.asset(as(OWNER), 'img', dropped.name).mime).toBe(
       'image/jpeg'
     );
-    host.advance(1);
-    service.sweep();
+    sweepEvery12h(service, host, 1.5);
     expect(() => service.asset(as(OWNER), 'img', dropped.name)).toThrow(
       'not found'
     );
@@ -376,11 +385,11 @@ describe('the asset store', () => {
     svc.sweep();
     expect(scans).toBe(1);
     h.advance(31 * 24 * 60);
-    // The month-long gap reads as a clock jump; the next sweep rescans.
+    // The month-long gap reads as a clock jump: no rescan for 30 days.
     svc.sweep();
+    sweepEvery12h(svc, h, 29);
     expect(scans).toBe(1);
-    h.advance(1);
-    svc.sweep();
+    sweepEvery12h(svc, h, 1.5);
     expect(scans).toBe(2);
   });
 

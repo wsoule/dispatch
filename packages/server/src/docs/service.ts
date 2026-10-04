@@ -2520,14 +2520,22 @@ export class DocsService {
     const store = this.deps.store;
     if (root === undefined || store === null) return;
     const anomaly = assetClockAnomaly(
-      store.meta('sweep:last'),
+      store.meta('assets:last'),
       store.newestAssetAt(),
       now
     );
+    store.setMeta('assets:last', now.toISOString());
+    // After a clock jump nothing is deleted until a full TTL of clock passes.
     if (anomaly !== null) {
-      console.error(`docs: image sweep skipped: ${anomaly}`);
+      const until = new Date(now.getTime() + ASSET_TTL_DAYS * DAY_MS);
+      store.setMeta('assets:hold-until', until.toISOString());
+      console.error(
+        `docs: image sweep held until ${until.toISOString()}: ${anomaly}`
+      );
       return;
     }
+    const hold = store.meta('assets:hold-until');
+    if (hold !== null && now.toISOString() < hold) return;
     const cutoff = new Date(
       now.getTime() - ASSET_TTL_DAYS * DAY_MS
     ).toISOString();
