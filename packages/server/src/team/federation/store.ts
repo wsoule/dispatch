@@ -381,12 +381,12 @@ export class FedStore {
   /** The current problem for a subject, replacing any earlier one. */
   problem(subject: string, message: string): void {
     // An acknowledged note stays quiet until it says something new.
-    const acked = this.db
+    const acknowledged = this.db
       .query<{ n: number }, [string, string]>(
         'SELECT 1 AS n FROM fed_problem_acks WHERE subject = ? AND message = ?'
       )
       .get(subject, message);
-    if (acked !== null) return;
+    if (acknowledged !== null) return;
     this.db
       .query(
         'INSERT INTO fed_problems (subject, message, at) VALUES (?, ?, ?) ON CONFLICT(subject) DO UPDATE SET message = excluded.message, at = excluded.at'

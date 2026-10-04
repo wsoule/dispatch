@@ -132,7 +132,12 @@ const ACTIONS = new Set([
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
 // merge reset and a route's late failure. A halt, a key claim or a pause
 // stays until what caused it is gone.
-const ACKABLE = ['team:race:', 'team:cut:', 'transport:merge', 'team:route'];
+const ACKNOWLEDGEABLE = [
+  'team:race:',
+  'team:cut:',
+  'transport:merge',
+  'team:route',
+];
 
 const STATUS: Record<RosterError['code'], number> = {
   forbidden: 403,
@@ -258,7 +263,7 @@ async function act(
     segments[2] === 'ack'
   ) {
     const subject = need('subject');
-    if (!ACKABLE.some((p) => subject.startsWith(p)))
+    if (!ACKNOWLEDGEABLE.some((p) => subject.startsWith(p)))
       throw new RosterError(
         'invalid',
         `${subject} is not a note to acknowledge; it goes when its cause does`
