@@ -10,6 +10,7 @@ import {
 import { platform } from 'node:os';
 import { join } from 'node:path';
 
+import { childEnv } from './childEnv.js';
 import { terminalScrollbackPath, terminalsDir } from './orchestrator/paths.js';
 import { spawnInThread } from './terminalSpawn.js';
 import type { TerminalProcess, TerminalSpawner } from './terminalSpawn.js';
@@ -374,7 +375,7 @@ export class TerminalRegistry {
     // `COLUMNS`/`LINES` give a size to a program that cannot ask a pty for one
     // — the only way to tell it under the fallbacks, which cannot resize.
     const env: Record<string, string> = {
-      ...(process.env as Record<string, string>),
+      ...childEnv(),
       ...spec.env,
       TERM: 'xterm-256color',
       COLUMNS: String(cols),

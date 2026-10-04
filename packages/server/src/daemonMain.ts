@@ -460,6 +460,8 @@ const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';
 // whoever launches the daemon with it is as trusted as whoever reads the
 // stdout line below. The agent token is always minted fresh.
 const presetAppToken = process.env.DISPATCH_APP_TOKEN?.trim();
+// Read once and gone: no child this daemon starts may inherit it.
+delete process.env.DISPATCH_APP_TOKEN;
 const tokens =
   presetAppToken !== undefined && presetAppToken !== ''
     ? { ...mintDaemonTokens(), appToken: presetAppToken }

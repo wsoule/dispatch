@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 
+import { childEnv } from '../childEnv.js';
+
 type JsonRpcId = number | string;
 
 interface JsonRpcError {
@@ -43,9 +45,14 @@ export interface CodexAppServerClose {
 
 const STDERR_TAIL_LIMIT = 8_192;
 
-function spawnCodexAppServer(cwd: string): ChildProcessWithoutNullStreams {
-  return spawn('codex', ['app-server', '--stdio'], {
+// `binary` is `codex`; a test names another to read the env it hands over.
+export function spawnCodexAppServer(
+  cwd: string,
+  binary = 'codex'
+): ChildProcessWithoutNullStreams {
+  return spawn(binary, binary === 'codex' ? ['app-server', '--stdio'] : [], {
     cwd,
+    env: childEnv(),
     stdio: 'pipe',
     windowsHide: true,
   });
