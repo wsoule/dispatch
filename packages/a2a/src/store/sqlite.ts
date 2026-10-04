@@ -129,10 +129,13 @@ export interface A2AStore {
   // Every task whose state is not terminal.
   openTasks(): TaskRow[];
   countOpen(client: Address): number;
+  // Rows created in [sinceIso, untilIso]; a row dated past `untilIso` (a
+  // clock that jumped) is outside the window.
   countSince(
     client: Address,
     skill: 'ask' | 'handoff',
-    sinceIso: string
+    sinceIso: string,
+    untilIso?: string
   ): number;
   newestTaskAt(client: Address): string | null;
   taskForDispatchTask(taskId: string): TaskRow | null;
@@ -584,13 +587,14 @@ export class SqliteA2AStore implements A2AStore {
   countSince(
     client: Address,
     skill: 'ask' | 'handoff',
-    sinceIso: string
+    sinceIso: string,
+    untilIso?: string
   ): number {
     return Number(
       queryOne<{ n: number }>(
         this.db,
-        'SELECT COUNT(*) AS n FROM tasks WHERE client = ? AND skill = ? AND created_at >= ?',
-        [client, skill, sinceIso]
+        'SELECT COUNT(*) AS n FROM tasks WHERE client = ? AND skill = ? AND created_at >= ? AND created_at <= ?',
+        [client, skill, sinceIso, untilIso ?? '9999']
       )?.n ?? 0
     );
   }
