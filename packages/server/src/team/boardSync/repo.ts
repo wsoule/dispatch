@@ -478,6 +478,25 @@ export class SyncRepo {
     return out;
   }
 
+  /** Each segment's name, size and change time under these replicas' ids
+   *  (every replica when null): a stamp that moves when their files do. */
+  stampOf(replicas: readonly string[] | null): string {
+    const root = join(this.dir, FED_DIR);
+    const ids =
+      replicas ??
+      listDir(root).filter((r) => REPLICA_ID.test(r) && realDir(join(root, r)));
+    return ids
+      .flatMap((replica) =>
+        this.segments(replica).map((name) => {
+          const st = lstatSync(join(root, replica, name), {
+            throwIfNoEntry: false,
+          });
+          return `${replica}/${name}:${st?.size ?? 0}:${st?.mtimeMs ?? 0}`;
+        })
+      )
+      .join(',');
+  }
+
   /** Every complete line of these replicas' segments (every replica when
    *  null), read whole within the per-file cap and outside every pass budget:
    *  FW-R28's scan for a named key op no probe found. */

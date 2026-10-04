@@ -108,6 +108,10 @@ export class GitFederationTransport implements FederationTransport {
     return entries;
   }
 
+  stamp(replicas: readonly string[] | null): string {
+    return this.deps.repo.stampOf(replicas);
+  }
+
   scan(replicas: readonly string[] | null): Promise<LogEntry[]> {
     return Promise.resolve(this.deps.repo.scanFull(replicas));
   }

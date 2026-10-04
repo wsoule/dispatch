@@ -528,6 +528,18 @@ describe('the read budget (FW-R23 hint)', () => {
     expect([...keyed].sort()).toEqual([lined, filed]);
   });
 
+  // The stamp a backed-off scan watches moves when that id's files do.
+  it("stamps an id's files so a change to them shows", async () => {
+    const a = clone('a', A);
+    await a.ensure();
+    const ops = chain(2);
+    await a.writeV2([ops[0]]);
+    const before = a.stampOf([A]);
+    expect(a.stampOf([A])).toBe(before);
+    await a.writeV2([ops[1]]);
+    expect(a.stampOf([A])).not.toBe(before);
+  });
+
   it('sees an append to a segment it already read', async () => {
     const a = clone('a', A);
     await a.ensure();

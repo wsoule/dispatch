@@ -26,6 +26,9 @@ export interface FederationTransport {
    *  null), outside the per-pass caps: for a key op a roster op names that
    *  no probe found (FW-R28). */
   scan(replicas: readonly string[] | null): Promise<LogEntry[]>;
+  /** A cheap stamp of those replicas' files that changes when they do, so a
+   *  backed-off scan runs again at once. */
+  stamp(replicas: readonly string[] | null): string;
   /** Who the transport sees connected, or null when it cannot tell (git). */
   presence(): { replica: string; since: string }[] | null;
   health(): TransportHealth;

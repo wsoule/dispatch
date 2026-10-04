@@ -73,7 +73,19 @@ export class MemoryTransport implements FederationTransport {
       )
     );
   }
+  /** Calls to scan, for the backoff tests. */
+  scans = 0;
+  stamp(replicas: readonly string[] | null): string {
+    return [...this.remote.logs]
+      .filter(([r]) => replicas === null || replicas.includes(r))
+      .map(
+        ([r, log]) =>
+          `${r}:${log.filter((e) => !this.remote.gone.has(e)).length}`
+      )
+      .join(',');
+  }
   scan(replicas: readonly string[] | null): Promise<LogEntry[]> {
+    this.scans += 1;
     return Promise.resolve(
       [...this.remote.logs]
         .filter(([r]) => replicas === null || replicas.includes(r))

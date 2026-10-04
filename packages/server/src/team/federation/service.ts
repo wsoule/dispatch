@@ -58,6 +58,10 @@ const APPLIED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const SEEN_OPS_KEPT = 10_000;
 // The most of a disputed id's claimed chain read before one is decided.
 const CLAIM_PREFIX_OPS = 8;
+// A full scan for a missing key or founding: this many passes in a row, then
+// waits doubling up to this long, unless the files it reads change.
+const SCAN_EAGER = 3;
+const SCAN_MAX_WAIT_MS = 30 * 60 * 1000;
 // One bad-signature or halt audit row per replica in this window.
 const AUDIT_WINDOW_MS = 10 * 60 * 1000;
 
@@ -167,6 +171,11 @@ interface Verified {
 
 export class FederationService {
   private lastSyncAt: string | null = null;
+  /** Backoff per full scan (FW-R28), by what it looks for. */
+  private readonly scans = new Map<
+    string,
+    { attempts: number; nextAt: number; stamp: string }
+  >();
   /** Per undecided id, the lines and roster it was last read with. */
   private readonly undecidedSeen = new Map<string, string>();
   private lastError: string | null = null;
@@ -429,7 +438,11 @@ export class FederationService {
     // FW-R28: a held invite names a team whose founding no read has shown;
     // every file is scanned until it shows, with a problem while it is missing.
     const awaited = this.opts.roster.awaitedTeam();
-    if (!this.opts.roster.founded() && awaited !== null) {
+    if (
+      !this.opts.roster.founded() &&
+      awaited !== null &&
+      this.scanDue(`founding\n${awaited}`, null)
+    ) {
       this.readFoundings(await this.opts.transport.scan(null));
       if (this.opts.roster.awaitedTeam() === null)
         this.opts.fed.clearProblem('team:founding');
@@ -468,6 +481,26 @@ export class FederationService {
     }
   }
 
+  // Whether a full scan for `key` is due: the first SCAN_EAGER passes in a
+  // row, then waits doubling from a minute up to SCAN_MAX_WAIT_MS, and at
+  // once whenever the stamp of the files it reads changes.
+  private scanDue(key: string, replicas: readonly string[] | null): boolean {
+    const stamp = this.opts.transport.stamp(replicas);
+    const now = this.now().getTime();
+    let st = this.scans.get(key);
+    if (st === undefined || st.stamp !== stamp) {
+      st = { attempts: 0, nextAt: 0, stamp };
+      this.scans.set(key, st);
+    }
+    if (now < st.nextAt) return false;
+    st.attempts += 1;
+    if (st.attempts >= SCAN_EAGER)
+      st.nextAt =
+        now +
+        Math.min(SCAN_MAX_WAIT_MS, 60_000 * 2 ** (st.attempts - SCAN_EAGER));
+    return true;
+  }
+
   /** FW-R28: the key op an admit names that no probe found, from a scan of
    *  that id's files outside the caps; true once a claim with it is held. */
   async findKey(replica: string, fingerprint: string): Promise<boolean> {
@@ -493,7 +526,10 @@ export class FederationService {
     const { fed, roster } = this.opts;
     const missing = roster.missingNamedKeys();
     for (const { replica, fingerprint } of missing) {
+      const key = `key\n${replica}\n${fingerprint}`;
+      if (!this.scanDue(key, [replica])) continue;
       const found = await this.findKey(replica, fingerprint);
+      if (found) this.scans.delete(key);
       const subject = `key:missing:${replica}`;
       if (found) fed.clearProblem(subject);
       else

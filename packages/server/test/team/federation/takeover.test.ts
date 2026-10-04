@@ -359,4 +359,45 @@ describe('rival key claims (FW-R24)', () => {
       cy.fed.problems().some((p) => p.subject.startsWith('key:missing:'))
     ).toBe(false);
   });
+
+  // The full scan for a missing key backs off: three passes in a row, then
+  // doubling waits up to 30 minutes, and at once when that id's files change.
+  it('backs off the scan for a missing key, and scans at once when its files change', async () => {
+    const {
+      remote,
+      make,
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const bobKey = (remote.logs.get(bob.fed.replica) ?? []).find(
+      (e) => e.type === 'key'
+    );
+    if (bobKey === undefined) throw new Error('no key op for bob');
+    remote.gone.add(bobKey);
+    const cy = make('cy');
+    await settle(ada, cy);
+    const transport = (
+      cy.service as unknown as { opts: { transport: { scans: number } } }
+    ).opts.transport;
+    const scans = () => transport.scans;
+    const pass = () => cy.service.syncNow();
+    const before = scans();
+    for (let n = 0; n < 6; n++) await pass();
+    const early = scans() - before;
+    expect(early).toBeLessThanOrEqual(3);
+    cy.clock.now = new Date(cy.clock.now.getTime() + 31 * 60 * 1000);
+    const waited = scans();
+    await pass();
+    expect(scans()).toBe(waited + 1);
+    await pass();
+    expect(scans()).toBe(waited + 1);
+    // A change under bob's id: scan again at once.
+    bob.store.create({ title: 'touches bob' });
+    await bob.service.syncNow();
+    await pass();
+    expect(scans()).toBe(waited + 2);
+  });
 });
