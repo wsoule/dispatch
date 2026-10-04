@@ -58,6 +58,7 @@ export class FakeHost implements MessagingHost {
   wakeResult: WakeResult = { ok: true, runId: 'r-00000f' };
   failPushFor = new Set<string>();
   failOnAnswered = false;
+  quotaGroups = new Map<Address, Address[]>(); // sender -> who shares its quota
   // When set, push() waits on it — lets a test act while a push is in flight.
   pushBarrier: Promise<void> | null = null;
   ownerAddress: Address = 'human:wyat';
@@ -117,6 +118,9 @@ export class FakeHost implements MessagingHost {
     this.calls.push({ hook: 'decide', args: [request.type, request.target] });
     this.requests.push(request);
     return this.ruling;
+  }
+  quotaGroup(sender: Address): Address[] {
+    return this.quotaGroups.get(sender) ?? [sender];
   }
   owner(): Address {
     return this.ownerAddress;

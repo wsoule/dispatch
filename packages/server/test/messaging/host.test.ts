@@ -58,6 +58,7 @@ function makeHost(
     liveRunIdForTask: () => null,
     isRunLive: () => false,
     taskIdOfRun: () => null,
+    list: () => [],
     deliverToRun: (runId, text, from) => {
       calls.deliverToRun.push([runId, text, from]);
     },

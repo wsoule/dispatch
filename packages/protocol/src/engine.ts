@@ -371,10 +371,13 @@ export class DeliveryEngine {
       !sender.address.startsWith('human:') &&
       sender.address !== SYSTEM_ADDRESS
     ) {
-      if (
-        this.store.countFrom(sender.address, this.hourAgoIso(), true) >=
-        this.limits.urgentPerHour
-      ) {
+      const since = this.hourAgoIso();
+      const group = this.host.quotaGroup?.(sender.address) ?? [sender.address];
+      const sent = group.reduce(
+        (n, address) => n + this.store.countFrom(address, since, true),
+        0
+      );
+      if (sent >= this.limits.urgentPerHour) {
         urgent = false;
         downgraded = true;
       }

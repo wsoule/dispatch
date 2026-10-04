@@ -2,6 +2,7 @@ import type { SqliteDatabase } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DeliveryEngine } from '../src/engine.js';
+import type { SendInput } from '../src/envelope.js';
 import { MessagingError } from '../src/errors.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
 import { FakeHost } from './fakeHost.js';
@@ -53,5 +54,28 @@ describe('DeliveryEngine.send', () => {
     } finally {
       console.error = originalError;
     }
+  });
+});
+
+describe('the urgent quota', () => {
+  it('is shared by every sender in the host quota group', async () => {
+    engine = new DeliveryEngine({ store, host, limits: { urgentPerHour: 2 } });
+    host.startRun('t-000002', 'r-000002');
+    const run2 = { address: 'run:r-000002', canDecide: false };
+    const group = [run1.address, run2.address];
+    host.quotaGroups.set(run1.address, group);
+    host.quotaGroups.set(run2.address, group);
+    const urgent: SendInput = {
+      to: ['human:wyat'],
+      kind: 'message',
+      body: 'x',
+      urgent: true,
+    };
+    expect((await engine.send(urgent, run1)).downgraded).toBe(false);
+    expect((await engine.send(urgent, run1)).downgraded).toBe(false);
+    // A sibling run cannot reset the count by being a new address.
+    const third = await engine.send(urgent, run2);
+    expect(third.downgraded).toBe(true);
+    expect(third.message.urgent).toBe(false);
   });
 });
