@@ -111,7 +111,12 @@ import {
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
-import { decidingHuman, proposalWriteRefusal } from './api/proposalFence.js';
+import {
+  a2aParentRefusal,
+  decidingHuman,
+  markA2AChild,
+  proposalWriteRefusal,
+} from './api/proposalFence.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
@@ -680,7 +685,8 @@ export function validateTaskInput(
 // Creates a task as POST /api/tasks does: checked, a legacy `milestone`
 // resolved to a parent, stored, cached and broadcast as task.changed.
 export function createTaskChecked(
-  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'>,
+  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'> &
+    Partial<Pick<ApiContext, 'a2a'>>,
   input: CreateInput
 ): { ok: true; doc: TaskDoc } | { ok: false; error: string } {
   const error = validateTaskInput(ctx.rootDir, { ...input });
@@ -697,6 +703,7 @@ export function createTaskChecked(
     // Omitted, a task starts in the project's ready role.
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
   });
+  markA2AChild(ctx, doc.meta.id, doc.meta.parent);
   ctx.cache.refresh(ctx.store, [doc.meta.id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
   return { ok: true, doc };
@@ -706,6 +713,8 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const input = parsed.value as CreateInput;
+  const refused = a2aParentRefusal(ctx, input.parent);
+  if (refused !== null) return refused;
   // Credit whoever made the request unless the caller names a creator (a
   // sync importing someone else's issue).
   const created = createTaskChecked(ctx, {
@@ -843,6 +852,12 @@ async function updateTask(
     if (!guard.ok) return errorResponse(guard.status, guard.error);
   }
 
+  // Moving a task under an A2A task makes it one: a decider's call.
+  if (patch.parent !== undefined && patch.parent !== existing.meta.parent) {
+    const refused = a2aParentRefusal(ctx, patch.parent);
+    if (refused !== null) return refused;
+  }
+
   // A publish task's elevated risk is what keeps a human on its merge, so only
   // decide tier (never the shared agent token) may change it while it publishes.
   if (
@@ -866,6 +881,7 @@ async function updateTask(
   }
 
   const doc = ctx.store.update(id, patch);
+  markA2AChild(ctx, id, doc.meta.parent);
   ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });

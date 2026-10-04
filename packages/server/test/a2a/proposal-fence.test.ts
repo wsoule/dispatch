@@ -6,6 +6,11 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import type {
+  ExecutorEvents,
+  ExecutorRun,
+  ExecutorStartOptions,
+} from '../../src/orchestrator/types.js';
 import { ParkingExecutor } from '../messaging/harness.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from '../testAuth.js';
@@ -14,9 +19,22 @@ import { approvedClient, useSeedBase } from './seed.js';
 let home: string;
 let root: string;
 let handle: ServerHandle;
+// Keeps each run's prompt.
+class PromptRecorder extends ParkingExecutor {
+  readonly prompts: string[] = [];
+  override start(
+    opts: ExecutorStartOptions,
+    events: ExecutorEvents
+  ): ExecutorRun {
+    this.prompts.push(opts.prompt);
+    return super.start(opts, events);
+  }
+}
+let recorder: PromptRecorder;
 const originalHome = process.env.DISPATCH_HOME;
 
 beforeEach(async () => {
+  recorder = new PromptRecorder();
   home = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-fence-home-')));
   process.env.DISPATCH_HOME = home;
   root = initGitRepo('a2a-fence-');
@@ -26,7 +44,10 @@ beforeEach(async () => {
     port: 0,
     writeDaemonFile: false,
     webDistDir: null,
-    registerExecutors: (o) => o.registerExecutor('park', new ParkingExecutor()),
+    registerExecutors: (o) => {
+      o.registerExecutor('park', new ParkingExecutor());
+      o.registerExecutor('record', recorder);
+    },
   });
   useTestAuth(handle);
   useSeedBase(`http://127.0.0.1:${handle.port}`);
@@ -215,4 +236,74 @@ it('caps pending A2A clients per requester', async () => {
   );
   const { token } = (await issued.json()) as { token: string };
   expect((await add('adas', token)).status).toBe(201);
+});
+
+it('keeps subtasks of an A2A task inside its provenance', async () => {
+  const id = await approvedDraft();
+  const child = (parent: string) =>
+    JSON.stringify({ title: 'A subtask', parent });
+  const viaAgent = await rawFetch(`http://127.0.0.1:${handle.port}/api/tasks`, {
+    method: 'POST',
+    headers: { ...json, authorization: `Bearer ${handle.tokens.agentToken}` },
+    body: child(id),
+  });
+  expect(viaAgent.status).toBe(403);
+  const made = await fetch(`http://127.0.0.1:${handle.port}/api/tasks`, {
+    method: 'POST',
+    headers: json,
+    body: child(id),
+  });
+  expect(made.status).toBe(201);
+  const { meta } = (await made.json()) as { meta: { id: string } };
+  expect(handle.a2a.taskOrigin(meta.id)).toBe('a2a');
+
+  // An ordinary task moved under it joins it, and only a decider may move it.
+  const plain = (await (
+    await fetch(`http://127.0.0.1:${handle.port}/api/tasks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ title: 'Plain' }),
+    })
+  ).json()) as { meta: { id: string } };
+  const move = JSON.stringify({ parent: id });
+  expect(
+    (
+      await asAgent(plain.meta.id, {
+        method: 'PATCH',
+        headers: json,
+        body: move,
+      })
+    ).status
+  ).toBe(403);
+  expect(
+    (await owner(plain.meta.id, { method: 'PATCH', headers: json, body: move }))
+      .status
+  ).toBe(200);
+  expect(handle.a2a.taskOrigin(plain.meta.id)).toBe('a2a');
+
+  // Its run never sees the A2A task's body as parent context.
+  await handle.orchestrator.dispatch(meta.id, 'record');
+  const prompt = recorder.prompts.at(-1) ?? '';
+  expect(prompt).not.toContain('Parent epic');
+  expect(prompt).not.toContain('Please add limits.');
+});
+
+it('refuses a subtask of an A2A clone below decide tier', async () => {
+  const id = await approvedDraft();
+  const res = await owner(`${id}/fanout`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({ variants: ['park'] }),
+  });
+  const { variants } = (await res.json()) as {
+    variants: { task: { meta: { id: string }; body: string } }[];
+  };
+  const clone = variants[0].task;
+  expect(clone.body.match(/## Description/g)).toHaveLength(1);
+  const viaAgent = await rawFetch(`http://127.0.0.1:${handle.port}/api/tasks`, {
+    method: 'POST',
+    headers: { ...json, authorization: `Bearer ${handle.tokens.agentToken}` },
+    body: JSON.stringify({ title: 'Sub', parent: clone.meta.id }),
+  });
+  expect(viaAgent.status).toBe(403);
 });
