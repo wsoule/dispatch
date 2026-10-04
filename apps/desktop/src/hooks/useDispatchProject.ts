@@ -217,8 +217,6 @@ async function wakeNoticeFor(
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
-// task.changed is handled in the socket's onEvent, where its ids are.
-const ignoreChange = () => {};
 // An in-place dispatch's failure reaches its caller as a rejection instead.
 const ignoreDispatchFailure = () => {};
 
@@ -1643,7 +1641,13 @@ export function useDispatchProject(
         );
       }
     };
-    const disconnect = client.connectEvents(ignoreChange, {
+    // task.changed is patched in onEvent below; onChange only re-reads the
+    // team, since a teammate's change may come with roster ops (Settings →
+    // Machines).
+    const refreshTeamKeys = () => {
+      void queryClient.invalidateQueries({ queryKey: ['team-keys'] });
+    };
+    const disconnect = client.connectEvents(refreshTeamKeys, {
       onEvent: (event) => {
         applyThreadEvent(queryClient, port, event);
         applyDocsEvent(queryClient, port, event);
@@ -1968,10 +1972,6 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: syncStatusQueryKey,
           });
-          // A teammate's change may come with roster ops: Settings → Machines.
-          if (event.type === 'board.sync') {
-            void queryClient.invalidateQueries({ queryKey: ['team-keys'] });
-          }
         } else if (event.type === 'linear.progress') {
           // An import moved on: patch the status in place, no refetch.
           queryClient.setQueryData<LinearStatus>(linearStatusQueryKey, (prev) =>
