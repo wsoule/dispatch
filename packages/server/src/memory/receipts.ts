@@ -20,6 +20,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import { unreadable } from '../docs/receipts.js';
 import { runsDir } from '../orchestrator/paths.js';
 import type { ReceiptsStep } from '../receipts/exporter.js';
 
@@ -180,12 +181,19 @@ async function restoreFile(
   const id = receiptId(file);
   if (id === null) return { problem: 'not a memory receipt file name' };
   const path = join(restoreDir, file);
-  const stat = lstatSync(path);
-  if (!stat.isFile()) return { problem: 'not a regular file' };
-  if (stat.size > MEMORY_RECEIPT_FILE_BYTES)
-    return { problem: `over ${MEMORY_RECEIPT_FILE_BYTES} bytes` };
-  if (shared.getEntry(id) !== null) return 'skipped';
-  const parsed = parseReceiptFile(readFileSync(path, 'utf8'), file);
+  let text: string;
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile()) return { problem: 'not a regular file' };
+    if (stat.size > MEMORY_RECEIPT_FILE_BYTES)
+      return { problem: `over ${MEMORY_RECEIPT_FILE_BYTES} bytes` };
+    if (shared.getEntry(id) !== null) return 'skipped';
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    // One file this process may not read never stops the rest.
+    return { problem: unreadable(err) };
+  }
+  const parsed = parseReceiptFile(text, file);
   if (parsed.problem !== null) return { problem: parsed.problem };
   // A retired lesson stays retired: only live ones come back.
   if (parsed.status?.startsWith('retired') === true) return 'skipped';

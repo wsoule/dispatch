@@ -7,6 +7,7 @@ import {
 import type { MemoryEntry, MemoryScope } from '@dispatch/memory';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -440,6 +441,27 @@ describe('a staged memory restore', () => {
     expect(
       await applyStagedMemoryRestore(t.engine, t.shared, restoreDir)
     ).toMatchObject({ restored: 0, skipped: 1 });
+  });
+
+  it('records a staged file it may not read as a problem and goes on', async () => {
+    const t = gatedEngine();
+    const locked = lostEntry('locked');
+    const file = stage(locked);
+    stage(lostEntry('readable'));
+    chmodSync(join(restoreDir, file), 0o000);
+    try {
+      const report = await applyStagedMemoryRestore(
+        t.engine,
+        t.shared,
+        restoreDir
+      );
+      expect(report?.restored).toBe(1);
+      expect(report?.problems).toEqual([
+        { file, detail: expect.stringContaining('EACCES') },
+      ]);
+    } finally {
+      chmodSync(join(restoreDir, file), 0o600);
+    }
   });
 
   it('reports a truncated or stripped receipt as a problem, never a proposal', async () => {
