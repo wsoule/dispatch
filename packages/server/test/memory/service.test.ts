@@ -12,6 +12,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -123,6 +124,46 @@ describe('restore problems', () => {
     expect(t.memory.restoreProblems()).toEqual([
       'memory restore: notes.md: not a memory receipt file name',
     ]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore health over several passes', () => {
+  it('counts each file once and clears a problem once its file is gone', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-dedupe-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, 'notes.md'), 'stray\n');
+    const e = newMemoryEntry(
+      {
+        scope: 'team',
+        kind: 'fact',
+        title: 'kept',
+        body: 'kept body',
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      createMemoryIds().entry(Date.now()),
+      new Date().toISOString()
+    );
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    await t.memory.restoreStaged();
+    // A second pass meets the same stray file: one problem line, not two.
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toHaveLength(1);
+    expect(t.memory.health(null).restore).toMatchObject({
+      restored: 1,
+      skipped: 0,
+    });
+    rmSync(join(staging, 'notes.md'));
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toEqual([]);
     t.memory.close();
     if (home === undefined) delete process.env.DISPATCH_HOME;
     else process.env.DISPATCH_HOME = home;

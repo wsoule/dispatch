@@ -239,7 +239,12 @@ export async function applyStagedMemoryRestore(
   engine: MemoryEngine | null,
   shared: MemoryStore | null,
   restoreDir: string,
-  limit = RESTORE_PER_PASS
+  limit = RESTORE_PER_PASS,
+  // Hears each staged file this pass looked at, and what became of it.
+  onFile: (
+    file: string,
+    outcome: 'restored' | 'skipped' | 'problem'
+  ) => void = () => {}
 ): Promise<MemoryRestoreReport | null> {
   if (engine === null || shared === null || !existsSync(restoreDir))
     return null;
@@ -258,6 +263,7 @@ export async function applyStagedMemoryRestore(
       break;
     }
     const outcome = await restoreFile(engine, shared, restoreDir, file);
+    onFile(file, typeof outcome === 'string' ? outcome : 'problem');
     if (typeof outcome !== 'string') {
       report.problems.push({ file, detail: outcome.problem });
       continue;

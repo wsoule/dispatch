@@ -15,7 +15,7 @@ import type {
   Principal,
 } from '@dispatch/memory';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { unwatchFile, watchFile } from 'node:fs';
+import { existsSync, unwatchFile, watchFile } from 'node:fs';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -239,23 +239,6 @@ function readLastImport(
   } catch {
     return null;
   }
-}
-
-// One process's restore so far: this pass's counts added to the earlier
-// passes', and its problems by file, a newer pass's reading winning.
-function withTotals(
-  before: MemoryRestoreReport | null,
-  pass: MemoryRestoreReport
-): MemoryRestoreReport {
-  if (before === null) return pass;
-  const problems = new Map(before.problems.map((p) => [p.file, p]));
-  for (const p of pass.problems) problems.set(p.file, p);
-  return {
-    ...pass,
-    restored: before.restored + pass.restored,
-    skipped: before.skipped + pass.skipped,
-    problems: [...problems.values()],
-  };
 }
 
 /**
@@ -793,17 +776,52 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
 
   let lastRestore: MemoryRestoreReport | null = null;
   let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  // Each staged file's latest outcome and open problem, across drain passes.
+  const restoreOutcomes = new Map<string, 'restored' | 'skipped'>();
+  const restoreProblemsByFile = new Map<
+    string,
+    { file: string; detail: string }
+  >();
   let closed = false;
   // One restore pass; files past its limit drain on a timer, a batch at a time.
   const restoreStaged = async (): Promise<MemoryRestoreReport | null> => {
+    const dir = memoryRestoreDir(deps.rootDir);
+    const visited = new Set<string>();
     const report = await applyStagedMemoryRestore(
       engine,
       shared,
-      memoryRestoreDir(deps.rootDir),
-      deps.restoreBatch
+      dir,
+      deps.restoreBatch,
+      (file, outcome) => {
+        visited.add(file);
+        if (outcome === 'problem') return;
+        restoreProblemsByFile.delete(file);
+        // A file restored once stays restored, however often it is seen again.
+        if (restoreOutcomes.get(file) !== 'restored')
+          restoreOutcomes.set(file, outcome);
+      }
     );
-    if (report === null) return null;
-    lastRestore = withTotals(lastRestore, report);
+    for (const p of report?.problems ?? [])
+      restoreProblemsByFile.set(p.file, p);
+    // A problem file no longer staged was dealt with by hand.
+    for (const file of [...restoreProblemsByFile.keys()])
+      if (!visited.has(file) && !existsSync(join(dir, file)))
+        restoreProblemsByFile.delete(file);
+    if (report === null) {
+      if (lastRestore !== null)
+        lastRestore = {
+          ...lastRestore,
+          problems: [...restoreProblemsByFile.values()],
+        };
+      return null;
+    }
+    const counted = [...restoreOutcomes.values()];
+    lastRestore = {
+      ...report,
+      restored: counted.filter((o) => o === 'restored').length,
+      skipped: counted.filter((o) => o === 'skipped').length,
+      problems: [...restoreProblemsByFile.values()],
+    };
     if (report.deferred > 0 && !closed && restoreTimer === null) {
       restoreTimer = setTimeout(() => {
         restoreTimer = null;
