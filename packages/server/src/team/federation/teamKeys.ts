@@ -12,7 +12,7 @@ export const BRANCH_SIZE_WARN_BYTES = 1024 * 1024 * 1024;
 const SKEW_WARN_MS = 60 * 1000;
 
 /** What the relay can read, shown before any switch to it (F-D31). */
-const RELAY_DISCLOSURE =
+export const RELAY_DISCLOSURE =
   'The relay can read everything that is not sealed: the board, team memory and team docs, the roster with the team’s license key, presence, and who messaged whom and when. It cannot read message contents.';
 
 /** What `GET /api/team/keys` answers, at the decide tier. */

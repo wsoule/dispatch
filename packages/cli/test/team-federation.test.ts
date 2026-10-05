@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { createApiClient } from '../src/apiClient.js';
 import type { TeamKeys } from '../src/apiClient.js';
-import { describeTeamKeys } from '../src/commands/team.js';
+import { describeTeamKeys, switchTeamTransport } from '../src/commands/team.js';
 
 let server: ReturnType<typeof Bun.serve>;
 const seen: { method: string; path: string; body: unknown }[] = [];
@@ -127,6 +127,11 @@ describe('the API client', () => {
     await client.dismissRosterOp('cy-0000000c', 4, 'h'.repeat(64));
     await client.ackProblem('team:race:bob-0000000b');
     await client.resolveRunConflict('r-0000000000ad', 'cy-0000000c');
+    await client.switchTransport({
+      kind: 'relay',
+      url: 'wss://relay.example',
+      confirmed: true,
+    });
     expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
       ['POST', '/api/team/found', { name: 'acme' }],
       [
@@ -148,6 +153,67 @@ describe('the API client', () => {
         '/api/team/runs/r-0000000000ad/resolve',
         { replica: 'cy-0000000c' },
       ],
+      [
+        'POST',
+        '/api/team/transport',
+        { kind: 'relay', url: 'wss://relay.example', confirmed: true },
+      ],
     ]);
+  });
+});
+
+describe('dispatch team transport', () => {
+  const api = () => {
+    const calls: unknown[] = [];
+    return {
+      calls,
+      getTeamKeys: () => Promise.resolve(keys),
+      switchTransport: (body: unknown) => {
+        calls.push(body);
+        return Promise.resolve({});
+      },
+    };
+  };
+
+  it('prints the disclosure and switches nothing without --yes', async () => {
+    const a = api();
+    const lines: string[] = [];
+    await expect(
+      switchTeamTransport(a, 'relay', 'wss://relay.example', false, (l) =>
+        lines.push(l)
+      )
+    ).rejects.toThrow('Run it again with --yes to switch.');
+    expect(lines).toContain(keys.relayDisclosure);
+    expect(a.calls).toEqual([]);
+  });
+
+  it('switches with confirmed: true given --yes, and back to git', async () => {
+    const a = api();
+    await switchTeamTransport(
+      a,
+      'relay',
+      'wss://relay.example',
+      true,
+      () => {}
+    );
+    await switchTeamTransport(a, 'git', undefined, false, () => {});
+    expect(a.calls).toEqual([
+      { kind: 'relay', url: 'wss://relay.example', confirmed: true },
+      { kind: 'git' },
+    ]);
+  });
+
+  it('says which transport the team syncs over', () => {
+    expect(describeTeamKeys(keys)).toContain('Syncing over git.');
+    expect(
+      describeTeamKeys({
+        ...keys,
+        transport: {
+          ...keys.transport,
+          kind: 'relay',
+          url: 'wss://relay.example',
+        },
+      })
+    ).toContain('Syncing over the relay at wss://relay.example.');
   });
 });

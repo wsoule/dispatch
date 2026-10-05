@@ -55,6 +55,8 @@ const GATED_FIELDS: readonly MemoryField[] = [
   'status',
   'statusReason',
   'supersedes',
+  'supersededBy',
+  'author',
 ];
 // Changed team entries read per pass.
 const BATCH = 500;
@@ -63,10 +65,12 @@ const PROJECT_BATCH = 200;
 // FW-R37(3): new team entries one publisher may start here per hour.
 const NEW_PER_HOUR = 500;
 
-/** A local team entry to publish, with who made its latest change. */
+/** A local team entry to publish: who made its latest change, and who
+ *  last changed each field, so no change rides another's `by`. */
 export interface TeamChange {
   entry: MemoryEntry;
   by: Address;
+  fieldBy: Partial<Record<keyof MemoryEntry, Address>>;
 }
 
 /** What the port did with a merged entry. */
@@ -364,7 +368,8 @@ export class MemorySync implements Collector, OpHandler {
       : row?.backed === 1;
     fed.db
       .query(
-        'INSERT INTO fed_memory (memory, trust, origin_replica, dirty, backed) VALUES (?, ?, ?, 1, ?) ON CONFLICT (memory) DO UPDATE SET trust = excluded.trust, dirty = 1, backed = excluded.backed'
+        // An unbacked change still waiting to apply keeps the entry unbacked.
+        'INSERT INTO fed_memory (memory, trust, origin_replica, dirty, backed) VALUES (?, ?, ?, 1, ?) ON CONFLICT (memory) DO UPDATE SET trust = excluded.trust, dirty = 1, backed = CASE WHEN fed_memory.dirty = 1 THEN min(fed_memory.backed, excluded.backed) ELSE excluded.backed END'
       )
       .run(id, trust, op.replica, backed ? 1 : 0);
     return 'applied';
@@ -459,19 +464,36 @@ export class MemorySync implements Collector, OpHandler {
   }
 
   // The fields of `entry` that differ from what the team merged (all of them
-  // for an entry the team never heard of), with its trust as an assertion
-  // and who made the change.
-  private publish({ entry, by }: TeamChange): void {
-    const { fed } = this.deps;
+  // for an entry the team never heard of), with its trust as an assertion.
+  // One op per author of those fields, in the order they last changed, so
+  // each carries only the changes its `by` made (FW-R37 minor).
+  private publish({ entry, by, fieldBy }: TeamChange): void {
     const prior = this.fields(entry.id);
     const row = this.entryRow(entry.id);
-    const fields: MemoryFields = {};
+    const groups = new Map<Address, MemoryFields>();
     for (const f of MEMORY_FIELDS) {
       const held = prior.get(f);
-      if (held === undefined || !same(JSON.parse(held.value_json), entry[f]))
-        fields[f] = entry[f];
+      if (held !== undefined && same(JSON.parse(held.value_json), entry[f]))
+        continue;
+      const author = fieldBy[f] ?? by;
+      const group = groups.get(author) ?? {};
+      group[f] = entry[f];
+      groups.set(author, group);
     }
-    if (Object.keys(fields).length === 0 && row?.trust === entry.trust) return;
+    if (groups.size === 0) {
+      if (row?.trust !== entry.trust) this.append(entry, {}, by);
+      return;
+    }
+    // The latest change's author goes last.
+    const order = [...groups.keys()].sort(
+      (a, b) => Number(a === by) - Number(b === by)
+    );
+    for (const author of order)
+      this.append(entry, groups.get(author) ?? {}, author);
+  }
+
+  private append(entry: MemoryEntry, fields: MemoryFields, by: Address): void {
+    const { fed } = this.deps;
     const body: MemoryBody = {
       memory: entry.id,
       kind: 'put',

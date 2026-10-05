@@ -467,6 +467,43 @@ describe('remote memory never skips local policy (FW-R37(1))', () => {
     ).toContain('pinned');
   });
 
+  it("never lets a policy-approved change ride a later human edit's by", async () => {
+    open = await foundedTeamWith({ withMemory: true }, 'ada', 'bob');
+    const [ada, bob] = [at(0), at(1)];
+    mem(bob).host.raise = () => Promise.resolve('m-0000000gate');
+    const id = await save(ada, human('ada'), 'retired by policy');
+    await bob.settleWith(ada);
+    // Ada's agent retires it under her auto policy, then she pins it.
+    mem(ada).host.ruling = AUTO;
+    await mem(ada).engine.forget(AGENT, id, 'stale');
+    mem(ada).engine.setPinned(human('ada'), id, true);
+    expect(entryOf(ada, id)).toMatchObject({ status: 'retired', pinned: true });
+    await bob.settleWith(ada);
+    expect(entryOf(bob, id)?.status).toBe('active');
+    expect(mem(bob).shared.listProposals({ states: ['open'] })).toHaveLength(1);
+  });
+
+  it("gates a teammate's change of author or supersededBy (minor 2)", async () => {
+    open = await foundedTeamWith({ withMemory: true }, 'ada', 'bob', 'cy');
+    for (const r of open)
+      mem(r).host.raise = () => Promise.resolve('m-0000000gate');
+    const id = await save(at(0), human('ada'), 'whose is it');
+    await at(2).settleWith(at(0));
+    for (const r of open) r.clock.now = new Date(r.clock.now.getTime() + 1000);
+    forge(at(1), id, { author: 'human:bob' }, 'agent', 'human:ada');
+    await at(2).settleWith(at(1));
+    expect(entryOf(at(2), id)?.author).toBe('human:ada');
+    expect(mem(at(2)).shared.listProposals({ states: ['open'] })).toHaveLength(
+      1
+    );
+    const other = await save(at(0), human('ada'), 'superseded or not');
+    await at(2).settleWith(at(0));
+    for (const r of open) r.clock.now = new Date(r.clock.now.getTime() + 1000);
+    forge(at(1), other, { supersededBy: ID }, 'agent', 'human:ada');
+    await at(2).settleWith(at(1));
+    expect(entryOf(at(2), other)?.supersededBy).toBeNull();
+  });
+
   it("applies a teammate's own human edit without a gate", async () => {
     open = await foundedTeamWith({ withMemory: true }, 'ada', 'bob');
     const id = await save(at(0), human('ada'), 'edited by bob');

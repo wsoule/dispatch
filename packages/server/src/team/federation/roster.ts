@@ -34,6 +34,7 @@ import { randomBytes } from 'node:crypto';
 
 import { seatLimitMessage } from '../license.js';
 import type { AuditKind } from './audit.js';
+import { BUILD_CAPS, recordKeyCaps } from './caps.js';
 import { signedEntry } from './git.js';
 import type { FedStore } from './store.js';
 import { MAX_KEY_CLAIMS } from './store.js';
@@ -50,6 +51,8 @@ export class RosterError extends Error {
 }
 
 export interface RosterDeps {
+  /** What this build speaks (FW-R39); BUILD_CAPS unless a test says. */
+  caps?: () => readonly string[];
   fed: FedStore;
   handle: string;
   device: string;
@@ -494,6 +497,25 @@ export class RosterService {
     this.publish({ rv: 1, action: 'close-legacy', entries });
   }
 
+  /** Switches the team's transport: an admin's `transport` op, once the
+   *  legacy window is closed (spec "Relay (F4)"). */
+  setTransport(kind: 'git' | 'relay', url?: string): void {
+    const view = this.admin('switch the team transport');
+    if (view.legacy.closed === null)
+      throw new RosterError(
+        'conflict',
+        'close the legacy window first: older builds read only the git branch'
+      );
+    if (kind === 'relay' && url === undefined)
+      throw new RosterError('invalid', 'url is required for the relay');
+    this.publish({
+      rv: 1,
+      action: 'transport',
+      kind,
+      ...(kind === 'relay' && url !== undefined ? { url } : {}),
+    });
+  }
+
   /** FW-R8: takes an op no build reads out of every fold, when this admin may. */
   dismiss(replica: string, seq: number, hash: string): void {
     const row = this.fed.db
@@ -617,6 +639,11 @@ export class RosterService {
       this.fed.clearProblem(subject);
     this.fed.observe(entry.hlc);
     if (entry.type === 'key') {
+      const body = entry.body as
+        | { signPub?: unknown; caps?: unknown }
+        | undefined;
+      if (typeof body?.signPub === 'string')
+        recordKeyCaps(this.fed, entry.replica, body.signPub, body.caps);
       this.pinKey(entry, opts.named === true);
       return 'applied';
     }
@@ -844,6 +871,8 @@ export class RosterService {
       signPub: this.fed.keys.signPub,
       sealPub: this.fed.keys.sealPub,
       legacy: this.deps.ownV1Attestation(),
+      // FW-R39: what this build speaks.
+      caps: [...(this.deps.caps?.() ?? BUILD_CAPS)],
       ...(pending === null
         ? {}
         : { invite: { id: pending.id, sig: pending.sig } }),
