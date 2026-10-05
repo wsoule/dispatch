@@ -6,6 +6,7 @@ import type {
   TaskStateName,
 } from '@dispatch/a2a';
 import {
+  FORWARDED_SIGNATURE_HEADERS,
   parsePortContinue,
   parsePortOpen,
   PORT_CLIENT_HEADER,
@@ -246,14 +247,6 @@ async function clientAuth(
   return bearer === null ? NO_CLIENT : port.authenticate(bearer);
 }
 
-const FORWARDED_HEADERS = [
-  'signature-input',
-  'signature',
-  'content-digest',
-  'content-type',
-  'a2a-version',
-] as const;
-
 // What a host forwards of a signed request it received, checked field by field.
 function forwardedRequest(raw: unknown): ReceivedRequest | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
@@ -269,7 +262,7 @@ function forwardedRequest(raw: unknown): ReceivedRequest | null {
   )
     return null;
   const headers = new Headers();
-  for (const name of FORWARDED_HEADERS) {
+  for (const name of FORWARDED_SIGNATURE_HEADERS) {
     const value = (r.headers as Record<string, unknown>)[name];
     if (typeof value === 'string' && value !== '') headers.set(name, value);
   }
@@ -309,17 +302,93 @@ async function authenticateForwarded(
     forwarded,
     host.publicUrl
   );
-  if (result === null)
-    return jsonResponse({
-      ...NO_CLIENT,
-      message: 'no Dispatch signature',
-    } satisfies AuthResult);
+  // No Dispatch signature: the host falls back to the client's bearer.
+  if (result === null) return jsonResponse(null);
   if (!result.ok) return jsonResponse(result);
   const token = bridge.signedSessions.open(host.id, result.caller.address);
   return jsonResponse({
     ok: true,
     caller: { ...result.caller, credential: `Signed ${token}` },
   } satisfies AuthResult);
+}
+
+const PATH = /^\/[^?#]*$/;
+const QUERY = /^(?:\?[^#]*)?$/;
+const MAX_SIGNED_BODY = 4 * 1024 * 1024;
+
+// POST /api/a2a/port/sign-response: the card key stays with the daemon, so it
+// signs a host's reply to a signed client, for the host's pinned URL and only
+// within that client's signed session.
+function signForHost(
+  raw: unknown,
+  port: NonNullable<NonNullable<ApiContext['a2a']>['port']>,
+  host: HostRow,
+  signedSession: boolean
+): Response {
+  const invalid = (message: string) =>
+    jsonResponse(
+      { error: { kind: 'messaging', code: 'invalid', message, field: 'body' } },
+      400
+    );
+  if (!signedSession)
+    return jsonResponse(
+      {
+        error: {
+          kind: 'auth',
+          status: 403,
+          reason: 'AUTH_NOT_SIGNED',
+          message: 'only a signed client’s reply is signed',
+        },
+      },
+      403
+    );
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return invalid('body: expected an object');
+  const r = raw as Record<string, unknown>;
+  const request = forwardedRequest({ ...(r.request as object), body: null });
+  if (
+    typeof r.status !== 'number' ||
+    !Number.isInteger(r.status) ||
+    r.status < 100 ||
+    r.status > 599 ||
+    (r.contentType !== null && typeof r.contentType !== 'string') ||
+    (r.body !== null && typeof r.body !== 'string') ||
+    request === null ||
+    !PATH.test(request.path) ||
+    !QUERY.test(request.query)
+  )
+    return invalid('body: expected the reply and the request it answers');
+  let body: Uint8Array | null = null;
+  if (typeof r.body === 'string') {
+    const bytes = Buffer.from(r.body, 'base64');
+    if (bytes.toString('base64') !== r.body || bytes.length > MAX_SIGNED_BODY)
+      return invalid('body: not base64, or too large');
+    body = new Uint8Array(bytes);
+  }
+  const headers = new Headers(
+    typeof r.contentType === 'string' ? { 'content-type': r.contentType } : {}
+  );
+  const origin = new URL(host.publicUrl).origin;
+  const signed = port.signFor(
+    { status: r.status, headers, body },
+    {
+      method: request.method,
+      targetUri: `${origin}${request.path}${request.query}`,
+      headers: request.headers,
+    }
+  );
+  if (signed === null)
+    return jsonResponse(
+      {
+        error: {
+          kind: 'messaging',
+          code: 'conflict',
+          message: 'card signing is off on the daemon',
+        },
+      },
+      409
+    );
+  return jsonResponse({ headers: signed });
 }
 
 // /api/a2a/port/* (spec:1666-1709): dark unless standalone hosts are allowed;
@@ -444,6 +513,13 @@ export async function handlePortRoute(
     if (rest[0] === 'continue' && rest.length === 1 && method === 'POST')
       return jsonResponse(
         await port.continue(caller, parsePortContinue(await raw()))
+      );
+    if (rest[0] === 'sign-response' && rest.length === 1 && method === 'POST')
+      return signForHost(
+        await raw(),
+        port,
+        host,
+        /^Signed[ ]/.test((clientHeader ?? '').trim())
       );
     if (rest[0] === 'cancel' && rest.length === 1 && method === 'POST') {
       const { taskId } = await body();

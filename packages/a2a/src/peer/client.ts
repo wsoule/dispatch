@@ -11,7 +11,9 @@ import {
 import type { Client } from '@a2a-js/sdk/client';
 import { VersionNotSupportedError } from '@a2a-js/sdk/errors';
 import type { JsonValue } from '@dispatch/protocol';
+import type { KeyObject } from 'node:crypto';
 
+import { signedFetch } from '../sig/fetch.js';
 import { ENVELOPE_URI, WORK_URI } from '../uris.js';
 import type { MessageJson, TaskJson } from '../wire.js';
 import type { PeerInterface } from './card.js';
@@ -33,6 +35,9 @@ export interface PeerClientOptions {
   // A decide-tier peer: every request re-resolves, refuses non-public
   // addresses and connects to the checked one.
   guard?: GuardOptions;
+  // A paired peer (P5): requests are signed with this project's card key and
+  // only responses its pinned key signed are read.
+  signed?: { keyid: string; privateKey: KeyObject; peerKey: KeyObject };
 }
 
 // The SDK reads a peer's "version not supported" as one of two error classes,
@@ -70,7 +75,7 @@ export class PeerClient {
     // Loaded on first contact, not at import: see test/lazy-imports.test.ts.
     const { ClientFactory, JsonRpcTransportFactory, RestTransportFactory } =
       await import('@a2a-js/sdk/client');
-    const fetchImpl = peerFetch({
+    const plainFetch = peerFetch({
       headers: {
         [A2A_VERSION_HEADER]: '1.0',
         [HTTP_EXTENSION_HEADER]: `${ENVELOPE_URI}, ${WORK_URI}`,
@@ -85,6 +90,10 @@ export class PeerClient {
           ? undefined
           : { field: 'url', ...this.o.guard },
     });
+    const fetchImpl =
+      this.o.signed === undefined
+        ? plainFetch
+        : signedFetch(plainFetch, { ...this.o.signed, box });
     const transport =
       this.o.iface.binding === 'HTTP+JSON'
         ? new RestTransportFactory({ fetchImpl })

@@ -1,7 +1,15 @@
-import { ecThumbprint, PORT_CLIENT_HEADER, signRequest } from '@dispatch/a2a';
+import {
+  ecThumbprint,
+  PORT_CLIENT_HEADER,
+  signRequest,
+  signResponseFor,
+  startStandalone,
+  verifyRequest,
+  verifyResponse,
+} from '@dispatch/a2a';
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { generateKeyPairSync } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +17,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { waitFor } from '../messaging/harness.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from '../testAuth.js';
 import { approvedClient, freePort, useSeedBase } from './seed.js';
@@ -391,5 +400,246 @@ describe('a signature client on every surface', () => {
       },
     });
     expect(res.status).toBe(401);
+  });
+});
+
+// The daemon's card key, as its JWKS publishes it.
+async function daemonKey(): Promise<KeyObject> {
+  const jwks = (await (
+    await rawFetch(`${listenerUrl}/.well-known/jwks.json`)
+  ).json()) as { keys: Record<string, string>[] };
+  return createPublicKey({ key: jwks.keys[0], format: 'jwk' });
+}
+
+describe('signed responses and outbound signing (T40)', () => {
+  it('the listener signs its response to a signed request, bound to that request', async () => {
+    const { key } = await signatureClient('acme');
+    const body = send('m-resp');
+    const headers = signedHeaders(
+      key,
+      'POST',
+      `${listenerUrl}/a2a/v1/message:send`,
+      body
+    );
+    const res = await rawFetch(`${listenerUrl}/a2a/v1/message:send`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(res.status).toBe(200);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const pub = await daemonKey();
+    const kid = ecThumbprint(
+      pub.export({ format: 'jwk' }) as Record<string, string>
+    )!;
+    const verdict = verifyResponse(
+      { status: res.status, headers: res.headers, body: bytes },
+      {
+        method: 'POST',
+        targetUri: `${listenerUrl}/a2a/v1/message:send`,
+        headers,
+      },
+      {
+        keyFor: (id) => (id === kid ? pub : null),
+        now: new Date(),
+        guardMs: 300_000,
+      }
+    );
+    expect(verdict).toEqual({ ok: true, keyid: kid });
+  });
+
+  it('signs requests to a pinned peer and reads its signed reply; an unsigned reply marks it auth-failed', async () => {
+    const peerKey = newKey();
+    let mode: 'signed' | 'unsigned' = 'signed';
+    let verified = 0;
+    const daemonPub = await daemonKey();
+    const daemonKid = ecThumbprint(
+      daemonPub.export({ format: 'jwk' }) as Record<string, string>
+    )!;
+    const seen = new Set<string>();
+    const peer = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: async (req) => {
+        const url = new URL(req.url);
+        if (url.pathname === '/.well-known/agent-card.json')
+          return Response.json({
+            name: 'Signed peer',
+            description: 'A fixture.',
+            version: '1',
+            capabilities: { streaming: false },
+            skills: [],
+            supportedInterfaces: [
+              {
+                url: `${url.origin}/a2a/v1`,
+                protocolBinding: 'HTTP+JSON',
+                protocolVersion: '1.0',
+              },
+            ],
+            securitySchemes: {
+              bearer: { httpAuthSecurityScheme: { scheme: 'Bearer' } },
+            },
+            securityRequirements: [{ schemes: { bearer: { list: [] } } }],
+          });
+        const body =
+          req.method === 'GET' ? null : new Uint8Array(await req.arrayBuffer());
+        const ok = verifyRequest(
+          {
+            method: req.method,
+            path: url.pathname,
+            query: url.search,
+            headers: req.headers,
+            body,
+          },
+          {
+            configuredOrigin: url.origin,
+            keyFor: (id) => (id === daemonKid ? daemonPub : null),
+            now: new Date(),
+            guardMs: 300_000,
+            rememberNonce: (_id, n) =>
+              seen.has(n) ? 'replay' : (seen.add(n), 'fresh'),
+          }
+        );
+        if (!ok.ok) return new Response(ok.reason, { status: 401 });
+        verified += 1;
+        if (req.headers.get('authorization') !== null)
+          return new Response('no bearer to a signature peer', { status: 400 });
+        const reply = new Response(
+          JSON.stringify({
+            message: {
+              messageId: 'r-1',
+              role: 'ROLE_AGENT',
+              parts: [{ text: 'Signed and answered.' }],
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+        if (mode === 'unsigned') return reply;
+        return signResponseFor(
+          reply,
+          { method: req.method, targetUri: req.url, headers: req.headers },
+          peerKey
+        );
+      },
+    });
+    try {
+      const origin = `http://127.0.0.1:${peer.port}`;
+      const added = await fetch(`${base}/api/a2a/peers`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({
+          alias: 'signed',
+          cardUrl: `${origin}/.well-known/agent-card.json`,
+          token: 'unused',
+        }),
+      });
+      expect(added.status).toBe(201);
+      expect(
+        handle.a2a.store!.setPeerKey('signed', {
+          thumbprint: peerKey.keyid,
+          jwk: peerKey.jwk,
+          auth: 'signature',
+          pairedId: null,
+        })
+      ).toBe(true);
+      const { message } = await handle.messaging.engine.send(
+        { to: ['a2a:signed'], kind: 'message', body: 'Hello, signed peer.' },
+        { address: 'human:test', canDecide: true }
+      );
+      await waitFor(
+        () =>
+          handle.a2a.store!.getOutbound(message.id, 'signed')?.state === 'done',
+        10_000
+      );
+      expect(verified).toBe(1);
+      mode = 'unsigned';
+      await handle.messaging.engine.send(
+        { to: ['a2a:signed'], kind: 'message', body: 'Again.' },
+        { address: 'human:test', canDecide: true }
+      );
+      await waitFor(
+        () => handle.a2a.store!.getPeer('signed')?.status === 'auth-failed',
+        10_000
+      );
+    } finally {
+      await peer.stop(true);
+    }
+  });
+
+  it('a signed client works end to end through a standalone host, and the reply is signed for the host URL', async () => {
+    const { key } = await signatureClient('acme');
+    await fetch(`${base}/api/a2a/listener/standalone`, {
+      method: 'PUT',
+      headers: json,
+      body: JSON.stringify({ enabled: true }),
+    });
+    const relayPort = await freePort();
+    const relayUrl = `http://127.0.0.1:${relayPort}`;
+    const { token: hostToken } = (await (
+      await fetch(`${base}/api/a2a/hosts`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({ name: 'relay', publicUrl: relayUrl }),
+      })
+    ).json()) as { token: string };
+    const relay = await startStandalone({
+      host: '127.0.0.1',
+      port: relayPort,
+      publicUrl: null,
+      tls: null,
+      publicBind: false,
+      trustForwardedFor: false,
+      daemonUrl: base,
+      hostToken,
+      fetchImpl: rawFetch,
+    });
+    try {
+      const body = send('m-relay');
+      const headers = signedHeaders(
+        key,
+        'POST',
+        `${relayUrl}/a2a/v1/message:send`,
+        body
+      );
+      const res = await rawFetch(`${relayUrl}/a2a/v1/message:send`, {
+        method: 'POST',
+        headers,
+        body,
+      });
+      expect(res.status).toBe(200);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const pub = await daemonKey();
+      const kid = ecThumbprint(
+        pub.export({ format: 'jwk' }) as Record<string, string>
+      )!;
+      expect(
+        verifyResponse(
+          { status: res.status, headers: res.headers, body: bytes },
+          {
+            method: 'POST',
+            targetUri: `${relayUrl}/a2a/v1/message:send`,
+            headers,
+          },
+          {
+            keyFor: (id) => (id === kid ? pub : null),
+            now: new Date(),
+            guardMs: 300_000,
+          }
+        ).ok
+      ).toBe(true);
+      // A bearer for the same client is refused through the host too.
+      const bearer = await rawFetch(`${relayUrl}/a2a/v1/message:send`, {
+        method: 'POST',
+        headers: {
+          ...json,
+          'a2a-version': '1.0',
+          authorization: 'Bearer not-it',
+        },
+        body: send('m-relay-2'),
+      });
+      expect(bearer.status).toBe(401);
+    } finally {
+      await relay.stop();
+    }
   });
 });

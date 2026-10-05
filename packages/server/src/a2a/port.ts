@@ -15,6 +15,7 @@ import type {
   OpenInput,
   OpenResult,
   ReceivedRequest,
+  RequestParts,
   StatusEntry,
   TaskFacts,
   TaskRow,
@@ -28,6 +29,8 @@ import {
   matchChoice,
   offeredSkills,
   peerSelfAddressed,
+  signResponse,
+  signResponseFor,
   statusReply,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
@@ -333,6 +336,45 @@ export class DaemonBridgePort implements BridgePort {
 
   revalidate(caller: Caller): Promise<boolean> {
     return settle(() => revalidateSigned(this.deps, caller));
+  }
+
+  // Signs the listener's reply to a signed request, for the URL the client
+  // was told to call; unsigned (and so refused by the peer) when signing is off.
+  async signResponse(res: Response, req: Request): Promise<Response> {
+    const signer = this.deps.signer?.() ?? null;
+    if (signer === null) return res;
+    const url = new URL(req.url);
+    const origin = new URL(this.deps.cardBase().publicUrl).origin;
+    return signResponseFor(
+      res,
+      {
+        method: req.method,
+        targetUri: `${origin}${url.pathname}${url.search}`,
+        headers: req.headers,
+      },
+      signer.requestKey(),
+      this.now()
+    );
+  }
+
+  // The signature headers for a standalone host's reply, for that host's URL;
+  // null when signing is off.
+  signFor(
+    res: { status: number; headers: Headers; body: Uint8Array | null },
+    request: RequestParts
+  ): Record<string, string> | null {
+    const signer = this.deps.signer?.() ?? null;
+    if (signer === null) return null;
+    const key = signer.requestKey();
+    return signResponse({
+      status: res.status,
+      headers: res.headers,
+      body: res.body,
+      request,
+      keyid: key.keyid,
+      privateKey: key.privateKey,
+      now: this.now(),
+    });
   }
 
   // A signed caller re-checked by address (a standalone host's session).

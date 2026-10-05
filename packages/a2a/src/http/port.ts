@@ -13,7 +13,9 @@ import type {
   OpenResult,
   TaskFacts,
 } from '../port.js';
-import { PORT_CLIENT_HEADER, portErrorFrom } from './wire.js';
+import { isEventStream } from '../sig/fetch.js';
+import type { ReceivedRequest } from '../sig/verify.js';
+import { forwardedHeaders, PORT_CLIENT_HEADER, portErrorFrom } from './wire.js';
 
 export interface HttpBridgePortOptions {
   daemonUrl: string;
@@ -63,7 +65,12 @@ export class HttpBridgePort implements BridgePort {
       authorization: `Bearer ${this.o.hostToken}`,
       ...(caller?.credential === undefined
         ? {}
-        : { [PORT_CLIENT_HEADER]: `Bearer ${caller.credential}` }),
+        : {
+            // A signed client's credential is already a session header value.
+            [PORT_CLIENT_HEADER]: caller.credential.startsWith('Signed ')
+              ? caller.credential
+              : `Bearer ${caller.credential}`,
+          }),
       ...(json ? { 'content-type': 'application/json' } : {}),
     };
   }
@@ -94,6 +101,60 @@ export class HttpBridgePort implements BridgePort {
       res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) throw portErrorFrom(res.status, parsed);
     return parsed as T;
+  }
+
+  // A Dispatch-signed request, verified by the daemon against this host's
+  // pinned URL; the daemon answers with a session for the request's calls.
+  async authenticateSigned(req: ReceivedRequest): Promise<AuthResult | null> {
+    if (!req.headers.has('signature-input')) return null;
+    return this.call<AuthResult | null>('POST', '/authenticate-signed', null, {
+      method: req.method,
+      path: req.path,
+      query: req.query,
+      headers: forwardedHeaders(req.headers),
+      body: req.body === null ? null : Buffer.from(req.body).toString('base64'),
+    });
+  }
+
+  async revalidate(caller: Caller): Promise<boolean> {
+    const result = await this.call<AuthResult>('GET', '/whoami', caller);
+    return result.ok && result.caller.address === caller.address;
+  }
+
+  // The daemon holds the card key, so it signs this host's reply for the
+  // host's pinned URL; a stream is signed over its headers.
+  async signResponse(
+    res: Response,
+    req: Request,
+    caller: Caller
+  ): Promise<Response> {
+    const stream = isEventStream(res.headers);
+    const bytes = stream ? null : new Uint8Array(await res.arrayBuffer());
+    const url = new URL(req.url);
+    const out = await this.call<{ headers: Record<string, string> }>(
+      'POST',
+      '/sign-response',
+      caller,
+      {
+        status: res.status,
+        contentType: res.headers.get('content-type'),
+        body: bytes === null ? null : Buffer.from(bytes).toString('base64'),
+        request: {
+          method: req.method,
+          path: url.pathname,
+          query: url.search,
+          headers: forwardedHeaders(req.headers),
+        },
+      }
+    );
+    const headers = new Headers(res.headers);
+    for (const [name, value] of Object.entries(out.headers))
+      headers.set(name, value);
+    return new Response(stream ? res.body : bytes, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
   }
 
   async authenticate(bearer: string): Promise<AuthResult> {

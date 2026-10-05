@@ -198,6 +198,9 @@ export interface BridgePort {
   authenticateSigned?(req: ReceivedRequest): Promise<AuthResult | null>;
   // Whether a caller that signed in may still stream; bearer callers re-run authenticate.
   revalidate?(caller: Caller): Promise<boolean>;
+  // Signs the response to a request that authenticated by signature, so the
+  // peer can tell it came from this agent; required with authenticateSigned.
+  signResponse?(res: Response, req: Request, caller: Caller): Promise<Response>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
   card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;

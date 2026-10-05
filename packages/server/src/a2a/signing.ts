@@ -14,6 +14,7 @@ import {
   sign,
   verify,
 } from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 
 export interface SigningKey {
   privateJwk: Record<string, string>;
@@ -91,6 +92,7 @@ export function loadOrCreateSigningKey(rootDir: string): SigningKey {
 // re-signing would churn every cache); a few cards are live at a time.
 export class CardSigner {
   private readonly cache = new Map<string, CardSignatureJson[]>();
+  private privateKey: KeyObject | undefined;
   constructor(private readonly key: SigningKey) {}
 
   async signaturesFor(inputs: CardInputs): Promise<CardSignatureJson[]> {
@@ -105,6 +107,15 @@ export class CardSigner {
     if (this.cache.size >= 8) this.cache.clear();
     this.cache.set(id, signatures);
     return signatures;
+  }
+
+  // The same key signs requests and responses to paired peers (RFC 9421).
+  requestKey(): { keyid: string; privateKey: KeyObject } {
+    this.privateKey ??= createPrivateKey({
+      key: this.key.privateJwk,
+      format: 'jwk',
+    });
+    return { keyid: this.key.kid, privateKey: this.privateKey };
   }
 
   /** Public keys only. */

@@ -124,6 +124,7 @@ export { checkStandalone, startStandalone } from './http/serve.js';
 export type { StandaloneCheck, StandaloneOptions } from './http/serve.js';
 export type { HttpBridgePortOptions } from './http/port.js';
 export {
+  FORWARDED_SIGNATURE_HEADERS,
   PORT_CLIENT_HEADER,
   portErrorFrom,
   portErrorJson,
@@ -177,6 +178,8 @@ export type { Reach } from './pair/reach.js';
 export { a2aFingerprint, ecThumbprint, publicJwkOf, sas } from './sig/keys.js';
 export type { RequestParts } from './sig/base.js';
 export { contentDigest, digestMatches } from './sig/digest.js';
+export { isEventStream, signedFetch } from './sig/fetch.js';
+export { signResponseFor } from './sig/respond.js';
 export {
   SIG_EXTENSION_URI,
   SIG_TAG,

@@ -35,6 +35,8 @@ import {
   PEER_ALIAS_PATTERN,
   SYSTEM_ADDRESS,
 } from '@dispatch/protocol';
+import { createPublicKey } from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
@@ -45,7 +47,14 @@ const HOUR_MS = 3_600_000;
 
 export type PeerDeps = Pick<
   BridgeDeps,
-  'rootDir' | 'engine' | 'messages' | 'store' | 'ownerRef' | 'policy' | 'now'
+  | 'rootDir'
+  | 'engine'
+  | 'messages'
+  | 'store'
+  | 'ownerRef'
+  | 'policy'
+  | 'now'
+  | 'signer'
 > & { fetchImpl?: typeof fetch; lookup?: LookupAll };
 
 export interface PeerAddInput {
@@ -511,18 +520,52 @@ export function peerSummary(row: PeerRow): PeerSummary {
 // when the card needs a credential that is not stored.
 export function peerClientFor(deps: PeerDeps, row: PeerRow): PeerClient {
   const card = cardOf(row);
-  const headers = authHeaders(
-    peerAuthFor(card, row.apiKeyHeader ?? undefined),
-    readPeerCredential(deps.rootDir, row.alias)
-  );
   const guard = peerGuard(deps, row);
-  return new PeerClient({
+  const common = {
     iface: { url: row.interfaceUrl, binding: row.binding },
     card,
-    headers,
     ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
     ...(guard === undefined ? {} : { guard }),
+  };
+  if (row.auth === undefined || row.auth === 'bearer')
+    return new PeerClient({
+      ...common,
+      headers: authHeaders(
+        peerAuthFor(card, row.apiKeyHeader ?? undefined),
+        readPeerCredential(deps.rootDir, row.alias)
+      ),
+    });
+  // A paired peer gets no bearer: its requests are signed, and only replies
+  // its pinned key signed are read. Without a key to sign with, the delivery
+  // parks as auth-failed (the 'token' field), never sent unsigned.
+  return new PeerClient({
+    ...common,
+    headers: {},
+    signed: signedFor(deps, row),
   });
+}
+
+function signedFor(
+  deps: PeerDeps,
+  row: PeerRow
+): { keyid: string; privateKey: KeyObject; peerKey: KeyObject } {
+  const cannot = (why: string) =>
+    new MessagingError(
+      'forbidden',
+      `cannot sign for a2a:${row.alias}: ${why}`,
+      'token'
+    );
+  if (row.auth !== 'signature') throw cannot('it is reached by a link');
+  if (row.keyJwk == null) throw cannot('no key is pinned');
+  const signer = deps.signer?.() ?? null;
+  if (signer === null) throw cannot('card signing is off');
+  let peerKey: KeyObject;
+  try {
+    peerKey = createPublicKey({ key: row.keyJwk, format: 'jwk' });
+  } catch {
+    throw cannot('the pinned key is not usable');
+  }
+  return { ...signer.requestKey(), peerKey };
 }
 
 // The engine's admission for a2a: targets. Direct to an absent or inactive

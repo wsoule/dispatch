@@ -252,9 +252,11 @@ export function verifyResponse(
 ): SigResult {
   const t = tagged(res.headers);
   if (typeof t === 'string') return refuse(t);
-  const required = responseItems(res.body !== null, request.headers).map(
-    (item) => serializeItem(item)
-  );
+  const required = responseItems(
+    res.body !== null,
+    request.headers,
+    res.headers.has('content-type')
+  ).map((item) => serializeItem(item));
   const have = new Set(t.covered.items.map(serializeItem));
   if (!required.every((id) => have.has(id))) return refuse('sig_malformed');
   return check(t, [], f, res.body, res.headers, () =>

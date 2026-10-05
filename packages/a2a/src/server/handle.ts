@@ -179,6 +179,8 @@ interface Authenticated {
   // The request to serve: rebuilt when the body was read for a signature.
   req: Request;
   stillAllowed: () => Promise<boolean>;
+  // Set when the caller signed: its response is signed in turn.
+  signed: boolean;
 }
 
 // A Dispatch signature decides on its own when present (a bearer beside it
@@ -236,6 +238,7 @@ async function authenticate(
         caller,
         req,
         stillAllowed: () => port.revalidate?.(caller) ?? Promise.resolve(false),
+        signed: true,
       };
     }
   }
@@ -253,6 +256,7 @@ async function authenticate(
     caller: result.caller,
     req,
     stillAllowed: async () => (await port.authenticate(bearer)).ok,
+    signed: false,
   };
 }
 
@@ -731,28 +735,16 @@ async function serveJwks(
   });
 }
 
-// The HTTP+JSON binding of A2A 1.0 over a BridgePort: version, then auth,
-// then the port's per-client admission, then the operation.
-export async function handleA2A(
-  req: Request,
+// Everything after authentication, as one response (errors included), so a
+// signed caller's response can be signed whatever it carries.
+async function serveAuthenticated(
+  auth: Authenticated,
+  route: Route,
+  url: URL,
   port: BridgePort,
   options: HandleOptions
 ): Promise<Response> {
-  const url = new URL(req.url);
   try {
-    if (url.pathname === CARD_PATH) return await serveCard(req, port, options);
-    if (url.pathname === JWKS_PATH) return await serveJwks(req, port, options);
-    if (!url.pathname.startsWith(`${options.basePath}/`))
-      return new Response('not found', { status: 404 });
-    if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
-    const route = matchRoute(
-      req.method,
-      url.pathname.slice(options.basePath.length)
-    );
-    if (route === null) return new Response('not found', { status: 404 });
-    checkVersion(req, url);
-    const auth = await authenticate(req, url, port, options);
-    if (auth instanceof Response) return auth;
     const admitted = await port.admit(auth.caller, 'request');
     if (!admitted.ok) return rateLimited(admitted.retryAfterSec);
     const op: Op = {
@@ -787,6 +779,36 @@ export async function handleA2A(
           'this agent has no extended card'
         );
     }
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+// The HTTP+JSON binding of A2A 1.0 over a BridgePort: version, then auth,
+// then the port's per-client admission, then the operation.
+export async function handleA2A(
+  req: Request,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<Response> {
+  const url = new URL(req.url);
+  try {
+    if (url.pathname === CARD_PATH) return await serveCard(req, port, options);
+    if (url.pathname === JWKS_PATH) return await serveJwks(req, port, options);
+    if (!url.pathname.startsWith(`${options.basePath}/`))
+      return new Response('not found', { status: 404 });
+    if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
+    const route = matchRoute(
+      req.method,
+      url.pathname.slice(options.basePath.length)
+    );
+    if (route === null) return new Response('not found', { status: 404 });
+    checkVersion(req, url);
+    const auth = await authenticate(req, url, port, options);
+    if (auth instanceof Response) return auth;
+    const res = await serveAuthenticated(auth, route, url, port, options);
+    if (!auth.signed || port.signResponse === undefined) return res;
+    return await port.signResponse(res, auth.req, auth.caller);
   } catch (err) {
     return errorResponse(err);
   }

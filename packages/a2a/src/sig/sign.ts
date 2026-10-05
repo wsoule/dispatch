@@ -121,7 +121,8 @@ export interface SignResponseInput {
  */
 export function responseItems(
   hasBody: boolean,
-  requestHeaders: Headers
+  requestHeaders: Headers,
+  hasContentType = hasBody
 ): Item[] {
   const signed = taggedRequest(requestHeaders);
   const asReq = (item: Item): Item => ({
@@ -130,7 +131,9 @@ export function responseItems(
   });
   return [
     plain('@status'),
-    ...(hasBody ? [plain('content-digest'), plain('content-type')] : []),
+    ...(hasBody ? [plain('content-digest')] : []),
+    // Covered whenever present, so a JSON reply cannot be relabelled a stream.
+    ...(hasContentType ? [plain('content-type')] : []),
     ...(
       signed?.items ?? ['@method', '@target-uri', '@authority'].map(plain)
     ).map(asReq),
@@ -153,7 +156,11 @@ export function signResponse(i: SignResponseInput): Record<string, string> {
   const digest = i.body === null ? undefined : contentDigest(i.body);
   if (digest !== undefined) headers.set('content-digest', digest);
   const covered: InnerList = {
-    items: responseItems(i.body !== null, i.request.headers),
+    items: responseItems(
+      i.body !== null,
+      i.request.headers,
+      headers.has('content-type')
+    ),
     params: sigParams(i.keyid, i.now, randomBytes(16).toString('base64url')),
   };
   const base = signatureBase(covered, {
