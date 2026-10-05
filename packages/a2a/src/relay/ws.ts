@@ -99,7 +99,7 @@ export class WsConnection {
   }
 
   // Frames are read strictly (RFC 6455 5.2-5.5): masked, no RSV bits, control
-  // frames short and unfragmented, continuations only inside a message, and
+  // frames short and never fragmented, continuations only inside a message, and
   // text that is valid UTF-8.
   private read(chunk: Buffer): void {
     this.buffer = Buffer.concat([this.buffer, chunk]);
