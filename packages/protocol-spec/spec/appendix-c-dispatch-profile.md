@@ -108,16 +108,15 @@ decide ([§C.2](appendix-c-dispatch-profile.md#sC.2)), to let it write outside
 its declared paths. Whatever recipients the session names, Dispatch sends its
 scope gate only where C.2 routes its gates (its human when they may decide, else
 the owner), so a session never picks who decides; any other human it named gets
-a notice saying where the request went.
-Only a session raises it, and its shape is fixed ([§5.3](05-gates.md#s5.3)):
-kind `question`, `blocking` true, `choices` exactly `grant` then `deny`, and
-data `{ "type": "scope", "paths", "reason" }`, with a non-empty list of
-non-empty paths and a reason that is not blank. A request that breaks one of
-these rules fails `invalid` on `data`, `data.paths` or `data.reason`; other
-members of its data are not checked. `grant` widens the session's writes by the
-paths; `deny` leaves them as they were. The system grants a request the autonomy
-policy allows, with an `x-policy` marker, and denies one that no one decided
-within 29 minutes, with an `x-expired` marker
+a notice saying where the request went. Only a session raises it, and its shape
+is fixed ([§5.3](05-gates.md#s5.3)): kind `question`, `blocking` true, `choices`
+exactly `grant` then `deny`, and data `{ "type": "scope", "paths", "reason" }`,
+with a non-empty list of non-empty paths and a reason that is not blank. A
+request that breaks one of these rules fails `invalid` on `data`, `data.paths`
+or `data.reason`; other members of its data are not checked. `grant` widens the
+session's writes by the paths; `deny` leaves them as they were. The system
+grants a request the autonomy policy allows, with an `x-policy` marker, and
+denies one that no one decided within 29 minutes, with an `x-expired` marker
 ([§C.4](appendix-c-dispatch-profile.md#sC.4)). Vectors:
 `env.envelope.only-sessions-raise-scope-gates`,
 `env.envelope.scope-gates-have-a-fixed-shape`,

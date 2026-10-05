@@ -229,3 +229,57 @@ describe('a scope gate addressed to someone who cannot decide (XH-R9)', () => {
     expect(gate.to).toEqual([OWNER]);
   });
 });
+
+describe("revoking a decide-tier teammate with their run's gates open", () => {
+  it('moves the memory and doc gates to the owner, who sees and answers them', async () => {
+    const w = world();
+    const ana = await invite(w, 'ana@example.com', 'decide');
+    const run = await liveRun(w, ana.token);
+    await proposeMemory(w, run.runToken);
+    await proposeDocEdit(w, run.runToken);
+    const before = [await openGate(w, 'memory'), await openGate(w, 'doc')];
+    for (const gate of before) expect(gate.to).toEqual([`human:${ana.handle}`]);
+
+    const rv = await call(w, w.app, 'DELETE', `/api/team/tokens/${ana.handle}`);
+    expect(rv.status).toBeLessThan(300);
+
+    const after = [await openGate(w, 'memory'), await openGate(w, 'doc')];
+    const open = await call(w, w.app, 'GET', '/api/decisions/open');
+    expect(open.status).toBe(200);
+    const ids = (open.json.items as Message[]).map((m) => m.id);
+    for (const gate of after) {
+      expect(gate.to).toEqual([OWNER]);
+      expect(ids).toContain(gate.id);
+    }
+    for (const gate of before) expect(ids).not.toContain(gate.id);
+
+    for (const gate of after) {
+      const answered = await call(
+        w,
+        w.app,
+        'POST',
+        `/api/messages/${gate.id}/reply`,
+        { body: '', choice: 'approve' }
+      );
+      expect([gate.id, answered.status]).toEqual([gate.id, 201]);
+    }
+    const memoryGate = gateOf(after[0]);
+    if (memoryGate?.type !== 'memory') throw new Error('not a memory gate');
+    await waitFor(
+      () =>
+        w.handle.memory.shared?.getProposal(memoryGate.proposalId)?.state ===
+        'approved'
+    );
+    const docGate = gateOf(after[1]);
+    if (docGate?.type !== 'doc') throw new Error('not a doc gate');
+    await waitFor(async () => {
+      const r = await call(
+        w,
+        w.app,
+        'GET',
+        `/api/docs/proposals/${docGate.proposal}`
+      );
+      return JSON.stringify(r.json).includes('"state":"approved"');
+    });
+  });
+});
