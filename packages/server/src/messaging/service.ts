@@ -190,6 +190,7 @@ export function openMessaging(deps: {
     orchestrator: deps.orchestrator,
     store: deps.store,
     ownerRef: deps.ownerRef,
+    routing,
     gates,
     onHumanMessage: () => {
       // message.new already reaches the desktop over the EventBus; no OS

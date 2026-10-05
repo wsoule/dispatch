@@ -60,10 +60,23 @@ async function proposeDocEdit(w: World, runToken: string): Promise<void> {
   expect(r.status).toBeLessThan(300);
 }
 
+// Asks, as the run, to wake a fresh task of the owner's.
+async function askToWake(w: World, runToken: string): Promise<void> {
+  const t = await call(w, w.app, 'POST', '/api/tasks', { title: 'asleep' });
+  const r = await call(w, runToken, 'POST', '/api/messages', {
+    to: [`task:${t.json.meta.id}`],
+    kind: 'message',
+    body: 'please pick this up',
+    wake: 'request',
+  });
+  expect(r.status).toBeLessThan(300);
+}
+
 describe("a teammate's run (XH-R9)", () => {
   for (const [type, propose] of [
     ['memory', proposeMemory],
     ['doc', proposeDocEdit],
+    ['wake', askToWake],
   ] as const) {
     it(`sends its ${type} gate to a teammate who can decide`, async () => {
       const w = world();
