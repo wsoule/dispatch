@@ -686,6 +686,61 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       await relay.stop();
     });
 
+  const tenant = a2a
+    .command('relay-tenant')
+    .description(
+      'Reach this daemon through an A2A relay it dials out to, with no inbound port'
+    );
+  const printRelay = (s: {
+    enabled: boolean;
+    url: string | null;
+    connected: boolean;
+    tenantUrl: string | null;
+    error: string | null;
+  }) => {
+    ctx.log(
+      !s.enabled
+        ? 'Relay tenant: off'
+        : s.connected
+          ? `Relay tenant: connected to ${s.url ?? ''}; served at ${s.tenantUrl ?? ''}`
+          : `Relay tenant: dialling ${s.url ?? ''}${s.error === null ? '' : ` (${s.error})`}`
+    );
+  };
+  tenant
+    .command('on')
+    .description('Dial a relay as a tenant (needs the daemon app token)')
+    .requiredOption(
+      '--url <url>',
+      'the relay origin, e.g. https://relay.example.com'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { url: string; token?: string }) => {
+      const client = await withAppToken(
+        o.token,
+        'dispatch a2a relay-tenant on'
+      );
+      printRelay(await client.setRelay({ enabled: true, url: o.url }));
+    });
+  tenant
+    .command('off')
+    .description('Stop dialling the relay (needs the daemon app token)')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { token?: string }) => {
+      const client = await withAppToken(
+        o.token,
+        'dispatch a2a relay-tenant off'
+      );
+      printRelay(await client.disableRelay());
+    });
+  tenant
+    .command('status', { isDefault: true })
+    .description(
+      'Whether this daemon is reached through a relay, and at what URL'
+    )
+    .action(async () => {
+      printRelay(await (await withAgentToken()).relayStatus());
+    });
+
   const hosts = a2a
     .command('hosts')
     .description(

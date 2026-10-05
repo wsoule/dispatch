@@ -236,6 +236,20 @@ function startFakeDaemon() {
           },
           { status: 202 }
         );
+      if (url.pathname === '/api/a2a/relay') {
+        const put = body as { enabled?: boolean; url?: string } | null;
+        const enabled = req.method === 'PUT' ? put?.enabled === true : false;
+        return Response.json({
+          enabled: req.method === 'GET' ? true : enabled,
+          url: put?.url ?? 'https://relay.example.com',
+          connected: req.method === 'GET',
+          tenantUrl:
+            req.method === 'GET'
+              ? `https://relay.example.com/t/${'T'.repeat(43)}`
+              : null,
+          error: null,
+        });
+      }
       if (url.pathname === '/api/a2a/tasks/m-1/decline') {
         return Response.json({ id: 'm-1' });
       }
@@ -836,6 +850,51 @@ describe('dispatch a2a peers upgrade', () => {
   it('needs --fingerprint', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     await expect(run('a2a', 'peers', 'upgrade', 'acme')).rejects.toThrow();
+    expect(a2aCalls()).toEqual([]);
+  });
+});
+
+describe('dispatch a2a relay-tenant', () => {
+  it('turns the tenant connection on with --url, off, and shows its status', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'relay-tenant',
+      'on',
+      '--url',
+      'https://relay.example.com'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'PUT',
+      path: '/api/a2a/relay',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { enabled: true, url: 'https://relay.example.com' },
+    });
+    await run('a2a', 'relay-tenant', 'off');
+    expect(a2aCalls().at(-1)).toMatchObject({
+      method: 'DELETE',
+      path: '/api/a2a/relay',
+    });
+    delete process.env.DISPATCH_APP_TOKEN;
+    lines = [];
+    await run('a2a', 'relay-tenant', 'status');
+    expect(a2aCalls().at(-1)).toMatchObject({
+      method: 'GET',
+      path: '/api/a2a/relay',
+      auth: `Bearer ${AGENT_TOKEN}`,
+    });
+    expect(lines.join('\n')).toContain(
+      `https://relay.example.com/t/${'T'.repeat(43)}`
+    );
+  });
+
+  it('never changes it on the agent token, and on needs --url', async () => {
+    await expect(
+      run('a2a', 'relay-tenant', 'on', '--url', 'https://r.example')
+    ).rejects.toThrow(CliError);
+    await expect(run('a2a', 'relay-tenant', 'off')).rejects.toThrow(CliError);
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(run('a2a', 'relay-tenant', 'on')).rejects.toThrow();
     expect(a2aCalls()).toEqual([]);
   });
 });

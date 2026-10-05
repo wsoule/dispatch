@@ -1348,6 +1348,14 @@ interface A2AKeys {
   next: { fingerprint: string; since: string; until: string } | null;
 }
 
+interface A2ARelayStatus {
+  enabled: boolean;
+  url: string | null;
+  connected: boolean;
+  tenantUrl: string | null;
+  error: string | null;
+}
+
 interface A2ARotation {
   fingerprint: string;
   told: string[];
@@ -1413,6 +1421,12 @@ export interface A2AApiClient {
     client?: string
   ): Promise<{ state: 'pending'; id: string; fingerprint: string }>;
   keys(): Promise<A2AKeys>;
+  relayStatus(): Promise<A2ARelayStatus>;
+  setRelay(settings: {
+    enabled: boolean;
+    url: string;
+  }): Promise<A2ARelayStatus>;
+  disableRelay(): Promise<A2ARelayStatus>;
   rotateKey(compromised: boolean): Promise<A2ARotation>;
 }
 
@@ -1511,6 +1525,13 @@ export function createA2AApiClient(
         })
       ),
     keys: () => request(target, '/api/a2a/keys'),
+    relayStatus: () => request(target, '/api/a2a/relay'),
+    setRelay: (settings) =>
+      request(target, '/api/a2a/relay', {
+        ...jsonBody(settings),
+        method: 'PUT',
+      }),
+    disableRelay: () => request(target, '/api/a2a/relay', { method: 'DELETE' }),
     rotateKey: (compromised) =>
       request(
         target,

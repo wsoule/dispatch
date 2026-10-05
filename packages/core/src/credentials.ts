@@ -25,6 +25,14 @@ export interface PeerCredential {
   header?: string;
 }
 
+/** Link keys: privates are PKCS8 DER, publics raw, all base64url (F2's form). */
+export interface A2ALinkKeys {
+  signPriv: string;
+  signPub: string;
+  sealPriv: string;
+  sealPub: string;
+}
+
 /** A rotation's new card-signing key, and when the rotation began. */
 export interface NextSigningKey {
   jwk: Record<string, string>;
@@ -44,6 +52,8 @@ export interface ProjectCredentials {
     nextSigningKey?: NextSigningKey;
     /** The last key-change or revocation statement, public, served to peers. */
     keyStatement?: string;
+    /** Teammate links' Ed25519 signing and X25519 sealing keys (P5). */
+    linkKeys?: A2ALinkKeys;
   };
 }
 
@@ -584,6 +594,70 @@ export async function replaceA2ASigningKeys(
     delete a2a.nextSigningKey;
     return withProjectEntry(file, key, { ...entry, a2a });
   });
+}
+
+export type LinkKeysRead =
+  | { status: 'absent' }
+  | { status: 'ok'; keys: A2ALinkKeys }
+  | { status: 'malformed' }
+  | { status: 'unreadable' };
+
+const LINK_KEY_FIELDS = ['signPriv', 'signPub', 'sealPriv', 'sealPub'] as const;
+
+function linkKeysOf(raw: unknown): LinkKeysRead {
+  if (raw === undefined) return { status: 'absent' };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return { status: 'malformed' };
+  const r = raw as Record<string, unknown>;
+  for (const f of LINK_KEY_FIELDS)
+    if (typeof r[f] !== 'string' || r[f] === '') return { status: 'malformed' };
+  return {
+    status: 'ok',
+    keys: {
+      signPriv: r.signPriv as string,
+      signPub: r.signPub as string,
+      sealPriv: r.sealPriv as string,
+      sealPub: r.sealPub as string,
+    },
+  };
+}
+
+/** This project's link keys. Only 'absent' means new ones may be made. */
+export function readA2ALinkKeys(rootDir: string): LinkKeysRead {
+  const loaded = loadCredentials();
+  if (loaded.kind === 'unreadable') return { status: 'unreadable' };
+  if (loaded.kind === 'absent') return { status: 'absent' };
+  return linkKeysOf(
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.linkKeys
+  );
+}
+
+/**
+ * The link keys, made by `make` and stored under the lock only when the slot
+ * is absent; a malformed slot is left as it is (the feature stays off), and
+ * an unparseable file throws CredentialsUnreadableError, writing nothing.
+ */
+export async function ensureA2ALinkKeys(
+  rootDir: string,
+  make: () => A2ALinkKeys
+): Promise<LinkKeysRead> {
+  const key = normalizeProjectPath(rootDir);
+  let result: LinkKeysRead = { status: 'absent' };
+  await updateCredentialsAsync((file) => {
+    const entry = file.projects?.[key] ?? {};
+    const current = linkKeysOf(entry.a2a?.linkKeys);
+    if (current.status !== 'absent') {
+      result = current;
+      return null;
+    }
+    const keys = make();
+    result = { status: 'ok', keys };
+    return withProjectEntry(file, key, {
+      ...entry,
+      a2a: { ...entry.a2a, linkKeys: { ...keys } },
+    });
+  });
+  return result;
 }
 
 /** The last key-change or revocation statement this project published. */

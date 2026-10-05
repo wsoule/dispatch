@@ -663,3 +663,5 @@ Unpairer
 unpairs
 tailnet
 cloudflared
+linkkeys
+LINKKEYS

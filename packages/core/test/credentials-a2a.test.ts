@@ -20,9 +20,11 @@ import {
   credentialsPath,
   credentialsUnreadable,
   CredentialsUnreadableError,
+  ensureA2ALinkKeys,
   isStaleLock,
   promoteA2ASigningKey,
   readA2AKeyStatement,
+  readA2ALinkKeys,
   readA2ANextSigningKey,
   readA2ASigningKey,
   readCredentials,
@@ -234,6 +236,44 @@ describe('the rotation writers wait without blocking', () => {
   });
 });
 
+describe('the A2A link keys (P5 piece 4)', () => {
+  const KEYS = { signPriv: 'sp', signPub: 'sP', sealPriv: 'xp', sealPub: 'xP' };
+  const OTHER = {
+    signPriv: 'sp2',
+    signPub: 'sP2',
+    sealPriv: 'xp2',
+    sealPub: 'xP2',
+  };
+
+  it('makes them only when the slot is absent, and keeps the first ones', async () => {
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'absent' });
+    expect(await ensureA2ALinkKeys(ROOT, () => KEYS)).toEqual({
+      status: 'ok',
+      keys: KEYS,
+    });
+    expect(await ensureA2ALinkKeys(ROOT, () => OTHER)).toEqual({
+      status: 'ok',
+      keys: KEYS,
+    });
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'ok', keys: KEYS });
+    expect(readA2ALinkKeys('/work/other')).toEqual({ status: 'absent' });
+  });
+
+  it('a malformed slot stays as it is, and nothing is made', async () => {
+    writeRaw({ a2a: { linkKeys: { signPriv: 'only' } } });
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'malformed' });
+    let made = false;
+    expect(
+      await ensureA2ALinkKeys(ROOT, () => {
+        made = true;
+        return KEYS;
+      })
+    ).toEqual({ status: 'malformed' });
+    expect(made).toBe(false);
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'malformed' });
+  });
+});
+
 describe('a credentials file that cannot be parsed', () => {
   const BROKEN = '{"projects": {"/work/x": {"linear": {"apiKey": "k"},}}}\n';
 
@@ -259,6 +299,13 @@ describe('a credentials file that cannot be parsed', () => {
         writeA2ANextSigningKey(ROOT, { jwk: { kty: 'EC' }, at: 'now' }, '{}'),
       () => promoteA2ASigningKey(ROOT),
       () => replaceA2ASigningKeys(ROOT, { kty: 'EC' }, '{}'),
+      () =>
+        ensureA2ALinkKeys(ROOT, () => ({
+          signPriv: 'a',
+          signPub: 'b',
+          sealPriv: 'c',
+          sealPub: 'd',
+        })),
     ])
       await expect(write()).rejects.toThrow(CredentialsUnreadableError);
     expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'unreadable' });

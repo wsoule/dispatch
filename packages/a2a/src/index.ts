@@ -267,3 +267,9 @@ export type { TenantLimits } from './relay/limits.js';
 export { TenantRouter } from './relay/router.js';
 export { readTenants, startRelay } from './relay/serve.js';
 export type { RelayOptions } from './relay/serve.js';
+export {
+  checkLinkKeysBinding,
+  linkKeysBinding,
+  loadOrCreateLinkKeys,
+} from './link/keys.js';
+export type { LinkKeysBinding } from './link/keys.js';
