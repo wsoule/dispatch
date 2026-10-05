@@ -67,7 +67,8 @@ export type FedMetaKey =
   | 'pending_invite'
   | 'audit_exported'
   | 'device'
-  | 'agents_republished';
+  | 'agents_republished'
+  | 'memory_rev';
 
 interface KeyRow {
   replica: string;
@@ -133,6 +134,25 @@ export class FedStore {
           put.run(r.replica, r.seq, Buffer.from(r.hash, 'hex'));
         db.exec('DROP TABLE fed_mail_seen_v0');
       })();
+  }
+
+  /** Remembers a verified op's hash, so a reread of it can be checked. */
+  rememberReread(replica: string, seq: number, hash: string): void {
+    this.db
+      .query(
+        'INSERT OR IGNORE INTO fed_reread_seen (replica, seq, hash) VALUES (?, ?, ?)'
+      )
+      .run(replica, seq, Buffer.from(hash, 'hex'));
+  }
+
+  /** The hex hash kept for a reread, or null when none was. */
+  rereadSeen(replica: string, seq: number): string | null {
+    const row = this.db
+      .query<{ hash: Uint8Array }, [string, number]>(
+        'SELECT hash FROM fed_reread_seen WHERE replica = ? AND seq = ?'
+      )
+      .get(replica, seq);
+    return row === null ? null : Buffer.from(row.hash).toString('hex');
   }
 
   /** Remembers a verified mail op's hash, so a forward of it can be checked. */

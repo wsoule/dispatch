@@ -242,6 +242,7 @@ export interface MemoryBody {
   kind: 'put' | 'remove';
   fields?: Record<string, unknown>;
   trust: 'human' | 'confirmed' | 'agent'; // the trust the publisher asserts; receivers recompute it
+  by?: string; // who made the change: the latest local revision's author
 }
 
 // A team doc change (docs design "Team sync"): a revision, meta fields

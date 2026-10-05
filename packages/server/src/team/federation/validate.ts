@@ -209,7 +209,7 @@ export function statePayload(v: unknown): StatePayload | null {
 /** FW-R32(3)(6): one rolling note a person can acknowledge per publisher and kind. */
 export function dropNote(
   fed: FedStore,
-  kind: 'malformed' | 'mail-drop',
+  kind: 'malformed' | 'mail-drop' | 'memory-cap' | 'memory-quota',
   replica: string,
   message: string
 ): void {
