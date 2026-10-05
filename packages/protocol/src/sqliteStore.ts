@@ -82,6 +82,7 @@ export function openMessagesDb(path: string): SqliteDatabase {
   db.exec(DDL);
   addIdemKey(db);
   addFederationSchema(db);
+  addMessageRefs(db);
   db.exec(`PRAGMA user_version = ${MESSAGES_DB_VERSION}`);
   return db;
 }
@@ -160,6 +161,43 @@ function addFederationSchema(db: SqliteDatabase): void {
     'CREATE INDEX IF NOT EXISTS messages_thread_hlc ON messages (thread, hlc, id)'
   );
   db.exec(FEDERATION_DDL);
+}
+
+// Additive: refs by (type, id), so a doc's or task's talk is one indexed read.
+// Created with a one-time backfill from refs_json; an older build's inserts
+// skip it, which a later open does not repair.
+function addMessageRefs(db: SqliteDatabase): void {
+  const existed =
+    queryOne<{ name: string }>(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'message_refs'"
+    ) !== undefined;
+  db.exec(`CREATE TABLE IF NOT EXISTS message_refs (
+  message_id TEXT NOT NULL, type TEXT NOT NULL, ref_id TEXT NOT NULL,
+  PRIMARY KEY (message_id, type, ref_id)
+);
+CREATE INDEX IF NOT EXISTS message_refs_target ON message_refs (type, ref_id);`);
+  if (existed) return;
+  db.exec(`INSERT OR IGNORE INTO message_refs (message_id, type, ref_id)
+    SELECT m.id, json_extract(j.value, '$.type'), json_extract(j.value, '$.id')
+    FROM messages m, json_each(m.refs_json) j
+    WHERE json_extract(j.value, '$.type') IS NOT NULL
+      AND json_extract(j.value, '$.id') IS NOT NULL`);
+}
+
+/** Which messages a conversation read matches: both parties of a pair, every
+ *  thread an address took part in, or every thread referencing a ref. */
+export type ConversationMatch =
+  | { kind: 'pair'; a: Address; b: Address }
+  | { kind: 'about'; addresses: readonly Address[] }
+  | { kind: 'ref'; type: string; id: string };
+
+export interface ConversationPage {
+  /** Only ids below this one (ulid order). */
+  before?: string;
+  limit?: number;
+  /** Only thread roots. */
+  rootsOnly?: boolean;
 }
 
 interface MessageRow {
@@ -284,6 +322,10 @@ export class SqliteMessageStore implements MessageStore {
         'INSERT INTO recipients (message_id, position, addr) VALUES (?,?,?)'
       );
       m.to.forEach((addr, i) => insert.run(m.id, i, addr));
+      const ref = this.db.prepare(
+        'INSERT OR IGNORE INTO message_refs (message_id, type, ref_id) VALUES (?,?,?)'
+      );
+      for (const r of m.refs) ref.run(m.id, r.type, r.id);
     });
   }
 
@@ -918,21 +960,9 @@ export class SqliteMessageStore implements MessageStore {
     const params: SqlValue[] = [];
     let where = '';
     if (about !== undefined) {
-      const marks = about.map(() => '?').join(', ');
-      // Held mail rebound to a run keeps its task recipient; match it by run id.
-      const runIds = about
-        .filter((a) => a.startsWith('run:'))
-        .map((a) => a.slice('run:'.length));
-      const byRun =
-        runIds.length === 0
-          ? ''
-          : ` OR d.run_id IN (${runIds.map(() => '?').join(', ')})`;
-      where = `WHERE thread IN (
-        SELECT thread FROM messages WHERE from_addr IN (${marks})
-        UNION SELECT m.thread FROM messages m JOIN recipients r ON r.message_id = m.id WHERE r.addr IN (${marks})
-        UNION SELECT m.thread FROM messages m JOIN deliveries d ON d.message_id = m.id
-          WHERE d.recipient IN (${marks})${byRun})`;
-      params.push(...about, ...about, ...about, ...runIds);
+      const clause = threadsAbout(about);
+      where = `WHERE thread IN (${clause.sql})`;
+      params.push(...clause.params);
     }
     params.push(limit);
     const rows = queryAll<{
@@ -956,6 +986,38 @@ export class SqliteMessageStore implements MessageStore {
     });
   }
 
+  /** Messages a conversation read matches, newest (highest id) first. */
+  conversation(match: ConversationMatch, page: ConversationPage): Message[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (match.kind === 'pair') {
+      const party =
+        '(m.from_addr = ? OR EXISTS (SELECT 1 FROM recipients r WHERE r.message_id = m.id AND r.addr = ?))';
+      where.push(`${party} AND ${party}`);
+      params.push(match.a, match.a, match.b, match.b);
+    } else if (match.kind === 'about') {
+      if (match.addresses.length === 0) return [];
+      const clause = threadsAbout(match.addresses);
+      where.push(`m.thread IN (${clause.sql})`);
+      params.push(...clause.params);
+    } else {
+      where.push(`m.thread IN (SELECT t.thread FROM message_refs x
+        JOIN messages t ON t.id = x.message_id WHERE x.type = ? AND x.ref_id = ?)`);
+      params.push(match.type, match.id);
+    }
+    if (page.before !== undefined) {
+      where.push('m.id < ?');
+      params.push(page.before);
+    }
+    if (page.rootsOnly === true) where.push('m.id = m.thread');
+    params.push(page.limit ?? 50);
+    return queryAll<MessageRow>(
+      this.db,
+      `SELECT m.* FROM messages m WHERE ${where.join(' AND ')} ORDER BY m.id DESC LIMIT ?`,
+      params
+    ).map((r) => this.toMessage(r));
+  }
+
   private firstStored(threadId: string): Message | null {
     const row = queryOne<MessageRow>(
       this.db,
@@ -973,6 +1035,29 @@ export class SqliteMessageStore implements MessageStore {
     );
     return row === undefined ? null : this.toMessage(row);
   }
+}
+
+// Threads `about` took part in as sender, recipient or delivery recipient;
+// held mail rebound to a run keeps its task recipient, so match it by run id.
+function threadsAbout(about: readonly Address[]): {
+  sql: string;
+  params: SqlValue[];
+} {
+  const marks = about.map(() => '?').join(', ');
+  const runIds = about
+    .filter((a) => a.startsWith('run:'))
+    .map((a) => a.slice('run:'.length));
+  const byRun =
+    runIds.length === 0
+      ? ''
+      : ` OR d.run_id IN (${runIds.map(() => '?').join(', ')})`;
+  return {
+    sql: `SELECT thread FROM messages WHERE from_addr IN (${marks})
+        UNION SELECT m.thread FROM messages m JOIN recipients r ON r.message_id = m.id WHERE r.addr IN (${marks})
+        UNION SELECT m.thread FROM messages m JOIN deliveries d ON d.message_id = m.id
+          WHERE d.recipient IN (${marks})${byRun}`,
+    params: [...about, ...about, ...about, ...runIds],
+  };
 }
 
 function toSettlement(r: SettlementRow): Settlement {
