@@ -26,6 +26,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # moon compares against main on a pull request; a shallow clone has no main.
+          fetch-depth: 0
 
       - name: Set up moon and caches
         uses: ./.github/actions/setup
