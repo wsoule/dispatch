@@ -81,8 +81,52 @@ other platforms.
   - Requests can't be steered to private addresses (SSRF guard with DNS
     pinning).
   - Every peer and client is tiered and revocable.
-- _(planned)_ **Peer-to-peer pairing:** one code pairs two Dispatches, with
-  signed requests and no shared secrets.
+
+### Pairing: two Dispatches trust each other with one code
+
+- **One code, used once.** One side makes a short-lived pairing code, and the
+  other enters it. Both sides then show the same check string to compare, and
+  each pins the other's key. There are no shared secrets to copy around.
+- **Signed requests both ways.** Paired agents sign every request and every
+  reply, so neither side needs a bearer token, and a reply the other side didn't
+  sign is never read.
+- **Key rotation and revocation.** Rotate your agent's key and paired peers
+  re-pin it on their own, with an overlap so nothing drops. If a key is
+  compromised, revoke it and every pairing that trusted it ends.
+- **Upgrade the peers you have.** A peer added with a token can move to signed
+  requests once its owner confirms the fingerprint, without being re-added.
+- **Unpair from either side.** Removing a paired peer tells the other side, and
+  both stop.
+
+### Reaching your agent from anywhere
+
+- **Tailscale or Cloudflare.** Step-by-step setup for putting your agent on your
+  tailnet, or behind a Cloudflare Tunnel, with no port opened.
+- **Your own relay.** `dispatch a2a relay` runs a small relay on a machine you
+  control. Your daemons dial out to it, and each one is reachable at its own
+  address. The relay can't forge a paired peer's signed requests.
+
+### Teammate links: no listener at all
+
+- **Pair over a git remote you share.** Teammates who can both push to one git
+  remote can pair over a branch on it. Neither side opens a port or needs a
+  public address.
+- **Works with laptops that sleep.** Questions, handoffs and answers wait on the
+  branch, end-to-end encrypted, until the other side comes back. Links are given
+  a week instead of a day.
+- **The same rules as any outside agent.** Work over a link still lands as a
+  draft task you approve, within the same limits.
+- **Link health in Settings.** See each link's last exchange, what's waiting,
+  and any problem it found.
+- **Safe rules for links.**
+  - Below the operator tier, a link must be an https remote on a public host.
+  - Before every exchange the host is checked again, and git is pinned to the
+    address that was checked: no redirects, and no proxy below the operator
+    tier.
+  - Whoever can push to the branch still can't forge, replay or rewrite a paired
+    teammate's messages.
+- _(planned)_ **Links over the team relay**, for instant delivery without git.
+- _(planned)_ **Keys in the OS keychain** instead of the credentials file.
 
 ## Federation: a team board with no server
 
