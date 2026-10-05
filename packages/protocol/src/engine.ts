@@ -106,6 +106,8 @@ interface ArrivalSettle {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+/** Superseded-answer notices one question sends at most (FW-R33). */
+const MAX_SUPERSEDED_NOTICES = 5;
 
 const SYSTEM_SENDER: Sender = { address: SYSTEM_ADDRESS, canDecide: true };
 
@@ -141,6 +143,8 @@ const LOCAL_RANK: Record<DeliveryState, number> = {
 
 export class DeliveryEngine {
   private readonly store: MessageStore;
+  // Superseded-answer notices sent, by question.
+  private readonly supersededNotices = new Map<string, number>();
   private readonly host: MessagingHost;
   private readonly limits: EngineLimits;
   private readonly ulid: (nowMs: number) => string;
@@ -1312,7 +1316,12 @@ export class DeliveryEngine {
           `message:${message.id}`,
           `${s.settler} sent a settle for ${message.id}; only the question's origin settles it`
         );
-      if (answer.supersededBy !== null)
+      // FW-R33: at most a few such notices per question, however many answer.
+      if (
+        answer.supersededBy !== null &&
+        message.replyTo !== null &&
+        this.noteSuperseded(message.replyTo)
+      )
         await this.noticeTo(
           message.from,
           message,
@@ -1785,12 +1794,8 @@ export class DeliveryEngine {
       changed.push(...this.swapSettled(q.id, s.answerId));
       return this.markAnswered(q.id);
     }
-    // The accepted answer may never reach this replica (it went to the
-    // asker): every answer held here already lost, so it is superseded now.
-    if (s.closedReason === null) {
-      changed.push(...this.demoteOtherAnswers(q.id, s.answerId));
-      return [];
-    }
+    // FW-R33: an answer that has not arrived supersedes nothing yet.
+    if (s.closedReason === null) return [];
     changed.push(...this.demoteOtherAnswers(q.id, s.answerId));
     this.store.insertMessage(
       closeCopy(
@@ -1934,6 +1939,14 @@ export class DeliveryEngine {
 
   // Tells a sender something went sideways, as a system notice in its thread;
   // a sender run that has ended hears it through its task.
+  // Counts a superseded-answer notice for a question; false past the cap.
+  private noteSuperseded(questionId: string): boolean {
+    const sent = this.supersededNotices.get(questionId) ?? 0;
+    if (sent >= MAX_SUPERSEDED_NOTICES) return false;
+    this.supersededNotices.set(questionId, sent + 1);
+    return true;
+  }
+
   private async noticeTo(
     recipient: Address,
     about: Message,

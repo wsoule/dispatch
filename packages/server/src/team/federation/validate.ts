@@ -72,7 +72,7 @@ export function presenceBody(v: unknown): PresenceBody | null {
       ) ||
       !text(v['runKind'], 32) ||
       typeof v['live'] !== 'boolean' ||
-      !(waiting === undefined || text(waiting, 64))
+      !(waiting === undefined || text(waiting, 128))
     )
       return null;
     return {
@@ -97,7 +97,7 @@ export function agentBody(v: unknown): AgentBody | null {
   if (
     !isAddress(v['address'], ['agent']) ||
     !text(v['displayName']) ||
-    !text(v['client'], 64) ||
+    !text(v['client'], 128) ||
     !(status === 'pending' || status === 'approved' || status === 'revoked')
   )
     return null;
@@ -183,12 +183,12 @@ export function statePayload(v: unknown): StatePayload | null {
         return null;
       entries.push(e as unknown as StatePayload['entries'][number]);
     } else if (e['t'] === 'refused') {
-      if (!text(e['reason'], 1024)) return null;
+      if (!text(e['reason'], 8192)) return null;
       entries.push(e as unknown as StatePayload['entries'][number]);
     } else if (e['t'] === 'settle') {
       const closed = e['closed'];
       if (!text(e['question'], 64) || !text(e['answer'], 64)) return null;
-      if (!(closed === undefined || text(closed, 1024))) return null;
+      if (!(closed === undefined || text(closed, 8192))) return null;
       entries.push(e as unknown as StatePayload['entries'][number]);
     } else return null;
   }

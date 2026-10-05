@@ -58,7 +58,8 @@ export class Homes {
       case 'task': {
         const live = this.taskLiveRun(p.id);
         if (live !== null) return this.usable([live.replica]);
-        return this.assigneeHomes(p.id) ?? [];
+        const allowed = this.assigneeHomes(p.id);
+        return Array.isArray(allowed) ? allowed : [];
       }
       default:
         return [];
@@ -70,6 +71,8 @@ export class Homes {
   taskLiveRun(taskId: string): LiveRun | null {
     // FW-R32(8): an assigned task's run counts only on its assignee's
     // machines, so no teammate takes another's task mail by running it.
+    // FW-R33(2): an unassigned task has no remote home; only a run here.
+    const me = this.deps.fed.replica;
     const allowed = this.assigneeHomes(taskId);
     return (
       this.deps.fed.db
@@ -77,18 +80,34 @@ export class Homes {
           "SELECT run, replica, hlc FROM fed_runs WHERE task = ? AND run_kind = 'execute' AND live = 1 ORDER BY hlc, replica"
         )
         .all(taskId)
-        .find((r) => allowed === null || allowed.includes(r.replica)) ?? null
+        .find(
+          (r) =>
+            r.replica === me ||
+            (allowed !== 'unassigned' &&
+              (allowed === 'anyone' || allowed.includes(r.replica)))
+        ) ?? null
     );
   }
 
-  // The machines of a task's assignee, or null for an unassigned task.
-  private assigneeHomes(taskId: string): string[] | null {
-    const assignee = this.deps.tasks.get(taskId)?.meta.assignee ?? '';
+  /** Whether `replica` may hold a task's mail when no run is live there:
+   *  never for an unassigned task. */
+  mayHold(taskId: string, replica: string): boolean {
+    const allowed = this.assigneeHomes(taskId);
+    if (allowed === 'unassigned') return false;
+    return allowed === 'anyone' || allowed.includes(replica);
+  }
+
+  // Whose machines may run a task for its mail: an unassigned task nobody's
+  // remotely, a named assignee's own, and an assignee the board names only
+  // by kind (agent or human) anyone's.
+  private assigneeHomes(taskId: string): string[] | 'unassigned' | 'anyone' {
+    const assignee = this.deps.tasks.get(taskId)?.meta.assignee ?? 'none';
+    if (assignee === 'none' || assignee === '') return 'unassigned';
     const ref = parsed(assignee);
     if (ref?.kind === 'human') return this.of(assignee);
     if (ref?.kind === 'agent' && ref.operator !== null)
       return this.of(`human:${ref.operator}`);
-    return null;
+    return 'anyone';
   }
 
   // Admitted, unrevoked, within the seats and not an observer (an observer

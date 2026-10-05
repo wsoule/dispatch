@@ -132,6 +132,8 @@ describe('mail in', () => {
     await at(0).service.syncNow();
     forgeForward(at(1), original, 'human:cy', at(2));
     await at(2).settleWith(at(1));
+    // A forward read before its original waits for it, then is judged.
+    await at(2).service.syncNow();
     expect(at(2).messages.getMessage(message.id)).toBeNull();
     expect(
       at(2)

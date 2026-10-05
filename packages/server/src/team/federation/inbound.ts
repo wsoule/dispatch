@@ -18,6 +18,7 @@ import type {
 } from '@dispatch/protocol/federation';
 
 import type { Homes } from './homes.js';
+import { recordSealed } from './mail.js';
 import type { RosterService } from './roster.js';
 import type { InboxDrainer, OpHandler, StageContext } from './service.js';
 import { speaksFor } from './speaksFor.js';
@@ -31,13 +32,12 @@ import {
 } from './validate.js';
 
 const INBOX_MAX_ATTEMPTS = 3;
-/** How long a verified mail op stays forwardable. */
-const MAIL_SEEN_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
+/** Verified mail ops remembered per publisher, newest first (FW-R33(1)). */
+const MAIL_SEEN_PER_PUBLISHER = 100_000;
 /** Queued messages one publisher may have before its mail waits parked. */
 const MAX_WAITING = 1000;
 /** State ops applied per clock hour from one teammate's machine. */
 const STATE_OPS_PER_HOUR = 600;
-const PARKED_MAX_PER_PUBLISHER = 10_000;
 
 /** What the inbox tells the state module (Task 16); no-ops until then. */
 export interface StateHooks {
@@ -258,8 +258,12 @@ export class Inbound implements OpHandler, InboxDrainer {
       return row === null || row.replica === me;
     }
     if (recipient.startsWith('task:')) {
-      const live = homes.taskLiveRun(recipient.slice('task:'.length));
+      const task = recipient.slice('task:'.length);
+      const live = homes.taskLiveRun(task);
       if (live?.replica === me) return true;
+      // A run here that ended as the mail came: still a holder if the task
+      // is one this machine may hold.
+      if (live === null && homes.mayHold(task, me)) return true;
     }
     return homes.of(recipient).includes(me);
   }
@@ -270,9 +274,7 @@ export class Inbound implements OpHandler, InboxDrainer {
     const { fed, roster } = this.deps;
     // FW-R32(8): nothing is delivered while the roster is paused.
     if ((roster.view()?.unknown ?? null) !== null) return;
-    fed.db
-      .query('DELETE FROM fed_mail_seen WHERE at < ?')
-      .run(new Date(now.getTime() - MAIL_SEEN_KEPT_MS).toISOString());
+    this.pruneSeen();
     const hour = now.toISOString().slice(0, 13);
     const stopped = new Set<string>();
     const rows = fed.db
@@ -350,6 +352,35 @@ export class Inbound implements OpHandler, InboxDrainer {
     };
   }
 
+  // FW-R33(1): seen mail is pruned by count per publisher, never by age,
+  // and never an op a held copy here may still forward.
+  private pruneSeen(): void {
+    const { db } = this.deps.fed;
+    const held = new Set(
+      db
+        .query<{ op_json: string }, []>('SELECT op_json FROM fed_held_ops')
+        .all()
+        .map((r) => {
+          const op = JSON.parse(r.op_json) as { replica: string; seq: number };
+          return `${op.replica}:${op.seq}`;
+        })
+    );
+    for (const { replica, n } of db
+      .query<{ replica: string; n: number }, [number]>(
+        'SELECT replica, COUNT(*) AS n FROM fed_mail_seen GROUP BY replica HAVING n > ?'
+      )
+      .all(MAIL_SEEN_PER_PUBLISHER))
+      for (const row of db
+        .query<{ seq: number }, [string, number]>(
+          'SELECT seq FROM fed_mail_seen WHERE replica = ? ORDER BY seq LIMIT ?'
+        )
+        .all(replica, n - MAIL_SEEN_PER_PUBLISHER))
+        if (!held.has(`${replica}:${row.seq}`))
+          db.query(
+            'DELETE FROM fed_mail_seen WHERE replica = ? AND seq = ?'
+          ).run(replica, row.seq);
+  }
+
   waiting(replica: string): number {
     return (
       this.deps.fed.db
@@ -369,6 +400,13 @@ export class Inbound implements OpHandler, InboxDrainer {
         .query('DELETE FROM fed_inbox WHERE replica = ? AND seq = ?')
         .run(row.replica, row.seq);
     };
+    // A holder that forwarded it here hears its delivery, as the origin does.
+    if (p.forwardTarget !== undefined)
+      fed.db
+        .query(
+          "INSERT OR IGNORE INTO fed_published (kind, ref, hash) VALUES ('forwarder', ?, '')"
+        )
+        .run(`${p.message.id}\n${row.replica}`);
     try {
       const result = await engine.receive(p.message, {
         replica: p.origin,
@@ -396,6 +434,7 @@ export class Inbound implements OpHandler, InboxDrainer {
             )
             .run(p.message.id, JSON.stringify(p.op));
       });
+      recordSealed(fed, p.message.id, [...p.sealedTo, p.origin]);
       state?.received(p.message, p.origin, result.deliveries);
       return true;
     } catch (err) {
@@ -560,28 +599,8 @@ export class Inbound implements OpHandler, InboxDrainer {
       .some((r) => view.resolution.has(r.hash));
   }
 
-  // Parks the op; past the cap, the publisher's oldest parked op goes.
-  private park(op: FederatedOp): 'parked' {
-    const { fed } = this.deps;
-    const held =
-      fed.db
-        .query<{ n: number }, [string]>(
-          'SELECT COUNT(*) AS n FROM fed_parked WHERE replica = ?'
-        )
-        .get(op.replica)?.n ?? 0;
-    if (held >= PARKED_MAX_PER_PUBLISHER) {
-      fed.db
-        .query(
-          'DELETE FROM fed_parked WHERE replica = ? AND seq = (SELECT MIN(seq) FROM fed_parked WHERE replica = ?)'
-        )
-        .run(op.replica, op.replica);
-      dropNote(
-        fed,
-        'mail-drop',
-        op.replica,
-        `${this.deps.roster.label(op.replica)} has more than ${PARKED_MAX_PER_PUBLISHER} waiting messages; the oldest was dropped`
-      );
-    }
+  // Parks the op; the service caps what one publisher may have waiting.
+  private park(_op: FederatedOp): 'parked' {
     return 'parked';
   }
 }

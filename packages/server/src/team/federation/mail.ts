@@ -21,6 +21,35 @@ import type { FedStore } from './store.js';
 
 const MAIL_SCAN_BATCH = 200;
 
+/** FW-R33(2): remembers the machines a message was sealed to, here or by
+ *  the op that brought it, so only they may report its delivery. */
+export function recordSealed(
+  fed: FedStore,
+  messageId: string,
+  replicas: readonly string[]
+): void {
+  for (const r of replicas)
+    fed.db
+      .query(
+        "INSERT OR IGNORE INTO fed_published (kind, ref, hash) VALUES ('sealed', ?, '')"
+      )
+      .run(`${messageId}\n${r}`);
+}
+
+export function wasSealedTo(
+  fed: FedStore,
+  messageId: string,
+  replica: string
+): boolean {
+  return (
+    fed.db
+      .query<{ ref: string }, [string]>(
+        "SELECT ref FROM fed_published WHERE kind = 'sealed' AND ref = ?"
+      )
+      .get(`${messageId}\n${replica}`) !== null
+  );
+}
+
 // A message as its payload carries it: `origin` is the receiver's to set.
 function withoutOrigin(message: Message): Message {
   const { origin: _origin, ...rest } = message;
@@ -54,7 +83,8 @@ function targetsOf(
  *  is a home of, a copy (the sender's devices, observers) gets them all. */
 function splitByTarget(
   targets: readonly MailTarget[],
-  recipients: readonly string[]
+  recipients: readonly string[],
+  full: ReadonlySet<string>
 ): { targets: MailTarget[]; recipients: string[] }[] {
   const groups = new Map<
     string,
@@ -62,7 +92,8 @@ function splitByTarget(
   >();
   for (const r of recipients) {
     const mine = targets.filter((t) => t.homes.includes(r));
-    const chosen = mine.length > 0 ? mine : [...targets];
+    // FW-R33: the sender's other devices keep the whole conversation.
+    const chosen = mine.length > 0 && !full.has(r) ? mine : [...targets];
     const key = chosen.map((t) => t.recipient).join('\n');
     const g = groups.get(key) ?? { targets: chosen, recipients: [] };
     g.recipients.push(r);
@@ -186,7 +217,14 @@ export class MailOut implements Collector {
       else keys.set(r, pin.sealPub);
     }
     const ops: FederatedOp[] = [];
-    for (const group of splitByTarget(targets, [...keys.keys()].sort())) {
+    const devices = new Set(
+      message.from.startsWith('human:') ? this.deps.homes.of(message.from) : []
+    );
+    for (const group of splitByTarget(
+      targets,
+      [...keys.keys()].sort(),
+      devices
+    )) {
       const payload: MailPayload = {
         message: withoutOrigin(message),
         targets: group.targets,
@@ -216,6 +254,7 @@ export class MailOut implements Collector {
             },
           })
         );
+        recordSealed(fed, message.id, [...chunk.keys()]);
       }
     }
     return ops;
@@ -274,6 +313,7 @@ export class MailOut implements Collector {
     const pin = fed.pinned(to);
     if (pin === null) return null;
     const forward: ForwardPayload = { target, key: b64u(key) };
+    if (payload !== null) recordSealed(fed, payload.message.id, [to]);
     return fed.append({
       type: 'mail',
       body: { forward: original as never },

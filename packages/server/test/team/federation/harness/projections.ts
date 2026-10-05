@@ -47,7 +47,9 @@ export async function rosterProjection(m: Member): Promise<unknown> {
 }
 
 /** Every message more than one member holds reads the same on each: its
- *  kind and its settlement (an answer accepted on one is accepted on all). */
+ *  body, and whether it is the accepted answer (accepted on one, accepted on
+ *  all). A losing answer may stay pending where the winner never arrives
+ *  (FW-R33), so that is not compared. */
 export function expectMessagesConverged(members: Member[]): void {
   const held = new Map<string, { name: string; row: unknown }[]>();
   for (const m of members)
@@ -60,7 +62,7 @@ export function expectMessagesConverged(members: Member[]): void {
       const list = held.get(row.id) ?? [];
       list.push({
         name: m.name,
-        row: { kind: row.kind, settled: row.settled_as, body: row.body },
+        row: { body: row.body, accepted: row.settled_as === 'accepted' },
       });
       held.set(row.id, list);
     }

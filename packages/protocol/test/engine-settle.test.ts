@@ -147,6 +147,22 @@ describe('at the settler: the question was asked here', () => {
     );
   });
 
+  it('sends at most five superseded notices for one question', async () => {
+    await engine.receive(
+      answerTo(q, 'm-a1', 'human:bob'),
+      fromBob([here('run:r-00000000000a')])
+    );
+    for (let i = 0; i < 8; i++)
+      await engine.receive(answerTo(q, `m-ax${i}`, 'human:cy'), {
+        replica: CY,
+        targets: [here('run:r-00000000000a')],
+      });
+    const notices = store
+      .remoteDeliveries({ recipient: 'human:cy' })
+      .filter((r) => r.messageId !== q.id);
+    expect(notices).toHaveLength(5);
+  });
+
   it('answers a later local answer with conflict, as today', async () => {
     await engine.receive(
       answerTo(q, 'm-a1', 'human:bob'),
@@ -364,11 +380,10 @@ describe("elsewhere: Bob's question, received here", () => {
     );
   });
 
-  // The accepted answer went to the asker only, never here: the settle
-  // alone tells this replica its own answer lost.
-  it('supersedes its own pending answer on a settle naming an answer it never sees', async () => {
+  // FW-R33: a settle naming an answer not stored here supersedes nothing
+  // until that answer arrives.
+  it('keeps its own answer pending on a settle naming an answer it has not seen', async () => {
     const { message: mine } = await engine.reply(q.id, { body: 'no' }, wyat);
-    expect(store.settledAs(mine.id)).toBe('pending');
     engine.applySettlement(
       {
         t: 'settle',
@@ -378,8 +393,7 @@ describe("elsewhere: Bob's question, received here", () => {
       },
       BOB
     );
-    expect(store.settledAs(mine.id)).toBe('superseded');
-    expect(store.getMessage(mine.id)?.kind).toBe('message');
+    expect(store.settledAs(mine.id)).toBe('pending');
     expect(store.settlement(q.id)?.answerId).toBe('m-acy');
   });
 

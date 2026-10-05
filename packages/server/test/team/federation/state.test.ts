@@ -73,13 +73,18 @@ describe('state across daemons', () => {
     await at(0).settleWith(at(1));
     await at(0).settleWith(at(2));
     for (const r of [at(1), at(2)]) await r.settleWith(at(0));
-    for (const r of open)
-      expect(
-        r.messages.settledAs(cys.message.id) === 'superseded' ||
-          r.messages.getMessage(cys.message.id) === null
-      ).toBe(true);
+    expect(at(0).messages.settledAs(cys.message.id)).toBe('superseded');
     expect(at(0).messages.settledAs(bobs.message.id)).toBe('accepted');
-    expect(at(2).messages.settledAs(cys.message.id)).toBe('superseded');
+    // FW-R33: on cy, whose machine never sees bob's answer, cy's stays
+    // pending; the settler's notice tells cy it was already answered.
+    expect(at(2).messages.settledAs(cys.message.id)).toBe('pending');
+    expect(
+      at(2)
+        .messages.recentThreads(20)
+        .some((t) =>
+          t.root.body.startsWith(`${cys.message.id} was already answered`)
+        )
+    ).toBe(true);
   });
 
   it('keeps a remote question answerable after the recipient daemon restarts', async () => {
@@ -231,7 +236,8 @@ describe('state across daemons', () => {
 
   it("follows a task's live run: the origin re-publishes held task mail to the claimant", async () => {
     open = await foundedTeam('ada', 'bob');
-    const id = at(0).store.create({ title: 'unassigned' }).meta.id;
+    const id = at(0).store.create({ title: 'assigned', assignee: 'human' }).meta
+      .id;
     const { message } = await at(0).engine.send(
       { to: [`task:${id}`], kind: 'message', body: 'for whoever runs it' },
       human('ada')

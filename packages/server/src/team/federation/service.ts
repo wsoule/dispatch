@@ -50,6 +50,12 @@ import { dropNote } from './validate.js';
 export const CLOCK_GUARD_MS = MAX_CLOCK_LEAD_MS;
 /** An op this far ahead also names its machine's clock as wrong. */
 const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
+/** Waiting ops one publisher may hold here (FW-R33(5)). */
+const MAX_PARKED_PER_PUBLISHER = 10_000;
+/** Waiting ops restaged per publisher, and in all, each pass. */
+const RESTAGE_PER_PUBLISHER = 200;
+const RESTAGE_PER_PASS = 2_000;
+
 /** Team messaging op types, applied only once mailReady (FW-R32(7)). */
 const F2_TYPES = new Set(['presence', 'agent', 'channel', 'mail', 'state']);
 
@@ -146,6 +152,8 @@ export interface V1Branch extends V1Log {
 }
 
 export interface FederationServiceOptions {
+  /** Waiting ops per publisher before the oldest go (tests lower it). */
+  maxParkedPerPublisher?: number;
   store: SyncedTaskStore;
   ledger: SyncLedger;
   v1: V1Branch;
@@ -200,6 +208,7 @@ export class FederationService {
   private readonly collectors: Collector[] = [];
   private inbox: InboxDrainer | null = null;
   private fast: Date | null = null;
+  private restageStart = 0;
 
   constructor(private readonly opts: FederationServiceOptions) {}
 
@@ -974,6 +983,13 @@ export class FederationService {
       return 'block';
     }
     if (isStub(entry)) {
+      // FW-R33(1): a pruned mail op stays forwardable by its header and sig.
+      if (entry.type === 'mail')
+        fed.db
+          .query(
+            'INSERT OR IGNORE INTO fed_mail_seen (replica, seq, hash, at) VALUES (?, ?, ?, ?)'
+          )
+          .run(r, entry.seq, opHash(entry), now.toISOString());
       if (entry.to?.includes(fed.replica) === true)
         fed.problem(
           `op:${r}:${entry.seq}`,
@@ -1022,6 +1038,7 @@ export class FederationService {
         'INSERT OR IGNORE INTO fed_unknown (replica, seq, op_json) VALUES (?, ?, ?)'
       )
       .run(r, entry.seq, JSON.stringify(entry));
+    this.makeRoom('fed_unknown', entry);
     return 'moved';
   }
 
@@ -1062,6 +1079,7 @@ export class FederationService {
   }
 
   private park(op: FederatedOp, reason: string): void {
+    this.makeRoom('fed_parked', op);
     this.opts.fed.db
       .query(
         'INSERT OR REPLACE INTO fed_parked (replica, seq, op_json, reason, first_at) VALUES (?, ?, ?, ?, ?)'
@@ -1075,23 +1093,49 @@ export class FederationService {
       );
   }
 
+  // FW-R33(5): one publisher's waiting ops are capped; past the cap its
+  // oldest goes, with a rolling note.
+  private makeRoom(table: 'fed_parked' | 'fed_unknown', op: FederatedOp): void {
+    const { db } = this.opts.fed;
+    const cap = this.opts.maxParkedPerPublisher ?? MAX_PARKED_PER_PUBLISHER;
+    const held =
+      db
+        .query<{ n: number }, [string, number]>(
+          `SELECT COUNT(*) AS n FROM ${table} WHERE replica = ? AND seq != ?`
+        )
+        .get(op.replica, op.seq)?.n ?? 0;
+    if (held < cap) return;
+    db.query(
+      `DELETE FROM ${table} WHERE replica = ? AND seq IN (SELECT seq FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?)`
+    ).run(op.replica, op.replica, op.seq, held - cap + 1);
+    dropNote(
+      this.opts.fed,
+      'mail-drop',
+      op.replica,
+      `${this.opts.roster.label(op.replica)} has more than ${cap} ops waiting here; the oldest were dropped`
+    );
+  }
+
   // Parked ops and ops of a type now registered get their handler again.
   private restage(ctx: StageContext): void {
     const { db } = this.opts.fed;
-    const rows = [
-      ...db
-        .query<{ replica: string; seq: number; op_json: string }, []>(
-          'SELECT replica, seq, op_json FROM fed_parked'
+    // FW-R33(5): a budget per publisher and per pass, publishers rotated.
+    const take = (table: 'fed_parked' | 'fed_unknown') =>
+      db
+        .query<{ replica: string; seq: number; op_json: string }, [number]>(
+          `SELECT replica, seq, op_json FROM (SELECT replica, seq, op_json, ROW_NUMBER() OVER (PARTITION BY replica ORDER BY seq) AS n FROM ${table}) WHERE n <= ? ORDER BY replica, seq`
         )
-        .all()
-        .map((row) => ({ ...row, table: 'fed_parked' })),
-      ...db
-        .query<{ replica: string; seq: number; op_json: string }, []>(
-          'SELECT replica, seq, op_json FROM fed_unknown'
-        )
-        .all()
-        .map((row) => ({ ...row, table: 'fed_unknown' })),
-    ];
+        .all(RESTAGE_PER_PUBLISHER)
+        .map((row) => ({ ...row, table }));
+    const all = [...take('fed_parked'), ...take('fed_unknown')];
+    const publishers = [...new Set(all.map((r) => r.replica))].sort();
+    const start =
+      publishers.length === 0 ? 0 : this.restageStart % publishers.length;
+    this.restageStart += 1;
+    const order = [...publishers.slice(start), ...publishers.slice(0, start)];
+    const rows = order
+      .flatMap((r) => all.filter((row) => row.replica === r))
+      .slice(0, RESTAGE_PER_PASS);
     const ready = this.opts.roster.mailReady();
     for (const row of rows) {
       const op = JSON.parse(row.op_json) as FederatedOp;

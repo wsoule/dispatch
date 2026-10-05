@@ -6,6 +6,7 @@ import type { FederatedOp, PresenceBody } from '@dispatch/protocol/federation';
 import type { Homes } from './homes.js';
 import { RosterError } from './roster.js';
 import type { RosterService } from './roster.js';
+import { standsAt } from './service.js';
 import type { Collector, OpHandler, StageContext } from './service.js';
 import type { FedStore } from './store.js';
 import { dropNote, presenceBody } from './validate.js';
@@ -132,6 +133,8 @@ export class Presence implements Collector, OpHandler {
   }
 
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped' {
+    // FW-R33(3): presence moves this clock on like any applied op.
+    this.deps.fed.observe(op.hlc);
     // FW-R32(3): a body that is not exactly an honest one is refused.
     const body = presenceBody(op.body);
     if (body === null) {
@@ -302,9 +305,14 @@ export class Presence implements Collector, OpHandler {
     op: FederatedOp,
     body: Extract<PresenceBody, { kind: 'resolve' }>,
     ctx: StageContext
-  ): 'applied' | 'dropped' {
+  ): 'applied' | 'parked' | 'dropped' {
+    // FW-R33(3): an admin standing at the resolve's own seq.
     const by = ctx.view.members.get(op.replica);
-    if (by?.role !== 'admin' || by.observer) {
+    if (
+      by?.role !== 'admin' ||
+      by.observer ||
+      !standsAt(ctx.view, op.replica, op.seq)
+    ) {
       this.deps.fed.problem(
         `run-conflict:${String(body.run)}`,
         `${this.deps.roster.label(op.replica)} tried to resolve run ${String(body.run)}, but is no admin; ignored`
@@ -319,7 +327,14 @@ export class Presence implements Collector, OpHandler {
     const claim =
       this.claimsOf(body.run)?.[body.replica] ??
       this.rivalClaim(body.run, body.replica);
-    if (claim === undefined || claim === null) return 'dropped';
+    if (claim === undefined || claim === null) {
+      // The claim it names has not been read here yet: wait for it.
+      this.deps.fed.problem(
+        `run-conflict:${body.run}`,
+        `${this.deps.roster.label(op.replica)} resolved run ${body.run} to ${this.deps.roster.label(body.replica)}, whose claim has not arrived here yet; it waits`
+      );
+      return 'parked';
+    }
     this.bindResolved(body.run, body.replica, claim);
     return 'applied';
   }

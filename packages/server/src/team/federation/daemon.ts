@@ -170,6 +170,7 @@ export function wireAgentsAndChannels(
     mailOut,
     homes: deps.homes,
   });
+  service.addCollector(held);
   deps.presence.setOnLiveRun((task, replica) => {
     held.onLiveRun(task, replica);
   });

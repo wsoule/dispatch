@@ -16,6 +16,7 @@ import type {
 
 import type { Homes } from './homes.js';
 import type { MailOut } from './mail.js';
+import { wasSealedTo } from './mail.js';
 import type { RosterService } from './roster.js';
 import type { Collector } from './service.js';
 import type { FedStore } from './store.js';
@@ -137,9 +138,10 @@ export class StateOut implements Collector {
     const entries: StateEntry[] = [];
     for (const e of payload.entries) {
       if (e.t === 'delivery') {
+        // FW-R33(2): only a machine the message was sealed to reports it.
         if (
           REPORTED.includes(e.state) &&
-          this.homesOf(e.recipient).includes(publisher)
+          wasSealedTo(fed, e.message, publisher)
         )
           entries.push(e);
       } else if (e.t === 'refused') {
@@ -173,7 +175,17 @@ export class StateOut implements Collector {
     if (message === null) return;
     const rows = this.deps.messages.remoteDeliveries({ messageId: message.id });
     if (message.origin === undefined && rows.length === 0) return;
-    const to = new Set<string>(rows.flatMap((r) => r.homes));
+    // The holder that forwarded it here, too: its held copy waits on this.
+    const forwarders = this.deps.fed.db
+      .query<{ ref: string }, [string]>(
+        "SELECT ref FROM fed_published WHERE kind = 'forwarder' AND ref LIKE ? ESCAPE '\\'"
+      )
+      .all(`${message.id.replace(/[\\%_]/g, '\\$&')}\n%`)
+      .map((r) => r.ref.slice(message.id.length + 1));
+    const to = new Set<string>([
+      ...rows.flatMap((r) => r.homes),
+      ...forwarders,
+    ]);
     if (message.origin !== undefined) to.add(message.origin);
     this.queue(
       {
@@ -257,10 +269,13 @@ export class StateOut implements Collector {
 }
 
 // Held task mail follows the task's live run (spec "Held task mail follows
-// the live run"): when another replica's execute run claims the task first,
-// the origin re-publishes its held copy there, any other holder forwards the
-// original op, and the local copy becomes a remote row.
-export class HeldMail {
+// the live run"): when another replica's execute run holds the task, the
+// origin re-publishes its held copy there and any other holder forwards the
+// original op. The local copy stays until that machine reports it delivered
+// (FW-R33(1)); the engine then retires it to a remote row.
+export class HeldMail implements Collector {
+  readonly order = 5;
+
   constructor(
     private readonly deps: {
       fed: FedStore;
@@ -271,27 +286,54 @@ export class HeldMail {
     }
   ) {}
 
+  /** Each pass: held task mail whose task now has a live run elsewhere (an
+   *  assignment can come after the run), and ops no copy needs any more. */
+  collect(): void {
+    const { fed, messages, homes } = this.deps;
+    const tasks = new Set(
+      messages
+        .deliveries({ states: ['held'] })
+        .filter((d) => d.recipient.startsWith('task:'))
+        .map((d) => d.recipient.slice('task:'.length))
+    );
+    for (const task of tasks) {
+      const live = homes.taskLiveRun(task);
+      if (live !== null && live.replica !== fed.replica)
+        this.onLiveRun(task, live.replica);
+    }
+    for (const row of fed.db
+      .query<{ message_id: string }, []>('SELECT message_id FROM fed_held_ops')
+      .all())
+      if (
+        !messages
+          .deliveries({ messageId: row.message_id, states: ['held'] })
+          .some((d) => d.recipient.startsWith('task:'))
+      )
+        fed.db
+          .query('DELETE FROM fed_held_ops WHERE message_id = ?')
+          .run(row.message_id);
+  }
+
   onLiveRun(task: string, replica: string): void {
-    const { fed, engine, messages, mailOut, homes } = this.deps;
+    const { fed, messages, mailOut, homes } = this.deps;
     if (replica === fed.replica) return;
-    // Only the earliest claim takes the task's mail.
+    // Only the honoured live run takes the task's mail.
     if (homes.taskLiveRun(task)?.replica !== replica) return;
     const recipient = `task:${task}`;
     for (const d of messages.deliveries({ recipient, states: ['held'] })) {
       const message = messages.getMessage(d.messageId);
       if (message === null) continue;
+      // Once per message and machine: a later pass waits for the report.
+      const ref = `${message.id}\n${replica}`;
+      const sent = fed.db
+        .query<{ ref: string }, [string]>(
+          "SELECT ref FROM fed_published WHERE kind = 'held-out' AND ref = ?"
+        )
+        .get(ref);
+      if (sent !== null) continue;
       if (message.origin === undefined) {
-        const already = messages
-          .remoteDeliveries({ messageId: message.id, recipient })
-          .some((r) => r.homes.includes(replica));
-        if (!already) {
-          const target: MailTarget = {
-            recipient,
-            via: d.via,
-            homes: [replica],
-          };
-          mailOut.publish(message, [target], [replica]);
-        }
+        const target: MailTarget = { recipient, via: d.via, homes: [replica] };
+        mailOut.publish(message, [target], [replica]);
       } else {
         const held = fed.db
           .query<{ op_json: string }, [string]>(
@@ -300,13 +342,15 @@ export class HeldMail {
           .get(message.id);
         const original =
           held === null ? null : (JSON.parse(held.op_json) as FederatedOp);
-        if (original !== null && !(original.to ?? []).includes(replica))
+        if (original === null) continue;
+        if (!(original.to ?? []).includes(replica))
           mailOut.forward(original, recipient, replica);
       }
-      engine.moveToRemote(message.id, recipient, [replica]);
       fed.db
-        .query('DELETE FROM fed_held_ops WHERE message_id = ?')
-        .run(message.id);
+        .query(
+          "INSERT OR IGNORE INTO fed_published (kind, ref, hash) VALUES ('held-out', ?, '')"
+        )
+        .run(ref);
     }
   }
 }

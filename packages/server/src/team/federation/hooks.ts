@@ -98,6 +98,21 @@ export class DaemonFederationHooks implements FederationHooks {
     message: Message,
     replyTarget: Message | null
   ): string[] {
+    // A reply to a run's message, readdressed to the run's task once the run
+    // is not live here, goes to the run's own machine: FW-R33(2)'s rule for
+    // unassigned tasks keeps others' runs out, not the asker's.
+    if (
+      recipient.startsWith('task:') &&
+      replyTarget?.from.startsWith('run:') === true
+    ) {
+      const row = this.deps.fed.db
+        .query<{ replica: string; task: string | null }, [string]>(
+          'SELECT replica, task FROM fed_runs WHERE run = ?'
+        )
+        .get(replyTarget.from.slice('run:'.length));
+      if (row !== null && `task:${row.task ?? ''}` === recipient)
+        return [row.replica];
+    }
     if (!recipient.startsWith('run:')) return this.deps.homes.of(recipient);
     if (
       replyTarget !== null &&

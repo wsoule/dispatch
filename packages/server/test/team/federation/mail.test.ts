@@ -193,15 +193,13 @@ describe('mail convergence over git', () => {
       await cy.handle.sync();
       await finish(c);
       expect((await ada.handle.answerOf(q.id)).answer?.id).toBe(a.id);
-      for (const m of c.members) {
-        const row = rows<{ settled_as: string | null; kind: string }>(
-          m,
-          'SELECT settled_as, kind FROM messages WHERE id = ?',
-          [b.id]
-        )[0];
-        if (row !== undefined)
-          expect(row).toEqual({ settled_as: 'superseded', kind: 'message' });
-      }
+      // At the settler cy's answer is a superseded reply; cy's own copy may
+      // stay pending, since bob's answer never reaches it (FW-R33).
+      expect(
+        rows(ada, 'SELECT settled_as, kind FROM messages WHERE id = ?', [
+          b.id,
+        ])[0]
+      ).toEqual({ settled_as: 'superseded', kind: 'message' });
       expect(
         rows(
           cy,
@@ -245,7 +243,10 @@ describe('mail convergence over git', () => {
     async () => {
       const c = await team(['ada', 'bob', 'cy']);
       const [ada, bob, cy] = c.members as [Member, Member, Member];
-      const task = await ada.handle.create('for whoever runs it');
+      // FW-R33(2): an unassigned task's mail waits at its origin.
+      const task = await ada.handle.create('for whoever runs it', {
+        assignee: 'human',
+      });
       await quiesce(c.members);
       const m = await ada.handle.send({
         to: [`task:${task}`],

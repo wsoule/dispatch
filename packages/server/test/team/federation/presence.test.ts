@@ -13,6 +13,13 @@ afterEach(() => {
   open = [];
 });
 const at = (i: number): MessagingReplica => open[i];
+// The live execute run fed_runs binds for a task, whatever its assignment.
+const liveRun = (r: MessagingReplica, task: string) =>
+  r.fed.db
+    .query<{ run: string; replica: string }, [string]>(
+      "SELECT run, replica FROM fed_runs WHERE task = ? AND run_kind = 'execute' AND live = 1 ORDER BY hlc LIMIT 1"
+    )
+    .get(task);
 const runCount = (r: MessagingReplica, kind: string) =>
   r.fed.db
     .query<{ n: number }, [string]>(
@@ -84,9 +91,7 @@ describe('presence', () => {
     });
     await at(0).settleWith(at(2));
     expect(at(0).hooks.remoteRunTask('r-0000000000aa')).toBe('t-00000a01');
-    expect(at(0).homes.taskLiveRun('t-00000a01')?.replica).toBe(
-      at(1).fed.replica
-    );
+    expect(liveRun(at(0), 't-00000a01')?.replica).toBe(at(1).fed.replica);
     expect(
       at(0)
         .fed.problems()
@@ -137,7 +142,7 @@ describe('presence', () => {
     at(1).presence.waitingOn(run, 'ada');
     await at(0).settleWith(at(1));
     expect(at(0).hooks.remoteRunTask(run)).toBeNull();
-    expect(at(0).homes.taskLiveRun('t-00000a01')).toBeNull();
+    expect(liveRun(at(0), 't-00000a01')).toBeNull();
     // Cy is revoked: bob's next update binds it.
     at(0).roster.revoke(at(2).fed.replica, 'claimed a run it does not run');
     await at(0).service.syncNow();
@@ -157,9 +162,7 @@ describe('presence', () => {
       await r.service.syncNow();
     expect(at(0).hooks.remoteRunTask(run)).toBeNull();
     // Bob holds its own claim; cy's was refused there and kept.
-    expect(at(1).homes.taskLiveRun('t-00000a01')?.replica).toBe(
-      at(1).fed.replica
-    );
+    expect(liveRun(at(1), 't-00000a01')?.replica).toBe(at(1).fed.replica);
     // Cy is no admin: its resolution is refused at once.
     expect(() => at(2).presence.resolve(run, at(2).fed.replica)).toThrow(
       /admin/
@@ -167,9 +170,7 @@ describe('presence', () => {
     at(0).presence.resolve(run, at(2).fed.replica);
     expect(at(0).hooks.remoteRunTask(run)).toBe('t-00000a01');
     await at(1).settleWith(at(0));
-    expect(at(1).homes.taskLiveRun('t-00000a01')?.replica).toBe(
-      at(2).fed.replica
-    );
+    expect(liveRun(at(1), 't-00000a01')?.replica).toBe(at(2).fed.replica);
     expect(
       at(1)
         .fed.problems()
@@ -262,7 +263,7 @@ describe('presence', () => {
       kind: 'execute',
     });
     await at(1).settleWith(at(0));
-    expect(at(1).homes.taskLiveRun('t-00000a03')?.run).toBe('r-0000000000af');
+    expect(liveRun(at(1), 't-00000a03')?.run).toBe('r-0000000000af');
     // A restart: r-…af is no longer live on ada's host, so a collect ends it.
     at(0).host.endRun('t-00000a03');
     at(0).presence.collect(at(0).clock.now);
@@ -272,8 +273,8 @@ describe('presence', () => {
       kind: 'execute',
     });
     await at(1).settleWith(at(0));
-    expect(at(1).homes.taskLiveRun('t-00000a02')).toBeNull();
-    expect(at(1).homes.taskLiveRun('t-00000a03')).toBeNull();
+    expect(liveRun(at(1), 't-00000a02')).toBeNull();
+    expect(liveRun(at(1), 't-00000a03')).toBeNull();
   });
 });
 
@@ -326,11 +327,10 @@ describe('GET /api/team/presence?task=', () => {
   it("names the machine a task's live run is on and whom it waits on", async () => {
     open = await foundedTeam('ada', 'bob');
     const ada = at(0);
-    at(1).startRun({
-      id: 'r-0000000000b9',
-      taskId: 't-00000a09',
-      kind: 'execute',
-    });
+    const task = ada.store.create({ title: 'run on bob', assignee: 'human' })
+      .meta.id;
+    await at(1).settleWith(ada);
+    at(1).startRun({ id: 'r-0000000000b9', taskId: task, kind: 'execute' });
     at(1).presence.waitingOn('r-0000000000b9', 'ada');
     await ada.settleWith(at(1));
     const ctx = {
@@ -352,7 +352,7 @@ describe('GET /api/team/presence?task=', () => {
           'GET'
         )
       ).json();
-    expect(await get('t-00000a09')).toEqual({
+    expect(await get(task)).toEqual({
       presence: {
         replica: at(1).fed.replica,
         handle: 'bob',
