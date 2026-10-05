@@ -174,6 +174,16 @@ export {
   wireState,
 } from './states.js';
 export type { TaskStateName, WireTaskState } from './states.js';
+export {
+  checkProof,
+  decodePairingCode,
+  encodePairingCode,
+  makeProof,
+  newPairingCode,
+  pairingPin,
+  pairingStatus,
+} from './pair/code.js';
+export type { PairingCode, PairingProof } from './pair/code.js';
 export type { Reach } from './pair/reach.js';
 export { a2aFingerprint, ecThumbprint, publicJwkOf, sas } from './sig/keys.js';
 export type { RequestParts } from './sig/base.js';
