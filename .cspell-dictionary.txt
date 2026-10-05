@@ -653,3 +653,6 @@ zwitch
 भाषा
 हिन्दी
 dumpenv
+keyid
+reqres
+unixsum
