@@ -407,6 +407,15 @@ function hasConflictMarkers(body: string): boolean {
   return false;
 }
 
+// One direct save's new head.
+interface DirectCommit {
+  body: string;
+  title: string;
+  summary: string;
+  cause: 'save' | 'edit' | 'revert';
+  restores?: RevisionMeta;
+}
+
 const problemKey = (docId: string): string => `problem:${docId}`;
 const heldKey = (docId: string): string => `held:${docId}`;
 const shareClaimKey = (docId: string): string => `linear-share:${docId}`;
@@ -1145,16 +1154,22 @@ export class DocsService {
   }
 
   // A new head from `next`, or an amend of the author's open head.
+  // A direct save, then the doc's Linear hold note brought up to date.
   private commitDirect(
     actor: DocsActor,
     doc: DocRow,
-    next: {
-      body: string;
-      title: string;
-      summary: string;
-      cause: 'save' | 'edit' | 'revert';
-      restores?: RevisionMeta;
-    },
+    next: DirectCommit,
+    extra: Partial<DocSaveResult> = {}
+  ): DocSaveResult {
+    const out = this.commitDirectTx(actor, doc, next, extra);
+    this.refreshLinearHold(doc.id);
+    return out;
+  }
+
+  private commitDirectTx(
+    actor: DocsActor,
+    doc: DocRow,
+    next: DirectCommit,
     extra: Partial<DocSaveResult> = {}
   ): DocSaveResult {
     const head = this.headOf(doc);
@@ -2651,9 +2666,32 @@ export class DocsService {
         .some((p) => p.origin === origin)
     )
       return 'a Linear edit waits as a proposal for a decider';
-    if (doc.unreviewed)
-      return 'it carries text no human has reviewed; mark it reviewed to push';
+    if (this.unreviewedAgentText(doc))
+      return 'it carries agent text no human has reviewed; mark it reviewed to push';
     return null;
+  }
+
+  // Whether the head carries agent text no human reviewed: a walk from the
+  // head back through every parent, stopping at reviewed revisions, finds an
+  // agent's revision. Linear's text (via linear) and humans' are not agent
+  // text. A walk that cannot finish falls back to the doc's review flag.
+  private unreviewedAgentText(doc: DocRow): boolean {
+    if (!doc.unreviewed) return false;
+    const store = this.store();
+    const seen = new Set<string>();
+    const queue = [doc.headId];
+    while (queue.length > 0) {
+      const id = queue.pop() as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (seen.size > 2000) return true;
+      if (id === doc.reviewedRev || store.hasReview(id)) continue;
+      const rev = store.revisionMeta(id);
+      if (rev === null) return true;
+      if (!rev.author.startsWith('human:') && rev.via !== 'linear') return true;
+      queue.push(...rev.parents);
+    }
+    return false;
   }
 
   // Whether a Linear-origin doc has local changes and what holds them, kept in

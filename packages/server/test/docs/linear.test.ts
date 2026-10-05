@@ -545,3 +545,38 @@ describe('verify fixes', () => {
     expect(linear.writes.at(-1)?.content).toBe('V1\nv2\nAGENT TEXT\n');
   });
 });
+
+describe('the hold counts only agent text', () => {
+  it('pushes a human edit after a pull without a review', async () => {
+    linear.docs.set('lin-a', doc('lin-a', { content: 'v1\n' }));
+    await adapter.pull(null);
+    const id = service.read(as(OWNER), 'spec').doc.id;
+    service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'mine' }] });
+    service.seal(as(OWNER), 'spec');
+    expect(service.read(as(OWNER), 'spec').doc.unreviewed).toBe(true);
+    expect(service.linearOutstanding()).toEqual([id]);
+    expect(await adapter.push(id)).toBe('pushed');
+    expect(linear.writes.at(-1)?.content).toBe('v1\nmine\n');
+  });
+
+  it("holds an agent's edit made after a Linear merge, and notes it on a human's save", async () => {
+    linear.docs.set('lin-a', doc('lin-a', { content: 'v1\nv2\n' }));
+    await adapter.pull(null);
+    edit('lin-a', 'V1\nv2\n');
+    await adapter.pull(null);
+    const id = service.read(as(OWNER), 'spec').doc.id;
+    service.edit(as(AGENT), 'spec', { ops: [{ op: 'append', text: 'agent' }] });
+    service.seal(as(AGENT), 'spec');
+    expect(service.linearOutstanding()).toEqual([]);
+    expect(await adapter.push(id)).toBe('held');
+    // A human's edit on top neither reviews the agent text nor releases it,
+    // and the save itself brings the hold note up to date.
+    docStore.deleteMeta(`held:${id}`);
+    service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'human' }] });
+    expect(service.read(as(OWNER), 'spec').doc.problem).toMatch(
+      /^Linear sync held: it carries agent text/
+    );
+    expect(await adapter.push(id)).toBe('held');
+    expect(linear.writes).toEqual([]);
+  });
+});

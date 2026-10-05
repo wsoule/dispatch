@@ -1777,15 +1777,19 @@ fetched 2026-09-26).
   to an **accepted** doc is a `doc` proposal (`origin: 'linear:<documentId>'`),
   since Linear's editors are not decide-tier Dispatch humans.
 - **What may push.** A Linear-origin head pushes only when it is not conflicted,
-  Linear's text was not cut, no Linear edit waits as an open proposal, and the
-  doc is reviewed. The review flag decides, whatever merged since: Linear's own
-  text arrives unreviewed, so after a pull even a human's edit (or a resolution
-  of a conflict) waits for Mark reviewed, and an agent's edit stays held through
-  any later Linear merge. A held doc shows "Linear sync held: <reason>" on the
-  doc page and as an Inbox item until the hold is released. When a decider
-  rejects a Linear edit's proposal, Linear still holds that edit and the
-  accepted head differs from it, so the next push restores ours over Linear's
-  edit (Linear's version history keeps theirs).
+  Linear's text was not cut, no Linear edit waits as an open proposal, and it
+  carries no agent text a human has not reviewed. That is a walk from the head
+  back through every parent, stopping at reviewed revisions: an agent's revision
+  found on the way holds the push; Linear's text and humans' edits do not, since
+  Linear's own text going back to Linear leaks nothing. So a human's edit after
+  a pull pushes without a review, and an agent's edit stays held through any
+  later Linear merge or human edit until a human reviews it. A walk that cannot
+  finish falls back to the doc's review flag. A held doc shows "Linear sync
+  held: <reason>" on the doc page and as an Inbox item until the hold is
+  released; saves, reviews, merges and pushes refresh it. When a decider rejects
+  a Linear edit's proposal, Linear still holds that edit and the accepted head
+  differs from it, so the next push restores ours over Linear's edit (Linear's
+  version history keeps theirs).
 - **Push.** `documentUpdate(id, input)` replaces `content`, and
   `DocumentUpdateInput` has no base version or `updatedAt` precondition, so a
   push cannot be conditional and a check-then-write can overwrite a Linear edit.
