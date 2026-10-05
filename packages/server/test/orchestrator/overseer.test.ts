@@ -1208,6 +1208,13 @@ describe('overseer on the bus', () => {
     expect(() => manager.sendMessage(record.id, 'still there?', WYAT)).toThrow(
       'the overseer is revoked: approve agent:wyat/overseer in Agents to use it again'
     );
+    let code: string | undefined;
+    try {
+      manager.sendMessage(record.id, 'still there?', WYAT);
+    } catch (err) {
+      code = (err as OrchestratorConflictError).code;
+    }
+    expect(code).toBe('overseer_revoked');
     ensureOverseerActor(
       messaging.store,
       'agent:wyat/overseer',

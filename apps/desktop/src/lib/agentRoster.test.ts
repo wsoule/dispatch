@@ -73,6 +73,20 @@ describe('rosterActions', () => {
     });
   });
 
+  test('a revoked Overseer can be approved again, nothing else', () => {
+    expect(
+      rosterActions(
+        agent({ address: 'agent:wyat/overseer', status: 'revoked' })
+      )
+    ).toEqual({ approve: true, mute: false, revoke: false });
+    // Only the `<owner>/overseer` name; a look-alike suffix stays dead.
+    expect(
+      rosterActions(
+        agent({ address: 'agent:wyat/my-overseer', status: 'revoked' })
+      ).approve
+    ).toBe(false);
+  });
+
   test('a revoked agent offers nothing: it must register again', () => {
     expect(rosterActions(agent({ status: 'revoked' }))).toEqual({
       approve: false,

@@ -13,6 +13,7 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import {
   answerLongPoll,
+  approveAgent,
   getMailbox,
   joinChannel,
   markDeliveryRead,
@@ -1850,6 +1851,26 @@ describe('messaging routes — direct unit coverage', () => {
     expect((await json<{ answer: unknown }>(res)).answer).toBeNull();
     // Never subscribed at all — still at baseline, not baseline+1-then-back.
     expect(messaging.engine.listenerCount).toBe(baseline);
+  });
+
+  it('refuses re-approving a revoked A2A client with a detectable code', async () => {
+    const address = 'agent:test/a2a.acme';
+    messaging.store.putAgent({
+      address,
+      displayName: 'acme',
+      client: 'a2a',
+      tokenHash: 'hash',
+      status: 'revoked',
+      muted: false,
+      approvedBy: null,
+      createdAt: new Date().toISOString(),
+    });
+    const res = await approveAgent(
+      { messaging } as unknown as ApiContext,
+      address
+    );
+    expect(res.status).toBe(409);
+    expect((await json<{ code?: string }>(res)).code).toBe('revoked_final');
   });
 
   it('reverts the agent to revoked and 500s if the registration gate fails to send', async () => {

@@ -721,7 +721,11 @@ describe('a revoked overseer', () => {
     });
     expect(register.status).toBe(409);
 
-    expect((await startConversation()).res.status).toBe(409);
+    const refused = await startConversation();
+    expect(refused.res.status).toBe(409);
+    expect((refused.record as unknown as { code?: string }).code).toBe(
+      'overseer_revoked'
+    );
     const { agents } = (await json(
       await fetch(`${baseUrl}/api/agents/roster`)
     )) as { agents: { address: string; status: string }[] };
@@ -729,6 +733,22 @@ describe('a revoked overseer', () => {
     expect(
       (await openGates()).filter((m) => gateType(m) === 'agent-registration')
     ).toEqual([]);
+  });
+
+  it('comes back on when a human approves its revoked row', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const { ref } = (await json(await fetch(`${baseUrl}/api/whoami`))) as {
+      ref: string;
+    };
+    const overseer = encodeURIComponent(
+      `agent:${ref.slice('human:'.length)}/overseer`
+    );
+    await fetch(`${baseUrl}/api/agents/${overseer}/revoke`, { method: 'POST' });
+    const approved = await fetch(`${baseUrl}/api/agents/${overseer}/approve`, {
+      method: 'POST',
+    });
+    expect(approved.status).toBe(200);
+    expect((await startConversation()).res.status).toBe(202);
   });
 });
 

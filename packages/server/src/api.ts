@@ -6911,7 +6911,9 @@ export async function handleApi(
       return errorResponse(404, err.message);
     }
     if (err instanceof OrchestratorConflictError) {
-      return errorResponse(409, err.message);
+      return err.code === undefined
+        ? errorResponse(409, err.message)
+        : jsonResponse({ error: err.message, code: err.code }, 409);
     }
     // The message says which file and what to do; it never quotes the file.
     if (err instanceof CredentialsUnreadableError) {

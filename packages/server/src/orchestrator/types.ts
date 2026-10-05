@@ -647,9 +647,12 @@ export class OrchestratorNotFoundError extends Error {
 }
 
 export class OrchestratorConflictError extends Error {
-  constructor(message: string) {
+  /** A machine-readable reason the 409 body carries as `code`, when a client must tell this conflict apart. */
+  readonly code: string | undefined;
+  constructor(message: string, code?: string) {
     super(message);
     this.name = 'OrchestratorConflictError';
+    this.code = code;
   }
 }
 

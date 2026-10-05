@@ -29,11 +29,18 @@ interface RosterActions {
   revoke: boolean;
 }
 
+// The daemon-owned Overseer, `agent:<owner>/overseer`: the server lets a human re-approve it.
+const OVERSEER_ADDRESS = /^agent:[^/]+\/overseer$/;
+
 /** What a roster row offers. A revoked agent's token is dead and it returns
- *  only by registering again, so its row offers nothing. */
+ *  only by registering again, so its row offers nothing; the exception is a
+ *  revoked Overseer, which only Approve brings back. */
 export function rosterActions(agent: AgentSummary): RosterActions {
   const live = agent.status !== 'revoked';
-  return { approve: agent.status === 'pending', mute: live, revoke: live };
+  const approve =
+    agent.status === 'pending' ||
+    (!live && OVERSEER_ADDRESS.test(agent.address));
+  return { approve, mute: live, revoke: live };
 }
 
 /** The agents a decider muted: their messages stay readable but never ask for attention. */

@@ -1192,9 +1192,12 @@ async function decideAgent(
     agent.status === 'revoked' &&
     isClientAddress(address)
   )
-    return errorResponse(
-      409,
-      `${address} was revoked, which is final; add a new A2A client instead`
+    return jsonResponse(
+      {
+        error: `${address} was revoked, which is final; add a new A2A client instead`,
+        code: 'revoked_final',
+      },
+      409
     );
   const gate = openRegistrationGateFor(ctx, address);
   if (gate !== null) {
