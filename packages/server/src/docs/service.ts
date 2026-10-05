@@ -472,9 +472,8 @@ function syncKnownKey(k: SyncKnown): string {
   return `sync:rv:${k.doc}:${k.rev}:${k.by}`;
 }
 
-/** A local change's op clock, at the wall time it was made: what a teammate's
- *  later revision is compared with before the change is published. */
-function localClock(atIso: string): string {
+// A wall time as an op clock, for a tombstone from before clocks.
+function wallClock(atIso: string): string {
   return `${String(Date.parse(atIso)).padStart(13, '0')}.0000.local`;
 }
 
@@ -2436,7 +2435,6 @@ export class DocsService {
         origin: doc.origin,
         deletedBy: actor.address,
         at,
-        hlc: localClock(at),
       });
       this.store().deleteDoc(doc.id);
       this.outbox.push({
@@ -5005,10 +5003,22 @@ export class DocsService {
     return this.store().doc(id);
   }
 
-  /** A tombstone with its clock; one from before clocks reads as its wall time. */
-  syncTombstone(id: string): { hlc: string; at: string } | null {
+  /** A tombstone and its clock: the removal's op clock once published, or
+   *  `pending` while a removal teammates must hear of is not yet out (D1).
+   *  One from before clocks, never published, reads as its wall time. */
+  syncTombstone(
+    id: string
+  ): { hlc: string; at: string } | { pending: true } | null {
     const t = this.store().tombstoneFull(id);
-    return t === null ? null : { at: t.at, hlc: t.hlc ?? localClock(t.at) };
+    if (t === null) return null;
+    if (t.hlc !== null) return { at: t.at, hlc: t.hlc };
+    if (
+      t.ns === 'team' &&
+      this.syncSnapshot(id) !== null &&
+      !this.syncKnown({ kind: 'remove', doc: id })
+    )
+      return { pending: true };
+    return { at: t.at, hlc: wallClock(t.at) };
   }
 
   syncRevision(id: string): RevisionRow | null {
@@ -5172,6 +5182,8 @@ export class DocsService {
       createdAt: input.createdAt,
     });
     store.deleteSyncMissing(input.id);
+    // Local children of the confirmed revision may travel now.
+    store.setMeta(syncDirtyKey(held.docId), '1');
     const doc = store.doc(held.docId);
     if (doc !== null && doc.headId === held.id) {
       const fresh = this.headOf(doc);
@@ -5769,9 +5781,8 @@ export class DocsService {
           stamps[i] === undefined || stamps[i] === '' ? null : stamps[i];
         if (body.kind === 'remove') {
           this.syncMarkKnown({ kind: 'remove', doc: body.doc });
-          // A local removal keeps the clock it was made at (localClock).
-          if (hlc !== null && store.tombstoneFull(body.doc)?.hlc == null)
-            store.setTombstoneHlc(body.doc, hlc);
+          // The removal's op clock is the one every replica orders it by.
+          if (hlc !== null) store.setTombstoneHlc(body.doc, hlc);
           return;
         }
         const clocks =
@@ -5819,6 +5830,7 @@ export class DocsService {
           restoredParents: missing.length === 0 ? null : missing,
           provisional: false,
         });
+        store.setMeta(syncDirtyKey(rev.docId), '1');
         docs.add(rev.docId);
       }
     });

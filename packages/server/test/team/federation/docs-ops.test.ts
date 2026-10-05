@@ -796,53 +796,136 @@ describe('a local removal not yet published', () => {
     host.clock = new Date('2026-09-26T11:00:00.000Z');
     service.remove(owner(), 'spec');
   }
-
-  it('is clocked at the time it was made, on its tombstone', () => {
-    removedHere();
-    expect(store.tombstoneFull(DOC)?.hlc).toBe(
-      `${Date.parse('2026-09-26T11:00:00.000Z')}.0000.local`
+  const revision = (n: number, body: string) =>
+    put(
+      DOC,
+      { id: ID(n), parents: [ID(1)], body, author: 'human:ada' },
+      { meta: undefined }
     );
-  });
 
-  it('spends a revision older than the removal and revives on a later one, by that clock', () => {
+  it('holds a revision for the doc unspent until the removal is published, then decides by its op clock', () => {
     removedHere();
-    const older = put(DOC, {
-      id: ID(2),
-      parents: [ID(1)],
-      body: 'older\n',
-      author: 'human:ada',
+    const between = revision(2, 'between\n');
+    const after = revision(3, 'after\n');
+    const opAt = (n: number, iso: string) => ({
+      ...meta('rep-2', n),
+      hlc: at(iso),
     });
     expect(
-      handler.apply(json(older), {
-        ...meta('rep-2', 2),
-        hlc: at('2026-09-26T10:30:00.000Z'),
-      })
-    ).toBe('applied');
-    expect(store.doc(DOC)).toBeNull();
-    const later = put(DOC, {
-      id: ID(3),
-      parents: [ID(1)],
-      body: 'later\n',
-      author: 'human:ada',
-    });
-    expect(
-      handler.apply(json(later), {
-        ...meta('rep-2', 3),
-        hlc: at('2026-09-26T11:30:00.000Z'),
-      })
-    ).toBe('applied');
-    expect(service.read(owner(), 'spec').text).toBe('later\n');
-  });
-
-  it('keeps its own clock when the removal is published', () => {
-    removedHere();
+      handler.apply(json(between), opAt(2, '2026-09-26T11:30:00.000Z'))
+    ).toBe('parked');
+    expect(store.tombstoneFull(DOC)?.hlc).toBeNull();
     handler.published(
       handler.pendingDocOps().filter((b) => b.kind === 'remove'),
       [at('2026-09-26T12:00:00.000Z', 'rep-1')]
     );
     expect(store.tombstoneFull(DOC)?.hlc).toBe(
-      `${Date.parse('2026-09-26T11:00:00.000Z')}.0000.local`
+      at('2026-09-26T12:00:00.000Z', 'rep-1')
     );
+    // Offered again next pass: older than the published removal, so spent.
+    expect(
+      handler.apply(json(between), opAt(2, '2026-09-26T11:30:00.000Z'))
+    ).toBe('applied');
+    expect(store.doc(DOC)).toBeNull();
+    expect(
+      handler.apply(json(after), opAt(3, '2026-09-26T12:30:00.000Z'))
+    ).toBe('applied');
+    expect(service.read(owner(), 'spec').text).toBe('after\n');
+  });
+
+  it('ends the same on three replicas when a revision is stamped between the removal and its publish', () => {
+    // The origin (rep-1, wyat) removes at 11:00 and publishes at 12:00; ada's
+    // revision is stamped 11:30; cy (rep-3) sees both.
+    const replicas = [0, 1, 2].map(() => {
+      const r = makeService();
+      const h = new DocOpHandler({
+        service: r.service,
+        policyAllows: () => false,
+      });
+      h.bindFederation({ speaksFor, rereadOps: () => {} });
+      return { ...r, h };
+    });
+    const [origin, ada, cy] = replicas;
+    const root = put(DOC, {
+      id: ID(1),
+      parents: [],
+      body: 'v1\n',
+      author: 'human:wyat',
+    });
+    for (const r of replicas)
+      r.h.apply(json(root), {
+        ...meta('rep-1', 1),
+        hlc: at('2026-09-26T10:00:00.000Z', 'rep-1'),
+      });
+    origin.host.clock = new Date('2026-09-26T11:00:00.000Z');
+    origin.service.remove(origin.service.actorFor(OWNER), 'spec');
+    const rev = revision(2, 'ada\n');
+    const revAt = { ...meta('rep-2', 1), hlc: at('2026-09-26T11:30:00.000Z') };
+    expect(ada.h.apply(json(rev), revAt)).toBe('applied');
+    expect(cy.h.apply(json(rev), revAt)).toBe('applied');
+    expect(origin.h.apply(json(rev), revAt)).toBe('parked');
+    const removal = origin.h.pendingDocOps().filter((b) => b.kind === 'remove');
+    const removalAt = {
+      ...meta('rep-1', 2),
+      hlc: at('2026-09-26T12:00:00.000Z', 'rep-1'),
+    };
+    origin.h.published(removal, [removalAt.hlc]);
+    expect(origin.h.apply(json(rev), revAt)).toBe('applied');
+    for (const r of [ada, cy]) r.h.apply(json(removal[0]), removalAt);
+    for (const r of replicas) r.h.passComplete();
+    expect(replicas.map((r) => r.store.doc(DOC))).toEqual([null, null, null]);
+  });
+});
+
+describe('restored history', () => {
+  it('publishes a local child of a restored revision once a signed op confirms its parent', () => {
+    service.restoreDoc(
+      {
+        id: DOC,
+        slug: 'spec',
+        title: 'Spec',
+        status: 'draft',
+        rev: ID(2),
+        n: 2,
+        parents: [ID(1)],
+        author: 'human:ada',
+        cause: 'save',
+        createdAt: '2026-09-26T09:00:00.000Z',
+        hash: sha('restored\n'),
+        links: [],
+        authors: ['human:ada'],
+        updatedAt: '2026-09-26T09:00:00.000Z',
+      },
+      'restored\n'
+    );
+    const read = service.read(owner(), 'spec');
+    const child = service.saveBody(owner(), 'spec', {
+      baseRev: read.doc.head.id,
+      body: 'restored\nmine\n',
+    });
+    service.seal(owner(), 'spec');
+    expect(handler.pendingDocOps().map((b) => b.revision?.id)).not.toContain(
+      child.rev.id
+    );
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'v1\n', author: 'human:ada' })
+      ),
+      meta('rep-2', 1)
+    );
+    handler.apply(
+      json(
+        put(DOC, {
+          id: ID(2),
+          parents: [ID(1)],
+          body: 'restored\n',
+          author: 'human:ada',
+        })
+      ),
+      meta('rep-2', 2)
+    );
+    const ids = handler.pendingDocOps().map((b) => b.revision?.id);
+    expect(ids.filter((id) => id === child.rev.id)).toHaveLength(1);
   });
 });
 

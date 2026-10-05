@@ -469,6 +469,9 @@ export class DocOpHandler implements DocsPort {
     if (doc === null) {
       const tomb = service.syncTombstone(body.doc);
       if (tomb !== null) {
+        // D1: while this replica's removal is unpublished it decides nothing;
+        // the revision waits, unspent, for the removal's op clock.
+        if ('pending' in tomb) return 'parked';
         // A revision later than the removal revives the doc; others are spent.
         if (!laterClock(meta.hlc, tomb.hlc)) return 'applied';
         // FW-R38(3): only a human's edit brings a removed doc back.
