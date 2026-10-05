@@ -12,6 +12,7 @@ import type {
   StatePayload,
 } from '@dispatch/protocol/federation';
 
+import { readCaps } from './caps.js';
 import type { FedStore } from './store.js';
 
 // FW-R32(3): every F2 op body is read field by field here, and a body that
@@ -49,18 +50,25 @@ const isChannelName = (v: unknown): v is string =>
 
 export function presenceBody(v: unknown): PresenceBody | null {
   if (!isObj(v)) return null;
-  if (v['kind'] === 'replica')
-    return text(v['build']) &&
-      text(v['device']) &&
-      typeof v['wall'] === 'number' &&
-      Number.isFinite(v['wall'])
-      ? {
-          kind: 'replica',
-          build: v['build'],
-          device: v['device'],
-          wall: v['wall'],
-        }
-      : null;
+  if (v['kind'] === 'replica') {
+    if (
+      !text(v['build']) ||
+      !text(v['device']) ||
+      typeof v['wall'] !== 'number' ||
+      !Number.isFinite(v['wall'])
+    )
+      return null;
+    const base = {
+      kind: 'replica' as const,
+      build: v['build'],
+      device: v['device'],
+      wall: v['wall'],
+    };
+    if (v['caps'] === undefined) return base;
+    // FW-R39: a re-announcement of what the build speaks.
+    const caps = readCaps(v['caps']);
+    return caps === null ? null : { ...base, caps };
+  }
   if (v['kind'] === 'run') {
     const task = v['task'];
     const waiting = v['waitingOn'];
@@ -198,7 +206,7 @@ export function statePayload(v: unknown): StatePayload | null {
 /** FW-R32(3)(6): one rolling note a person can acknowledge per publisher and kind. */
 export function dropNote(
   fed: FedStore,
-  kind: 'malformed' | 'mail-drop',
+  kind: 'malformed' | 'mail-drop' | 'memory-cap' | 'memory-quota',
   replica: string,
   message: string
 ): void {

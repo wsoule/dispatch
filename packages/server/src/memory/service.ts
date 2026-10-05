@@ -36,6 +36,7 @@ import type {
   RunKind,
   RunMeta,
 } from '../orchestrator/types.js';
+import type { TeamMemoryPort } from '../team/federation/memory.js';
 import {
   ClaudeExportManager,
   overseerLineageOpen,
@@ -78,6 +79,7 @@ import type { DocsOverflowPort } from './overflow.js';
 import { PersonalStores } from './personalStores.js';
 import { applyStagedMemoryRestore, memoryRestoreDir } from './receipts.js';
 import type { MemoryRestoreReport } from './receipts.js';
+import { createTeamMemoryPort } from './teamPort.js';
 
 interface MemoryHealth {
   available: boolean;
@@ -117,6 +119,8 @@ export interface MemoryService extends MemoryPromptPort {
   readonly personal: PersonalStores;
   /** Null when memory.db would not open. */
   readonly claudeExport: ClaudeExportManager | null;
+  /** Team entries for federation F3; null when memory.db would not open. */
+  readonly teamPort: TeamMemoryPort | null;
   /** The engine's stores: a reused handle answers 409, a down identities.db 503. */
   readonly stores: MemoryStores;
   /** Throws MemoryError('unavailable') with the open failure. */
@@ -920,6 +924,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     identities,
     personal,
     claudeExport,
+    teamPort:
+      engine === null || shared === null
+        ? null
+        : createTeamMemoryPort({ engine, shared, host }),
     stores,
     requireEngine: () => {
       if (engine === null) throw unavailable();

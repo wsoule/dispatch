@@ -173,6 +173,8 @@ export function daemons(): {
       ...(opts.federationDebounceMs === undefined
         ? {}
         : { federationDebounceMs: opts.federationDebounceMs }),
+      // The fake relay listens on ws://127.0.0.1.
+      federationAllowLoopbackRelay: true,
     });
     handles.push(handle);
     return handle;

@@ -87,13 +87,19 @@ interface OpStub extends OpHeader {
   since its body and data are at most 64 KiB each ([§4.5](04-messages.md#s4.5)).
 - **Unknown types.** An op of a type a replica does not know is verified, kept,
   and applied after an upgrade that knows it.
+- **Capabilities.** A `key` op may carry `caps`, the features its build speaks:
+  a list of lowercase names such as `relay`, at most 16 of them. A replica whose
+  build changes what it speaks re-announces the list in a `presence` op for
+  itself, and a later announcement replaces an earlier one. A team waits on a
+  capability, never on a version number. A replica that announces no `caps`
+  speaks none of them.
 
 | Type       | Content                                                          | Who may publish                                                                                   | Applied by           |
 | ---------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------- |
-| `key`      | the replica's handle, device, build and public keys              | the replica itself, once, as its first op                                                         | every replica        |
+| `key`      | the replica's handle, device, build, public keys and `caps`      | the replica itself, once, as its first op                                                         | every replica        |
 | `roster`   | admissions, roles, revocations, invites and the license          | by role                                                                                           | every replica        |
 | `task`     | a change to a work item                                          | any admitted replica                                                                              | every replica        |
-| `presence` | the replica, or one of its sessions, is live                     | the replica, for itself and its own sessions                                                      | every replica        |
+| `presence` | the replica, or one of its sessions, is live; its new `caps`     | the replica, for itself and its own sessions                                                      | every replica        |
 | `agent`    | an agent install registered on the replica                       | the replica it registered on                                                                      | every replica        |
 | `channel`  | one membership change                                            | any admitted replica                                                                              | every replica        |
 | `mail`     | a sealed message ([§F.4](appendix-f-federation.md#sF.4))         | any admitted replica, for the senders it speaks for ([§F.5](appendix-f-federation.md#sF.5))       | the replicas in `to` |

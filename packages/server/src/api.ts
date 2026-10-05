@@ -4613,6 +4613,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['team', 'close-legacy'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
+  // Moves the whole team's sync to another transport, after its disclosure.
+  { method: 'POST', segments: ['team', 'transport'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
   // An admin's pick between two machines that each claim a run first.
   {

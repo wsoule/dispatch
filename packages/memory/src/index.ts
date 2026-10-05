@@ -68,6 +68,7 @@ export type {
   IngestProblemRow,
   MemoryStore,
   RecallRow,
+  RevisionMark,
   SearchHit,
 } from './store.js';
 export { queryTerms, relevanceTerms, STOPWORDS } from './query.js';
@@ -94,7 +95,12 @@ export {
 } from './visibility.js';
 export type { Viewer } from './visibility.js';
 export type { MemoryHost, MemoryStores } from './host.js';
-export { isRestoredOrigin, MemoryEngine } from './engine.js';
+export {
+  isRestoredOrigin,
+  MemoryEngine,
+  syncedEntryId,
+  syncOrigin,
+} from './engine.js';
 export { decayStore } from './decay.js';
 export type { DecayResult } from './decay.js';
 export type {
@@ -107,6 +113,8 @@ export type {
   RankedIndex,
   ReadResult,
   SaveInput,
+  SyncedProposalInput,
+  SyncedProposalResult,
   SaveResult,
   SearchQuery,
   SearchResult,

@@ -3,6 +3,7 @@ import type { DeliveryEngine, MessageStore } from '@dispatch/protocol';
 import { hlcWallMs } from '@dispatch/protocol/federation';
 import type { FederatedOp, PresenceBody } from '@dispatch/protocol/federation';
 
+import { BUILD_CAPS, readCaps, recordPresenceCaps } from './caps.js';
 import type { Homes } from './homes.js';
 import { RosterError } from './roster.js';
 import type { RosterService } from './roster.js';
@@ -45,6 +46,8 @@ export class Presence implements Collector, OpHandler {
   readonly order = 1;
   readonly type = 'presence';
   private lastReplicaAt: number | null = null;
+  // The caps last re-announced, so a change goes out at once.
+  private lastCapsSent: string | null = null;
 
   constructor(
     private deps: {
@@ -61,8 +64,20 @@ export class Presence implements Collector, OpHandler {
       onLiveRun?: (task: string, replica: string, hlc: string) => void;
       /** A presence op was queued: ask for a pass. */
       changed?: () => void;
+      /** What this build speaks (FW-R39); BUILD_CAPS unless a test says. */
+      caps?: () => readonly string[];
     }
   ) {}
+
+  // The caps this machine's own key op announced.
+  private ownKeyCaps(): string[] {
+    const key = this.deps.fed.ownLog()[0];
+    const body =
+      key === undefined || !('body' in key)
+        ? undefined
+        : (key.body as { caps?: unknown } | undefined);
+    return readCaps(body?.caps) ?? [];
+  }
 
   /** Wires held task mail in once messaging is open. */
   setOnLiveRun(fn: (task: string, replica: string, hlc: string) => void): void {
@@ -92,7 +107,14 @@ export class Presence implements Collector, OpHandler {
   collect(now: Date): void {
     if (!this.canPublish()) return;
     const { fed } = this.deps;
+    // FW-R39: caps that differ from the key op's go out in presence, at once.
+    const caps = [...(this.deps.caps?.() ?? BUILD_CAPS)];
+    const keyed = this.ownKeyCaps();
+    const announceCaps = JSON.stringify(caps) !== JSON.stringify(keyed);
+    const capsChanged =
+      announceCaps && JSON.stringify(caps) !== this.lastCapsSent;
     if (
+      capsChanged ||
       this.lastReplicaAt === null ||
       now.getTime() - this.lastReplicaAt >= PRESENCE_REPLICA_EVERY_MS
     ) {
@@ -101,7 +123,9 @@ export class Presence implements Collector, OpHandler {
         build: this.deps.build,
         device: this.deps.device,
         wall: now.getTime(),
+        ...(announceCaps ? { caps } : {}),
       };
+      if (announceCaps) this.lastCapsSent = JSON.stringify(caps);
       fed.append({ type: 'presence', body });
       this.lastReplicaAt = now.getTime();
     }
@@ -147,6 +171,8 @@ export class Presence implements Collector, OpHandler {
       return 'dropped';
     }
     if (body.kind === 'replica') {
+      if ('caps' in body)
+        recordPresenceCaps(this.deps.fed, op.replica, body.caps, op.hlc);
       this.deps.fed.db
         .query(
           'INSERT OR REPLACE INTO fed_replicas (replica, build, device, last_hlc, skew_ms) VALUES (?, ?, ?, ?, ?)'

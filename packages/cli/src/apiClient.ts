@@ -826,6 +826,13 @@ export interface ApiClient {
   ackProblem(subject: string): Promise<void>;
   /** An admin binds a run two machines claim first to one of them. */
   resolveRunConflict(run: string, replica: string): Promise<RosterAnswer>;
+  /** Switches the team between git and a relay (operator tier); a relay
+   *  needs `confirmed: true` after its disclosure was shown. */
+  switchTransport(body: {
+    kind: 'git' | 'relay';
+    url?: string;
+    confirmed?: boolean;
+  }): Promise<RosterAnswer>;
 }
 
 /** The fields of @dispatch/memory's entry view the CLI prints. */
@@ -932,6 +939,8 @@ export interface TeamKeys {
     unpublished: number;
     sizeBytes: number | null;
     acks: Record<string, string>;
+    /** The relay's URL while the team syncs over one. */
+    url?: string;
   };
   license: {
     seats: number;
@@ -1197,6 +1206,8 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         `/api/team/runs/${encodeURIComponent(run)}/resolve`,
         jsonBody({ replica })
       ),
+    switchTransport: (body) =>
+      request(target, '/api/team/transport', jsonBody(body)),
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',

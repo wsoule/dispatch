@@ -23,6 +23,7 @@ import type {
   IngestProblemRow,
   MemoryStore,
   RecallRow,
+  RevisionMark,
   SearchHit,
 } from './store.js';
 import type {
@@ -778,6 +779,24 @@ export class SqliteMemoryStore implements MemoryStore {
         'INSERT INTO revisions (memory_id, rev, snapshot_json, by_addr, cause, at) VALUES (?, ?, ?, ?, ?, ?)'
       )
       .run(entry.id, entry.rev, JSON.stringify(entry), by, cause, at);
+  }
+
+  revisionsSince(afterRowid: number, limit: number): RevisionMark[] {
+    return queryAll<{
+      rowid: number;
+      memory_id: string;
+      rev: number;
+      cause: string;
+    }>(
+      this.db,
+      'SELECT rowid, memory_id, rev, cause FROM revisions WHERE rowid > ? ORDER BY rowid LIMIT ?',
+      [afterRowid, limit]
+    ).map((r) => ({
+      rowid: r.rowid,
+      memoryId: r.memory_id,
+      rev: r.rev,
+      cause: r.cause as RevisionCause,
+    }));
   }
 }
 

@@ -10,6 +10,7 @@ import {
 } from '../../api/http.js';
 import type { AuthTier } from '../../tiers.js';
 import { tierAllows } from '../../tiers.js';
+import { capsOf } from './caps.js';
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
 import type { FedStore } from './store.js';
@@ -17,6 +18,7 @@ import { OpTooLargeError } from './store.js';
 import {
   assembleTeamKeys,
   redactCredentials,
+  RELAY_DISCLOSURE,
   withoutCredentials,
 } from './teamKeys.js';
 
@@ -43,6 +45,8 @@ export interface FederationContext {
     presence: { replica: string; handle: string; device: string } | null;
     waitingOn: string | null;
   };
+  /** Tests only: a ws:// relay on this machine may be switched to. */
+  allowLoopbackRelay?: boolean;
   /** How long a route waits for its pass; ROUTE_PASS_WAIT_MS unless a test sets it. */
   passWaitMs?: number;
 }
@@ -138,6 +142,7 @@ const ACTIONS = new Set([
   'problems',
   'runs',
   'presence',
+  'transport',
 ]);
 
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
@@ -383,9 +388,80 @@ async function act(
     case 'abandon-invite':
       roster.abandonInvite();
       return after(null);
+    case 'transport':
+      return switchTransport(fedCtx, body, after);
     default:
       return errorResponse(404, 'not found');
   }
+}
+
+// A relay URL a machine may dial: wss, or, in tests, ws on this machine.
+function relayUrlProblem(url: string, loopback: boolean): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'url is not a URL';
+  }
+  if (parsed.protocol === 'wss:') return null;
+  const local = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+  if (loopback && parsed.protocol === 'ws:' && local) return null;
+  return 'url must be wss://';
+}
+
+// POST /api/team/transport: an admin switches the team between git and a
+// relay. The relay needs every admitted machine to speak it (FW-R39), the legacy
+// window closed, and its disclosure confirmed first (F-D31).
+async function switchTransport(
+  fedCtx: FederationContext,
+  body: Body,
+  after: (
+    value: Record<string, unknown> | null
+  ) => Promise<Record<string, unknown> | null>
+): Promise<Response | Record<string, unknown> | null> {
+  const { roster, fed } = fedCtx;
+  const kind = body.kind;
+  if (kind !== 'git' && kind !== 'relay')
+    throw new RosterError('invalid', 'kind must be git or relay');
+  const view = roster.view();
+  if (view === null)
+    throw new RosterError('conflict', 'this machine is in no team');
+  if (kind === 'relay') {
+    const url = typeof body.url === 'string' ? body.url : '';
+    const bad =
+      url === ''
+        ? 'url is required'
+        : relayUrlProblem(url, fedCtx.allowLoopbackRelay === true);
+    if (bad !== null) throw new RosterError('invalid', bad);
+    // FW-R39: every admitted machine must announce that it speaks the relay.
+    // Invitees waiting to be admitted count too: they join over the relay.
+    const lacking = [...view.members.keys(), ...view.invitedBy.keys()].filter(
+      (r) => !capsOf(fed, r).includes('relay')
+    );
+    if (lacking.length > 0)
+      throw new RosterError(
+        'conflict',
+        `every machine needs a Dispatch build that speaks the relay; not yet: ${lacking.map((r) => fedCtx.label(r)).join(', ')}`
+      );
+    if (view.legacy.closed === null)
+      throw new RosterError(
+        'conflict',
+        'close the legacy window first: older builds read only the git branch'
+      );
+    if (body.confirmed !== true)
+      return jsonResponse(
+        {
+          error: 'confirm what the relay can read first',
+          code: 'confirm_required',
+          disclosure: RELAY_DISCLOSURE,
+        },
+        409
+      );
+    roster.setTransport('relay', url);
+    return after({ ok: true, disclosure: RELAY_DISCLOSURE });
+  }
+  roster.setTransport('git');
+  return after(null);
 }
 
 async function keyAction(

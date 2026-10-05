@@ -59,6 +59,14 @@ export interface ActivityRow {
   summary: string;
 }
 
+// One revision's place in the global write order (federation F3's watermark).
+export interface RevisionMark {
+  rowid: number;
+  memoryId: string;
+  rev: number;
+  cause: RevisionCause;
+}
+
 export interface RecallRow {
   memoryId: string;
   runId: string;
@@ -151,4 +159,6 @@ export interface MemoryStore {
   /** Writes a 0600 copy to `path`, replacing the previous one; not inside a transaction. */
   backup(path: string): void;
   close(): void;
+  /** Revisions written after `afterRowid`, in write order, at most `limit`. */
+  revisionsSince(afterRowid: number, limit: number): RevisionMark[];
 }

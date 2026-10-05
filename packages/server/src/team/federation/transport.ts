@@ -15,6 +15,8 @@ export interface TransportHealth {
   readBytes: number;
   /** Replica → `at` of its last verified acks.json (git); {} on the relay (F-D39). */
   acks: Record<string, string>;
+  /** The relay's URL while the team syncs over one. */
+  url?: string;
 }
 
 export interface FederationTransport {

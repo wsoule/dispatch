@@ -59,6 +59,8 @@ const RESTAGE_PER_PASS = 2_000;
 
 /** Team messaging op types, applied only once mailReady (FW-R32(7)). */
 const F2_TYPES = new Set(['presence', 'agent', 'channel', 'mail', 'state']);
+/** Op types a handler may ask to reread; their hashes are kept (FW-R37(2)). */
+const REREAD_TYPES = new Set(['doc']);
 
 /** How soon the next pass runs while an asker waits (fastUntil). */
 const FAST_PASS_MS = 10_000;
@@ -130,6 +132,16 @@ export interface OpHandler {
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped';
   /** After each pass that ran to the end: project what the pass applied. */
   passComplete?(): void;
+  /** Its applied ops count in `applied`, as task ops do (board state). */
+  readonly countsApplied?: boolean;
+  /** Retention dropped a parked op of this type (XD1c). */
+  dropped?(op: FederatedOp, reason: 'overflow' | 'revoked'): void;
+}
+
+/** A transport a switch can move to: it stores a whole log, stubs too. */
+interface SwitchableTransport extends FederationTransport {
+  upload(entries: readonly LogEntry[]): Promise<void>;
+  close(): void;
 }
 
 /** Queues ops into fed_outbox before publishing (spec "Collect"). */
@@ -163,7 +175,13 @@ export interface FederationServiceOptions {
   fed: FedStore;
   roster: RosterService;
   legacy: LegacyWindow;
+  /** The git transport, the default and the one a `transport {kind: 'git'}` op names. */
   transport: FederationTransport;
+  /** A relay transport for the URL a `transport {kind: 'relay'}` op names;
+   *  absent, this build stays on git and says so. */
+  relayFor?: (url: string) => SwitchableTransport;
+  /** Tests only: follow a ws:// relay on this machine, as the fake relay is. */
+  allowLoopbackRelay?: boolean;
   remote: string;
   branch: string;
   intervalMs: number;
@@ -216,9 +234,25 @@ export class FederationService {
   // When each waiting op was last restaged, by pass (FW-R35(3)). Known limit:
   // kept in memory, so a restart tries each publisher's oldest ops first once.
   private readonly restageTried = new Map<string, number>();
+  // Ops a handler asked to see again (XD1e), by replica. Known limit: kept in
+  // memory, so a restart forgets them and the handler asks again.
+  private readonly rereads = new Map<string, Set<number>>();
+
+  // The transport the roster's `transport` op chose, once switched to.
+  private current: FederationTransport;
 
   constructor(private readonly opts: FederationServiceOptions) {
+    this.current = opts.transport;
     this.register(new LinkOpsOffTeamLog(opts));
+  }
+
+  /** The next pass pulls `replica` from below `seqs` and hands each of those
+   *  ops, verified again, to its handler once more. */
+  reread(replica: string, seqs: readonly number[]): void {
+    const wanted = this.rereads.get(replica) ?? new Set<number>();
+    for (const seq of seqs)
+      if (Number.isInteger(seq) && seq > 0) wanted.add(seq);
+    if (wanted.size > 0) this.rereads.set(replica, wanted);
   }
 
   /** Starts the interval and runs a first pass. */
@@ -292,7 +326,8 @@ export class FederationService {
   }
 
   status(): FederationStatus {
-    const { ledger, fed, roster, transport } = this.opts;
+    const { ledger, fed, roster } = this.opts;
+    const transport = this.current;
     const view = roster.view();
     return {
       enabled: true,
@@ -336,7 +371,7 @@ export class FederationService {
   }
 
   private async pass(): Promise<void> {
-    const { v1, roster, fed, transport, legacy } = this.opts;
+    const { v1, roster, fed, legacy } = this.opts;
     try {
       this.ready ??= v1.ensure();
       await this.ready;
@@ -367,6 +402,8 @@ export class FederationService {
           `dispatchd: could not close the legacy window: ${(err as Error).message}`
         );
       }
+      // A switch the roster made, once nothing waits for the old transport.
+      await this.followTransport();
       for (const c of this.collectors) c.collect(now);
       // Offline keeps both outboxes; the pull below says why.
       try {
@@ -375,17 +412,26 @@ export class FederationService {
         if (!(err instanceof TransportOffline)) throw err;
       }
       // From one below each cursor, so a rival of the head op is seen (FW-R23).
-      const entries = await transport.pull(this.watermarks(1));
+      // A reread pulls its replica again from below the asked-for seqs.
+      const marks = new Map(this.watermarks(1));
+      for (const [replica, seqs] of this.rereads)
+        marks.set(
+          replica,
+          Math.min(marks.get(replica) ?? 0, Math.max(0, Math.min(...seqs) - 2))
+        );
+      const entries = await this.current.pull(marks);
       this.lastError = null;
       const v1Ops = v1.readOthers((r) => this.opts.ledger.cursor(r));
       const before = roster.view();
       const verified = this.verify(entries);
       this.afterFold(before);
       const changed = this.stage(verified, v1Ops, now);
+      this.stageRereads(entries, now);
       await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
-      await transport.ack(this.watermarks());
+      await this.current.ack(this.watermarks());
       for (const h of this.handlers.values()) h.passComplete?.();
+      await this.followTransport();
       if (fed.outbox().length > 0) this.notifyLocalChange();
       this.lastSyncAt = now.toISOString();
       // A route's late sync failure is over once a sync goes through.
@@ -448,7 +494,7 @@ export class FederationService {
     for (let round = 0; round < 2 && !this.opts.roster.founded(); round++) {
       let entries: LogEntry[];
       try {
-        entries = await this.opts.transport.pull(new Map());
+        entries = await this.current.pull(new Map());
         this.opts.fed.clearProblem('team:founding');
       } catch (err) {
         // B7: say why no founding can be seen, instead of waiting silently.
@@ -470,10 +516,10 @@ export class FederationService {
       awaited !== null &&
       this.scanDue(`founding\n${awaited}`, null)
     ) {
-      this.readFoundings(await this.opts.transport.scan(null));
+      this.readFoundings(await this.current.scan(null));
       if (this.opts.roster.awaitedTeam() === null) {
         this.opts.fed.clearProblem('team:founding');
-        this.opts.transport.forgetScans(null);
+        this.current.forgetScans(null);
       } else
         this.opts.fed.problem(
           'team:founding',
@@ -481,7 +527,7 @@ export class FederationService {
         );
     }
     // Founded: the scans for a founding are over (FW-R30(5)).
-    if (this.opts.roster.founded()) this.opts.transport.forgetScans(null);
+    if (this.opts.roster.founded()) this.current.forgetScans(null);
     if (this.opts.fed.outbox().length > 0) this.notifyLocalChange();
   }
 
@@ -515,7 +561,7 @@ export class FederationService {
   // row, then waits doubling from a minute up to SCAN_MAX_WAIT_MS, and at
   // once whenever the stamp of the files it reads changes.
   private scanDue(key: string, replicas: readonly string[] | null): boolean {
-    const stamp = this.opts.transport.stamp(replicas);
+    const stamp = this.current.stamp(replicas);
     const now = this.now().getTime();
     let st = this.scans.get(key);
     if (st === undefined) {
@@ -544,7 +590,7 @@ export class FederationService {
   /** FW-R28: the key op an admit names that no probe found, from a scan of
    *  that id's files outside the caps; true once a claim with it is held. */
   async findKey(replica: string, fingerprint: string): Promise<boolean> {
-    const entries = await this.opts.transport.scan([replica]);
+    const entries = await this.current.scan([replica]);
     for (const k of keyOps(entries.filter((e) => e.replica === replica))) {
       const body = k.body as { signPub?: unknown; sealPub?: unknown };
       if (
@@ -558,7 +604,7 @@ export class FederationService {
     const found = this.opts.fed
       .claims(replica)
       .some((c) => c.fingerprint === fingerprint);
-    if (found) this.opts.transport.forgetScans([replica]);
+    if (found) this.current.forgetScans([replica]);
     return found;
   }
 
@@ -617,7 +663,8 @@ export class FederationService {
   // Signed ops through the transport, then the v1 outbox (copies while the
   // window is open, and an older build's own lines).
   private async publish(): Promise<void> {
-    const { fed, ledger, v1, transport } = this.opts;
+    const { fed, ledger, v1 } = this.opts;
+    const transport = this.current;
     const ops = fed.outbox();
     const last = ops.at(-1);
     if (last !== undefined) {
@@ -986,6 +1033,9 @@ export class FederationService {
       });
       return 'moved';
     }
+    // FW-R37(2): the hash of an op a handler may reread is kept before it waits.
+    if (REREAD_TYPES.has(entry.type))
+      fed.rememberReread(r, entry.seq, opHash(entry));
     // FW-R32(2), FW-R33(1): every verified mail op, a pruned one too, is
     // remembered before it can wait, so a forward of it can be checked.
     if (entry.type === 'mail') fed.rememberMail(r, entry.seq, opHash(entry));
@@ -1055,7 +1105,10 @@ export class FederationService {
     ctx: StageContext
   ): 'applied' | 'parked' | 'dropped' {
     try {
-      return handler.stage(op, ctx);
+      const out = handler.stage(op, ctx);
+      if (out === 'applied' && handler.countsApplied === true)
+        this.applied += 1;
+      return out;
     } catch (err) {
       dropNote(
         this.opts.fed,
@@ -1098,6 +1151,134 @@ export class FederationService {
       );
   }
 
+  // Whether a relay URL from the roster may be dialed: wss://, or, in tests
+  // only, ws:// on this machine.
+  private relayUrlOk(url: string): boolean {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol === 'wss:') return true;
+    return (
+      this.opts.allowLoopbackRelay === true &&
+      parsed.protocol === 'ws:' &&
+      ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
+    );
+  }
+
+  // Moves to the transport the roster's `transport` op names: this
+  // replica's whole log goes up first, idempotent by (replica, seq), so
+  // nothing is lost, and only once the outbox is empty, so the op that made
+  // the switch reached the old transport too. The old one is not written again.
+  private async followTransport(): Promise<void> {
+    const { fed, roster } = this.opts;
+    const want = roster.view()?.transport ?? { kind: 'git' as const };
+    const here = this.current;
+    const hereUrl = (here as { url?: string }).url;
+    if (
+      want.kind === here.kind &&
+      (want.kind === 'git' || want.url === hereUrl)
+    )
+      return;
+    if (fed.outbox().length > 0) return;
+    let next: FederationTransport;
+    if (want.kind === 'git') next = this.opts.transport;
+    else if (want.url === undefined || this.opts.relayFor === undefined) {
+      fed.problem(
+        'transport:switch',
+        'the team switched to a relay this machine cannot reach; it keeps syncing over git until it can'
+      );
+      return;
+    } else if (!this.relayUrlOk(want.url)) {
+      // M1: a roster URL is dialed with this machine's log; only over TLS.
+      fed.problem(
+        'transport:switch',
+        'the team switched to a relay whose address is not wss://, so this machine keeps syncing over git; an admin can switch again with a wss:// address'
+      );
+      return;
+    } else next = this.opts.relayFor(want.url);
+    const log = fed.ownLog();
+    try {
+      if ('upload' in next) await (next as SwitchableTransport).upload(log);
+      else await next.publish(log.filter((e): e is FederatedOp => !isStub(e)));
+    } catch (err) {
+      if (next !== this.opts.transport) (next as SwitchableTransport).close();
+      fed.problem(
+        'transport:switch',
+        `this machine could not move its log to the ${want.kind} yet, so it keeps the old transport: ${(err as Error).message.slice(0, 200)}`
+      );
+      return;
+    }
+    this.current = next;
+    if (here !== this.opts.transport) (here as SwitchableTransport).close();
+    fed.clearProblem('transport:switch');
+    fed.audit('transport', `transport:${want.kind}`, {
+      from: here.kind,
+      to: want.kind,
+      ...(want.url === undefined ? {} : { url: want.url }),
+      uploaded: log.length,
+    });
+  }
+
+  // Tells a parked op's handler that retention dropped it.
+  private droppedParked(json: string, reason: 'overflow' | 'revoked'): void {
+    const op = JSON.parse(json) as FederatedOp;
+    try {
+      this.handlers.get(op.type)?.dropped?.(op, reason);
+    } catch (err) {
+      console.error(`dispatchd: a dropped ${op.type} op's handler failed`, err);
+    }
+  }
+
+  // XD1e: the ops a handler asked for again, from this pass's pull (lowered
+  // to below them). Each stages again only when its hash matches the one
+  // kept when it was first verified (FW-R37(2)), and its signature and
+  // content check against its predecessor's clock; else it is refused.
+  private stageRereads(entries: readonly LogEntry[], now: Date): void {
+    if (this.rereads.size === 0) return;
+    const { ledger, fed, roster } = this.opts;
+    const asked = new Map(this.rereads);
+    this.rereads.clear();
+    const byHash = new Map<string, LogEntry>();
+    for (const e of entries) {
+      const h = orNull(() => opHash(e));
+      if (h !== null) byHash.set(h, e);
+    }
+    ledger.atomically(() => {
+      const view = roster.view();
+      if (view === null) return;
+      const ctx: StageContext = {
+        view,
+        now,
+        evidence: evidenceOf(new Map(), view),
+      };
+      for (const e of entries) {
+        if (asked.get(e.replica)?.has(e.seq) !== true || isStub(e)) continue;
+        const kept = fed.rereadSeen(e.replica, e.seq);
+        if (kept === null || kept !== orNull(() => opHash(e))) continue;
+        asked.get(e.replica)?.delete(e.seq);
+        const handler = this.handlers.get(e.type);
+        const pinned = fed.pinned(e.replica);
+        if (handler === undefined || pinned === null) continue;
+        const prev = byHash.get(e.prev);
+        const prevHlc =
+          prev?.replica === e.replica
+            ? prev.hlc
+            : `${'0'.repeat(13)}.0000.${e.replica}`;
+        const ok = verifyEntry(
+          { seq: e.seq - 1, hash: e.prev, hlc: prevHlc },
+          e,
+          pinned.signPub
+        );
+        if (!ok.ok) continue;
+        if (this.stageSafely(handler, e, ctx) === 'parked')
+          this.park(e, 'parked');
+      }
+    });
+  }
+
   // FW-R33(5): one publisher's waiting ops are capped; past the cap its
   // oldest goes, with a rolling note.
   private makeRoom(table: 'fed_parked' | 'fed_unknown', op: FederatedOp): void {
@@ -1110,9 +1291,16 @@ export class FederationService {
         )
         .get(op.replica, op.seq)?.n ?? 0;
     if (held < cap) return;
+    const gone = db
+      .query<{ seq: number; op_json: string }, [string, number, number]>(
+        `SELECT seq, op_json FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?`
+      )
+      .all(op.replica, op.seq, held - cap + 1);
     db.query(
       `DELETE FROM ${table} WHERE replica = ? AND seq IN (SELECT seq FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?)`
     ).run(op.replica, op.replica, op.seq, held - cap + 1);
+    if (table === 'fed_parked')
+      for (const row of gone) this.droppedParked(row.op_json, 'overflow');
     dropNote(
       this.opts.fed,
       'mail-drop',
@@ -1123,7 +1311,8 @@ export class FederationService {
 
   // Parked ops and ops of a type now registered get their handler again.
   private restage(ctx: StageContext): void {
-    const { db } = this.opts.fed;
+    const { fed } = this.opts;
+    const { db } = fed;
     // FW-R33(5), FW-R35(3): a budget per publisher and per pass; within a
     // publisher the least recently tried go first, so stuck ops cannot
     // starve the ones behind them, and publishers rotate.
@@ -1180,6 +1369,21 @@ export class FederationService {
     for (const row of rows) {
       this.restageTried.set(`${row.table}:${row.replica}:${row.seq}`, pass);
       const op = JSON.parse(row.op_json) as FederatedOp;
+      // A parked op above its publisher's settled revocation cut goes (XD1c).
+      const cut = ctx.view.revoked.get(op.replica);
+      if (
+        row.table === 'fed_parked' &&
+        cut !== undefined &&
+        op.seq > cut.afterSeq &&
+        !revocationContested(fed, op.replica, ctx.view)
+      ) {
+        db.query('DELETE FROM fed_parked WHERE replica = ? AND seq = ?').run(
+          row.replica,
+          row.seq
+        );
+        this.droppedParked(row.op_json, 'revoked');
+        continue;
+      }
       const handler = this.handlers.get(op.type);
       if (handler === undefined) continue;
       if (F2_TYPES.has(op.type) && !ready) continue;
@@ -1357,6 +1561,30 @@ function keyOpSignPub(e: LogEntry): string | null {
 
 // The run and agent claims a pull's verified ops make, read before any is
 // staged, so a run claimed twice in one pull binds to neither.
+/** Whether a revocation of `replica` is still being fought: its parked ops
+ *  wait until the fight is decided (FW-R31(5)). */
+export function revocationContested(
+  fed: FedStore,
+  replica: string,
+  view: RosterView
+): boolean {
+  return fed.db
+    .query<{ hash: string }, [string]>(
+      'SELECT hash FROM fed_roster WHERE replica = ?'
+    )
+    .all(replica)
+    .some((r) => view.resolution.has(r.hash));
+}
+
+// The value, or null when computing it throws (hostile input).
+function orNull<T>(fn: () => T): T | null {
+  try {
+    return fn();
+  } catch {
+    return null;
+  }
+}
+
 function evidenceOf(
   verified: Map<string, Verified>,
   view: RosterView

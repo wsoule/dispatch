@@ -10,6 +10,10 @@ vector ids (see §14.2).
   sealed, prunable A2A payload on a link's own log, which a replica drops when
   it finds one on a team's log (§F.1). The appendix is informative, so no vector
   changes.
+- [editorial] Appendix F, which is informative, says a federation `key` op may
+  carry `caps`, the features its build speaks, re-announced in the replica's own
+  `presence` op when they change. A team gates a feature such as the relay on a
+  capability, never a version (App. F.1).
 - [clarification] A host may name a `wake` gate's owner by the message's sender
   as well as the target (§2.3, §6.5). The Dispatch profile names the human a
   session acts for: that human is asked and told about the session, and gets its

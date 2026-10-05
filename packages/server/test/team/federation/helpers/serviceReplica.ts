@@ -3,13 +3,17 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { defaultAsyncGitRunner } from '../../../../src/sync/worktree.js';
 import type { BoardOp } from '../../../../src/team/boardSync/engine.js';
 import { SyncLedger } from '../../../../src/team/boardSync/ledger.js';
 import type { RepoSyncResult } from '../../../../src/team/boardSync/repo.js';
-import { personOf } from '../../../../src/team/boardSync/repo.js';
+import { personOf, SyncRepo } from '../../../../src/team/boardSync/repo.js';
 import { SyncedTaskStore } from '../../../../src/team/boardSync/syncedStore.js';
+import { readHints } from '../../../../src/team/federation/daemon.js';
+import { GitFederationTransport } from '../../../../src/team/federation/git.js';
 import { loadOrCreateKeys } from '../../../../src/team/federation/keys.js';
 import { LegacyWindow } from '../../../../src/team/federation/legacy.js';
+import { RelayFederationTransport } from '../../../../src/team/federation/relay.js';
 import { RosterService } from '../../../../src/team/federation/roster.js';
 import { FederationService } from '../../../../src/team/federation/service.js';
 import type { V1Branch } from '../../../../src/team/federation/service.js';
@@ -89,6 +93,10 @@ export function serviceReplica(
     seenOpsKept?: number;
     maxParkedPerPublisher?: number;
     restagePerPublisher?: number;
+    /** A bare repo: the git transport and v1 branch over it, as a daemon has. */
+    gitRemote?: string;
+    /** What this build speaks (FW-R39), in place of BUILD_CAPS. */
+    caps?: () => readonly string[];
   } = {}
 ): ServiceReplica {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), `fed-svc-${handle}-`)));
@@ -98,10 +106,21 @@ export function serviceReplica(
     clock.now.getTime()
   );
   const fed = new FedStore(ledger, loadOrCreateKeys(dir, ledger.replica), now);
-  const branch = v1.branch(ledger.replica);
+  const repo =
+    opts.gitRemote === undefined
+      ? null
+      : new SyncRepo(
+          join(dir, 'sync'),
+          opts.gitRemote,
+          'dispatch-sync',
+          ledger.replica,
+          defaultAsyncGitRunner
+        );
+  const branch = repo ?? v1.branch(ledger.replica);
   const legacyRef: { current: LegacyWindow | null } = { current: null };
   const signerRef: { current: TaskOpSigner | null } = { current: null };
   const roster = new RosterService({
+    ...(opts.caps === undefined ? {} : { caps: opts.caps }),
     fed,
     handle,
     device: `${handle}-laptop`,
@@ -142,6 +161,7 @@ export function serviceReplica(
     publicKey: opts.licensePublicKey ?? null,
     clock: now,
   });
+  const serviceRef: { current: FederationService | null } = { current: null };
   const service = new FederationService({
     store,
     ledger,
@@ -149,7 +169,35 @@ export function serviceReplica(
     fed,
     roster,
     legacy,
-    transport: new MemoryTransport(remote, ledger.replica),
+    transport:
+      repo === null
+        ? new MemoryTransport(remote, ledger.replica)
+        : new GitFederationTransport({
+            repo,
+            replica: ledger.replica,
+            signPriv: fed.keys.signPriv,
+            verifyAcks: () => true,
+            acknowledgedBy: () => false,
+            ownLog: () => fed.ownLog(),
+            onPruned: (seqs) => fed.stubLog(seqs),
+            readHints: () => readHints(fed, roster),
+            now,
+          }),
+    // The fake relay listens on ws://127.0.0.1.
+    allowLoopbackRelay: true,
+    // As a daemon wires it: a push from the relay runs a pass.
+    relayFor: (url) =>
+      new RelayFederationTransport({
+        url,
+        teamId: roster.teamId() ?? '',
+        replica: ledger.replica,
+        signPriv: fed.keys.signPriv,
+        keyOp: () => fed.ownLog()[0] ?? null,
+        wake: () => {
+          void serviceRef.current?.syncNow();
+        },
+        now,
+      }),
     remote: 'memory',
     branch: 'dispatch-sync',
     intervalMs: 60 * 60 * 1000,
@@ -168,6 +216,7 @@ export function serviceReplica(
       ? {}
       : { restagePerPublisher: opts.restagePerPublisher }),
   });
+  serviceRef.current = service;
   return {
     dir,
     ledger,

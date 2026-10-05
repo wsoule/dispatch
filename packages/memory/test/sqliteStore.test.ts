@@ -283,3 +283,23 @@ describe('SqliteMemoryStore', () => {
     expect(s.ingestProblems(10).map((p) => p.id)).toEqual(['p2']);
   });
 });
+
+describe('revisionsSince (federation F3)', () => {
+  it('lists revisions after a rowid in write order, up to a limit', () => {
+    const s = store();
+    const a = entry(s);
+    const b = entry(s, { title: 'second' });
+    s.updateEntry({ ...a, rev: 2, title: 'edited' }, 'human:ada', 'edit');
+    const all = s.revisionsSince(0, 10);
+    expect(all.map((r) => [r.memoryId, r.rev, r.cause])).toEqual([
+      [a.id, 1, 'save'],
+      [b.id, 1, 'save'],
+      [a.id, 2, 'edit'],
+    ]);
+    expect(all.map((r) => r.rowid)).toEqual(
+      [...all.map((r) => r.rowid)].sort((x, y) => x - y)
+    );
+    expect(s.revisionsSince(all[0].rowid, 1)).toEqual([all[1]]);
+    expect(s.revisionsSince(all[2].rowid, 10)).toEqual([]);
+  });
+});

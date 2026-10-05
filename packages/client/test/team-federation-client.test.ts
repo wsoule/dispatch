@@ -57,6 +57,11 @@ describe('team federation bindings', () => {
       await client.revokeReplica('a/b', 'left');
       await client.dismissRosterOp('cy-0000000c', 4, 'h');
       await client.ackProblem('team:race:bob-0000000b');
+      await client.switchTransport({
+        kind: 'relay',
+        url: 'wss://relay.example',
+        confirmed: true,
+      });
       expect(stub.calls.map((c) => [c.init?.method, c.url])).toEqual([
         ['POST', `${BASE}/api/team/found`],
         ['POST', `${BASE}/api/team/trust`],
@@ -66,7 +71,13 @@ describe('team federation bindings', () => {
         ['POST', `${BASE}/api/team/keys/a%2Fb/revoke`],
         ['POST', `${BASE}/api/team/dismiss`],
         ['POST', `${BASE}/api/team/problems/ack`],
+        ['POST', `${BASE}/api/team/transport`],
       ]);
+      expect(sentJson(stub.calls[8] ?? {})).toEqual({
+        kind: 'relay',
+        url: 'wss://relay.example',
+        confirmed: true,
+      });
       expect(sentJson(stub.calls[3] ?? {})).toEqual({ hosts: ['eve'] });
       expect(sentJson(stub.calls[6] ?? {})).toEqual({
         replica: 'cy-0000000c',

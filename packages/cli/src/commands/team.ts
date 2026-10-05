@@ -1,6 +1,11 @@
 import type { Command } from 'commander';
 
-import type { RosterAnswer, TeamKeys, TeamTier } from '../apiClient.js';
+import type {
+  ApiClient,
+  RosterAnswer,
+  TeamKeys,
+  TeamTier,
+} from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
@@ -213,6 +218,11 @@ export function describeTeamKeys(keys: TeamKeys): string[] {
     lines.push(
       `${b.handle} has not acknowledged since ${b.lastAck === null ? 'it was admitted' : b.lastAck.slice(0, 10)}; it blocks pruning. Revoke it?`
     );
+  lines.push(
+    keys.transport.kind === 'relay'
+      ? `Syncing over the relay at ${keys.transport.url ?? 'an unknown URL'}.`
+      : 'Syncing over git.'
+  );
   if (keys.transport.sizeBytes !== null)
     lines.push(
       `The sync branch holds ${(keys.transport.sizeBytes / (1024 * 1024)).toFixed(1)} MiB.`
@@ -222,6 +232,27 @@ export function describeTeamKeys(keys: TeamKeys): string[] {
   for (const p of keys.problems)
     lines.push(`Problem with ${p.subject}: ${p.message}`);
   return lines;
+}
+
+/**
+ * `dispatch team transport relay <url> [--yes] | git`: a switch to the relay
+ * first prints what the relay can read, and switches only with --yes (F-D31).
+ */
+export async function switchTeamTransport(
+  api: Pick<ApiClient, 'getTeamKeys' | 'switchTransport'>,
+  kind: 'git' | 'relay',
+  url: string | undefined,
+  yes: boolean,
+  log: (line: string) => void
+): Promise<RosterAnswer> {
+  if (kind === 'git') return await api.switchTransport({ kind: 'git' });
+  if (url === undefined || url === '')
+    throw new CliError('Name the relay: dispatch team transport relay <url>');
+  if (!yes) {
+    log((await api.getTeamKeys()).relayDisclosure);
+    throw new CliError('Run it again with --yes to switch.');
+  }
+  return await api.switchTransport({ kind: 'relay', url, confirmed: true });
 }
 
 // A roster change's answer: its warning, and whether its sync still runs.
@@ -358,6 +389,36 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
       await (await client(opts, 'dispatch team close-legacy')).closeLegacy();
       ctx.log('Closed the legacy window: older builds no longer sync.');
     });
+
+  team
+    .command('transport <kind> [url]')
+    .description(
+      'Switch the team to a relay (relay <url> --yes) or back to git'
+    )
+    .option('--yes', 'Switch, having read what the relay can see')
+    .option(tokenOption, tokenHelp)
+    .action(
+      async (
+        kind: string,
+        url: string | undefined,
+        opts: { token?: string; yes?: boolean }
+      ) => {
+        if (kind !== 'relay' && kind !== 'git')
+          throw new CliError(`kind must be relay or git, not "${kind}"`);
+        const api = await client(opts, 'dispatch team transport');
+        logAnswer(
+          ctx,
+          await switchTeamTransport(api, kind, url, opts.yes === true, (l) =>
+            ctx.log(l)
+          )
+        );
+        ctx.log(
+          kind === 'relay'
+            ? 'Switched the team to the relay; every machine follows on its next sync.'
+            : 'Switched the team back to git; every machine follows on its next sync.'
+        );
+      }
+    );
 
   team
     .command('dismiss <replica> <seq> <hash>')

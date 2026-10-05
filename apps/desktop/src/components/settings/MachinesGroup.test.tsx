@@ -1,7 +1,13 @@
 import { ApiError } from '@dispatch/client';
 import type { TeamKeys } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import { accessFor, SettingsAccessProvider } from './access';
@@ -70,7 +76,8 @@ const founded: TeamKeys = {
 
 function mount(
   keys: TeamKeys | (() => Promise<TeamKeys>),
-  tier: 'request' | 'decide' | 'operator' = 'operator'
+  tier: 'request' | 'decide' | 'operator' = 'operator',
+  extra: Record<string, unknown> = {}
 ) {
   const ok = () => Promise.resolve({ ok: true });
   const client = {
@@ -98,6 +105,8 @@ function mount(
     ),
     closeLegacy: mock(ok),
     setReplicaHosts: mock(ok),
+    switchTransport: mock(ok),
+    ...extra,
   };
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -448,4 +457,84 @@ test('titles a task field-cap note', async () => {
   expect(
     await screen.findByText('Task change too large: t-00000a01')
   ).toBeTruthy();
+});
+
+const closed: TeamKeys = {
+  ...founded,
+  legacy: { until: null, closed: true, olderBuilds: [] },
+};
+
+test('says which transport the team syncs over', async () => {
+  mount(closed);
+  expect(await screen.findByText('Syncing over git')).toBeTruthy();
+  cleanup();
+  mount(
+    {
+      ...closed,
+      transport: {
+        ...closed.transport,
+        kind: 'relay',
+        url: 'wss://relay.example',
+      },
+    },
+    'decide'
+  );
+  expect(
+    await screen.findByText('Syncing over the relay at wss://relay.example')
+  ).toBeTruthy();
+});
+
+test('shows the relay disclosure before switching, and switches only on confirm', async () => {
+  const switchTransport = mock(() => Promise.resolve({ ok: true }));
+  const client = mount(closed, 'operator', { switchTransport });
+  fireEvent.change(await screen.findByLabelText('Relay URL'), {
+    target: { value: 'wss://relay.example' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to the relay' }));
+  expect(
+    await screen.findByText(/The relay can read everything that is not sealed/)
+  ).toBeTruthy();
+  expect(switchTransport).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Switch' }));
+  await waitFor(() =>
+    expect(switchTransport).toHaveBeenCalledWith({
+      kind: 'relay',
+      url: 'wss://relay.example',
+      confirmed: true,
+    })
+  );
+  await waitFor(() =>
+    expect(client.getTeamKeys.mock.calls.length).toBeGreaterThan(1)
+  );
+});
+
+test('offers no relay switch while the legacy window is open, or below the operator tier', async () => {
+  mount(founded);
+  expect(await screen.findByText('Syncing over git')).toBeTruthy();
+  expect(
+    screen.queryByRole('button', { name: 'Switch to the relay' })
+  ).toBeNull();
+  cleanup();
+  mount(closed, 'decide');
+  expect(await screen.findByText('Syncing over git')).toBeTruthy();
+  expect(
+    screen.queryByRole('button', { name: 'Switch to the relay' })
+  ).toBeNull();
+});
+
+test('switches back to git from the relay', async () => {
+  const client = mount({
+    ...closed,
+    transport: {
+      ...closed.transport,
+      kind: 'relay',
+      url: 'wss://relay.example',
+    },
+  });
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Switch back to git' })
+  );
+  await waitFor(() =>
+    expect(client.switchTransport).toHaveBeenCalledWith({ kind: 'git' })
+  );
 });

@@ -22,7 +22,10 @@ import { Inbound } from './inbound.js';
 import { loadOrCreateKeys } from './keys.js';
 import { LegacyWindow } from './legacy.js';
 import { MailOut } from './mail.js';
+import { MemorySync } from './memory.js';
+import type { TeamMemoryPort } from './memory.js';
 import { Presence, trackWaiting } from './presence.js';
+import { RelayFederationTransport } from './relay.js';
 import { RosterService } from './roster.js';
 import { FederationService } from './service.js';
 import { HeldMail, StateOut } from './state.js';
@@ -44,6 +47,8 @@ export interface FederationDeps {
   onBoardChanged: () => void;
   now: () => Date;
   debounceMs?: number;
+  /** Tests only: follow a ws:// relay on this machine. */
+  allowLoopbackRelay?: boolean;
 }
 
 /** The pieces the daemon keeps: Task 11's routes read fed and roster. */
@@ -99,6 +104,17 @@ export function wireMessagingFederation(
     knowsRun: deps.knowsRun,
   });
   return { homes, presence, hooks };
+}
+
+// Team memory on signed ops (F3), once memory.db is open.
+export function wireTeamMemory(
+  federation: Federation,
+  port: TeamMemoryPort
+): void {
+  const { fed, roster, service } = federation;
+  const sync = new MemorySync({ fed, roster, port });
+  service.register(sync);
+  service.addCollector(sync);
 }
 
 // The agent roster, channel memberships and outbound mail, once messaging
@@ -244,7 +260,22 @@ export function buildFederation(deps: FederationDeps): Federation {
         !roster.isAdmitted(r) ||
         (acks.get(r)?.through[ledger.replica] ?? 0) >= op.seq
     );
+  const serviceRef: { current: FederationService | null } = { current: null };
   const service = new FederationService({
+    ...(deps.allowLoopbackRelay === true ? { allowLoopbackRelay: true } : {}),
+    // A relay the roster switches to; a push from it runs a pass at once.
+    relayFor: (url) =>
+      new RelayFederationTransport({
+        url,
+        teamId: roster.teamId() ?? '',
+        replica: ledger.replica,
+        signPriv: fed.keys.signPriv,
+        keyOp: () => fed.ownLog()[0] ?? null,
+        wake: () => {
+          void serviceRef.current?.syncNow();
+        },
+        now,
+      }),
     store: deps.store,
     ledger,
     v1: repo,
@@ -309,12 +340,13 @@ export function buildFederation(deps: FederationDeps): Federation {
     ...(deps.debounceMs === undefined ? {} : { debounceMs: deps.debounceMs }),
     now,
   });
+  serviceRef.current = service;
   return { service, fed, roster, legacy };
 }
 
 // Each replica's cursor head, and a check against its pinned key, so a pull
 // reads the segment that continues the log before any other (I2).
-function readHints(fed: FedStore, roster: RosterService): ReadHints {
+export function readHints(fed: FedStore, roster: RosterService): ReadHints {
   const heads = new Map<string, string>();
   for (const row of fed.db
     .query<{ replica: string; hash: string | null }, []>(

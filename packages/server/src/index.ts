@@ -186,6 +186,7 @@ import {
   buildFederation,
   wireAgentsAndChannels,
   wireMessagingFederation,
+  wireTeamMemory,
 } from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
 import type { FederationContext } from './team/federation/routes.js';
@@ -338,6 +339,8 @@ export interface StartServerOptions {
   federationNow?: () => number;
   // Debounce for a board sync pass after a local change; test-only.
   federationDebounceMs?: number;
+  // Lets a test follow the fake relay on ws://127.0.0.1; test-only.
+  federationAllowLoopbackRelay?: boolean;
   // Debounce for the receipts exporter's response to a task change. Defaults
   // to ReceiptsScheduler's own multi-second default; tests pass something much
   // shorter. There is no periodic counterpart: the export has no remote to
@@ -1267,6 +1270,9 @@ async function bootServer(
         ...(opts.federationDebounceMs === undefined
           ? {}
           : { debounceMs: opts.federationDebounceMs }),
+        ...(opts.federationAllowLoopbackRelay === true
+          ? { allowLoopbackRelay: true }
+          : {}),
       });
       boardSync = federation.service;
       const { roster, fed } = federation;
@@ -1279,6 +1285,9 @@ async function bootServer(
         // The origin warning names the code remote only when sync.repo is unset.
         remote: syncConfig.repo === undefined ? remoteUrl : null,
         label: (replica) => roster.label(replica),
+        ...(opts.federationAllowLoopbackRelay === true
+          ? { allowLoopbackRelay: true }
+          : {}),
         observer: () => {
           const watcher = [...(roster.view()?.members.values() ?? [])].find(
             (m) => m.observer
@@ -1561,6 +1570,9 @@ async function bootServer(
       ? {}
       : { preflight: opts.memoryPreflight }),
   });
+  // Team memory rides signed ops once memory.db is open (F3).
+  if (federation !== null && memory.teamPort !== null)
+    wireTeamMemory(federation, memory.teamPort);
   memoryReceipts = memoryReceiptsStep(
     () => memory.shared,
     memoryRestoreDir(rootDir)

@@ -4,7 +4,7 @@ import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { Address, Ref } from '@dispatch/protocol';
 
 import { withoutPersonalDoc } from './claudeFiles.js';
-import { normalizeTitle } from './contentHash.js';
+import { memoryContentHash, normalizeTitle } from './contentHash.js';
 import { MemoryError } from './errors.js';
 import { memoryHandle, parseMemoryRef } from './handle.js';
 import type { MemoryHost, MemoryStores } from './host.js';
@@ -18,6 +18,7 @@ import {
   newMemoryEntry,
   newProposal,
 } from './records.js';
+import type { MemoryIds } from './records.js';
 import { renderIndex } from './render.js';
 import type { IndexVariant, RenderedIndex } from './render.js';
 import type { SearchMode } from './schema.js';
@@ -166,6 +167,23 @@ export interface SubmitProposalInput {
   origin?: string;
 }
 
+// A replicated team entry this daemon's policy must rule on (federation F3):
+// new here (`add`), or a change to the held entry `target` (`supersede`,
+// approved in place). `reason` says what else the change sets.
+export interface SyncedProposalInput {
+  id: string;
+  origin: string;
+  author: Address;
+  content: ProposalContent;
+  target?: string | null;
+  reason?: string | null;
+}
+
+export type SyncedProposalResult =
+  | { status: 'auto' }
+  | { status: 'duplicate' }
+  | { status: 'proposed'; proposal: string; raised: Promise<void> };
+
 // A proposal with its target as proposed against (`base`) and as it is now.
 export interface ProposalView {
   proposal: MemoryProposal;
@@ -249,6 +267,20 @@ const runIdOf = (principal: Principal): string | null =>
 // A lesson `dispatch receipts restore` brought back from the receipt log.
 export const isRestoredOrigin = (origin: string | null): boolean =>
   origin !== null && origin.startsWith('receipts:');
+
+// A team entry from a teammate's machine waits as a proposal under this
+// origin (federation F3): `sync:<replica>:<id>`, then `/2`, `/3` after a decided one.
+export const syncOrigin = (replica: string, id: string, attempt: number) =>
+  `sync:${replica}:${id}${attempt > 1 ? `/${attempt}` : ''}`;
+
+/** The replicated entry id a sync origin names, or null for any other origin. */
+export function syncedEntryId(origin: string | null): string | null {
+  const m =
+    origin === null
+      ? null
+      : /^sync:[^:]+:(mem-[0-9A-Z]{26})(?:\/\d+)?$/.exec(origin);
+  return m === null ? null : (m[1] ?? null);
+}
 
 // Ledger-import, sync and receipt-restore proposals are bounded by what
 // arrives, not by what an agent asks.
@@ -975,6 +1007,65 @@ export class MemoryEngine {
     return { outcome: 'applied', proposal: done.proposal };
   }
 
+  /**
+   * A replicated entry another daemon's policy approved: `auto` when this
+   * daemon's policy would too (the caller stores it), else an open `add`
+   * proposal, stored now, whose gate `raised` sends (recover() retries it).
+   */
+  proposeSynced(input: SyncedProposalInput): SyncedProposalResult {
+    const store = this.deps.stores.shared();
+    const now = this.now();
+    const target = input.target ?? null;
+    const draft = newProposal(
+      {
+        action: target === null ? 'add' : 'supersede',
+        scope: 'team',
+        target,
+        content: input.content,
+        reason: input.reason ?? null,
+        author: input.author,
+        authorTrust: 'agent',
+        origin: input.origin,
+      },
+      this.ids.proposal(Date.parse(now)),
+      now
+    );
+    if (this.ruleOn(draft).mode === 'auto') return { status: 'auto' };
+    try {
+      checkSharedOrigin(store, input.origin);
+      // A change to a held entry may keep its content (a pin, a status).
+      if (target === null) this.checkDuplicate(store, draft, now);
+    } catch (err) {
+      if (err instanceof MemoryError && err.code === 'conflict')
+        return { status: 'duplicate' };
+      throw err;
+    }
+    store.transaction(() => store.insertProposal(draft));
+    const raised = this.raiseGateOrNull(draft).then((gate) => {
+      if (gate !== null) this.recordGate(store, draft.id, gate);
+    });
+    return { status: 'proposed', proposal: draft.id, raised };
+  }
+
+  /** A later replicated change to an entry still waiting as an open proposal. */
+  reviseSyncedProposal(
+    proposalId: string,
+    content: ProposalContent,
+    reason: string | null = null
+  ): void {
+    const store = this.deps.stores.shared();
+    store.transaction(() => {
+      const p = store.getProposal(proposalId);
+      if (p === null || p.state !== 'open') return;
+      store.updateProposal({
+        ...p,
+        content,
+        reason,
+        contentHash: memoryContentHash(content),
+      });
+    });
+  }
+
   // Open proposals created before `cutoffIso`, oldest first, for expiry.
   openProposalsOlderThan(cutoffIso: string): MemoryProposal[] {
     return this.deps.stores
@@ -1391,12 +1482,51 @@ export class MemoryEngine {
           ? 'human'
           : 'confirmed';
     const content = p.action === 'retire' ? null : p.content;
+    // A replicated entry keeps its id on every machine (federation F3): a
+    // change to one held here applies in place; a new one takes its id,
+    // unless its handle collides here, when it gets a fresh one.
+    let synced = syncedEntryId(p.origin);
+    const held = synced === null ? null : store.getEntry(synced);
+    if (held !== null && content !== null) {
+      const revised = this.revise(
+        store,
+        held,
+        {
+          ...content,
+          trust,
+          decidedBy: decision.decidedBy,
+          decidedByPolicy: decision.decidedByPolicy,
+        },
+        by,
+        'gate'
+      );
+      const proposal: MemoryProposal = {
+        ...p,
+        state: 'approved',
+        gate: gate ?? p.gate,
+        result: held.id,
+        decidedBy: decision.decidedBy,
+        decidedByPolicy: decision.decidedByPolicy,
+        decidedAt: now,
+      };
+      store.updateProposal(proposal);
+      return { proposal, created: revised, retired: null };
+    }
+    if (held !== null) synced = null;
+    const ids: MemoryIds = {
+      ...this.ids,
+      entry: (ms) => {
+        const id = synced ?? this.ids.entry(ms);
+        synced = null;
+        return id;
+      },
+    };
     const created =
       content === null
         ? null
         : insertFresh(
             store,
-            this.ids,
+            ids,
             Date.parse(now),
             (id) =>
               newMemoryEntry(
