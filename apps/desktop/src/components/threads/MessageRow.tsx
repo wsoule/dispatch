@@ -1,4 +1,9 @@
-import type { ApiClient, Message } from '@dispatch/client';
+import type {
+  ApiClient,
+  Message,
+  RemoteDeliveryRow,
+  Settlement,
+} from '@dispatch/client';
 import type { TaskListItem } from '@dispatch/core/browser';
 import { memo, useEffect, useState } from 'react';
 
@@ -56,6 +61,14 @@ export interface MessageRowProps {
   onOpen: (action: RefAction) => void;
   /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
   loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
+  /** Recipients of this message homed on teammates' machines, as reported. */
+  remoteDeliveries?: readonly RemoteDeliveryRow[];
+  /** This reply's standing at its question's settler (federation). */
+  settlement?: Settlement;
+  /** The settler's handle, for a pending answer. */
+  settlerLabel?: string;
+  /** "<handle>'s <device>" of an admitted observer reading the thread. */
+  observer?: string | null;
   /** Declines an open question from an A2A client, reads a memory or doc
    *  gate's proposal and a task proposal's draft body; without it there is
    *  no Decline and no proposal to show. */
@@ -66,6 +79,17 @@ export interface MessageRowProps {
   /** The daemon's port, keying a proposal read under memory's or docs' queries. */
   port?: number;
 }
+
+// How a teammate's machine reports a recipient's state, in words.
+const REMOTE_STATE: Record<RemoteDeliveryRow['state'], string> = {
+  forwarded: 'sent to their machine',
+  held: 'held on their machine',
+  pushed: 'delivered',
+  notified: 'delivered',
+  read: 'read',
+  answered: 'answered',
+  refused: 'refused by their machine',
+};
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
 export const MessageRow = memo(function MessageRow({
@@ -80,6 +104,10 @@ export const MessageRow = memo(function MessageRow({
   onAnswer,
   onOpen,
   loadApprovalInput,
+  remoteDeliveries = [],
+  settlement,
+  settlerLabel,
+  observer = null,
   client = null,
   port,
 }: MessageRowProps) {
@@ -132,6 +160,9 @@ export const MessageRow = memo(function MessageRow({
               <Pill title="Sent from outside this machine over A2A">A2A</Pill>
             )}
             {badge !== undefined && <Pill>{badge}</Pill>}
+            {message.remoteLabel !== undefined && (
+              <Pill>{`remote: ${message.remoteLabel}`}</Pill>
+            )}
             {message.urgent && <Pill>Urgent</Pill>}
             {status !== null && (
               <Pill>{status === 'revoked' ? 'Revoked' : 'Muted'}</Pill>
@@ -171,6 +202,28 @@ export const MessageRow = memo(function MessageRow({
                 );
               })}
             </div>
+          )}
+          {remoteDeliveries.length > 0 && (
+            <ul className="text-muted-foreground flex flex-wrap gap-x-3 text-[12px]">
+              {remoteDeliveries.map((d) => (
+                <li
+                  key={d.recipient}
+                >{`${d.recipient}: ${REMOTE_STATE[d.state]}`}</li>
+              ))}
+            </ul>
+          )}
+          {settlement === 'pending' && message.kind === 'answer' && (
+            <p className="text-muted-foreground text-[12px]">
+              {`answered here, waiting for ${settlerLabel ?? 'the asker'}'s machine`}
+            </p>
+          )}
+          {settlement === 'superseded' && (
+            <p className="text-muted-foreground text-[12px]">superseded</p>
+          )}
+          {observer !== null && message.origin !== undefined && (
+            <p className="text-muted-foreground text-[12px]">
+              {`an observer (${observer}) reads this thread`}
+            </p>
           )}
           <Control
             message={message}

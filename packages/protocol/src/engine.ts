@@ -121,6 +121,8 @@ interface ArrivalSettle {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+/** Superseded-answer notices one question sends at most (FW-R33). */
+const MAX_SUPERSEDED_NOTICES = 5;
 
 const SYSTEM_SENDER: Sender = { address: SYSTEM_ADDRESS, canDecide: true };
 
@@ -1362,7 +1364,12 @@ export class DeliveryEngine {
           `message:${message.id}`,
           `${s.settler} sent a settle for ${message.id}; only the question's origin settles it`
         );
-      if (answer.supersededBy !== null)
+      // FW-R33: at most a few such notices per question, however many answer.
+      if (
+        answer.supersededBy !== null &&
+        message.replyTo !== null &&
+        this.mayNoteSuperseded(message.replyTo, message.id)
+      )
         await this.noticeTo(
           message.from,
           message,
@@ -1835,6 +1842,7 @@ export class DeliveryEngine {
       changed.push(...this.swapSettled(q.id, s.answerId));
       return this.markAnswered(q.id);
     }
+    // FW-R33: an answer that has not arrived supersedes nothing yet.
     if (s.closedReason === null) return [];
     changed.push(...this.demoteOtherAnswers(q.id, s.answerId));
     this.store.insertMessage(
@@ -1979,6 +1987,18 @@ export class DeliveryEngine {
 
   // Tells a sender something went sideways, as a system notice in its thread;
   // a sender run that has ended hears it through its task.
+  // Whether `answerId`'s superseded notice is within the question's cap.
+  // Counted from the store (one notice per earlier superseded answer), so a
+  // restart keeps the count.
+  private mayNoteSuperseded(questionId: string, answerId: string): boolean {
+    const earlier = this.store
+      .answerCandidates(questionId)
+      .filter(
+        (c) => c.settledAs === 'superseded' && c.message.id !== answerId
+      ).length;
+    return earlier < MAX_SUPERSEDED_NOTICES;
+  }
+
   private async noticeTo(
     recipient: Address,
     about: Message,

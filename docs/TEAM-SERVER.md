@@ -191,6 +191,27 @@ as of v1, all accepted:
   cannot lower a publish task's risk on the replica that owns the publish; a
   teammate's replica keeps whatever its own board says.
 
+## 6a. Federation: the seam, git first
+
+Before any server, teammates' daemons already share one board, messages and
+memory peer to peer (`packages/server/src/team/federation/`, ELv2): each machine
+signs its own ops into a hash chain, a signed roster decides who is in the team,
+and mail is sealed to its recipients' machines. The transport is a seam
+(`FederationTransport`):
+
+- **Git first.** The default carries every machine's log on a branch of a repo
+  the team already has. No service to run or trust; sealed mail stays unreadable
+  to anyone with branch access.
+- **The relay, the paid path.** A team can switch, by a roster op an admin signs
+  after a disclosure, to a hosted relay that delivers in under a second and
+  keeps acknowledged mail for no longer than needed.
+- **What a relay can read.** Everything that is not sealed: the board, team
+  memory and team docs, the roster with the team's license key, presence, and
+  who messaged whom and when. It cannot read message contents.
+
+A team server, when it comes, replaces neither: it becomes another transport
+behind the same seam.
+
 ## 7. Phasing
 
 0. **Storage spine (solo, no server)** — epic `e-99e113`. Extract the

@@ -739,6 +739,13 @@ export interface Message {
   choice?: string;
   wake: 'none' | 'request';
   createdAt: string;
+  /** Federation: the replica a teammate's message came from, its clock, and
+   *  the handle that replica belongs to. */
+  origin?: string;
+  hlc?: string;
+  remoteLabel?: string;
+  /** Federation: a reply's standing at its question's settler. */
+  settledAs?: 'pending' | 'accepted' | 'superseded' | 'candidate';
 }
 
 export type DeliveryState =
@@ -1080,6 +1087,8 @@ export interface AgentSummary {
   muted: boolean;
   approvedBy: string | null;
   createdAt: string;
+  /** With federation: the registering machine's handle for a teammate's agent. */
+  remote?: string | null;
 }
 
 // One entry of GET /api/channels.
@@ -1101,7 +1110,37 @@ export interface ThreadSummary {
 // deliveries, enough to render the conversation from one fetch.
 export interface ThreadDetail {
   messages: Message[];
-  deliveries: Delivery[];
+  /** With federation, remote recipients' rows ride along, marked `remote`. */
+  deliveries: (Delivery | RemoteDeliveryRow)[];
+  /** Each question's settlement, when federation is on. */
+  settlements?: Record<string, Settlement>;
+  /** "<handle>'s <device>" of an admitted observer, when a participant is remote. */
+  observer?: string | null;
+}
+
+/** A recipient homed on a teammate's machine, as that machine reports it. */
+export interface RemoteDeliveryRow {
+  messageId: string;
+  recipient: string;
+  via: DeliveryVia;
+  state:
+    | 'forwarded'
+    | 'held'
+    | 'pushed'
+    | 'notified'
+    | 'read'
+    | 'answered'
+    | 'refused';
+  remote: true;
+}
+
+/** Where a question stands across machines; `local` when none is involved. */
+export type Settlement = 'local' | 'pending' | 'accepted' | 'superseded';
+
+/** Where a task's live run is on the team, and whom it waits on. */
+export interface TaskPresence {
+  presence: { replica: string; handle: string; device: string } | null;
+  waitingOn: string | null;
 }
 
 // One row of GET /api/mailbox: a delivery paired with the message it
@@ -3643,8 +3682,10 @@ export interface ApiClient {
   waitForAnswer(
     id: string,
     opts?: { wait?: boolean }
-  ): Promise<{ answer: Message | null }>;
+  ): Promise<{ answer: Message | null; settlement?: Settlement }>;
   getThread(id: string): Promise<ThreadDetail>;
+  /** Where a task's live run is across the team (federation). */
+  getTaskPresence(taskId: string): Promise<TaskPresence>;
   /** The most recently active threads project-wide (deciding humans only);
    *  `about: 'task:<id>'` keeps those the task or its runs took part in. */
   listRecentThreads(
@@ -4649,6 +4690,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         `/api/messages/${id}/answer${opts.wait === true ? '?wait=1' : ''}`
       ),
     getThread: (id) => request(target, `/api/threads/${id}`),
+    getTaskPresence: (taskId) =>
+      request(target, `/api/team/presence?task=${encodeURIComponent(taskId)}`),
     listRecentThreads: (limit, opts = {}) => {
       const params = new URLSearchParams();
       if (limit !== undefined) params.set('limit', String(limit));

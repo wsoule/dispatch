@@ -1,6 +1,10 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch/core';
 import { DEFAULT_MESSAGING, loadConfig } from '@dispatch/core';
-import type { Message, MessageStore } from '@dispatch/protocol';
+import type {
+  FederationHooks,
+  Message,
+  MessageStore,
+} from '@dispatch/protocol';
 import {
   DeliveryEngine,
   gateOf,
@@ -106,6 +110,8 @@ export interface Messaging {
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
   // Installs (or with null removes) the A2A bridge's say on external recipients.
   setExternalPolicy(policy: ExternalPolicy | null): void;
+  /** messaging.agentBlockingTimeoutSec as read at open. */
+  agentWaitSec: number;
   close(): void;
 }
 
@@ -118,6 +124,9 @@ function messageAudience(
   const participants = new Set<string>([message.from, ...message.to]);
   for (const d of store.deliveries({ messageId: message.id }))
     participants.add(d.recipient);
+  // A recipient on a teammate's machine follows the thread here too.
+  for (const r of store.remoteDeliveries({ messageId: message.id }))
+    participants.add(r.recipient);
   return (who) => {
     if (who === undefined || who.agentToken) return false;
     if (
@@ -146,6 +155,9 @@ export function openMessaging(deps: {
   appendPolicyActivity?: (taskId: string, text: string) => void;
   // How often the scope-gate sweep runs, and its clock; tests shorten both.
   scopeExpiry?: { sweepMs?: number; now?: () => number };
+  // Federation's hooks, and a nudge for the next pass once mail is stored.
+  federation?: FederationHooks;
+  onFederatedMessage?: () => void;
   // Who may answer gates and who still holds a credential, for routing a
   // teammate's run (XH-R9); omitted, only the owner decides.
   deciders?: {
@@ -196,6 +208,7 @@ export function openMessaging(deps: {
       // message.new already reaches the desktop over the EventBus; no OS
       // notification is raised for a human's message yet.
     },
+    ...(deps.federation === undefined ? {} : { federation: deps.federation }),
     onWakeFailed: (target, message, acting) => {
       const taskId = target.slice('task:'.length);
       if (!hasActiveRun(taskId)) return;
@@ -287,11 +300,22 @@ export function openMessaging(deps: {
   // A human approved waking a held task. A no-op while a live execute run can
   // take the task's mail; any other live run makes the wake fail with a notice.
   gates.register('wake', async (question, answer) => {
-    if (answer.choice !== 'approve') return;
     const gate = gateOf(question);
     if (gate === null || gate.type !== 'wake') return;
     const original = store.getMessage(gate.message);
     if (original === null) return;
+    // A denied wake tells its sender, so a run waiting on it does not wait on.
+    if (answer.choice !== 'approve') {
+      // A teammate's machine hears that it was denied, not by whom.
+      if (answer.choice === 'deny')
+        await noticeWakeSender(
+          original,
+          original.origin === undefined
+            ? `Not woken: ${answer.from} denied waking ${gate.target}. Your message is waiting for it.`
+            : `Not woken: waking ${gate.target} was denied. Your message is waiting for it.`
+        );
+      return;
+    }
     if (gate.target.startsWith('task:')) {
       const taskId = gate.target.slice('task:'.length);
       const live = deps.orchestrator.liveRunIdForTask(taskId);
@@ -585,6 +609,7 @@ export function openMessaging(deps: {
         { type: 'message.new', message: e.message },
         messageAudience(store, e.message)
       );
+      deps.onFederatedMessage?.();
       return;
     }
     // Channel membership reaches no socket; only the federation router reads it.
@@ -614,6 +639,8 @@ export function openMessaging(deps: {
   // run only gets mail addressed to its own run.
   const unsubscribeRunStarted = deps.orchestrator.onRunStarted((meta) => {
     if (runKind(meta) !== 'execute') return;
+    // Task mail a teammate's machine held for this task comes here first.
+    if (deps.federation !== undefined) engine.claimRemote(meta.taskId);
     engine
       .deliverHeld(meta.id, meta.taskId)
       .catch((err) => console.error('messaging: deliverHeld failed', err));
@@ -629,6 +656,7 @@ export function openMessaging(deps: {
       overseer = target;
     },
     recover: () => engine.recover(),
+    agentWaitSec: limits.agentBlockingTimeoutSec,
     setExternalPolicy(policy) {
       host.setExternalPolicy(policy);
     },

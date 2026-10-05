@@ -35,6 +35,14 @@ export interface FederationContext {
   label(replica: string): string;
   /** "<handle>'s <device>" of an admitted observer, or null. */
   observer(): string | null;
+  /** Binds a contested run to one claimant (an admin's), when messaging
+   *  federates; absent before then. */
+  resolveRun?: (run: string, replica: string) => void;
+  /** Where a task's live run is, when messaging federates. */
+  presenceOf?: (task: string) => {
+    presence: { replica: string; handle: string; device: string } | null;
+    waitingOn: string | null;
+  };
   /** How long a route waits for its pass; ROUTE_PASS_WAIT_MS unless a test sets it. */
   passWaitMs?: number;
 }
@@ -128,10 +136,12 @@ const ACTIONS = new Set([
   'dismiss',
   'abandon-invite',
   'problems',
+  'runs',
+  'presence',
 ]);
 
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
-// merge reset and a route's late failure. A halt, a key claim or a pause
+// merge reset, a route's late failure, a message note and a run conflict. A halt, a key claim or a pause
 // stays until what caused it is gone.
 const ACKNOWLEDGEABLE = [
   'team:race:',
@@ -142,6 +152,17 @@ const ACKNOWLEDGEABLE = [
   'transport:read:',
   'transport:bloat:',
   'transport:rewrite:',
+  // FW-R31(3): a message note and a run conflict can be acknowledged.
+  'message:',
+  'run-conflict:',
+  // A teammate's refused agent or channel op is a one-off note.
+  'agent:',
+  'channel:',
+  // FW-R32(6): one rolling note per publisher, and a message that could not go.
+  'malformed:',
+  'mail-drop:',
+  'mail-out:',
+  'run-moved:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {
@@ -207,6 +228,12 @@ export async function handleFederationRoute(
     return errorResponse(409, 'board sync is not on');
   if (method === 'GET' && segments.length === 2 && segments[1] === 'keys')
     return jsonResponse(teamKeys(fedCtx, service));
+  if (method === 'GET' && segments.length === 2 && segments[1] === 'presence') {
+    const task = new URL(req.url).searchParams.get('task') ?? '';
+    return jsonResponse(
+      fedCtx.presenceOf?.(task) ?? { presence: null, waitingOn: null }
+    );
+  }
   if (method !== 'POST') return errorResponse(405, 'method not allowed');
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;
@@ -283,6 +310,16 @@ async function act(
       );
     fedCtx.fed.ackProblem(subject);
     return { ok: true };
+  }
+  if (
+    segments.length === 4 &&
+    segments[1] === 'runs' &&
+    segments[3] === 'resolve'
+  ) {
+    if (fedCtx.resolveRun === undefined)
+      return errorResponse(409, 'team messaging is not on');
+    fedCtx.resolveRun(segments[2] ?? '', need('replica'));
+    return after({ ok: true });
   }
   if (segments.length !== 2) return errorResponse(404, 'not found');
   switch (segments[1]) {

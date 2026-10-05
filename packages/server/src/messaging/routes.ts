@@ -536,11 +536,17 @@ export function waitForAnswer(
     );
   }
 
+  // With federation, every answer carries its settlement (the settler's say).
+  const answered = (answer: Message | null): Response =>
+    jsonResponse(
+      ctx.federation === null
+        ? { answer }
+        : { answer, settlement: settlementOf(ctx, id) }
+    );
   const existing = ctx.messaging.engine.answerOf(id);
-  if (existing !== null)
-    return Promise.resolve(jsonResponse({ answer: existing }));
+  if (existing !== null) return Promise.resolve(answered(existing));
   if (!wait || req.signal.aborted) {
-    return Promise.resolve(jsonResponse({ answer: null }));
+    return Promise.resolve(answered(null));
   }
 
   return new Promise<Response>((resolve) => {
@@ -551,7 +557,7 @@ export function waitForAnswer(
       clearTimeout(timer);
       unsubscribe();
       req.signal.removeEventListener('abort', onAbort);
-      resolve(jsonResponse({ answer }));
+      resolve(answered(answer));
     };
     const unsubscribe = ctx.messaging.engine.subscribe((e) => {
       if (
@@ -575,7 +581,60 @@ export function getThreadById(ctx: ApiContext, threadId: string): Response {
   if (!ctx.messaging.engine.canReadThread(threadId, senderOf(principal))) {
     return errorResponse(404, `no message ${threadId}`);
   }
-  return jsonResponse(ctx.messaging.engine.thread(threadId));
+  const thread = ctx.messaging.engine.thread(threadId);
+  const fed = ctx.federation;
+  if (fed === null) return jsonResponse(thread);
+  // Federated rows: who sent from which machine, remote recipients' states,
+  // each question's settlement, and an admitted observer when one reads.
+  const store = ctx.messaging.store;
+  const messages = thread.messages.map((m) => {
+    const settledAs = store.settledAs(m.id);
+    return {
+      ...m,
+      ...(m.origin === undefined ? {} : { remoteLabel: fed.label(m.origin) }),
+      ...(settledAs === null ? {} : { settledAs }),
+    };
+  });
+  const remote = thread.messages.flatMap((m) =>
+    store.remoteDeliveries({ messageId: m.id }).map((r) => ({
+      messageId: r.messageId,
+      recipient: r.recipient,
+      via: r.via,
+      state: r.state,
+      remote: true as const,
+    }))
+  );
+  const settlements: Record<string, Settlement> = {};
+  for (const m of thread.messages)
+    if (m.kind === 'question' || m.kind === 'handoff')
+      settlements[m.id] = settlementOf(ctx, m.id);
+  const crosses =
+    remote.length > 0 || thread.messages.some((m) => m.origin !== undefined);
+  return jsonResponse({
+    messages,
+    deliveries: [...thread.deliveries, ...remote],
+    settlements,
+    observer: crosses ? fed.observer() : null,
+  });
+}
+
+type Settlement = 'local' | 'pending' | 'accepted' | 'superseded';
+
+// A question's state across machines: `local` when no federated answer is
+// stored, else accepted, pending or superseded from its answers' rows.
+function settlementOf(ctx: ApiContext, questionId: string): Settlement {
+  const store = ctx.messaging.store;
+  const answers = store
+    .answerCandidates(questionId)
+    .map((c) => ({ message: c.message, settledAs: c.settledAs }));
+  const federated =
+    answers.some((a) => a.message.origin !== undefined) ||
+    store.remoteDeliveries({ messageId: questionId }).length > 0;
+  if (!federated) return 'local';
+  if (answers.some((a) => a.settledAs === 'accepted')) return 'accepted';
+  if (answers.some((a) => a.settledAs === 'pending')) return 'pending';
+  if (answers.some((a) => a.settledAs === 'superseded')) return 'superseded';
+  return 'pending';
 }
 
 const DEFAULT_RECENT_THREADS = 50;
@@ -826,8 +885,19 @@ function stripTokenHash(agent: AgentRecord): AgentSummary {
 // GET /api/agents/roster — request tier, not self-authenticated: this is a
 // membership listing, not an action that needs to know who's asking.
 export function listAgentRoster(ctx: ApiContext): Response {
+  const fed = ctx.federation;
   return jsonResponse({
-    agents: ctx.messaging.store.agents().map(stripTokenHash),
+    agents: ctx.messaging.store.agents().map((a) => ({
+      ...stripTokenHash(a),
+      // A teammate's agent names its registering machine's handle.
+      ...(fed === null
+        ? {}
+        : {
+            remote: a.tokenHash.startsWith('remote:')
+              ? registeringHandle(ctx, a.address)
+              : null,
+          }),
+    })),
   });
 }
 
@@ -1087,6 +1157,18 @@ function openRegistrationGateFor(
   return null;
 }
 
+// The handle of the machine a replicated agent was registered on.
+function registeringHandle(ctx: ApiContext, address: string): string {
+  const fed = ctx.federation;
+  if (fed === null) return 'a teammate';
+  const row = fed.fed.db
+    .query<{ replica: string }, [string]>(
+      'SELECT replica FROM fed_agents WHERE address = ?'
+    )
+    .get(address);
+  return row === null ? 'a teammate' : fed.label(row.replica);
+}
+
 // Approve/revoke: answers the open registration gate if there is one, so its
 // handler stays the one writer of status; else writes the agent row directly.
 async function decideAgent(
@@ -1097,6 +1179,12 @@ async function decideAgent(
 ): Promise<Response> {
   const agent = ctx.messaging.store.getAgent(address);
   if (agent === null) return errorResponse(404, `no agent ${address}`);
+  // A teammate's agent is approved or revoked only on its own machine.
+  if (agent.tokenHash.startsWith('remote:'))
+    return errorResponse(
+      409,
+      `${address} is registered on ${registeringHandle(ctx, address)}'s machine; approve or revoke it there`
+    );
   // Revoking an A2A client is final: its tasks were failed and its push
   // configs deleted, so approving it again is refused; add a new client.
   if (

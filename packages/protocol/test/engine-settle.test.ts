@@ -147,6 +147,45 @@ describe('at the settler: the question was asked here', () => {
     );
   });
 
+  it('sends at most five superseded notices for one question', async () => {
+    await engine.receive(
+      answerTo(q, 'm-a1', 'human:bob'),
+      fromBob([here('run:r-00000000000a')])
+    );
+    for (let i = 0; i < 8; i++)
+      await engine.receive(answerTo(q, `m-ax${i}`, 'human:cy'), {
+        replica: CY,
+        targets: [here('run:r-00000000000a')],
+      });
+    const notices = store
+      .remoteDeliveries({ recipient: 'human:cy' })
+      .filter((r) => r.messageId !== q.id);
+    expect(notices).toHaveLength(5);
+  });
+
+  it('keeps the cap of five superseded notices across a restart', async () => {
+    await engine.receive(
+      answerTo(q, 'm-a1', 'human:bob'),
+      fromBob([here('run:r-00000000000a')])
+    );
+    for (let i = 0; i < 4; i++)
+      await engine.receive(answerTo(q, `m-ay${i}`, 'human:cy'), {
+        replica: CY,
+        targets: [here('run:r-00000000000a')],
+      });
+    // A restart: a new engine over the same store.
+    engine = new DeliveryEngine({ store, host });
+    for (let i = 4; i < 8; i++)
+      await engine.receive(answerTo(q, `m-ay${i}`, 'human:cy'), {
+        replica: CY,
+        targets: [here('run:r-00000000000a')],
+      });
+    const notices = store
+      .remoteDeliveries({ recipient: 'human:cy' })
+      .filter((r) => r.messageId !== q.id);
+    expect(notices).toHaveLength(5);
+  });
+
   it('answers a later local answer with conflict, as today', async () => {
     await engine.receive(
       answerTo(q, 'm-a1', 'human:bob'),
@@ -362,6 +401,23 @@ describe("elsewhere: Bob's question, received here", () => {
       q,
       fromBob([here('human:wyat'), there('human:cy', [CY])])
     );
+  });
+
+  // FW-R33: a settle naming an answer not stored here supersedes nothing
+  // until that answer arrives.
+  it('keeps its own answer pending on a settle naming an answer it has not seen', async () => {
+    const { message: mine } = await engine.reply(q.id, { body: 'no' }, wyat);
+    engine.applySettlement(
+      {
+        t: 'settle',
+        question: q.id,
+        answer: 'm-acy',
+        at: '2026-09-26T10:05:00.000Z',
+      },
+      BOB
+    );
+    expect(store.settledAs(mine.id)).toBe('pending');
+    expect(store.settlement(q.id)?.answerId).toBe('m-acy');
   });
 
   it('stores the first answer seen as pending and later ones as candidates', async () => {

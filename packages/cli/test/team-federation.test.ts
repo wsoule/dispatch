@@ -126,6 +126,7 @@ describe('the API client', () => {
     await client.abandonInvite();
     await client.dismissRosterOp('cy-0000000c', 4, 'h'.repeat(64));
     await client.ackProblem('team:race:bob-0000000b');
+    await client.resolveRunConflict('r-0000000000ad', 'cy-0000000c');
     expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
       ['POST', '/api/team/found', { name: 'acme' }],
       [
@@ -142,6 +143,11 @@ describe('the API client', () => {
         { replica: 'cy-0000000c', seq: 4, hash: 'h'.repeat(64) },
       ],
       ['POST', '/api/team/problems/ack', { subject: 'team:race:bob-0000000b' }],
+      [
+        'POST',
+        '/api/team/runs/r-0000000000ad/resolve',
+        { replica: 'cy-0000000c' },
+      ],
     ]);
   });
 });

@@ -130,6 +130,15 @@ export class SyncLedger {
     });
   }
 
+  /** One clock tick, persisted, for a message's hlc (federation F2). */
+  tickPersisted(): string {
+    return this.atomically(() => {
+      const hlc = this.clock.tick();
+      this.setMeta('hlc', this.clock.last);
+      return hlc;
+    });
+  }
+
   /** The next seq, past both the v1 counter and `atLeast`, and a fresh tick.
    *  Call inside atomically() so the op using them lands in the same write. */
   nextStamp(atLeast: number): { seq: number; hlc: string } {

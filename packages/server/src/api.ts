@@ -4584,6 +4584,7 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
+  { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
@@ -4613,6 +4614,12 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  // An admin's pick between two machines that each claim a run first.
+  {
+    method: 'POST',
+    segments: ['team', 'runs', '*', 'resolve'],
+    tier: 'decide',
+  },
   {
     method: 'POST',
     segments: ['team', 'keys', '*', 'admit'],

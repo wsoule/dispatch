@@ -20,14 +20,14 @@ puts the bus's logic in an MIT package so other products can embed it.
 
 ## The six sub-projects
 
-| #   | Piece                                                                      | License              | Depends on |
-| --- | -------------------------------------------------------------------------- | -------------------- | ---------- |
-| 1   | **Messaging core** — this spec                                             | MIT engine, FSL host | —          |
-| 2   | Memory — personal and team stores, scopes, prompt injection, decay         | MIT model, FSL host  | 1          |
-| 3   | A2A bridge — Dispatch agents as A2A agents and back                        | MIT                  | 1          |
-| 4   | Docs — team documents beside tasks                                         | FSL                  | 2          |
-| 5   | Federation — messages and memory across teammates' daemons                 | ELv2 / private       | 1, 2       |
-| 6   | Published protocol spec — the extensions written up for other implementers | open                 | 1–3        |
+| #   | Piece                                                                      | License                                                                                                                                                              | Depends on |
+| --- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| 1   | **Messaging core** — this spec                                             | MIT engine, FSL host                                                                                                                                                 | —          |
+| 2   | Memory — personal and team stores, scopes, prompt injection, decay         | MIT model, FSL host                                                                                                                                                  | 1          |
+| 3   | A2A bridge — Dispatch agents as A2A agents and back                        | MIT                                                                                                                                                                  | 1          |
+| 4   | Docs — team documents beside tasks                                         | FSL                                                                                                                                                                  | 2          |
+| 5   | Federation — messages and memory across teammates' daemons                 | MIT (`@dispatch/protocol` receive and the `federation` wire), ELv2 (`@dispatch/federation`, `team/federation/**`), FSL (wiring, `/ws`, desktop), private (the relay) | 1, 2       |
+| 6   | Published protocol spec — the extensions written up for other implementers | open                                                                                                                                                                 | 1–3        |
 
 The protocol is extracted from a working implementation (#6 last), and speaks
 [A2A](https://a2a-protocol.org) at the edge (#3) rather than competing with it.
@@ -222,6 +222,11 @@ agents       (addr PK, display_name, client, token_hash UNIQUE,
               approved_by NULL, created_at)
 gate_effects (question_id PK, applied_at)          -- gate answers whose effect ran
 ```
+
+With federation (#5), a recipient homed on a teammate's machine is a remote row
+instead of a delivery, in the states that machine reports: `forwarded`, `held`,
+`pushed`, `notified`, `read`, `answered`, and `refused` (its machine would not
+take the message).
 
 A message is stored once; each resolved recipient gets a delivery with its own
 state. A six-member channel message is one message and six deliveries. Delivery

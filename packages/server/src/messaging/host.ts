@@ -10,6 +10,7 @@ import type {
   ExternalAdmission,
   ExternalKind,
   ExternalTarget,
+  FederationHooks,
   Message,
   MessagingHost,
   PolicyRequest,
@@ -59,6 +60,8 @@ export interface DaemonHostDeps {
   // Told when a wake could not start a run, so the caller can retry it later.
   onWakeFailed?: (target: Address, message: Message, acting: WakeActor) => void;
   now?: () => Date;
+  // Present when board sync federates: where mail lives, and its clock.
+  federation?: FederationHooks;
 }
 
 // An epic channel's implicit members: every task parented to its epic, as
@@ -99,8 +102,11 @@ export type ExternalPolicy = Required<
 // and epic membership from the task store, gate effects from GateHandlers.
 export class DaemonMessagingHost implements MessagingHost {
   private externalPolicy: ExternalPolicy | null = null;
+  readonly federation?: FederationHooks;
 
-  constructor(private readonly deps: DaemonHostDeps) {}
+  constructor(private readonly deps: DaemonHostDeps) {
+    if (deps.federation !== undefined) this.federation = deps.federation;
+  }
 
   // Installed by the A2A bridge; without one nothing is external.
   setExternalPolicy(policy: ExternalPolicy | null): void {

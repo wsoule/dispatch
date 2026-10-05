@@ -1,4 +1,5 @@
 import { LICENSE_PUBLIC_KEY } from '@dispatch/federation';
+import type { Address, DeliveryEngine, MessageStore } from '@dispatch/protocol';
 import { canonicalize, TAG, verifyText } from '@dispatch/protocol/federation';
 import type { FederatedOp } from '@dispatch/protocol/federation';
 import { hostname } from 'node:os';
@@ -11,11 +12,20 @@ import { SyncRepo } from '../boardSync/repo.js';
 import type { SyncedTaskStore } from '../boardSync/syncedStore.js';
 import type { Team } from '../index.js';
 import { syncSeats } from '../index.js';
+import { AgentSync } from './agents.js';
+import { ChannelSync } from './channels.js';
 import { GitFederationTransport, signedEntry } from './git.js';
+import { Homes } from './homes.js';
+import type { HomeTasks } from './homes.js';
+import { DaemonFederationHooks } from './hooks.js';
+import { Inbound } from './inbound.js';
 import { loadOrCreateKeys } from './keys.js';
 import { LegacyWindow } from './legacy.js';
+import { MailOut } from './mail.js';
+import { Presence, trackWaiting } from './presence.js';
 import { RosterService } from './roster.js';
 import { FederationService } from './service.js';
+import { HeldMail, StateOut } from './state.js';
 import { FedStore } from './store.js';
 import { TaskOpSigner } from './taskOps.js';
 
@@ -42,6 +52,129 @@ export interface Federation {
   fed: FedStore;
   roster: RosterService;
   legacy: LegacyWindow;
+}
+
+/** What messaging federates through: homes, run presence, the hooks. */
+export interface MessagingFederation {
+  homes: Homes;
+  presence: Presence;
+  hooks: DaemonFederationHooks;
+}
+
+// The F2 pieces over a built federation: Presence registered as a collector
+// and the `presence` handler, and the hooks the delivery engine calls.
+export function wireMessagingFederation(
+  federation: Federation,
+  deps: {
+    ledger: SyncLedger;
+    tasks: HomeTasks;
+    build: string;
+    device: string;
+    knowsRun: (runId: string) => boolean;
+    isLive: (runId: string) => boolean;
+    messages: () => MessageStore | null;
+    now: () => Date;
+  }
+): MessagingFederation {
+  const { fed, roster, service } = federation;
+  const homes = new Homes({ fed, roster, tasks: deps.tasks });
+  const presence = new Presence({
+    fed,
+    roster,
+    build: deps.build,
+    device: deps.device,
+    knowsRun: deps.knowsRun,
+    isLive: deps.isLive,
+    now: deps.now,
+    changed: () => service.notifyLocalChange(),
+  });
+  service.register(presence);
+  service.addCollector(presence);
+  const hooks = new DaemonFederationHooks({
+    ledger: deps.ledger,
+    fed,
+    roster,
+    homes,
+    messages: deps.messages,
+    knowsRun: deps.knowsRun,
+  });
+  return { homes, presence, hooks };
+}
+
+// The agent roster, channel memberships and outbound mail, once messaging
+// is open: each publishes in the pass, and the syncs project after it.
+export function wireAgentsAndChannels(
+  federation: Federation,
+  deps: {
+    homes: Homes;
+    presence: Presence;
+    messages: MessageStore;
+    engine: DeliveryEngine;
+    implicit: (channel: string) => Address[];
+    /** messaging.remoteMailPerReplicaPerHour */
+    perReplicaPerHour: number;
+    /** messaging.agentBlockingTimeoutSec, for the fast pass */
+    agentWaitSec: number;
+    now: () => Date;
+  }
+): void {
+  const { fed, roster, service } = federation;
+  const agents = new AgentSync({ fed, roster, messages: deps.messages });
+  const channels = new ChannelSync({
+    fed,
+    roster,
+    messages: deps.messages,
+    engine: deps.engine,
+    implicit: deps.implicit,
+  });
+  for (const sync of [agents, channels]) {
+    service.register(sync);
+    service.addCollector(sync);
+  }
+  const mailOut = new MailOut({
+    fed,
+    roster,
+    homes: deps.homes,
+    messages: deps.messages,
+  });
+  service.addCollector(mailOut);
+  const stateOut = new StateOut({
+    fed,
+    roster,
+    homes: deps.homes,
+    engine: deps.engine,
+    messages: deps.messages,
+    now: deps.now,
+    fast: (until) => {
+      service.fastUntil(until);
+    },
+  });
+  stateOut.agentWaitSec = deps.agentWaitSec;
+  service.addCollector(stateOut);
+  const inbound = new Inbound({
+    fed,
+    roster,
+    engine: deps.engine,
+    homes: deps.homes,
+    perReplicaPerHour: deps.perReplicaPerHour,
+    now: deps.now,
+    state: stateOut,
+  });
+  service.register(inbound);
+  service.register(inbound.stateHandler(stateOut));
+  service.setInbox(inbound);
+  const held = new HeldMail({
+    fed,
+    engine: deps.engine,
+    messages: deps.messages,
+    mailOut,
+    homes: deps.homes,
+  });
+  service.addCollector(held);
+  deps.presence.setOnLiveRun((task, replica) => {
+    held.onLiveRun(task, replica);
+  });
+  trackWaiting(deps.engine, deps.messages, deps.presence);
 }
 
 // Board sync as one daemon runs it: the signed roster, signed task ops, the

@@ -1,8 +1,9 @@
-import type { JsonValue } from '@dispatch/protocol';
+import type { JsonValue, Message } from '@dispatch/protocol';
 import {
   buildOp,
   generateReplicaKeys,
   opHash,
+  sealPayload,
   stubOf,
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
@@ -190,4 +191,78 @@ export function bloatSegments(
       where === 'append' ? `${text}${junk}` : `${junk}${text}`
     );
   }
+}
+
+// A member's keys, as its keys/replica.json holds them.
+export function keysOf(m: Member): {
+  replica: string;
+  signPriv: string;
+  sealPub: string;
+  sealPriv: string;
+} {
+  return JSON.parse(
+    readFileSync(join(m.handle.syncDir, 'keys', 'replica.json'), 'utf8')
+  ) as { replica: string; signPriv: string; sealPub: string; sealPriv: string };
+}
+
+/** A mail op on `from`'s log, chained on its branch head: `message.hlc` set
+ *  to the op's, one target per `to` member's human homed on its replica, and
+ *  sealed to those members' keys. */
+export function appendSealedMail(
+  dir: string,
+  from: Member,
+  message: Message,
+  to: Member[]
+): FederatedOp {
+  const { replica, signPriv } = keysOf(from);
+  const file = lastSegment(dir, replica);
+  const entries = linesOf(file).map((l) => JSON.parse(l) as LogEntry);
+  const head = entries.at(-1);
+  if (head === undefined) throw new Error(`empty segment ${file}`);
+  const seq = head.seq + 1;
+  const hlc = nextHlc(head.hlc, replica);
+  const recipients = new Map(
+    to.map((m) => [keysOf(m).replica, keysOf(m).sealPub])
+  );
+  const targets = message.to.map((recipient) => {
+    const home = to.find((m) => recipient === `human:${m.handle.handle}`);
+    return {
+      recipient,
+      via: 'direct' as const,
+      homes: home === undefined ? [] : [keysOf(home).replica],
+    };
+  });
+  const { to: sealedTo, sealed } = sealPayload({
+    replica,
+    seq,
+    type: 'mail',
+    payload: { message: { ...message, hlc }, targets } as never,
+    recipients,
+  });
+  const built = buildOp(
+    {
+      replica,
+      seq,
+      prev: opHash(head),
+      hlc,
+      type: 'mail',
+      to: sealedTo,
+      sealed,
+    },
+    signPriv
+  );
+  writeFileSync(
+    file,
+    `${readFileSync(file, 'utf8')}${JSON.stringify(built)}\n`
+  );
+  return built;
+}
+
+/** Appends the replica's last line again: a replayed push. */
+export function duplicateLastLine(dir: string, replica: string): void {
+  const file = lastSegment(dir, replica);
+  const lines = linesOf(file);
+  const last = lines.at(-1);
+  if (last === undefined) throw new Error(`empty segment ${file}`);
+  writeFileSync(file, `${readFileSync(file, 'utf8')}${last}\n`);
 }
