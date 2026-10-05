@@ -921,3 +921,109 @@ describe('DecisionFeed ownership', () => {
     }
   });
 });
+
+describe('DecisionFeed gate context', () => {
+  it('names the task a task proposal drafted and a memory gate refers to', () => {
+    h.titles.set('t-draft', 'Drafted by a peer');
+    h.titles.set('t-mem', 'Remembered');
+    h.gates.push(
+      gate('m-tp', {
+        data: {
+          type: 'task-proposal',
+          task: 't-draft',
+          proposedBy: 'a2a:acme',
+          message: 'm-root',
+        },
+      }),
+      gate('m-mem', {
+        refs: [
+          { type: 'task', id: 't-mem' },
+          { type: 'run', id: 'r-gone' },
+        ],
+        data: {
+          type: 'memory',
+          proposalId: 'mp-1',
+          action: 'add',
+          scope: 'project',
+          kind: 'fact',
+        },
+      })
+    );
+    const items = h.feed.list();
+    expect(items.find((i) => i.messageId === 'm-tp')).toMatchObject({
+      taskId: 't-draft',
+      taskTitle: 'Drafted by a peer',
+    });
+    expect(items.find((i) => i.messageId === 'm-mem')).toMatchObject({
+      taskId: 't-mem',
+      taskTitle: 'Remembered',
+    });
+  });
+
+  it("owns a run-less system gate by its human addressee, a run's gate by the run", () => {
+    const adas = runMeta('r-ada', { dispatchedBy: 'human:ada' });
+    h.runs.push(adas);
+    h.gates.push(
+      gate('m-reg', {
+        to: ['human:sam'],
+        data: {
+          type: 'agent-registration',
+          agent: 'agent:sam/helper',
+          client: 'helper',
+        },
+      }),
+      approvalGate(
+        'm-run',
+        adas.id,
+        'req-1',
+        { command: 'ls' },
+        {
+          to: ['human:sam'],
+        }
+      ),
+      // A run's own question is not the system's: no addressee fallback.
+      gate('m-agent', { from: 'agent:sam/helper', to: ['human:sam'] })
+    );
+    const owners = Object.fromEntries(
+      h.feed.list().map((i) => [i.messageId, i.owner])
+    );
+    expect(owners).toEqual({
+      'm-reg': 'human:sam',
+      'm-run': 'human:ada',
+      'm-agent': undefined,
+    });
+  });
+
+  it('carries the Overseer conversation on its action and tool-approval gates', () => {
+    h.gates.push(
+      gate('m-act', {
+        data: {
+          type: 'overseer-action',
+          conversation: 'c-1',
+          actionId: 'a-1',
+          summary: 'Create a task',
+        },
+      }),
+      gate('m-tool', {
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-9',
+          conversation: 'c-1',
+          tool: 'Bash',
+          input: 'ls',
+          floor: false,
+        },
+      })
+    );
+    const items = h.feed.list();
+    expect(items.map((i) => [i.messageId, i.conversation])).toEqual([
+      ['m-act', 'c-1'],
+      ['m-tool', 'c-1'],
+    ]);
+  });
+
+  it('names no gate message on an item that has none', () => {
+    h.loops.push(cappedLoop('t-1'));
+    expect(h.feed.list()[0]?.messageId).toBeUndefined();
+  });
+});

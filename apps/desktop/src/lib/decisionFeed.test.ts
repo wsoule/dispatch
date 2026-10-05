@@ -128,6 +128,14 @@ describe('decisionTarget', () => {
     });
   });
 
+  test('a gate item opens the message the feed names', () => {
+    expect(
+      decisionTarget(
+        item({ id: 'doc:m-000004', kind: 'doc', messageId: 'm-000005' })
+      )
+    ).toEqual({ kind: 'thread', messageId: 'm-000005' });
+  });
+
   test('a capped fix loop opens the task review, where the ruling happens', () => {
     expect(
       decisionTarget(item({ kind: 'fix-loop-capped', runId: undefined }))

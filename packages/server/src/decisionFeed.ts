@@ -1,7 +1,7 @@
 import type { FloorCheck, NotificationKind } from '@dispatch/core';
 import { notificationKindForMessage } from '@dispatch/core';
 import type { GateData, Message } from '@dispatch/protocol';
-import { gateOf } from '@dispatch/protocol';
+import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
 import type { EventBus, ServerEvent } from './events.js';
 import {
@@ -88,9 +88,13 @@ export interface DecisionItem {
    */
   floor?: FloorCheck | 'unknown';
   /** ActorRef of the human whose run this came from (the one it acts for,
-   *  else its dispatcher) — see withOwner. Absent
-   *  means nobody in particular, so everyone. */
+   *  else its dispatcher) — see withOwner; for a run-less system gate, its
+   *  human addressee. Absent means nobody in particular, so everyone. */
   owner?: string;
+  /** The gate message behind a gate item; absent on fix-loop and stalled-run items. */
+  messageId?: string;
+  /** The Overseer conversation an overseer-action or tool-approval gate is parked on. */
+  conversation?: string;
   disposition: DecisionDisposition;
 }
 
@@ -216,14 +220,41 @@ function oneLine(text: string, max = 120): string {
  * Items with no dispatcher (an auto-filled run, a fix loop, a run from before
  * dispatchedBy existed) stay ownerless, which surfaces read as everyone's.
  */
-function withOwner<T extends { runId?: string }>(
+function withOwner<T extends { runId?: string; owner?: string }>(
   item: T,
   runs: Map<string, RunMeta>
-): T & { owner?: string } {
-  const run = item.runId === undefined ? undefined : runs.get(item.runId);
+): T {
+  if (item.runId === undefined) return item;
+  const run = runs.get(item.runId);
   // The human the run acts for (XH-R9), else whoever dispatched it.
   const owner = run?.operator ?? run?.dispatchedBy;
   return owner === undefined ? item : { ...item, owner };
+}
+
+// A run-less system gate's human addressee: whom XH-R9 routed it to.
+function systemGateOwner(message: Message): string | undefined {
+  if (message.from !== SYSTEM_ADDRESS) return undefined;
+  return message.to.find((address) => address.startsWith('human:'));
+}
+
+// The task a gate is about when no run names one: a wake's target, a doc or
+// task-proposal gate's own field, or a memory gate's task ref.
+function gateTaskId(
+  message: Message,
+  gate: GateData | null
+): string | undefined {
+  switch (gate?.type) {
+    case 'wake':
+      return addressId(gate.target, 'task:');
+    case 'doc':
+      return gate.taskId;
+    case 'task-proposal':
+      return message.from === SYSTEM_ADDRESS ? gate.task : undefined;
+    case 'memory':
+      return message.refs.find((ref) => ref.type === 'task')?.id;
+    default:
+      return undefined;
+  }
 }
 
 // Run ids some later run resumed from. Built once per recompute rather than
@@ -449,18 +480,24 @@ export class DecisionFeed {
           ? gate.runId
           : addressId(message.from, 'run:');
       const run = runId === undefined ? undefined : runs.get(runId);
-      let taskId = run?.taskId;
-      if (gate?.type === 'wake') taskId ??= addressId(gate.target, 'task:');
-      else if (gate?.type === 'doc') taskId ??= gate.taskId;
+      const taskId = run?.taskId ?? gateTaskId(message, gate);
+      const owner = runId === undefined ? systemGateOwner(message) : undefined;
+      const conversation =
+        gate?.type === 'overseer-action' || gate?.type === 'tool-approval'
+          ? gate.conversation
+          : undefined;
       const taskTitle =
         run?.taskTitle ??
         (taskId === undefined ? undefined : this.taskTitle(taskId));
       const base = {
         id: `${kind}:${message.id}`,
         kind,
+        messageId: message.id,
         runId,
         taskId,
         taskTitle,
+        ...(owner === undefined ? {} : { owner }),
+        ...(conversation === undefined ? {} : { conversation }),
         since: message.createdAt,
         ageMs: ageSince(message.createdAt, nowMs),
         state: 'open' as const,
