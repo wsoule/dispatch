@@ -535,8 +535,32 @@ describe('messaging HTTP routes', () => {
     const sent = await json<{ deliveries: { id: string }[] }>(sendRes);
     const deliveryId = sent.deliveries[0].id;
 
+    // b cannot read the message, so its delivery answers as an absent one (§9.3).
+    const hidden = await fetch(`${baseUrl}/api/deliveries/${deliveryId}/read`, {
+      method: 'POST',
+      headers: authHeaders(b.token),
+    });
+    expect(hidden.status).toBe(404);
+    expect(await json<{ error: string }>(hidden)).toEqual({
+      error: `no delivery ${deliveryId}`,
+    });
+
+    // b takes part in this one, so it may see a's delivery but not mark it.
+    const bothRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [a.address, b.address],
+        kind: 'message',
+        body: 'for both',
+      }),
+    });
+    const both = await json<{
+      deliveries: { id: string; recipient: string }[];
+    }>(bothRes);
+    const toA = both.deliveries.find((d) => d.recipient === a.address);
     const forbidden = await fetch(
-      `${baseUrl}/api/deliveries/${deliveryId}/read`,
+      `${baseUrl}/api/deliveries/${toA?.id ?? ''}/read`,
       { method: 'POST', headers: authHeaders(b.token) }
     );
     expect(forbidden.status).toBe(403);
@@ -905,13 +929,6 @@ describe('messaging HTTP routes', () => {
         `cannot read the mailbox for ${taskA}`,
       ],
       [
-        fetch(`${baseUrl}/api/deliveries/${deliveryId}/read`, {
-          method: 'POST',
-          headers: authHeaders(bToken),
-        }),
-        `cannot mark ${deliveryId} read`,
-      ],
-      [
         fetch(`${baseUrl}/api/channels/other/members`, {
           method: 'POST',
           headers: authHeaders(bToken),
@@ -946,6 +963,14 @@ describe('messaging HTTP routes', () => {
         `no message ${id}`
       );
     }
+    const markRead = await fetch(
+      `${baseUrl}/api/deliveries/${deliveryId}/read`,
+      { method: 'POST', headers: authHeaders(bToken) }
+    );
+    expect(markRead.status).toBe(404);
+    expect((await json<{ error: string }>(markRead)).error).toBe(
+      `no delivery ${deliveryId}`
+    );
   });
 
   it('a request-tier teammate cannot list threads or decisions, or read mail it is not part of', async () => {
@@ -1910,7 +1935,8 @@ describe('messaging routes — direct unit coverage', () => {
       getMailbox(ctxForRun(review.id), new URL('http://x/api/mailbox'))
     );
     expect(own.items).toEqual([]);
-    expect(markDeliveryRead(ctxForRun(review.id), deliveryId).status).toBe(403);
+    // The review run cannot read the task's mail, so its delivery answers as absent.
+    expect(markDeliveryRead(ctxForRun(review.id), deliveryId).status).toBe(404);
     await expect(
       messaging.engine.reply(
         question.message.id,
@@ -2064,7 +2090,7 @@ describe('messaging routes — direct unit coverage', () => {
 
     const otherTask = store.create({ title: 'Unrelated task 2' });
     const run3 = await orchestrator.dispatch(otherTask.meta.id, 'claude', {});
-    const forbidden = markDeliveryRead(ctxForRun(run3.id), heldDelivery.id);
-    expect(forbidden.status).toBe(403);
+    const hidden = markDeliveryRead(ctxForRun(run3.id), heldDelivery.id);
+    expect(hidden.status).toBe(404);
   });
 });

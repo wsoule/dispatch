@@ -742,11 +742,16 @@ export function getMailbox(ctx: ApiContext, url: URL): Response {
 }
 
 // POST /api/deliveries/:id/read — only the delivery's own recipient (or its
-// task's run, or a deciding human) may mark it read.
+// task's run, or a deciding human) may mark it read. A caller that may not read
+// its message gets the absent id's 404, so the delivery's existence is not disclosed.
 export function markDeliveryRead(ctx: ApiContext, id: string): Response {
   const principal = requirePrincipal(ctx);
   const delivery = ctx.messaging.store.getDelivery(id);
-  if (delivery === null) return errorResponse(404, `no delivery ${id}`);
+  if (
+    delivery === null ||
+    !ctx.messaging.engine.canRead(delivery.messageId, senderOf(principal))
+  )
+    return errorResponse(404, `no delivery ${id}`);
   if (!canActAs(ctx, principal, delivery.recipient)) {
     return errorResponse(403, `cannot mark ${id} read`);
   }
