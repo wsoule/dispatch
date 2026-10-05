@@ -36,6 +36,8 @@ export type ProjectView =
   /** Conversations on the message bus: Needs you, Channels, Direct.
    * `threadFocus` says which thread is open. */
   | 'threads'
+  /** What runs remember: Personal, Project, Team, Proposals and Stale. */
+  | 'memory'
   | 'brain-dump'
   /** Point at an element in a live browser and hand it to an agent. */
   | 'design'

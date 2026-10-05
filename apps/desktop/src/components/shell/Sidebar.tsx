@@ -12,6 +12,7 @@ import {
   Inbox,
   Layers,
   LayoutDashboard,
+  Lightbulb,
   Link2,
   ListChecks,
   MessagesSquare,
@@ -110,6 +111,7 @@ export const PROJECT_NAV_VIEWS: PaletteView[] = [
   { id: 'cockpit', label: 'Home' },
   { id: 'inbox', label: 'Inbox' },
   { id: 'threads', label: 'Threads' },
+  { id: 'memory', label: 'Memory' },
   ...[...WORK_VIEWS, ...RUN_PROJECT_VIEWS, ...CODE_VIEWS].map(
     ({ id, label }) => ({ id, label })
   ),
@@ -392,6 +394,13 @@ export function Sidebar({
         icon: <MessagesSquare strokeWidth={2} />,
         count: threadsNeedsYouCount > 0 ? threadsNeedsYouCount : undefined,
         state: threadsNeedsYouCount > 0 ? 'attention' : undefined,
+        disabled: !hasActiveProject,
+      },
+      {
+        // What runs remember: personal, project and team lessons.
+        id: 'memory',
+        label: 'Memory',
+        icon: <Lightbulb strokeWidth={2} />,
         disabled: !hasActiveProject,
       },
       {

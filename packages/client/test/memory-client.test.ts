@@ -224,6 +224,18 @@ describe('memory write and Settings bindings', () => {
     ]);
   });
 
+  it('reads and moves entries narrowed to another checkout', async () => {
+    expect(
+      await calls(async (c) => {
+        await c.memoryProjectKeys();
+        await c.rehomeMemory('bbbbbbbbbbbb');
+      })
+    ).toEqual([
+      [`${BASE}/api/memory/rehome`, 'GET', undefined],
+      [`${BASE}/api/memory/rehome`, 'POST', { from: 'bbbbbbbbbbbb' }],
+    ]);
+  });
+
   it('lists proposals, with a state when given, and reads one', async () => {
     expect(
       await calls(async (c) => {

@@ -68,6 +68,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'cockpit',
     'inbox',
     'threads',
+    'memory',
     'overview',
     'board',
     'projects',
@@ -86,6 +87,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'Home',
     'Inbox',
     'Threads',
+    'Memory',
     'Overview',
     'Tasks',
     'Projects',
@@ -108,6 +110,7 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
     'cockpit',
     'inbox',
     'threads',
+    'memory',
     'drafts',
     'overseer',
     'overview',
@@ -354,10 +357,11 @@ test('Favorites lists starred views and tasks above Work and opens them', () => 
     },
   });
   const rows = navRows();
-  expect(rows.slice(0, 8)).toEqual([
+  expect(rows.slice(0, 9)).toEqual([
     'cockpit',
     'inbox',
     'threads',
+    'memory',
     'drafts',
     'overseer',
     'fav-view-v-1',

@@ -781,6 +781,13 @@ export class SqliteMemoryStore implements MemoryStore {
       .run(entry.id, entry.rev, JSON.stringify(entry), by, cause, at);
   }
 
+  projectKeyCounts(): { key: string; count: number }[] {
+    return queryAll<{ key: string; count: number }>(
+      this.db,
+      "SELECT project_key AS key, COUNT(*) AS count FROM entries WHERE scope = 'personal' AND status = 'active' AND project_key IS NOT NULL GROUP BY project_key ORDER BY project_key"
+    );
+  }
+
   revisionsSince(afterRowid: number, limit: number): RevisionMark[] {
     return queryAll<{
       rowid: number;

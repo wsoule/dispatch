@@ -3,10 +3,12 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   activityItems,
+  entryActions,
   entryProvenance,
   memoryQueryKey,
   memoryQueryRootKey,
   memorySettingsModel,
+  memoryTabs,
   proposalCardModel,
 } from './memory';
 import type { Content } from './memory.test-helper';
@@ -470,5 +472,102 @@ describe('entryProvenance', () => {
         entry({ origin: 'amendment:a-1@2026-09-01', trust: 'human' })
       )
     ).toBe('Team hazard · from a task amendment · human-written');
+  });
+});
+
+describe('entryActions', () => {
+  const decider = { canDecide: true, me: 'human:wyat' };
+  const teammate = { canDecide: false, me: 'human:ada' };
+  const none = {
+    pin: false,
+    retire: false,
+    confirm: false,
+    promote: false,
+    delete: false,
+  };
+  it.each([
+    [
+      'team',
+      'agent',
+      decider,
+      false,
+      { pin: true, retire: true, confirm: true, promote: false, delete: true },
+    ],
+    [
+      'team',
+      'human',
+      decider,
+      false,
+      { pin: true, retire: true, confirm: false, promote: false, delete: true },
+    ],
+    ['team', 'agent', teammate, false, { ...none, retire: true }],
+    [
+      'personal',
+      'agent',
+      decider,
+      true,
+      { pin: true, retire: true, confirm: true, promote: true, delete: true },
+    ],
+    ['personal', 'agent', decider, false, none],
+  ] as const)(
+    '%s %s entry for %o (own: %s)',
+    (scope, trust, viewer, own, expected) => {
+      expect(
+        entryActions(
+          entry({ scope, trust, author: own ? viewer.me : 'human:someone' }),
+          viewer
+        )
+      ).toEqual(expected);
+    }
+  );
+
+  it('offers a run’s entry in your personal memory as yours', () => {
+    expect(
+      entryActions(
+        entry({ scope: 'personal', trust: 'agent', author: 'run:r-9f2c01' }),
+        decider
+      ).delete
+    ).toBe(true);
+  });
+
+  it('offers no retire on a retired entry', () => {
+    expect(
+      entryActions(
+        entry({ scope: 'team', state: 'retired', status: 'retired' }),
+        decider
+      ).retire
+    ).toBe(false);
+  });
+});
+
+describe('memoryTabs', () => {
+  it('puts stale entries under Stale, not under their scope tab', () => {
+    const tabs = memoryTabs([
+      entry({ scope: 'team', state: 'stale' }),
+      entry({ scope: 'team', state: 'active' }),
+    ]);
+    expect(tabs.team).toHaveLength(1);
+    expect(tabs.stale).toHaveLength(1);
+  });
+
+  it('sorts each tab by its scope', () => {
+    const tabs = memoryTabs([
+      entry({ id: 'mem-p', scope: 'personal' }),
+      entry({ id: 'mem-j', scope: 'project' }),
+      entry({ id: 'mem-t', scope: 'team' }),
+    ]);
+    expect(
+      [tabs.personal, tabs.project, tabs.team].map((t) => t[0]?.id)
+    ).toEqual(['mem-p', 'mem-j', 'mem-t']);
+  });
+});
+
+describe('entryProvenance for a replicated entry', () => {
+  it('says it came from a teammate’s machine', () => {
+    expect(
+      entryProvenance(
+        entry({ origin: 'sync:ada-0000000a:mem-01K', author: 'human:ada' })
+      )
+    ).toContain('from a teammate’s machine');
   });
 });

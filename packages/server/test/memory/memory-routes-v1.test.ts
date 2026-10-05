@@ -1,3 +1,4 @@
+import { createMemoryIds, insertFresh, newMemoryEntry } from '@dispatch/memory';
 import { gateOf } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -457,6 +458,81 @@ describe('personal privacy', () => {
 
 // The booted daemon decides A2A provenance the way docs does: from handoff
 // evidence, never the a2a label alone.
+describe('re-homing (D33)', () => {
+  it('a decide-tier teammate re-homes only their own entries; the agentToken gets 403', async () => {
+    const OTHER = 'bbbbbbbbbbbb';
+    // The owner's entry, narrowed to another checkout.
+    insertFresh(
+      handle.memory.stores.personal('self'),
+      createMemoryIds(),
+      Date.now(),
+      (id) =>
+        newMemoryEntry(
+          {
+            scope: 'personal',
+            kind: 'fact',
+            title: 'the owner’s old checkout',
+            body: 'b',
+            author: 'human:test',
+            trust: 'human',
+            projectKey: OTHER,
+          },
+          id,
+          new Date().toISOString()
+        ),
+      'human:test',
+      'save'
+    );
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const saved = await json<{ id: string }>(
+      await rawFetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: authHeaders(ada),
+        body: JSON.stringify({
+          scope: 'personal',
+          kind: 'fact',
+          title: 'ada’s old checkout',
+          body: 'b',
+          projectOnly: true,
+        }),
+      })
+    );
+    const identity = handle.memory.host.operatorOf({
+      address: 'human:ada',
+      canDecide: true,
+      kind: 'human',
+    })?.identity;
+    const adaStore = handle.memory.stores.personal(identity ?? '');
+    const entry = adaStore.getEntry(saved.id);
+    if (entry === null) throw new Error('ada’s entry was not saved');
+    adaStore.updateEntry(
+      { ...entry, projectKey: OTHER, rev: entry.rev + 1 },
+      'human:ada',
+      'edit'
+    );
+    const keys = await json<{ current: string; others: unknown[] }>(
+      await rawFetch(`${base}/api/memory/rehome`, { headers: authHeaders(ada) })
+    );
+    expect(keys.others).toEqual([{ key: OTHER, count: 1 }]);
+    const moved = await rawFetch(`${base}/api/memory/rehome`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+      body: JSON.stringify({ from: OTHER }),
+    });
+    expect(await json<unknown>(moved)).toEqual({ moved: 1 });
+    expect(adaStore.getEntry(saved.id)?.projectKey).toBe(keys.current);
+    expect(handle.memory.stores.personal('self').projectKeyCounts()).toEqual([
+      { key: OTHER, count: 1 },
+    ]);
+    const agent = await rawFetch(`${base}/api/memory/rehome`, {
+      method: 'POST',
+      headers: authHeaders(handle.tokens.agentToken),
+      body: JSON.stringify({ from: OTHER }),
+    });
+    expect(agent.status).toBe(403);
+  });
+});
+
 describe('A2A provenance', () => {
   it('a run of a handed-off task acts for no one and lists no project memory', async () => {
     await fetch(`${base}/api/memory`, {

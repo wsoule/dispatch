@@ -644,6 +644,32 @@ export function memoryActivityRoute(ctx: ApiContext, url: URL): Response {
   });
 }
 
+// GET /api/memory/rehome: the caller's personal entries narrowed to other
+// checkouts, by key (D33).
+export function memoryRehomeKeysRoute(ctx: ApiContext): Response {
+  const principal = requireMemoryPrincipal(ctx);
+  return jsonResponse(
+    ctx.memory.requireEngine().personalProjectKeys(principal)
+  );
+}
+
+// POST /api/memory/rehome { from }: moves the caller's own entries narrowed
+// to `from` to this checkout.
+export async function memoryRehomeRoute(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const principal = requireMemoryPrincipal(ctx);
+  const parsed = await bodyOf(req, false);
+  if (!parsed.ok) return parsed.response;
+  const from = (parsed.value as { from?: unknown }).from;
+  if (typeof from !== 'string')
+    throw new MemoryError('invalid', 'from: expected a project key', 'from');
+  return jsonResponse(
+    await retryBusy(() => ctx.memory.requireEngine().rehome(principal, from))
+  );
+}
+
 // The calling human and their handle in this project; `does` names what only a human does.
 function callingHuman(
   ctx: ApiContext,

@@ -231,6 +231,7 @@ const ORIGIN_TEXT: Record<string, string> = {
   ledger: 'from the ledger',
   claude: 'from your Claude notes',
   amendment: 'from a task amendment',
+  sync: 'from a teammate’s machine',
 };
 
 /** One line on where an entry came from: scope and kind, its source or
@@ -262,4 +263,68 @@ export function entryProvenance(entry: MemoryEntryView): string {
   if (entry.state === 'stale') parts.push('stale');
   if (entry.pinned) parts.push('pinned');
   return parts.join(' · ');
+}
+
+/** What the Memory view may offer on an entry. */
+export interface EntryActions {
+  pin: boolean;
+  retire: boolean;
+  confirm: boolean;
+  promote: boolean;
+  delete: boolean;
+}
+
+/** Who is looking: whether they decide, and their own address. */
+export interface MemoryViewer {
+  canDecide: boolean;
+  me: string;
+}
+
+/**
+ * The spec's Lifecycle table for one entry and viewer. A personal entry is the
+ * viewer's own unless another human wrote it (a run or agent acting for them
+ * writes into their store); shared entries take the decide tier, except that
+ * anyone may ask to retire one, which becomes a proposal.
+ */
+export function entryActions(
+  entry: MemoryEntryView,
+  viewer: MemoryViewer
+): EntryActions {
+  const live = entry.state !== 'retired';
+  if (entry.scope === 'personal') {
+    const own =
+      !entry.author.startsWith('human:') || entry.author === viewer.me;
+    return {
+      pin: own,
+      retire: own && live,
+      confirm: own && entry.trust === 'agent',
+      promote: own && live,
+      delete: own,
+    };
+  }
+  return {
+    pin: viewer.canDecide,
+    retire: live,
+    confirm: viewer.canDecide && entry.trust === 'agent',
+    promote: false,
+    delete: viewer.canDecide,
+  };
+}
+
+/** The Memory view's entry tabs: each scope's live entries, and Stale. */
+export interface MemoryTabs {
+  personal: MemoryEntryView[];
+  project: MemoryEntryView[];
+  team: MemoryEntryView[];
+  stale: MemoryEntryView[];
+}
+
+/** Sorts entries into their tabs; a stale entry shows under Stale only. */
+export function memoryTabs(entries: readonly MemoryEntryView[]): MemoryTabs {
+  const tabs: MemoryTabs = { personal: [], project: [], team: [], stale: [] };
+  for (const e of entries) {
+    if (e.state === 'stale') tabs.stale.push(e);
+    else tabs[e.scope].push(e);
+  }
+  return tabs;
 }
