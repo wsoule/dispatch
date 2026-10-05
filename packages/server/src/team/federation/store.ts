@@ -67,7 +67,8 @@ export type FedMetaKey =
   | 'pending_invite'
   | 'audit_exported'
   | 'device'
-  | 'agents_republished';
+  | 'agents_republished'
+  | 'memory_rev';
 
 interface KeyRow {
   replica: string;

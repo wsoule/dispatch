@@ -15,6 +15,7 @@ import { fingerprint, sealPayload } from '@dispatch/protocol/federation';
 import type { StatePayload } from '@dispatch/protocol/federation';
 import { join } from 'node:path';
 
+import { createTeamMemoryPort } from '../../../../src/memory/teamPort.js';
 import { AgentSync } from '../../../../src/team/federation/agents.js';
 import { ChannelSync } from '../../../../src/team/federation/channels.js';
 import { Homes } from '../../../../src/team/federation/homes.js';
@@ -22,10 +23,13 @@ import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js'
 import { Inbound } from '../../../../src/team/federation/inbound.js';
 import type { StateHooks } from '../../../../src/team/federation/inbound.js';
 import { MailOut } from '../../../../src/team/federation/mail.js';
+import { MemorySync } from '../../../../src/team/federation/memory.js';
 import { Presence } from '../../../../src/team/federation/presence.js';
 import { trackWaiting } from '../../../../src/team/federation/presence.js';
 import type { RunInfo } from '../../../../src/team/federation/presence.js';
 import { HeldMail, StateOut } from '../../../../src/team/federation/state.js';
+import { testEngine } from '../../../memory/fixtures.js';
+import type { TestMemoryHost } from '../../../memory/fixtures.js';
 import { MemoryRemote } from './memoryTransport.js';
 import { MemoryV1, serviceReplica } from './serviceReplica.js';
 import type { ServiceReplica } from './serviceReplica.js';
@@ -129,6 +133,13 @@ export interface MessagingReplica extends ServiceReplica {
   startRun(meta: RunInfo): void;
   /** `other`'s pass, then this replica's. */
   settleWith(other: MessagingReplica): Promise<void>;
+  /** Team memory over an in-memory memory.db, when the team asked for it. */
+  memory?: {
+    engine: ReturnType<typeof testEngine>['engine'];
+    host: TestMemoryHost;
+    shared: ReturnType<typeof testEngine>['shared'];
+    sync: MemorySync;
+  };
 }
 
 export interface TeamOpts {
@@ -139,6 +150,10 @@ export interface TeamOpts {
   remoteMailPerReplicaPerHour?: number;
   maxWaitingPerPublisher?: number;
   stateOpsPerHour?: number;
+  /** Each replica gets a memory engine and a registered MemorySync. */
+  withMemory?: boolean;
+  /** Handles that save a team entry before the team is founded. */
+  memoryFirst?: readonly string[];
   maxParkedPerPublisher?: number;
   restagePerPublisher?: number;
 }
@@ -277,6 +292,23 @@ export function messagingReplica(
   base.service.register(inbound);
   base.service.register(inbound.stateHandler(stateOut));
   base.service.setInbox(inbound);
+  let memory: MessagingReplica['memory'];
+  if (opts.withMemory === true) {
+    const m = testEngine();
+    m.host.clock = () => base.clock.now;
+    const sync = new MemorySync({
+      fed: base.fed,
+      roster: base.roster,
+      port: createTeamMemoryPort({
+        engine: m.engine,
+        shared: m.shared,
+        host: m.host,
+      }),
+    });
+    base.service.register(sync);
+    base.service.addCollector(sync);
+    memory = { engine: m.engine, host: m.host, shared: m.shared, sync };
+  }
   const replica: MessagingReplica = {
     ...base,
     remote,
@@ -312,8 +344,10 @@ export function messagingReplica(
     },
     close: () => {
       db.close();
+      memory?.shared.close();
       base.close();
     },
+    ...(memory === undefined ? {} : { memory }),
   };
   return replica;
 }
@@ -341,6 +375,17 @@ export async function foundedTeamWith(
   const remote = new MemoryRemote();
   const v1 = new MemoryV1();
   const rs = handles.map((h) => messagingReplica(h, remote, v1, opts));
+  for (const [i, r] of rs.entries())
+    if ((opts.memoryFirst ?? []).includes(handles[i] ?? ''))
+      await r.memory?.engine.save(
+        { address: `human:${handles[i]}`, canDecide: true, kind: 'human' },
+        {
+          scope: 'team',
+          kind: 'fact',
+          title: 'from before the team',
+          body: 'b',
+        }
+      );
   const [founder, ...rest] = rs;
   if (founder === undefined) return rs;
   founder.roster.found('acme');

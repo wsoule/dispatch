@@ -186,6 +186,7 @@ import {
   buildFederation,
   wireAgentsAndChannels,
   wireMessagingFederation,
+  wireTeamMemory,
 } from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
 import type { FederationContext } from './team/federation/routes.js';
@@ -1554,6 +1555,9 @@ async function bootServer(
       ? {}
       : { preflight: opts.memoryPreflight }),
   });
+  // Team memory rides signed ops once memory.db is open (F3).
+  if (federation !== null && memory.teamPort !== null)
+    wireTeamMemory(federation, memory.teamPort);
   memoryReceipts = memoryReceiptsStep(
     () => memory.shared,
     memoryRestoreDir(rootDir)
