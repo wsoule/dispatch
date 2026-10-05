@@ -167,12 +167,16 @@ export interface SubmitProposalInput {
   origin?: string;
 }
 
-// A replicated team entry this daemon's policy must rule on (federation F3).
+// A replicated team entry this daemon's policy must rule on (federation F3):
+// new here (`add`), or a change to the held entry `target` (`supersede`,
+// approved in place). `reason` says what else the change sets.
 export interface SyncedProposalInput {
   id: string;
   origin: string;
   author: Address;
   content: ProposalContent;
+  target?: string | null;
+  reason?: string | null;
 }
 
 export type SyncedProposalResult =
@@ -1011,11 +1015,14 @@ export class MemoryEngine {
   proposeSynced(input: SyncedProposalInput): SyncedProposalResult {
     const store = this.deps.stores.shared();
     const now = this.now();
+    const target = input.target ?? null;
     const draft = newProposal(
       {
-        action: 'add',
+        action: target === null ? 'add' : 'supersede',
         scope: 'team',
+        target,
         content: input.content,
+        reason: input.reason ?? null,
         author: input.author,
         authorTrust: 'agent',
         origin: input.origin,
@@ -1026,7 +1033,8 @@ export class MemoryEngine {
     if (this.ruleOn(draft).mode === 'auto') return { status: 'auto' };
     try {
       checkSharedOrigin(store, input.origin);
-      this.checkDuplicate(store, draft, now);
+      // A change to a held entry may keep its content (a pin, a status).
+      if (target === null) this.checkDuplicate(store, draft, now);
     } catch (err) {
       if (err instanceof MemoryError && err.code === 'conflict')
         return { status: 'duplicate' };
@@ -1040,7 +1048,11 @@ export class MemoryEngine {
   }
 
   /** A later replicated change to an entry still waiting as an open proposal. */
-  reviseSyncedProposal(proposalId: string, content: ProposalContent): void {
+  reviseSyncedProposal(
+    proposalId: string,
+    content: ProposalContent,
+    reason: string | null = null
+  ): void {
     const store = this.deps.stores.shared();
     store.transaction(() => {
       const p = store.getProposal(proposalId);
@@ -1048,6 +1060,7 @@ export class MemoryEngine {
       store.updateProposal({
         ...p,
         content,
+        reason,
         contentHash: memoryContentHash(content),
       });
     });
@@ -1469,10 +1482,37 @@ export class MemoryEngine {
           ? 'human'
           : 'confirmed';
     const content = p.action === 'retire' ? null : p.content;
-    // A replicated entry keeps its id on every machine (federation F3),
+    // A replicated entry keeps its id on every machine (federation F3): a
+    // change to one held here applies in place; a new one takes its id,
     // unless its handle collides here, when it gets a fresh one.
     let synced = syncedEntryId(p.origin);
-    if (synced !== null && store.getEntry(synced) !== null) synced = null;
+    const held = synced === null ? null : store.getEntry(synced);
+    if (held !== null && content !== null) {
+      const revised = this.revise(
+        store,
+        held,
+        {
+          ...content,
+          trust,
+          decidedBy: decision.decidedBy,
+          decidedByPolicy: decision.decidedByPolicy,
+        },
+        by,
+        'gate'
+      );
+      const proposal: MemoryProposal = {
+        ...p,
+        state: 'approved',
+        gate: gate ?? p.gate,
+        result: held.id,
+        decidedBy: decision.decidedBy,
+        decidedByPolicy: decision.decidedByPolicy,
+        decidedAt: now,
+      };
+      store.updateProposal(proposal);
+      return { proposal, created: revised, retired: null };
+    }
+    if (held !== null) synced = null;
     const ids: MemoryIds = {
       ...this.ids,
       entry: (ms) => {

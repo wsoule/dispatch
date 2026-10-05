@@ -49,6 +49,9 @@ export class RecordingDocsPort implements DocsPort {
   answer: 'applied' | 'parked' | 'dropped' = 'applied';
   pending: { doc: string; kind: 'put'; n: number }[] = [];
   publishedBatches: number[][] = [];
+  publishedClocks: string[][] = [];
+  /** Leaves what was published in `pending` minus the batch, as a real port does. */
+  keepUnpublished = false;
   dropped: {
     replica: string;
     seq: number;
@@ -73,9 +76,15 @@ export class RecordingDocsPort implements DocsPort {
   pendingDocOps(): { doc: string; kind: 'put'; n: number }[] {
     return this.pending;
   }
-  published(bodies: readonly { [key: string]: unknown }[]): void {
+  published(
+    bodies: readonly { [key: string]: unknown }[],
+    clocks: readonly string[] = []
+  ): void {
     this.publishedBatches.push(bodies.map((b) => Number(b['n'])));
-    this.pending = [];
+    this.publishedClocks.push([...clocks]);
+    this.pending = this.keepUnpublished
+      ? this.pending.slice(bodies.length)
+      : [];
   }
   parkedDropped(
     meta: { replica: string; seq: number; reason: 'overflow' | 'revoked' },
@@ -211,12 +220,20 @@ export interface TeamOpts {
   stateOpsPerHour?: number;
   /** Each replica gets a memory engine and a registered MemorySync. */
   withMemory?: boolean;
+  /** How many of each replica's op hashes fed_seen_ops keeps. */
+  seenOpsKept?: number;
+  /** A bare repo every replica syncs through over git instead of memory. */
+  gitRemote?: string;
   /** Set by foundedTeamWith on the founder, which installs `license`. */
   installLicense?: boolean;
   /** Each replica gets a recording DocsPort and a registered DocSync. */
   docs?: boolean;
   /** A license: its key installed on the founder, its public key on all. */
   license?: { key: string; publicKey: string };
+  /** Sync proposals one publisher may have open (FW-R37(3)). */
+  memoryOpenProposals?: number;
+  /** New team entries one publisher may start per hour (FW-R37(3)). */
+  memoryNewPerHour?: number;
   /** Handles that save a team entry before the team is founded. */
   memoryFirst?: readonly string[];
   maxParkedPerPublisher?: number;
@@ -232,6 +249,10 @@ export function messagingReplica(
   opts: TeamOpts = {}
 ): MessagingReplica {
   const base = serviceReplica(handle, remote, v1, {
+    ...(opts.gitRemote === undefined ? {} : { gitRemote: opts.gitRemote }),
+    ...(opts.seenOpsKept === undefined
+      ? {}
+      : { seenOpsKept: opts.seenOpsKept }),
     ...(opts.license === undefined
       ? {}
       : {
@@ -389,7 +410,13 @@ export function messagingReplica(
         engine: m.engine,
         shared: m.shared,
         host: m.host,
+        ...(opts.memoryOpenProposals === undefined
+          ? {}
+          : { maxOpenPerPublisher: opts.memoryOpenProposals }),
       }),
+      ...(opts.memoryNewPerHour === undefined
+        ? {}
+        : { newPerHour: opts.memoryNewPerHour }),
     });
     base.service.register(sync);
     base.service.addCollector(sync);

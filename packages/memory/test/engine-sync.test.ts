@@ -116,4 +116,48 @@ describe('synced proposals (federation F3)', () => {
     t.engine.reviseSyncedProposal(p.id, { ...content, body: 'later' });
     expect(t.shared.getProposal(p.id)?.content?.body).toBe(content.body);
   });
+
+  it('applies an approved change to a held entry in place', async () => {
+    const t = setup();
+    const id = (await t.engine.save(
+      { address: 'human:ada', canDecide: true, kind: 'human' },
+      {
+        scope: 'team',
+        kind: 'hazard',
+        title: content.title,
+        body: content.body,
+      }
+    )) as { id: string };
+    const out = t.engine.proposeSynced({
+      id: id.id,
+      origin: syncOrigin('ada-0000000a', id.id, 1),
+      author: 'agent:dispatch',
+      content,
+      target: id.id,
+      reason: 'pinned',
+    });
+    if (out.status !== 'proposed') throw new Error(out.status);
+    await out.raised;
+    expect(t.shared.getProposal(out.proposal)).toMatchObject({
+      action: 'supersede',
+      target: id.id,
+      reason: 'pinned',
+    });
+    t.engine.applyGateAnswer({
+      proposalId: out.proposal,
+      gateId: 'm-gate-1',
+      choice: 'approve',
+      by: 'human:bob',
+      reason: '',
+      expired: false,
+    });
+    expect(t.shared.listEntries({ scopes: ['team'] }).map((e) => e.id)).toEqual(
+      [id.id]
+    );
+    expect(t.shared.getEntry(id.id)).toMatchObject({
+      status: 'active',
+      decidedBy: 'human:bob',
+      trust: 'confirmed',
+    });
+  });
 });

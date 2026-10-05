@@ -58,6 +58,8 @@ const RESTAGE_PER_PASS = 2_000;
 
 /** Team messaging op types, applied only once mailReady (FW-R32(7)). */
 const F2_TYPES = new Set(['presence', 'agent', 'channel', 'mail', 'state']);
+/** Op types a handler may ask to reread; their hashes are kept (FW-R37(2)). */
+const REREAD_TYPES = new Set(['doc']);
 
 /** How soon the next pass runs while an asker waits (fastUntil). */
 const FAST_PASS_MS = 10_000;
@@ -129,6 +131,8 @@ export interface OpHandler {
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped';
   /** After each pass that ran to the end: project what the pass applied. */
   passComplete?(): void;
+  /** Its applied ops count in `applied`, as task ops do (board state). */
+  readonly countsApplied?: boolean;
   /** Retention dropped a parked op of this type (XD1c). */
   dropped?(op: FederatedOp, reason: 'overflow' | 'revoked'): void;
 }
@@ -386,11 +390,12 @@ export class FederationService {
         if (!(err instanceof TransportOffline)) throw err;
       }
       // From one below each cursor, so a rival of the head op is seen (FW-R23).
+      // A reread pulls its replica again from below the asked-for seqs.
       const marks = new Map(this.watermarks(1));
       for (const [replica, seqs] of this.rereads)
         marks.set(
           replica,
-          Math.min(marks.get(replica) ?? 0, Math.max(0, Math.min(...seqs) - 1))
+          Math.min(marks.get(replica) ?? 0, Math.max(0, Math.min(...seqs) - 2))
         );
       const entries = await transport.pull(marks);
       this.lastError = null;
@@ -1004,6 +1009,9 @@ export class FederationService {
       });
       return 'moved';
     }
+    // FW-R37(2): the hash of an op a handler may reread is kept before it waits.
+    if (REREAD_TYPES.has(entry.type))
+      fed.rememberReread(r, entry.seq, opHash(entry));
     // FW-R32(2), FW-R33(1): every verified mail op, a pruned one too, is
     // remembered before it can wait, so a forward of it can be checked.
     if (entry.type === 'mail') fed.rememberMail(r, entry.seq, opHash(entry));
@@ -1073,7 +1081,10 @@ export class FederationService {
     ctx: StageContext
   ): 'applied' | 'parked' | 'dropped' {
     try {
-      return handler.stage(op, ctx);
+      const out = handler.stage(op, ctx);
+      if (out === 'applied' && handler.countsApplied === true)
+        this.applied += 1;
+      return out;
     } catch (err) {
       dropNote(
         this.opts.fed,
@@ -1126,13 +1137,20 @@ export class FederationService {
     }
   }
 
-  // XD1e: the ops a handler asked for again, each verified again against
-  // its publisher's decided key and the hash seen here, staged once more.
+  // XD1e: the ops a handler asked for again, from this pass's pull (lowered
+  // to below them). Each stages again only when its hash matches the one
+  // kept when it was first verified (FW-R37(2)), and its signature and
+  // content check against its predecessor's clock; else it is refused.
   private stageRereads(entries: readonly LogEntry[], now: Date): void {
     if (this.rereads.size === 0) return;
     const { ledger, fed, roster } = this.opts;
     const asked = new Map(this.rereads);
     this.rereads.clear();
+    const byHash = new Map<string, LogEntry>();
+    for (const e of entries) {
+      const h = orNull(() => opHash(e));
+      if (h !== null) byHash.set(h, e);
+    }
     ledger.atomically(() => {
       const view = roster.view();
       if (view === null) return;
@@ -1143,22 +1161,23 @@ export class FederationService {
       };
       for (const e of entries) {
         if (asked.get(e.replica)?.has(e.seq) !== true || isStub(e)) continue;
+        const kept = fed.rereadSeen(e.replica, e.seq);
+        if (kept === null || kept !== orNull(() => opHash(e))) continue;
         asked.get(e.replica)?.delete(e.seq);
         const handler = this.handlers.get(e.type);
         const pinned = fed.pinned(e.replica);
-        const head = fed.cursor(e.replica).head;
-        if (handler === undefined || pinned === null || head === null) continue;
-        if (e.seq > head.seq) continue;
-        const seen = this.seenHash(e.replica, e.seq);
-        if (seen !== null && seen !== opHash(e)) continue;
+        if (handler === undefined || pinned === null) continue;
+        const prev = byHash.get(e.prev);
+        const prevHlc =
+          prev?.replica === e.replica
+            ? prev.hlc
+            : `${'0'.repeat(13)}.0000.${e.replica}`;
         const ok = verifyEntry(
-          { seq: e.seq - 1, hash: e.prev, hlc: '' },
+          { seq: e.seq - 1, hash: e.prev, hlc: prevHlc },
           e,
           pinned.signPub
         );
         if (!ok.ok) continue;
-        const cut = view.revoked.get(e.replica);
-        if (cut !== undefined && e.seq > cut.afterSeq) continue;
         if (this.stageSafely(handler, e, ctx) === 'parked')
           this.park(e, 'parked');
       }
@@ -1460,6 +1479,15 @@ export function revocationContested(
     )
     .all(replica)
     .some((r) => view.resolution.has(r.hash));
+}
+
+// The value, or null when computing it throws (hostile input).
+function orNull<T>(fn: () => T): T | null {
+  try {
+    return fn();
+  } catch {
+    return null;
+  }
 }
 
 function evidenceOf(

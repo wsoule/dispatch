@@ -1,6 +1,11 @@
 import { speaksForHandle } from '@dispatch/federation';
 import type { RosterView } from '@dispatch/federation';
-import { MEMORY_ID_PATTERN, MEMORY_KINDS } from '@dispatch/memory';
+import {
+  MEMORY_ID_PATTERN,
+  MEMORY_KINDS,
+  MEMORY_LIMITS,
+  utf8Bytes,
+} from '@dispatch/memory';
 import type { MemoryEntry, MemoryTrust } from '@dispatch/memory';
 import { parseAddress } from '@dispatch/protocol';
 import type { Address } from '@dispatch/protocol';
@@ -41,15 +46,42 @@ const CONTENT_FIELDS: readonly MemoryField[] = [
   'kind',
   'refs',
 ];
+// FW-R37(1): a change to any of these meets local policy unless backed.
+const GATED_FIELDS: readonly MemoryField[] = [
+  ...CONTENT_FIELDS,
+  'epic',
+  'appliesTo',
+  'pinned',
+  'status',
+  'statusReason',
+  'supersedes',
+];
 // Changed team entries read per pass.
 const BATCH = 500;
 // Entries projected into memory.db per pass.
 const PROJECT_BATCH = 200;
+// FW-R37(3): new team entries one publisher may start here per hour.
+const NEW_PER_HOUR = 500;
+
+/** A local team entry to publish, with who made its latest change. */
+export interface TeamChange {
+  entry: MemoryEntry;
+  by: Address;
+}
+
+/** What the port did with a merged entry. */
+export type ApplyOutcome =
+  | 'entry'
+  | 'proposal'
+  | 'ignored'
+  | 'invalid'
+  | 'capped'
+  | 'collision';
 
 /** What federation needs from memory v1 (memory/teamPort.ts builds it). */
 export interface TeamMemoryPort {
   /** Every team entry, active or retired. */
-  teamEntries(): MemoryEntry[];
+  teamEntries(): TeamChange[];
   /** The newest revision mark, 0 when there is none. */
   latestRev(): number;
   /** Team entries changed after `sinceRev` by anything but decay or sync;
@@ -57,22 +89,41 @@ export interface TeamMemoryPort {
   changedTeamEntries(
     sinceRev: number,
     limit: number
-  ): { entries: MemoryEntry[]; through: number };
+  ): { changes: TeamChange[]; through: number };
   /** Ids with a local change after `sinceRev` that is not yet published. */
   unpublished(sinceRev: number): Set<string>;
   /** The trust memory.db holds for `id`, or null when it holds no entry. */
   heldTrust(id: string): MemoryTrust | null;
-  /** Writes the team's merged entry, or opens or updates a proposal when
-   *  this daemon's policy would block what another's approved. */
+  /**
+   * Writes the team's merged entry. A change no human the publisher speaks
+   * for backs (`backed` false) meets this daemon's policy first: it waits
+   * as a sync proposal unless policy would approve it (FW-R37(1)).
+   */
   applyRemote(input: {
     id: string;
     fields: MemoryFields;
     trust: MemoryTrust;
     replica: string;
-  }): 'entry' | 'proposal' | 'ignored' | 'invalid';
+    backed: boolean;
+  }): ApplyOutcome;
 }
 
 const RANK: Record<MemoryTrust, number> = { agent: 0, confirmed: 1, human: 2 };
+
+// Whether `publisher` speaks, at its op `seq`, for the human `address`.
+function speaksForHuman(
+  view: RosterView,
+  publisher: string,
+  address: string | null | undefined,
+  seq: number
+): boolean {
+  return (
+    typeof address === 'string' &&
+    address.startsWith('human:') &&
+    standsAt(view, publisher, seq) &&
+    speaksForHandle(view, publisher, address.slice('human:'.length), seq)
+  );
+}
 
 /**
  * Q10: a publisher that speaks for the human author keeps `human`, for the
@@ -91,14 +142,16 @@ export function arrivalTrust(input: {
   contentChanged: boolean;
 }): MemoryTrust {
   const { view, publisher, seq } = input;
-  const speaksFor = (address: Address | null): boolean =>
-    address !== null &&
-    address.startsWith('human:') &&
-    standsAt(view, publisher, seq) &&
-    speaksForHandle(view, publisher, address.slice('human:'.length), seq);
   let derived: MemoryTrust = 'agent';
-  if (input.asserted === 'human' && speaksFor(input.author)) derived = 'human';
-  else if (input.asserted === 'confirmed' && speaksFor(input.decidedBy))
+  if (
+    input.asserted === 'human' &&
+    speaksForHuman(view, publisher, input.author, seq)
+  )
+    derived = 'human';
+  else if (
+    input.asserted === 'confirmed' &&
+    speaksForHuman(view, publisher, input.decidedBy, seq)
+  )
     derived = 'confirmed';
   if (input.contentChanged || input.held === null) return derived;
   return RANK[derived] > RANK[input.held] ? derived : input.held;
@@ -107,8 +160,8 @@ export function arrivalTrust(input: {
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
-const isText = (v: unknown, max: number): boolean =>
-  typeof v === 'string' && v.length <= max;
+const isText = (v: unknown, maxBytes: number): boolean =>
+  typeof v === 'string' && utf8Bytes(v) <= maxBytes;
 const isAddressOf = (v: unknown, kinds: readonly string[]): boolean => {
   if (typeof v !== 'string') return false;
   try {
@@ -120,15 +173,23 @@ const isAddressOf = (v: unknown, kinds: readonly string[]): boolean => {
 const isMemoryId = (v: unknown): boolean =>
   v === null || (typeof v === 'string' && MEMORY_ID_PATTERN.test(v));
 
-// Each field's shape; memory.db's own validation checks content on apply.
+// Each field's shape, within memory's producer limits; memory.db's own
+// validation checks content again on apply.
 const FIELD_OK: Record<MemoryField, (v: unknown) => boolean> = {
-  title: (v) => isText(v, 1024),
-  body: (v) => isText(v, 64 * 1024),
+  title: (v) => isText(v, MEMORY_LIMITS.titleBytes),
+  body: (v) => isText(v, MEMORY_LIMITS.bodyBytes),
   kind: (v) => (MEMORY_KINDS as readonly unknown[]).includes(v),
-  refs: (v) => Array.isArray(v) && v.length <= 64,
+  refs: (v) =>
+    Array.isArray(v) &&
+    v.length <= MEMORY_LIMITS.refs &&
+    v.every(
+      (r) => isObj(r) && utf8Bytes(JSON.stringify(r)) <= MEMORY_LIMITS.refBytes
+    ),
   epic: (v) => v === null || isText(v, 64),
   appliesTo: (v) =>
-    Array.isArray(v) && v.length <= 64 && v.every((p) => isText(p, 512)),
+    Array.isArray(v) &&
+    v.length <= MEMORY_LIMITS.appliesTo &&
+    v.every((p) => isText(p, MEMORY_LIMITS.refBytes)),
   pinned: (v) => typeof v === 'boolean',
   status: (v) => v === 'active' || v === 'retired',
   statusReason: (v) =>
@@ -151,20 +212,28 @@ function memoryBody(
   v: unknown
 ): (MemoryBody & { fields: MemoryFields }) | null {
   if (!isObj(v)) return null;
-  const { memory, kind, trust, fields } = v;
+  const { memory, kind, trust, fields, by } = v;
   if (typeof memory !== 'string' || !MEMORY_ID_PATTERN.test(memory))
     return null;
   if (kind !== 'put' && kind !== 'remove') return null;
   if (trust !== 'human' && trust !== 'confirmed' && trust !== 'agent')
     return null;
   if (fields !== undefined && !isObj(fields)) return null;
+  if (by !== undefined && !isAddressOf(by, ['human', 'agent', 'run']))
+    return null;
   const read: MemoryFields = {};
   for (const f of MEMORY_FIELDS) {
     if (fields === undefined || !(f in fields)) continue;
     if (!FIELD_OK[f](fields[f])) return null;
     read[f] = fields[f];
   }
-  return { memory, kind, trust, fields: read };
+  return {
+    memory,
+    kind,
+    trust,
+    fields: read,
+    ...(by === undefined ? {} : { by: by as string }),
+  };
 }
 
 // Whether hlc `a` is later than `b`, the replica breaking a tie.
@@ -187,6 +256,7 @@ interface EntryRow {
   memory: string;
   trust: MemoryTrust;
   origin_replica: string;
+  backed: number;
 }
 
 /**
@@ -204,6 +274,8 @@ export class MemorySync implements Collector, OpHandler {
       fed: FedStore;
       roster: RosterService;
       port: TeamMemoryPort;
+      /** New team entries one publisher may start here per hour. */
+      newPerHour?: number;
     }
   ) {}
 
@@ -215,13 +287,13 @@ export class MemorySync implements Collector, OpHandler {
     if (mark === null) {
       // The first pass sends every team entry the team has not heard of.
       const through = port.latestRev();
-      for (const entry of port.teamEntries())
-        if (this.entryRow(entry.id) === null) this.publish(entry);
+      for (const change of port.teamEntries())
+        if (this.entryRow(change.entry.id) === null) this.publish(change);
       fed.setMeta('memory_rev', String(through));
       return;
     }
-    const { entries, through } = port.changedTeamEntries(Number(mark), BATCH);
-    for (const entry of entries) this.publish(entry);
+    const { changes, through } = port.changedTeamEntries(Number(mark), BATCH);
+    for (const change of changes) this.publish(change);
     fed.setMeta('memory_rev', String(through));
   }
 
@@ -241,6 +313,8 @@ export class MemorySync implements Collector, OpHandler {
     if (body.kind === 'remove') return 'dropped';
     const id = body.memory;
     const prior = this.fields(id);
+    // FW-R37(3): a publisher starts at most so many new entries an hour here.
+    if (prior.size === 0 && !this.takeNew(op.replica, ctx.now)) return 'parked';
     const won: MemoryFields = {};
     for (const [f, value] of Object.entries(body.fields) as [
       MemoryField,
@@ -274,16 +348,31 @@ export class MemorySync implements Collector, OpHandler {
       held: port.heldTrust(id) ?? row?.trust ?? null,
       contentChanged,
     });
+    // FW-R37(1): a gated change is backed only by a human the publisher
+    // speaks for: the one who made it, or the human who decided it.
+    const gated = GATED_FIELDS.some(
+      (f) => f in won && !same(won[f], before.get(f))
+    );
+    const backed = gated
+      ? speaksForHuman(ctx.view, op.replica, body.by, op.seq) ||
+        speaksForHuman(
+          ctx.view,
+          op.replica,
+          merged.get('decidedBy') as string | null,
+          op.seq
+        )
+      : row?.backed === 1;
     fed.db
       .query(
-        'INSERT INTO fed_memory (memory, trust, origin_replica, dirty) VALUES (?, ?, ?, 1) ON CONFLICT (memory) DO UPDATE SET trust = excluded.trust, dirty = 1'
+        'INSERT INTO fed_memory (memory, trust, origin_replica, dirty, backed) VALUES (?, ?, ?, 1, ?) ON CONFLICT (memory) DO UPDATE SET trust = excluded.trust, dirty = 1, backed = excluded.backed'
       )
-      .run(id, trust, op.replica);
+      .run(id, trust, op.replica, backed ? 1 : 0);
     return 'applied';
   }
 
   /** After a pass: memory.db follows what the team merged, except an entry
-   *  with a local change still to publish, which the next pass sends first. */
+   *  with a local change still to publish, which the next pass sends first.
+   *  One waiting on a gate or a cap is looked at again each pass. */
   passComplete(): void {
     const { fed, roster, port } = this.deps;
     const mark = fed.meta('memory_rev');
@@ -291,7 +380,7 @@ export class MemorySync implements Collector, OpHandler {
       mark === null ? new Set<string>() : port.unpublished(Number(mark));
     const rows = fed.db
       .query<EntryRow, [number]>(
-        'SELECT memory, trust, origin_replica FROM fed_memory WHERE dirty = 1 LIMIT ?'
+        'SELECT memory, trust, origin_replica, backed FROM fed_memory WHERE dirty = 1 ORDER BY waiting, memory LIMIT ?'
       )
       .all(PROJECT_BATCH);
     for (const row of rows) {
@@ -299,35 +388,80 @@ export class MemorySync implements Collector, OpHandler {
       const fields: MemoryFields = {};
       for (const [f, r] of this.fields(row.memory))
         fields[f] = JSON.parse(r.value_json) as unknown;
-      let out: ReturnType<TeamMemoryPort['applyRemote']>;
+      let out: ApplyOutcome;
       try {
         out = port.applyRemote({
           id: row.memory,
           fields,
           trust: row.trust,
           replica: row.origin_replica,
+          backed: row.backed === 1,
         });
       } catch (err) {
         // memory.db is down or busy: the entry stays dirty for a later pass.
         console.error('dispatchd: team memory was not applied', err);
         continue;
       }
+      const label = roster.label(row.origin_replica);
       if (out === 'invalid')
         dropNote(
           fed,
           'malformed',
           row.origin_replica,
-          `${roster.label(row.origin_replica)}'s team memory ${row.memory} is not a valid entry, so it was not applied`
+          `${label}'s team memory ${row.memory} is not a valid entry, so it was not applied`
         );
+      if (out === 'capped')
+        dropNote(
+          fed,
+          'memory-cap',
+          row.origin_replica,
+          `${label} has too many team memory changes waiting for a decision here; the rest wait until those are decided`
+        );
+      if (out === 'collision')
+        fed.problem(
+          `memory:${row.memory}`,
+          `${label}'s team memory ${row.memory} has the same short handle as an entry here, so it was not applied`
+        );
+      const waiting = out === 'proposal' || out === 'capped';
       fed.db
-        .query('UPDATE fed_memory SET dirty = 0 WHERE memory = ?')
-        .run(row.memory);
+        .query('UPDATE fed_memory SET dirty = ?, waiting = ? WHERE memory = ?')
+        .run(waiting ? 1 : 0, waiting ? 1 : 0, row.memory);
     }
   }
 
+  // Counts a new entry against its publisher's hour; false past the cap.
+  private takeNew(replica: string, now: Date): boolean {
+    const { fed, roster } = this.deps;
+    const key = `memory:${replica}`;
+    const hour = now.toISOString().slice(0, 13);
+    const count =
+      fed.db
+        .query<{ count: number }, [string, string]>(
+          'SELECT count FROM fed_quota WHERE replica = ? AND hour = ?'
+        )
+        .get(key, hour)?.count ?? 0;
+    const cap = this.deps.newPerHour ?? NEW_PER_HOUR;
+    if (count >= cap) {
+      dropNote(
+        fed,
+        'memory-quota',
+        replica,
+        `${roster.label(replica)} started more than ${cap} team memory entries this hour; the rest wait`
+      );
+      return false;
+    }
+    fed.db
+      .query(
+        'INSERT INTO fed_quota (replica, hour, count) VALUES (?, ?, 1) ON CONFLICT(replica, hour) DO UPDATE SET count = count + 1'
+      )
+      .run(key, hour);
+    return true;
+  }
+
   // The fields of `entry` that differ from what the team merged (all of them
-  // for an entry the team never heard of), with its trust as an assertion.
-  private publish(entry: MemoryEntry): void {
+  // for an entry the team never heard of), with its trust as an assertion
+  // and who made the change.
+  private publish({ entry, by }: TeamChange): void {
     const { fed } = this.deps;
     const prior = this.fields(entry.id);
     const row = this.entryRow(entry.id);
@@ -343,6 +477,7 @@ export class MemorySync implements Collector, OpHandler {
       kind: 'put',
       fields,
       trust: entry.trust,
+      by,
     };
     fed.append({
       type: 'memory',
@@ -352,7 +487,7 @@ export class MemorySync implements Collector, OpHandler {
           this.putField(entry.id, f as MemoryField, stamp.hlc, value);
         fed.db
           .query(
-            'INSERT INTO fed_memory (memory, trust, origin_replica, dirty) VALUES (?, ?, ?, 0) ON CONFLICT (memory) DO UPDATE SET trust = excluded.trust'
+            'INSERT INTO fed_memory (memory, trust, origin_replica, dirty, backed) VALUES (?, ?, ?, 0, 1) ON CONFLICT (memory) DO UPDATE SET trust = excluded.trust'
           )
           .run(entry.id, entry.trust, fed.replica);
       },
@@ -384,7 +519,7 @@ export class MemorySync implements Collector, OpHandler {
   private entryRow(id: string): EntryRow | null {
     return this.deps.fed.db
       .query<EntryRow, [string]>(
-        'SELECT memory, trust, origin_replica FROM fed_memory WHERE memory = ?'
+        'SELECT memory, trust, origin_replica, backed FROM fed_memory WHERE memory = ?'
       )
       .get(id);
   }

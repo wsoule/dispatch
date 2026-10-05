@@ -1913,13 +1913,18 @@ interface MemoryBody {
   trust by these rules; any other change never lowers the trust this daemon
   holds. Speaks-for is judged once, on arrival: a roster change later leaves
   held trust as it is.
-- **Local policy still applies.** An incoming entry that was approved by policy
-  elsewhere (`decidedByPolicy` set) is checked against this daemon's own
-  `memory` policy. If this daemon would block, the entry arrives as an open
-  `add` proposal with `origin: sync:<replica>:<id>` (`/2`, `/3` after a decided
-  one), and later ops for it update the proposal until it is decided. On
-  approval, the entry keeps its replicated id. A rejected entry comes back only
-  when its content changes.
+- **Local policy still applies** (federation FW-R37(1)). A new entry, or a
+  change to a held entry's content, status, pin, `appliesTo` or supersession,
+  applies directly only when a human the publishing machine speaks for backs it:
+  the op's `by` (who made the change) or the entry's `decidedBy`. Anything else
+  meets this daemon's own `memory` policy: it applies if policy would approve,
+  else it waits as an open sync proposal with `origin: sync:<replica>:<id>`
+  (`/2`, `/3` after a decided one): `add` for a new entry, `supersede` of the
+  held entry for a change, which approval applies in place. Later ops update an
+  open proposal until it is decided. On approval, the entry keeps its replicated
+  id. A rejected change comes back only when it changes again.
+- **Caps** (FW-R37(3)). One publisher may have 50 sync proposals open here, and
+  start 500 new team entries an hour; the rest wait, with a rolling note.
 - **Seats.** Replication pauses past the license's seats, like task ops.
 - **Receipts.** v2 also exports team entries, active and retired, as
   `.dispatch/memory/<id>.md` into the receipt log (the layout in

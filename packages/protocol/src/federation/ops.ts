@@ -235,6 +235,7 @@ export interface MemoryBody {
   kind: 'put' | 'remove';
   fields?: Record<string, unknown>;
   trust: 'human' | 'confirmed' | 'agent'; // the trust the publisher asserts; receivers recompute it
+  by?: string; // who made the change: the latest local revision's author
 }
 
 // A JSON object whose fields the docs design owns: doc id, put | remove, `by`,

@@ -38,11 +38,16 @@ CREATE TABLE IF NOT EXISTS fed_run_claims (run TEXT PRIMARY KEY, claims_json TEX
 -- Every mail op verified here, so a forward carries only a real one (FW-R32(2)).
 -- Never pruned (FW-R36(1)): a forward is judged against these hashes alone.
 CREATE TABLE IF NOT EXISTS fed_mail_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash BLOB NOT NULL, PRIMARY KEY (replica, seq));
+-- The hash of every verified op of a type a handler may ask to reread, kept
+-- forever: a reread stages only a line matching it (FW-R37(2)).
+CREATE TABLE IF NOT EXISTS fed_reread_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash BLOB NOT NULL, PRIMARY KEY (replica, seq));
 -- Pruned run ids and the replica that ran each: never claimed by another.
 CREATE TABLE IF NOT EXISTS fed_run_tombs (run TEXT PRIMARY KEY, replica TEXT NOT NULL);
 -- Team memory as the team merged it (F3): each field's last writer by hlc,
 -- and per entry the trust this machine derived and whether memory.db lags.
-CREATE TABLE IF NOT EXISTS fed_memory (memory TEXT PRIMARY KEY, trust TEXT NOT NULL, origin_replica TEXT NOT NULL, dirty INTEGER NOT NULL);
+-- backed: a human the publisher speaks for made its latest gated change;
+-- waiting: it waits on a gate or a cap here.
+CREATE TABLE IF NOT EXISTS fed_memory (memory TEXT PRIMARY KEY, trust TEXT NOT NULL, origin_replica TEXT NOT NULL, dirty INTEGER NOT NULL, backed INTEGER NOT NULL DEFAULT 0, waiting INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS fed_memory_fields (memory TEXT NOT NULL, field TEXT NOT NULL, hlc TEXT NOT NULL, value_json TEXT NOT NULL, PRIMARY KEY (memory, field));
 CREATE TABLE IF NOT EXISTS fed_state_out (id INTEGER PRIMARY KEY, recipients TEXT NOT NULL, entry_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_replicas (replica TEXT PRIMARY KEY, build TEXT NOT NULL, device TEXT NOT NULL, last_hlc TEXT NOT NULL, skew_ms INTEGER NOT NULL);

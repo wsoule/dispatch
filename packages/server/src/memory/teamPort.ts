@@ -13,17 +13,24 @@ import type {
   MemoryHost,
   MemoryProposal,
   MemoryStore,
+  MemoryTrust,
   ProposalContent,
 } from '@dispatch/memory';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { Address, Ref } from '@dispatch/protocol';
 
-import type { TeamMemoryPort } from '../team/federation/memory.js';
+import type {
+  ApplyOutcome,
+  TeamChange,
+  TeamMemoryPort,
+} from '../team/federation/memory.js';
 
 // Revisions that never travel: decay is local, and sync came from the team.
 const LOCAL_ONLY = new Set(['decay', 'sync']);
 // How far back `unpublished` looks for local changes still to send.
 const UNPUBLISHED_SCAN = 5000;
+// FW-R37(3): sync proposals one publisher may have open here.
+const OPEN_PER_PUBLISHER = 50;
 
 // The entry fields a merged remote entry sets, beyond its content.
 type Extra = Pick<
@@ -38,15 +45,27 @@ type Extra = Pick<
   | 'decidedByPolicy'
 >;
 
+// What a gated change sets besides content, said for the gate and compared
+// to tell whether an approval still covers it.
+function describe(extra: Extra): string {
+  const parts = [`status ${extra.status}`];
+  if (extra.statusReason !== null) parts.push(`(${extra.statusReason})`);
+  if (extra.pinned) parts.push('pinned');
+  if (extra.supersedes !== null) parts.push(`supersedes ${extra.supersedes}`);
+  return `From a teammate's machine: ${parts.join(', ')}`;
+}
+
 /**
  * Federation's view of memory v1 (federation F3): which team entries changed
- * locally, and how an entry the team merged is written here, as an entry or,
- * when this daemon's policy would block a policy-approved one, a proposal.
+ * locally, and how an entry the team merged is written here, directly when
+ * a human the publisher speaks for backs it, else through local policy.
  */
 export function createTeamMemoryPort(deps: {
   engine: MemoryEngine;
   shared: MemoryStore;
   host: MemoryHost;
+  /** Sync proposals one publisher may have open here. */
+  maxOpenPerPublisher?: number;
 }): TeamMemoryPort {
   const { engine, shared, host } = deps;
 
@@ -60,8 +79,69 @@ export function createTeamMemoryPort(deps: {
     }
   };
 
+  // Who made an entry's latest change that travels.
+  const changeOf = (entry: MemoryEntry): TeamChange => {
+    const last = shared
+      .revisions(entry.id)
+      .filter((r) => !LOCAL_ONLY.has(r.cause))
+      .at(-1);
+    return { entry, by: last?.by ?? entry.author };
+  };
+
+  // The merged entry written as it stands; a new one keeps its id.
+  const write = (
+    id: string,
+    content: ProposalContent,
+    extra: Extra,
+    author: Address,
+    trust: MemoryTrust
+  ): ApplyOutcome => {
+    const now = host.now().toISOString();
+    const held = shared.getEntry(id);
+    if (held !== null) {
+      // Q10: a change that leaves the content alone never lowers trust.
+      const kept =
+        memoryContentHash(held) === memoryContentHash(content) &&
+        RANK[held.trust] > RANK[trust]
+          ? held.trust
+          : trust;
+      const next: MemoryEntry = {
+        ...held,
+        ...content,
+        ...extra,
+        author,
+        trust: kept,
+      };
+      if (JSON.stringify(next) === JSON.stringify(held)) return 'entry';
+      shared.updateEntry(
+        { ...next, rev: held.rev + 1, updatedAt: now },
+        SYSTEM_ADDRESS,
+        'sync',
+        now
+      );
+      host.changed({ scope: 'team', id });
+      return 'entry';
+    }
+    // A 40-bit handle another entry here already holds.
+    if (shared.entriesByHandle(memoryHandle(id)).length > 0) return 'collision';
+    const entry: MemoryEntry = {
+      ...newMemoryEntry({ ...content, scope: 'team', author, trust }, id, now),
+      ...extra,
+      updatedAt: now,
+    };
+    shared.insertEntry(entry, SYSTEM_ADDRESS, 'sync');
+    host.changed({ scope: 'team', id });
+    if (
+      displayState(entry) === 'active' &&
+      (entry.kind === 'hazard' || entry.kind === 'constraint')
+    )
+      host.entryActivated(entry, null);
+    return 'entry';
+  };
+
   return {
-    teamEntries: () => shared.listEntries({ scopes: ['team'] }),
+    teamEntries: () =>
+      shared.listEntries({ scopes: ['team'] }).map((e) => changeOf(e)),
 
     latestRev: () => {
       let last = 0;
@@ -77,12 +157,13 @@ export function createTeamMemoryPort(deps: {
       const ids = new Set(
         marks.filter((m) => !LOCAL_ONLY.has(m.cause)).map((m) => m.memoryId)
       );
-      const entries: MemoryEntry[] = [];
+      const changes: TeamChange[] = [];
       for (const id of ids) {
         const entry = shared.getEntry(id);
-        if (entry !== null && entry.scope === 'team') entries.push(entry);
+        if (entry !== null && entry.scope === 'team')
+          changes.push(changeOf(entry));
       }
-      return { entries, through: marks.at(-1)?.rowid ?? sinceRev };
+      return { changes, through: marks.at(-1)?.rowid ?? sinceRev };
     },
 
     unpublished: (sinceRev) =>
@@ -95,7 +176,7 @@ export function createTeamMemoryPort(deps: {
 
     heldTrust: (id) => shared.getEntry(id)?.trust ?? null,
 
-    applyRemote: ({ id, fields, trust, replica }) => {
+    applyRemote: ({ id, fields, trust, replica, backed }) => {
       const author = fields.author as Address | undefined;
       if (author === undefined) return 'invalid';
       let content: ProposalContent;
@@ -134,69 +215,69 @@ export function createTeamMemoryPort(deps: {
         decidedByPolicy: (fields.decidedByPolicy ??
           null) as MemoryEntry['decidedByPolicy'],
       };
-      const now = host.now().toISOString();
       const held = shared.getEntry(id);
-      if (held !== null) {
-        if (held.scope !== 'team') return 'ignored';
-        const next: MemoryEntry = {
-          ...held,
-          ...content,
-          ...extra,
-          author,
-          trust,
-        };
-        if (JSON.stringify(next) === JSON.stringify(held)) return 'entry';
-        shared.updateEntry(
-          { ...next, rev: held.rev + 1, updatedAt: now },
-          SYSTEM_ADDRESS,
-          'sync',
-          now
-        );
-        host.changed({ scope: 'team', id });
-        return 'entry';
-      }
+      if (held !== null && held.scope !== 'team') return 'ignored';
       const tried = attempts(replica, id);
       const last = tried.at(-1);
+      const reason = describe(extra);
+      const covers = (p: MemoryProposal) =>
+        p.contentHash === memoryContentHash(content) && p.reason === reason;
+      // What a gate would decide: a new entry, or a change to content or to
+      // its status, pin or supersession.
+      const gated =
+        held === null ||
+        memoryContentHash(held) !== memoryContentHash(content) ||
+        JSON.stringify([held.epic, held.appliesTo]) !==
+          JSON.stringify([content.epic, content.appliesTo]) ||
+        reason !== describe({ ...extra, ...pickExtra(held) });
+      // A proposal still open is what a human here was asked; it is updated
+      // rather than bypassed.
       if (last?.state === 'open') {
-        engine.reviseSyncedProposal(last.id, content);
+        if (!covers(last))
+          engine.reviseSyncedProposal(last.id, content, reason);
         return 'proposal';
       }
-      // Decided here already: a rejected entry comes back only changed.
-      if (
-        last !== undefined &&
-        (last.state === 'approved' ||
-          last.contentHash === memoryContentHash(content))
-      )
-        return 'ignored';
-      if (extra.decidedByPolicy !== null && extra.status === 'active') {
-        const out = engine.proposeSynced({
+      if (!gated || backed) return write(id, content, extra, author, trust);
+      if (last?.state === 'approved' && covers(last))
+        return write(
           id,
-          origin: syncOrigin(replica, id, tried.length + 1),
-          author,
           content,
-        });
-        if (out.status === 'proposed') return 'proposal';
-        if (out.status === 'duplicate') return 'ignored';
-      }
-      const entry: MemoryEntry = {
-        ...newMemoryEntry(
-          { ...content, scope: 'team', author, trust },
-          id,
-          now
-        ),
-        ...extra,
-        updatedAt: now,
-      };
-      // A 40-bit handle another entry here already holds: left out.
-      if (shared.entriesByHandle(memoryHandle(id)).length > 0) return 'ignored';
-      shared.insertEntry(entry, SYSTEM_ADDRESS, 'sync');
-      host.changed({ scope: 'team', id });
-      if (
-        displayState(entry) === 'active' &&
-        (entry.kind === 'hazard' || entry.kind === 'constraint')
-      )
-        host.entryActivated(entry, null);
-      return 'entry';
+          extra,
+          author,
+          RANK[trust] >= RANK.confirmed ? trust : 'confirmed'
+        );
+      // Decided here already: it comes back only changed.
+      if (last !== undefined && covers(last)) return 'ignored';
+      const cap = deps.maxOpenPerPublisher ?? OPEN_PER_PUBLISHER;
+      const open = shared
+        .listProposals({ states: ['open'] })
+        .filter((p) => p.origin?.startsWith(`sync:${replica}:`) === true);
+      if (open.length >= cap) return 'capped';
+      const out = engine.proposeSynced({
+        id,
+        origin: syncOrigin(replica, id, tried.length + 1),
+        author,
+        content,
+        target: held?.id ?? null,
+        reason,
+      });
+      if (out.status === 'proposed') return 'proposal';
+      if (out.status === 'duplicate') return 'ignored';
+      return write(id, content, extra, author, trust);
     },
+  };
+}
+
+const RANK: Record<MemoryTrust, number> = { agent: 0, confirmed: 1, human: 2 };
+
+// The status, pin and supersession fields `describe` reads.
+function pickExtra(
+  e: MemoryEntry
+): Pick<Extra, 'status' | 'statusReason' | 'pinned' | 'supersedes'> {
+  return {
+    status: e.status,
+    statusReason: e.statusReason,
+    pinned: e.pinned,
+    supersedes: e.supersedes,
   };
 }

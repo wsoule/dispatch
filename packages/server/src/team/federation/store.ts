@@ -136,6 +136,25 @@ export class FedStore {
       })();
   }
 
+  /** Remembers a verified op's hash, so a reread of it can be checked. */
+  rememberReread(replica: string, seq: number, hash: string): void {
+    this.db
+      .query(
+        'INSERT OR IGNORE INTO fed_reread_seen (replica, seq, hash) VALUES (?, ?, ?)'
+      )
+      .run(replica, seq, Buffer.from(hash, 'hex'));
+  }
+
+  /** The hex hash kept for a reread, or null when none was. */
+  rereadSeen(replica: string, seq: number): string | null {
+    const row = this.db
+      .query<{ hash: Uint8Array }, [string, number]>(
+        'SELECT hash FROM fed_reread_seen WHERE replica = ? AND seq = ?'
+      )
+      .get(replica, seq);
+    return row === null ? null : Buffer.from(row.hash).toString('hex');
+  }
+
   /** Remembers a verified mail op's hash, so a forward of it can be checked. */
   rememberMail(replica: string, seq: number, hash: string): void {
     this.db

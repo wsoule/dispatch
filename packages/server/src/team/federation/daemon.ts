@@ -327,7 +327,7 @@ export function buildFederation(deps: FederationDeps): Federation {
 
 // Each replica's cursor head, and a check against its pinned key, so a pull
 // reads the segment that continues the log before any other (I2).
-function readHints(fed: FedStore, roster: RosterService): ReadHints {
+export function readHints(fed: FedStore, roster: RosterService): ReadHints {
   const heads = new Map<string, string>();
   for (const row of fed.db
     .query<{ replica: string; hash: string | null }, []>(
