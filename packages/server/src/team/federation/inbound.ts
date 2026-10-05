@@ -21,6 +21,7 @@ import type { Homes } from './homes.js';
 import { recordSealed } from './mail.js';
 import type { RosterService } from './roster.js';
 import type { InboxDrainer, OpHandler, StageContext } from './service.js';
+import { revocationContested } from './service.js';
 import { speaksFor } from './speaksFor.js';
 import type { FedStore } from './store.js';
 import {
@@ -202,7 +203,9 @@ export class Inbound implements OpHandler, InboxDrainer {
   ): 'stands' | 'parked' | 'dropped' {
     const cut = view.revoked.get(replica);
     if (cut === undefined || seq <= cut.afterSeq) return 'stands';
-    return this.contested(replica, view) ? 'parked' : 'dropped';
+    return revocationContested(this.deps.fed, replica, view)
+      ? 'parked'
+      : 'dropped';
   }
 
   // The origin's targets, held to this machine's roster: homes that are no
@@ -563,15 +566,6 @@ export class Inbound implements OpHandler, InboxDrainer {
 
   // A revocation is contested while its target published a removal the fold
   // judged: that fight can still flip it.
-  private contested(replica: string, view: RosterView): boolean {
-    return this.deps.fed.db
-      .query<{ hash: string }, [string]>(
-        'SELECT hash FROM fed_roster WHERE replica = ?'
-      )
-      .all(replica)
-      .some((r) => view.resolution.has(r.hash));
-  }
-
   // Parks the op; the service caps what one publisher may have waiting.
   private park(_op: FederatedOp): 'parked' {
     return 'parked';
