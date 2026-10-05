@@ -3951,7 +3951,8 @@ export interface ApiClient {
   /** Decide tier: moves a bearer peer to signed requests once its owner agrees. */
   upgradeA2APeer(
     alias: string,
-    confirmFingerprint: string
+    confirmFingerprint: string,
+    client?: string
   ): Promise<{ state: 'pending'; id: string; fingerprint: string }>;
   a2aKeys(): Promise<A2AKeys>;
   /** Operator tier. */
@@ -5064,10 +5065,13 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'DELETE',
       });
     },
-    upgradeA2APeer: (alias, confirmFingerprint) =>
+    upgradeA2APeer: (alias, confirmFingerprint, client) =>
       request(target, `/api/a2a/peers/${encodeURIComponent(alias)}/upgrade`, {
         method: 'POST',
-        ...jsonBody({ confirmFingerprint }),
+        ...jsonBody({
+          confirmFingerprint,
+          ...(client === undefined ? {} : { client }),
+        }),
       }),
     a2aKeys: () => request(target, '/api/a2a/keys'),
     rotateA2AKey: (compromised) =>

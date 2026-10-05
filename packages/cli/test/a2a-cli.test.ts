@@ -811,6 +811,23 @@ describe('dispatch a2a peers upgrade', () => {
     expect(lines.join('\n')).toContain('waits for');
   });
 
+  it('passes --client, the client the peer reaches this agent as', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'peers',
+      'upgrade',
+      'acme',
+      '--fingerprint',
+      'A9B8-C7D6',
+      '--client',
+      'a2a.acme'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      body: { confirmFingerprint: 'A9B8-C7D6', client: 'a2a.acme' },
+    });
+  });
+
   it('needs --fingerprint', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     await expect(run('a2a', 'peers', 'upgrade', 'acme')).rejects.toThrow();

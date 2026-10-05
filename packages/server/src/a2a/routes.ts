@@ -421,11 +421,18 @@ async function peerRoute(
           409,
           'open the A2A listener first: the other side needs to reach this agent'
         );
+      const named = (parsed.value as { client?: unknown }).client;
+      if (named !== undefined && typeof named !== 'string')
+        return invalid(
+          'client',
+          'client is the A2A client the peer reaches this agent as'
+        );
       const started = await upgrades.start({
         alias,
         confirmFingerprint: confirm,
         ourCard,
         caller,
+        ...(named === undefined ? {} : { client: named }),
       });
       changed(ctx);
       return jsonResponse(started, 202);

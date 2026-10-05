@@ -1,10 +1,18 @@
-import { a2aFingerprint, SIG_EXTENSION_URI } from '@dispatch/a2a';
+import {
+  a2aFingerprint,
+  ecThumbprint,
+  makeUpgradeProof,
+  publicJwkOf,
+  SIG_EXTENSION_URI,
+  signedFetch,
+} from '@dispatch/a2a';
 import { readPeerCredential } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
+import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { loadOrCreateSigningKey } from '../../src/a2a/signing.js';
+import { CardSigner, loadOrCreateSigningKey } from '../../src/a2a/signing.js';
 import { waitFor } from '../messaging/harness.js';
 import { rawFetch } from '../testAuth.js';
 import type { Daemon } from './pairHarness.js';
@@ -233,4 +241,146 @@ describe('upgrading a bearer pair to signatures', () => {
       ).status
     ).toBe(403);
   });
+});
+
+describe('batch 4 review C1: an upgrade is approved only by the other side’s owner', () => {
+  // The victim's bearer and a key of the attacker's choosing.
+  async function selfRequest(b: Daemon, bearer: string) {
+    const { privateKey, publicKey } = generateKeyPairSync('ec', {
+      namedCurve: 'P-256',
+    });
+    const jwk = publicJwkOf(
+      publicKey.export({ format: 'jwk' }) as Record<string, string>
+    );
+    const proof = makeUpgradeProof({
+      reach: {
+        kind: 'url',
+        card: 'https://mallory.example.com/.well-known/agent-card.json',
+      },
+      name: 'Mallory',
+      privateKey,
+      jwk,
+      now: new Date(),
+    });
+    const res = await rawFetch(`${b.listener}/a2a/v1/dispatch/upgrade`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'a2a-version': '1.0',
+        authorization: `Bearer ${bearer}`,
+      },
+      body: JSON.stringify({ type: 'request', proof }),
+    });
+    return { res, proof, privateKey, kid: ecThumbprint(jwk)! };
+  }
+
+  it('a requester posting approved for its own request gets 404, and nothing changes', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    const { onB } = await bearerPair(a, b);
+    const { res, proof, privateKey, kid } = await selfRequest(b, onB);
+    expect(res.status).toBe(202);
+    const bKey = new CardSigner(loadOrCreateSigningKey(b.root)).publicJwk();
+    const signed = signedFetch(rawFetch, {
+      keyid: kid,
+      privateKey,
+      peerKey: createPublicKey({ key: bKey, format: 'jwk' }),
+    });
+    const approved = await signed(`${b.listener}/a2a/v1/dispatch/upgrade`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'a2a-version': '1.0',
+        authorization: `Bearer ${onB}`,
+      },
+      body: JSON.stringify({ type: 'approved', id: proof.id }),
+    });
+    expect(approved.status).toBe(404);
+    expect(clientOf(b, 'a2a.alice').auth ?? 'bearer').toBe('bearer');
+    expect((await send(b, onB)).status).toBe(200);
+    expect(upgradeGate(b)).toBeDefined();
+  });
+
+  it('ignores an answer from someone who cannot decide, or from another replica', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    await bearerPair(a, b);
+    expect(
+      (
+        await a.call('/api/a2a/peers/bob/upgrade', {
+          body: { confirmFingerprint: fingerprintOf(b) },
+        })
+      ).status
+    ).toBe(202);
+    await waitFor(() => upgradeGate(b) !== undefined, 10_000);
+    const gate = upgradeGate(b)!;
+    const base = {
+      id: 'm-forged',
+      thread: gate.thread,
+      replyTo: gate.id,
+      to: gate.to,
+      kind: 'answer' as const,
+      body: '',
+      refs: [],
+      urgent: false,
+      blocking: false,
+      wake: 'none' as const,
+      createdAt: new Date().toISOString(),
+      choice: 'approve',
+    };
+    const owner = await ownerOf(b);
+    b.handle.a2a.upgrades!.answered({ ...base, from: 'human:mallory' });
+    b.handle.a2a.upgrades!.answered({
+      ...base,
+      from: owner,
+      origin: 'replica-x',
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(clientOf(b, 'a2a.alice').auth ?? 'bearer').toBe('bearer');
+    expect(a.handle.a2a.store!.getPeer('bob')?.auth ?? 'bearer').toBe('bearer');
+  });
+});
+
+describe('batch 4 review C1: the approval comes from the paired client', () => {
+  it('with the client named at start, an approval over another client’s bearer is refused', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    await bearerPair(a, b);
+    // The upgrade names a client B does not use: B's approval cannot match it.
+    await client(a, 'someone-else');
+    const res = await a.call('/api/a2a/peers/bob/upgrade', {
+      body: {
+        confirmFingerprint: fingerprintOf(b),
+        client: 'a2a.someone-else',
+      },
+    });
+    expect(res.status).toBe(202);
+    await waitFor(() => upgradeGate(b) !== undefined, 10_000);
+    await b.handle.messaging.engine.reply(
+      upgradeGate(b)!.id,
+      { body: '', choice: 'approve' },
+      { address: await ownerOf(b), canDecide: true }
+    );
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(a.handle.a2a.store!.getPeer('bob')?.auth ?? 'bearer').toBe('bearer');
+    expect(clientOf(a, 'a2a.bob').auth ?? 'bearer').toBe('bearer');
+    expect(clientOf(a, 'a2a.someone-else').auth ?? 'bearer').toBe('bearer');
+  }, 30_000);
+
+  it('with the right client named, the upgrade completes', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    await bearerPair(a, b);
+    const res = await a.call('/api/a2a/peers/bob/upgrade', {
+      body: { confirmFingerprint: fingerprintOf(b), client: 'a2a.bob' },
+    });
+    expect(res.status).toBe(202);
+    await waitFor(() => upgradeGate(b) !== undefined, 10_000);
+    await b.handle.messaging.engine.reply(
+      upgradeGate(b)!.id,
+      { body: '', choice: 'approve' },
+      { address: await ownerOf(b), canDecide: true }
+    );
+    await waitFor(() => clientOf(a, 'a2a.bob').auth === 'signature', 15_000);
+  }, 30_000);
 });

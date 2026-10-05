@@ -131,8 +131,9 @@ export interface PushConfigRow {
 // Only the secret's hash is kept, and only on the offering side.
 export interface PairingRow {
   id: string;
-  // 'upgrade': a bearer pair moving to signatures (P5), on either side.
-  role: 'offer' | 'accept' | 'upgrade';
+  // A bearer pair moving to signatures (P5): 'upgrade-out' where this side
+  // asked, 'upgrade-in' where the other side asked and this owner decides.
+  role: 'offer' | 'accept' | 'upgrade-out' | 'upgrade-in';
   secretHash: string | null;
   alias: string;
   reach: Reach;
@@ -156,8 +157,10 @@ export interface PairingRow {
 // with its attempts so a restart neither repeats nor resets its backoff.
 export interface PendingNotice {
   // 'upgrade': an approved upgrade still telling the other side;
-  // 'upgrade-gate': an upgrade waiting on its owner question (body: its id).
-  kind: 'unpair' | 'key-push' | 'upgrade' | 'upgrade-gate';
+  // 'upgrade-gate': an upgrade waiting on its owner question (body: its id);
+  // 'upgrade-client': the client an upgrade this side asked for must come
+  // back as (body: its address).
+  kind: 'unpair' | 'key-push' | 'upgrade' | 'upgrade-gate' | 'upgrade-client';
   id: string;
   body: string;
   at: string;
@@ -565,7 +568,10 @@ const PAIRING_STATES: readonly PairingRow['state'][] = [
 function toPairing(r: PairingDbRow): PairingRow {
   return {
     id: r.id,
-    role: r.role === 'accept' || r.role === 'upgrade' ? r.role : 'offer',
+    role:
+      r.role === 'accept' || r.role === 'upgrade-out' || r.role === 'upgrade-in'
+        ? r.role
+        : 'offer',
     secretHash: r.secret_hash,
     alias: r.alias,
     reach: JSON.parse(r.reach_json) as Reach,

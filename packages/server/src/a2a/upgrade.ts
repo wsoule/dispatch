@@ -91,13 +91,14 @@ export class Upgrades {
   }
 
   private record(
+    role: 'upgrade-out' | 'upgrade-in',
     row: Omit<PairingRow, 'secretHash' | 'completedAt' | 'role' | 'state'>,
     jwk: Record<string, string>
   ): void {
     this.d.store.transaction(() => {
       this.d.store.putPairing({
         ...row,
-        role: 'upgrade',
+        role,
         secretHash: null,
         state: 'offered',
         completedAt: null,
@@ -123,10 +124,14 @@ export class Upgrades {
     confirmFingerprint: string;
     ourCard: string;
     caller: { tier: AuthTier; ref: Address };
+    // The client the other side reaches this agent as: its approval must
+    // come back over that client's bearer.
+    client?: string;
   }): Promise<{ state: 'pending'; id: string; fingerprint: string }> {
     const peer = this.d.store.getPeer(i.alias);
     if (peer === null)
       throw new MessagingError('not-found', `no A2A peer ${i.alias}`);
+    const client = i.client === undefined ? null : this.clientNamed(i.client);
     if (peer.auth === 'signature')
       throw new MessagingError(
         'conflict',
@@ -166,6 +171,7 @@ export class Upgrades {
     });
     const at = nowOf(this.d);
     this.record(
+      'upgrade-out',
       {
         id: proof.id,
         alias: i.alias,
@@ -180,6 +186,13 @@ export class Upgrades {
       },
       peerJwk
     );
+    if (client !== null)
+      this.d.store.putNotice({
+        kind: 'upgrade-client',
+        id: proof.id,
+        body: client,
+        at: at.toISOString(),
+      });
     let status: number | null = null;
     try {
       const res = await this.bearerSigned(peer, peerJwk)(
@@ -203,6 +216,29 @@ export class Upgrades {
     }
     this.d.changed();
     return { state: 'pending', id: proof.id, fingerprint };
+  }
+
+  // A bearer client by its address or name, as `clients` commands take it.
+  private clientNamed(arg: string): Address {
+    const named = `a2a.${arg.replace(/^a2a\./, '')}`;
+    const rows = this.d.store
+      .clients()
+      .filter((c) => c.address === arg || c.name === arg || c.name === named);
+    if (rows.length !== 1)
+      throw new MessagingError(
+        'invalid',
+        rows.length === 0
+          ? `no A2A client ${arg}`
+          : `${arg} names more than one client; pass its address`,
+        'client'
+      );
+    if (rows[0].auth === 'signature')
+      throw new MessagingError(
+        'conflict',
+        `${rows[0].address} already signs its requests`,
+        'client'
+      );
+    return rows[0].address;
   }
 
   // The key that signs `card`, from the peer's JWKS, checked to sign it.
@@ -336,6 +372,7 @@ export class Upgrades {
     }
     const at = nowOf(this.d);
     this.record(
+      'upgrade-in',
       {
         id: proof.id,
         alias: peer?.alias ?? client.name,
@@ -370,16 +407,26 @@ export class Upgrades {
     return Response.json({ pending: true }, { status: 202 });
   }
 
+  // Who may answer an upgrade question: a human here who can decide (the
+  // owner, or a live teammate at decide or above), never another replica.
+  private canDecide(answer: Message): boolean {
+    if (answer.origin !== undefined) return false;
+    if (answer.from === this.d.ownerRef) return true;
+    if (!answer.from.startsWith('human:')) return false;
+    const tier = this.d.creatorTier?.(answer.from) ?? null;
+    return tier !== null && tierAllows(tier, 'decide');
+  }
+
   /** An answer to one of this side's upgrade questions. */
   answered(answer: Message): void {
     if (answer.kind !== 'answer' || answer.replyTo === null) return;
     const gate = this.d.store
       .notices('upgrade-gate')
       .find((n) => n.body === answer.replyTo);
-    if (gate === undefined) return;
+    if (gate === undefined || !this.canDecide(answer)) return;
     this.d.store.deleteNotice('upgrade-gate', gate.id);
     const row = this.d.store.pairing(gate.id);
-    if (row === null || row.state !== 'offered') return;
+    if (row?.role !== 'upgrade-in' || row.state !== 'offered') return;
     if (answer.choice !== 'approve') {
       this.d.store.setPairingState(row.id, 'canceled');
       this.d.changed();
@@ -415,7 +462,7 @@ export class Upgrades {
 
   private async sendApproval(id: string): Promise<boolean> {
     const row = this.d.store.pairing(id);
-    if (row === null || row.state !== 'offered') return true;
+    if (row?.role !== 'upgrade-in' || row.state !== 'offered') return true;
     const jwk = this.keyOf(row);
     if (jwk === null) return true;
     const peer = this.d.store.getPeer(row.alias);
@@ -446,8 +493,11 @@ export class Upgrades {
     r: ReceivedRequest,
     publicUrl: string
   ): Response {
+    // Only an upgrade this side asked for: the other side's owner approves
+    // ours, and no requester can approve its own (batch 4 review C1).
     const row = this.d.store.pairing(id);
-    if (row?.role !== 'upgrade' || row.state !== 'offered') return notFound();
+    if (row?.role !== 'upgrade-out' || row.state !== 'offered')
+      return notFound();
     const jwk = this.keyOf(row);
     if (jwk === null || row.peerThumbprint === null) return notFound();
     const now = nowOf(this.d);
@@ -463,6 +513,23 @@ export class Upgrades {
         this.d.store.rememberNonce(keyid, nonce, expiresAt, NONCE_CAP, now),
     });
     if (!verdict.ok) return notFound();
+    // Over the bearer of the client named at start; with none named, only an
+    // approved bearer client with no pin yet.
+    const named = this.d.store
+      .notices('upgrade-client')
+      .find((n) => n.id === id)?.body;
+    const client = this.d.store.getClient(address);
+    const agent = this.d.messages.getAgent(address);
+    if (
+      named !== undefined
+        ? named !== address
+        : client === null ||
+          client.auth === 'signature' ||
+          client.keyThumbprint != null ||
+          agent?.status !== 'approved'
+    )
+      return notFound();
+    this.d.store.deleteNotice('upgrade-client', id);
     const peer = this.d.store.getPeer(row.alias);
     this.switchToSignatures(row, jwk, address, peer);
     return Response.json({ upgraded: true });

@@ -1401,7 +1401,8 @@ export interface A2AApiClient {
   cancelPairing(id: string): Promise<void>;
   upgradePeer(
     alias: string,
-    confirmFingerprint: string
+    confirmFingerprint: string,
+    client?: string
   ): Promise<{ state: 'pending'; id: string; fingerprint: string }>;
   keys(): Promise<A2AKeys>;
   rotateKey(compromised: boolean): Promise<A2ARotation>;
@@ -1492,11 +1493,14 @@ export function createA2AApiClient(
       request(target, `/api/a2a/pairings/${encodeURIComponent(id)}`, {
         method: 'DELETE',
       }),
-    upgradePeer: (alias, confirmFingerprint) =>
+    upgradePeer: (alias, confirmFingerprint, client) =>
       request(
         target,
         `/api/a2a/peers/${encodeURIComponent(alias)}/upgrade`,
-        jsonBody({ confirmFingerprint })
+        jsonBody({
+          confirmFingerprint,
+          ...(client === undefined ? {} : { client }),
+        })
       ),
     keys: () => request(target, '/api/a2a/keys'),
     rotateKey: (compromised) =>

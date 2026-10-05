@@ -452,14 +452,25 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       '--fingerprint <fp>',
       "the peer's key fingerprint, as its owner reads it to you"
     )
+    .option(
+      '--client <name>',
+      'the A2A client the peer reaches this agent as; its approval must come over that client'
+    )
     .option('--token <token>', TOKEN_HELP)
     .action(
-      async (alias: string, o: { fingerprint: string; token?: string }) => {
+      async (
+        alias: string,
+        o: { fingerprint: string; client?: string; token?: string }
+      ) => {
         const client = await withAppToken(
           o.token,
           'dispatch a2a peers upgrade'
         );
-        const started = await client.upgradePeer(alias, o.fingerprint);
+        const started = await client.upgradePeer(
+          alias,
+          o.fingerprint,
+          o.client
+        );
         ctx.log(
           `a2a:${alias} (key ${started.fingerprint}) waits for its owner to approve signed requests; once they do, both sides drop the bearer.`
         );
