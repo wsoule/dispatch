@@ -47,11 +47,13 @@ type Extra = Pick<
 
 // What a gated change sets besides content, said for the gate and compared
 // to tell whether an approval still covers it.
-function describe(extra: Extra): string {
-  const parts = [`status ${extra.status}`];
+function describe(extra: Extra, author: Address): string {
+  const parts = [`by ${author}`, `status ${extra.status}`];
   if (extra.statusReason !== null) parts.push(`(${extra.statusReason})`);
   if (extra.pinned) parts.push('pinned');
   if (extra.supersedes !== null) parts.push(`supersedes ${extra.supersedes}`);
+  if (extra.supersededBy !== null)
+    parts.push(`superseded by ${extra.supersededBy}`);
   return `From a teammate's machine: ${parts.join(', ')}`;
 }
 
@@ -79,13 +81,25 @@ export function createTeamMemoryPort(deps: {
     }
   };
 
-  // Who made an entry's latest change that travels.
+  // Who last changed each field of an entry by a change that travels:
+  // revisions are walked in order, and decay or sync ones attribute nothing.
   const changeOf = (entry: MemoryEntry): TeamChange => {
-    const last = shared
-      .revisions(entry.id)
-      .filter((r) => !LOCAL_ONLY.has(r.cause))
-      .at(-1);
-    return { entry, by: last?.by ?? entry.author };
+    const fieldBy: Partial<Record<keyof MemoryEntry, Address>> = {};
+    let before: MemoryEntry | null = null;
+    let by: Address = entry.author;
+    for (const r of shared.revisions(entry.id)) {
+      if (!LOCAL_ONLY.has(r.cause)) {
+        by = r.by;
+        for (const key of Object.keys(r.snapshot) as (keyof MemoryEntry)[])
+          if (
+            before === null ||
+            JSON.stringify(before[key]) !== JSON.stringify(r.snapshot[key])
+          )
+            fieldBy[key] = r.by;
+      }
+      before = r.snapshot;
+    }
+    return { entry, by, fieldBy };
   };
 
   // The merged entry written as it stands; a new one keeps its id.
@@ -219,17 +233,17 @@ export function createTeamMemoryPort(deps: {
       if (held !== null && held.scope !== 'team') return 'ignored';
       const tried = attempts(replica, id);
       const last = tried.at(-1);
-      const reason = describe(extra);
+      const reason = describe(extra, author);
       const covers = (p: MemoryProposal) =>
         p.contentHash === memoryContentHash(content) && p.reason === reason;
-      // What a gate would decide: a new entry, or a change to content or to
-      // its status, pin or supersession.
+      // What a gate would decide: a new entry, or a change to content, its
+      // author, or its status, pin or supersession.
       const gated =
         held === null ||
         memoryContentHash(held) !== memoryContentHash(content) ||
         JSON.stringify([held.epic, held.appliesTo]) !==
           JSON.stringify([content.epic, content.appliesTo]) ||
-        reason !== describe({ ...extra, ...pickExtra(held) });
+        reason !== describe({ ...extra, ...pickExtra(held) }, held.author);
       // A proposal still open is what a human here was asked; it is updated
       // rather than bypassed.
       if (last?.state === 'open') {
@@ -273,11 +287,15 @@ const RANK: Record<MemoryTrust, number> = { agent: 0, confirmed: 1, human: 2 };
 // The status, pin and supersession fields `describe` reads.
 function pickExtra(
   e: MemoryEntry
-): Pick<Extra, 'status' | 'statusReason' | 'pinned' | 'supersedes'> {
+): Pick<
+  Extra,
+  'status' | 'statusReason' | 'pinned' | 'supersedes' | 'supersededBy'
+> {
   return {
     status: e.status,
     statusReason: e.statusReason,
     pinned: e.pinned,
     supersedes: e.supersedes,
+    supersededBy: e.supersededBy,
   };
 }
