@@ -27,10 +27,19 @@ import type { RelayFrame } from '../../../src/team/federation/relay.js';
 // docs/specs/2026-10-05-sealed-relay-contract.md over Bun.serve, with
 // @dispatch/federation's verifyLog and foldRoster. Tests only.
 
-const OP_MAX_BYTES = 1024 * 1024;
-const OPS_PER_MINUTE = 1000;
-const PENDING_PER_TEAM_MINUTE = 10;
-const PENDING_PER_SOURCE_MINUTE = 3;
+/** The contract's limits; tests lower them. */
+export interface RelayLimits {
+  opMaxBytes: number;
+  opsPerMinute: number;
+  pendingPerTeamMinute: number;
+  pendingPerSourceMinute: number;
+}
+const LIMITS: RelayLimits = {
+  opMaxBytes: 1024 * 1024,
+  opsPerMinute: 1000,
+  pendingPerTeamMinute: 10,
+  pendingPerSourceMinute: 3,
+};
 const RETAIN_MS = 30 * 24 * 60 * 60 * 1000;
 const OPS_PER_FRAME = 1000;
 const MINUTE = 60_000;
@@ -58,7 +67,10 @@ export interface FakeRelay {
  *  ops as `POST /v1/teams` would. */
 export function startFakeRelay(
   founder: { fed: { ownLog(): LogEntry[] }; clock?: { now: Date } },
-  opts: { licensePublicKey?: string | null } = {}
+  opts: {
+    licensePublicKey?: string | null;
+    limits?: Partial<RelayLimits>;
+  } = {}
 ): Promise<FakeRelay> {
   const own = founder.fed.ownLog();
   const key = own.find((e) => e.type === 'key');
@@ -76,7 +88,8 @@ export function startFakeRelay(
     key,
     found,
     opts.licensePublicKey ?? null,
-    founder.clock ?? { now: new Date() }
+    founder.clock ?? { now: new Date() },
+    { ...LIMITS, ...opts.limits }
   );
   const server = Bun.serve<Conn>({
     port: 0,
@@ -144,7 +157,8 @@ class Relay {
     private readonly found: LogEntry,
     private readonly licensePublicKey: string | null,
     /** The founder's clock in tests, so invites and retention share it. */
-    readonly clock: { now: Date }
+    readonly clock: { now: Date },
+    private readonly limits: RelayLimits
   ) {
     this.logs.set(founderKey.replica, [founderKey, found]);
   }
@@ -244,9 +258,9 @@ class Relay {
         return refuse('the invite was used');
       const recent = this.pendingTimes.filter((p) => now - p.at < MINUTE);
       if (
-        recent.length >= PENDING_PER_TEAM_MINUTE ||
+        recent.length >= this.limits.pendingPerTeamMinute ||
         recent.filter((p) => p.source === conn.source).length >=
-          PENDING_PER_SOURCE_MINUTE
+          this.limits.pendingPerSourceMinute
       )
         return refuse('too many joins; try again in a minute');
       this.pendingTimes.push({ at: now, source: conn.source });
@@ -270,17 +284,20 @@ class Relay {
     const times = (this.publishTimes.get(replica) ?? []).filter(
       (t) => now - t < MINUTE
     );
-    const switchedAt = this.transportHlc();
+    // The switch op may ride in this very upload.
+    const switchedAt = this.transportHlc(
+      conn.status === 'member' ? ops.filter((e) => e.replica === replica) : []
+    );
     const mine = ops
       .filter((e) => e.replica === replica)
       .filter((e) => conn.status === 'member' || e.type === 'key')
       .sort((a, b) => a.seq - b.seq);
     for (const e of mine) {
       if (log.some((h) => h.seq === e.seq)) continue;
-      if (Buffer.byteLength(JSON.stringify(e)) > OP_MAX_BYTES) break;
+      if (Buffer.byteLength(JSON.stringify(e)) > this.limits.opMaxBytes) break;
       // The switch-over upload (ops before the relay switch) is not limited.
       const exempt = switchedAt !== null && e.hlc < switchedAt;
-      if (!exempt && times.length >= OPS_PER_MINUTE) break;
+      if (!exempt && times.length >= this.limits.opsPerMinute) break;
       const head = log.at(-1);
       const pinned = log[0] === undefined ? null : pinnedOf(log[0]);
       const r = verifyLog(
@@ -393,9 +410,9 @@ class Relay {
   }
 
   // The hlc of the folded roster's transport op naming the relay, if any.
-  private transportHlc(): string | null {
+  private transportHlc(incoming: readonly LogEntry[] = []): string | null {
     const clocks: string[] = [];
-    for (const log of this.logs.values())
+    for (const log of [...this.logs.values(), incoming])
       for (const e of log)
         if (
           e.type === 'roster' &&

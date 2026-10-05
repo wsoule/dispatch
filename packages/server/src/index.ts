@@ -339,6 +339,8 @@ export interface StartServerOptions {
   federationNow?: () => number;
   // Debounce for a board sync pass after a local change; test-only.
   federationDebounceMs?: number;
+  // The build this daemon announces to its team; test-only (the package version).
+  federationBuild?: string;
   // Debounce for the receipts exporter's response to a task change. Defaults
   // to ReceiptsScheduler's own multi-second default; tests pass something much
   // shorter. There is no periodic counterpart: the export has no remote to
@@ -1243,7 +1245,7 @@ async function bootServer(
         store: syncedStore,
         team,
         handle: actorContext.member.handle,
-        build: packageJson.version,
+        build: opts.federationBuild ?? packageJson.version,
         remoteUrl,
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
@@ -1460,7 +1462,7 @@ async function bootServer(
       : wireMessagingFederation(federation, {
           ledger: syncLedger,
           tasks: store,
-          build: packageJson.version,
+          build: opts.federationBuild ?? packageJson.version,
           device: hostname().split('.')[0] ?? 'machine',
           knowsRun: (id) => orchestrator.getRun(id) !== null,
           isLive: (id) => orchestrator.isRunLive(id),

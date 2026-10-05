@@ -30,6 +30,8 @@ import { rawFetch } from '../../../testAuth.js';
 export interface TeammateOpts {
   federationNow?: () => number;
   federationDebounceMs?: number;
+  /** The build this daemon announces, in place of the package version. */
+  federationBuild?: string;
   gitName?: string;
   /** Extra .dispatch/config.yml lines. */
   config?: string;
@@ -173,6 +175,9 @@ export function daemons(): {
       ...(opts.federationDebounceMs === undefined
         ? {}
         : { federationDebounceMs: opts.federationDebounceMs }),
+      ...(opts.federationBuild === undefined
+        ? {}
+        : { federationBuild: opts.federationBuild }),
     });
     handles.push(handle);
     return handle;

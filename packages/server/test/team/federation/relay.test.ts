@@ -17,8 +17,11 @@ afterEach(async () => {
   relay = null;
 });
 const at = (i: number): MessagingReplica => open[i];
-const startRelay = async (founder: MessagingReplica): Promise<FakeRelay> => {
-  relay = await startFakeRelay(founder);
+const startRelay = async (
+  founder: MessagingReplica,
+  limits?: Parameters<typeof startFakeRelay>[1]
+): Promise<FakeRelay> => {
+  relay = await startFakeRelay(founder, limits);
   return relay;
 };
 const kinds = (entries: { type: string; body?: unknown }[]) =>
@@ -341,5 +344,103 @@ describe('switching a team to the relay', () => {
     const id = at(0).store.create({ title: 'after the switch back' }).meta.id;
     await passes(open, 2);
     expect(at(1).store.get(id)?.meta.title).toBe('after the switch back');
+  });
+});
+
+describe("the fake relay's limits", () => {
+  it('refuses an op over the size cap, holding the outbox', async () => {
+    open = await foundedTeam('ada', 'bob');
+    const r = await startRelay(at(0), { limits: { opMaxBytes: 4096 } });
+    const t = at(0).relayTransport(r.url);
+    await t.upload(at(0).fed.ownLog());
+    at(0).store.create({ title: 'x'.repeat(8000) });
+    await expect(t.upload(at(0).fed.ownLog())).rejects.toThrow(
+      'only through seq'
+    );
+    expect(r.stored(at(0).fed.replica).at(-1)?.seq).toBeLessThan(
+      at(0).fed.head()?.seq ?? 0
+    );
+  });
+
+  it('stores at most so many ops a minute, then the rest the next minute', async () => {
+    open = await foundedTeam('ada', 'bob');
+    const r = await startRelay(at(0), { limits: { opsPerMinute: 2 } });
+    const t = at(0).relayTransport(r.url);
+    await t.upload(at(0).fed.ownLog());
+    const before = r.stored(at(0).fed.replica).at(-1)?.seq ?? 0;
+    r.clock.now = new Date(r.clock.now.getTime() + 61_000);
+    for (let i = 0; i < 4; i++) at(0).store.create({ title: `task ${i}` });
+    const head = at(0).fed.head()?.seq ?? 0;
+    let minutes = 0;
+    for (; minutes < 10; minutes++) {
+      try {
+        await t.upload(at(0).fed.ownLog());
+        break;
+      } catch {
+        r.clock.now = new Date(r.clock.now.getTime() + 61_000);
+      }
+    }
+    expect(minutes).toBe(Math.ceil((head - before) / 2) - 1);
+    expect(r.stored(at(0).fed.replica).at(-1)?.seq).toBe(head);
+  });
+
+  it('exempts the switch-over upload, ops before the relay transport op, from the rate', async () => {
+    open = await foundedTeam('ada', 'bob');
+    for (let i = 0; i < 4; i++) at(0).store.create({ title: `before ${i}` });
+    at(0).roster.closeLegacy();
+    const r = await startRelay(at(0), { limits: { opsPerMinute: 1 } });
+    at(0).roster.setTransport('relay', r.url);
+    for (let i = 0; i < 2; i++) at(0).store.create({ title: `after ${i}` });
+    const t = at(0).relayTransport(r.url);
+    await expect(t.upload(at(0).fed.ownLog())).rejects.toThrow(
+      'only through seq'
+    );
+    const stored = r.stored(at(0).fed.replica);
+    const switchAt = stored.findIndex(
+      (e) =>
+        e.type === 'roster' &&
+        (e as { body?: { action?: string } }).body?.action === 'transport'
+    );
+    // Everything up to the switch op went up at once; one op after it.
+    expect(switchAt).toBeGreaterThan(4);
+    expect(stored.length).toBe(switchAt + 1);
+  });
+
+  it('lets so many pending machines join a minute, per team and per source', async () => {
+    open = await foundedTeam('ada');
+    const r = await startRelay(at(0), {
+      limits: { pendingPerTeamMinute: 5, pendingPerSourceMinute: 1 },
+    });
+    const codes = ['bob', 'cy'].map((h) => at(0).roster.invite(h).code);
+    await at(0).relayTransport(r.url).upload(at(0).fed.ownLog());
+    const [bob, cy] = ['bob', 'cy'].map((h) => messagingReplica(h));
+    open.push(bob, cy);
+    bob.roster.join(codes[0]);
+    cy.roster.join(codes[1]);
+    await bob.relayTransport(r.url).pull(new Map());
+    await expect(cy.relayTransport(r.url).pull(new Map())).rejects.toThrow(
+      'too many joins'
+    );
+    r.clock.now = new Date(r.clock.now.getTime() + 61_000);
+    await expect(
+      cy.relayTransport(r.url).pull(new Map())
+    ).resolves.toBeDefined();
+  });
+
+  it('caps pending joins per team across sources', async () => {
+    open = await foundedTeam('ada');
+    const r = await startRelay(at(0), {
+      limits: { pendingPerTeamMinute: 1, pendingPerSourceMinute: 10 },
+    });
+    const codes = ['bob', 'cy'].map((h) => at(0).roster.invite(h).code);
+    await at(0).relayTransport(r.url).upload(at(0).fed.ownLog());
+    const [bob, cy] = ['bob', 'cy'].map((h) => messagingReplica(h));
+    open.push(bob, cy);
+    bob.roster.join(codes[0]);
+    cy.roster.join(codes[1]);
+    await bob.relayTransport(r.url).pull(new Map());
+    await expect(cy.relayTransport(r.url).pull(new Map())).rejects.toThrow(
+      'too many joins'
+    );
   });
 });
