@@ -494,6 +494,25 @@ export class RosterService {
     this.publish({ rv: 1, action: 'close-legacy', entries });
   }
 
+  /** Switches the team's transport: an admin's `transport` op, once the
+   *  legacy window is closed (spec "Relay (F4)"). */
+  setTransport(kind: 'git' | 'relay', url?: string): void {
+    const view = this.admin('switch the team transport');
+    if (view.legacy.closed === null)
+      throw new RosterError(
+        'conflict',
+        'close the legacy window first: older builds read only the git branch'
+      );
+    if (kind === 'relay' && url === undefined)
+      throw new RosterError('invalid', 'url is required for the relay');
+    this.publish({
+      rv: 1,
+      action: 'transport',
+      kind,
+      ...(kind === 'relay' && url !== undefined ? { url } : {}),
+    });
+  }
+
   /** FW-R8: takes an op no build reads out of every fold, when this admin may. */
   dismiss(replica: string, seq: number, hash: string): void {
     const row = this.fed.db

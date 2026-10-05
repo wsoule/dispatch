@@ -17,6 +17,7 @@ import { OpTooLargeError } from './store.js';
 import {
   assembleTeamKeys,
   redactCredentials,
+  RELAY_DISCLOSURE,
   withoutCredentials,
 } from './teamKeys.js';
 
@@ -138,6 +139,7 @@ const ACTIONS = new Set([
   'problems',
   'runs',
   'presence',
+  'transport',
 ]);
 
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
@@ -382,9 +384,99 @@ async function act(
     case 'abandon-invite':
       roster.abandonInvite();
       return after(null);
+    case 'transport':
+      return switchTransport(fedCtx, body, after);
     default:
       return errorResponse(404, 'not found');
   }
+}
+
+/** The first build that speaks to a relay (F4). */
+const RELAY_MIN_BUILD = '0.37.0';
+
+// Whether dotted version `a` is older than `b`; an unreadable one is old.
+function olderThan(a: string, b: string): boolean {
+  const pa = a.split(/[.+-]/).slice(0, 3).map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const x = pa[i];
+    const y = pb[i] ?? 0;
+    if (x === undefined || !Number.isFinite(x)) return true;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
+// A relay URL a machine may dial: wss, or ws on this machine only.
+function relayUrlProblem(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'url is not a URL';
+  }
+  if (parsed.protocol === 'wss:') return null;
+  const local = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+  if (parsed.protocol === 'ws:' && local) return null;
+  return 'url must be wss:// (ws:// only on this machine)';
+}
+
+// POST /api/team/transport: an admin switches the team between git and a
+// relay. The relay needs every admitted machine on an F4 build, the legacy
+// window closed, and its disclosure confirmed first (F-D31).
+async function switchTransport(
+  fedCtx: FederationContext,
+  body: Body,
+  after: (
+    value: Record<string, unknown> | null
+  ) => Promise<Record<string, unknown> | null>
+): Promise<Response | Record<string, unknown> | null> {
+  const { roster, fed } = fedCtx;
+  const kind = body.kind;
+  if (kind !== 'git' && kind !== 'relay')
+    throw new RosterError('invalid', 'kind must be git or relay');
+  const view = roster.view();
+  if (view === null)
+    throw new RosterError('conflict', 'this machine is in no team');
+  if (kind === 'relay') {
+    const url = typeof body.url === 'string' ? body.url : '';
+    const bad = url === '' ? 'url is required' : relayUrlProblem(url);
+    if (bad !== null) throw new RosterError('invalid', bad);
+    const builds = new Map(
+      fed.db
+        .query<{ replica: string; build: string }, []>(
+          'SELECT replica, build FROM fed_replicas'
+        )
+        .all()
+        .map((r) => [r.replica, r.build])
+    );
+    const old = [...view.members.keys()].filter((r) =>
+      olderThan(builds.get(r) ?? fed.pinned(r)?.build ?? '', RELAY_MIN_BUILD)
+    );
+    if (old.length > 0)
+      throw new RosterError(
+        'conflict',
+        `every machine needs Dispatch ${RELAY_MIN_BUILD} or later to use a relay; still older: ${old.map((r) => fedCtx.label(r)).join(', ')}`
+      );
+    if (view.legacy.closed === null)
+      throw new RosterError(
+        'conflict',
+        'close the legacy window first: older builds read only the git branch'
+      );
+    if (body.confirmed !== true)
+      return jsonResponse(
+        {
+          error: 'confirm what the relay can read first',
+          code: 'confirm_required',
+          disclosure: RELAY_DISCLOSURE,
+        },
+        409
+      );
+    roster.setTransport('relay', url);
+    return after({ ok: true, disclosure: RELAY_DISCLOSURE });
+  }
+  roster.setTransport('git');
+  return after(null);
 }
 
 async function keyAction(

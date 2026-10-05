@@ -2248,6 +2248,8 @@ interface TransportHealth {
   sizeBytes: number | null;
   readBytes: number;
   acks: Record<string, string>;
+  /** The relay's URL while the team syncs over one. */
+  url?: string;
 }
 
 /** Mirrors TeamKeys in packages/server/src/team/federation/teamKeys.ts. */
@@ -3240,6 +3242,13 @@ export interface ApiClient {
   ): Promise<RosterAnswer>;
   setReplicaHosts(replica: string, hosts: string[]): Promise<RosterAnswer>;
   closeLegacy(): Promise<RosterAnswer>;
+  /** Switches the team between git and a relay; a relay needs
+   *  `confirmed: true` once its disclosure was shown (F-D31). */
+  switchTransport(body: {
+    kind: 'git' | 'relay';
+    url?: string;
+    confirmed?: boolean;
+  }): Promise<RosterAnswer>;
   /** FW-R8: takes an op no build reads out of every fold. */
   dismissRosterOp(
     replica: string,
@@ -4192,6 +4201,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     setReplicaHosts: (replica, hosts) =>
       teamPost(target, rosterPath(replica, 'hosts'), { hosts }),
     closeLegacy: () => teamPost(target, '/api/team/close-legacy', {}),
+    switchTransport: (body) => teamPost(target, '/api/team/transport', body),
     dismissRosterOp: (replica, seq, hash) =>
       teamPost(target, '/api/team/dismiss', { replica, seq, hash }),
     abandonInvite: () => teamPost(target, '/api/team/abandon-invite', {}),

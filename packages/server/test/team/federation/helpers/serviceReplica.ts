@@ -13,6 +13,7 @@ import { readHints } from '../../../../src/team/federation/daemon.js';
 import { GitFederationTransport } from '../../../../src/team/federation/git.js';
 import { loadOrCreateKeys } from '../../../../src/team/federation/keys.js';
 import { LegacyWindow } from '../../../../src/team/federation/legacy.js';
+import { RelayFederationTransport } from '../../../../src/team/federation/relay.js';
 import { RosterService } from '../../../../src/team/federation/roster.js';
 import { FederationService } from '../../../../src/team/federation/service.js';
 import type { V1Branch } from '../../../../src/team/federation/service.js';
@@ -157,6 +158,7 @@ export function serviceReplica(
     publicKey: opts.licensePublicKey ?? null,
     clock: now,
   });
+  const serviceRef: { current: FederationService | null } = { current: null };
   const service = new FederationService({
     store,
     ledger,
@@ -178,6 +180,19 @@ export function serviceReplica(
             readHints: () => readHints(fed, roster),
             now,
           }),
+    // As a daemon wires it: a push from the relay runs a pass.
+    relayFor: (url) =>
+      new RelayFederationTransport({
+        url,
+        teamId: roster.teamId() ?? '',
+        replica: ledger.replica,
+        signPriv: fed.keys.signPriv,
+        keyOp: () => fed.ownLog()[0] ?? null,
+        wake: () => {
+          void serviceRef.current?.syncNow();
+        },
+        now,
+      }),
     remote: 'memory',
     branch: 'dispatch-sync',
     intervalMs: 60 * 60 * 1000,
@@ -196,6 +211,7 @@ export function serviceReplica(
       ? {}
       : { restagePerPublisher: opts.restagePerPublisher }),
   });
+  serviceRef.current = service;
   return {
     dir,
     ledger,

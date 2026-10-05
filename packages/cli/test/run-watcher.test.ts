@@ -156,6 +156,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     abandonInvite: () => Promise.reject(new Error('not used')),
     ackProblem: () => Promise.reject(new Error('not used')),
     resolveRunConflict: () => Promise.reject(new Error('not used')),
+    switchTransport: () => Promise.reject(new Error('not used')),
   };
 }
 

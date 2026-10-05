@@ -137,6 +137,12 @@ export interface OpHandler {
   dropped?(op: FederatedOp, reason: 'overflow' | 'revoked'): void;
 }
 
+/** A transport a switch can move to: it stores a whole log, stubs too. */
+interface SwitchableTransport extends FederationTransport {
+  upload(entries: readonly LogEntry[]): Promise<void>;
+  close(): void;
+}
+
 /** Queues ops into fed_outbox before publishing (spec "Collect"). */
 export interface Collector {
   readonly order: number;
@@ -168,7 +174,11 @@ export interface FederationServiceOptions {
   fed: FedStore;
   roster: RosterService;
   legacy: LegacyWindow;
+  /** The git transport, the default and the one a `transport {kind: 'git'}` op names. */
   transport: FederationTransport;
+  /** A relay transport for the URL a `transport {kind: 'relay'}` op names;
+   *  absent, this build stays on git and says so. */
+  relayFor?: (url: string) => SwitchableTransport;
   remote: string;
   branch: string;
   intervalMs: number;
@@ -225,7 +235,12 @@ export class FederationService {
   // memory, so a restart forgets them and the handler asks again.
   private readonly rereads = new Map<string, Set<number>>();
 
-  constructor(private readonly opts: FederationServiceOptions) {}
+  // The transport the roster's `transport` op chose, once switched to.
+  private current: FederationTransport;
+
+  constructor(private readonly opts: FederationServiceOptions) {
+    this.current = opts.transport;
+  }
 
   /** The next pass pulls `replica` from below `seqs` and hands each of those
    *  ops, verified again, to its handler once more. */
@@ -307,7 +322,8 @@ export class FederationService {
   }
 
   status(): FederationStatus {
-    const { ledger, fed, roster, transport } = this.opts;
+    const { ledger, fed, roster } = this.opts;
+    const transport = this.current;
     const view = roster.view();
     return {
       enabled: true,
@@ -351,7 +367,7 @@ export class FederationService {
   }
 
   private async pass(): Promise<void> {
-    const { v1, roster, fed, transport, legacy } = this.opts;
+    const { v1, roster, fed, legacy } = this.opts;
     try {
       this.ready ??= v1.ensure();
       await this.ready;
@@ -382,6 +398,8 @@ export class FederationService {
           `dispatchd: could not close the legacy window: ${(err as Error).message}`
         );
       }
+      // A switch the roster made, once nothing waits for the old transport.
+      await this.followTransport();
       for (const c of this.collectors) c.collect(now);
       // Offline keeps both outboxes; the pull below says why.
       try {
@@ -397,7 +415,7 @@ export class FederationService {
           replica,
           Math.min(marks.get(replica) ?? 0, Math.max(0, Math.min(...seqs) - 2))
         );
-      const entries = await transport.pull(marks);
+      const entries = await this.current.pull(marks);
       this.lastError = null;
       const v1Ops = v1.readOthers((r) => this.opts.ledger.cursor(r));
       const before = roster.view();
@@ -407,8 +425,9 @@ export class FederationService {
       this.stageRereads(entries, now);
       await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
-      await transport.ack(this.watermarks());
+      await this.current.ack(this.watermarks());
       for (const h of this.handlers.values()) h.passComplete?.();
+      await this.followTransport();
       if (fed.outbox().length > 0) this.notifyLocalChange();
       this.lastSyncAt = now.toISOString();
       // A route's late sync failure is over once a sync goes through.
@@ -471,7 +490,7 @@ export class FederationService {
     for (let round = 0; round < 2 && !this.opts.roster.founded(); round++) {
       let entries: LogEntry[];
       try {
-        entries = await this.opts.transport.pull(new Map());
+        entries = await this.current.pull(new Map());
         this.opts.fed.clearProblem('team:founding');
       } catch (err) {
         // B7: say why no founding can be seen, instead of waiting silently.
@@ -493,10 +512,10 @@ export class FederationService {
       awaited !== null &&
       this.scanDue(`founding\n${awaited}`, null)
     ) {
-      this.readFoundings(await this.opts.transport.scan(null));
+      this.readFoundings(await this.current.scan(null));
       if (this.opts.roster.awaitedTeam() === null) {
         this.opts.fed.clearProblem('team:founding');
-        this.opts.transport.forgetScans(null);
+        this.current.forgetScans(null);
       } else
         this.opts.fed.problem(
           'team:founding',
@@ -504,7 +523,7 @@ export class FederationService {
         );
     }
     // Founded: the scans for a founding are over (FW-R30(5)).
-    if (this.opts.roster.founded()) this.opts.transport.forgetScans(null);
+    if (this.opts.roster.founded()) this.current.forgetScans(null);
     if (this.opts.fed.outbox().length > 0) this.notifyLocalChange();
   }
 
@@ -538,7 +557,7 @@ export class FederationService {
   // row, then waits doubling from a minute up to SCAN_MAX_WAIT_MS, and at
   // once whenever the stamp of the files it reads changes.
   private scanDue(key: string, replicas: readonly string[] | null): boolean {
-    const stamp = this.opts.transport.stamp(replicas);
+    const stamp = this.current.stamp(replicas);
     const now = this.now().getTime();
     let st = this.scans.get(key);
     if (st === undefined) {
@@ -567,7 +586,7 @@ export class FederationService {
   /** FW-R28: the key op an admit names that no probe found, from a scan of
    *  that id's files outside the caps; true once a claim with it is held. */
   async findKey(replica: string, fingerprint: string): Promise<boolean> {
-    const entries = await this.opts.transport.scan([replica]);
+    const entries = await this.current.scan([replica]);
     for (const k of keyOps(entries.filter((e) => e.replica === replica))) {
       const body = k.body as { signPub?: unknown; sealPub?: unknown };
       if (
@@ -581,7 +600,7 @@ export class FederationService {
     const found = this.opts.fed
       .claims(replica)
       .some((c) => c.fingerprint === fingerprint);
-    if (found) this.opts.transport.forgetScans([replica]);
+    if (found) this.current.forgetScans([replica]);
     return found;
   }
 
@@ -640,7 +659,8 @@ export class FederationService {
   // Signed ops through the transport, then the v1 outbox (copies while the
   // window is open, and an older build's own lines).
   private async publish(): Promise<void> {
-    const { fed, ledger, v1, transport } = this.opts;
+    const { fed, ledger, v1 } = this.opts;
+    const transport = this.current;
     const ops = fed.outbox();
     const last = ops.at(-1);
     if (last !== undefined) {
@@ -1125,6 +1145,53 @@ export class FederationService {
         reason,
         this.now().toISOString()
       );
+  }
+
+  // Moves to the transport the roster's `transport` op names: this
+  // replica's whole log goes up first, idempotent by (replica, seq), so
+  // nothing is lost, and only once the outbox is empty, so the op that made
+  // the switch reached the old transport too. The old one is not written again.
+  private async followTransport(): Promise<void> {
+    const { fed, roster } = this.opts;
+    const want = roster.view()?.transport ?? { kind: 'git' as const };
+    const here = this.current;
+    const hereUrl = (here as { url?: string }).url;
+    if (
+      want.kind === here.kind &&
+      (want.kind === 'git' || want.url === hereUrl)
+    )
+      return;
+    if (fed.outbox().length > 0) return;
+    let next: FederationTransport;
+    if (want.kind === 'git') next = this.opts.transport;
+    else if (want.url === undefined || this.opts.relayFor === undefined) {
+      fed.problem(
+        'transport:switch',
+        'the team switched to a relay this machine cannot reach; it keeps syncing over git until it can'
+      );
+      return;
+    } else next = this.opts.relayFor(want.url);
+    const log = fed.ownLog();
+    try {
+      if ('upload' in next) await (next as SwitchableTransport).upload(log);
+      else await next.publish(log.filter((e): e is FederatedOp => !isStub(e)));
+    } catch (err) {
+      if (next !== this.opts.transport) (next as SwitchableTransport).close();
+      fed.problem(
+        'transport:switch',
+        `this machine could not move its log to the ${want.kind} yet, so it keeps the old transport: ${(err as Error).message.slice(0, 200)}`
+      );
+      return;
+    }
+    this.current = next;
+    if (here !== this.opts.transport) (here as SwitchableTransport).close();
+    fed.clearProblem('transport:switch');
+    fed.audit('transport', `transport:${want.kind}`, {
+      from: here.kind,
+      to: want.kind,
+      ...(want.url === undefined ? {} : { url: want.url }),
+      uploaded: log.length,
+    });
   }
 
   // Tells a parked op's handler that retention dropped it.

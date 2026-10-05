@@ -103,6 +103,9 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [inviteFor, setInviteFor] = useState('');
   const [hostsDraft, setHostsDraft] = useState<Record<string, string>>({});
+  const [relayUrl, setRelayUrl] = useState('');
+  // The relay URL whose disclosure is showing, until Switch or Cancel.
+  const [disclosing, setDisclosing] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{
     replica: string;
     handle: string;
@@ -486,6 +489,83 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
             >
               New recovery code
             </Button>
+          }
+        />
+      )}
+      {k.team !== null && (
+        <SettingsRow
+          title={
+            k.transport.kind === 'relay'
+              ? `Syncing over the relay at ${k.transport.url ?? 'an unknown URL'}`
+              : 'Syncing over git'
+          }
+          control={
+            canAdmin && k.legacy.closed ? (
+              k.transport.kind === 'relay' ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(() => api.switchTransport({ kind: 'git' }))
+                  }
+                >
+                  Switch back to git
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Input
+                    aria-label="Relay URL"
+                    placeholder="wss://relay.example"
+                    value={relayUrl}
+                    onChange={(e) => setRelayUrl(e.target.value)}
+                    className="h-7 w-56"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || relayUrl.trim() === ''}
+                    onClick={() => setDisclosing(relayUrl.trim())}
+                  >
+                    Switch to the relay
+                  </Button>
+                </div>
+              )
+            ) : undefined
+          }
+        />
+      )}
+      {disclosing !== null && (
+        <SettingsRow
+          title="Before the team switches"
+          subtitle={k.relayDisclosure}
+          control={
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setDisclosing(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() =>
+                  void act(async () => {
+                    await api.switchTransport({
+                      kind: 'relay',
+                      url: disclosing,
+                      confirmed: true,
+                    });
+                    setDisclosing(null);
+                  })
+                }
+              >
+                Switch
+              </Button>
+            </div>
           }
         />
       )}
