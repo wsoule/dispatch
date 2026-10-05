@@ -38,6 +38,11 @@ export interface RelayOptions {
   log?: (line: string) => void;
   // How long a dialled connection has to answer its challenge (10 s).
   authTimeoutMs?: number;
+  // Connections still waiting to authenticate: per IP (8) and in all (256).
+  preAuthPerIp?: number;
+  preAuthTotal?: number;
+  // How often tenants are pinged; one silent for two intervals is dropped.
+  pingMs?: number;
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
@@ -47,6 +52,9 @@ const TENANTS_PATH = '/v1/tenants';
 const TENANT = /^\/t\/([A-Za-z0-9_-]{43})(\/[^?]*)?(\?.*)?$/;
 const AUTH_TIMEOUT_MS = 10_000;
 const PING_MS = 30_000;
+// Before auth a dialled connection may send only its auth frame.
+const PRE_AUTH_BYTES = 4096;
+const AFTER_AUTH_BYTES = 2 * MAX_FRAME_BODY + 4096;
 
 interface Tenant {
   thumbprint: string;
@@ -121,12 +129,18 @@ function checkRelay(o: RelayOptions): string | null {
 }
 
 /** Starts the relay; resolves once it listens. */
-export async function startRelay(
-  o: RelayOptions
-): Promise<{ url: string; port: number; stop(): Promise<void> }> {
+export async function startRelay(o: RelayOptions): Promise<{
+  url: string;
+  port: number;
+  // Re-reads the tenants file (SIGHUP) and drops tenants no longer listed.
+  reload(): void;
+  stop(): Promise<void>;
+}> {
   const problem = checkRelay(o);
   if (problem !== null) throw new Error(problem);
-  const allowed = readTenants(o.tenantsFile);
+  let allowed = readTenants(o.tenantsFile);
+  const preAuth = new Map<string, number>();
+  let preAuthTotal = 0;
   const log = o.log ?? ((line: string) => console.log(line));
   const router = new TenantRouter<Tenant>();
   const limiter = new TenantLimiter(() => o.limits ?? DEFAULT_TENANT_LIMITS);
@@ -144,8 +158,28 @@ export async function startRelay(
       socket.destroy();
       return;
     }
+    // Unauthenticated connections are capped per IP and in all (review M2).
+    const ip = req.socket.remoteAddress ?? '-';
+    if (
+      (preAuth.get(ip) ?? 0) >= (o.preAuthPerIp ?? 8) ||
+      preAuthTotal >= (o.preAuthTotal ?? 256)
+    ) {
+      socket.destroy();
+      return;
+    }
+    preAuth.set(ip, (preAuth.get(ip) ?? 0) + 1);
+    preAuthTotal++;
+    let counted = true;
+    const authDone = () => {
+      if (!counted) return;
+      counted = false;
+      preAuthTotal--;
+      const n = (preAuth.get(ip) ?? 1) - 1;
+      if (n <= 0) preAuth.delete(ip);
+      else preAuth.set(ip, n);
+    };
     socket.write(handshake(key));
-    const conn = new WsConnection(socket, 2 * MAX_FRAME_BODY + 4096);
+    const conn = new WsConnection(socket, PRE_AUTH_BYTES);
     conns.add(conn);
     const nonce = randomBytes(24).toString('base64url');
     const dialled = `${base.replace(/^http/, 'ws')}${TENANTS_PATH}`;
@@ -160,6 +194,7 @@ export async function startRelay(
     conn.send(JSON.stringify({ t: 'challenge', nonce }));
     conn.onClose = () => {
       clearTimeout(timer);
+      authDone();
       conns.delete(conn);
       if (tenant === null) return;
       router.drop(tenant.thumbprint, tenant);
@@ -190,6 +225,8 @@ export async function startRelay(
           return;
         }
         const tp = checked.thumbprint;
+        authDone();
+        conn.setMaxMessage(AFTER_AUTH_BYTES);
         const channel = new TenantChannel({
           tenant: tp,
           send: (f) => conn.send(JSON.stringify(f)),
@@ -253,19 +290,11 @@ export async function startRelay(
         done(404);
         return;
       }
+      // Not connected reads as not listed: no oracle for who is a tenant (M4).
       const tenant = router.connOf(tp);
       if (tenant === null) {
-        res
-          .writeHead(503, {
-            'content-type': 'application/json',
-            'retry-after': '30',
-          })
-          .end(
-            JSON.stringify({
-              error: 'this agent is not connected to the relay',
-            })
-          );
-        done(503);
+        res.writeHead(404).end('not found');
+        done(404);
         return;
       }
       const ac = new AbortController();
@@ -326,6 +355,9 @@ export async function startRelay(
           onRequest
         );
   server.on('upgrade', onUpgrade);
+  // Explicit, so a slow client cannot hold a socket open on headers or body.
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 60_000;
   const sockets = new Set<Socket>();
   server.on('connection', (socket: Socket) => {
     sockets.add(socket);
@@ -340,13 +372,39 @@ export async function startRelay(
     const host = o.host === '::1' ? '[::1]' : '127.0.0.1';
     base = `http://${host}:${port}`;
   }
+  // Pings every tenant; one silent for two intervals is half-open: dropped.
+  const pingMs = o.pingMs ?? PING_MS;
   const pinger = setInterval(() => {
-    for (const conn of conns) conn.ping();
-  }, PING_MS);
+    for (const conn of conns) {
+      if (conn.silentForMs() > 2 * pingMs) conn.close(1001);
+      else conn.ping();
+    }
+  }, pingMs);
   pinger.unref();
   return {
     url: base,
     port,
+    reload: () => {
+      let next: Map<string, string>;
+      try {
+        next = readTenants(o.tenantsFile);
+      } catch (err) {
+        log(
+          `relay: kept the old tenants list: ${err instanceof Error ? err.message : 'error'}`
+        );
+        return;
+      }
+      const before = allowed;
+      allowed = next;
+      for (const tp of before.keys()) {
+        if (allowed.has(tp)) continue;
+        const t = router.connOf(tp);
+        if (t === null) continue;
+        t.channel.close();
+        t.conn.close(1008);
+        log(`relay: dropped tenant ${tp.slice(0, 8)}, no longer listed`);
+      }
+    },
     stop: () =>
       new Promise<void>((resolve) => {
         clearInterval(pinger);

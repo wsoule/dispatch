@@ -680,9 +680,15 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
         throw new CliError(err instanceof Error ? err.message : String(err));
       }
       ctx.log(
-        `A2A relay listening at ${relay.url}; tenants dial ${relay.url.replace(/^http/, 'ws')}/v1/tenants. Ctrl-C or SIGTERM stops it.`
+        `A2A relay listening at ${relay.url}; tenants dial ${relay.url.replace(/^http/, 'ws')}/v1/tenants. SIGHUP re-reads the tenants file; Ctrl-C or SIGTERM stops it.`
       );
-      await stopSignal();
+      const reload = () => relay.reload();
+      process.on('SIGHUP', reload);
+      try {
+        await stopSignal();
+      } finally {
+        process.off('SIGHUP', reload);
+      }
       await relay.stop();
     });
 

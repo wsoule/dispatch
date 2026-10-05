@@ -53,6 +53,33 @@ const RESULT_HEADERS = [
   'content-digest',
 ];
 
+const PORT_PREFIX = '/api/a2a/port/';
+
+/**
+ * A call frame's route as a port request URL and its segments, or null when,
+ * normalized, it would leave /api/a2a/port/ (relay review M6).
+ */
+export function portCallOf(
+  route: string
+): { url: string; rest: string[] } | null {
+  if (!route.startsWith('/') || route.startsWith('//')) return null;
+  let url: URL;
+  try {
+    url = new URL(`http://relay.invalid/api/a2a/port${route}`);
+  } catch {
+    return null;
+  }
+  if (url.host !== 'relay.invalid' || !url.pathname.startsWith(PORT_PREFIX))
+    return null;
+  const rest = url.pathname
+    .slice(PORT_PREFIX.length)
+    .split('/')
+    .filter((seg) => seg !== '');
+  if (rest.length === 0 || rest.some((seg) => /^(\.|%2e)+$/i.test(seg)))
+    return null;
+  return { url: url.href, rest };
+}
+
 export class RelayClient {
   private settings: RelaySettings = { ...DEFAULT_RELAY };
   private ws: WebSocket | null = null;
@@ -223,11 +250,18 @@ export class RelayClient {
     const ac = new AbortController();
     this.calls.set(f.id, ac);
     try {
-      const url = new URL(`http://relay.invalid/api/a2a/port${f.route}`);
-      const rest = url.pathname
-        .slice('/api/a2a/port/'.length)
-        .split('/')
-        .filter((s) => s !== '');
+      const call = portCallOf(f.route);
+      if (call === null) {
+        this.send(ws, {
+          t: 'result',
+          id: f.id,
+          status: 404,
+          headers: {},
+          body: null,
+        });
+        return;
+      }
+      const { rest } = call;
       const host: HostRow = {
         id: this.hostId(),
         name: 'relay',
@@ -238,7 +272,7 @@ export class RelayClient {
         revokedAt: null,
       };
       const bodied = f.method !== 'GET' && f.method !== 'HEAD';
-      const req = new Request(url.href, {
+      const req = new Request(call.url, {
         method: f.method,
         headers: f.headers,
         ...(bodied && f.body !== null ? { body: f.body } : {}),

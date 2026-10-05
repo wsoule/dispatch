@@ -564,3 +564,21 @@ describe('batch 5 review R1, R6', () => {
     ).toHaveLength(1);
   });
 });
+
+describe('relay review M1', () => {
+  it('with exactly one candidate client, the upgrade records it as the named client', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    await bearerPair(a, b);
+    expect(
+      (
+        await a.call('/api/a2a/peers/bob/upgrade', {
+          body: { confirmFingerprint: fingerprintOf(b) },
+        })
+      ).status
+    ).toBe(202);
+    expect(
+      a.handle.a2a.store!.notices('upgrade-client').map((n) => n.body)
+    ).toEqual([clientOf(a, 'a2a.bob').address]);
+  });
+});

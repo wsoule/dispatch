@@ -133,6 +133,13 @@ export interface BridgeDeps {
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
 // as the client (never deciding), and every read is gathered fresh.
+// Whether a forwarded path lies under the host's own URL path (relay review
+// I1): '/t/<A>/a2a/v1/…' for tenant A, anything for a host at an origin.
+function underHostPath(path: string, publicUrl: string): boolean {
+  const base = new URL(publicUrl).pathname.replace(/\/$/, '');
+  return base === '' || path.startsWith(`${base}/`);
+}
+
 export class DaemonBridgePort implements BridgePort {
   private readonly requestTimes = new Map<string, number[]>();
   private readonly streams = new Map<string, number>();
@@ -376,6 +383,15 @@ export class DaemonBridgePort implements BridgePort {
     req: ReceivedRequest,
     publicUrl: string
   ): Promise<AuthResult | null> {
+    // A host serving under a path (a relay tenant) passes only paths under it:
+    // a request signed for another tenant's path is never verified here.
+    if (!underHostPath(req.path, publicUrl))
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        reason: 'AUTH_INVALID_TOKEN',
+        message: 'unknown token',
+      });
     return settle(() =>
       verifySignedClient(this.deps, req, new URL(publicUrl).origin)
     );
@@ -454,7 +470,8 @@ export class DaemonBridgePort implements BridgePort {
   ): Promise<Response> {
     const peers = this.deps.peers?.() ?? null;
     const unpairer = this.deps.unpairer?.() ?? null;
-    if (peers === null) return new Response('not found', { status: 404 });
+    if (peers === null || !underHostPath(r.path, publicUrl))
+      return new Response('not found', { status: 404 });
     const parts = {
       method: r.method,
       targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,

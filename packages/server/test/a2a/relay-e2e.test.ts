@@ -176,14 +176,14 @@ describe('daemons reached through an A2A relay', () => {
       });
       expect(wrong.status).toBe(401);
 
-      // A leaves the relay: A's URLs are 503, B still serves.
+      // A leaves the relay: A's URLs are 404, as for a stranger; B still serves.
       expect(
         (await a.call('/api/a2a/relay', { method: 'DELETE' })).status
       ).toBe(200);
       await waitFor(() => !relayStatus(a).connected, 5000);
       expect(
         (await rawFetch(`${sa.tenantUrl}/.well-known/agent-card.json`)).status
-      ).toBe(503);
+      ).toBe(404);
       expect((await ask(sb.tenantUrl!, tokenB, 'Still here?')).status).toBe(
         200
       );

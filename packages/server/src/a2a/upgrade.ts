@@ -132,7 +132,7 @@ export class Upgrades {
     const peer = this.d.store.getPeer(i.alias);
     if (peer === null)
       throw new MessagingError('not-found', `no A2A peer ${i.alias}`);
-    const client = i.client === undefined ? null : this.clientNamed(i.client);
+    let client = i.client === undefined ? null : this.clientNamed(i.client);
     // Unnamed, the approval may come over any approved, unpinned bearer
     // client: with more than one, which is the peer must be said (review R1).
     if (client === null) {
@@ -150,6 +150,8 @@ export class Upgrades {
           `more than one A2A client could be a2a:${i.alias}; pass client: the one it reaches this agent as (${candidates.map((c) => c.name).join(', ')})`,
           'client'
         );
+      // Exactly one: it is the client the approval must come over (review M1).
+      if (candidates.length === 1) client = candidates[0].address;
     }
     if (peer.auth === 'signature')
       throw new MessagingError(

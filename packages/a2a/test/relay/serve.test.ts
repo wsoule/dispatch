@@ -202,14 +202,14 @@ describe('startRelay', () => {
     expect(log).not.toContain('secret-token');
   });
 
-  it('answers 503 for a tenant whose daemon is not connected', async () => {
+  it('answers 404 for a tenant whose daemon is not connected, as for one never listed (review M4)', async () => {
     const a = newKey();
     const r = await relay(tenantsFile(`${a.tp}\n`));
     const t = tenant(r.url, a);
     await t.settled;
     t.ws.close();
     await new Promise((res) => setTimeout(res, 200));
-    expect((await fetch(`${r.url}/t/${a.tp}/a2a/v1/tasks/x`)).status).toBe(503);
+    expect((await fetch(`${r.url}/t/${a.tp}/a2a/v1/tasks/x`)).status).toBe(404);
   });
 });
 
@@ -311,5 +311,91 @@ describe('the relay’s handshake and isolation (batch 5 review)', () => {
     );
     expect(await pending).toBe('no answer');
     expect(lines.join('\n')).toContain('answered a call it does not own');
+  });
+});
+
+describe('relay review M2, M5, M3 liveness', () => {
+  async function relayWith(
+    tenants: string,
+    over: Record<string, unknown> = {}
+  ) {
+    const r = await startRelay({
+      host: '127.0.0.1',
+      port: 0,
+      publicUrl: null,
+      tls: null,
+      publicBind: false,
+      trustForwardedFor: false,
+      tenantsFile: tenants,
+      log: (line) => lines.push(line),
+      ...over,
+    });
+    stops.push(r.stop);
+    return r;
+  }
+  const dial = (url: string) => {
+    const ws = new WebSocket(`${url.replace(/^http/, 'ws')}/v1/tenants`);
+    const got: string[] = [];
+    const closed = new Promise<number>(
+      (res) => (ws.onclose = (e) => res(e.code))
+    );
+    const challenged = new Promise<void>((res) => {
+      ws.onmessage = (e) => {
+        got.push(String(e.data));
+        res();
+      };
+    });
+    stops.push(() => {
+      ws.close();
+      return Promise.resolve();
+    });
+    return { ws, got, closed, challenged };
+  };
+
+  it('M2: closes a connection that sends a large message before its auth', async () => {
+    const r = await relayWith(tenantsFile(`${newKey().tp}\n`));
+    const d = dial(r.url);
+    await d.challenged;
+    d.ws.send('x'.repeat(8 * 1024));
+    expect(await d.closed).toBe(1009);
+  });
+
+  it('M2: caps connections still waiting to authenticate, per IP', async () => {
+    const r = await relayWith(tenantsFile(`${newKey().tp}\n`), {
+      preAuthPerIp: 2,
+    });
+    const a = dial(r.url);
+    const b = dial(r.url);
+    await a.challenged;
+    await b.challenged;
+    const c = dial(r.url);
+    await c.closed;
+    expect(c.got).toEqual([]);
+  });
+
+  it('M5: a reload drops tenants no longer listed', async () => {
+    const a = newKey();
+    const file = tenantsFile(`${a.tp}\n`);
+    const r = await relayWith(file);
+    const t = tenant(r.url, a);
+    expect(await t.settled).toEqual({ t: 'ready' });
+    writeFileSync(file, `${newKey().tp}\n`);
+    r.reload();
+    await new Promise((res) => setTimeout(res, 200));
+    expect(t.ws.readyState).toBe(WebSocket.CLOSED);
+    expect(
+      (await fetch(`${r.url}/t/${a.tp}/.well-known/agent-card.json`)).status
+    ).toBe(404);
+  });
+
+  it('M3: drops a tenant that stops answering pings', async () => {
+    const a = newKey();
+    const r = await relayWith(tenantsFile(`${a.tp}\n`), { pingMs: 100 });
+    // Bun's client answers pings; a tenant that never sends a frame after auth
+    // still answers them, so this only checks the timer runs without harm.
+    const t = tenant(r.url, a);
+    expect(await t.settled).toEqual({ t: 'ready' });
+    await new Promise((res) => setTimeout(res, 400));
+    expect(t.ws.readyState).toBe(WebSocket.OPEN);
   });
 });

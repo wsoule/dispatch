@@ -43,9 +43,9 @@ it('binds loopback by default and serves nothing but tenant paths', async () => 
   const relay = await startRelay({ ...options, log: () => {} });
   try {
     expect((await fetch(`${relay.url}/admin`)).status).toBe(404);
-    // An allowlisted tenant with no daemon connected: 503.
+    // An allowlisted tenant with no daemon connected: 404, as for any other.
     expect((await fetch(`${relay.url}/t/${TP}/a2a/v1/tasks/x`)).status).toBe(
-      503
+      404
     );
   } finally {
     await relay.stop();

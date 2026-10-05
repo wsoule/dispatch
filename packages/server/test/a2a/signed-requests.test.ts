@@ -958,3 +958,75 @@ describe('review J1, N1, N2', () => {
     }
   });
 });
+
+describe('relay review I1: a forwarded path stays under the host’s own URL', () => {
+  const RELAY = 'https://relay.example.com';
+  const MINE = `${RELAY}/t/${'A'.repeat(43)}`;
+  const OTHER = `${RELAY}/t/${'B'.repeat(43)}`;
+  const forwarded = (url: string, key: SigningKey, id: string) => {
+    const body = send(id);
+    const u = new URL(url);
+    return {
+      method: 'POST',
+      path: u.pathname,
+      query: '',
+      headers: signedHeaders(key, 'POST', url, body),
+      body,
+    };
+  };
+
+  it('refuses a request signed for another tenant’s path, replayed to this tenant', async () => {
+    const { key } = await signatureClient('acme');
+    const port = handle.a2a.port!;
+    // Signed for tenant B, handed to tenant A's port as if it were A's.
+    const replayed = await port.authenticateSignedAt(
+      forwarded(`${OTHER}/a2a/v1/message:send`, key, 'm-i1-a'),
+      MINE
+    );
+    expect(replayed?.ok).toBe(false);
+    // The same client signing for A's own URL is accepted.
+    const own = await port.authenticateSignedAt(
+      forwarded(`${MINE}/a2a/v1/message:send`, key, 'm-i1-b'),
+      MINE
+    );
+    expect(own?.ok).toBe(true);
+  });
+
+  it('holds for a standalone host whose public URL has a path', async () => {
+    const { key } = await signatureClient('acme');
+    const port = handle.a2a.port!;
+    const host = `${RELAY}/agent`;
+    expect(
+      (
+        await port.authenticateSignedAt(
+          forwarded(`${RELAY}/elsewhere/a2a/v1/message:send`, key, 'm-i1-c'),
+          host
+        )
+      )?.ok
+    ).toBe(false);
+    expect(
+      (
+        await port.authenticateSignedAt(
+          forwarded(`${host}/a2a/v1/message:send`, key, 'm-i1-d'),
+          host
+        )
+      )?.ok
+    ).toBe(true);
+  });
+
+  it('an extension call forwarded for another tenant’s path is 404', async () => {
+    const port = handle.a2a.port!;
+    const res = await port.extensionAt(
+      'unpair',
+      {
+        method: 'POST',
+        path: `/t/${'B'.repeat(43)}/a2a/v1/dispatch/unpair`,
+        query: '',
+        headers: new Headers(),
+        body: new TextEncoder().encode('{}'),
+      },
+      MINE
+    );
+    expect(res.status).toBe(404);
+  });
+});

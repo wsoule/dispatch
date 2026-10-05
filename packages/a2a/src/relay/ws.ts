@@ -46,17 +46,32 @@ export class WsConnection {
   private buffer = Buffer.alloc(0);
   private parts: Buffer[] = [];
   private partsLength = 0;
+  private fragmenting = false;
   private closed = false;
+  private lastSeen = Date.now();
   onMessage: (text: string) => void = () => {};
   onClose: () => void = () => {};
 
   constructor(
     private readonly socket: Duplex,
-    private readonly maxMessage: number
+    private maxMessage: number
   ) {
-    socket.on('data', (chunk: Buffer) => this.read(chunk));
+    socket.on('data', (chunk: Buffer) => {
+      this.lastSeen = Date.now();
+      this.read(chunk);
+    });
     socket.on('close', () => this.ended());
     socket.on('error', () => this.ended());
+  }
+
+  /** Raises (or lowers) the message cap: small before auth, larger after. */
+  setMaxMessage(bytes: number): void {
+    this.maxMessage = bytes;
+  }
+
+  /** How long since the peer last sent anything (a pong counts). */
+  silentForMs(): number {
+    return Date.now() - this.lastSeen;
   }
 
   send(text: string): void {
@@ -83,15 +98,22 @@ export class WsConnection {
     this.onClose();
   }
 
+  // Frames are read strictly (RFC 6455 5.2-5.5): masked, no RSV bits, control
+  // frames short and unfragmented, continuations only inside a message, and
+  // text that is valid UTF-8.
   private read(chunk: Buffer): void {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     for (;;) {
-      if (this.buffer.length < 2) return;
+      if (this.closed || this.buffer.length < 2) return;
       const b0 = this.buffer[0];
       const b1 = this.buffer[1];
-      if ((b1 & 0x80) === 0) return this.close(1002); // unmasked client frame
+      const fin = (b0 & 0x80) !== 0;
+      const opcode = b0 & 0x0f;
+      const control = opcode >= 0x8;
+      if ((b0 & 0x70) !== 0 || (b1 & 0x80) === 0) return this.close(1002);
       let len = b1 & 0x7f;
       let offset = 2;
+      if (control && (!fin || len > 125)) return this.close(1002);
       if (len === 126) {
         if (this.buffer.length < 4) return;
         len = this.buffer.readUInt16BE(2);
@@ -111,24 +133,35 @@ export class WsConnection {
       );
       for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
       this.buffer = this.buffer.subarray(offset + 4 + len);
-      const fin = (b0 & 0x80) !== 0;
-      const opcode = b0 & 0x0f;
       if (opcode === 0x8) return this.close();
       if (opcode === 0x9) {
         this.socket.write(frame(0xa, payload));
         continue;
       }
       if (opcode === 0xa) continue;
-      if (opcode !== 0x0 && opcode !== 0x1) return this.close(1003);
+      if (opcode === 0x1) {
+        if (this.fragmenting) return this.close(1002);
+      } else if (opcode === 0x0) {
+        if (!this.fragmenting) return this.close(1002);
+      } else {
+        return this.close(1003);
+      }
       this.partsLength += payload.length;
       if (this.partsLength > this.maxMessage) return this.close(1009);
       this.parts.push(payload);
+      this.fragmenting = !fin;
       if (!fin) continue;
-      const text = Buffer.concat(this.parts).toString('utf8');
+      let text: string;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(
+          Buffer.concat(this.parts)
+        );
+      } catch {
+        return this.close(1007);
+      }
       this.parts = [];
       this.partsLength = 0;
       this.onMessage(text);
-      if (this.closed) return;
     }
   }
 }
