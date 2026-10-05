@@ -253,8 +253,19 @@ export function covered(
 
 // ---- the doc op handler ------------------------------------------------------
 
-/** Per teammate replica: new docs an hour, and held proposals open here. */
-const SYNC_LIMITS = { newDocsPerHour: 500, heldPerPublisher: 50 };
+/** Per teammate replica: new docs an hour, held proposals open here, and
+ *  held revisions on one open proposal's chain. */
+interface SyncLimits {
+  newDocsPerHour: number;
+  heldPerPublisher: number;
+  heldChain?: number;
+}
+
+const SYNC_LIMITS = {
+  newDocsPerHour: 500,
+  heldPerPublisher: 50,
+  heldChain: 50,
+};
 
 // A revision stamped later than its op's clock allows reads as that clock's time.
 function clampTime(
@@ -295,11 +306,11 @@ export class DocOpHandler implements DocsPort {
     private readonly deps: {
       service: DocsService;
       policyAllows(taskId: string | null): boolean;
-      limits?: { newDocsPerHour: number; heldPerPublisher: number };
+      limits?: SyncLimits;
     }
   ) {}
 
-  private get limits(): { newDocsPerHour: number; heldPerPublisher: number } {
+  private get limits(): SyncLimits {
     return this.deps.limits ?? SYNC_LIMITS;
   }
 
@@ -559,6 +570,20 @@ export class DocOpHandler implements DocsPort {
         service.syncNote(
           meta.replica,
           `more than ${this.limits.heldPerPublisher} held changes wait for a decision; the rest wait`
+        );
+        return 'parked';
+      }
+      const chainCap = this.limits.heldChain ?? SYNC_LIMITS.heldChain;
+      const longest = Math.max(
+        0,
+        ...parents
+          .filter((p) => heldNow.has(p))
+          .map((p) => service.syncHeldChainLength(p))
+      );
+      if (held && parentHeld && longest >= chainCap) {
+        service.syncNote(
+          meta.replica,
+          `a held change's chain is over ${chainCap} revisions; the rest wait for a decision`
         );
         return 'parked';
       }

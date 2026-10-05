@@ -1184,3 +1184,95 @@ describe('what a teammate cannot slip in (FW-R38)', () => {
     ]);
   });
 });
+
+describe('meta changes travel as whoever made them', () => {
+  it("sends a human's status change and a run's link change as two ops, the latest actor last", () => {
+    const team = service.create(owner(), { title: 'Team', body: 'shared\n' });
+    service.seal(owner(), 'team');
+    handler.published(handler.pendingDocOps());
+    service.setStatus(owner(), 'team', 'accepted');
+    service.link(service.actorFor(RUN), 'team', {
+      target: { type: 'task', id: 't-1' },
+      rel: 'context',
+    });
+    const metas = handler.pendingDocOps().filter((b) => b.meta !== undefined);
+    expect(metas).toEqual([
+      {
+        doc: team.doc.id,
+        kind: 'put',
+        by: 'human:wyat',
+        meta: { status: 'accepted' },
+      },
+      {
+        doc: team.doc.id,
+        kind: 'put',
+        by: 'run:r-1',
+        meta: {
+          links: [{ target: { type: 'task', id: 't-1' }, rel: 'context' }],
+        },
+      },
+    ]);
+    // A teammate replica speaking for human:wyat applies both, status included.
+    const other = makeService();
+    const there = new DocOpHandler({
+      service: other.service,
+      policyAllows: () => false,
+    });
+    there.bindFederation({ speaksFor, rereadOps: () => {} });
+    handler.published([]);
+    const all = handler.pendingDocOps();
+    const root = put(team.doc.id, {
+      id: store.revisionMetas(team.doc.id, { limit: 1 })[0].id,
+      parents: [],
+      body: 'shared\n',
+      author: 'human:wyat',
+    });
+    root.revision = {
+      ...(root.revision as NonNullable<DocBody['revision']>),
+      title: 'Team',
+    };
+    root.meta = { slug: 'team', title: 'Team', status: 'draft' };
+    there.apply(json(root), meta('rep-1', 1));
+    all
+      .filter((b) => b.meta !== undefined)
+      .forEach((b, i) => there.apply(json(b), meta('rep-1', 2 + i)));
+    const read = other.service.read(other.service.actorFor(OWNER), 'team');
+    expect(read.doc.status).toBe('accepted');
+    expect(other.service.syncProblems(team.doc.id)).toEqual([]);
+  });
+});
+
+describe('a held chain has a length', () => {
+  it('parks a held revision past the chain cap of its open proposal, with a note', () => {
+    const h = new DocOpHandler({
+      service,
+      policyAllows: () => false,
+      limits: { newDocsPerHour: 100, heldPerPublisher: 10, heldChain: 2 },
+    });
+    h.bindFederation({ speaksFor, rereadOps: () => {} });
+    h.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'l1\n', author: 'human:wyat' })
+      ),
+      meta('rep-1', 1)
+    );
+    service.setStatus(owner(), 'spec', 'accepted');
+    const edit = (n: number) =>
+      put(
+        DOC,
+        {
+          id: ID(n),
+          parents: [ID(n - 1)],
+          body: `l1\n${n}\n`,
+          author: 'run:r-9',
+          cause: 'edit',
+          task: 't-1',
+        },
+        { meta: undefined }
+      );
+    expect(h.apply(json(edit(2)), meta('rep-2', 1))).toBe('applied');
+    expect(h.apply(json(edit(3)), meta('rep-2', 2))).toBe('applied');
+    expect(h.apply(json(edit(4)), meta('rep-2', 3))).toBe('parked');
+    expect(service.health(owner()).warnings.join('\n')).toContain('chain');
+  });
+});

@@ -478,6 +478,24 @@ function localClock(atIso: string): string {
   return `${String(Date.parse(atIso)).padStart(13, '0')}.0000.local`;
 }
 
+type MetaField = 'slug' | 'aliases' | 'status' | 'links';
+type FieldActors = Partial<Record<MetaField, { by: string; order: number }>>;
+
+// The synced meta fields that differ between two readings.
+function metaFieldsChanged(
+  before: SyncMeta | null,
+  after: SyncMeta
+): MetaField[] {
+  if (before === null) return [];
+  const out: MetaField[] = [];
+  if (after.slug !== before.slug) out.push('slug');
+  if (after.aliases.some((a) => !before.aliases.includes(a)))
+    out.push('aliases');
+  if (after.status !== before.status) out.push('status');
+  if (linksKey(after.links) !== linksKey(before.links)) out.push('links');
+  return out;
+}
+
 const linksKey = (links: SyncMeta['links']): string =>
   links
     .map((l) => `${l.target.type}:${l.target.id}:${l.rel}`)
@@ -584,10 +602,30 @@ export class DocsService {
     for (const change of this.outbox) {
       if (change.scope !== 'team') continue;
       store.setMeta(syncDirtyKey(change.doc), '1');
-      // Who made a meta change is who it travels as (FW-R38 minor).
-      if (change.kind === 'meta')
-        store.setMeta(`sync:by:${change.doc}`, change.author);
+      if (change.kind === 'meta') this.attributeMeta(change.doc, change.author);
     }
+  }
+
+  // Who changed each synced meta field last, and in what order, so each
+  // actor's changes travel as that actor's own op (FW-R38 minor).
+  private attributeMeta(docId: string, author: string): void {
+    const store = this.store();
+    const now = this.syncMetaOf(docId);
+    if (now === null) return;
+    const seenKey = `sync:seen:${docId}`;
+    const raw = store.meta(seenKey);
+    const seen =
+      raw === null ? this.syncSnapshot(docId) : (JSON.parse(raw) as SyncMeta);
+    const fields = metaFieldsChanged(seen, now);
+    if (fields.length > 0) {
+      const byKey = `sync:field-by:${docId}`;
+      const by = JSON.parse(store.meta(byKey) ?? '{}') as FieldActors;
+      const order = Number(store.meta('sync:meta-order') ?? '0') + 1;
+      store.setMeta('sync:meta-order', String(order));
+      for (const f of fields) by[f] = { by: author, order };
+      store.setMeta(byKey, JSON.stringify(by));
+    }
+    store.setMeta(seenKey, JSON.stringify(now));
   }
 
   // The docs a pass looks at; the first ever pass looks at every team doc.
@@ -5528,6 +5566,11 @@ export class DocsService {
     return n;
   }
 
+  /** How many held revisions an open proposal's chain to `tip` holds. */
+  syncHeldChainLength(tip: string): number {
+    return this.heldChain(tip).length;
+  }
+
   /** Open held proposals from `replica`. */
   syncHeldFrom(replica: string): number {
     return this.store()
@@ -5682,15 +5725,26 @@ export class DocsService {
     const snap = this.syncSnapshot(doc.id);
     const now = this.syncMetaOf(doc.id);
     if (snap === null || now === null) return out;
-    const meta: NonNullable<DocBody['meta']> = {};
-    if (now.slug !== snap.slug) meta.slug = now.slug;
-    if (now.aliases.some((a) => !snap.aliases.includes(a)))
-      meta.aliases = now.aliases;
-    if (now.status !== snap.status) meta.status = now.status;
-    if (linksKey(now.links) !== linksKey(snap.links)) meta.links = now.links;
-    const by = store.meta(`sync:by:${doc.id}`) ?? doc.updatedBy;
-    if (Object.keys(meta).length > 0)
-      out.push({ doc: doc.id, kind: 'put', by, meta });
+    // One op per actor, the latest actor last.
+    const actors = JSON.parse(
+      store.meta(`sync:field-by:${doc.id}`) ?? '{}'
+    ) as FieldActors;
+    const groups = new Map<
+      string,
+      { order: number; meta: NonNullable<DocBody['meta']> }
+    >();
+    for (const field of metaFieldsChanged(snap, now)) {
+      const who = actors[field] ?? { by: doc.updatedBy, order: 0 };
+      const g = groups.get(who.by) ?? { order: who.order, meta: {} };
+      g.order = Math.max(g.order, who.order);
+      if (field === 'slug') g.meta.slug = now.slug;
+      if (field === 'aliases') g.meta.aliases = now.aliases;
+      if (field === 'status') g.meta.status = now.status;
+      if (field === 'links') g.meta.links = now.links;
+      groups.set(who.by, g);
+    }
+    for (const [by, g] of [...groups].sort((a, b) => a[1].order - b[1].order))
+      out.push({ doc: doc.id, kind: 'put', by, meta: g.meta });
     for (const r of store.reviewsOf(doc.id)) {
       if (!r.by.startsWith('human:')) continue;
       const key: SyncKnown = {
