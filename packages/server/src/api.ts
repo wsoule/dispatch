@@ -222,6 +222,7 @@ import {
   startLinkRoute,
 } from './memory/routes.js';
 import type { MemoryService } from './memory/service.js';
+import { listBusConversation } from './messaging/conversations.js';
 import type { Principal } from './messaging/principal.js';
 import { resolvePrincipal } from './messaging/principal.js';
 import {
@@ -4836,15 +4837,30 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
 // Route families that authenticate by principal throughout, every method.
 const SELF_AUTHENTICATED_PREFIXES: ReadonlySet<string> = new Set(['docs']);
 
+// GET /api/conversations reads the bus (by principal) when it names with= or
+// about=; with subject= it is the review chat, on the tier ladder.
+function isBusConversationQuery(query: URLSearchParams): boolean {
+  return query.has('with') || query.has('about');
+}
+
 /** Whether `/api/<segments>` is a messaging route that authenticates by
  *  principal, not tier: requiredTier skips it and handleApi resolves it. */
 export function isSelfAuthenticated(
   segments: readonly string[],
-  method: string
+  method: string,
+  query?: URLSearchParams
 ): boolean {
   if (segments.length > 0 && SELF_AUTHENTICATED_PREFIXES.has(segments[0])) {
     return true;
   }
+  if (
+    method === 'GET' &&
+    segments.length === 1 &&
+    segments[0] === 'conversations' &&
+    query !== undefined &&
+    isBusConversationQuery(query)
+  )
+    return true;
   return SELF_AUTHENTICATED_ROUTES.some(
     (route) => route.method === method && matchesRoute(route.segments, segments)
   );
@@ -4857,7 +4873,8 @@ export function isSelfAuthenticated(
  */
 function requiredTier(
   method: string,
-  segments: readonly string[]
+  segments: readonly string[],
+  query?: URLSearchParams
 ): AuthTier | null {
   if (
     (method === 'GET' || method === 'HEAD') &&
@@ -4877,7 +4894,7 @@ function requiredTier(
   }
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
   // this ladder — returning null here just opens the gate for them.
-  if (isSelfAuthenticated(segments, method)) return null;
+  if (isSelfAuthenticated(segments, method, query)) return null;
   // A standalone host's routes accept its host token only, checked in
   // a2a/portRoutes.ts; A2A client tokens were already refused above.
   if (segments[0] === 'a2a' && segments[1] === 'port') return null;
@@ -5082,7 +5099,7 @@ export async function handleApi(
   // Resolves and enforces the principal here, before dispatch, so every
   // self-authenticated route fails closed even with no handler behind it.
   let principal: Principal | undefined;
-  if (isSelfAuthenticated(segments, method)) {
+  if (isSelfAuthenticated(segments, method, url.searchParams)) {
     const principalResult = resolvePrincipal(daemonCtx, presented);
     if (!principalResult.ok) {
       return authErrorResponse(
@@ -5106,7 +5123,7 @@ export async function handleApi(
     );
   }
 
-  const tier = requiredTier(method, segments);
+  const tier = requiredTier(method, segments, url.searchParams);
   if (tier !== null) {
     const unauthorized =
       run === null
@@ -6032,6 +6049,9 @@ export async function handleApi(
 
     if (segments[0] === 'conversations') {
       if (segments.length === 1 && method === 'GET') {
+        // with=/about= is the bus's participant-scoped read; subject= the review chat.
+        if (isBusConversationQuery(url.searchParams))
+          return listBusConversation(ctx, url);
         return listConversation(req, ctx);
       }
       if (segments.length === 1 && method === 'POST') {
@@ -6095,7 +6115,7 @@ export async function handleApi(
 
     if (segments[0] === 'channels') {
       if (segments.length === 1 && method === 'GET') {
-        return listChannels(ctx);
+        return listChannels(ctx, url);
       }
       if (
         segments.length === 3 &&

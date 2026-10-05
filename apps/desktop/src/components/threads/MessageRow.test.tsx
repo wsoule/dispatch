@@ -364,6 +364,11 @@ test('says an observer reads the thread when one is admitted and a participant i
   ).toBeTruthy();
 });
 
+test('names the agent that drafted a send', () => {
+  renderRow(msg('m-dr', { data: { draftedBy: 'agent:wyat/overseer' } }));
+  expect(screen.getByText(/^drafted by /)).toBeTruthy();
+});
+
 test('a doc ref chip names its whole section and opens the doc there', () => {
   const onOpen = mock((_action: unknown) => {});
   renderRow(

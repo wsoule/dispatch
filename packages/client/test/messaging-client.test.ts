@@ -467,3 +467,65 @@ describe('openDecisions', () => {
     }
   });
 });
+
+describe('getConversation', () => {
+  it('GETs /api/conversations with with=, before and limit', async () => {
+    const stub = stubFetch({ messages: [], next: null });
+    try {
+      await createApiClient(BASE).getConversation({
+        with: 'human:sam',
+        before: 'm-02',
+        limit: 20,
+      });
+      expect(stub.calls[0].url).toBe(
+        `${BASE}/api/conversations?with=human%3Asam&before=m-02&limit=20`
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('sends about= alone when that is all it names', async () => {
+    const stub = stubFetch({ messages: [], next: null });
+    try {
+      await createApiClient(BASE).getConversation({ about: 'doc:d-1' });
+      expect(stub.calls[0].url).toBe(
+        `${BASE}/api/conversations?about=doc%3Ad-1`
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe('listChannels for the caller', () => {
+  it('adds ?member=me', async () => {
+    const stub = stubFetch({ channels: [] });
+    try {
+      await createApiClient(BASE).listChannels({ member: 'me' });
+      expect(stub.calls[0].url).toBe(`${BASE}/api/channels?member=me`);
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe('sendMessage continuing a root', () => {
+  it('puts continueThread in the body', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient(BASE).sendMessage(
+        { to: ['run:r-1'], kind: 'message', body: 'hi' },
+        { continueThread: true }
+      );
+      expect(sentJson(stub.calls[0])).toEqual({
+        to: ['run:r-1'],
+        kind: 'message',
+        body: 'hi',
+        continueThread: true,
+      });
+    } finally {
+      stub.restore();
+    }
+  });
+});

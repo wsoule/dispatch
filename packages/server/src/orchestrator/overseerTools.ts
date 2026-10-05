@@ -94,10 +94,18 @@ export interface OverseerToolContext {
       answer: { choice: 'approve' | 'approve-session' | 'deny'; body: string },
       actor: string
     ): Promise<void>;
-    sendAsHuman(to: string, text: string, actor: string): Promise<void>;
+    /** `data.draftedBy` names the agent that wrote the text, shown to readers. */
+    sendAsHuman(
+      to: string,
+      text: string,
+      actor: string,
+      data?: { draftedBy?: string }
+    ): Promise<void>;
   };
   /** The daemon's human: the overseer acts for them, so its runs do too. */
   ownerRef: string;
+  /** The overseer's own address, credited as drafter of what it sends as a human. */
+  overseer?: string;
   /** Team docs, read as the owner; absent or null when the docs service is not wired. */
   docs?: Pick<
     DocsService,
@@ -867,7 +875,8 @@ const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {
     await ctx.messaging.sendAsHuman(
       `run:${input.runId}`,
       input.text,
-      meta.actor
+      meta.actor,
+      ctx.overseer === undefined ? undefined : { draftedBy: ctx.overseer }
     );
   },
 };

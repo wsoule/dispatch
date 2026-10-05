@@ -1106,6 +1106,25 @@ export interface ThreadSummary {
   count: number;
 }
 
+/** A conversation row: with federation, the sending machine and settlement. */
+export type ConversationMessage = Message & {
+  remoteLabel?: string;
+  settledAs?: 'pending' | 'accepted' | 'superseded' | 'candidate';
+};
+
+/** GET /api/conversations?with=|about= — one page, oldest to newest. */
+export interface ConversationPage {
+  messages: ConversationMessage[];
+  /** The `before` cursor for the next older page; null at the start. */
+  next: string | null;
+}
+
+/** Exactly one of `with` (an address) or `about` (task:, channel: or doc:). */
+export type ConversationQuery = (
+  | { with: string; about?: never }
+  | { about: string; with?: never }
+) & { before?: string; limit?: number };
+
 // GET /api/threads/:id's body: every message in the thread and their
 // deliveries, enough to render the conversation from one fetch.
 export interface ThreadDetail {
@@ -1198,6 +1217,8 @@ export interface DocListParams {
   conflicted?: boolean;
   q?: string;
   includeArchived?: boolean;
+  /** Team docs linked to no task or milestone. */
+  unlinked?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -3760,10 +3781,15 @@ export interface ApiClient {
   // Messaging; the server's messaging/routes.ts defines these shapes.
   /** Sends a message. A retry with the same `opts.idempotencyKey` replays the
    *  first attempt's result (200) instead of sending twice (201). */
+  /** `continueThread` replies into the newest open root for the one run, task
+   *  or person addressed, instead of starting a root per send. */
   sendMessage(
     input: SendInput,
-    opts?: { idempotencyKey?: string }
+    opts?: { idempotencyKey?: string; continueThread?: boolean }
   ): Promise<SendResult>;
+  /** Flat, participant-scoped talk with a person or about a task, channel or
+   *  doc; request-tier callers get their own, never a 403. */
+  getConversation(query: ConversationQuery): Promise<ConversationPage>;
   getMessage(id: string): Promise<Message>;
   /** An answer if the target is a question or handoff, a plain message
    *  otherwise — the server decides which. */
@@ -3790,7 +3816,10 @@ export interface ApiClient {
     states?: DeliveryState[]
   ): Promise<{ items: MailboxItem[] }>;
   markDeliveryRead(id: string): Promise<Delivery>;
-  listChannels(): Promise<{ channels: ChannelSummary[] }>;
+  /** `member: 'me'` keeps the channels the caller belongs to. */
+  listChannels(opts?: {
+    member?: 'me';
+  }): Promise<{ channels: ChannelSummary[] }>;
   /** `member` defaults to the caller (a run defaults to its task). */
   joinChannel(name: string, member?: string): Promise<void>;
   /** `member` defaults to the caller (a run defaults to its task), same as
@@ -4804,8 +4833,20 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       return request(target, '/api/messages', {
         method: 'POST',
         headers,
-        body: JSON.stringify(input),
+        body: JSON.stringify(
+          opts?.continueThread === true
+            ? { ...input, continueThread: true }
+            : input
+        ),
       });
+    },
+    getConversation: (query) => {
+      const params = new URLSearchParams();
+      if (query.with !== undefined) params.set('with', query.with);
+      if (query.about !== undefined) params.set('about', query.about);
+      if (query.before !== undefined) params.set('before', query.before);
+      if (query.limit !== undefined) params.set('limit', String(query.limit));
+      return request(target, `/api/conversations?${params.toString()}`);
     },
     getMessage: (id) => request(target, `/api/messages/${id}`),
     replyToMessage: (id, input) =>
@@ -4839,7 +4880,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     },
     markDeliveryRead: (id) =>
       request(target, `/api/deliveries/${id}/read`, { method: 'POST' }),
-    listChannels: () => request(target, '/api/channels'),
+    listChannels: (opts = {}) =>
+      request(
+        target,
+        opts.member === 'me' ? '/api/channels?member=me' : '/api/channels'
+      ),
     // Uses send(), not request(): the server answers 204 with no JSON body,
     // which request() would fail to parse.
     joinChannel: async (name, member) => {
@@ -4979,6 +5024,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       if (params.conflicted === true) q.set('conflicted', '1');
       if (params.q !== undefined && params.q !== '') q.set('q', params.q);
       if (params.includeArchived === true) q.set('includeArchived', '1');
+      if (params.unlinked === true) q.set('unlinked', '1');
       if (params.limit !== undefined) q.set('limit', String(params.limit));
       if (params.offset !== undefined) q.set('offset', String(params.offset));
       const qs = q.toString();

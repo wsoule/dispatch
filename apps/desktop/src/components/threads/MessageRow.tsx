@@ -46,6 +46,15 @@ function refAt(ref: Message['refs'][number]): string {
   return ref.type === 'doc' ? `#${ref.at}` : `@${ref.at.slice(0, 7)}`;
 }
 
+// The agent that wrote a message a human sent (sendAsHuman's data.draftedBy).
+function draftedByOf(message: Message): string | null {
+  const data = message.data;
+  if (typeof data !== 'object' || data === null || Array.isArray(data))
+    return null;
+  const by = (data as { draftedBy?: unknown }).draftedBy;
+  return typeof by === 'string' && by !== '' ? by : null;
+}
+
 export interface MessageRowProps {
   message: Message;
   me: string;
@@ -114,6 +123,7 @@ export const MessageRow = memo(function MessageRow({
   const [error, setError] = useState<string | null>(null);
   const mine = message.from === me;
   const sender = participantLabel(message.from, lookups);
+  const draftedBy = draftedByOf(message);
   const senderAction = addressAction(message.from, lookups);
   const status = lookups.agentStatus(message.from);
   // Only the daemon's own close or breaker marker earns its badge.
@@ -160,6 +170,11 @@ export const MessageRow = memo(function MessageRow({
               <Pill title="Sent from outside this machine over A2A">A2A</Pill>
             )}
             {badge !== undefined && <Pill>{badge}</Pill>}
+            {draftedBy !== null && (
+              <Pill title="An agent wrote this; the sender approved and sent it">
+                {`drafted by ${participantLabel(draftedBy, lookups)}`}
+              </Pill>
+            )}
             {message.remoteLabel !== undefined && (
               <Pill>{`remote: ${message.remoteLabel}`}</Pill>
             )}

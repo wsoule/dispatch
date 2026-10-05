@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto';
 
 import type { OverseerToolContext } from '../orchestrator/overseerTools.js';
 import { OrchestratorConflictError } from '../orchestrator/types.js';
+import type { RootFinder } from './conversations.js';
 import { closeGate, openToolApprovalGate, SYSTEM_SENDER } from './gates.js';
 import { INTERNAL_TOKEN_PREFIX } from './internalAgents.js';
 import { TOOL_APPROVAL_CHOICES, toolApprovalGateData } from './toolApproval.js';
@@ -180,9 +181,11 @@ export function createOverseerBus(
 }
 
 // The real OverseerToolContext['messaging'], over the engine: a confirmed
-// action answers a run's gate, or messages it, as the human who confirmed it.
+// action answers a run's gate, or messages it, as the human who confirmed it,
+// into the newest open root `findRoot` names for that human and run.
 export function overseerToolMessaging(
-  engine: DeliveryEngine
+  engine: DeliveryEngine,
+  findRoot: RootFinder = () => null
 ): OverseerToolContext['messaging'] {
   return {
     async answerRunApproval(runId, requestId, answer, actor) {
@@ -198,10 +201,19 @@ export function overseerToolMessaging(
         { address: actor, canDecide: true }
       );
     },
-    async sendAsHuman(to, text, actor) {
+    async sendAsHuman(to, text, actor, data) {
+      const sender: Sender = { address: actor, canDecide: true };
+      const root = findRoot(sender, to);
+      const draftedBy = data?.draftedBy;
       await engine.send(
-        { to: [to], kind: 'message', body: text },
-        { address: actor, canDecide: true }
+        {
+          to: [to],
+          kind: 'message',
+          body: text,
+          ...(root === null ? {} : { replyTo: root.id }),
+          ...(draftedBy === undefined ? {} : { data: { draftedBy } }),
+        },
+        sender
       );
     },
   };

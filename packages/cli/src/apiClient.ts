@@ -722,6 +722,14 @@ export interface ApiClient {
     body: string;
     wake?: 'none' | 'request';
   }): Promise<SendResult>;
+  /** GET /api/conversations: flat, participant-scoped talk with `with` (an
+   *  address) or `about` (task:, channel: or doc:), a page oldest first. */
+  getConversation(query: {
+    with?: string;
+    about?: string;
+    before?: string;
+    limit?: number;
+  }): Promise<{ messages: Message[]; next: string | null }>;
   /** The caller's own mail in the given delivery states. */
   getMailbox(
     states: string[]
@@ -1141,6 +1149,14 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         jsonBody(input)
       ),
     sendMessage: (input) => request(target, '/api/messages', jsonBody(input)),
+    getConversation: (query) => {
+      const params = new URLSearchParams();
+      if (query.with !== undefined) params.set('with', query.with);
+      if (query.about !== undefined) params.set('about', query.about);
+      if (query.before !== undefined) params.set('before', query.before);
+      if (query.limit !== undefined) params.set('limit', String(query.limit));
+      return request(target, `/api/conversations?${params.toString()}`);
+    },
     getMailbox: (states) =>
       request(
         target,

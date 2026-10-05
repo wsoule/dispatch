@@ -2541,11 +2541,11 @@ export function useDispatchProject(
     async (runId: string, text: string): Promise<void> => {
       if (client === null) return;
       assertCanMessage(auth);
-      await client.sendMessage({
-        to: [`run:${runId}`],
-        kind: 'message',
-        body: text,
-      });
+      // One conversation per run: continue its newest open root.
+      await client.sendMessage(
+        { to: [`run:${runId}`], kind: 'message', body: text },
+        { continueThread: true }
+      );
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, port, auth]
@@ -2600,12 +2600,10 @@ export function useDispatchProject(
       const before = new Set((await client.fetchRuns()).map((r) => r.id));
       // A human's wake of an ended run continues exactly that run, inside the
       // send, so its continuation is already listed below.
-      const sent = await client.sendMessage({
-        to: [`run:${runId}`],
-        kind: 'message',
-        body: text,
-        wake: 'request',
-      });
+      const sent = await client.sendMessage(
+        { to: [`run:${runId}`], kind: 'message', body: text, wake: 'request' },
+        { continueThread: true }
+      );
       const runs = await client.fetchRuns();
       // Task changes arrive over `task.changed`.
       queryClient.setQueryData(runsQueryKey, runs);

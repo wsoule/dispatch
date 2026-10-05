@@ -66,6 +66,7 @@ let openDecisionsCalls = 0;
 // Holds open-gate reads open while set, so a test sees the cache before them.
 let decisionsHold: Promise<void> | null = null;
 const sentMessages: SendInput[] = [];
+const sentOptions: ({ continueThread?: boolean } | undefined)[] = [];
 const replies: [string, ReplyInput][] = [];
 const approvalReads: [string, string][] = [];
 // Runs inside a send, the way the daemon wakes a run before the send returns.
@@ -174,8 +175,9 @@ void mock.module('@dispatch/client', () => ({
       if (decisionsHold !== null) await decisionsHold;
       return { items: openGatesFixture };
     },
-    sendMessage: (input: SendInput) => {
+    sendMessage: (input: SendInput, opts?: { continueThread?: boolean }) => {
       sentMessages.push(input);
+      sentOptions.push(opts);
       duringSend?.();
       return Promise.resolve({
         message: { id: 'm-sent' },
@@ -1151,6 +1153,7 @@ async function mountWithGates(gates: Message[]) {
   openDecisionsCalls = 0;
   notified.length = 0;
   sentMessages.length = 0;
+  sentOptions.length = 0;
   replies.length = 0;
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -1339,6 +1342,7 @@ test('the card handlers answer their gates with the matching choice', async () =
   expect(sentMessages).toEqual([
     { to: ['run:r-1'], kind: 'message', body: 'keep going' },
   ]);
+  expect(sentOptions).toEqual([{ continueThread: true }]);
   const stale = await result.current.handleApprove('r-1', 'req-9', true).then(
     () => 'resolved',
     (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
@@ -1435,6 +1439,7 @@ test('request changes continues the named run and follows its continuation', asy
   runsFixture = [r2, runFixture('r-1', 'finished')];
   openGatesFixture = [];
   sentMessages.length = 0;
+  sentOptions.length = 0;
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -1473,6 +1478,7 @@ test('request changes continues the named run and follows its continuation', asy
       wake: 'request',
     },
   ]);
+  expect(sentOptions).toEqual([{ continueThread: true }]);
   expect(followed).toEqual([['r-3', 't-1']]);
   resetGateFixtures();
 });
@@ -1575,6 +1581,7 @@ test('a window on the agent token reads no gates, notifies none and sends nothin
   openDecisionsCalls = 0;
   notified.length = 0;
   sentMessages.length = 0;
+  sentOptions.length = 0;
   try {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

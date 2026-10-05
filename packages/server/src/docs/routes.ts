@@ -391,6 +391,7 @@ export async function handleDocsRoute(
             status: wanted === null ? undefined : status(wanted, 'status'),
             unreviewed: flag(url, 'unreviewed'),
             conflicted: flag(url, 'conflicted'),
+            unlinked: flag(url, 'unlinked'),
             query: url.searchParams.get('q') ?? undefined,
             includeArchived: flag(url, 'includeArchived'),
             limit: int(url, 'limit'),

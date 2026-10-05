@@ -406,6 +406,22 @@ describe('isSelfAuthenticated', () => {
       expect(isSelfAuthenticated(path.split('/'), method)).toBe(false);
     });
   }
+
+  it('GET /api/conversations is the bus read only with with= or about=', () => {
+    const q = (s: string) => new URLSearchParams(s);
+    expect(
+      isSelfAuthenticated(['conversations'], 'GET', q('with=human:a'))
+    ).toBe(true);
+    expect(
+      isSelfAuthenticated(['conversations'], 'GET', q('about=task:t-1'))
+    ).toBe(true);
+    expect(
+      isSelfAuthenticated(['conversations'], 'GET', q('subject=run:r-1'))
+    ).toBe(false);
+    expect(isSelfAuthenticated(['conversations'], 'POST', q('with=x'))).toBe(
+      false
+    );
+  });
 });
 
 // A run that starts and never finishes — enough for the tier gate below,

@@ -276,6 +276,8 @@ export interface DocListFilter {
   unreviewed?: boolean;
   conflicted?: boolean;
   ids?: readonly string[];
+  /** No link to a task (milestones are tasks). */
+  unlinked?: boolean;
   query?: string; // a case-insensitive title substring
   limit: number;
   offset: number;
@@ -588,6 +590,10 @@ export class SqliteDocStore {
     const params: SqlValue[] = [...filter.ns, ...filter.statuses];
     if (filter.unreviewed === true) where.push('unreviewed = 1');
     if (filter.conflicted === true) where.push('conflicted = 1');
+    if (filter.unlinked === true)
+      where.push(
+        "NOT EXISTS (SELECT 1 FROM links l WHERE l.doc_id = docs.id AND l.target_type = 'task')"
+      );
     if (filter.ids !== undefined) {
       if (filter.ids.length === 0) return { rows: [], total: 0 };
       where.push(`id IN (${filter.ids.map(() => '?').join(', ')})`);

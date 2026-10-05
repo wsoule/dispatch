@@ -58,7 +58,12 @@ describe("an A2A-origin run's token", () => {
       ],
       // Channels, peers, team, presence, config beyond what it needs.
       ['GET', '/api/channels'],
+      ['GET', '/api/channels?member=me'],
       ['POST', '/api/channels/leads/members', {}],
+      // The bus's flat reads.
+      ['GET', `/api/conversations?about=task:${ownerId}`],
+      ['GET', `/api/conversations?about=task:${a2a.taskId}`],
+      ['GET', '/api/conversations?with=human:test'],
       ['GET', '/api/a2a/peers'],
       ['GET', '/api/presence'],
       ['GET', '/api/people'],
