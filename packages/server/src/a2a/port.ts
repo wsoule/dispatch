@@ -14,6 +14,7 @@ import type {
   LookupAll,
   OpenInput,
   OpenResult,
+  ReceivedRequest,
   StatusEntry,
   TaskFacts,
   TaskRow,
@@ -53,11 +54,12 @@ import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import type { RunResultsMemo } from './artifacts.js';
-import { authenticateA2AClient } from './auth.js';
+import { authenticateA2AClient, authenticateSignedAgent } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
 import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
+import { revalidateSigned, verifySignedClient } from './signed.js';
 import type { CardSigner } from './signing.js';
 import type { BridgeWatch } from './watch.js';
 
@@ -310,8 +312,35 @@ export class DaemonBridgePort implements BridgePort {
     return settle(() =>
       authenticateA2AClient(
         this.deps.messages,
-        (a) => this.deps.store.getClient(a) !== null,
+        (a) => this.deps.store.getClient(a)?.auth ?? null,
         bearer
+      )
+    );
+  }
+
+  // The in-daemon listener verifies against its own configured URL.
+  authenticateSigned(req: ReceivedRequest): Promise<AuthResult | null> {
+    return this.authenticateSignedAt(req, this.deps.cardBase().publicUrl);
+  }
+
+  // A standalone host's forwarded request, verified against that host's pinned URL.
+  authenticateSignedAt(
+    req: ReceivedRequest,
+    origin: string
+  ): Promise<AuthResult | null> {
+    return settle(() => verifySignedClient(this.deps, req, origin));
+  }
+
+  revalidate(caller: Caller): Promise<boolean> {
+    return settle(() => revalidateSigned(this.deps, caller));
+  }
+
+  // A signed caller re-checked by address (a standalone host's session).
+  authenticateSignedAddress(address: string): Promise<AuthResult> {
+    return settle(() =>
+      authenticateSignedAgent(
+        this.deps.messages.getAgent(address),
+        this.deps.store.getClient(address)?.auth ?? null
       )
     );
   }

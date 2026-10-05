@@ -50,7 +50,7 @@ import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
 import type { WatchLimits } from './portRoutes.js';
-import { PortLeases, PortWatches } from './portRoutes.js';
+import { PortLeases, PortWatches, SignedSessions } from './portRoutes.js';
 import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
 import type { ListenerOverrides, ListenerSettings } from './settings.js';
@@ -96,6 +96,8 @@ export interface A2ABridge {
   // Stream slots and task-watch streams standalone hosts hold.
   readonly leases: PortLeases;
   readonly watches: PortWatches;
+  // Signed clients' sessions across a standalone host's port calls.
+  readonly signedSessions: SignedSessions;
   // Ends a revoked host's leases and watch streams.
   hostRevoked(hostId: string): void;
   peerStatus(alias: string): PeerStatus | null;
@@ -225,6 +227,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
   const leases = new PortLeases();
   const watches = new PortWatches(deps.watchLimits);
+  const signedSessions = new SignedSessions();
   // Loaded on the first card; null (with the reason) when it cannot be.
   let signer: CardSigner | null | undefined;
   let signerError: string | null = null;
@@ -439,9 +442,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     },
     leases,
     watches,
+    signedSessions,
     hostRevoked: (hostId) => {
       leases.endHost(hostId);
       watches.closeHost(hostId);
+      signedSessions.endHost(hostId);
     },
     standalone: () => readListenerSettings(rootDir).settings.standalone,
     setStandalone: (enabled) =>
@@ -452,6 +457,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         if (!enabled) {
           leases.closeAll();
           watches.closeAll();
+          signedSessions.closeAll();
         }
         return Promise.resolve({ standalone: enabled });
       }),
@@ -576,6 +582,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         outbound = null;
         leases.closeAll();
         watches.closeAll();
+        signedSessions.closeAll();
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
         if (refreshTimer !== null) clearInterval(refreshTimer);

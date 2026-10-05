@@ -66,7 +66,7 @@ interface Op {
   port: BridgePort;
   options: HandleOptions;
   caller: Caller;
-  bearer: string;
+  stillAllowed: () => Promise<boolean>;
 }
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -163,14 +163,34 @@ function checkVersion(req: Request, url: URL): void {
   }
 }
 
-// Resolves the bearer through the port. Only failing requests count toward
-// the per-IP lockout, so a valid bearer behind a shared tunnel IP always passes.
+// The request body for a signature check, under the same 256 KiB cap.
+async function readBytes(req: Request): Promise<Uint8Array> {
+  const tooLarge = () =>
+    new HttpFailure(new Response('request body over 256 KiB', { status: 413 }));
+  if (Number(req.headers.get('content-length') ?? '0') > MAX_BODY_BYTES)
+    throw tooLarge();
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (bytes.byteLength > MAX_BODY_BYTES) throw tooLarge();
+  return bytes;
+}
+
+interface Authenticated {
+  caller: Caller;
+  // The request to serve: rebuilt when the body was read for a signature.
+  req: Request;
+  stillAllowed: () => Promise<boolean>;
+}
+
+// A Dispatch signature decides on its own when present (a bearer beside it
+// is ignored); otherwise the bearer resolves through the port. Only failing
+// requests count toward the per-IP lockout, so a valid caller behind a
+// shared tunnel IP always passes.
 async function authenticate(
-  req: Request,
+  original: Request,
   url: URL,
   port: BridgePort,
   options: HandleOptions
-): Promise<{ caller: Caller; bearer: string } | Response> {
+): Promise<Authenticated | Response> {
   const queryKeys = [...url.searchParams.keys()].map((k) => k.toLowerCase());
   if (queryKeys.some((k) => QUERY_CREDENTIALS.includes(k))) {
     throw new MessagingError(
@@ -179,8 +199,6 @@ async function authenticate(
       'query'
     );
   }
-  const header = req.headers.get('authorization') ?? '';
-  const bearer = /^Bearer[ ]+(\S+)$/i.exec(header.trim())?.[1] ?? null;
   const fail = (code: 401 | 403, reason: string, message: string): Response => {
     options.limiter.authFailed(options.clientIp);
     const locked = options.limiter.lockedFor(options.clientIp);
@@ -188,6 +206,41 @@ async function authenticate(
       ? authFailure(code, reason, message)
       : rateLimited(locked);
   };
+  let req = original;
+  if (
+    port.authenticateSigned !== undefined &&
+    req.headers.has('signature-input')
+  ) {
+    const body =
+      req.method === 'GET' || req.method === 'HEAD'
+        ? null
+        : await readBytes(req);
+    if (body !== null)
+      req = new Request(original.url, {
+        method: original.method,
+        headers: original.headers,
+        body,
+        signal: original.signal,
+      });
+    const signed = await port.authenticateSigned({
+      method: req.method,
+      path: url.pathname,
+      query: url.search,
+      headers: req.headers,
+      body,
+    });
+    if (signed !== null) {
+      if (!signed.ok) return fail(signed.status, signed.reason, signed.message);
+      const caller = signed.caller;
+      return {
+        caller,
+        req,
+        stillAllowed: () => port.revalidate?.(caller) ?? Promise.resolve(false),
+      };
+    }
+  }
+  const header = req.headers.get('authorization') ?? '';
+  const bearer = /^Bearer[ ]+(\S+)$/i.exec(header.trim())?.[1] ?? null;
   if (bearer === null)
     return fail(
       401,
@@ -196,7 +249,11 @@ async function authenticate(
     );
   const result = await port.authenticate(bearer);
   if (!result.ok) return fail(result.status, result.reason, result.message);
-  return { caller: result.caller, bearer };
+  return {
+    caller: result.caller,
+    req,
+    stillAllowed: async () => (await port.authenticate(bearer)).ok,
+  };
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -356,7 +413,7 @@ function openStream(
       taskEventStream({
         port: op.port,
         caller: op.caller,
-        bearer: op.bearer,
+        stillAllowed: op.stillAllowed,
         taskId,
         view,
         reask,
@@ -699,12 +756,12 @@ export async function handleA2A(
     const admitted = await port.admit(auth.caller, 'request');
     if (!admitted.ok) return rateLimited(admitted.retryAfterSec);
     const op: Op = {
-      req,
+      req: auth.req,
       url,
       port,
       options,
       caller: auth.caller,
-      bearer: auth.bearer,
+      stillAllowed: auth.stillAllowed,
     };
     switch (route.op) {
       case 'send':

@@ -68,7 +68,7 @@ function open(
   const res = taskEventStream({
     port,
     caller,
-    bearer: 'good',
+    stillAllowed: async () => (await port.authenticate('good')).ok,
     taskId: 'm-root',
     view,
     release: () => {
@@ -193,7 +193,7 @@ describe('taskEventStream', () => {
     expect(got.keepalives).toBeGreaterThan(0);
   });
 
-  it('closes within a tick when the bearer stops authenticating', async () => {
+  it('closes within a tick when the caller is no longer allowed', async () => {
     const port = new FakePort();
     const { res, released } = open(port);
     setTimeout(() => port.tokens.delete('good'), 30);

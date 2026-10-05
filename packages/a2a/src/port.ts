@@ -9,6 +9,7 @@ import type {
 
 import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
 import type { PushConfigInput, PushConfigJson } from './push.js';
+import type { ReceivedRequest } from './sig/verify.js';
 import type { TaskStateName } from './states.js';
 import type { HandoffPhase } from './statuses.js';
 import type { ArtifactJson } from './wire.js';
@@ -192,6 +193,11 @@ export interface PushConfigPort {
 
 export interface BridgePort {
   authenticate(bearer: string): Promise<AuthResult>;
+  // A request a Dispatch peer signed (RFC 9421). null when it carries no
+  // Dispatch signature, so the bearer path decides; absent, signatures are ignored.
+  authenticateSigned?(req: ReceivedRequest): Promise<AuthResult | null>;
+  // Whether a caller that signed in may still stream; bearer callers re-run authenticate.
+  revalidate?(caller: Caller): Promise<boolean>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
   card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;
