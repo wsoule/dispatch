@@ -20,11 +20,18 @@ import {
   credentialsPath,
   credentialsUnreadable,
   CredentialsUnreadableError,
+  ensureA2ALinkKeys,
   isStaleLock,
+  promoteA2ASigningKey,
+  readA2AKeyStatement,
+  readA2ALinkKeys,
+  readA2ANextSigningKey,
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,
+  replaceA2ASigningKeys,
   takeOverStaleLock,
+  writeA2ANextSigningKey,
   writeA2ASigningKey,
   writePeerCredential,
   writeProjectCredential,
@@ -153,6 +160,120 @@ describe('the A2A card-signing key', () => {
   });
 });
 
+describe('the next card-signing key (rotation)', () => {
+  const K1 = { kty: 'EC', crv: 'P-256', x: 'x1', y: 'y1', d: 'd1' };
+  const K2 = { kty: 'EC', crv: 'P-256', x: 'x2', y: 'y2', d: 'd2' };
+  const AT = '2026-10-01T00:00:00.000Z';
+
+  it('writes the next slot and its statement only when no next key is there', async () => {
+    writeA2ASigningKey(ROOT, K1);
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'absent' });
+    expect(
+      await writeA2ANextSigningKey(ROOT, { jwk: K2, at: AT }, '{"s":1}')
+    ).toBe(true);
+    expect(readA2ANextSigningKey(ROOT)).toEqual({
+      status: 'ok',
+      next: { jwk: K2, at: AT },
+    });
+    expect(readA2AKeyStatement(ROOT)).toBe('{"s":1}');
+    expect(
+      await writeA2ANextSigningKey(ROOT, { jwk: K1, at: AT }, '{"s":2}')
+    ).toBe(false);
+    expect(readA2ANextSigningKey(ROOT)).toEqual({
+      status: 'ok',
+      next: { jwk: K2, at: AT },
+    });
+    expect(readA2AKeyStatement(ROOT)).toBe('{"s":1}');
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: K1 });
+  });
+
+  it('promotes next to current and clears next under one lock, keeping the statement', async () => {
+    writeA2ASigningKey(ROOT, K1);
+    await writeA2ANextSigningKey(ROOT, { jwk: K2, at: AT }, '{"s":1}');
+    expect(await promoteA2ASigningKey(ROOT)).toBe(true);
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: K2 });
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'absent' });
+    expect(readA2AKeyStatement(ROOT)).toBe('{"s":1}');
+    expect(await promoteA2ASigningKey(ROOT)).toBe(false);
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: K2 });
+  });
+
+  it('replaces both keys at once, for a compromise', async () => {
+    const K3 = { kty: 'EC', crv: 'P-256', x: 'x3', y: 'y3', d: 'd3' };
+    writeA2ASigningKey(ROOT, K1);
+    await writeA2ANextSigningKey(ROOT, { jwk: K2, at: AT }, '{"s":1}');
+    await replaceA2ASigningKeys(ROOT, K3, '{"s":3}');
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: K3 });
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'absent' });
+    expect(readA2AKeyStatement(ROOT)).toBe('{"s":3}');
+  });
+
+  it('tells a malformed next slot apart from an absent one', () => {
+    writeRaw({ a2a: { nextSigningKey: { jwk: K2 } } });
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'malformed' });
+    writeRaw({ a2a: { nextSigningKey: { jwk: 'x', at: AT } } });
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'malformed' });
+  });
+});
+
+describe('the rotation writers wait without blocking', () => {
+  const K1 = { kty: 'EC', crv: 'P-256', x: 'x1', y: 'y1', d: 'd1' };
+  const K2 = { kty: 'EC', crv: 'P-256', x: 'x2', y: 'y2', d: 'd2' };
+
+  it('yields to the event loop while a live process holds the lock', async () => {
+    writeA2ASigningKey(ROOT, K1);
+    const lock = `${credentialsPath()}.lock`;
+    writeFileSync(lock, `${process.pid} held\n`);
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 5);
+    const write = writeA2ANextSigningKey(ROOT, { jwk: K2, at: 'now' }, '{}');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(ticks).toBeGreaterThan(3);
+    rmSync(lock);
+    expect(await write).toBe(true);
+    clearInterval(timer);
+    expect(readA2ANextSigningKey(ROOT)).toMatchObject({ status: 'ok' });
+  });
+});
+
+describe('the A2A link keys (P5 piece 4)', () => {
+  const KEYS = { signPriv: 'sp', signPub: 'sP', sealPriv: 'xp', sealPub: 'xP' };
+  const OTHER = {
+    signPriv: 'sp2',
+    signPub: 'sP2',
+    sealPriv: 'xp2',
+    sealPub: 'xP2',
+  };
+
+  it('makes them only when the slot is absent, and keeps the first ones', async () => {
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'absent' });
+    expect(await ensureA2ALinkKeys(ROOT, () => KEYS)).toEqual({
+      status: 'ok',
+      keys: KEYS,
+    });
+    expect(await ensureA2ALinkKeys(ROOT, () => OTHER)).toEqual({
+      status: 'ok',
+      keys: KEYS,
+    });
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'ok', keys: KEYS });
+    expect(readA2ALinkKeys('/work/other')).toEqual({ status: 'absent' });
+  });
+
+  it('a malformed slot stays as it is, and nothing is made', async () => {
+    writeRaw({ a2a: { linkKeys: { signPriv: 'only' } } });
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'malformed' });
+    let made = false;
+    expect(
+      await ensureA2ALinkKeys(ROOT, () => {
+        made = true;
+        return KEYS;
+      })
+    ).toEqual({ status: 'malformed' });
+    expect(made).toBe(false);
+    expect(readA2ALinkKeys(ROOT)).toEqual({ status: 'malformed' });
+  });
+});
+
 describe('a credentials file that cannot be parsed', () => {
   const BROKEN = '{"projects": {"/work/x": {"linear": {"apiKey": "k"},}}}\n';
 
@@ -161,7 +282,7 @@ describe('a credentials file that cannot be parsed', () => {
     writeFileSync(credentialsPath(), BROKEN);
   }
 
-  it('is never written over, by any writer', () => {
+  it('is never written over, by any writer', async () => {
     writeBroken();
     const writers = [
       () => writeA2ASigningKey(ROOT, { kty: 'EC', d: 'd' }),
@@ -173,6 +294,21 @@ describe('a credentials file that cannot be parsed', () => {
     ];
     for (const write of writers)
       expect(write).toThrow(CredentialsUnreadableError);
+    for (const write of [
+      () =>
+        writeA2ANextSigningKey(ROOT, { jwk: { kty: 'EC' }, at: 'now' }, '{}'),
+      () => promoteA2ASigningKey(ROOT),
+      () => replaceA2ASigningKeys(ROOT, { kty: 'EC' }, '{}'),
+      () =>
+        ensureA2ALinkKeys(ROOT, () => ({
+          signPriv: 'a',
+          signPub: 'b',
+          sealPriv: 'c',
+          sealPub: 'd',
+        })),
+    ])
+      await expect(write()).rejects.toThrow(CredentialsUnreadableError);
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'unreadable' });
     expect(readFileSync(credentialsPath(), 'utf8')).toBe(BROKEN);
     expect(existsSync(`${credentialsPath()}.lock`)).toBe(false);
   });
@@ -302,7 +438,11 @@ describe('concurrent writers', () => {
     const now = Date.now();
     expect(isStaleLock(`${await deadPid()} n\n`, now, now)).toBe(true);
     expect(isStaleLock(`${process.pid} n\n`, now, now)).toBe(false);
-    expect(isStaleLock(`${process.pid} n\n`, now - 60_000, now)).toBe(true);
+    // A live holder is never judged stale by age alone, short of the long limit.
+    expect(isStaleLock(`${process.pid} n\n`, now - 60_000, now)).toBe(false);
+    expect(isStaleLock(`${process.pid} n\n`, now - 11 * 60_000, now)).toBe(
+      true
+    );
     expect(isStaleLock('', now, now)).toBe(false);
     expect(isStaleLock('', now - 60_000, now)).toBe(true);
   });

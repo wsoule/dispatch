@@ -24,6 +24,7 @@ import type {
   A2APolicy,
   BridgePort,
   Caller,
+  ExtensionRoute,
   OpenResult,
   TaskFacts,
 } from '../port.js';
@@ -66,10 +67,14 @@ interface Op {
   port: BridgePort;
   options: HandleOptions;
   caller: Caller;
-  bearer: string;
+  stillAllowed: () => Promise<boolean>;
 }
 
 const MAX_BODY_BYTES = 256 * 1024;
+// <base>/dispatch/<route>, the Dispatch extension routes.
+const EXTENSION = /^\/dispatch\/(pair|unpair|key-change|upgrade)$/;
+/** Where a peer that missed a rotation's push finds the statement. */
+export const KEY_STATEMENT_PATH = '/.well-known/dispatch-a2a-key-change.json';
 const CARD_PATH = '/.well-known/agent-card.json';
 const QUERY_CREDENTIALS = [
   'token',
@@ -163,14 +168,36 @@ function checkVersion(req: Request, url: URL): void {
   }
 }
 
-// Resolves the bearer through the port. Only failing requests count toward
-// the per-IP lockout, so a valid bearer behind a shared tunnel IP always passes.
+// The request body for a signature check, under the same 256 KiB cap.
+async function readBytes(req: Request): Promise<Uint8Array> {
+  const tooLarge = () =>
+    new HttpFailure(new Response('request body over 256 KiB', { status: 413 }));
+  if (Number(req.headers.get('content-length') ?? '0') > MAX_BODY_BYTES)
+    throw tooLarge();
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (bytes.byteLength > MAX_BODY_BYTES) throw tooLarge();
+  return bytes;
+}
+
+interface Authenticated {
+  caller: Caller;
+  // The request to serve: rebuilt when the body was read for a signature.
+  req: Request;
+  stillAllowed: () => Promise<boolean>;
+  // Set when the caller signed: its response is signed in turn.
+  signed: boolean;
+}
+
+// A Dispatch signature decides on its own when present (a bearer beside it
+// is ignored); otherwise the bearer resolves through the port. Only failing
+// requests count toward the per-IP lockout, so a valid caller behind a
+// shared tunnel IP always passes.
 async function authenticate(
-  req: Request,
+  original: Request,
   url: URL,
   port: BridgePort,
   options: HandleOptions
-): Promise<{ caller: Caller; bearer: string } | Response> {
+): Promise<Authenticated | Response> {
   const queryKeys = [...url.searchParams.keys()].map((k) => k.toLowerCase());
   if (queryKeys.some((k) => QUERY_CREDENTIALS.includes(k))) {
     throw new MessagingError(
@@ -179,8 +206,6 @@ async function authenticate(
       'query'
     );
   }
-  const header = req.headers.get('authorization') ?? '';
-  const bearer = /^Bearer[ ]+(\S+)$/i.exec(header.trim())?.[1] ?? null;
   const fail = (code: 401 | 403, reason: string, message: string): Response => {
     options.limiter.authFailed(options.clientIp);
     const locked = options.limiter.lockedFor(options.clientIp);
@@ -188,15 +213,82 @@ async function authenticate(
       ? authFailure(code, reason, message)
       : rateLimited(locked);
   };
+  let req = original;
+  if (
+    port.authenticateSigned !== undefined &&
+    req.headers.has('signature-input')
+  ) {
+    const body =
+      req.method === 'GET' || req.method === 'HEAD'
+        ? null
+        : await readBytes(req);
+    if (body !== null)
+      req = new Request(original.url, {
+        method: original.method,
+        headers: original.headers,
+        body,
+        signal: original.signal,
+      });
+    const signed = await port.authenticateSigned({
+      method: req.method,
+      path: url.pathname,
+      query: url.search,
+      headers: req.headers,
+      body,
+    });
+    if (signed !== null) {
+      if (!signed.ok) {
+        if (signed.verified === undefined)
+          return fail(
+            signed.status === 403 ? 403 : 401,
+            signed.reason,
+            signed.message
+          );
+        // A verified signer's refusal is signed and never counts toward the IP lockout.
+        const refusal =
+          signed.status === 429
+            ? rateLimited(signed.retryAfterSec ?? 1)
+            : authFailure(signed.status, signed.reason, signed.message);
+        return port.signResponse === undefined
+          ? refusal
+          : await port.signResponse(refusal, req, signed.verified);
+      }
+      const caller = signed.caller;
+      return {
+        caller,
+        req,
+        stillAllowed: () => port.revalidate?.(caller) ?? Promise.resolve(false),
+        signed: true,
+      };
+    }
+  }
+  const header = req.headers.get('authorization') ?? '';
+  const bearer = /^Bearer[ ]+(\S+)$/i.exec(header.trim())?.[1] ?? null;
   if (bearer === null)
     return fail(
       401,
       'AUTH_MISSING_TOKEN',
       'send Authorization: Bearer <token>'
     );
-  const result = await port.authenticate(bearer);
-  if (!result.ok) return fail(result.status, result.reason, result.message);
-  return { caller: result.caller, bearer };
+  const presented = (req.headers.get('a2a-extensions') ?? '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter((u) => u !== '');
+  const result = await (presented.length === 0
+    ? port.authenticate(bearer)
+    : port.authenticate(bearer, presented));
+  if (!result.ok)
+    return fail(
+      result.status === 403 ? 403 : 401,
+      result.reason,
+      result.message
+    );
+  return {
+    caller: result.caller,
+    req,
+    stillAllowed: async () => (await port.authenticate(bearer)).ok,
+    signed: false,
+  };
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -356,7 +448,7 @@ function openStream(
       taskEventStream({
         port: op.port,
         caller: op.caller,
-        bearer: op.bearer,
+        stillAllowed: op.stillAllowed,
         taskId,
         view,
         reask,
@@ -674,37 +766,25 @@ async function serveJwks(
   });
 }
 
-// The HTTP+JSON binding of A2A 1.0 over a BridgePort: version, then auth,
-// then the port's per-client admission, then the operation.
-export async function handleA2A(
-  req: Request,
+// Everything after authentication, as one response (errors included), so a
+// signed caller's response can be signed whatever it carries.
+async function serveAuthenticated(
+  auth: Authenticated,
+  route: Route,
+  url: URL,
   port: BridgePort,
   options: HandleOptions
 ): Promise<Response> {
-  const url = new URL(req.url);
   try {
-    if (url.pathname === CARD_PATH) return await serveCard(req, port, options);
-    if (url.pathname === JWKS_PATH) return await serveJwks(req, port, options);
-    if (!url.pathname.startsWith(`${options.basePath}/`))
-      return new Response('not found', { status: 404 });
-    if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
-    const route = matchRoute(
-      req.method,
-      url.pathname.slice(options.basePath.length)
-    );
-    if (route === null) return new Response('not found', { status: 404 });
-    checkVersion(req, url);
-    const auth = await authenticate(req, url, port, options);
-    if (auth instanceof Response) return auth;
     const admitted = await port.admit(auth.caller, 'request');
     if (!admitted.ok) return rateLimited(admitted.retryAfterSec);
     const op: Op = {
-      req,
+      req: auth.req,
       url,
       port,
       options,
       caller: auth.caller,
-      bearer: auth.bearer,
+      stillAllowed: auth.stillAllowed,
     };
     switch (route.op) {
       case 'send':
@@ -730,6 +810,79 @@ export async function handleA2A(
           'this agent has no extended card'
         );
     }
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+// The public statement of this agent's last key change or revocation.
+async function serveKeyStatement(
+  req: Request,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<Response> {
+  if (req.method !== 'GET' && req.method !== 'HEAD')
+    return new Response(null, { status: 405 });
+  const wait = options.limiter.allowCard(options.clientIp);
+  if (wait !== null) return rateLimited(wait);
+  const statement = (await port.keyStatement?.()) ?? null;
+  if (statement === null) return new Response('not found', { status: 404 });
+  return new Response(req.method === 'HEAD' ? null : statement, {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=300',
+    },
+  });
+}
+
+// The HTTP+JSON binding of A2A 1.0 over a BridgePort: version, then auth,
+// then the port's per-client admission, then the operation.
+export async function handleA2A(
+  req: Request,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<Response> {
+  const url = new URL(req.url);
+  try {
+    if (url.pathname === CARD_PATH) return await serveCard(req, port, options);
+    if (url.pathname === JWKS_PATH) return await serveJwks(req, port, options);
+    if (url.pathname === KEY_STATEMENT_PATH)
+      return await serveKeyStatement(req, port, options);
+    if (!url.pathname.startsWith(`${options.basePath}/`))
+      return new Response('not found', { status: 404 });
+    if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
+    // Dispatch extension routes: each authenticates its own body,
+    // signature or bearer.
+    const ext = EXTENSION.exec(url.pathname.slice(options.basePath.length));
+    if (
+      req.method === 'POST' &&
+      url.pathname.startsWith(options.basePath) &&
+      ext !== null
+    ) {
+      // Rate-limited like the card; any refusal (outside 2xx: an upgrade
+      // request's 202 is a success) counts toward the lockout, since each
+      // route checks a proof, signature or bearer.
+      const wait = options.limiter.allowCard(options.clientIp);
+      if (wait !== null) return rateLimited(wait);
+      if (port.extension === undefined)
+        return new Response('not found', { status: 404 });
+      const res = await port.extension(ext[1] as ExtensionRoute, req);
+      if (res.status < 200 || res.status >= 300)
+        options.limiter.authFailed(options.clientIp);
+      return res;
+    }
+    const route = matchRoute(
+      req.method,
+      url.pathname.slice(options.basePath.length)
+    );
+    if (route === null) return new Response('not found', { status: 404 });
+    checkVersion(req, url);
+    const auth = await authenticate(req, url, port, options);
+    if (auth instanceof Response) return auth;
+    const res = await serveAuthenticated(auth, route, url, port, options);
+    if (!auth.signed || port.signResponse === undefined) return res;
+    return await port.signResponse(res, auth.req, auth.caller);
   } catch (err) {
     return errorResponse(err);
   }

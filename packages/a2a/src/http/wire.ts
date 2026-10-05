@@ -7,6 +7,24 @@ import type { A2AReason } from '../errors.js';
 /** The header a standalone host forwards its A2A client's bearer in. */
 export const PORT_CLIENT_HEADER = 'x-a2a-client-authorization';
 
+/** The request headers a signature covers, as a host forwards them. */
+export const FORWARDED_SIGNATURE_HEADERS = [
+  'signature-input',
+  'signature',
+  'content-digest',
+  'content-type',
+  'a2a-version',
+] as const;
+
+export function forwardedHeaders(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of FORWARDED_SIGNATURE_HEADERS) {
+    const value = headers.get(name);
+    if (value !== null) out[name] = value;
+  }
+  return out;
+}
+
 /** An error as /api/a2a/port/* carries it, both sides of the contract. */
 export type PortError =
   | {

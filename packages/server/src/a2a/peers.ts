@@ -7,6 +7,7 @@ import type {
   PeerStatus,
 } from '@dispatch/a2a';
 import {
+  a2aFingerprint,
   AddressRefusedError,
   authHeaders,
   checkPeerCard,
@@ -16,6 +17,7 @@ import {
   PeerClient,
   PeerHttpError,
   pickInterface,
+  SIG_EXTENSION_URI,
   summarizeCard,
   UnresolvedHostError,
 } from '@dispatch/a2a';
@@ -35,6 +37,8 @@ import {
   PEER_ALIAS_PATTERN,
   SYSTEM_ADDRESS,
 } from '@dispatch/protocol';
+import { createPublicKey, randomUUID } from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
@@ -45,7 +49,14 @@ const HOUR_MS = 3_600_000;
 
 export type PeerDeps = Pick<
   BridgeDeps,
-  'rootDir' | 'engine' | 'messages' | 'store' | 'ownerRef' | 'policy' | 'now'
+  | 'rootDir'
+  | 'engine'
+  | 'messages'
+  | 'store'
+  | 'ownerRef'
+  | 'policy'
+  | 'now'
+  | 'signer'
 > & { fetchImpl?: typeof fetch; lookup?: LookupAll };
 
 export interface PeerAddInput {
@@ -71,6 +82,10 @@ export interface PeerSummary {
   addedTier: 'decide' | 'operator';
   fetchedAt: string;
   createdAt: string;
+  // How it is reached: a bearer, signed requests (paired), or a link.
+  auth: 'bearer' | 'signature' | 'link';
+  // The fingerprint of the key it is pinned to, once paired.
+  fingerprint: string | null;
 }
 
 export type PeerChange =
@@ -78,6 +93,10 @@ export type PeerChange =
   | 'enabled'
   | 'disabled'
   | 'removed'
+  // Disabled because the other side unpaired: closes as a removal does.
+  | 'unpaired'
+  // The pinned key moved: mail waiting out an unverifiable reply goes now.
+  | 'rekeyed'
   | 'refreshed';
 
 export interface PeerService {
@@ -167,6 +186,22 @@ export async function addPeer(
   input: PeerAddInput,
   caller: { tier: AuthTier; ref: Address }
 ): Promise<PeerRow> {
+  const { row, secret } = await checkNewPeer(deps, input, caller);
+  if (secret !== null) writePeerCredential(deps.rootDir, input.alias, secret);
+  deps.store.putPeer(row);
+  return row;
+}
+
+// Everything addPeer checks (alias, tier, guard, card, interface), with the
+// row it would write; nothing is stored, so pairing can verify the peer's
+// key first.
+export async function checkNewPeer(
+  deps: PeerDeps,
+  input: PeerAddInput,
+  caller: { tier: AuthTier; ref: Address },
+  // A paired peer authenticates by signature; its card's bearer scheme does not apply.
+  signature = false
+): Promise<{ row: PeerRow; secret: PeerSecret | null }> {
   if (!PEER_ALIAS_PATTERN.test(input.alias))
     throw new MessagingError(
       'invalid',
@@ -231,8 +266,8 @@ export async function addPeer(
   });
   if (guard !== undefined)
     await guardPublicUrl(checked.iface.url, { ...guard, field: 'cardUrl' });
-  const secret = secretFor(checked.auth, input.token);
-  authHeaders(checked.auth, secret);
+  const secret = signature ? null : secretFor(checked.auth, input.token);
+  if (!signature) authHeaders(checked.auth, secret);
   const at = nowOf(deps).toISOString();
   const row: PeerRow = {
     alias: input.alias,
@@ -250,25 +285,55 @@ export async function addPeer(
     apiKeyHeader: input.apiKeyHeader ?? null,
     createdAt: at,
   };
-  if (secret !== null) writePeerCredential(deps.rootDir, input.alias, secret);
-  deps.store.putPeer(row);
-  return row;
+  return { row, secret };
 }
 
 export function markAuthFailed(
   deps: PeerDeps,
   notices: PeerNotices,
-  alias: string
+  alias: string,
+  reason: string | null = null
 ): PeerRow | null {
   const row = deps.store.getPeer(alias);
   if (row === null) return null;
-  deps.store.setPeerStatus(alias, 'auth-failed');
+  deps.store.setPeerStatus(alias, 'auth-failed', reason);
   notices.send(
     alias,
     'auth',
     `a2a:${alias} refused Dispatch's credential. Direct messages to it fail and channels skip it until it is enabled again with a working credential, in Settings → A2A → Peers or with dispatch a2a peers enable ${alias}.`
   );
-  return { ...row, status: 'auth-failed' };
+  return { ...row, status: 'auth-failed', statusReason: reason };
+}
+
+/**
+ * Hourly: each signature peer auth-failed only for unverifiable replies is
+ * sent one signed request. A verified answer of any status but an AUTH_*
+ * refusal re-enables it; a verified AUTH_* makes the failure sticky.
+ */
+export async function probeUnverifiedPeers(peers: PeerService): Promise<void> {
+  const d = peers.deps;
+  for (const row of d.store.peers()) {
+    if (
+      row.status !== 'auth-failed' ||
+      row.statusReason !== 'unverifiable' ||
+      row.auth === 'link'
+    )
+      continue;
+    try {
+      await peerClientFor(d, row).getTask(`dispatch-probe-${randomUUID()}`);
+    } catch (err) {
+      if (!(err instanceof PeerHttpError) || err.status === null) continue;
+      if (
+        (err.status === 401 || err.status === 403) &&
+        (err.reason ?? '').startsWith('AUTH_')
+      ) {
+        d.store.setPeerStatus(row.alias, 'auth-failed', null);
+        continue;
+      }
+    }
+    d.store.setPeerStatus(row.alias, 'active');
+    peers.emit(row.alias, 'enabled');
+  }
 }
 
 // Disables a peer and tells the owner once a day for this reason.
@@ -319,6 +384,8 @@ export async function refreshPeer(
   alias: string
 ): Promise<PeerRow> {
   const row = mustPeer(deps, alias);
+  // A link peer has no card to fetch; its keys come with the pairing.
+  if (row.auth === 'link') return row;
   const guard = peerGuard(deps, row);
   const refused = await refusedUrl(guard, row.cardUrl);
   if (refused !== null)
@@ -420,7 +487,11 @@ export async function refreshDuePeers(
   const cutoff = nowOf(deps).getTime() - DAY_MS;
   let refreshed = 0;
   for (const row of deps.store.peers()) {
-    if (row.status === 'disabled' || Date.parse(row.fetchedAt) > cutoff)
+    if (
+      row.status === 'disabled' ||
+      row.auth === 'link' ||
+      Date.parse(row.fetchedAt) > cutoff
+    )
       continue;
     try {
       await refreshPeer(deps, notices, row.alias);
@@ -441,7 +512,7 @@ export async function setPeerEnabled(
   token?: string
 ): Promise<PeerRow> {
   const row = mustPeer(deps, alias);
-  const guard = peerGuard(deps, row);
+  const guard = row.auth === 'link' ? undefined : peerGuard(deps, row);
   if (enabled && guard !== undefined) {
     await guardPublicUrl(row.cardUrl, { ...guard, field: 'cardUrl' });
     await guardPublicUrl(row.interfaceUrl, { ...guard, field: 'cardUrl' });
@@ -503,6 +574,9 @@ export function peerSummary(row: PeerRow): PeerSummary {
     addedTier: row.addedTier,
     fetchedAt: row.fetchedAt,
     createdAt: row.createdAt,
+    auth: row.auth ?? 'bearer',
+    fingerprint:
+      row.keyThumbprint == null ? null : a2aFingerprint(row.keyThumbprint),
   };
 }
 
@@ -511,18 +585,79 @@ export function peerSummary(row: PeerRow): PeerSummary {
 // when the card needs a credential that is not stored.
 export function peerClientFor(deps: PeerDeps, row: PeerRow): PeerClient {
   const card = cardOf(row);
+  const guard = peerGuard(deps, row);
+  const common = {
+    iface: { url: row.interfaceUrl, binding: row.binding },
+    card,
+    ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
+    ...(guard === undefined ? {} : { guard }),
+  };
+  if (row.auth === undefined || row.auth === 'bearer')
+    return new PeerClient({ ...common, headers: bearerHeadersFor(deps, row) });
+  // A paired peer gets no bearer: its requests are signed, and only replies
+  // its pinned key signed are read. Without a key to sign with, the delivery
+  // parks as auth-failed (the 'token' field), never sent unsigned.
+  return new PeerClient({
+    ...common,
+    headers: {},
+    signed: signedFor(deps, row),
+  });
+}
+
+/**
+ * A bearer peer's request headers: its stored credential and, for a peer
+ * whose card offers signed requests, the signature extension named, so it
+ * knows this agent can sign (a2a.requireSignedDispatchPeers keys on that).
+ * Throws MessagingError 'token' when the card needs a credential not stored.
+ */
+export function bearerHeadersFor(
+  deps: Pick<PeerDeps, 'rootDir'>,
+  row: PeerRow
+): Record<string, string> {
+  const card = cardOf(row);
   const headers = authHeaders(
     peerAuthFor(card, row.apiKeyHeader ?? undefined),
     readPeerCredential(deps.rootDir, row.alias)
   );
-  const guard = peerGuard(deps, row);
-  return new PeerClient({
-    iface: { url: row.interfaceUrl, binding: row.binding },
-    card,
-    headers,
-    ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
-    ...(guard === undefined ? {} : { guard }),
-  });
+  return offersSignatures(JSON.parse(row.cardJson) as unknown)
+    ? { ...headers, 'a2a-extensions': SIG_EXTENSION_URI }
+    : headers;
+}
+
+/** Whether a card advertises Dispatch's signature extension. */
+export function offersSignatures(card: unknown): boolean {
+  const extensions = (
+    card as { capabilities?: { extensions?: unknown } } | null
+  )?.capabilities?.extensions;
+  return (
+    Array.isArray(extensions) &&
+    extensions.some(
+      (e) => (e as { uri?: unknown } | null)?.uri === SIG_EXTENSION_URI
+    )
+  );
+}
+
+function signedFor(
+  deps: PeerDeps,
+  row: PeerRow
+): { keyid: string; privateKey: KeyObject; peerKey: KeyObject } {
+  const cannot = (why: string) =>
+    new MessagingError(
+      'forbidden',
+      `cannot sign for a2a:${row.alias}: ${why}`,
+      'token'
+    );
+  if (row.auth !== 'signature') throw cannot('it is reached by a link');
+  if (row.keyJwk == null) throw cannot('no key is pinned');
+  const signer = deps.signer?.() ?? null;
+  if (signer === null) throw cannot('card signing is off');
+  let peerKey: KeyObject;
+  try {
+    peerKey = createPublicKey({ key: row.keyJwk, format: 'jwk' });
+  } catch {
+    throw cannot('the pinned key is not usable');
+  }
+  return { ...signer.requestKey(), peerKey };
 }
 
 // The engine's admission for a2a: targets. Direct to an absent or inactive

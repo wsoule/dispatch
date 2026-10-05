@@ -1,8 +1,13 @@
 import type { A2APolicy, BridgePort } from '@dispatch/a2a';
-import { errorResponse, handleA2A, IpLimiter } from '@dispatch/a2a';
+import {
+  errorResponse,
+  handleA2A,
+  IpLimiter,
+  KEY_STATEMENT_PATH,
+} from '@dispatch/a2a';
 
 import type { ResolvedListener } from './settings.js';
-import { clientIpFor } from './settings.js';
+import { listenerClientIp } from './settings.js';
 
 const MAX_REQUEST_BODY = 256 * 1024;
 const CARD_PATH = '/.well-known/agent-card.json';
@@ -66,14 +71,15 @@ export class A2AListener {
     const started = performance.now();
     const { pathname } = new URL(req.url);
     this.deps.mark?.(`a2a ${req.method} ${pathname}`);
-    const clientIp = clientIpFor(
+    const clientIp = listenerClientIp(
       req,
       srv.requestIP(req)?.address ?? null,
-      listener.trustForwardedFor
+      listener
     );
     if (
       pathname !== CARD_PATH &&
       pathname !== JWKS_PATH &&
+      pathname !== KEY_STATEMENT_PATH &&
       !pathname.startsWith(`${BASE_PATH}/`)
     ) {
       this.access(clientIp, req.method, pathname, 404, started);

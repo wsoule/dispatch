@@ -4678,6 +4678,19 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     tier: 'decide',
   },
   { method: 'DELETE', segments: ['a2a', 'peers', '*'], tier: 'decide' },
+  // Upgrading a bearer peer binds its key once the other side's owner agrees.
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'upgrade'],
+    tier: 'decide',
+  },
+  // Pairing writes a peer and an approved client in one step (P5); a private
+  // card URL on either side needs the operator, checked as for peers.
+  { method: 'GET', segments: ['a2a', 'pairings'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'pairings'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'pairings', 'accept'], tier: 'decide' },
+  { method: 'DELETE', segments: ['a2a', 'pairings', '*'], tier: 'decide' },
+  { method: 'GET', segments: ['a2a', 'links'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
@@ -4698,6 +4711,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     tier: 'operator',
   },
   { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Rotating the card key changes what every paired peer trusts.
+  { method: 'POST', segments: ['a2a', 'keys', 'rotate'], tier: 'operator' },
+  // Which relay this daemon dials as a tenant decides where it is served.
+  { method: 'PUT', segments: ['a2a', 'relay'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'relay'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
   // whose account, and which workspace, the board is sent to — the same call

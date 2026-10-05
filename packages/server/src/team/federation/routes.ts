@@ -166,6 +166,7 @@ const ACKNOWLEDGEABLE = [
   // FW-R32(6): one rolling note per publisher, and a message that could not go.
   'malformed:',
   'mail-drop:',
+  'link-op:',
   'mail-out:',
   'run-moved:',
 ];

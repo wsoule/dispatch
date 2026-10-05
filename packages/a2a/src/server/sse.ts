@@ -12,7 +12,8 @@ export interface StreamOptions {
   port: BridgePort;
   caller: Caller;
   // Re-checked every tick, so a revoked or rotated token ends the stream.
-  bearer: string;
+  // Re-checked at every tick; false closes the stream.
+  stillAllowed: () => Promise<boolean>;
   taskId: string;
   view: ProjectionView;
   // Frees the caller's stream slot; runs exactly once, however the stream ends.
@@ -134,7 +135,7 @@ export function taskEventStream(o: StreamOptions): Response {
           busy = true;
           try {
             if (Date.now() - started >= maxMs) return close();
-            if (!(await o.port.authenticate(o.bearer)).ok) return close();
+            if (!(await o.stillAllowed())) return close();
             if (dirty) {
               dirty = false;
               const facts = await o.port.facts(o.caller, o.taskId);

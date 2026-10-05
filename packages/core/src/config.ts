@@ -438,6 +438,14 @@ function parseA2AConfig(raw: unknown): {
           'a2a.skills must be a list of ask, handoff, status; using every skill built'
         );
       }
+    } else if (key === 'requireSignedDispatchPeers') {
+      if (typeof value === 'boolean') {
+        config.requireSignedDispatchPeers = value;
+      } else {
+        warnings.push(
+          'a2a.requireSignedDispatchPeers must be true or false; using false'
+        );
+      }
     } else if ((A2A_LIMIT_KEYS as readonly string[]).includes(key)) {
       const k = key as A2ALimitKey;
       const max = A2A_LIMIT_MAX[k];

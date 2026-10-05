@@ -7,13 +7,16 @@ import type {
   CardInputs,
   ContinueInput,
   ContinueResult,
+  ExtensionRoute,
   ListPage,
   ListQuery,
   OpenInput,
   OpenResult,
   TaskFacts,
 } from '../port.js';
-import { PORT_CLIENT_HEADER, portErrorFrom } from './wire.js';
+import { isEventStream } from '../sig/fetch.js';
+import type { ReceivedRequest } from '../sig/verify.js';
+import { forwardedHeaders, PORT_CLIENT_HEADER, portErrorFrom } from './wire.js';
 
 export interface HttpBridgePortOptions {
   daemonUrl: string;
@@ -24,6 +27,10 @@ export interface HttpBridgePortOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   reconnectMs?: number;
+  // A path the public URL serves this agent under (a relay tenant's
+  // /t/<thumbprint>): forwarded request paths carry it, so the daemon checks
+  // a signature against the URL the client actually called.
+  pathPrefix?: string;
 }
 
 // The 700 s call timeout covers the longest legitimate call, a blocking open
@@ -63,7 +70,12 @@ export class HttpBridgePort implements BridgePort {
       authorization: `Bearer ${this.o.hostToken}`,
       ...(caller?.credential === undefined
         ? {}
-        : { [PORT_CLIENT_HEADER]: `Bearer ${caller.credential}` }),
+        : {
+            // A signed client's credential is already a session header value.
+            [PORT_CLIENT_HEADER]: caller.credential.startsWith('Signed ')
+              ? caller.credential
+              : `Bearer ${caller.credential}`,
+          }),
       ...(json ? { 'content-type': 'application/json' } : {}),
     };
   }
@@ -96,6 +108,83 @@ export class HttpBridgePort implements BridgePort {
     return parsed as T;
   }
 
+  // A Dispatch-signed request, verified by the daemon against this host's
+  // pinned URL; the daemon answers with a session for the request's calls.
+  async authenticateSigned(req: ReceivedRequest): Promise<AuthResult | null> {
+    if (!req.headers.has('signature-input')) return null;
+    return this.call<AuthResult | null>('POST', '/authenticate-signed', null, {
+      method: req.method,
+      path: `${this.o.pathPrefix ?? ''}${req.path}`,
+      query: req.query,
+      headers: forwardedHeaders(req.headers),
+      body: req.body === null ? null : Buffer.from(req.body).toString('base64'),
+    });
+  }
+
+  // A pairing proof or unpair notice: the daemon handles it and signs the
+  // reply for this host's pinned URL; the host relays the reply as given.
+  async extension(route: ExtensionRoute, req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const body = new Uint8Array(await req.arrayBuffer());
+    let out: { status: number; headers: Record<string, string>; body: string };
+    try {
+      out = await this.call<typeof out>('POST', `/dispatch/${route}`, null, {
+        method: req.method,
+        path: `${this.o.pathPrefix ?? ''}${url.pathname}`,
+        query: url.search,
+        headers: forwardedHeaders(req.headers),
+        body: Buffer.from(body).toString('base64'),
+      });
+    } catch {
+      return new Response('unavailable', { status: 503 });
+    }
+    return new Response(Buffer.from(out.body, 'base64'), {
+      status: out.status,
+      headers: out.headers,
+    });
+  }
+
+  async revalidate(caller: Caller): Promise<boolean> {
+    const result = await this.call<AuthResult>('GET', '/whoami', caller);
+    return result.ok && result.caller.address === caller.address;
+  }
+
+  // The daemon holds the card key, so it signs this host's reply for the
+  // host's pinned URL; a stream is signed over its headers.
+  async signResponse(
+    res: Response,
+    req: Request,
+    caller: Caller
+  ): Promise<Response> {
+    const stream = isEventStream(res.headers);
+    const bytes = stream ? null : new Uint8Array(await res.arrayBuffer());
+    const url = new URL(req.url);
+    const out = await this.call<{ headers: Record<string, string> }>(
+      'POST',
+      '/sign-response',
+      caller,
+      {
+        status: res.status,
+        contentType: res.headers.get('content-type'),
+        body: bytes === null ? null : Buffer.from(bytes).toString('base64'),
+        request: {
+          method: req.method,
+          path: `${this.o.pathPrefix ?? ''}${url.pathname}`,
+          query: url.search,
+          headers: forwardedHeaders(req.headers),
+        },
+      }
+    );
+    const headers = new Headers(res.headers);
+    for (const [name, value] of Object.entries(out.headers))
+      headers.set(name, value);
+    return new Response(stream ? res.body : bytes, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  }
+
   async authenticate(bearer: string): Promise<AuthResult> {
     const result = await this.call<AuthResult>('GET', '/whoami', {
       address: '',
@@ -124,6 +213,15 @@ export class HttpBridgePort implements BridgePort {
         ).catch(() => undefined);
       },
     };
+  }
+
+  async keyStatement(): Promise<string | null> {
+    const out = await this.call<{ statement: string | null }>(
+      'GET',
+      '/key-statement',
+      null
+    );
+    return out.statement;
   }
 
   async card(): Promise<CardInputs> {

@@ -14,7 +14,9 @@ export type OpType =
   | 'mail'
   | 'state'
   | 'memory'
-  | 'doc';
+  | 'doc'
+  // A2A over a teammate link (P5): only ever on a link's own branch.
+  | 'a2a';
 
 export const OP_TYPES: readonly OpType[] = [
   'key',
@@ -27,15 +29,22 @@ export const OP_TYPES: readonly OpType[] = [
   'state',
   'memory',
   'doc',
+  'a2a',
 ];
 
-// Only mail and state travel sealed; every other type is board state in the clear.
-export const SEALED_TYPES: ReadonlySet<string> = new Set(['mail', 'state']);
+// Mail, state and a2a (teammate links) travel sealed; every other type is
+// board state in the clear.
+export const SEALED_TYPES: ReadonlySet<string> = new Set([
+  'mail',
+  'state',
+  'a2a',
+]);
 // The types a transport may prune to a stub; board ops are never pruned.
 export const STUBBABLE_TYPES: ReadonlySet<string> = new Set([
   'mail',
   'state',
   'presence',
+  'a2a',
 ]);
 
 export const MAX_OP_BYTES = 1_048_576;

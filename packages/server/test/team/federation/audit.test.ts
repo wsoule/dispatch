@@ -64,6 +64,7 @@ const ELSEWHERE: Record<string, string> = {
   'run-conflict': 'Task 14a, presence.test.ts',
   'refused-message': 'Task 15b, inbound.test.ts',
   transport: 'Task 22, relay.test.ts',
+  'link-op': 'A2A P5, service.test.ts (an a2a op on the team log)',
 };
 
 describe('the federation audit log', () => {

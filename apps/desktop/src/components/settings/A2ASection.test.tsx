@@ -1,7 +1,9 @@
 import type {
   A2AClientSummary,
+  A2ALinksStatus,
   A2AListenerSettings,
   A2AListenerStatus,
+  A2APairingSummary,
   A2APeerSummary,
   A2ATaskSummary,
   AuthTier,
@@ -99,7 +101,11 @@ const PEER: A2APeerSummary = {
   addedTier: 'decide',
   fetchedAt: '2026-09-25T10:00:00.000Z',
   createdAt: '2026-09-25T10:00:00.000Z',
+  auth: 'bearer',
+  fingerprint: null,
 };
+
+const PAIR_CODE = `dispatch-a2a-pair:${'c'.repeat(60)}`;
 
 const BASE_URL = 'http://127.0.0.1:1';
 let queryClient: QueryClient;
@@ -112,6 +118,8 @@ function mount(
     clients?: A2AClientSummary[];
     tasks?: A2ATaskSummary[];
     peers?: A2APeerSummary[] | Error;
+    pairings?: A2APairingSummary[];
+    links?: A2ALinksStatus;
   } = {}
 ) {
   const status = over.status ?? CLOSED;
@@ -164,6 +172,48 @@ function mount(
         Promise.resolve(PEER)
     ),
     removeA2APeer: mock((_alias: string) => Promise.resolve()),
+    createA2APairing: mock((_input: unknown) =>
+      Promise.resolve({
+        id: 'AAAAAAAAAAAAAAAAAAAAAA',
+        code: PAIR_CODE,
+        fingerprint: 'A1B2-C3D4-0000-0000-0000-0000',
+        expiresAt: '2026-10-05T00:15:00.000Z',
+      })
+    ),
+    acceptA2APairing: mock((_input: unknown) =>
+      Promise.resolve({
+        alias: 'alice',
+        sas: '<i>5N82</i>-A48G',
+        fingerprint: '<b>T1H2</b>-R3K4-0000-0000-0000-0000',
+      })
+    ),
+    a2aPairings: mock(() => Promise.resolve({ pairings: over.pairings ?? [] })),
+    cancelA2APairing: mock((_id: string) => Promise.resolve()),
+    a2aLinks: mock(() =>
+      Promise.resolve(over.links ?? { enabled: true, links: [], offers: [] })
+    ),
+    upgradeA2APeer: mock((_alias: string, _fp: string) =>
+      Promise.resolve({
+        state: 'pending',
+        id: 'BBBBBBBBBBBBBBBBBBBBBB',
+        fingerprint: 'A9B8-C7D6-0000-0000-0000-0000',
+      })
+    ),
+    a2aKeys: mock(() =>
+      Promise.resolve({
+        current: { fingerprint: 'A1B2-C3D4-0000-0000-0000-0000' },
+        next: null,
+      })
+    ),
+    rotateA2AKey: mock((_compromised: boolean) =>
+      Promise.resolve({
+        fingerprint: 'N3W4-K5Y6-0000-0000-0000-0000',
+        told: ['bob'],
+        untold: [],
+        mustRepair: [],
+        overlapUntil: '2026-10-12T00:00:00.000Z',
+      })
+    ),
     setA2AStandalone: mock((enabled: boolean) =>
       Promise.resolve({ standalone: enabled })
     ),
@@ -605,4 +655,229 @@ test('disables, refreshes and removes a peer after confirming', async () => {
   await waitFor(() =>
     expect(client.removeA2APeer).toHaveBeenCalledWith('acme')
   );
+});
+
+test('Pair with… shows the code once, and closing it clears it', async () => {
+  const client = mount('decide');
+  fireEvent.change(await screen.findByLabelText('Pair as'), {
+    target: { value: 'bob' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Pair with…' }));
+  expect(await screen.findByText(PAIR_CODE)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Copy code' })).toBeTruthy();
+  expect(client.createA2APairing).toHaveBeenCalledWith({ alias: 'bob' });
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await waitFor(() => expect(screen.queryByText(PAIR_CODE)).toBeNull());
+  expect(document.body.textContent).not.toContain(PAIR_CODE);
+});
+
+test('Enter a code takes it in a password field, cleared on submit, and shows the SAS as text', async () => {
+  const client = mount('decide');
+  const field = await screen.findByLabelText<HTMLInputElement>('Pairing code');
+  expect(field.type).toBe('password');
+  fireEvent.change(screen.getByLabelText('Their alias'), {
+    target: { value: 'alice' },
+  });
+  field.value = PAIR_CODE;
+  fireEvent.click(screen.getByRole('button', { name: 'Enter code' }));
+  await waitFor(() =>
+    expect(client.acceptA2APairing).toHaveBeenCalledWith({
+      code: PAIR_CODE,
+      alias: 'alice',
+    })
+  );
+  expect(field.value).toBe('');
+  expect(await screen.findByText(/<i>5N82<\/i>-A48G/)).toBeTruthy();
+  expect(screen.getByText(/<b>T1H2<\/b>-R3K4/)).toBeTruthy();
+  expect(document.querySelector('i')).toBeNull();
+  expect(document.body.textContent).not.toContain(PAIR_CODE);
+});
+
+test('Pair with… over a link sends the remote, and needs no listener (T55)', async () => {
+  const client = mount('decide');
+  fireEvent.change(await screen.findByLabelText('Pair as'), {
+    target: { value: 'bob' },
+  });
+  fireEvent.change(screen.getByLabelText('Over a link (git remote)'), {
+    target: { value: 'git@github.com:acme/links.git' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Pair with…' }));
+  await waitFor(() =>
+    expect(client.createA2APairing).toHaveBeenCalledWith({
+      alias: 'bob',
+      link: { remote: 'git@github.com:acme/links.git' },
+    })
+  );
+});
+
+test('Links shows each link’s health and an offer’s problem, as text (T55)', async () => {
+  mount('decide', {
+    links: {
+      enabled: true,
+      links: [
+        {
+          alias: 'bob',
+          remote: 'git@github.com:acme/links.git',
+          branch: 'dispatch-a2a-0123456789abcdef',
+          ready: true,
+          pending: false,
+          remoteTasks: 0,
+          readThisPass: 0,
+          waiting: 2,
+          lastExchangeAt: '2026-10-05T00:00:00.000Z',
+          lastError: null,
+          unpublished: 1,
+          problems: [
+            {
+              subject: 'link-rival:x',
+              message: '<b>1 key op</b> on the link branch is not this link’s',
+              at: '2026-10-05T00:00:00.000Z',
+              dismissible: true,
+            },
+          ],
+        },
+      ],
+      offers: [
+        {
+          pairedId: 'AAAAAAAAAAAAAAAAAAAAAA',
+          alias: 'carl',
+          remote: '/srv/links.git',
+          branch: 'dispatch-a2a-fedcba9876543210',
+          createdAt: '2026-10-05T00:00:00.000Z',
+          readThisPass: 0,
+          problems: ['1 key op offered a proof that did not check out'],
+        },
+      ],
+    },
+  });
+  expect(await screen.findByText('a2a:bob')).toBeTruthy();
+  expect(screen.getByText(/2 waiting, 1 unpublished/)).toBeTruthy();
+  expect(screen.getByText(/<b>1 key op<\/b>/)).toBeTruthy();
+  expect(document.querySelector('b')).toBeNull();
+  expect(screen.getByText(/did not check out/)).toBeTruthy();
+});
+
+test('a link still waiting for the offerer says so (T55)', async () => {
+  mount('decide', {
+    links: {
+      enabled: true,
+      links: [
+        {
+          alias: 'ada',
+          remote: '/srv/links.git',
+          branch: 'dispatch-a2a-0123456789abcdef',
+          ready: true,
+          pending: true,
+          remoteTasks: 0,
+          readThisPass: 0,
+          waiting: 0,
+          lastExchangeAt: null,
+          lastError: null,
+          unpublished: 0,
+          problems: [],
+        },
+      ],
+      offers: [],
+    },
+  });
+  expect(
+    await screen.findByText(/Waiting for the other side to start the link/)
+  ).toBeTruthy();
+});
+
+test('below decide there is no pairing form', async () => {
+  mount('request');
+  expect(await screen.findByText(/Someone who can approve pairs/)).toBeTruthy();
+  expect(screen.queryByLabelText('Pairing code')).toBeNull();
+});
+
+test('peer rows say Signed, Not verified or Link, with the pinned fingerprint as text', async () => {
+  mount('decide', {
+    peers: [
+      {
+        ...PEER,
+        alias: 'signed',
+        auth: 'signature',
+        fingerprint: '<b>SIGN</b>-0000',
+      },
+      { ...PEER, alias: 'plain', auth: 'bearer', fingerprint: null },
+      { ...PEER, alias: 'linked', auth: 'link', fingerprint: null },
+    ],
+  });
+  expect(await screen.findByText('a2a:signed')).toBeTruthy();
+  expect(screen.getByText(/Signed/)).toBeTruthy();
+  expect(screen.getByText(/<b>SIGN<\/b>-0000/)).toBeTruthy();
+  expect(screen.getAllByText(/Not verified/)).toHaveLength(1);
+  expect(screen.getByText(/Link ·/)).toBeTruthy();
+  expect(document.querySelector('b')).toBeNull();
+});
+
+test('a bearer peer can be upgraded with the fingerprint its owner reads out', async () => {
+  const client = mount('decide', {
+    peers: [{ ...PEER, auth: 'bearer', fingerprint: null }],
+  });
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Upgrade a2a:acme to signed' })
+  );
+  fireEvent.change(screen.getByLabelText('Their fingerprint'), {
+    target: { value: 'A9B8-C7D6-0000-0000-0000-0000' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Ask to upgrade' }));
+  await waitFor(() =>
+    expect(client.upgradeA2APeer).toHaveBeenCalledWith(
+      'acme',
+      'A9B8-C7D6-0000-0000-0000-0000'
+    )
+  );
+  expect(await screen.findByText(/waits for its owner/)).toBeTruthy();
+});
+
+test('shows this agent’s fingerprint; only the operator sees Rotate', async () => {
+  const client = mount('decide');
+  expect(await screen.findByText('A1B2-C3D4-0000-0000-0000-0000')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Rotate key' })).toBeNull();
+  cleanup();
+  const operator = mount('operator');
+  fireEvent.click(await screen.findByRole('button', { name: 'Rotate key' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Rotate' }));
+  await waitFor(() =>
+    expect(operator.rotateA2AKey).toHaveBeenCalledWith(false)
+  );
+  expect(await screen.findByText(/N3W4-K5Y6-0000-0000-0000-0000/)).toBeTruthy();
+  expect(client.rotateA2AKey).not.toHaveBeenCalled();
+});
+
+test('lists recent pairings with their SAS on either side, as plain text', async () => {
+  mount('decide', {
+    pairings: [
+      {
+        id: 'AAAAAAAAAAAAAAAAAAAAAA',
+        role: 'offer',
+        alias: 'bob',
+        state: 'completed',
+        createdBy: 'human:wyat',
+        createdAt: '2026-10-05T00:00:00.000Z',
+        expiresAt: '2026-10-05T00:15:00.000Z',
+        completedAt: '2026-10-05T00:01:00.000Z',
+        fingerprint: 'A9B8-C7D6-0000',
+        sas: '<i>5N82</i>-A48G',
+      },
+      {
+        id: 'BBBBBBBBBBBBBBBBBBBBBB',
+        role: 'offer',
+        alias: 'carol',
+        state: 'offered',
+        createdBy: 'human:wyat',
+        createdAt: '2026-10-05T00:00:00.000Z',
+        expiresAt: '2026-10-05T00:15:00.000Z',
+        completedAt: null,
+        fingerprint: null,
+        sas: null,
+      },
+    ],
+  });
+  expect(await screen.findByText(/SAS <i>5N82<\/i>-A48G/)).toBeTruthy();
+  expect(screen.getByText('a2a:carol')).toBeTruthy();
+  expect(screen.getByText(/Waiting for the other side/)).toBeTruthy();
+  expect(document.querySelector('i')).toBeNull();
 });

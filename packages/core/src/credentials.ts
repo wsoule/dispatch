@@ -25,6 +25,20 @@ export interface PeerCredential {
   header?: string;
 }
 
+/** Link keys: privates are PKCS8 DER, publics raw, all base64url (F2's form). */
+export interface A2ALinkKeys {
+  signPriv: string;
+  signPub: string;
+  sealPriv: string;
+  sealPub: string;
+}
+
+/** A rotation's new card-signing key, and when the rotation began. */
+export interface NextSigningKey {
+  jwk: Record<string, string>;
+  at: string;
+}
+
 /** One project's secrets, one key per integration. */
 export interface ProjectCredentials {
   linear?: { apiKey: string };
@@ -34,6 +48,12 @@ export interface ProjectCredentials {
   a2a?: {
     peers?: Record<string, PeerCredential>;
     signingKey?: Record<string, string>;
+    /** A rotation's new key, signing beside the old one through the overlap. */
+    nextSigningKey?: NextSigningKey;
+    /** The last key-change or revocation statement, public, served to peers. */
+    keyStatement?: string;
+    /** Teammate links' Ed25519 signing and X25519 sealing keys (P5). */
+    linkKeys?: A2ALinkKeys;
   };
 }
 
@@ -116,7 +136,11 @@ function writeCredentials(file: CredentialsFile): void {
   renameSync(tmpPath, path);
 }
 
+// A lock with no pid yet (still being written) is abandoned after this.
 const LOCK_STALE_MS = 10_000;
+// A lock whose pid is alive is only broken after this long: the pid may
+// have been reused by an unrelated process.
+const LOCK_ABANDONED_MS = 10 * 60_000;
 // Longer than LOCK_STALE_MS, so a waiter outlives an abandoned lock.
 const LOCK_WAIT_MS = 15_000;
 
@@ -130,16 +154,17 @@ function holderGone(pid: number): boolean {
 }
 
 /** Whether a lock holding `text` ("<pid> <nonce>") and last written at
- *  `mtimeMs` was abandoned: its holder has exited, or it is over 10s old. A
- *  lock still being written (no pid yet) waits out the age rule. */
+ *  `mtimeMs` was abandoned: its holder has exited, or (a live pid being
+ *  possibly reused) it is over 10 minutes old. A lock still being written
+ *  (no pid yet) is abandoned after 10s. */
 export function isStaleLock(
   text: string,
   mtimeMs: number,
   now = Date.now()
 ): boolean {
-  if (now - mtimeMs > LOCK_STALE_MS) return true;
   const pid = Number(/^(\d+) /.exec(text)?.[1]);
-  return Number.isInteger(pid) && pid > 0 && holderGone(pid);
+  if (!Number.isInteger(pid) || pid <= 0) return now - mtimeMs > LOCK_STALE_MS;
+  return holderGone(pid) || now - mtimeMs > LOCK_ABANDONED_MS;
 }
 
 /** Removes the lock at `lock` only if it still holds `judged`, the text it
@@ -182,47 +207,73 @@ export function takeOverStaleLock(lock: string, judged: string): void {
 // removes it only while it still holds this nonce. A waiter sleeps 5ms per
 // try; it blocks only while a live process is mid-write, since a lock whose
 // holder exited is taken over at once.
-function lockCredentials(): () => void {
+// One try at the lock: its release when taken, else null (a stale lock is
+// taken over first, so the next try can succeed).
+function tryLock(lock: string, mine: string): (() => void) | null {
+  try {
+    const fd = openSync(lock, 'wx', 0o600);
+    try {
+      writeSync(fd, mine);
+    } finally {
+      closeSync(fd);
+    }
+    return () => {
+      try {
+        if (readFileSync(lock, 'utf8') === mine) unlinkSync(lock);
+      } catch {
+        // Already gone.
+      }
+    };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  }
+  let text: string;
+  let mtimeMs: number;
+  try {
+    text = readFileSync(lock, 'utf8');
+    mtimeMs = statSync(lock).mtimeMs;
+  } catch {
+    return null; // Released between the open and the read.
+  }
+  if (isStaleLock(text, mtimeMs)) takeOverStaleLock(lock, text);
+  return null;
+}
+
+function lockPaths(): { lock: string; mine: string; deadline: number } {
   const lock = `${credentialsPath()}.lock`;
   mkdirSync(resolve(lock, '..'), { recursive: true });
-  const mine = `${process.pid} ${randomBytes(16).toString('hex')}\n`;
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  return {
+    lock,
+    mine: `${process.pid} ${randomBytes(16).toString('hex')}\n`,
+    deadline: Date.now() + LOCK_WAIT_MS,
+  };
+}
+
+const heldElsewhere = (lock: string) =>
+  new Error(
+    `${lock} is held by another process; remove it if no Dispatch process is running`
+  );
+
+function lockCredentials(): () => void {
+  const { lock, mine, deadline } = lockPaths();
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
-    try {
-      const fd = openSync(lock, 'wx', 0o600);
-      try {
-        writeSync(fd, mine);
-      } finally {
-        closeSync(fd);
-      }
-      return () => {
-        try {
-          if (readFileSync(lock, 'utf8') === mine) unlinkSync(lock);
-        } catch {
-          // Already gone.
-        }
-      };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-    }
-    let text: string;
-    let mtimeMs: number;
-    try {
-      text = readFileSync(lock, 'utf8');
-      mtimeMs = statSync(lock).mtimeMs;
-    } catch {
-      continue; // Released between the open and the read.
-    }
-    if (isStaleLock(text, mtimeMs)) {
-      takeOverStaleLock(lock, text);
-      continue;
-    }
-    if (Date.now() > deadline)
-      throw new Error(
-        `${lock} is held by another process; remove it if no Dispatch process is running`
-      );
+    const release = tryLock(lock, mine);
+    if (release !== null) return release;
+    if (Date.now() > deadline) throw heldElsewhere(lock);
     Atomics.wait(pause, 0, 0, 5);
+  }
+}
+
+// As lockCredentials, but waits on timers: the daemon's writers never block
+// its event loop while another process holds the lock.
+async function lockCredentialsAsync(): Promise<() => void> {
+  const { lock, mine, deadline } = lockPaths();
+  for (;;) {
+    const release = tryLock(lock, mine);
+    if (release !== null) return release;
+    if (Date.now() > deadline) throw heldElsewhere(lock);
+    await new Promise((r) => setTimeout(r, 5));
   }
 }
 
@@ -233,6 +284,22 @@ function updateCredentials(
   change: (file: CredentialsFile) => CredentialsFile | null
 ): void {
   const release = lockCredentials();
+  try {
+    const loaded = loadCredentials();
+    if (loaded.kind === 'unreadable') throw new CredentialsUnreadableError();
+    const next = change(loaded.kind === 'ok' ? loaded.file : {});
+    if (next !== null) writeCredentials(next);
+  } finally {
+    release();
+  }
+}
+
+// updateCredentials for the daemon: the same read-modify-write, waiting
+// asynchronously for the lock.
+async function updateCredentialsAsync(
+  change: (file: CredentialsFile) => CredentialsFile | null
+): Promise<void> {
+  const release = await lockCredentialsAsync();
   try {
     const loaded = loadCredentials();
     if (loaded.kind === 'unreadable') throw new CredentialsUnreadableError();
@@ -430,6 +497,176 @@ export function writeA2ASigningKey(
       a2a: { ...entry.a2a, signingKey: { ...jwk } },
     });
   });
+}
+
+export type NextSigningKeyRead =
+  | { status: 'absent' }
+  | { status: 'ok'; next: NextSigningKey }
+  | { status: 'malformed' }
+  | { status: 'unreadable' };
+
+function stringRecord(raw: unknown): Record<string, string> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return null;
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0 || entries.some(([, v]) => typeof v !== 'string'))
+    return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+/** The rotation's next key, when one is in its overlap. */
+export function readA2ANextSigningKey(rootDir: string): NextSigningKeyRead {
+  const loaded = loadCredentials();
+  if (loaded.kind === 'unreadable') return { status: 'unreadable' };
+  if (loaded.kind === 'absent') return { status: 'absent' };
+  const raw: unknown =
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.nextSigningKey;
+  if (raw === undefined) return { status: 'absent' };
+  const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const jwk = stringRecord(r.jwk);
+  if (jwk === null || typeof r.at !== 'string') return { status: 'malformed' };
+  return { status: 'ok', next: { jwk, at: r.at } };
+}
+
+/**
+ * Starts a rotation: the next key and the statement announcing it, written
+ * together under the lock. False, writing nothing, when a next key is there.
+ */
+export async function writeA2ANextSigningKey(
+  rootDir: string,
+  next: NextSigningKey,
+  statement: string
+): Promise<boolean> {
+  const key = normalizeProjectPath(rootDir);
+  let wrote = false;
+  await updateCredentialsAsync((file) => {
+    const entry = file.projects?.[key] ?? {};
+    if (entry.a2a?.nextSigningKey !== undefined) return null;
+    wrote = true;
+    return withProjectEntry(file, key, {
+      ...entry,
+      a2a: {
+        ...entry.a2a,
+        nextSigningKey: { jwk: { ...next.jwk }, at: next.at },
+        keyStatement: statement,
+      },
+    });
+  });
+  return wrote;
+}
+
+/** Ends a rotation: next becomes the signing key and the old key is gone. */
+export async function promoteA2ASigningKey(rootDir: string): Promise<boolean> {
+  const key = normalizeProjectPath(rootDir);
+  let promoted = false;
+  await updateCredentialsAsync((file) => {
+    const entry = file.projects?.[key] ?? {};
+    const next = entry.a2a?.nextSigningKey;
+    if (next === undefined) return null;
+    promoted = true;
+    const a2a = { ...entry.a2a, signingKey: { ...next.jwk } };
+    delete a2a.nextSigningKey;
+    return withProjectEntry(file, key, { ...entry, a2a });
+  });
+  return promoted;
+}
+
+/**
+ * A compromise: `jwk` becomes the only signing key (any rotation's next key
+ * goes too) and `statement` is published, under one lock.
+ */
+export async function replaceA2ASigningKeys(
+  rootDir: string,
+  jwk: Record<string, string>,
+  statement: string
+): Promise<void> {
+  const key = normalizeProjectPath(rootDir);
+  await updateCredentialsAsync((file) => {
+    const entry = file.projects?.[key] ?? {};
+    const a2a = {
+      ...entry.a2a,
+      signingKey: { ...jwk },
+      keyStatement: statement,
+    };
+    delete a2a.nextSigningKey;
+    return withProjectEntry(file, key, { ...entry, a2a });
+  });
+}
+
+export type LinkKeysRead =
+  | { status: 'absent' }
+  | { status: 'ok'; keys: A2ALinkKeys }
+  | { status: 'malformed' }
+  | { status: 'unreadable' };
+
+const LINK_KEY_FIELDS = ['signPriv', 'signPub', 'sealPriv', 'sealPub'] as const;
+
+function linkKeysOf(raw: unknown): LinkKeysRead {
+  if (raw === undefined) return { status: 'absent' };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return { status: 'malformed' };
+  const r = raw as Record<string, unknown>;
+  for (const f of LINK_KEY_FIELDS)
+    if (typeof r[f] !== 'string' || r[f] === '') return { status: 'malformed' };
+  return {
+    status: 'ok',
+    keys: {
+      signPriv: r.signPriv as string,
+      signPub: r.signPub as string,
+      sealPriv: r.sealPriv as string,
+      sealPub: r.sealPub as string,
+    },
+  };
+}
+
+/** This project's link keys. Only 'absent' means new ones may be made. */
+export function readA2ALinkKeys(rootDir: string): LinkKeysRead {
+  const loaded = loadCredentials();
+  if (loaded.kind === 'unreadable') return { status: 'unreadable' };
+  if (loaded.kind === 'absent') return { status: 'absent' };
+  return linkKeysOf(
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.linkKeys
+  );
+}
+
+/**
+ * The link keys, made by `make` and stored under the lock only when the slot
+ * is absent; a malformed slot is left as it is (the feature stays off), and
+ * an unparseable file throws CredentialsUnreadableError, writing nothing.
+ */
+export async function ensureA2ALinkKeys(
+  rootDir: string,
+  make: () => A2ALinkKeys
+): Promise<LinkKeysRead> {
+  const key = normalizeProjectPath(rootDir);
+  let result: LinkKeysRead = { status: 'absent' };
+  await updateCredentialsAsync((file) => {
+    const entry = file.projects?.[key] ?? {};
+    const current = linkKeysOf(entry.a2a?.linkKeys);
+    if (current.status !== 'absent') {
+      result = current;
+      return null;
+    }
+    const keys = make();
+    result = { status: 'ok', keys };
+    return withProjectEntry(file, key, {
+      ...entry,
+      a2a: { ...entry.a2a, linkKeys: { ...keys } },
+    });
+  });
+  return result;
+}
+
+/** The last key-change or revocation statement this project published. */
+export function readA2AKeyStatement(rootDir: string): string | null {
+  const loaded = loadCredentials();
+  if (loaded.kind !== 'ok') return null;
+  const raw: unknown =
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.keyStatement;
+  return typeof raw === 'string' ? raw : null;
 }
 
 /** Where a resolved key came from — in precedence order — or `null` when there is none. */

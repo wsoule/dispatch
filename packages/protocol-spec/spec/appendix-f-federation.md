@@ -35,7 +35,8 @@ type OpType =
   | 'mail'
   | 'state'
   | 'memory'
-  | 'doc';
+  | 'doc'
+  | 'a2a'; // draft: teammate links only (below)
 
 interface OpHeader {
   v: 2;
@@ -50,7 +51,7 @@ interface OpHeader {
 
 interface FederatedOp extends OpHeader {
   body?: JsonValue; // the plain types, and the clear part of a forward
-  sealed?: Sealed; // mail and state (F.3)
+  sealed?: Sealed; // mail, state and a2a (F.3)
   sig: string; // Ed25519 over "dispatch-op-v2\n" + JCS(the header)
 }
 
@@ -70,8 +71,8 @@ interface OpStub extends OpHeader {
   them starts over under a new id.
 - **Verification.** An op verifies when `sig` verifies over its header with the
   publisher's key and `bodyHash` is the hash of its content. A stub verifies
-  with the same signature, and is accepted only for the types `mail`, `state`
-  and `presence`.
+  with the same signature, and is accepted only for the types `mail`, `state`,
+  `presence` and `a2a`.
 - **The chain.** `opHash` is the hash of the JCS form of the header and `sig`,
   the same for an op and its stub. Each op carries the `opHash` of the
   publisher's previous op as `prev`, and its `seq` exceeds that op's. A
@@ -105,10 +106,17 @@ interface OpStub extends OpHeader {
 | `state`    | sealed delivery states, settlements and refusals                 | a home of each recipient it reports; a question's origin for a settlement; a replica that refused | the replicas in `to` |
 | `memory`   | a team memory entry ([§F.7](appendix-f-federation.md#sF.7))      | any admitted replica                                                                              | every replica        |
 | `doc`      | a team document revision ([§F.7](appendix-f-federation.md#sF.7)) | any admitted replica                                                                              | every replica        |
+| `a2a`      | draft: a sealed A2A payload on a teammate link                   | either side of the link, on the link's own log                                                    | the other side       |
 
-Only `mail` and `state` are sealed. The other types are the team's shared state
-and travel in the clear, so a transport can read the board, team memory and
-documents, presence and the roster, but not the mail.
+Only `mail`, `state` and `a2a` are sealed. The other types are the team's shared
+state and travel in the clear, so a transport can read the board, team memory
+and documents, presence and the roster, but not the mail.
+
+`a2a` is a draft entry. It carries A2A between two paired agents over a
+**teammate link**, a log of its own that only those two replicas publish to, and
+never appears on a team's log. A replica that finds one on a team's log drops it
+with a note, rather than keeping it as an unknown type. Its payload is sealed
+under the type `a2a`, so it can never be opened as `mail`, or `mail` as it.
 
 ## F.2 Canonical JSON and domain tags
 

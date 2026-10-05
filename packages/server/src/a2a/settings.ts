@@ -326,6 +326,20 @@ export function resolveListener(
 
 // The IP per-IP limits key on. The right-most X-Forwarded-For entry is the
 // one the tunnel appended, trusted only on a loopback listener.
+/**
+ * The listener's client address: X-Forwarded-For counts only when the
+ * listener is bound to loopback (a tunnel on this machine), as for the
+ * standalone host; on a network bind anyone could send that header.
+ */
+export function listenerClientIp(
+  req: Request,
+  peer: string | null,
+  listener: Pick<ResolvedListener, 'host' | 'trustForwardedFor'>
+): string | null {
+  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(listener.host);
+  return clientIpFor(req, peer, listener.trustForwardedFor && loopback);
+}
+
 export function clientIpFor(
   req: Request,
   peer: string | null,
@@ -339,4 +353,95 @@ export function clientIpFor(
     .filter((s) => s !== '')
     .at(-1);
   return last ?? peer;
+}
+
+/** a2a-relay.json: whether this daemon dials a relay as a tenant, and which. */
+export interface RelaySettings {
+  enabled: boolean;
+  // The relay's origin; the daemon dials <origin>/v1/tenants.
+  url: string | null;
+}
+
+export const DEFAULT_RELAY: RelaySettings = { enabled: false, url: null };
+
+function relaySettingsPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'a2a-relay.json');
+}
+
+// A relay origin: https, or http on loopback; no path, query or credentials.
+function relayOrigin(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const u = new URL(raw);
+    const loopback =
+      u.hostname === 'localhost' ||
+      (isIP(u.hostname.replace(/^\[|\]$/g, '')) !== 0 &&
+        isLoopbackAddress(u.hostname.replace(/^\[|\]$/g, '')));
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && loopback))
+      return null;
+    if (
+      u.username !== '' ||
+      u.password !== '' ||
+      u.search !== '' ||
+      u.hash !== ''
+    )
+      return null;
+    if (u.pathname !== '/') return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function parseRelaySettings(
+  raw: unknown
+): { ok: true; settings: RelaySettings } | { ok: false; key: string } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return { ok: false, key: 'body' };
+  const r = raw as Record<string, unknown>;
+  if (typeof r.enabled !== 'boolean') return { ok: false, key: 'enabled' };
+  if (r.url === null || r.url === undefined) {
+    if (r.enabled) return { ok: false, key: 'url' };
+    return { ok: true, settings: { enabled: false, url: null } };
+  }
+  const url = relayOrigin(r.url);
+  if (url === null) return { ok: false, key: 'url' };
+  return { ok: true, settings: { enabled: r.enabled, url } };
+}
+
+// Never throws: missing or malformed is the default (off), with the reason.
+export function readRelaySettings(rootDir: string): {
+  settings: RelaySettings;
+  error: string | null;
+} {
+  const path = relaySettingsPath(rootDir);
+  if (!existsSync(path)) return { settings: { ...DEFAULT_RELAY }, error: null };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return {
+      settings: { ...DEFAULT_RELAY },
+      error: `${path} is not valid JSON; the relay stays off`,
+    };
+  }
+  const parsed = parseRelaySettings(raw);
+  return parsed.ok
+    ? { settings: parsed.settings, error: null }
+    : {
+        settings: { ...DEFAULT_RELAY },
+        error: `${path} has the wrong shape (${parsed.key}); the relay stays off`,
+      };
+}
+
+export function writeRelaySettings(
+  rootDir: string,
+  settings: RelaySettings
+): void {
+  const path = relaySettingsPath(rootDir);
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, path);
 }

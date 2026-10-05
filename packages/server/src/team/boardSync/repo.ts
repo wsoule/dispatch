@@ -2,6 +2,7 @@ import {
   MAX_OP_BYTES,
   opHash,
   REPLICA_ID,
+  SEALED_TYPES,
   stubOf,
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
@@ -1182,7 +1183,7 @@ export class SyncRepo {
         if (
           entry === null ||
           'pruned' in entry ||
-          (entry.type !== 'mail' && entry.type !== 'state') ||
+          !SEALED_TYPES.has(entry.type) ||
           !prune(entry)
         )
           return line;

@@ -1336,6 +1336,43 @@ export interface A2APeerSummary {
   addedTier: 'decide' | 'operator';
   fetchedAt: string;
   createdAt: string;
+  auth?: 'bearer' | 'signature' | 'link';
+  fingerprint?: string | null;
+}
+
+/** A pairing as /api/a2a/pairings lists it; never its secret. */
+interface A2APairingSummary {
+  id: string;
+  role: 'offer' | 'accept' | 'upgrade';
+  alias: string;
+  state: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  completedAt: string | null;
+  fingerprint: string | null;
+  sas: string | null;
+}
+
+interface A2AKeys {
+  current: { fingerprint: string; thumbprint?: string };
+  next: { fingerprint: string; since: string; until: string } | null;
+}
+
+interface A2ARelayStatus {
+  enabled: boolean;
+  url: string | null;
+  connected: boolean;
+  tenantUrl: string | null;
+  error: string | null;
+}
+
+interface A2ARotation {
+  fingerprint: string;
+  told: string[];
+  untold: string[];
+  mustRepair: string[];
+  overlapUntil: string | null;
 }
 
 // Separate from ApiClient so its test fakes need not grow the A2A routes.
@@ -1377,6 +1414,35 @@ export interface A2AApiClient {
   ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
   removeHost(id: string): Promise<void>;
   setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+  createPairing(input: {
+    alias: string;
+    ttlMin?: number;
+    link?: { remote: string };
+  }): Promise<{
+    id: string;
+    code: string;
+    fingerprint: string;
+    expiresAt: string;
+  }>;
+  acceptPairing(input: {
+    code: string;
+    alias: string;
+  }): Promise<{ alias: string; sas: string; fingerprint: string }>;
+  pairings(): Promise<{ pairings: A2APairingSummary[] }>;
+  cancelPairing(id: string): Promise<void>;
+  upgradePeer(
+    alias: string,
+    confirmFingerprint: string,
+    client?: string
+  ): Promise<{ state: 'pending'; id: string; fingerprint: string }>;
+  keys(): Promise<A2AKeys>;
+  relayStatus(): Promise<A2ARelayStatus>;
+  setRelay(settings: {
+    enabled: boolean;
+    url: string;
+  }): Promise<A2ARelayStatus>;
+  disableRelay(): Promise<A2ARelayStatus>;
+  rotateKey(compromised: boolean): Promise<A2ARotation>;
 }
 
 // A standalone host as /api/a2a/hosts lists it; never its token or hash.
@@ -1455,5 +1521,37 @@ export function createA2AApiClient(
         ...jsonBody({ enabled }),
         method: 'PUT',
       }),
+    createPairing: (input) =>
+      request(target, '/api/a2a/pairings', jsonBody(input)),
+    acceptPairing: (input) =>
+      request(target, '/api/a2a/pairings/accept', jsonBody(input)),
+    pairings: () => request(target, '/api/a2a/pairings'),
+    cancelPairing: (id) =>
+      request(target, `/api/a2a/pairings/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    upgradePeer: (alias, confirmFingerprint, client) =>
+      request(
+        target,
+        `/api/a2a/peers/${encodeURIComponent(alias)}/upgrade`,
+        jsonBody({
+          confirmFingerprint,
+          ...(client === undefined ? {} : { client }),
+        })
+      ),
+    keys: () => request(target, '/api/a2a/keys'),
+    relayStatus: () => request(target, '/api/a2a/relay'),
+    setRelay: (settings) =>
+      request(target, '/api/a2a/relay', {
+        ...jsonBody(settings),
+        method: 'PUT',
+      }),
+    disableRelay: () => request(target, '/api/a2a/relay', { method: 'DELETE' }),
+    rotateKey: (compromised) =>
+      request(
+        target,
+        '/api/a2a/keys/rotate',
+        jsonBody(compromised ? { compromised: true } : {})
+      ),
   };
 }

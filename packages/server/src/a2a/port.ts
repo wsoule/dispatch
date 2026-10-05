@@ -8,12 +8,15 @@ import type {
   CardRequest,
   ContinueInput,
   ContinueResult,
+  ExtensionRoute,
   HandoffStatuses,
   ListPage,
   ListQuery,
   LookupAll,
   OpenInput,
   OpenResult,
+  ReceivedRequest,
+  RequestParts,
   StatusEntry,
   TaskFacts,
   TaskRow,
@@ -25,8 +28,12 @@ import {
   decodePageToken,
   encodePageToken,
   matchChoice,
+  normalizedPath,
   offeredSkills,
   peerSelfAddressed,
+  SIG_EXTENSION_URI,
+  signResponse,
+  signResponseFor,
   statusReply,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
@@ -52,13 +59,24 @@ import { basename } from 'node:path';
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import type { AuthTier } from '../tiers.js';
 import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
+import type { KeyService } from './keys.js';
+import { completePairing } from './pairing.js';
+import type { Unpairer } from './pairing.js';
+import type { PeerService } from './peers.js';
 import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
+import {
+  authenticateByKey,
+  revalidateSigned,
+  verifySignedClient,
+} from './signed.js';
 import type { CardSigner } from './signing.js';
+import type { Upgrades } from './upgrade.js';
 import type { BridgeWatch } from './watch.js';
 
 const MINUTE_MS = 60_000;
@@ -102,10 +120,28 @@ export interface BridgeDeps {
   lookup?: LookupAll;
   // The card signer, created on first use; null serves the card unsigned.
   signer?: () => CardSigner | null;
+  // The peer service, once a2a.db is open; pairing writes peers through it.
+  peers?: () => PeerService | null;
+  // The tier a pairing offer's creator acts at now; null once revoked.
+  creatorTier?: (ref: string) => AuthTier | null;
+  // Unpairing's notices and their retries, once a2a.db is open.
+  unpairer?: () => Unpairer | null;
+  // Rotations and peers' key statements, once a2a.db is open.
+  keys?: () => KeyService | null;
+  // Bearer-to-signature upgrades, once a2a.db is open.
+  upgrades?: () => Upgrades | null;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
 // as the client (never deciding), and every read is gathered fresh.
+// Whether a forwarded path lies under the host's own URL path (relay review
+// I1): '/t/<A>/a2a/v1/…' for tenant A, anything for a host at an origin.
+function underHostPath(path: string, publicUrl: string): boolean {
+  if (!normalizedPath(path)) return false;
+  const base = new URL(publicUrl).pathname.replace(/\/$/, '');
+  return base === '' || path.startsWith(`${base}/`);
+}
+
 export class DaemonBridgePort implements BridgePort {
   private readonly requestTimes = new Map<string, number[]>();
   private readonly streams = new Map<string, number>();
@@ -306,14 +342,178 @@ export class DaemonBridgePort implements BridgePort {
     return { ok: true };
   }
 
-  authenticate(bearer: string): Promise<AuthResult> {
-    return settle(() =>
-      authenticateA2AClient(
+  // A bearer client, refused under a2a.requireSignedDispatchPeers once its
+  // agent has named the signature extension (remembered from `presented`).
+  // The client chooses to name it: a migration nudge, not a boundary.
+  authenticate(bearer: string, presented?: string[]): Promise<AuthResult> {
+    return settle(() => {
+      const result = authenticateA2AClient(
         this.deps.messages,
-        (a) => this.deps.store.getClient(a) !== null,
+        (a) => this.deps.store.getClient(a)?.auth ?? null,
         bearer
+      );
+      if (!result.ok) return result;
+      const address = result.caller.address;
+      const client = this.deps.store.getClient(address);
+      const presents = presented?.includes(SIG_EXTENSION_URI) === true;
+      if (presents && client?.sigPresented !== true)
+        this.deps.store.markSigPresented(address);
+      if (
+        (presents || client?.sigPresented === true) &&
+        this.deps.policy().requireSignedDispatchPeers
       )
+        return {
+          ok: false,
+          status: 401,
+          reason: 'AUTH_SIGNATURE_REQUIRED',
+          message:
+            'this project takes only signed requests from Dispatch agents; upgrade the pairing (dispatch a2a peers upgrade)',
+        };
+      return result;
+    });
+  }
+
+  // The in-daemon listener verifies against its own configured URL.
+  authenticateSigned(req: ReceivedRequest): Promise<AuthResult | null> {
+    return this.authenticateSignedAt(req, this.deps.cardBase().publicUrl);
+  }
+
+  // A standalone host's forwarded request, verified against that host's pinned
+  // URL. A relay tenant's URL has a path (/t/<thumbprint>): its origin is what
+  // the verifier takes, and the forwarded path carries the prefix.
+  authenticateSignedAt(
+    req: ReceivedRequest,
+    publicUrl: string
+  ): Promise<AuthResult | null> {
+    // A host serving under a path (a relay tenant) passes only paths under it:
+    // a request signed for another tenant's path is never verified here.
+    if (!underHostPath(req.path, publicUrl))
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        reason: 'AUTH_INVALID_TOKEN',
+        message: 'unknown token',
+      });
+    return settle(() =>
+      verifySignedClient(this.deps, req, new URL(publicUrl).origin)
     );
+  }
+
+  revalidate(caller: Caller): Promise<boolean> {
+    return settle(() => revalidateSigned(this.deps, caller));
+  }
+
+  // Signs the listener's reply to a signed request, for the URL the client
+  // was told to call; unsigned (and so refused by the peer) when signing is off.
+  async signResponse(res: Response, req: Request): Promise<Response> {
+    const signer = this.deps.signer?.() ?? null;
+    if (signer === null) return res;
+    const url = new URL(req.url);
+    const origin = new URL(this.deps.cardBase().publicUrl).origin;
+    return signResponseFor(
+      res,
+      {
+        method: req.method,
+        targetUri: `${origin}${url.pathname}${url.search}`,
+        headers: req.headers,
+      },
+      signer.requestKey(),
+      this.now()
+    );
+  }
+
+  // The signature headers for a standalone host's reply, for that host's URL;
+  // null when signing is off.
+  signFor(
+    res: { status: number; headers: Headers; body: Uint8Array | null },
+    request: RequestParts
+  ): Record<string, string> | null {
+    const signer = this.deps.signer?.() ?? null;
+    if (signer === null) return null;
+    const key = signer.requestKey();
+    return signResponse({
+      status: res.status,
+      headers: res.headers,
+      body: res.body,
+      request,
+      keyid: key.keyid,
+      privateKey: key.privateKey,
+      now: this.now(),
+    });
+  }
+
+  // This project's last key-change or revocation statement, public.
+  keyStatement(): Promise<string | null> {
+    return Promise.resolve(this.deps.keys?.()?.statement() ?? null);
+  }
+
+  // The listener's extension routes: a pairing proof or an unpair notice.
+  async extension(route: ExtensionRoute, req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    return this.extensionAt(
+      route,
+      {
+        method: req.method,
+        path: url.pathname,
+        query: url.search,
+        headers: req.headers,
+        body: new Uint8Array(await req.arrayBuffer()),
+      },
+      this.deps.cardBase().publicUrl
+    );
+  }
+
+  // An extension request received at publicUrl (this listener's, or a host's
+  // pinned URL); replies are signed for that URL.
+  async extensionAt(
+    route: ExtensionRoute,
+    r: ReceivedRequest,
+    publicUrl: string
+  ): Promise<Response> {
+    const peers = this.deps.peers?.() ?? null;
+    const unpairer = this.deps.unpairer?.() ?? null;
+    if (peers === null || !underHostPath(r.path, publicUrl))
+      return new Response('not found', { status: 404 });
+    const parts = {
+      method: r.method,
+      targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,
+      headers: r.headers,
+    };
+    const d = {
+      ...peers.deps,
+      notices: peers.notices,
+      emit: peers.emit,
+      ...(this.deps.creatorTier === undefined
+        ? {}
+        : { creatorTier: this.deps.creatorTier }),
+    };
+    if (route === 'pair')
+      return completePairing(d, r.body ?? new Uint8Array(), parts);
+    if (route === 'upgrade') {
+      const upgrades = this.deps.upgrades?.() ?? null;
+      if (upgrades === null) return new Response('not found', { status: 404 });
+      return upgrades.receive(r, publicUrl);
+    }
+    if (route === 'key-change') {
+      const keys = this.deps.keys?.() ?? null;
+      if (keys === null) return new Response('not found', { status: 404 });
+      return keys.receive(r.body, parts);
+    }
+    if (unpairer === null) return new Response('not found', { status: 404 });
+    return unpairer.receive(
+      await this.authenticateSignedAt(r, publicUrl),
+      r.body,
+      parts
+    );
+  }
+
+  // A signed caller re-checked by address and the key it proved (a
+  // standalone host's session).
+  authenticateSignedAddress(
+    address: string,
+    keyid: string
+  ): Promise<AuthResult> {
+    return settle(() => authenticateByKey(this.deps, address, keyid));
   }
 
   // Requests per minute and open streams, per client, in memory.
@@ -339,9 +539,11 @@ export class DaemonBridgePort implements BridgePort {
     };
     const signer = this.deps.signer?.() ?? null;
     if (signer === null) return inputs;
+    // A signed card also advertises the signature extension.
+    const signing = { ...inputs, signing: true };
     return {
-      ...inputs,
-      signatures: await signer.signaturesFor(inputs),
+      ...signing,
+      signatures: await signer.signaturesFor(signing),
       jwks: signer.jwks(),
     };
   }

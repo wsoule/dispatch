@@ -127,6 +127,155 @@ name, so a DNS answer that changes between the check and the connect (DNS
 rebinding) cannot redirect it. Redirects are not followed. A name that does not
 resolve is retried; a refused address is final.
 
+## Reaching your agent
+
+The listener binds loopback. To let agents on other machines reach it, put a
+tunnel in front of it and give the card the tunnel's URL. Commands below were
+checked against Tailscale's and Cloudflare's docs in October 2026.
+
+Whatever terminates TLS in front of the listener (Cloudflare, a relay) can read
+bearer traffic: a plain A2A client's token and every body. Tailscale Funnel is
+not one of them: Funnel's TLS ends on your machine. Pair Dispatch peers
+(`dispatch a2a pair offer`) so their requests and replies are signed; an edge
+can still read and drop them, but cannot forge or alter them unnoticed.
+
+`--trust-forwarded-for` keys the per-IP limits on the right-most
+`X-Forwarded-For` value. The listener honours X-Forwarded-For only when it is
+bound to loopback (a tunnel on this machine), as `dispatch a2a serve` does; on a
+network bind the flag is ignored, since anyone could send that header. Set
+trustForwardedFor only when the proxy in front appends the connecting address to
+that header; otherwise a client chooses its own address and steps around the
+per-IP lockout. Left off, every client of a loopback tunnel shares one budget,
+which is safe. To check a proxy, send a request with
+`X-Forwarded-For: 192.0.2.1` through it: the listener's access log should show
+your real address, not `192.0.2.1`.
+
+`a2a.requireSignedDispatchPeers: true` in config.yml refuses bearer tokens from
+any client whose requests once named Dispatch's signature extension, so a
+Dispatch peer that can sign stops falling back to its bearer. The client names
+the extension itself, so one that never does keeps its bearer: this setting is a
+migration nudge for well-behaved Dispatch agents, not a security boundary.
+Upgrade or pair a peer to stop its bearer for good.
+
+### Tailscale
+
+Within your tailnet (needs MagicDNS and HTTPS certificates on the tailnet):
+
+```bash
+dispatch a2a listen --port 7450 --public-url https://<machine>.<tailnet>.ts.net
+tailscale serve --bg --https=443 http://127.0.0.1:7450
+tailscale serve --https=443 off          # stop
+```
+
+A tailnet name resolves to a 100.64.0.0/10 address, which the outbound address
+checks refuse: a tailnet peer must be added or paired by someone at the operator
+tier, as for any private address.
+
+Public, through Tailscale Funnel (also needs the `funnel` node attribute in the
+tailnet policy; ports 443, 8443 or 10000):
+
+```bash
+dispatch a2a listen --port 7450 --public-url https://<machine>.<tailnet>.ts.net
+tailscale funnel --bg --https=443 http://127.0.0.1:7450
+tailscale funnel --https=443 off         # stop
+```
+
+Funnel's TLS ends on your machine, but Tailscale's docs do not say whether
+`serve` or `funnel` add `X-Forwarded-For`: run the check above before turning
+`--trust-forwarded-for` on.
+
+### Cloudflare Tunnel
+
+Use a named tunnel with your own hostname. Quick tunnels
+(`cloudflared tunnel --url …`) are for testing only: they do not carry
+Server-Sent Events, so A2A streaming and task subscriptions fail, and they cap
+in-flight requests at 200.
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create dispatch-a2a
+cloudflared tunnel route dns dispatch-a2a agent.example.com
+```
+
+`~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <tunnel-uuid>
+credentials-file: /Users/<you>/.cloudflared/<tunnel-uuid>.json
+ingress:
+  - hostname: agent.example.com
+    service: http://127.0.0.1:7450
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel ingress validate
+cloudflared tunnel run dispatch-a2a
+dispatch a2a listen --port 7450 --public-url https://agent.example.com \
+  --trust-forwarded-for
+```
+
+Cloudflare terminates TLS and can read and rewrite traffic: bearer clients are
+fully exposed to it, and signatures make any rewrite of a paired peer's request
+fail verification. Cloudflare appends the address that connected to it to
+`X-Forwarded-For`, so `--trust-forwarded-for` is safe here; `CF-Connecting-IP`
+is not read separately. Cloudflare Access in front of the tunnel works only for
+clients that can present Access credentials, which plain A2A clients cannot.
+
+### A relay
+
+With neither Tailscale nor a tunnel, or to serve many daemons from one public
+host, run a relay that the daemons dial out to; none of them opens a port:
+
+```bash
+dispatch a2a keys show                      # on each daemon: its thumbprint
+# On the relay machine: the card-key thumbprints it admits, one per line.
+dispatch a2a relay --host 0.0.0.0 --public --port 443 \
+  --public-url https://relay.example.com \
+  --tls-cert cert.pem --tls-key key.pem --tenants-file ./tenants   # chmod 600
+```
+
+Each daemon then sets
+`PUT /api/a2a/relay {"enabled": true, "url": "https://relay.example.com"}`
+(operator) and is served at `https://relay.example.com/t/<thumbprint>`, its card
+built for that URL. The relay terminates TLS: it can read bearer traffic and
+bodies and can drop them, but cannot forge a paired peer's signed requests,
+which are checked against the tenant URL. Run it for your own daemons, never as
+a public service.
+
+To change the tenants file while the relay runs, write the new list to a file
+beside it, `chmod 600` it and `mv` it over the old one (an atomic replace), then
+send the relay SIGHUP: it re-reads the list and drops tenants no longer on it.
+
+Connections that have not authenticated yet are capped per address (8) and in
+all (256). Behind `--trust-forwarded-for` on loopback, the per-address cap keys
+on the forwarded address. Many addresses together can still fill the overall cap
+for a while; each such connection closes after 10 s without a valid auth.
+
+### Teammate links
+
+Two Dispatch projects whose owners can both push to one git remote can pair over
+a branch on it instead, with no listener and no public URL on either side:
+`dispatch a2a pair offer --alias bob --link <remote>`, and the other side
+accepts the code as usual. Messages wait on the branch while a laptop sleeps.
+
+- **Who may use which remote.** Below the operator tier a link must be an
+  `https://` remote on a public host. ssh and `git://` resolve the host
+  themselves (ssh through your ssh config: `ProxyCommand`, `HostName` aliases),
+  so a host check there would only be advisory; the operator tier may use them,
+  a private host, or a local path.
+- **Where git connects.** Before every exchange the host is resolved and, for a
+  decide-tier link, checked public; git is then pinned to that address
+  (`http.curloptResolve`) and never follows a redirect. A host that now resolves
+  privately is not contacted, with a note in Settings.
+- **Proxies.** A proxy resolves the host itself, which would undo the pin, so a
+  decide-tier link runs with no proxy (`http.proxy` empty, and `http_proxy`,
+  `https_proxy`, `all_proxy` and `no_proxy` cleared, in both cases, for its git
+  commands). A per-URL `http.<url>.proxy` in your gitconfig, wildcards included,
+  is overridden too: the link sets `http.<its exact remote>.proxy` empty, the
+  most specific match git knows. An operator-tier link keeps your proxy
+  settings.
+
 ## Standalone host
 
 Use `dispatch a2a serve` when the public A2A listener should run on another
@@ -166,6 +315,10 @@ dispatch a2a serve --host 0.0.0.0 --public --port 443 \
 - The card is built for the host's configured public URL, never from a request's
   `Host` or `X-Forwarded-*` headers.
 - A standalone host offers no push configs; push is the daemon's own.
+- Pairing works through a host, but upgrading an existing bearer pair to
+  signatures through a standalone host is not supported yet: the host does not
+  forward the bearer the upgrade authenticates with. Upgrade over the daemon's
+  own listener, or pair afresh.
 
 ## Running the TCK
 

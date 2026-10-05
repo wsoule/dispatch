@@ -19,6 +19,8 @@ const STATUS = {
   legacyClients: [],
 };
 
+const CODE = `dispatch-a2a-pair:${'c'.repeat(80)}`;
+
 const PEER = {
   alias: 'acme',
   cardUrl: 'https://agent.example.com/.well-known/agent-card.json',
@@ -174,6 +176,80 @@ function startFakeDaemon() {
         return Response.json({
           standalone: (body as { enabled?: boolean } | null)?.enabled === true,
         });
+      if (url.pathname === '/api/a2a/pairings' && req.method === 'POST')
+        return Response.json(
+          {
+            id: 'AAAAAAAAAAAAAAAAAAAAAA',
+            code: CODE,
+            fingerprint: 'A9B8-C7D6-J5K4-N3P2-S1T0-W9X8',
+            expiresAt: '2026-10-05T00:15:00Z',
+          },
+          { status: 201 }
+        );
+      if (url.pathname === '/api/a2a/pairings/accept')
+        return Response.json({
+          alias: 'alice',
+          sas: '5N82-A48G',
+          fingerprint: 'A9B8-C7D6-J5K4-N3P2-S1T0-W9X8',
+        });
+      if (url.pathname === '/api/a2a/pairings' && req.method === 'GET')
+        return Response.json({
+          pairings: [
+            {
+              id: 'AAAAAAAAAAAAAAAAAAAAAA',
+              role: 'offer',
+              alias: 'bob',
+              state: 'completed',
+              createdBy: 'human:wyat',
+              createdAt: '2026-10-05T00:00:00Z',
+              expiresAt: '2026-10-05T00:15:00Z',
+              completedAt: '2026-10-05T00:01:00Z',
+              fingerprint: 'A9B8-C7D6-J5K4-N3P2-S1T0-W9X8',
+              sas: '5N82-A48G',
+            },
+          ],
+        });
+      if (url.pathname === '/api/a2a/pairings/AAAAAAAAAAAAAAAAAAAAAA')
+        return new Response(null, { status: 204 });
+      if (url.pathname === '/api/a2a/keys')
+        return Response.json({
+          current: {
+            fingerprint: 'C1U2-R3E4-N5T6-0000-0000-0000',
+            thumbprint: 'T'.repeat(43),
+          },
+          next: null,
+        });
+      if (url.pathname === '/api/a2a/keys/rotate')
+        return Response.json({
+          fingerprint: 'N3W4-K5Y6-0000-0000-0000-0000',
+          told: ['bob'],
+          untold: [],
+          mustRepair: [],
+          overlapUntil: '2026-10-12T00:00:00Z',
+        });
+      if (url.pathname === '/api/a2a/peers/acme/upgrade')
+        return Response.json(
+          {
+            state: 'pending',
+            id: 'BBBBBBBBBBBBBBBBBBBBBB',
+            fingerprint: 'A9B8-C7D6-J5K4-N3P2-S1T0-W9X8',
+          },
+          { status: 202 }
+        );
+      if (url.pathname === '/api/a2a/relay') {
+        const put = body as { enabled?: boolean; url?: string } | null;
+        const enabled = req.method === 'PUT' ? put?.enabled === true : false;
+        return Response.json({
+          enabled: req.method === 'GET' ? true : enabled,
+          url: put?.url ?? 'https://relay.example.com',
+          connected: req.method === 'GET',
+          tenantUrl:
+            req.method === 'GET'
+              ? `https://relay.example.com/t/${'T'.repeat(43)}`
+              : null,
+          error: null,
+        });
+      }
       if (url.pathname === '/api/a2a/tasks/m-1/decline') {
         return Response.json({ id: 'm-1' });
       }
@@ -643,6 +719,201 @@ describe('dispatch a2a hosts', () => {
       ['a2a', 'hosts', 'remove', 'h-1'],
     ])
       await expect(run(...argv)).rejects.toThrow(CliError);
+    expect(a2aCalls()).toEqual([]);
+  });
+});
+
+describe('dispatch a2a pair', () => {
+  it('offers with the app token and prints the code once, with this side’s fingerprint', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'pair', 'offer', '--alias', 'bob', '--ttl', '30');
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/pairings',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { alias: 'bob', ttlMin: 30 },
+    });
+    const out = lines.join('\n');
+    expect(out.split(CODE).length).toBe(2);
+    expect(out).toContain('A9B8-C7D6-J5K4-N3P2-S1T0-W9X8');
+  });
+
+  it('offers a pairing over a teammate link with --link (T55)', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'pair',
+      'offer',
+      '--alias',
+      'bob',
+      '--link',
+      'git@github.com:acme/links.git'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/pairings',
+      body: { alias: 'bob', link: { remote: 'git@github.com:acme/links.git' } },
+    });
+    expect(lines.join('\n')).toContain('link');
+  });
+
+  it('accepts a code read only from stdin, and prints the SAS to compare', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    ctx.readStdin = () => Promise.resolve(`${CODE}\n`);
+    await run('a2a', 'pair', 'accept', '--alias', 'alice');
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/pairings/accept',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { code: CODE, alias: 'alice' },
+    });
+    const out = lines.join('\n');
+    expect(out).toContain('5N82-A48G');
+    expect(out).not.toContain(CODE);
+  });
+
+  it('refuses a code on the command line, sending nothing', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(
+      run('a2a', 'pair', 'accept', '--alias', 'alice', CODE)
+    ).rejects.toThrow();
+    await expect(
+      run('a2a', 'pair', 'accept', '--alias', 'alice', '--code', CODE)
+    ).rejects.toThrow();
+    expect(a2aCalls()).toEqual([]);
+  });
+
+  it('lists and cancels with the app token, never the agent token', async () => {
+    await expect(run('a2a', 'pair', 'list')).rejects.toThrow(CliError);
+    await expect(run('a2a', 'pair', 'offer', '--alias', 'bob')).rejects.toThrow(
+      CliError
+    );
+    expect(a2aCalls()).toEqual([]);
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'pair', 'list');
+    expect(lines.join('\n')).toContain('a2a:bob');
+    expect(lines.join('\n')).toContain('5N82-A48G');
+    await run('a2a', 'pair', 'cancel', 'AAAAAAAAAAAAAAAAAAAAAA');
+    expect(a2aCalls().at(-1)).toMatchObject({
+      method: 'DELETE',
+      path: '/api/a2a/pairings/AAAAAAAAAAAAAAAAAAAAAA',
+    });
+  });
+});
+
+describe('dispatch a2a keys', () => {
+  it('shows the key on the agent token', async () => {
+    await run('a2a', 'keys', 'show');
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'GET',
+      path: '/api/a2a/keys',
+      auth: `Bearer ${AGENT_TOKEN}`,
+    });
+    expect(lines.join('\n')).toContain('C1U2-R3E4-N5T6-0000-0000-0000');
+    // The thumbprint a relay's tenants file lists.
+    expect(lines.join('\n')).toContain('T'.repeat(43));
+  });
+
+  it('rotates only with the app token, passing --compromised', async () => {
+    await expect(run('a2a', 'keys', 'rotate')).rejects.toThrow(CliError);
+    expect(a2aCalls()).toEqual([]);
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('a2a', 'keys', 'rotate', '--compromised');
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/keys/rotate',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { compromised: true },
+    });
+    expect(lines.join('\n')).toContain('N3W4-K5Y6-0000-0000-0000-0000');
+  });
+});
+
+describe('dispatch a2a peers upgrade', () => {
+  it('sends the fingerprint to confirm, with the app token', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'peers',
+      'upgrade',
+      'acme',
+      '--fingerprint',
+      'A9B8-C7D6-J5K4-N3P2-S1T0-W9X8'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/peers/acme/upgrade',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { confirmFingerprint: 'A9B8-C7D6-J5K4-N3P2-S1T0-W9X8' },
+    });
+    expect(lines.join('\n')).toContain('waits for');
+  });
+
+  it('passes --client, the client the peer reaches this agent as', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'peers',
+      'upgrade',
+      'acme',
+      '--fingerprint',
+      'A9B8-C7D6',
+      '--client',
+      'a2a.acme'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      body: { confirmFingerprint: 'A9B8-C7D6', client: 'a2a.acme' },
+    });
+  });
+
+  it('needs --fingerprint', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(run('a2a', 'peers', 'upgrade', 'acme')).rejects.toThrow();
+    expect(a2aCalls()).toEqual([]);
+  });
+});
+
+describe('dispatch a2a relay-tenant', () => {
+  it('turns the tenant connection on with --url, off, and shows its status', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'relay-tenant',
+      'on',
+      '--url',
+      'https://relay.example.com'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'PUT',
+      path: '/api/a2a/relay',
+      auth: `Bearer ${APP_TOKEN}`,
+      body: { enabled: true, url: 'https://relay.example.com' },
+    });
+    await run('a2a', 'relay-tenant', 'off');
+    expect(a2aCalls().at(-1)).toMatchObject({
+      method: 'DELETE',
+      path: '/api/a2a/relay',
+    });
+    delete process.env.DISPATCH_APP_TOKEN;
+    lines = [];
+    await run('a2a', 'relay-tenant', 'status');
+    expect(a2aCalls().at(-1)).toMatchObject({
+      method: 'GET',
+      path: '/api/a2a/relay',
+      auth: `Bearer ${AGENT_TOKEN}`,
+    });
+    expect(lines.join('\n')).toContain(
+      `https://relay.example.com/t/${'T'.repeat(43)}`
+    );
+  });
+
+  it('never changes it on the agent token, and on needs --url', async () => {
+    await expect(
+      run('a2a', 'relay-tenant', 'on', '--url', 'https://r.example')
+    ).rejects.toThrow(CliError);
+    await expect(run('a2a', 'relay-tenant', 'off')).rejects.toThrow(CliError);
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(run('a2a', 'relay-tenant', 'on')).rejects.toThrow();
     expect(a2aCalls()).toEqual([]);
   });
 });

@@ -183,7 +183,7 @@ it('streams the INPUT_REQUIRED a run’s question causes, over the daemon port',
   const res = taskEventStream({
     port: f.port,
     caller: f.caller,
-    bearer: 'tok-acme',
+    stillAllowed: async () => (await f.port.authenticate('tok-acme')).ok,
     taskId: rootId,
     view: { ...view, client: f.caller.address },
     release: () => {},

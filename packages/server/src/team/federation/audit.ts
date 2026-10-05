@@ -28,6 +28,8 @@ export const AUDIT_KINDS = [
   'refused-message',
   'run-conflict',
   'clock-hold',
+  // An a2a (teammate-link) op found on the team log (A2A P5).
+  'link-op',
 ] as const;
 
 export type AuditKind = (typeof AUDIT_KINDS)[number];

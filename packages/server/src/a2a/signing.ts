@@ -5,7 +5,12 @@ import {
   unsignedCardEtag,
   unsignedCardJson,
 } from '@dispatch/a2a';
-import { readA2ASigningKey, writeA2ASigningKey } from '@dispatch/core';
+import {
+  promoteA2ASigningKey,
+  readA2ANextSigningKey,
+  readA2ASigningKey,
+  writeA2ASigningKey,
+} from '@dispatch/core';
 import {
   createHash,
   createPrivateKey,
@@ -14,6 +19,7 @@ import {
   sign,
   verify,
 } from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 
 export interface SigningKey {
   privateJwk: Record<string, string>;
@@ -72,11 +78,21 @@ export function loadOrCreateSigningKey(rootDir: string): SigningKey {
   if (read.status === 'ok') {
     jwk = read.jwk;
   } else {
-    jwk = generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({
-      format: 'jwk',
-    }) as Record<string, string>;
+    jwk = newPrivateJwk();
     writeA2ASigningKey(rootDir, jwk);
   }
+  return keyOf(jwk);
+}
+
+/** A fresh P-256 private JWK. */
+export function newPrivateJwk(): Record<string, string> {
+  return generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({
+    format: 'jwk',
+  }) as Record<string, string>;
+}
+
+// A stored private JWK as a signing key, proven usable.
+function keyOf(jwk: Record<string, string>): SigningKey {
   const { x, y } = publicHalf(jwk);
   const publicJwk = { kty: 'EC', crv: 'P-256', x, y };
   const kid = thumbprint(publicJwk);
@@ -87,28 +103,153 @@ export function loadOrCreateSigningKey(rootDir: string): SigningKey {
   };
 }
 
+/** A planned rotation's overlap: both keys sign and are served, then the old one goes. */
+export const KEY_OVERLAP_MS = 7 * 24 * 3600 * 1000;
+
+export interface SigningKeys {
+  current: SigningKey;
+  // A rotation in its overlap: the key it moves to, and when it began.
+  next: { key: SigningKey; at: string } | null;
+}
+
+// The signing key and any rotation's next key. A rotation whose overlap is
+// over already signs with its new key alone; finishRotation deletes the old.
+export function loadSigningKeys(
+  rootDir: string,
+  now = new Date()
+): SigningKeys {
+  const current = loadOrCreateSigningKey(rootDir);
+  const read = readA2ANextSigningKey(rootDir);
+  if (read.status === 'unreadable')
+    throw new Error('the credentials file cannot be parsed');
+  if (read.status === 'malformed')
+    throw new Error("the stored rotation's next key is malformed");
+  if (read.status === 'absent') return { current, next: null };
+  const key = keyOf(read.next.jwk);
+  if (overlapOver(read.next.at, now)) return { current: key, next: null };
+  return { current, next: { key, at: read.next.at } };
+}
+
+function overlapOver(at: string, now: Date): boolean {
+  const began = Date.parse(at);
+  return Number.isNaN(began) || now.getTime() - began >= KEY_OVERLAP_MS;
+}
+
+/** Deletes a rotation's old key once its overlap is over; true when it did. */
+export async function finishRotation(
+  rootDir: string,
+  now = new Date()
+): Promise<boolean> {
+  const read = readA2ANextSigningKey(rootDir);
+  if (read.status !== 'ok' || !overlapOver(read.next.at, now)) return false;
+  return promoteA2ASigningKey(rootDir);
+}
+
 // Signs each distinct card once (ES256 signatures are randomized, and
 // re-signing would churn every cache); a few cards are live at a time.
 export class CardSigner {
   private readonly cache = new Map<string, CardSignatureJson[]>();
-  constructor(private readonly key: SigningKey) {}
+  private readonly privateKeys = new Map<string, KeyObject>();
+  private readonly keys: SigningKeys;
+  constructor(keys: SigningKey | SigningKeys) {
+    this.keys = 'current' in keys ? keys : { current: keys, next: null };
+  }
+
+  // The key that signs now: a rotation's new key through its overlap.
+  private get active(): SigningKey {
+    return this.keys.next?.key ?? this.keys.current;
+  }
 
   async signaturesFor(inputs: CardInputs): Promise<CardSignatureJson[]> {
     const id = `${unsignedCardEtag(inputs)} ${inputs.publicUrl}`;
     const cached = this.cache.get(id);
     if (cached !== undefined) return cached;
-    const signatures = await signCard(unsignedCardJson(inputs), {
-      privateJwk: this.key.privateJwk,
-      kid: this.key.kid,
-      jku: `${inputs.publicUrl.replace(/\/$/, '')}${JWKS_PATH}`,
-    });
+    const jku = `${inputs.publicUrl.replace(/\/$/, '')}${JWKS_PATH}`;
+    // Through an overlap, both keys sign: peers pinned to either verify.
+    const signers =
+      this.keys.next === null
+        ? [this.keys.current]
+        : [this.keys.next.key, this.keys.current];
+    const signatures: CardSignatureJson[] = [];
+    for (const key of signers)
+      signatures.push(
+        ...(await signCard(unsignedCardJson(inputs), {
+          privateJwk: key.privateJwk,
+          kid: key.kid,
+          jku,
+        }))
+      );
     if (this.cache.size >= 8) this.cache.clear();
     this.cache.set(id, signatures);
     return signatures;
   }
 
-  /** Public keys only. */
-  jwks(): Jwks {
-    return { keys: [{ ...this.key.publicJwk }] };
+  private keyObject(key: SigningKey): { keyid: string; privateKey: KeyObject } {
+    let privateKey = this.privateKeys.get(key.kid);
+    if (privateKey === undefined) {
+      privateKey = createPrivateKey({ key: key.privateJwk, format: 'jwk' });
+      this.privateKeys.set(key.kid, privateKey);
+    }
+    return { keyid: key.kid, privateKey };
   }
+
+  // The same key signs requests and responses to paired peers (RFC 9421).
+  requestKey(): { keyid: string; privateKey: KeyObject } {
+    return this.keyObject(this.active);
+  }
+
+  /** Through an overlap, the key being replaced: it signs the statement. */
+  oldKey(): {
+    keyid: string;
+    privateKey: KeyObject;
+    jwk: Record<string, string>;
+  } | null {
+    if (this.keys.next === null) return null;
+    return {
+      ...this.keyObject(this.keys.current),
+      jwk: bareJwk(this.keys.current),
+    };
+  }
+
+  /** Every key a peer may still pin: the signing key, and a rotation's next. */
+  keysInUse(): {
+    keyid: string;
+    privateKey: KeyObject;
+    jwk: Record<string, string>;
+  }[] {
+    const keys = [
+      this.keys.current,
+      ...(this.keys.next === null ? [] : [this.keys.next.key]),
+    ];
+    return keys.map((k) => ({ ...this.keyObject(k), jwk: bareJwk(k) }));
+  }
+
+  /** The signing key itself, for a rotation to replace. */
+  currentKey(): {
+    keyid: string;
+    privateKey: KeyObject;
+    jwk: Record<string, string>;
+  } {
+    return {
+      ...this.keyObject(this.keys.current),
+      jwk: bareJwk(this.keys.current),
+    };
+  }
+
+  // The active key's public half as a bare EC JWK (no kid, alg or use).
+  publicJwk(): Record<string, string> {
+    return bareJwk(this.active);
+  }
+
+  /** Public keys only: both through an overlap. */
+  jwks(): Jwks {
+    const keys = [{ ...this.active.publicJwk }];
+    if (this.keys.next !== null) keys.push({ ...this.keys.current.publicJwk });
+    return { keys };
+  }
+}
+
+function bareJwk(key: SigningKey): Record<string, string> {
+  const { kty, crv, x, y } = key.publicJwk;
+  return { kty, crv, x, y };
 }

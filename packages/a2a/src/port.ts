@@ -9,6 +9,7 @@ import type {
 
 import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
 import type { PushConfigInput, PushConfigJson } from './push.js';
+import type { ReceivedRequest } from './sig/verify.js';
 import type { TaskStateName } from './states.js';
 import type { HandoffPhase } from './statuses.js';
 import type { ArtifactJson } from './wire.js';
@@ -19,6 +20,9 @@ import type { ArtifactJson } from './wire.js';
 export interface Caller {
   address: Address;
   name: string;
+  // The card-key thumbprint a signed caller proved; every re-check requires
+  // the client row to pin it still.
+  keyid?: string;
   // The client's own bearer, which a standalone host forwards to the daemon;
   // opaque to handleA2A.
   credential?: string;
@@ -26,7 +30,17 @@ export interface Caller {
 
 export type AuthResult =
   | { ok: true; caller: Caller }
-  | { ok: false; status: 401 | 403; reason: string; message: string };
+  | {
+      ok: false;
+      // 429 only for a signed caller at its nonce cap.
+      status: 401 | 403 | 429;
+      reason: string;
+      message: string;
+      retryAfterSec?: number;
+      // Set when the signature verified but the caller may not call: its
+      // refusal is signed, so the peer can trust it.
+      verified?: Caller;
+    };
 
 export type OpenKind = 'ask' | 'message' | 'notice' | 'handoff' | 'status';
 
@@ -159,6 +173,8 @@ export interface CardInputs {
   skills: A2ASkill[];
   blockingWaitSec: number;
   pushNotifications: boolean;
+  // Signed by the card key: the card advertises the signature extension.
+  signing?: boolean;
   signatures?: CardSignatureJson[];
   jwks?: Jwks;
 }
@@ -190,8 +206,25 @@ export interface PushConfigPort {
   delete(caller: Caller, taskId: string, id: string): Promise<void>;
 }
 
+export type ExtensionRoute = 'pair' | 'unpair' | 'key-change' | 'upgrade';
+
 export interface BridgePort {
-  authenticate(bearer: string): Promise<AuthResult>;
+  // `presented`: the extension URIs the request's A2A-Extensions header named.
+  authenticate(bearer: string, presented?: string[]): Promise<AuthResult>;
+  // A request a Dispatch peer signed (RFC 9421). null when it carries no
+  // Dispatch signature, so the bearer path decides; absent, signatures are ignored.
+  authenticateSigned?(req: ReceivedRequest): Promise<AuthResult | null>;
+  // Whether a caller that signed in may still stream; bearer callers re-run authenticate.
+  revalidate?(caller: Caller): Promise<boolean>;
+  // Signs the response to a request that authenticated by signature, so the
+  // peer can tell it came from this agent; required with authenticateSigned.
+  signResponse?(res: Response, req: Request, caller: Caller): Promise<Response>;
+  // POST <base>/dispatch/<route>: a pairing proof or a signed unpair notice
+  // (P5); absent, 404.
+  extension?(route: ExtensionRoute, req: Request): Promise<Response>;
+  // The last key-change or revocation statement, served at
+  // KEY_STATEMENT_PATH; null (404) when there is none.
+  keyStatement?(): Promise<string | null>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
   card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;

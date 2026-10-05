@@ -16,6 +16,7 @@ export {
   JWKS_PATH,
   offeredSkills,
   signCard,
+  dispatchSignatureKids,
   verifyCardSignature,
   unsignedCardEtag,
   unsignedCardJson,
@@ -102,6 +103,7 @@ export type {
   Admission,
   AuthResult,
   BridgePort,
+  ExtensionRoute,
   Caller,
   CardInputs,
   CardRequest,
@@ -124,6 +126,7 @@ export { checkStandalone, startStandalone } from './http/serve.js';
 export type { StandaloneCheck, StandaloneOptions } from './http/serve.js';
 export type { HttpBridgePortOptions } from './http/port.js';
 export {
+  FORWARDED_SIGNATURE_HEADERS,
   PORT_CLIENT_HEADER,
   portErrorFrom,
   portErrorJson,
@@ -159,7 +162,7 @@ export type {
   PushConfigJson,
   PushResult,
 } from './push.js';
-export { handleA2A, matchRoute } from './server/handle.js';
+export { handleA2A, KEY_STATEMENT_PATH, matchRoute } from './server/handle.js';
 export type { HandleOptions, Route } from './server/handle.js';
 export { IpLimiter } from './server/limits.js';
 export { decodePageToken, encodePageToken } from './server/paging.js';
@@ -173,15 +176,67 @@ export {
   wireState,
 } from './states.js';
 export type { TaskStateName, WireTaskState } from './states.js';
+export {
+  checkProof,
+  decodePairingCode,
+  encodePairingCode,
+  makeProof,
+  newPairingCode,
+  pairingPin,
+  pairingStatus,
+} from './pair/code.js';
+export type { PairingCode, PairingProof } from './pair/code.js';
+export {
+  checkUpgradeProof,
+  makeUpgradeProof,
+  upgradeClientBinding,
+} from './pair/upgrade.js';
+export type { UpgradeProof } from './pair/upgrade.js';
+export type { Reach } from './pair/reach.js';
+export { a2aFingerprint, ecThumbprint, publicJwkOf, sas } from './sig/keys.js';
+export type { RequestParts } from './sig/base.js';
+export { contentDigest, digestMatches } from './sig/digest.js';
+export { isEventStream, signedFetch } from './sig/fetch.js';
+export { signResponseFor } from './sig/respond.js';
+export {
+  checkKeyChange,
+  checkRevocation,
+  makeKeyChange,
+  makeRevocation,
+  parseUnpairNotice,
+  unpairNotice,
+} from './sig/statements.js';
+export type {
+  KeyChangeStatement,
+  RevocationStatement,
+} from './sig/statements.js';
+export {
+  SIG_EXTENSION_URI,
+  SIG_TAG,
+  signRequest,
+  signResponse,
+} from './sig/sign.js';
+export { normalizedPath, verifyRequest, verifyResponse } from './sig/verify.js';
+export type {
+  ReceivedRequest,
+  SigRefusal,
+  SigResult,
+  VerifyFacts,
+} from './sig/verify.js';
 export { statusReply } from './statusSkill.js';
 export type { StatusEntry } from './statusSkill.js';
 export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
 export type {
   A2AStore,
+  AuthMode,
   ClientRow,
   HostRow,
+  KeyEvent,
+  PendingNotice,
+  KeyPin,
   OutboundRow,
   OutboundState,
+  PairingRow,
   PeerRow,
   PeerStatus,
   PushConfigRow,
@@ -199,3 +254,28 @@ export type {
   TaskJson,
   TaskStatusJson,
 } from './wire.js';
+export { relayBridgePort, TenantChannel } from './relay/bridgePort.js';
+export {
+  answerChallenge,
+  challengeString,
+  checkAuth,
+} from './relay/challenge.js';
+export { callHeaders, MAX_FRAME_BODY, parseFrame } from './relay/frames.js';
+export type { DaemonToRelay, RelayToDaemon } from './relay/frames.js';
+export { DEFAULT_TENANT_LIMITS, TenantLimiter } from './relay/limits.js';
+export type { TenantLimits } from './relay/limits.js';
+export { TenantRouter } from './relay/router.js';
+export { readTenants, startRelay } from './relay/serve.js';
+export type { RelayOptions } from './relay/serve.js';
+export {
+  checkLinkKeysBinding,
+  linkKeysBinding,
+  loadOrCreateLinkKeys,
+} from './link/keys.js';
+export type { LinkKeysBinding } from './link/keys.js';
+export {
+  checkLinkPayload,
+  MAX_LINK_PAYLOAD_BYTES,
+  sealableLinkPayload,
+} from './link/payload.js';
+export type { LinkPayload } from './link/payload.js';

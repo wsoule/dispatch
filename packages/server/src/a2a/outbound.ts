@@ -57,15 +57,20 @@ const QUOTA_RECHECK_MS = 5 * 60_000;
 // How soon a send held by an unreadable credentials file looks again.
 const LOCAL_RETRY_MS = 60_000;
 
+/** What the worker needs of a peer client: HTTP, or a teammate link (T54). */
+export type OutboundClient = Pick<PeerClient, 'send' | 'getTask'> & {
+  changes?: PeerClient['changes'];
+};
+
 export interface OutboundDeps {
   engine: DeliveryEngine;
   messages: SqliteMessageStore;
   store: A2AStore;
   policy: () => A2AConfig;
   // peerClientFor; throws MessagingError 'token' when the credential is missing.
-  clientFor: (row: PeerRow) => PeerClient;
+  clientFor: (row: PeerRow) => OutboundClient;
   refreshPeer: (alias: string) => Promise<void>;
-  markAuthFailed: (alias: string) => void;
+  markAuthFailed: (alias: string, reason?: string | null) => void;
   // Re-resolves and re-checks a decide-tier peer's interface URL before a
   // send, a poll or a subscribe; throws MessagingError when refused.
   guard: (row: PeerRow) => Promise<void>;
@@ -74,6 +79,11 @@ export interface OutboundDeps {
   now?: () => Date;
   pollMs?: (polls: number) => number;
   concurrency?: number;
+  // How long unverifiable replies run before auth-failed (UNVERIFIED_WINDOW_MS).
+  unverifiedWindowMs?: number;
+  // A reply signed by a key the peer's pin does not know: a rotation the
+  // push missed, looked up at the peer's well-known statement.
+  keyUnknown?: (alias: string) => void;
 }
 
 // The next stream event as 'tick', or 'done' when the stream ends or fails.
@@ -119,20 +129,67 @@ function addressRefusal(err: unknown): string | null {
 }
 
 // A refused credential: 401, or a 403 whose reason is AUTH_*. Any other 403
-// (FORBIDDEN_ADDRESS, say) fails only the message.
-function authRefusal(err: unknown): boolean {
+// (FORBIDDEN_ADDRESS, say) fails only the message. A signature peer's reply
+// reaches here only once verified, and then only an AUTH_* reason refuses.
+function authRefusal(err: unknown, signed: boolean): boolean {
   if (!(err instanceof PeerHttpError)) return false;
+  const auth = (err.reason ?? '').startsWith('AUTH_');
+  if (signed) return (err.status === 401 || err.status === 403) && auth;
+  return err.status === 401 || (err.status === 403 && auth);
+}
+
+// A signature peer's reply that could not be verified (unsigned, stale, a
+// proxy's own page): retried like a network fault, never a credential verdict.
+function unverifiable(err: unknown): boolean {
   return (
-    err.status === 401 ||
-    (err.status === 403 && (err.reason ?? '').startsWith('AUTH_'))
+    err instanceof PeerHttpError &&
+    err.status === null &&
+    (err.reason ?? '').startsWith('sig_')
   );
 }
+
+// How long a signature peer must answer only unverifiably before it is
+// auth-failed: a sustained hour means its key or clock no longer matches,
+// where a short burst (a proxy's error page) does not.
+const UNVERIFIED_WINDOW_MS = 3_600_000;
 
 // The outbound worker (spec:1444-1531): relays held a2a: deliveries one at a
 // time per peer, at most `concurrency` peers at once, then follows each peer
 // task and records what the peer says. What to record and when to retry come
 // from @dispatch/a2a; this class only does I/O, timers and bookkeeping.
 export class OutboundWorker {
+  // When each signature peer's run of unverifiable replies began; any
+  // verified reply clears it.
+  private readonly unverified = new Map<string, number>();
+
+  // Notes an unverifiable reply; true once the run has lasted the window,
+  // however many trackers saw it, after which the peer is auth-failed.
+  private unverifiedRunEnds(alias: string, err: unknown): boolean {
+    if (!unverifiable(err)) return false;
+    if ((err as PeerHttpError).reason === 'sig_key_unknown')
+      this.deps.keyUnknown?.(alias);
+    const now = this.now().getTime();
+    const began = this.unverified.get(alias);
+    if (began === undefined) {
+      this.unverified.set(alias, now);
+      return false;
+    }
+    if (now - began < (this.deps.unverifiedWindowMs ?? UNVERIFIED_WINDOW_MS))
+      return false;
+    this.unverified.delete(alias);
+    return true;
+  }
+
+  // Auth-failed: 'unverifiable' when only unverifiable replies said so, which
+  // the hourly probe may undo; a verified AUTH_* refusal stays.
+  private authFailed(alias: string, err: unknown): void {
+    this.deps.markAuthFailed(alias, unverifiable(err) ? 'unverifiable' : null);
+  }
+
+  private signedPeer(alias: string): boolean {
+    return this.deps.store.getPeer(alias)?.auth === 'signature';
+  }
+
   private readonly queues = new Map<string, string[]>();
   private readonly busy = new Set<string>();
   private readonly trackers = new Map<string, AbortController>();
@@ -221,6 +278,16 @@ export class OutboundWorker {
         ? this.deps.store.outboundIn(['open'])
         : this.deps.store.outboundOf(alias, ['open']);
     for (const row of open) this.track(row);
+  }
+
+  // The peer's pinned key moved: its queued rows retry at once rather than
+  // wait out the backoff an unverifiable reply set.
+  retryNow(alias: string): void {
+    if (this.stopped) return;
+    for (const row of this.deps.store.outboundOf(alias, ['queued']))
+      if (row.nextAttemptAt !== null)
+        this.deps.store.putOutbound({ ...row, nextAttemptAt: null });
+    this.kick(alias);
   }
 
   trackerCount(alias?: string): number {
@@ -364,6 +431,7 @@ export class OutboundWorker {
       await this.sendFailed(d, message, base, err);
       return;
     }
+    this.unverified.delete(alias);
     // The peer may have been removed, or the row given up, while the send was
     // in flight: keep it failed and leave the delivery as the removal left it.
     const after = this.deps.store.getOutbound(message.id, alias);
@@ -478,7 +546,8 @@ export class OutboundWorker {
     }
     if (
       (err instanceof MessagingError && err.field === 'token') ||
-      authRefusal(err)
+      authRefusal(err, this.signedPeer(row.alias)) ||
+      this.unverifiedRunEnds(row.alias, err)
     ) {
       // Parked: the peer is auth-failed and its deliveries wait for `enable`.
       this.deps.store.putOutbound({
@@ -487,7 +556,7 @@ export class OutboundWorker {
         lastError: reason,
         updatedAt: at,
       });
-      this.deps.markAuthFailed(row.alias);
+      this.authFailed(row.alias, err);
       return;
     }
     if (
@@ -693,7 +762,7 @@ export class OutboundWorker {
       )
         return;
       if (await this.expired(current)) return;
-      let client: PeerClient;
+      let client: OutboundClient;
       try {
         client = this.deps.clientFor(peer);
       } catch (err) {
@@ -733,11 +802,12 @@ export class OutboundWorker {
   // the 7-day limit holds even while events keep arriving. True when tracking
   // ends; false when the stream ended or failed and polling should take over.
   private async stream(
-    client: PeerClient,
+    client: OutboundClient,
     row: OutboundRow,
     signal: AbortSignal
   ): Promise<boolean> {
     if (row.remoteTaskId === null) return true;
+    if (client.changes === undefined) return false;
     const floor = this.deps.pollMs?.(0) ?? pollDelayMs(0);
     const idleCheck = this.deps.pollMs?.(4) ?? pollDelayMs(4);
     const ticks = client.changes(row.remoteTaskId, signal);
@@ -778,7 +848,7 @@ export class OutboundWorker {
 
   // Reads the peer task once and records what changed; true when tracking ends.
   private async poll(
-    client: PeerClient,
+    client: OutboundClient,
     row: OutboundRow,
     signal: AbortSignal
   ): Promise<boolean> {
@@ -794,6 +864,7 @@ export class OutboundWorker {
     let task: TaskJson;
     try {
       task = await client.getTask(row.remoteTaskId);
+      this.unverified.delete(row.alias);
     } catch (err) {
       const refusal = addressRefusal(err);
       if (refusal !== null) {
@@ -804,8 +875,11 @@ export class OutboundWorker {
         return true;
       }
       const status = err instanceof PeerHttpError ? err.status : null;
-      if (authRefusal(err)) {
-        this.deps.markAuthFailed(row.alias);
+      if (
+        authRefusal(err, this.signedPeer(row.alias)) ||
+        this.unverifiedRunEnds(row.alias, err)
+      ) {
+        this.authFailed(row.alias, err);
         return true;
       }
       // A 404 may mean the peer moved its interface; its card says where.
@@ -892,12 +966,13 @@ export class OutboundWorker {
   // fail its unfinished rows, close its open direct questions and handoffs
   // and the questions it asked, and tombstone all its rows (remote ids
   // cleared), so the alias can be reused without the old peer's context.
-  peerGone(alias: string, why: 'disabled' | 'removed'): void {
+  peerGone(alias: string, why: 'disabled' | 'removed' | 'unpaired'): void {
     for (const [key, ac] of this.trackers)
       if (key.endsWith(` ${alias}`)) ac.abort();
     this.queues.delete(alias);
     if (why === 'disabled') return;
-    const reason = removedReason(alias);
+    const reason =
+      why === 'unpaired' ? `a2a:${alias} unpaired` : removedReason(alias);
     const at = this.now().toISOString();
     const unfinished = this.deps.store.outboundOf(alias, ['queued', 'open']);
     const seen = new Set(unfinished.map((r) => r.messageId));
@@ -966,28 +1041,41 @@ export function startOutbound(
     pollMs?: (polls: number) => number;
     concurrency?: number;
     changed?: () => void;
+    unverifiedWindowMs?: number;
+    keyUnknown?: (alias: string) => void;
+    // A teammate link's client (T54); null when links are off here.
+    linkClientFor?: (row: PeerRow) => OutboundClient | null;
   } = {}
 ): { worker: OutboundWorker; stop: () => void } {
   const d = peers.deps;
-  const { changed = () => {}, ...workerOpts } = opts;
+  const { changed = () => {}, linkClientFor, ...workerOpts } = opts;
   const worker: OutboundWorker = new OutboundWorker({
     engine: d.engine,
     messages: d.messages,
     store: d.store,
     policy: () => d.policy(),
-    clientFor: (row) => peerClientFor(d, row),
+    clientFor: (row) => {
+      if (row.auth !== 'link') return peerClientFor(d, row);
+      const client = linkClientFor?.(row) ?? null;
+      // Retried like an unreachable peer until links come back.
+      if (client === null)
+        throw new PeerHttpError(null, 'teammate links are off on this machine');
+      return client;
+    },
     refreshPeer: async (alias) => {
       const row = await refreshPeer(d, peers.notices, alias);
       if (row.status !== 'active') peers.emit(alias, 'disabled');
       changed();
     },
-    markAuthFailed: (alias) => {
-      markAuthFailed(d, peers.notices, alias);
+    markAuthFailed: (alias, reason) => {
+      markAuthFailed(d, peers.notices, alias, reason ?? null);
       worker.peerGone(alias, 'disabled');
       changed();
     },
     // Read at call time (d.lookup, not a copy), so a test can swap the resolver.
     guard: async (row) => {
+      // A link peer has no address to check: it is reached through a branch.
+      if (row.auth === 'link') return;
       const guard = peerGuard(d, row);
       if (guard === undefined) return; // an operator admitted private addresses on purpose
       await guardPublicUrl(row.interfaceUrl, {
@@ -1011,7 +1099,9 @@ export function startOutbound(
   });
   const stopWorker = worker.start();
   const offPeers = peers.onChange((alias, what) => {
-    if (what === 'removed' || what === 'disabled') worker.peerGone(alias, what);
+    if (what === 'removed' || what === 'disabled' || what === 'unpaired')
+      worker.peerGone(alias, what);
+    else if (what === 'rekeyed') worker.retryNow(alias);
     else worker.kick(alias);
   });
   return {

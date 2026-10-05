@@ -1,4 +1,4 @@
-import type { AuthResult } from '@dispatch/a2a';
+import type { AuthMode, AuthResult } from '@dispatch/a2a';
 import { isClientAddress } from '@dispatch/a2a';
 import type { AgentRecord } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
@@ -20,11 +20,12 @@ const UNKNOWN: AuthResult = {
   message: 'unknown token',
 };
 
-// The listener's only credential: an approved a2a.* agent with a clients row.
+// The listener's bearer path: an approved a2a.* agent whose clients row still
+// authenticates by bearer. A row that signs (P5) refuses a bearer outright.
 // Every other bearer gets the same 401, so none can be confirmed as valid.
 export function authenticateA2AClient(
   agents: AgentTokens,
-  hasClientRow: (address: string) => boolean,
+  clientAuthOf: (address: string) => AuthMode | null,
   bearer: string
 ): AuthResult {
   const agent = agents.agentByTokenHash(tokenHash(bearer));
@@ -45,7 +46,40 @@ export function authenticateA2AClient(
       message: 'awaiting approval in Dispatch',
     };
   }
-  if (!hasClientRow(agent.address)) return UNKNOWN;
+  if (clientAuthOf(agent.address) !== 'bearer') return UNKNOWN;
+  return {
+    ok: true,
+    caller: {
+      address: agent.address,
+      name: agent.address.slice(agent.address.indexOf('/') + 1),
+    },
+  };
+}
+
+// A client that proved its pinned key: allowed while its agent is approved
+// and its row still authenticates by signature.
+export function authenticateSignedAgent(
+  agent: AgentRecord | null,
+  auth: AuthMode | null,
+  // 'link' only from a teammate link's own delivery path (T54).
+  expected: 'signature' | 'link' = 'signature'
+): AuthResult {
+  if (agent === null || !isClientAddress(agent.address) || auth !== expected)
+    return UNKNOWN;
+  if (agent.status === 'revoked')
+    return {
+      ok: false,
+      status: 401,
+      reason: 'AUTH_AGENT_REVOKED',
+      message: "this client's access was revoked",
+    };
+  if (agent.status === 'pending')
+    return {
+      ok: false,
+      status: 403,
+      reason: 'AUTH_AGENT_PENDING',
+      message: 'awaiting approval in Dispatch',
+    };
   return {
     ok: true,
     caller: {

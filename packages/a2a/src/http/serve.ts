@@ -5,7 +5,7 @@ import type { AddressInfo, Socket } from 'node:net';
 
 import { JWKS_PATH } from '../card.js';
 import { isLoopbackHost } from '../peer/http.js';
-import { handleA2A } from '../server/handle.js';
+import { handleA2A, KEY_STATEMENT_PATH } from '../server/handle.js';
 import { IpLimiter } from '../server/limits.js';
 import { HttpBridgePort } from './port.js';
 
@@ -107,10 +107,12 @@ export function checkStandalone(
 
 // Node's request as a fetch Request at the configured public URL (never the
 // Host header), the body capped at 256 KiB; aborted when the client leaves.
-async function toRequest(
+// `path` replaces the request's own path and query (a relay's tenant rest).
+export async function toRequest(
   req: IncomingMessage,
   origin: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  path: string = req.url ?? '/'
 ): Promise<Request | Response> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -128,7 +130,7 @@ async function toRequest(
       headers.set(name, Array.isArray(value) ? value.join(', ') : value);
   const init: RequestInit = { method: req.method ?? 'GET', headers, signal };
   if (chunks.length > 0) init.body = new Uint8Array(Buffer.concat(chunks));
-  return new Request(new URL(req.url ?? '/', origin).href, init);
+  return new Request(new URL(path, origin).href, init);
 }
 
 // Copies a fetch Response onto node's response, waiting for 'drain' whenever
@@ -201,6 +203,7 @@ export async function startStandalone(
       if (
         path !== CARD_PATH &&
         path !== JWKS_PATH &&
+        path !== KEY_STATEMENT_PATH &&
         !path.startsWith('/a2a/v1/')
       ) {
         res.writeHead(404).end('not found');

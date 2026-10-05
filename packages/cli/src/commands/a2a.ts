@@ -1,4 +1,4 @@
-import { startStandalone } from '@dispatch/a2a';
+import { startRelay, startStandalone } from '@dispatch/a2a';
 import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -12,6 +12,8 @@ import type {
 import { createA2AApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
+import type { RelayCommandOptions } from './a2aRelay.js';
+import { resolveRelay } from './a2aRelay.js';
 import type { ServeCommandOptions } from './a2aServe.js';
 import { resolveServe, stopSignal } from './a2aServe.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
@@ -61,9 +63,7 @@ function clientNamed(clients: A2AClientSummary[], arg: string): string {
 function readAllStdin(): Promise<string> {
   if (process.stdin.isTTY === true)
     return Promise.reject(
-      new CliError(
-        '--token-stdin reads a piped credential; stdin is a terminal'
-      )
+      new CliError('this reads from a pipe; stdin is a terminal')
     );
   return Promise.resolve(readFileSync(0, 'utf8'));
 }
@@ -95,7 +95,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
   const a2a = program
     .command('a2a')
     .description(
-      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, and standalone hosts (hosts, serve)'
+      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, pairing and keys, standalone hosts (hosts, serve), and the relay'
     );
 
   const withAgentToken = async (): Promise<A2AApiClient> => {
@@ -445,6 +445,185 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       }
     );
 
+  peers
+    .command('upgrade <alias>')
+    .description(
+      'Move a bearer peer to signed requests; its owner approves the key (needs the daemon app token)'
+    )
+    .requiredOption(
+      '--fingerprint <fp>',
+      "the peer's key fingerprint, as its owner reads it to you"
+    )
+    .option(
+      '--client <name>',
+      'the A2A client the peer reaches this agent as; its approval must come over that client'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(
+      async (
+        alias: string,
+        o: { fingerprint: string; client?: string; token?: string }
+      ) => {
+        const client = await withAppToken(
+          o.token,
+          'dispatch a2a peers upgrade'
+        );
+        const started = await client.upgradePeer(
+          alias,
+          o.fingerprint,
+          o.client
+        );
+        ctx.log(
+          `a2a:${alias} (key ${started.fingerprint}) waits for its owner to approve signed requests; once they do, both sides drop the bearer.`
+        );
+      }
+    );
+
+  const pair = a2a
+    .command('pair')
+    .description(
+      'Pair with another Dispatch agent by one code: signed requests both ways'
+    );
+
+  pair
+    .command('offer')
+    .description(
+      'Make a pairing code to give the other side (needs the daemon app token)'
+    )
+    .requiredOption('--alias <alias>', 'what the other side is called here')
+    .option('--ttl <minutes>', 'how long the code stays good, 5 to 60')
+    .option(
+      '--link <remote>',
+      'pair over a teammate link on this git remote, with no listener on either side'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(
+      async (o: {
+        alias: string;
+        ttl?: string;
+        link?: string;
+        token?: string;
+      }) => {
+        const client = await withAppToken(o.token, 'dispatch a2a pair offer');
+        const ttlMin = o.ttl === undefined ? undefined : Number(o.ttl);
+        if (ttlMin !== undefined && !Number.isInteger(ttlMin))
+          throw new CliError('--ttl takes whole minutes, 5 to 60');
+        const offered = await client.createPairing({
+          alias: o.alias,
+          ...(ttlMin === undefined ? {} : { ttlMin }),
+          ...(o.link === undefined ? {} : { link: { remote: o.link } }),
+        });
+        ctx.log(`code: ${offered.code}`);
+        ctx.log(
+          `This code is shown once and is good until ${offered.expiresAt}. Give it to the other side over a channel you trust; they run dispatch a2a pair accept.`
+        );
+        if (o.link !== undefined)
+          ctx.log(
+            `Over a teammate link on ${o.link}: the pairing completes here once this daemon reads their proof on the link branch.`
+          );
+        ctx.log(`This agent's fingerprint: ${offered.fingerprint}`);
+      }
+    );
+
+  pair
+    .command('accept')
+    .description(
+      'Accept a pairing code piped on stdin (needs the daemon app token)'
+    )
+    .requiredOption('--alias <alias>', 'what the other side is called here')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { alias: string; token?: string }) => {
+      // The app token first, so a missing one fails before stdin is read.
+      const client = await withAppToken(o.token, 'dispatch a2a pair accept');
+      const code = (await (ctx.readStdin ?? readAllStdin)()).trim();
+      if (code === '')
+        throw new CliError(
+          'pair accept reads the code from stdin: pipe it in, e.g. `pbpaste | dispatch a2a pair accept --alias …`'
+        );
+      const accepted = await client.acceptPairing({ code, alias: o.alias });
+      ctx.log(
+        `Paired with a2a:${accepted.alias} (fingerprint ${accepted.fingerprint}).`
+      );
+      ctx.log(
+        `SAS: ${accepted.sas}. Check the other side shows the same; if not, remove the peer.`
+      );
+    });
+
+  pair
+    .command('list', { isDefault: true })
+    .description('Open and recent pairings (needs the daemon app token)')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a pair list');
+      const { pairings } = await client.pairings();
+      if (pairings.length === 0)
+        ctx.log(
+          'No pairings. Start one with: dispatch a2a pair offer --alias <alias>'
+        );
+      for (const p of pairings)
+        ctx.log(
+          `${p.id} · a2a:${p.alias} · ${p.role} · ${p.state}${p.sas === null ? '' : ` · SAS ${p.sas}`}${p.fingerprint === null ? '' : ` · ${p.fingerprint}`}`
+        );
+    });
+
+  pair
+    .command('cancel <id>')
+    .description('Cancel an open offer (needs the daemon app token)')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (id: string, o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a pair cancel');
+      await client.cancelPairing(id);
+      ctx.log(`Canceled pairing offer ${id}.`);
+    });
+
+  const keys = a2a
+    .command('keys')
+    .description("This project's card key: show it, or rotate it");
+
+  keys
+    .command('show', { isDefault: true })
+    .description("The card key's fingerprint, and a rotation in its overlap")
+    .action(async () => {
+      const shown = await (await withAgentToken()).keys();
+      ctx.log(`key: ${shown.current.fingerprint}`);
+      if (shown.current.thumbprint !== undefined)
+        ctx.log(
+          `thumbprint: ${shown.current.thumbprint} (what a relay's tenants file lists)`
+        );
+      if (shown.next !== null)
+        ctx.log(
+          `rotating to ${shown.next.fingerprint} (since ${shown.next.since}; the old key goes ${shown.next.until})`
+        );
+    });
+
+  keys
+    .command('rotate')
+    .description(
+      'Rotate the card key; paired peers re-pin (needs the daemon app token)'
+    )
+    .option(
+      '--compromised',
+      'the key leaked: revoke it, and every pairing must be made again'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { compromised?: boolean; token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a keys rotate');
+      const r = await client.rotateKey(o.compromised === true);
+      ctx.log(`New key: ${r.fingerprint}`);
+      if (r.told.length > 0)
+        ctx.log(`Told: ${r.told.map((a) => `a2a:${a}`).join(', ')}`);
+      if (r.untold.length > 0)
+        ctx.log(
+          `Not reached yet (retried): ${r.untold.map((a) => `a2a:${a}`).join(', ')}`
+        );
+      if (r.mustRepair.length > 0)
+        ctx.log(
+          `Must pair again: ${r.mustRepair.map((a) => `a2a:${a}`).join(', ')}`
+        );
+      if (r.overlapUntil !== null)
+        ctx.log(`Both keys are served until ${r.overlapUntil}.`);
+    });
+
   a2a
     .command('serve')
     .description(
@@ -484,6 +663,104 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       );
       await stopSignal();
       await standalone.stop();
+    });
+
+  a2a
+    .command('relay')
+    .description(
+      'Run an A2A relay: one public host for many daemons, each dialling in as a tenant at <public-url>/t/<thumbprint>'
+    )
+    .option('--port <n>', 'the port to listen on')
+    .option('--host <addr>', '127.0.0.1 (default) or a wildcard with --public')
+    .option(
+      '--public',
+      'allow binding every network interface (needs TLS and --public-url)'
+    )
+    .option('--public-url <url>', 'the relay origin clients and tenants use')
+    .option('--tls-cert <file>', 'serve over HTTPS (PEM)')
+    .option('--tls-key <file>', 'the private key for --tls-cert')
+    .option(
+      '--tenants-file <file>',
+      'a 0600 file of admitted card-key thumbprints, one per line, an optional name after each'
+    )
+    .option(
+      '--trust-forwarded-for',
+      'behind a tunnel on loopback: key per-IP limits on X-Forwarded-For'
+    )
+    .action(async (o: RelayCommandOptions) => {
+      let relay;
+      try {
+        relay = await startRelay(resolveRelay(o));
+      } catch (err) {
+        if (err instanceof CliError) throw err;
+        throw new CliError(err instanceof Error ? err.message : String(err));
+      }
+      ctx.log(
+        `A2A relay listening at ${relay.url}; tenants dial ${relay.url.replace(/^http/, 'ws')}/v1/tenants. SIGHUP re-reads the tenants file; Ctrl-C or SIGTERM stops it.`
+      );
+      const reload = () => relay.reload();
+      process.on('SIGHUP', reload);
+      try {
+        await stopSignal();
+      } finally {
+        process.off('SIGHUP', reload);
+      }
+      await relay.stop();
+    });
+
+  const tenant = a2a
+    .command('relay-tenant')
+    .description(
+      'Reach this daemon through an A2A relay it dials out to, with no inbound port'
+    );
+  const printRelay = (s: {
+    enabled: boolean;
+    url: string | null;
+    connected: boolean;
+    tenantUrl: string | null;
+    error: string | null;
+  }) => {
+    ctx.log(
+      !s.enabled
+        ? 'Relay tenant: off'
+        : s.connected
+          ? `Relay tenant: connected to ${s.url ?? ''}; served at ${s.tenantUrl ?? ''}`
+          : `Relay tenant: dialling ${s.url ?? ''}${s.error === null ? '' : ` (${s.error})`}`
+    );
+  };
+  tenant
+    .command('on')
+    .description('Dial a relay as a tenant (needs the daemon app token)')
+    .requiredOption(
+      '--url <url>',
+      'the relay origin, e.g. https://relay.example.com'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { url: string; token?: string }) => {
+      const client = await withAppToken(
+        o.token,
+        'dispatch a2a relay-tenant on'
+      );
+      printRelay(await client.setRelay({ enabled: true, url: o.url }));
+    });
+  tenant
+    .command('off')
+    .description('Stop dialling the relay (needs the daemon app token)')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { token?: string }) => {
+      const client = await withAppToken(
+        o.token,
+        'dispatch a2a relay-tenant off'
+      );
+      printRelay(await client.disableRelay());
+    });
+  tenant
+    .command('status', { isDefault: true })
+    .description(
+      'Whether this daemon is reached through a relay, and at what URL'
+    )
+    .action(async () => {
+      printRelay(await (await withAgentToken()).relayStatus());
     });
 
   const hosts = a2a

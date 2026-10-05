@@ -9,6 +9,7 @@ import type {
   CardInputs,
   ContinueInput,
   ContinueResult,
+  ExtensionRoute,
   ListPage,
   ListQuery,
   OpenInput,
@@ -133,9 +134,13 @@ export class FakePort implements BridgePort {
     reask: null,
   });
   onCancel: (taskId: string) => void = () => {};
+  extension?: (route: ExtensionRoute, req: Request) => Promise<Response>;
 
-  authenticate(bearer: string): Promise<AuthResult> {
-    this.calls.push({ method: 'authenticate', args: [bearer] });
+  authenticate(bearer: string, presented?: string[]): Promise<AuthResult> {
+    this.calls.push({
+      method: 'authenticate',
+      args: presented === undefined ? [bearer] : [bearer, presented],
+    });
     return Promise.resolve(
       this.tokens.get(bearer) ?? {
         ok: false,

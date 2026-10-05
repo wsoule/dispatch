@@ -48,13 +48,19 @@ test.describe('A2A peers in Settings', () => {
     await expect(secret).toHaveValue('');
     const row = page.getByText('a2a:fixture', { exact: true });
     await expect(row).toBeVisible();
-    await expect(page.getByText(/^Active · Fixture peer$/)).toBeVisible();
+    await expect(
+      page.getByText(/^Not verified · Active · Fixture peer$/)
+    ).toBeVisible();
 
     await page.getByRole('button', { name: 'Disable a2a:fixture' }).click();
-    await expect(page.getByText(/^Disabled · Fixture peer$/)).toBeVisible();
+    await expect(
+      page.getByText(/^Not verified · Disabled · Fixture peer$/)
+    ).toBeVisible();
 
     await page.getByRole('button', { name: 'Enable a2a:fixture' }).click();
-    await expect(page.getByText(/^Active · Fixture peer$/)).toBeVisible();
+    await expect(
+      page.getByText(/^Not verified · Active · Fixture peer$/)
+    ).toBeVisible();
 
     const fetched = await peer.cardFetches();
     await page.getByRole('button', { name: 'Refresh a2a:fixture' }).click();

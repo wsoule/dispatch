@@ -27,6 +27,7 @@ import { personOf } from '../boardSync/repo.js';
 import type { SyncedTaskStore } from '../boardSync/syncedStore.js';
 import type { AuditKind } from './audit.js';
 import type { LegacyWindow, V1Log } from './legacy.js';
+import { LinkOpsOffTeamLog } from './linkOps.js';
 import type { RosterService } from './roster.js';
 import type { FedStore } from './store.js';
 import { TransportOffline } from './transport.js';
@@ -242,6 +243,7 @@ export class FederationService {
 
   constructor(private readonly opts: FederationServiceOptions) {
     this.current = opts.transport;
+    this.register(new LinkOpsOffTeamLog(opts));
   }
 
   /** The next pass pulls `replica` from below `seqs` and hands each of those

@@ -1371,6 +1371,13 @@ export interface A2AClientSummary {
   recipients: string[];
   createdBy: string;
   createdAt: string;
+  // Its agent once named the signature extension (a Dispatch agent).
+  sigPresented?: boolean;
+  // How it authenticates, and the key it is pinned to once paired.
+  auth?: 'bearer' | 'signature' | 'link';
+  keyThumbprint?: string | null;
+  keyJwk?: Record<string, string> | null;
+  pairedId?: string | null;
   status: AgentStatus;
 }
 
@@ -1405,6 +1412,81 @@ export interface A2APeerSummary {
   addedTier: 'decide' | 'operator';
   fetchedAt: string;
   createdAt: string;
+  // How it is reached: a bearer, signed requests (paired), or a link.
+  auth: 'bearer' | 'signature' | 'link';
+  // The fingerprint of the key it is pinned to, once paired.
+  fingerprint: string | null;
+}
+
+// One row of GET /api/a2a/pairings; never its secret. Mirrors
+// pairingSummaries in packages/server/src/a2a/pairing.ts.
+export interface A2APairingSummary {
+  id: string;
+  role: 'offer' | 'accept' | 'upgrade';
+  alias: string;
+  state: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  completedAt: string | null;
+  fingerprint: string | null;
+  sas: string | null;
+}
+
+// GET /api/a2a/links (T55): each teammate link's health, and offers waiting
+// for the other side's proof. Mirrors LinkHub.health and offers.
+export interface A2ALinkHealth {
+  alias: string;
+  remote: string;
+  branch: string;
+  ready: boolean;
+  // Accepted here, and the offerer's first op not read yet.
+  pending: boolean;
+  // Snapshots of the other side's tasks kept here.
+  remoteTasks: number;
+  // Fresh bytes the link read in the last pass.
+  readThisPass: number;
+  waiting: number;
+  lastExchangeAt: string | null;
+  lastError: string | null;
+  unpublished: number;
+  problems: {
+    subject: string;
+    message: string;
+    at: string;
+    dismissible: boolean;
+  }[];
+}
+
+export interface A2ALinkOffer {
+  pairedId: string;
+  alias: string;
+  remote: string;
+  branch: string;
+  createdAt: string;
+  readThisPass: number;
+  problems: string[];
+}
+
+export interface A2ALinksStatus {
+  enabled: boolean;
+  links: A2ALinkHealth[];
+  offers: A2ALinkOffer[];
+}
+
+// GET /api/a2a/keys: this project's card key and a rotation in its overlap.
+export interface A2AKeys {
+  current: { fingerprint: string; thumbprint?: string };
+  next: { fingerprint: string; since: string; until: string } | null;
+}
+
+// POST /api/a2a/keys/rotate's answer.
+export interface A2ARotation {
+  fingerprint: string;
+  told: string[];
+  untold: string[];
+  mustRepair: string[];
+  overlapUntil: string | null;
 }
 
 // The body of POST /api/a2a/peers.
@@ -3953,6 +4035,36 @@ export interface ApiClient {
   removeA2APeer(alias: string): Promise<void>;
   /** Operator tier: lets standalone hosts reach /api/a2a/port, or closes it. */
   setA2AStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+  /** Decide tier: a pairing code for the other side, shown once; `link`
+   *  pairs over a teammate link on that git remote. */
+  createA2APairing(input: {
+    alias: string;
+    ttlMin?: number;
+    link?: { remote: string };
+  }): Promise<{
+    id: string;
+    code: string;
+    fingerprint: string;
+    expiresAt: string;
+  }>;
+  /** Decide tier: pairs with the side that made `code`. */
+  acceptA2APairing(input: {
+    code: string;
+    alias: string;
+  }): Promise<{ alias: string; sas: string; fingerprint: string }>;
+  a2aPairings(): Promise<{ pairings: A2APairingSummary[] }>;
+  /** Decide tier: teammate links' health and open link offers. */
+  a2aLinks(): Promise<A2ALinksStatus>;
+  cancelA2APairing(id: string): Promise<void>;
+  /** Decide tier: moves a bearer peer to signed requests once its owner agrees. */
+  upgradeA2APeer(
+    alias: string,
+    confirmFingerprint: string,
+    client?: string
+  ): Promise<{ state: 'pending'; id: string; fingerprint: string }>;
+  a2aKeys(): Promise<A2AKeys>;
+  /** Operator tier. */
+  rotateA2AKey(compromised: boolean): Promise<A2ARotation>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -5054,6 +5166,37 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'DELETE',
       });
     },
+    createA2APairing: (input) =>
+      request(target, '/api/a2a/pairings', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    acceptA2APairing: (input) =>
+      request(target, '/api/a2a/pairings/accept', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    a2aPairings: () => request(target, '/api/a2a/pairings'),
+    a2aLinks: () => request(target, '/api/a2a/links'),
+    cancelA2APairing: async (id) => {
+      await send(target, `/api/a2a/pairings/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
+    upgradeA2APeer: (alias, confirmFingerprint, client) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}/upgrade`, {
+        method: 'POST',
+        ...jsonBody({
+          confirmFingerprint,
+          ...(client === undefined ? {} : { client }),
+        }),
+      }),
+    a2aKeys: () => request(target, '/api/a2a/keys'),
+    rotateA2AKey: (compromised) =>
+      request(target, '/api/a2a/keys/rotate', {
+        method: 'POST',
+        ...jsonBody(compromised ? { compromised: true } : {}),
+      }),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

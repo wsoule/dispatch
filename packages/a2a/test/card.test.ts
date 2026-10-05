@@ -15,7 +15,9 @@ import {
   unsignedCardJson,
   verifyCardSignature,
 } from '../src/card.js';
+import { dispatchSignatureKids } from '../src/card.js';
 import type { CardInputs } from '../src/port.js';
+import { SIG_EXTENSION_URI } from '../src/sig/sign.js';
 import { handoffStatuses, namedStatusVocabulary } from '../src/statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from '../src/uris.js';
 
@@ -173,6 +175,30 @@ function keyPair() {
   };
 }
 
+describe('the signature extension (P5)', () => {
+  const uris = (card: Record<string, unknown>) =>
+    (
+      card.capabilities as { extensions: { uri: string; required: boolean }[] }
+    ).extensions.map((e) => [e.uri, e.required]);
+
+  it('is advertised, never required, only on a card that will be signed', () => {
+    expect(
+      uris(
+        unsignedCardJson({
+          ...inputs,
+          skills: [...inputs.skills],
+          signing: true,
+        })
+      )
+    ).toContainEqual([SIG_EXTENSION_URI, false]);
+    expect(
+      uris(unsignedCardJson({ ...inputs, skills: [...inputs.skills] })).map(
+        ([u]) => u
+      )
+    ).not.toContain(SIG_EXTENSION_URI);
+  });
+});
+
 describe('signed cards', () => {
   // A verifier written from RFC 8785 alone: the served card minus
   // `signatures`, keys sorted, ECMAScript string and number forms.
@@ -219,6 +245,13 @@ describe('signed cards', () => {
     ) as Record<string, unknown>;
     return { served, signatures, privateJwk, publicJwk, jku, kid };
   }
+
+  it('names the key ids of its Dispatch signatures only', async () => {
+    const { served, kid } = await signedServedCard();
+    expect(dispatchSignatureKids(served)).toEqual([kid]);
+    expect(dispatchSignatureKids({ signatures: 'x' })).toEqual([]);
+    expect(dispatchSignatureKids({})).toEqual([]);
+  });
 
   it('signs the RFC 8785 form of the full served card, so a plain JCS verifier passes', async () => {
     const { served, signatures, privateJwk, publicJwk, jku, kid } =

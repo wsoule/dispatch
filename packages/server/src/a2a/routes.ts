@@ -3,6 +3,7 @@ import {
   cardJson,
   clientNameFor,
   decideState,
+  decodePairingCode,
   isClientAddress,
   PeerHttpError,
   TERMINAL_STATES,
@@ -29,6 +30,8 @@ import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
 import { hostPublicUrl, isHostName, mintHost } from './hosts.js';
+import { acceptLinkPairing, offerLinkPairing } from './linkPairing.js';
+import { acceptPairing, offerPairing, pairingSummaries } from './pairing.js';
 import type { PeerAddInput, PeerChange } from './peers.js';
 import {
   addPeer,
@@ -39,6 +42,7 @@ import {
 } from './peers.js';
 import type { DaemonBridgePort } from './port.js';
 import { handlePortRoute } from './portRoutes.js';
+import { parseRelaySettings } from './settings.js';
 import { parseSettings } from './settings.js';
 
 const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -380,10 +384,68 @@ async function peerRoute(
     if (rest.length === 0) return null;
     const alias = decodeURIComponent(rest[0]);
     if (rest.length === 1 && method === 'DELETE') {
+      // A paired peer unpairs: both records here at once, the peer row
+      // itself once the other side has been told.
+      if (ctx.a2a?.unpairer?.peerRemoved(alias) === true) {
+        changed(ctx);
+        return new Response(null, { status: 204 });
+      }
       if (!removePeer(service.deps, alias))
         return errorResponse(404, `no A2A peer ${alias}`);
       changedPeer(alias, 'removed');
       return new Response(null, { status: 204 });
+    }
+    if (rest.length === 2 && method === 'POST' && rest[1] === 'upgrade') {
+      if (ctx.viaAgentToken === true)
+        return jsonResponse(
+          {
+            error: 'an agent cannot upgrade a peer; a human does',
+            code: 'auth_agent_token',
+          },
+          403
+        );
+      const b = bridge(ctx);
+      if (!b.ok) return b.response;
+      const upgrades = b.a2a.upgrades;
+      if (upgrades === null)
+        return errorResponse(503, 'the A2A bridge is unavailable');
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return parsed.response;
+      const confirm = (parsed.value as { confirmFingerprint?: unknown })
+        .confirmFingerprint;
+      if (typeof confirm !== 'string')
+        return invalid(
+          'confirmFingerprint',
+          "confirmFingerprint is required: the peer's fingerprint as its owner reads it"
+        );
+      // M4: said before the listener check, which a link peer never needs.
+      const alias = decodeURIComponent(rest[0]);
+      if (b.store.getPeer(alias)?.auth === 'link')
+        return invalid(
+          'alias',
+          `a2a:${alias} is reached over a teammate link, which signs both ways already; there is nothing to upgrade`
+        );
+      const ourCard = ourCardUrl(b.a2a);
+      if (ourCard === null)
+        return errorResponse(
+          409,
+          'open the A2A listener first: the other side needs to reach this agent'
+        );
+      const named = (parsed.value as { client?: unknown }).client;
+      if (named !== undefined && typeof named !== 'string')
+        return invalid(
+          'client',
+          'client is the A2A client the peer reaches this agent as'
+        );
+      const started = await upgrades.start({
+        alias,
+        confirmFingerprint: confirm,
+        ourCard,
+        caller,
+        ...(named === undefined ? {} : { client: named }),
+      });
+      changed(ctx);
+      return jsonResponse(started, 202);
     }
     if (rest.length === 2 && method === 'POST' && rest[1] === 'refresh') {
       const row = await refreshPeer(service.deps, service.notices, alias);
@@ -486,6 +548,201 @@ async function hostRoute(
   return null;
 }
 
+// This side's card URL at the open listener, or null when it is closed.
+function ourCardUrl(a2a: Running['a2a']): string | null {
+  const status = a2a.status();
+  return status.listening && status.url !== null
+    ? `${status.url.replace(/\/$/, '')}/.well-known/agent-card.json`
+    : null;
+}
+
+// `/api/a2a/relay`: GET the tenant connection (request tier), PUT
+// { enabled, url } or DELETE to stop dialling (operator, ELEVATED_ROUTES).
+async function relayRoute(
+  req: Request,
+  ctx: ApiContext,
+  method: string
+): Promise<Response | null> {
+  const a2a = ctx.a2a;
+  if (a2a === undefined)
+    return errorResponse(503, 'the A2A bridge is unavailable');
+  if (method === 'GET') return jsonResponse(a2a.relayStatus());
+  if (method === 'DELETE') {
+    const now = a2a.relayStatus();
+    return jsonResponse(a2a.setRelay({ enabled: false, url: now.url }));
+  }
+  if (method !== 'PUT') return null;
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const settings = parseRelaySettings(parsed.value);
+  if (!settings.ok)
+    return invalid(
+      settings.key,
+      settings.key === 'url'
+        ? 'url is the relay origin: https, or http on loopback, with no path'
+        : `${settings.key} has the wrong type`
+    );
+  return jsonResponse(a2a.setRelay(settings.settings));
+}
+
+// POST /api/a2a/keys/rotate { compromised? }: operator tier (ELEVATED_ROUTES).
+async function rotateKeys(req: Request, ctx: ApiContext): Promise<Response> {
+  if (ctx.viaAgentToken === true)
+    return jsonResponse(
+      {
+        error: 'an agent cannot rotate keys; a human does',
+        code: 'auth_agent_token',
+      },
+      403
+    );
+  const b = bridge(ctx);
+  if (!b.ok) return b.response;
+  const keys = b.a2a.keys;
+  if (keys === null) return errorResponse(503, 'the A2A bridge is unavailable');
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const compromised = (parsed.value as { compromised?: unknown } | null)
+    ?.compromised;
+  if (compromised !== undefined && typeof compromised !== 'boolean')
+    return invalid('compromised', 'compromised must be true or false');
+  const rotation = await keys.rotate(compromised === true);
+  changed(ctx);
+  return jsonResponse(rotation);
+}
+
+// A link offer (`link: { remote }`) or the acceptance of a link code; null
+// for the card-URL flow.
+function linkRequest(
+  body: Record<string, unknown>,
+  rest: string[]
+):
+  | { kind: 'offer'; remote: string }
+  | { kind: 'accept'; code: string }
+  | 'invalid'
+  | null {
+  if (rest.length === 0 && body.link !== undefined) {
+    const remote = (body.link as { remote?: unknown } | null)?.remote;
+    return typeof remote === 'string' && remote !== ''
+      ? { kind: 'offer', remote }
+      : 'invalid';
+  }
+  if (rest[0] !== 'accept' || typeof body.code !== 'string') return null;
+  try {
+    const code = decodePairingCode(body.code, new Date());
+    return code.reach.kind === 'link'
+      ? { kind: 'accept', code: body.code }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// `/api/a2a/pairings[/accept | /:id]` (P5): offer a code, accept one, list
+// or cancel; tiers are in ELEVATED_ROUTES, private card URLs need the operator.
+async function pairingRoute(
+  req: Request,
+  ctx: ApiContext,
+  rest: string[],
+  method: string
+): Promise<Response | null> {
+  // As for clients: an agent must not mint a way in for outside callers.
+  if (ctx.viaAgentToken === true)
+    return jsonResponse(
+      {
+        error: 'an agent cannot pair; a human pairs',
+        code: 'auth_agent_token',
+      },
+      403
+    );
+  const b = bridge(ctx);
+  if (!b.ok) return b.response;
+  const peers = b.a2a.peers;
+  if (peers === null)
+    return errorResponse(503, 'the A2A bridge is unavailable');
+  const d = { ...peers.deps, notices: peers.notices, emit: peers.emit };
+  const caller = { tier: ctx.caller?.tier ?? 'request', ref: humanActor(ctx) };
+  if (rest.length === 0 && method === 'GET')
+    return jsonResponse({ pairings: pairingSummaries(d) });
+  if (rest.length === 1 && method === 'DELETE') {
+    const row = b.store.pairing(decodeURIComponent(rest[0]));
+    if (row === null || row.role !== 'offer' || row.state !== 'offered')
+      return errorResponse(404, 'no open pairing offer with that id');
+    b.store.setPairingState(row.id, 'canceled');
+    changed(ctx);
+    return new Response(null, { status: 204 });
+  }
+  if (method !== 'POST' || rest.length > 1) return null;
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as Record<string, unknown>;
+  if (typeof body.alias !== 'string')
+    return invalid('alias', 'alias is required');
+  if (body.ttlMin !== undefined && typeof body.ttlMin !== 'number')
+    return invalid('ttlMin', 'ttlMin must be a number of minutes');
+  // T55: a pairing reached over a teammate link needs no listener.
+  const link = linkRequest(body, rest);
+  if (link === 'invalid')
+    return invalid('link.remote', 'link.remote must be a git remote');
+  if (link !== null) {
+    const result =
+      link.kind === 'offer'
+        ? await offerLinkPairing(d, b.a2a.links, {
+            alias: body.alias,
+            remote: link.remote,
+            ...(typeof body.ttlMin === 'number' ? { ttlMin: body.ttlMin } : {}),
+            caller,
+          })
+        : await acceptLinkPairing(d, b.a2a.links, {
+            code: link.code,
+            alias: body.alias,
+            caller,
+          });
+    changed(ctx);
+    return jsonResponse(result, link.kind === 'offer' ? 201 : 200);
+  }
+  // This side's card URL: the open listener's, or one given (a host or relay).
+  const ourCard =
+    typeof body.cardUrl === 'string' ? body.cardUrl : ourCardUrl(b.a2a);
+  if (ourCard === null)
+    return errorResponse(
+      409,
+      'open the A2A listener first, or pass cardUrl: the other side needs to reach this agent'
+    );
+  try {
+    if (rest.length === 0) {
+      const offered = offerPairing(d, {
+        alias: body.alias,
+        ourCard,
+        ...(typeof body.ttlMin === 'number' ? { ttlMin: body.ttlMin } : {}),
+        caller,
+      });
+      changed(ctx);
+      return jsonResponse(offered, 201);
+    }
+    if (rest[0] !== 'accept') return null;
+    if (typeof body.code !== 'string')
+      return invalid('code', 'code is required');
+    const accepted = await acceptPairing(d, {
+      code: body.code,
+      alias: body.alias,
+      ourCard,
+      caller,
+    });
+    changed(ctx);
+    return jsonResponse(accepted);
+  } catch (err) {
+    if (err instanceof PeerHttpError)
+      return jsonResponse(
+        {
+          error: `the other side's card could not be fetched: ${err.message}`,
+          field: 'code',
+        },
+        502
+      );
+    throw err;
+  }
+}
+
 // `/api/a2a/*` after the `a2a` segment; null for anything it does not serve,
 // so handleApi's 404 applies. Tiers are enforced in ELEVATED_ROUTES.
 export async function handleA2ARoute(
@@ -498,6 +755,30 @@ export async function handleA2ARoute(
     return peerRoute(req, ctx, segments.slice(1), method);
   if (segments[0] === 'port')
     return handlePortRoute(req, ctx, segments.slice(1), method);
+  if (segments[0] === 'pairings')
+    return pairingRoute(req, ctx, segments.slice(1), method);
+  if (segments[0] === 'keys' && segments[1] === 'rotate' && method === 'POST')
+    return rotateKeys(req, ctx);
+  if (segments[0] === 'relay' && segments.length === 1)
+    return relayRoute(req, ctx, method);
+  // T55: each link's health, and offers waiting for the other side's proof.
+  if (segments[0] === 'links' && segments.length === 1 && method === 'GET') {
+    const b = bridge(ctx);
+    if (!b.ok) return b.response;
+    const hub = b.a2a.links;
+    return jsonResponse({
+      enabled: hub !== null,
+      links: hub?.health() ?? [],
+      offers: hub?.offers() ?? [],
+    });
+  }
+  if (segments[0] === 'keys' && segments.length === 1 && method === 'GET') {
+    const b = bridge(ctx);
+    if (!b.ok) return b.response;
+    if (b.a2a.keys === null)
+      return errorResponse(503, 'the A2A bridge is unavailable');
+    return jsonResponse(b.a2a.keys.show());
+  }
   if (
     segments[0] === 'hosts' ||
     (segments[0] === 'listener' && segments[1] === 'standalone')

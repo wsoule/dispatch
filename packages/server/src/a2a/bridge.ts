@@ -28,6 +28,7 @@ import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir, transcriptPath } from '../orchestrator/paths.js';
 import { replayTranscript } from '../orchestrator/transcript.js';
+import type { LinkHub } from '../team/links/hub.js';
 import type { AuthTier } from '../tiers.js';
 import { RunResultsMemo } from './artifacts.js';
 import { bridgeExternalPolicy } from './external.js';
@@ -41,26 +42,47 @@ import {
   ProposalGuard,
 } from './guards.js';
 import { handleProposal } from './handoff.js';
+import { KeyService } from './keys.js';
 import { A2ALineage } from './lineage.js';
+import { LinkWiring } from './links.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
 import type { OutboundWorker } from './outbound.js';
 import { startOutbound } from './outbound.js';
+import { Unpairer } from './pairing.js';
 import type { PeerService } from './peers.js';
-import { createPeerService, refreshDuePeers } from './peers.js';
+import {
+  createPeerService,
+  probeUnverifiedPeers,
+  refreshDuePeers,
+} from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
 import type { WatchLimits } from './portRoutes.js';
-import { PortLeases, PortWatches } from './portRoutes.js';
+import {
+  PortLeases,
+  PortWatches,
+  servePortCall,
+  SignedSessions,
+} from './portRoutes.js';
 import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
-import type { ListenerOverrides, ListenerSettings } from './settings.js';
+import type { RelayStatus } from './relayClient.js';
+import { RelayClient } from './relayClient.js';
+import type {
+  ListenerOverrides,
+  ListenerSettings,
+  RelaySettings,
+} from './settings.js';
 import {
   applyOverrides,
   readListenerSettings,
+  readRelaySettings,
   resolveListener,
   writeListenerSettings,
+  writeRelaySettings,
 } from './settings.js';
-import { CardSigner, loadOrCreateSigningKey } from './signing.js';
+import { CardSigner, finishRotation, loadSigningKeys } from './signing.js';
+import { Upgrades } from './upgrade.js';
 import { BridgeWatch } from './watch.js';
 
 interface ListenerStatus {
@@ -87,8 +109,20 @@ export interface A2ABridge {
   readonly watch: BridgeWatch | null;
   // Outbound peers; null when a2a.db is down.
   readonly peers: PeerService | null;
+  readonly unpairer: Unpairer | null;
+  readonly keys: KeyService | null;
+  readonly upgrades: Upgrades | null;
+  // This daemon as a relay tenant (a2a-relay.json).
+  relayStatus(): RelayStatus;
+  setRelay(settings: RelaySettings): RelayStatus;
+  // XH-R3: cancels the open pairing offers `ref` made.
+  cancelOffersBy(ref: string): void;
+  // Probes each peer auth-failed only for unverifiable replies (hourly).
+  probeUnverified(): Promise<void>;
   // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
   readonly outbound: OutboundWorker | null;
+  // Teammate links (T54); null until the link keys load, or when a2a.db is down.
+  readonly links: LinkHub | null;
   // Whether standalone hosts may use /api/a2a/port/* (the settings file).
   standalone(): boolean;
   // Changes only that flag in the settings file; the listener is untouched.
@@ -96,6 +130,8 @@ export interface A2ABridge {
   // Stream slots and task-watch streams standalone hosts hold.
   readonly leases: PortLeases;
   readonly watches: PortWatches;
+  // Signed clients' sessions across a standalone host's port calls.
+  readonly signedSessions: SignedSessions;
   // Ends a revoked host's leases and watch streams.
   hostRevoked(hostId: string): void;
   peerStatus(alias: string): PeerStatus | null;
@@ -138,6 +174,8 @@ export interface A2ABridge {
 }
 
 interface OpenBridgeDeps {
+  // The tier a pairing offer's creator acts at now; null once revoked.
+  creatorTier?: (ref: string) => AuthTier | null;
   rootDir: string;
   messaging: Messaging;
   tasks: TaskStorePort;
@@ -157,6 +195,12 @@ interface OpenBridgeDeps {
   teamTls?: { certPath: string; keyPath: string };
   // Standalone hosts' watch-stream limits over the defaults (tests).
   watchLimits?: Partial<WatchLimits>;
+  // How long unverifiable replies run before auth-failed (tests shorten it).
+  unverifiedWindowMs?: number;
+  // Unpair notices' and key pushes' retry delays (tests shorten them).
+  noticeBackoffMs?: number[];
+  // How often teammate links exchange (tests shorten it).
+  linkIntervalMs?: number;
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -221,10 +265,17 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let stopWatch: (() => void) | null = null;
   let listener: A2AListener | null = null;
   let peers: PeerService | null = null;
+  let unpairer: Unpairer | null = null;
+  let keys: KeyService | null = null;
+  let upgrades: Upgrades | null = null;
+  let relay: RelayClient | null = null;
+  let stopUpgradeAnswers: (() => void) | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
+  let links: LinkWiring | null = null;
   const leases = new PortLeases();
   const watches = new PortWatches(deps.watchLimits);
+  const signedSessions = new SignedSessions();
   // Loaded on the first card; null (with the reason) when it cannot be.
   let signer: CardSigner | null | undefined;
   let signerError: string | null = null;
@@ -233,6 +284,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   } else {
     const bridgeDeps: BridgeDeps = {
       rootDir,
+      ...(deps.creatorTier === undefined
+        ? {}
+        : { creatorTier: deps.creatorTier }),
       engine: messaging.engine,
       messages: messaging.store,
       store,
@@ -265,7 +319,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       signer: () => {
         if (signer !== undefined) return signer;
         try {
-          signer = new CardSigner(loadOrCreateSigningKey(rootDir));
+          signer = new CardSigner(loadSigningKeys(rootDir));
         } catch (err) {
           // The message names the problem, never the key.
           signerError = err instanceof Error ? err.message : 'unknown error';
@@ -300,12 +354,107 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     watch = hub;
     stopWatch = hub.start();
     const peerService = createPeerService(bridgeDeps);
+    bridgeDeps.peers = () => peerService;
     peers = peerService;
+    unpairer = new Unpairer({
+      ...peerService.deps,
+      notices: peerService.notices,
+      emit: peerService.emit,
+      revokeClient: (address) => bridge.clientRevoked(address),
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      linkUnpair: (alias, id) =>
+        links?.unpair(alias, id) ?? Promise.resolve(false),
+      ...(deps.noticeBackoffMs === undefined
+        ? {}
+        : { backoffMs: deps.noticeBackoffMs }),
+    });
+    bridgeDeps.unpairer = () => unpairer;
+    const keyService = new KeyService({
+      ...peerService.deps,
+      notices: peerService.notices,
+      emit: peerService.emit,
+      revokeClient: (address) => bridge.clientRevoked(address),
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      unpairer,
+      resetSigner: () => {
+        signer = undefined;
+      },
+      linkStatement: (alias, statement) =>
+        links?.statement(alias, statement) ?? false,
+      ...(deps.noticeBackoffMs === undefined
+        ? {}
+        : { backoffMs: deps.noticeBackoffMs }),
+    });
+    bridgeDeps.keys = () => keyService;
+    keys = keyService;
+    links = new LinkWiring({
+      rootDir,
+      store,
+      messages: messaging.store,
+      port: () => port,
+      policy: () => a2aConfig(rootDir).policy,
+      unpaired: (id) =>
+        unpairer?.drop(
+          id,
+          (a) =>
+            `a2a:${a} unpaired: the other side removed this pairing over the link. Its records are kept, disabled.`
+        ),
+      keyChange: (id, statement) => keyService.receiveOverLink(id, statement),
+      pairing: () => ({
+        ...peerService.deps,
+        notices: peerService.notices,
+        emit: peerService.emit,
+      }),
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      ...(deps.linkIntervalMs === undefined
+        ? {}
+        : { intervalMs: deps.linkIntervalMs }),
+    });
+    peerService.onChange((alias, what) => {
+      if (what === 'removed') links?.removed(alias);
+    });
+    const upgradeService = new Upgrades({
+      ...peerService.deps,
+      notices: peerService.notices,
+      emit: peerService.emit,
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      ...(deps.noticeBackoffMs === undefined
+        ? {}
+        : { backoffMs: deps.noticeBackoffMs }),
+    });
+    bridgeDeps.upgrades = () => upgradeService;
+    upgrades = upgradeService;
+    // This daemon as a relay tenant: each call frame answered as the port
+    // routes answer a standalone host pinned to the tenant URL.
+    relay = new RelayClient({
+      signer: () => bridgeDeps.signer?.() ?? null,
+      serve: (req, rest, host, stillHost) =>
+        servePortCall(req, bridge, rest, req.method, host, stillHost),
+      hostGone: (hostId) => bridge.hostRevoked(hostId),
+      ownerRef: deps.ownerRef,
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+    });
+    // The owner's answers to upgrade questions (plain questions: a new gate
+    // type would be a protocol registry change).
+    stopUpgradeAnswers = messaging.engine.subscribe((e) => {
+      if (e.type === 'message') upgradeService.answered(e.message);
+    });
     messaging.setExternalPolicy(
       bridgeExternalPolicy(bridgeDeps, peerService.notices)
     );
-    // The 24 h card refresh, checked hourly.
+    // The 24 h card refresh, checked hourly; a rotation whose overlap is
+    // over is finished by reloading the keys.
     refreshTimer = setInterval(() => {
+      void finishRotation(rootDir).then(
+        (finished) => {
+          if (finished) signer = undefined;
+        },
+        (err: unknown) =>
+          console.error('dispatchd: finishing the A2A key rotation failed', err)
+      );
+      void probeUnverifiedPeers(peerService).catch((err: unknown) =>
+        console.error('dispatchd: probing unverified A2A peers failed', err)
+      );
       void refreshDuePeers(peerService.deps, peerService.notices).then(
         (n) => {
           if (n > 0) deps.events.broadcast({ type: 'a2a.changed' });
@@ -340,9 +489,29 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     try {
       outbound = startOutbound(peerService, {
         changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+        ...(deps.unverifiedWindowMs === undefined
+          ? {}
+          : { unverifiedWindowMs: deps.unverifiedWindowMs }),
+        keyUnknown: (alias) => keyService.keyUnknown(alias),
+        linkClientFor: (row) => links?.clientFor(row) ?? null,
       });
     } catch (err) {
       console.error('dispatchd: the A2A outbound worker did not start', err);
+    }
+    try {
+      unpairer.resume();
+      keyService.resume();
+      upgradeService.resume();
+      relay?.apply(readRelaySettings(rootDir).settings);
+      void finishRotation(rootDir).then(
+        (finished) => {
+          if (finished) signer = undefined;
+        },
+        (err: unknown) =>
+          console.error('dispatchd: finishing the A2A key rotation failed', err)
+      );
+    } catch (err) {
+      console.error('dispatchd: A2A unpair resume failed', err);
     }
   }
   try {
@@ -421,7 +590,39 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     };
   }
 
-  return {
+  const bridge: A2ABridge = {
+    cancelOffersBy(ref) {
+      if (store === null) return;
+      for (const p of store.pairings())
+        if (p.createdBy === ref && p.state === 'offered')
+          store.setPairingState(p.id, 'canceled');
+      deps.events.broadcast({ type: 'a2a.changed' });
+    },
+    async probeUnverified() {
+      if (peers === null) return;
+      await probeUnverifiedPeers(peers);
+    },
+    get unpairer() {
+      return unpairer;
+    },
+    get keys() {
+      return keys;
+    },
+    get upgrades() {
+      return upgrades;
+    },
+    relayStatus: () =>
+      relay?.status() ?? {
+        ...readRelaySettings(rootDir).settings,
+        connected: false,
+        tenantUrl: null,
+        error: 'the A2A bridge is unavailable',
+      },
+    setRelay(settings) {
+      writeRelaySettings(rootDir, settings);
+      relay?.apply(settings);
+      return bridge.relayStatus();
+    },
     get port() {
       return port;
     },
@@ -437,11 +638,16 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     get outbound() {
       return outbound?.worker ?? null;
     },
+    get links() {
+      return links?.links ?? null;
+    },
     leases,
     watches,
+    signedSessions,
     hostRevoked: (hostId) => {
       leases.endHost(hostId);
       watches.closeHost(hostId);
+      signedSessions.endHost(hostId);
     },
     standalone: () => readListenerSettings(rootDir).settings.standalone,
     setStandalone: (enabled) =>
@@ -452,6 +658,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         if (!enabled) {
           leases.closeAll();
           watches.closeAll();
+          signedSessions.closeAll();
         }
         return Promise.resolve({ standalone: enabled });
       }),
@@ -487,6 +694,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         if (settingsError !== null)
           console.error(`dispatchd: ${settingsError}`);
         settings = applyOverrides(read.settings, deps.overrides);
+        try {
+          await links?.start();
+        } catch (err) {
+          console.error('dispatchd: teammate links did not start', err);
+        }
         for (const warning of a2aConfig(rootDir).warnings)
           console.warn(`dispatchd: ${warning}`);
         await reopen();
@@ -526,6 +738,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     // Never throws: the revocation has already happened, and one task that
     // cannot close is logged without stopping the others.
     clientRevoked(address) {
+      try {
+        unpairer?.clientRevoked(address);
+      } catch (err) {
+        console.error(`dispatchd: could not unpair ${address}`, err);
+      }
       // First, so closing its asks below pushes nothing to its webhooks.
       try {
         store?.deletePushConfigsOf(address);
@@ -572,10 +789,17 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
+        unpairer?.stop();
+        keys?.stop();
+        upgrades?.stop();
+        relay?.stop();
+        stopUpgradeAnswers?.();
         outbound?.stop();
         outbound = null;
+        await links?.stop();
         leases.closeAll();
         watches.closeAll();
+        signedSessions.closeAll();
         deps.orchestrator.setDispatchGuard(null);
         stopProposals();
         if (refreshTimer !== null) clearInterval(refreshTimer);
@@ -588,4 +812,5 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         store?.close();
       }),
   };
+  return bridge;
 }

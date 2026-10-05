@@ -4,17 +4,41 @@ import type { Address } from '@dispatch/protocol';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+import type { Reach } from '../pair/reach.js';
 import type { TaskStateName } from '../states.js';
 import { TERMINAL_STATES } from '../states.js';
 
 export const A2A_DB_VERSION = 1;
 
-export interface ClientRow {
+// How a client or peer proves itself: a bearer token (P1-P4), an RFC 9421
+// signature under a pinned card key (P5), or a teammate link.
+export type AuthMode = 'bearer' | 'signature' | 'link';
+
+// The key fields every read fills; writes set them only through setClientKey
+// and setPeerKey, so an upsert can never drop a pin.
+interface KeyFields {
+  auth?: AuthMode;
+  keyThumbprint?: string | null;
+  keyJwk?: Record<string, string> | null;
+  pairedId?: string | null;
+}
+
+export interface KeyPin {
+  thumbprint: string;
+  jwk: Record<string, string>;
+  auth: AuthMode;
+  pairedId: string | null;
+}
+
+export interface ClientRow extends KeyFields {
   address: Address;
   name: string;
   recipients: Address[];
   createdBy: Address;
   createdAt: string;
+  // Its agent once named the signature extension: a Dispatch agent, which
+  // a2a.requireSignedDispatchPeers refuses to take a bearer from. Read-only.
+  sigPresented?: boolean;
 }
 
 export interface TaskRow {
@@ -50,7 +74,7 @@ export interface TaskListQuery {
 export type PeerStatus = 'active' | 'disabled' | 'auth-failed';
 
 // An outbound peer as registered; its credential lives in credentials.json.
-export interface PeerRow {
+export interface PeerRow extends KeyFields {
   alias: string;
   cardUrl: string;
   interfaceUrl: string;
@@ -65,6 +89,9 @@ export interface PeerRow {
   allowOrigin: boolean;
   apiKeyHeader: string | null;
   createdAt: string;
+  // Why it is in its status, set with it: 'unverifiable' marks an
+  // auth-failed peer the hourly probe may bring back. Kept across upserts.
+  statusReason?: string | null;
 }
 
 export type OutboundState = 'queued' | 'open' | 'done' | 'failed';
@@ -98,6 +125,57 @@ export interface PushConfigRow {
   failures: number;
   disabledAt: string | null;
   createdAt: string;
+}
+
+// One pairing on this side: an offer this daemon made, or one it accepted.
+// Only the secret's hash is kept, and only on the offering side.
+export interface PairingRow {
+  id: string;
+  // A bearer pair moving to signatures (P5): 'upgrade-out' where this side
+  // asked, 'upgrade-in' where the other side asked and this owner decides.
+  role: 'offer' | 'accept' | 'upgrade-out' | 'upgrade-in';
+  secretHash: string | null;
+  alias: string;
+  reach: Reach;
+  createdBy: Address;
+  createdTier: 'decide' | 'operator';
+  createdAt: string;
+  expiresAt: string;
+  // unpairing: this side unpaired and is still telling the other side.
+  state:
+    | 'offered'
+    | 'completed'
+    | 'canceled'
+    | 'expired'
+    | 'unpairing'
+    | 'unpaired';
+  peerThumbprint: string | null;
+  completedAt: string | null;
+}
+
+// A notice a paired peer has not yet heard (an unpair, a key push), kept
+// with its attempts so a restart neither repeats nor resets its backoff.
+export interface PendingNotice {
+  // 'upgrade': an approved upgrade still telling the other side;
+  // 'upgrade-gate': an upgrade waiting on its owner question (body: its id);
+  // 'upgrade-client': the client an upgrade this side asked for must come
+  // back as (body: its address).
+  kind: 'unpair' | 'key-push' | 'upgrade' | 'upgrade-gate' | 'upgrade-client';
+  id: string;
+  body: string;
+  at: string;
+  attempts?: number;
+}
+
+export interface KeyEvent {
+  thumbprint: string;
+  event: string;
+  statement: string | null;
+  at: string;
+  // The pairing that pinned this key, and the key itself, so a revocation of
+  // any key in a pairing's chain can be checked.
+  pairedId?: string | null;
+  jwk?: Record<string, string> | null;
 }
 
 // An operator-issued credential for one standalone host; the token is kept
@@ -144,7 +222,13 @@ export interface A2AStore {
   getPeer(alias: string): PeerRow | null;
   // By alias.
   peers(): PeerRow[];
-  setPeerStatus(alias: string, status: PeerStatus): void;
+  setPeerStatus(
+    alias: string,
+    status: PeerStatus,
+    reason?: string | null
+  ): void;
+  // Runs `fn` in one transaction, rolled back when it throws; re-entrant.
+  transaction<T>(fn: () => T): T;
   deletePeer(alias: string): boolean;
   // Upsert on (message_id, alias); thread and first_attempt_at keep their first values.
   putOutbound(row: OutboundRow): void;
@@ -203,6 +287,42 @@ export interface A2AStore {
   hostByTokenHash(hash: string): HostRow | null;
   // True when a live host was revoked.
   revokeHost(id: string, at: string): boolean;
+  // False when the row is absent or another row already holds this key.
+  setClientKey(address: Address, pin: KeyPin): boolean;
+  markSigPresented(address: Address): void;
+  clientByThumbprint(thumbprint: string): ClientRow | null;
+  setPeerKey(alias: string, pin: KeyPin): boolean;
+  peerByThumbprint(thumbprint: string): PeerRow | null;
+  putPairing(row: PairingRow): void;
+  pairing(id: string): PairingRow | null;
+  // Newest first.
+  pairings(): PairingRow[];
+  // offered → completed, once; false when the row is not offered.
+  completePairing(id: string, peerThumbprint: string, at: string): boolean;
+  setPairingState(id: string, state: PairingRow['state']): void;
+  recordKeyEvent(e: KeyEvent): void;
+  // One per kind and id; a newer body replaces the older and resets attempts.
+  putNotice(n: PendingNotice): void;
+  // Oldest first.
+  notices(kind: PendingNotice['kind']): Required<PendingNotice>[];
+  // Counts one failed attempt; the new count, or 0 when there is no notice.
+  noteAttempt(kind: PendingNotice['kind'], id: string): number;
+  deleteNotice(kind: PendingNotice['kind'], id: string): void;
+  // Oldest first.
+  keyEvents(thumbprint: string): KeyEvent[];
+  // Every pairing that ever pinned `thumbprint`, with that key.
+  pairingsThatPinned(
+    thumbprint: string
+  ): { pairedId: string; jwk: Record<string, string> }[];
+  // Prunes expired entries, then records the nonce: 'replay' when seen,
+  // 'full' when this key already holds `cap` live nonces.
+  rememberNonce(
+    thumbprint: string,
+    nonce: string,
+    expiresAt: Date,
+    cap: number,
+    now: Date
+  ): 'fresh' | 'replay' | 'full';
   close(): void;
 }
 
@@ -250,7 +370,102 @@ CREATE TABLE IF NOT EXISTS hosts (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, public_url TEXT NOT NULL,
   created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
 );
+CREATE TABLE IF NOT EXISTS pairings (
+  id TEXT PRIMARY KEY, role TEXT NOT NULL, secret_hash TEXT, alias TEXT NOT NULL, reach_json TEXT NOT NULL,
+  created_by TEXT NOT NULL, created_tier TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+  state TEXT NOT NULL, peer_thumbprint TEXT, completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS key_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, thumbprint TEXT NOT NULL, event TEXT NOT NULL,
+  statement TEXT, at TEXT NOT NULL, paired_id TEXT, jwk_json TEXT
+);
+CREATE INDEX IF NOT EXISTS key_events_tp ON key_events (thumbprint, seq);
+CREATE TABLE IF NOT EXISTS pending_notices (
+  kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (kind, id)
+);
+CREATE TABLE IF NOT EXISTS seen_nonces (
+  thumbprint TEXT NOT NULL, nonce TEXT NOT NULL, expires_at TEXT NOT NULL,
+  PRIMARY KEY (thumbprint, nonce)
+);
+CREATE INDEX IF NOT EXISTS seen_nonces_exp ON seen_nonces (expires_at);
 `;
+
+// P5 key columns on two P1/P3 tables, added once (version stays 1).
+const KEY_COLUMNS: readonly [string, string][] = [
+  ['key_thumbprint', 'TEXT'],
+  ['key_jwk', 'TEXT'],
+  ['auth', "TEXT NOT NULL DEFAULT 'bearer'"],
+  ['paired_id', 'TEXT'],
+];
+
+// A stored JWK, or null when it is not an object of strings.
+function jwkOf(text: string): Record<string, string> | null {
+  try {
+    const v: unknown = JSON.parse(text);
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+    const entries = Object.entries(v as Record<string, unknown>);
+    return entries.every(([, x]) => typeof x === 'string')
+      ? (Object.fromEntries(entries) as Record<string, string>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function addKeyColumns(db: SqliteDatabase): void {
+  const peerColumns = new Set(
+    queryAll<{ name: string }>(db, 'PRAGMA table_info(peers)').map(
+      (c) => c.name
+    )
+  );
+  if (!peerColumns.has('status_reason'))
+    db.exec('ALTER TABLE peers ADD COLUMN status_reason TEXT');
+  const clientColumns = new Set(
+    queryAll<{ name: string }>(db, 'PRAGMA table_info(clients)').map(
+      (c) => c.name
+    )
+  );
+  if (!clientColumns.has('sig_presented'))
+    db.exec(
+      'ALTER TABLE clients ADD COLUMN sig_presented INTEGER NOT NULL DEFAULT 0'
+    );
+  const events = new Set(
+    queryAll<{ name: string }>(db, 'PRAGMA table_info(key_events)').map(
+      (c) => c.name
+    )
+  );
+  for (const name of ['paired_id', 'jwk_json'])
+    if (!events.has(name))
+      db.exec(`ALTER TABLE key_events ADD COLUMN ${name} TEXT`);
+  for (const table of ['clients', 'peers']) {
+    const have = new Set(
+      queryAll<{ name: string }>(db, `PRAGMA table_info(${table})`).map(
+        (c) => c.name
+      )
+    );
+    for (const [name, type] of KEY_COLUMNS) {
+      if (!have.has(name))
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+    // A key pinned on two rows (written before this index) pins neither.
+    for (const { tp } of queryAll<{ tp: string }>(
+      db,
+      `SELECT key_thumbprint AS tp FROM ${table} WHERE key_thumbprint IS NOT NULL GROUP BY key_thumbprint HAVING COUNT(*) > 1`
+    )) {
+      console.warn(
+        `a2a: key ${tp} was pinned on more than one ${table} row; those pins are cleared`
+      );
+      db.prepare(
+        `UPDATE ${table} SET key_thumbprint = NULL, key_jwk = NULL WHERE key_thumbprint = ?`
+      ).run(tp);
+    }
+    // One key pins one row per table.
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_key_unique ON ${table} (key_thumbprint) WHERE key_thumbprint IS NOT NULL`
+    );
+  }
+}
 
 // Created 0600 before SQLite opens it, so it never exists world-readable;
 // refuses a file a newer schema wrote rather than stamping it back down.
@@ -268,17 +483,108 @@ export function openA2ADb(path: string): SqliteDatabase {
     );
   }
   db.exec(DDL);
+  addKeyColumns(db);
   db.exec(`PRAGMA user_version = ${A2A_DB_VERSION}`);
   if (path !== ':memory:') chmodSync(path, 0o600);
   return db;
 }
 
-interface ClientDbRow {
+interface KeyDbFields {
+  auth: string;
+  key_thumbprint: string | null;
+  key_jwk: string | null;
+  paired_id: string | null;
+}
+
+const AUTH_MODES: readonly AuthMode[] = ['bearer', 'signature', 'link'];
+
+const NO_KEY = { keyThumbprint: null, keyJwk: null };
+
+// A stored JWK as an object of strings, or null when the column is damaged.
+function readJwk(text: string | null): Record<string, string> | null {
+  if (text === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+    return null;
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.some(([, v]) => typeof v !== 'string')) return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+// An unknown auth mode, or a damaged key, reads as signature with no key at
+// all, so the row authenticates nothing either way.
+function keyFields(r: KeyDbFields): Required<KeyFields> {
+  if (!AUTH_MODES.includes(r.auth as AuthMode))
+    return { auth: 'signature', ...NO_KEY, pairedId: r.paired_id };
+  const keyJwk = readJwk(r.key_jwk);
+  return {
+    auth: r.auth as AuthMode,
+    ...(keyJwk === null || r.key_thumbprint === null
+      ? NO_KEY
+      : { keyThumbprint: r.key_thumbprint, keyJwk }),
+    pairedId: r.paired_id,
+  };
+}
+
+interface ClientDbRow extends KeyDbFields {
   addr: string;
   name: string;
   recipients_json: string;
   created_by: string;
   created_at: string;
+  sig_presented?: number;
+}
+
+interface PairingDbRow {
+  id: string;
+  role: string;
+  secret_hash: string | null;
+  alias: string;
+  reach_json: string;
+  created_by: string;
+  created_tier: string;
+  created_at: string;
+  expires_at: string;
+  state: string;
+  peer_thumbprint: string | null;
+  completed_at: string | null;
+}
+
+const PAIRING_STATES: readonly PairingRow['state'][] = [
+  'offered',
+  'completed',
+  'canceled',
+  'expired',
+  'unpairing',
+  'unpaired',
+];
+
+// An unknown state reads as canceled, so a hand-edited row never completes.
+function toPairing(r: PairingDbRow): PairingRow {
+  return {
+    id: r.id,
+    role:
+      r.role === 'accept' || r.role === 'upgrade-out' || r.role === 'upgrade-in'
+        ? r.role
+        : 'offer',
+    secretHash: r.secret_hash,
+    alias: r.alias,
+    reach: JSON.parse(r.reach_json) as Reach,
+    createdBy: r.created_by,
+    createdTier: r.created_tier === 'operator' ? 'operator' : 'decide',
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    state: PAIRING_STATES.includes(r.state as PairingRow['state'])
+      ? (r.state as PairingRow['state'])
+      : 'canceled',
+    peerThumbprint: r.peer_thumbprint,
+    completedAt: r.completed_at,
+  };
 }
 
 interface TaskDbRow {
@@ -295,7 +601,7 @@ interface TaskDbRow {
   created_at: string;
 }
 
-interface PeerDbRow {
+interface PeerDbRow extends KeyDbFields {
   alias: string;
   card_url: string;
   interface_url: string;
@@ -310,6 +616,7 @@ interface PeerDbRow {
   allow_origin: number;
   api_key_header: string | null;
   created_at: string;
+  status_reason?: string | null;
 }
 
 const PEER_STATUSES: readonly PeerStatus[] = [
@@ -337,6 +644,8 @@ function toPeer(r: PeerDbRow): PeerRow {
     allowOrigin: r.allow_origin === 1,
     apiKeyHeader: r.api_key_header,
     createdAt: r.created_at,
+    statusReason: r.status_reason ?? null,
+    ...keyFields(r),
   };
 }
 
@@ -450,6 +759,8 @@ function toClient(r: ClientDbRow): ClientRow {
     recipients: JSON.parse(r.recipients_json) as Address[],
     createdBy: r.created_by,
     createdAt: r.created_at,
+    sigPresented: r.sig_presented === 1,
+    ...keyFields(r),
   };
 }
 
@@ -470,7 +781,25 @@ function toTask(r: TaskDbRow): TaskRow {
 }
 
 export class SqliteA2AStore implements A2AStore {
+  private depth = 0;
   constructor(private readonly db: SqliteDatabase) {}
+
+  // Re-entrant: only the outermost call issues BEGIN/COMMIT.
+  transaction<T>(fn: () => T): T {
+    if (this.depth > 0) return fn();
+    this.db.exec('BEGIN');
+    this.depth++;
+    try {
+      const out = fn();
+      this.db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    } finally {
+      this.depth--;
+    }
+  }
 
   putClient(c: ClientRow): void {
     this.db
@@ -687,10 +1016,14 @@ export class SqliteA2AStore implements A2AStore {
     ).map(toPeer);
   }
 
-  setPeerStatus(alias: string, status: PeerStatus): void {
+  setPeerStatus(
+    alias: string,
+    status: PeerStatus,
+    reason: string | null = null
+  ): void {
     this.db
-      .prepare('UPDATE peers SET status = ? WHERE alias = ?')
-      .run(status, alias);
+      .prepare('UPDATE peers SET status = ?, status_reason = ? WHERE alias = ?')
+      .run(status, reason, alias);
   }
 
   deletePeer(alias: string): boolean {
@@ -974,6 +1307,248 @@ export class SqliteA2AStore implements A2AStore {
           .run(at, id).changes
       ) > 0
     );
+  }
+
+  markSigPresented(address: Address): void {
+    this.db
+      .prepare('UPDATE clients SET sig_presented = 1 WHERE addr = ?')
+      .run(address);
+  }
+
+  setClientKey(address: Address, pin: KeyPin): boolean {
+    return this.pin('clients', 'addr', address, pin);
+  }
+
+  // Pins a key on one row; a key another row holds is refused, never moved.
+  private pin(
+    table: 'clients' | 'peers',
+    keyColumn: 'addr' | 'alias',
+    id: string,
+    pin: KeyPin
+  ): boolean {
+    const holder = queryOne<{ id: string }>(
+      this.db,
+      `SELECT ${keyColumn} AS id FROM ${table} WHERE key_thumbprint = ?`,
+      [pin.thumbprint]
+    );
+    if (holder !== undefined && holder.id !== id) return false;
+    try {
+      return (
+        Number(
+          this.db
+            .prepare(
+              `UPDATE ${table} SET key_thumbprint = ?, key_jwk = ?, auth = ?, paired_id = ? WHERE ${keyColumn} = ?`
+            )
+            .run(
+              pin.thumbprint,
+              JSON.stringify(pin.jwk),
+              pin.auth,
+              pin.pairedId,
+              id
+            ).changes
+        ) > 0
+      );
+    } catch {
+      // The unique index refused a pin that raced in.
+      return false;
+    }
+  }
+
+  clientByThumbprint(thumbprint: string): ClientRow | null {
+    const r = queryOne<ClientDbRow>(
+      this.db,
+      'SELECT * FROM clients WHERE key_thumbprint = ? ORDER BY addr LIMIT 1',
+      [thumbprint]
+    );
+    return r === undefined ? null : toClient(r);
+  }
+
+  setPeerKey(alias: string, pin: KeyPin): boolean {
+    return this.pin('peers', 'alias', alias, pin);
+  }
+
+  peerByThumbprint(thumbprint: string): PeerRow | null {
+    const r = queryOne<PeerDbRow>(
+      this.db,
+      'SELECT * FROM peers WHERE key_thumbprint = ? ORDER BY alias LIMIT 1',
+      [thumbprint]
+    );
+    return r === undefined ? null : toPeer(r);
+  }
+
+  putPairing(p: PairingRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO pairings (id, role, secret_hash, alias, reach_json, created_by, created_tier, created_at, expires_at, state, peer_thumbprint, completed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        p.id,
+        p.role,
+        p.secretHash,
+        p.alias,
+        JSON.stringify(p.reach),
+        p.createdBy,
+        p.createdTier,
+        p.createdAt,
+        p.expiresAt,
+        p.state,
+        p.peerThumbprint,
+        p.completedAt
+      );
+  }
+
+  pairing(id: string): PairingRow | null {
+    const r = queryOne<PairingDbRow>(
+      this.db,
+      'SELECT * FROM pairings WHERE id = ?',
+      [id]
+    );
+    return r === undefined ? null : toPairing(r);
+  }
+
+  pairings(): PairingRow[] {
+    return queryAll<PairingDbRow>(
+      this.db,
+      'SELECT * FROM pairings ORDER BY created_at DESC, id DESC'
+    ).map(toPairing);
+  }
+
+  completePairing(id: string, peerThumbprint: string, at: string): boolean {
+    return (
+      Number(
+        this.db
+          .prepare(
+            "UPDATE pairings SET state = 'completed', peer_thumbprint = ?, completed_at = ?, secret_hash = NULL WHERE id = ? AND state = 'offered'"
+          )
+          .run(peerThumbprint, at, id).changes
+      ) > 0
+    );
+  }
+
+  setPairingState(id: string, state: PairingRow['state']): void {
+    this.db
+      .prepare(
+        "UPDATE pairings SET state = ?, secret_hash = CASE WHEN ? = 'offered' THEN secret_hash ELSE NULL END WHERE id = ?"
+      )
+      .run(state, state, id);
+  }
+
+  putNotice(n: PendingNotice): void {
+    this.db
+      .prepare(
+        'INSERT INTO pending_notices (kind, id, body, at, attempts) VALUES (?,?,?,?,0) ON CONFLICT(kind, id) DO UPDATE SET body = excluded.body, at = excluded.at, attempts = 0'
+      )
+      .run(n.kind, n.id, n.body, n.at);
+  }
+
+  notices(kind: PendingNotice['kind']): Required<PendingNotice>[] {
+    return queryAll<Required<PendingNotice>>(
+      this.db,
+      'SELECT kind, id, body, at, attempts FROM pending_notices WHERE kind = ? ORDER BY at, id',
+      [kind]
+    );
+  }
+
+  noteAttempt(kind: PendingNotice['kind'], id: string): number {
+    this.db
+      .prepare(
+        'UPDATE pending_notices SET attempts = attempts + 1 WHERE kind = ? AND id = ?'
+      )
+      .run(kind, id);
+    return (
+      queryOne<{ attempts: number }>(
+        this.db,
+        'SELECT attempts FROM pending_notices WHERE kind = ? AND id = ?',
+        [kind, id]
+      )?.attempts ?? 0
+    );
+  }
+
+  deleteNotice(kind: PendingNotice['kind'], id: string): void {
+    this.db
+      .prepare('DELETE FROM pending_notices WHERE kind = ? AND id = ?')
+      .run(kind, id);
+  }
+
+  recordKeyEvent(e: KeyEvent): void {
+    this.db
+      .prepare(
+        'INSERT INTO key_events (thumbprint, event, statement, at, paired_id, jwk_json) VALUES (?,?,?,?,?,?)'
+      )
+      .run(
+        e.thumbprint,
+        e.event,
+        e.statement,
+        e.at,
+        e.pairedId ?? null,
+        e.jwk == null ? null : JSON.stringify(e.jwk)
+      );
+  }
+
+  keyEvents(thumbprint: string): KeyEvent[] {
+    return queryAll<{
+      thumbprint: string;
+      event: string;
+      statement: string | null;
+      at: string;
+      paired_id: string | null;
+      jwk_json: string | null;
+    }>(
+      this.db,
+      'SELECT thumbprint, event, statement, at, paired_id, jwk_json FROM key_events WHERE thumbprint = ? ORDER BY seq',
+      [thumbprint]
+    ).map((r) => ({
+      thumbprint: r.thumbprint,
+      event: r.event,
+      statement: r.statement,
+      at: r.at,
+      pairedId: r.paired_id,
+      jwk: r.jwk_json === null ? null : jwkOf(r.jwk_json),
+    }));
+  }
+
+  pairingsThatPinned(
+    thumbprint: string
+  ): { pairedId: string; jwk: Record<string, string> }[] {
+    const out: { pairedId: string; jwk: Record<string, string> }[] = [];
+    const seen = new Set<string>();
+    for (const e of this.keyEvents(thumbprint)) {
+      if (e.pairedId == null || e.jwk == null || seen.has(e.pairedId)) continue;
+      seen.add(e.pairedId);
+      out.push({ pairedId: e.pairedId, jwk: e.jwk });
+    }
+    return out;
+  }
+
+  rememberNonce(
+    thumbprint: string,
+    nonce: string,
+    expiresAt: Date,
+    cap: number,
+    now: Date
+  ): 'fresh' | 'replay' | 'full' {
+    this.db
+      .prepare('DELETE FROM seen_nonces WHERE expires_at <= ?')
+      .run(now.toISOString());
+    const seen = queryOne<{ n: number }>(
+      this.db,
+      'SELECT COUNT(*) AS n FROM seen_nonces WHERE thumbprint = ? AND nonce = ?',
+      [thumbprint, nonce]
+    );
+    if ((seen?.n ?? 0) > 0) return 'replay';
+    const held = queryOne<{ n: number }>(
+      this.db,
+      'SELECT COUNT(*) AS n FROM seen_nonces WHERE thumbprint = ?',
+      [thumbprint]
+    );
+    if ((held?.n ?? 0) >= cap) return 'full';
+    this.db
+      .prepare(
+        'INSERT INTO seen_nonces (thumbprint, nonce, expires_at) VALUES (?,?,?)'
+      )
+      .run(thumbprint, nonce, expiresAt.toISOString());
+    return 'fresh';
   }
 
   close(): void {
