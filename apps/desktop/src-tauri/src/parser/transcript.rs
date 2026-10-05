@@ -141,8 +141,7 @@ mod tests {
         }
     }
 
-    const SESSION_BASIC_FIXTURE: &str =
-        include_str!("../../tests/fixtures/session_basic.jsonl");
+    const SESSION_BASIC_FIXTURE: &str = include_str!("../../tests/fixtures/session_basic.jsonl");
 
     #[test]
     fn extracts_first_user_text_and_last_textful_assistant_text_from_fixture() {
@@ -182,9 +181,8 @@ mod tests {
             "### You\n\nAdd a hello world main function and fix the greeting in foo().\n"
         ));
         // first assistant turn: text plus its Write tool call.
-        assert!(markdown.contains(
-            "### Assistant\n\nI'll create the main function.\n- Wrote `src/main.rs`\n"
-        ));
+        assert!(markdown
+            .contains("### Assistant\n\nI'll create the main function.\n- Wrote `src/main.rs`\n"));
         // remaining assistant turns are tool-only: no text block, so the placeholder plus
         // their respective tool call bullet.
         assert!(markdown.contains("_[no text]_\n- Edited `src/main.rs`\n"));
@@ -193,7 +191,11 @@ mod tests {
         // the system and ai-title records carry no conversational content and must not
         // produce their own heading.
         assert!(!markdown.contains("### System"));
-        assert_eq!(markdown.matches("### ").count(), 5, "expected exactly 5 rendered turns");
+        assert_eq!(
+            markdown.matches("### ").count(),
+            5,
+            "expected exactly 5 rendered turns"
+        );
     }
 
     #[test]

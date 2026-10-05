@@ -377,7 +377,7 @@ pub trait DaemonSpawner: Send + Sync {
 /// `gh` is invisible, so a packaged app loses PR features that work fine from
 /// a terminal launch. Appending (not prepending) keeps an explicitly
 /// configured PATH's own ordering authoritative.
-fn enriched_child_path() -> std::ffi::OsString {
+pub(crate) fn enriched_child_path() -> std::ffi::OsString {
     let current = std::env::var("PATH").unwrap_or_default();
     let home = std::env::var("HOME").ok();
     std::ffi::OsString::from(enrich_path(&current, home.as_deref()))
@@ -392,8 +392,7 @@ fn enrich_path(current: &str, home: Option<&str>) -> String {
         .filter(|p| !p.is_empty())
         .map(String::from)
         .collect();
-    let mut extras: Vec<String> =
-        vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()];
+    let mut extras: Vec<String> = vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()];
     if let Some(home) = home {
         extras.push(format!("{home}/.bun/bin"));
         extras.push(format!("{home}/.local/bin"));
@@ -485,7 +484,10 @@ impl DaemonSpawner for BunSpawner {
                 format!("failed to spawn dispatchd: {e} — is bun installed? https://bun.sh")
             }
             DaemonLaunch::Bundled { dispatchd, .. } => {
-                format!("failed to spawn bundled dispatchd ({}): {e}", dispatchd.display())
+                format!(
+                    "failed to spawn bundled dispatchd ({}): {e}",
+                    dispatchd.display()
+                )
             }
         })
     }
@@ -1062,10 +1064,22 @@ mod tests {
 
     #[test]
     fn reuse_decision_attaches_to_a_healthy_daemon_and_spawns_over_a_dead_one() {
-        assert_eq!(reuse_decision(HealthProbe::Healthy, true), ReuseDecision::Reuse);
-        assert_eq!(reuse_decision(HealthProbe::Healthy, false), ReuseDecision::Reuse);
-        assert_eq!(reuse_decision(HealthProbe::Down, true), ReuseDecision::Spawn);
-        assert_eq!(reuse_decision(HealthProbe::Down, false), ReuseDecision::Spawn);
+        assert_eq!(
+            reuse_decision(HealthProbe::Healthy, true),
+            ReuseDecision::Reuse
+        );
+        assert_eq!(
+            reuse_decision(HealthProbe::Healthy, false),
+            ReuseDecision::Reuse
+        );
+        assert_eq!(
+            reuse_decision(HealthProbe::Down, true),
+            ReuseDecision::Spawn
+        );
+        assert_eq!(
+            reuse_decision(HealthProbe::Down, false),
+            ReuseDecision::Spawn
+        );
         // A stall from a pid that no longer exists is a stale file plus some
         // unrelated listener on the old port — nothing to wait for.
         assert_eq!(
@@ -1127,7 +1141,10 @@ mod tests {
             parse_health_response(r#"{"ok":true,"version":"0.0.1","rootDir":"/x"}"#),
             Ok(true)
         );
-        assert_eq!(parse_health_response(r#"{"ok":false,"version":"0.0.1"}"#), Ok(false));
+        assert_eq!(
+            parse_health_response(r#"{"ok":false,"version":"0.0.1"}"#),
+            Ok(false)
+        );
     }
 
     #[test]
@@ -1214,10 +1231,8 @@ mod tests {
 
     #[test]
     fn read_daemon_file_at_deserializes_the_camelcase_json_bun_writes() {
-        let dir = std::env::temp_dir().join(format!(
-            "dispatch-sidecar-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("dispatch-sidecar-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("daemon.json");
         fs::write(
@@ -1262,17 +1277,26 @@ mod tests {
 
     #[test]
     fn normalize_root_strips_a_trailing_slash() {
-        assert_eq!(normalize_root("/tmp/dispatch-fixture-root/"), Ok("/tmp/dispatch-fixture-root".to_string()));
+        assert_eq!(
+            normalize_root("/tmp/dispatch-fixture-root/"),
+            Ok("/tmp/dispatch-fixture-root".to_string())
+        );
     }
 
     #[test]
     fn normalize_root_strips_multiple_trailing_slashes() {
-        assert_eq!(normalize_root("/tmp/dispatch-fixture-root///"), Ok("/tmp/dispatch-fixture-root".to_string()));
+        assert_eq!(
+            normalize_root("/tmp/dispatch-fixture-root///"),
+            Ok("/tmp/dispatch-fixture-root".to_string())
+        );
     }
 
     #[test]
     fn normalize_root_is_a_no_op_without_a_trailing_slash() {
-        assert_eq!(normalize_root("/tmp/dispatch-fixture-root"), Ok("/tmp/dispatch-fixture-root".to_string()));
+        assert_eq!(
+            normalize_root("/tmp/dispatch-fixture-root"),
+            Ok("/tmp/dispatch-fixture-root".to_string())
+        );
     }
 
     #[test]
@@ -1294,7 +1318,10 @@ mod tests {
         // the same directory), so it polled the wrong daemon file forever.
         let with_slash = normalize_root("/tmp/dispatch-fixture-root/").unwrap();
         let without_slash = normalize_root("/tmp/dispatch-fixture-root").unwrap();
-        assert_eq!(daemon_file_key(&with_slash), daemon_file_key(&without_slash));
+        assert_eq!(
+            daemon_file_key(&with_slash),
+            daemon_file_key(&without_slash)
+        );
     }
 
     #[test]
@@ -1520,12 +1547,21 @@ mod tests {
 
     #[test]
     fn parse_app_token_line_matches_only_the_exact_prefixed_line() {
-        assert_eq!(parse_app_token_line("DISPATCH_APP_TOKEN=abc123"), Some("abc123"));
+        assert_eq!(
+            parse_app_token_line("DISPATCH_APP_TOKEN=abc123"),
+            Some("abc123")
+        );
         // CRLF-terminated stdout still yields a clean value.
-        assert_eq!(parse_app_token_line("DISPATCH_APP_TOKEN=abc123\r"), Some("abc123"));
+        assert_eq!(
+            parse_app_token_line("DISPATCH_APP_TOKEN=abc123\r"),
+            Some("abc123")
+        );
         // A bare prefix is not a credential.
         assert_eq!(parse_app_token_line("DISPATCH_APP_TOKEN="), None);
-        assert_eq!(parse_app_token_line("dispatchd listening on http://127.0.0.1:45999"), None);
+        assert_eq!(
+            parse_app_token_line("dispatchd listening on http://127.0.0.1:45999"),
+            None
+        );
         // The prefix only counts at the start of a line, so prose mentioning it
         // (like the daemon's own follow-up hint) is forwarded normally.
         assert_eq!(
@@ -1562,7 +1598,12 @@ mod tests {
         let tail: OutputTail = Arc::new(Mutex::new(VecDeque::new()));
         let slot: AppTokenSlot = Arc::new(Mutex::new(None));
 
-        forward_child_output(&mut child, Arc::clone(&tail), log_path.clone(), Arc::clone(&slot));
+        forward_child_output(
+            &mut child,
+            Arc::clone(&tail),
+            log_path.clone(),
+            Arc::clone(&slot),
+        );
         child.wait().expect("child exits");
         std::thread::sleep(Duration::from_millis(200));
 
@@ -1570,7 +1611,9 @@ mod tests {
 
         let captured: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
         assert!(captured.iter().any(|l| l.contains("listening on")));
-        assert!(captured.iter().any(|l| l.contains("authorizes approval decisions")));
+        assert!(captured
+            .iter()
+            .any(|l| l.contains("authorizes approval decisions")));
         assert!(!captured.iter().any(|l| l.contains(secret)));
         assert!(!captured.iter().any(|l| l.contains(APP_TOKEN_PREFIX)));
 
@@ -1632,7 +1675,9 @@ mod tests {
             *writer.lock().unwrap() = Some("late-token".to_string());
         });
         assert_eq!(
-            wait_for_app_token(&slot, Duration::from_secs(2)).await.as_deref(),
+            wait_for_app_token(&slot, Duration::from_secs(2))
+                .await
+                .as_deref(),
             Some("late-token")
         );
     }
@@ -1649,7 +1694,10 @@ mod tests {
         // The first 5 lines (0..5) should have been evicted; the buffer should
         // start at line-5 and run through line-(N+4).
         assert_eq!(buf.front().unwrap(), "line-5");
-        assert_eq!(buf.back().unwrap(), &format!("line-{}", OUTPUT_TAIL_LINES + 4));
+        assert_eq!(
+            buf.back().unwrap(),
+            &format!("line-{}", OUTPUT_TAIL_LINES + 4)
+        );
     }
 
     #[test]
@@ -1780,8 +1828,14 @@ mod tests {
         // --- the property: the app token is nowhere at rest ---
         let log_path = daemon_log_path(&root);
         let logged = fs::read_to_string(&log_path).expect("daemon log written");
-        assert!(logged.contains("listening on"), "log should still be useful");
-        assert!(!logged.contains(&app_token), "app token reached the daemon log");
+        assert!(
+            logged.contains("listening on"),
+            "log should still be useful"
+        );
+        assert!(
+            !logged.contains(&app_token),
+            "app token reached the daemon log"
+        );
         assert!(!logged.contains(APP_TOKEN_PREFIX));
 
         let mut files = Vec::new();
@@ -1846,7 +1900,10 @@ mod tests {
         )
         .await;
         eprintln!("[live] decide with the agent token  -> {status} {body}");
-        assert_eq!(status, 403, "agent token must not reach decide tier: {body}");
+        assert_eq!(
+            status, 403,
+            "agent token must not reach decide tier: {body}"
+        );
         assert!(body.contains("auth_insufficient_tier"), "body was {body}");
 
         // The credential a spawning app holds: the decision lands.

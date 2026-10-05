@@ -38,7 +38,10 @@ pub fn parse_line(line: &str) -> Option<ParsedRecord> {
     }
 
     let cwd = value.get("cwd").and_then(Value::as_str).map(String::from);
-    let session_id = value.get("sessionId").and_then(Value::as_str).map(String::from);
+    let session_id = value
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(String::from);
     let timestamp = value
         .get("timestamp")
         .and_then(Value::as_str)
@@ -76,7 +79,10 @@ mod tests {
         let record = parse_line(line).expect("user line should parse");
         assert_eq!(record.agent, "cursor");
         assert_eq!(record.session_id.as_deref(), Some("cur-1"));
-        assert_eq!(record.cwd.as_deref(), Some("/Users/testuser/Desktop/fixture-project"));
+        assert_eq!(
+            record.cwd.as_deref(),
+            Some("/Users/testuser/Desktop/fixture-project")
+        );
         assert_eq!(record.text.as_deref(), Some("fix this bug"));
         assert!(record.usage.is_none(), "Cursor logs carry no token usage");
     }
