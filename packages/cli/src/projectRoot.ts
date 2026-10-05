@@ -1,4 +1,4 @@
-import { childEnv } from '@dispatch/core';
+import { childEnv } from '@dispatch-foo/core';
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { basename, dirname } from 'node:path';

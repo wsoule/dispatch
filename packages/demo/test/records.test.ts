@@ -1,5 +1,5 @@
-import type { Finding, LedgerEntry } from '@dispatch/core';
-import { parseActorRef } from '@dispatch/core';
+import type { Finding, LedgerEntry } from '@dispatch-foo/core';
+import { parseActorRef } from '@dispatch-foo/core';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

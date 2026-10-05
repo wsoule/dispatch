@@ -6,8 +6,8 @@ import {
   SendMessageRequest,
   SSE_HEADERS,
 } from '@a2a-js/sdk';
-import { MessagingError } from '@dispatch/protocol';
-import type { JsonValue } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import { randomUUID } from 'node:crypto';
 
 import { buildCard, cardEtag, JWKS_PATH } from '../card.js';

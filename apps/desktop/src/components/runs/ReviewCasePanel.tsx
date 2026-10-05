@@ -1,9 +1,9 @@
-import type { ApiClient, Finding } from '@dispatch/client';
 import type {
   CommandEvidence,
   LedgerEntry,
   MutationEvidence,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { ApiClient, Finding } from '@dispatch/client';
 import {
   Bot,
   Check,

@@ -1,4 +1,4 @@
-import { openSqliteDb } from '@dispatch/core';
+import { openSqliteDb } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,

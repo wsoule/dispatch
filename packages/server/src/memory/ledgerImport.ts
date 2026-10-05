@@ -1,5 +1,6 @@
-import { isValidAssignee, TASK_ID_PATTERN } from '@dispatch/core';
-import type { LedgerEntry, LedgerKind } from '@dispatch/core';
+import { isValidAssignee, TASK_ID_PATTERN } from '@dispatch-foo/core';
+import type { LedgerEntry, LedgerKind } from '@dispatch-foo/core';
+import { LINE_BREAK, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import {
   cutUtf8,
   insertFresh,
@@ -10,7 +11,6 @@ import {
   utf8Bytes,
 } from '@dispatch/memory';
 import type { MemoryIds, MemoryStore } from '@dispatch/memory';
-import { LINE_BREAK, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
 import {
   DEP_MAP_DEGRADED_TITLE,

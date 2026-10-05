@@ -1,5 +1,5 @@
-import { generateDraftId, loadConfig } from '@dispatch/core';
-import type { ActorContext, TaskStorePort } from '@dispatch/core';
+import { generateDraftId, loadConfig } from '@dispatch-foo/core';
+import type { ActorContext, TaskStorePort } from '@dispatch-foo/core';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -22,7 +22,7 @@ import {
 } from './types.js';
 
 // Same shape as core's generateRunId (a short collision-resistant hex tag),
-// but kept local to the server package rather than added to @dispatch/core —
+// but kept local to the server package rather than added to @dispatch-foo/core —
 // unlike tasks/runs, a plan is a purely server-side, in-memory concept (see
 // PlanManager's doc comment) that is never written to a task file, so it has
 // no reason to live alongside core's on-disk id schemes.

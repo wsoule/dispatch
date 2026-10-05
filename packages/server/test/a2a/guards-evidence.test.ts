@@ -1,9 +1,9 @@
-import type { A2AStore } from '@dispatch/a2a';
-import { shapeDraft, wrapExternalData } from '@dispatch/a2a';
-import type { TaskDoc, TaskStorePort } from '@dispatch/core';
-import { newTaskDoc } from '@dispatch/core';
-import type { DeliveryEngine, Message } from '@dispatch/protocol';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import type { A2AStore } from '@dispatch-foo/a2a';
+import { shapeDraft, wrapExternalData } from '@dispatch-foo/a2a';
+import type { TaskDoc, TaskStorePort } from '@dispatch-foo/core';
+import { newTaskDoc } from '@dispatch-foo/core';
+import type { DeliveryEngine, Message } from '@dispatch-foo/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { expect, it } from 'bun:test';
 
 import type { GuardDeps } from '../../src/a2a/guards.js';

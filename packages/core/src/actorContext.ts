@@ -67,10 +67,10 @@ function writeKnownHandle(rootDir: string, handle: string): void {
  * The identity this process acts as. Derived from git config and recorded in
  * `.dispatch/team.yml` on first sight, so joining a team needs no invite step.
  *
- * Lives in `@dispatch/core` (not `@dispatch/server`) so both the daemon and
+ * Lives in `@dispatch-foo/core` (not `@dispatch/server`) so both the daemon and
  * the CLI can resolve the same identity through the same roster logic — the
  * daemon is Bun-only, but everything this class touches (node:fs/crypto/os
- * plus `@dispatch/core` itself) is plain Node, same as store.ts.
+ * plus `@dispatch-foo/core` itself) is plain Node, same as store.ts.
  */
 export class ActorContext {
   private constructor(

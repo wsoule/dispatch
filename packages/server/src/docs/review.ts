@@ -1,4 +1,4 @@
-import type { RevisionCause } from '@dispatch/core';
+import type { RevisionCause } from '@dispatch-foo/core';
 
 // `unreviewed` tells a reader that agent text in a revision has not been
 // checked by a human. It is computed from the DAG so no write clears it by accident.

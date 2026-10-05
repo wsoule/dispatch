@@ -1,4 +1,4 @@
-import { decideState } from '@dispatch/a2a';
+import { decideState } from '@dispatch-foo/a2a';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 
 import { useTempProject } from '../messaging/harness.js';

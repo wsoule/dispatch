@@ -1,5 +1,5 @@
 // Pure timestamp comparison, no node:* imports, so this is safe for the
-// desktop webview via the '@dispatch/core/browser' entry point.
+// desktop webview via the '@dispatch-foo/core/browser' entry point.
 
 /**
  * Whether a task's content has moved past the version a consumer last

@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { createMemoryIds, insertFresh, newMemoryEntry } from '@dispatch/memory';
 import type { SqliteMemoryStore } from '@dispatch/memory';
 import { describe, expect, it } from 'bun:test';

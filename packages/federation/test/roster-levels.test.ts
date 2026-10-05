@@ -1,4 +1,8 @@
-import { ed25519FromSeed, signText, TAG } from '@dispatch/protocol/federation';
+import {
+  ed25519FromSeed,
+  signText,
+  TAG,
+} from '@dispatch-foo/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
 import { foldRosterAt, KNOWN_ROSTER_PAIRS } from '../src/roster.js';

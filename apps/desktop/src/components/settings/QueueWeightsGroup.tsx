@@ -1,5 +1,5 @@
-import type { ConfigPatch, DispatchConfig } from '@dispatch/core/browser';
-import { QUEUE_FACTORS, queueWeights } from '@dispatch/core/browser';
+import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
+import { QUEUE_FACTORS, queueWeights } from '@dispatch-foo/core/browser';
 
 import { NumberSetting } from './fields';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';

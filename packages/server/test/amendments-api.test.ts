@@ -1,4 +1,4 @@
-import { getSection, TaskStore } from '@dispatch/core';
+import { getSection, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

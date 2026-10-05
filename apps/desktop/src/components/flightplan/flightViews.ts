@@ -1,13 +1,13 @@
+import type { StatusModel } from '@dispatch-foo/core/browser';
+import {
+  claimConflictsWithWrites,
+  PRIORITY_ORDER,
+} from '@dispatch-foo/core/browser';
 import type {
   EpicProgressChild,
   MergeQueueEntryState,
   RunMeta,
 } from '@dispatch/client';
-import type { StatusModel } from '@dispatch/core/browser';
-import {
-  claimConflictsWithWrites,
-  PRIORITY_ORDER,
-} from '@dispatch/core/browser';
 
 import { assigneeRef } from '../../lib/taskDisplay';
 import { type CriticalPath, edgeKey } from './criticalPath';

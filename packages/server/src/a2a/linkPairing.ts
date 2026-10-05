@@ -8,10 +8,10 @@ import {
   linkKeysBinding,
   makeProof,
   sas,
-} from '@dispatch/a2a';
-import type { LinkKeysBinding } from '@dispatch/a2a';
-import type { JsonValue } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import type { LinkKeysBinding } from '@dispatch-foo/a2a';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { randomBytes } from 'node:crypto';
 
 import type { LinkHub } from '../team/links/hub.js';

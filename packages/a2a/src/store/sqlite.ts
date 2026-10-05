@@ -1,6 +1,11 @@
-import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
-import type { SqliteDatabase, SqlValue } from '@dispatch/core';
-import type { Address } from '@dispatch/protocol';
+import {
+  dbVersion,
+  openSqliteDb,
+  queryAll,
+  queryOne,
+} from '@dispatch-foo/core';
+import type { SqliteDatabase, SqlValue } from '@dispatch-foo/core';
+import type { Address } from '@dispatch-foo/protocol';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 

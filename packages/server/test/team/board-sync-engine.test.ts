@@ -1,5 +1,5 @@
-import type { TaskDoc, UpdatePatch } from '@dispatch/core';
-import { applyUpdatePatch, newTaskDoc } from '@dispatch/core';
+import type { TaskDoc, UpdatePatch } from '@dispatch-foo/core';
+import { applyUpdatePatch, newTaskDoc } from '@dispatch-foo/core';
 import { describe, expect, test } from 'bun:test';
 
 import type { BoardOp, MergeState } from '../../src/team/boardSync/engine.js';

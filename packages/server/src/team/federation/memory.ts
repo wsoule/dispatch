@@ -1,5 +1,12 @@
-import { speaksForHandle } from '@dispatch/federation';
-import type { RosterView } from '@dispatch/federation';
+import { speaksForHandle } from '@dispatch-foo/federation';
+import type { RosterView } from '@dispatch-foo/federation';
+import { parseAddress } from '@dispatch-foo/protocol';
+import type { Address } from '@dispatch-foo/protocol';
+import { compareHlc, parseOpHlc } from '@dispatch-foo/protocol/federation';
+import type {
+  FederatedOp,
+  MemoryBody,
+} from '@dispatch-foo/protocol/federation';
 import {
   MEMORY_ID_PATTERN,
   MEMORY_KINDS,
@@ -7,10 +14,6 @@ import {
   utf8Bytes,
 } from '@dispatch/memory';
 import type { MemoryEntry, MemoryTrust } from '@dispatch/memory';
-import { parseAddress } from '@dispatch/protocol';
-import type { Address } from '@dispatch/protocol';
-import { compareHlc, parseOpHlc } from '@dispatch/protocol/federation';
-import type { FederatedOp, MemoryBody } from '@dispatch/protocol/federation';
 
 import type { RosterService } from './roster.js';
 import type { Collector, OpHandler, StageContext } from './service.js';

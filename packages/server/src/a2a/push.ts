@@ -11,7 +11,7 @@ import type {
   StreamResponseJson,
   TaskFacts,
   TaskRow,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   A2AError,
   decideState,
@@ -22,8 +22,8 @@ import {
   PUSH_LIMITS,
   snapshotOf,
   TERMINAL_STATES,
-} from '@dispatch/a2a';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { randomUUID } from 'node:crypto';
 
 function toJson(r: PushConfigRow): PushConfigJson {

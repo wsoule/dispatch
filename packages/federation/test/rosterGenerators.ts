@@ -3,8 +3,8 @@ import {
   sha256Hex,
   signText,
   TAG,
-} from '@dispatch/protocol/federation';
-import type { RosterBody } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { RosterBody } from '@dispatch-foo/protocol/federation';
 
 import type { FoldInput, RosterOpRef } from '../src/roster.js';
 import { keysFor, team } from './rosterOps.js';

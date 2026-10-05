@@ -1,6 +1,6 @@
-import type { Message } from '@dispatch/protocol';
-import { sealPayload } from '@dispatch/protocol/federation';
-import type { MailTarget } from '@dispatch/protocol/federation';
+import type { Message } from '@dispatch-foo/protocol';
+import { sealPayload } from '@dispatch-foo/protocol/federation';
+import type { MailTarget } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { MailOut } from '../../../src/team/federation/mail.js';
@@ -304,7 +304,7 @@ describe('M4: F2 ops wait until this machine is firmly in the team (FW-R32(7))',
     expect(bob.roster.mailReady()).toBe(false);
     expect(bob.messages.members('ops')).toEqual([]);
     await ada.settleWith(bob);
-    const { fingerprint } = await import('@dispatch/protocol/federation');
+    const { fingerprint } = await import('@dispatch-foo/protocol/federation');
     ada.roster.admit(bob.fed.replica, {
       fingerprint: fingerprint(bob.fed.keys.signPub, bob.fed.keys.sealPub),
     });

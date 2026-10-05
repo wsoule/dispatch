@@ -1,10 +1,8 @@
 import type {
-  EpicProgress,
-  MergeQueueEntry,
-  ReadinessReading,
-  RunMeta,
-} from '@dispatch/client';
-import type { Person, StatusModel, TaskListItem } from '@dispatch/core/browser';
+  Person,
+  StatusModel,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
 import {
   canonicalAssignee,
   hasStatusRole,
@@ -13,7 +11,13 @@ import {
   parentIdsOf,
   PRIORITY_ORDER,
   readyTasks,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type {
+  EpicProgress,
+  MergeQueueEntry,
+  ReadinessReading,
+  RunMeta,
+} from '@dispatch/client';
 
 import { isTerminalRunState } from './runState';
 import type { TaskAttention } from './taskAttention';

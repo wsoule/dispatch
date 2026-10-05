@@ -1,6 +1,6 @@
-import { isClientAddress, isReservedName } from '@dispatch/a2a';
-import { canonicalKind } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import { isClientAddress, isReservedName } from '@dispatch-foo/a2a';
+import { canonicalKind } from '@dispatch-foo/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 import type {
   AgentRecord,
   Delivery,
@@ -12,13 +12,13 @@ import type {
   Ref,
   Sender,
   SendInput,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import {
   DELIVERY_STATES,
   gateOf,
   parseAddress,
   SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import { randomBytes } from 'node:crypto';
 
 import { tokenHash } from '../a2a/auth.js';
@@ -140,7 +140,7 @@ interface RawSendBody {
 }
 
 // Narrows an unknown JSON body into a well-typed SendInput (shape only —
-// deep validation happens in @dispatch/protocol's validateSendInput).
+// deep validation happens in @dispatch-foo/protocol's validateSendInput).
 function parseSendInput(
   raw: unknown
 ): { ok: true; value: SendInput } | { ok: false; response: Response } {

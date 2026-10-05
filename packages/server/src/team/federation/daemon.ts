@@ -1,7 +1,15 @@
-import { LICENSE_PUBLIC_KEY } from '@dispatch/federation';
-import type { Address, DeliveryEngine, MessageStore } from '@dispatch/protocol';
-import { canonicalize, TAG, verifyText } from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+import { LICENSE_PUBLIC_KEY } from '@dispatch-foo/federation';
+import type {
+  Address,
+  DeliveryEngine,
+  MessageStore,
+} from '@dispatch-foo/protocol';
+import {
+  canonicalize,
+  TAG,
+  verifyText,
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 

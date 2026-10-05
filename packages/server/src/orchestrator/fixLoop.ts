@@ -1,11 +1,11 @@
-import { executorModels, loadConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch-foo/core';
 import type {
   ActorContext,
   EscalationStep,
   Finding,
   TaskDoc,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -25,7 +25,7 @@ import {
 } from './types.js';
 import { WorktreeManager } from './worktree.js';
 
-export type { EscalationStep } from '@dispatch/core';
+export type { EscalationStep } from '@dispatch-foo/core';
 
 /** The label a blocking ruling puts on the task, so it is visible on the board
  *  rather than only inside the finding that caused it. */

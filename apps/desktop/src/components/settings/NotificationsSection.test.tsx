@@ -1,4 +1,4 @@
-import { SECRET_URL_MASK_SUFFIX } from '@dispatch/core/browser';
+import { SECRET_URL_MASK_SUFFIX } from '@dispatch-foo/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

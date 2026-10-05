@@ -1,5 +1,5 @@
-import type { Priority, TaskListItem } from '@dispatch/core/browser';
-import { isContainerKind, PRIORITY_ORDER } from '@dispatch/core/browser';
+import type { Priority, TaskListItem } from '@dispatch-foo/core/browser';
+import { isContainerKind, PRIORITY_ORDER } from '@dispatch-foo/core/browser';
 
 import { assigneeLabel, assigneeRef, priorityLabel } from './taskDisplay';
 import type { TasksSubGrouping } from './tasksPrefs';

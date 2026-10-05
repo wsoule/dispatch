@@ -1,4 +1,8 @@
-import { gateOf, isDecidingAuthor, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import {
+  gateOf,
+  isDecidingAuthor,
+  SYSTEM_ADDRESS,
+} from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import { call, useWorld } from './world.js';

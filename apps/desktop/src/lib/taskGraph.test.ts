@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core/browser';
-import { defaultTaskFields, statusModelOf } from '@dispatch/core/browser';
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { defaultTaskFields, statusModelOf } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { computeBlockedIds } from './taskGraph';

@@ -1,11 +1,11 @@
-import type { LookupAll } from '@dispatch/a2a';
+import type { LookupAll } from '@dispatch-foo/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   openA2ADb,
   SqliteA2AStore,
-} from '@dispatch/a2a';
-import type { A2AConfig } from '@dispatch/core';
-import { DEFAULT_A2A } from '@dispatch/core';
+} from '@dispatch-foo/a2a';
+import type { A2AConfig } from '@dispatch-foo/core';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
 
 import { RunResultsMemo } from '../../src/a2a/artifacts.js';
 import { tokenHash } from '../../src/a2a/auth.js';

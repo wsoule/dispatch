@@ -1,4 +1,4 @@
-import { childEnv } from '@dispatch/core';
+import { childEnv } from '@dispatch-foo/core';
 
 // Thrown, never swallowed to `[]` — a failed `git ls-files` is not "no
 // tracked files" and must not read as one.

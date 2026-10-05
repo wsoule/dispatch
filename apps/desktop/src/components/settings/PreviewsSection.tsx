@@ -1,5 +1,5 @@
-import type { ConfigPatch, DispatchConfig } from '@dispatch/core/browser';
-import { previewSettings } from '@dispatch/core/browser';
+import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
+import { previewSettings } from '@dispatch-foo/core/browser';
 
 import {
   NumberSetting,

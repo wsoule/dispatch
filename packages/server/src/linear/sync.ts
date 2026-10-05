@@ -7,7 +7,7 @@ import {
   resolveLinearApiKey,
   UNRESOLVED_LINEAR_ASSIGNEE,
   writeProjectCredential,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CommentStorePort,
   CredentialSource,
@@ -22,7 +22,7 @@ import type {
   LinearUser,
   TaskDoc,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';

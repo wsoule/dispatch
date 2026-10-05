@@ -4,8 +4,13 @@ import {
   generateLedgerId,
   openDispatchDb,
   SqliteLedgerStore,
-} from '@dispatch/core';
-import type { AddLedgerInput, LedgerEntry, PolicyRuling } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type {
+  AddLedgerInput,
+  LedgerEntry,
+  PolicyRuling,
+} from '@dispatch-foo/core';
+import type { DeliveryEngine } from '@dispatch-foo/protocol';
 import {
   createMemoryIds,
   MemoryEngine,
@@ -24,7 +29,6 @@ import type {
   Principal,
   ValidMemoryInput,
 } from '@dispatch/memory';
-import type { DeliveryEngine } from '@dispatch/protocol';
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 

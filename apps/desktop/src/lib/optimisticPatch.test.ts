@@ -1,4 +1,4 @@
-import type { TaskMeta } from '@dispatch/core/browser';
+import type { TaskMeta } from '@dispatch-foo/core/browser';
 import { expect, test } from 'bun:test';
 
 import {

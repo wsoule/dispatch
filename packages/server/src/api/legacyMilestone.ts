@@ -1,4 +1,4 @@
-import { canonicalKind, resolveMilestoneRef } from '@dispatch/core';
+import { canonicalKind, resolveMilestoneRef } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 

@@ -1,5 +1,5 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
-import type { Person } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch-foo/core';
+import type { Person } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -4,7 +4,7 @@ import type {
   DocScope,
   DocStatus,
   LinkRel,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   assetNames,
   childEnv,
@@ -12,7 +12,7 @@ import {
   parseDocFile,
   renderDocFile,
   rewriteAssetLinks,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';

@@ -1,7 +1,7 @@
+import { isStub } from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { decayStore, memoryHandle, newMemoryEntry } from '@dispatch/memory';
 import type { MemoryEntry, Principal } from '@dispatch/memory';
-import { isStub } from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { arrivalTrust } from '../../../src/team/federation/memory.js';

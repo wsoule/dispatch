@@ -1,6 +1,6 @@
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { isDoneStatus } from '@dispatch/core/browser';
 import { ChevronDown, Plus } from 'lucide-react';
 import { useState } from 'react';
 

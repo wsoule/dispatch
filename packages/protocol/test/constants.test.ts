@@ -2,7 +2,7 @@ import {
   driftProblems,
   ENGINE_REGISTRIES,
   loadRegistry,
-} from '@dispatch/protocol-spec';
+} from '@dispatch-foo/protocol-spec';
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 

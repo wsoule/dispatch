@@ -1,4 +1,4 @@
-import type { LedgerEntry } from '@dispatch/core/browser';
+import type { LedgerEntry } from '@dispatch-foo/core/browser';
 
 import { isPolicyReceipt } from '../../lib/policyReceipts';
 import { LabelPill } from '@/ui/ai/pill';

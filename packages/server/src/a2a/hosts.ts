@@ -1,6 +1,6 @@
-import type { A2AStore, HostRow } from '@dispatch/a2a';
-import { isLoopbackHost } from '@dispatch/a2a';
-import type { Address } from '@dispatch/protocol';
+import type { A2AStore, HostRow } from '@dispatch-foo/a2a';
+import { isLoopbackHost } from '@dispatch-foo/a2a';
+import type { Address } from '@dispatch-foo/protocol';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { tokenHash } from './auth.js';

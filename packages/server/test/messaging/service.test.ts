@@ -1,4 +1,10 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
+import type { Delivery, Message, Sender } from '@dispatch-foo/protocol';
+import {
+  openMessagesDb,
+  SqliteMessageStore,
+  SYSTEM_ADDRESS,
+} from '@dispatch-foo/protocol';
 import {
   createMemoryIds,
   insertFresh,
@@ -6,12 +12,6 @@ import {
   openMemoryDb,
   SqliteMemoryStore,
 } from '@dispatch/memory';
-import type { Delivery, Message, Sender } from '@dispatch/protocol';
-import {
-  openMessagesDb,
-  SqliteMessageStore,
-  SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';

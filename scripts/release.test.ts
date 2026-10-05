@@ -76,7 +76,7 @@ const packageJson = `{
   "private": true,
   "license": "MIT",
   "dependencies": {
-    "@dispatch/core": "workspace:*"
+    "@dispatch-foo/core": "workspace:*"
   }
 }
 `;

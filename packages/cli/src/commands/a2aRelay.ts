@@ -1,4 +1,4 @@
-import type { RelayOptions } from '@dispatch/a2a';
+import type { RelayOptions } from '@dispatch-foo/a2a';
 import { readFileSync } from 'node:fs';
 
 import { CliError } from '../context.js';

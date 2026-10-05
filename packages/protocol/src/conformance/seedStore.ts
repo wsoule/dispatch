@@ -1,4 +1,4 @@
-import type { Given, Json, JsonObject } from '@dispatch/protocol-spec';
+import type { Given, Json, JsonObject } from '@dispatch-foo/protocol-spec';
 
 import type { Message, MessageKind, Ref } from '../envelope.js';
 import { DELIVERY_STATES } from '../store.js';

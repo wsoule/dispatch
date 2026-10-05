@@ -1,5 +1,5 @@
-import type { Address, Ref } from '@dispatch/protocol';
-import { createUlidFactory } from '@dispatch/protocol';
+import type { Address, Ref } from '@dispatch-foo/protocol';
+import { createUlidFactory } from '@dispatch-foo/protocol';
 
 import { memoryContentHash } from './contentHash.js';
 import { memoryHandle } from './handle.js';

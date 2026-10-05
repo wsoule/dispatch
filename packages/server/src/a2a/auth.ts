@@ -1,6 +1,6 @@
-import type { AuthMode, AuthResult } from '@dispatch/a2a';
-import { isClientAddress } from '@dispatch/a2a';
-import type { AgentRecord } from '@dispatch/protocol';
+import type { AuthMode, AuthResult } from '@dispatch-foo/a2a';
+import { isClientAddress } from '@dispatch-foo/a2a';
+import type { AgentRecord } from '@dispatch-foo/protocol';
 import { createHash } from 'node:crypto';
 
 // The one messages.db read these checks need: an agent row by token hash.

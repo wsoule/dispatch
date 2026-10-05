@@ -102,21 +102,21 @@ none of your runs or memory; replicating team memory is team-server work.
 
 ## Packages
 
-| Package              | Size                  | What it is                                                                                                                                     |
-| -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@dispatch/core`     | ~11.5k                | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding |
-| `@dispatch/protocol` | ~2.0k                 | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                 |
-| `@dispatch/memory`   | ~4.6k                 | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                |
-| `@dispatch/server`   | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
-| `@dispatch/cli`      | ~6.4k                 | The `dispatch` binary                                                                                                                          |
-| `@dispatch/mcp`      | ~2.8k                 | Stdio MCP server, 20 tools                                                                                                                     |
-| `@dispatch/client`   | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
-| `@dispatch/ui`       | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
-| `@dispatch/tokens`   | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |
-| `apps/desktop`       | ~67.4k TS + 8.6k Rust | The Tauri app: ~25 views, Rust shell, sidecar management                                                                                       |
-| `apps/demo`          | —                     | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                              |
-| `apps/site`          | —                     | Static marketing server (Railway)                                                                                                              |
-| `packages/demo`      | —                     | Seeds a demo repo — board, runs, records, teammate                                                                                             |
+| Package                  | Size                  | What it is                                                                                                                                     |
+| ------------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@dispatch-foo/core`     | ~11.5k                | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding |
+| `@dispatch-foo/protocol` | ~2.0k                 | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                 |
+| `@dispatch/memory`       | ~4.6k                 | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                |
+| `@dispatch/server`       | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
+| `@dispatch/cli`          | ~6.4k                 | The `dispatch` binary                                                                                                                          |
+| `@dispatch/mcp`          | ~2.8k                 | Stdio MCP server, 20 tools                                                                                                                     |
+| `@dispatch/client`       | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
+| `@dispatch/ui`           | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
+| `@dispatch/tokens`       | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |
+| `apps/desktop`           | ~67.4k TS + 8.6k Rust | The Tauri app: ~25 views, Rust shell, sidecar management                                                                                       |
+| `apps/demo`              | —                     | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                              |
+| `apps/site`              | —                     | Static marketing server (Railway)                                                                                                              |
+| `packages/demo`          | —                     | Seeds a demo repo — board, runs, records, teammate                                                                                             |
 
 ## The task model
 
@@ -266,8 +266,8 @@ Notable modules:
 Agents, runs and people talk over one persistent bus
 (`docs/specs/2026-09-23-messaging-core-design.md`).
 
-- **`@dispatch/protocol`** (MIT) holds the address grammar, the envelope and its
-  validation, the `MessageStore` interface with its SQLite store, and the
+- **`@dispatch-foo/protocol`** (MIT) holds the address grammar, the envelope and
+  its validation, the `MessageStore` interface with its SQLite store, and the
   `DeliveryEngine`: it resolves recipients, chooses push, notify or hold, runs
   the wake policy and the guardrails, and replays unfinished work at boot. It
   reaches the outside world only through a `MessagingHost`.

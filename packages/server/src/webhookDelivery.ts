@@ -1,4 +1,4 @@
-import type { NotificationsConfig } from '@dispatch/core';
+import type { NotificationsConfig } from '@dispatch-foo/core';
 
 import type { DecisionItem } from './decisionFeed.js';
 import type { EventBus } from './events.js';

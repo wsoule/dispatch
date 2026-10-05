@@ -1,4 +1,4 @@
-import { MAX_HANDLE_BYTES, TaskStore } from '@dispatch/core';
+import { MAX_HANDLE_BYTES, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

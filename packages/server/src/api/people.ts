@@ -6,8 +6,8 @@ import {
   TeamParseError,
   UNRESOLVED_LINEAR_ASSIGNEE,
   UNRESOLVED_LINEAR_PERSON,
-} from '@dispatch/core';
-import type { Person, TeamMember } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { Person, TeamMember } from '@dispatch-foo/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 

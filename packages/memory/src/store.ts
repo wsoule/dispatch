@@ -1,4 +1,4 @@
-import type { Address } from '@dispatch/protocol';
+import type { Address } from '@dispatch-foo/protocol';
 
 import type { ManifestRow } from './claudeFiles.js';
 import type { SearchMode } from './schema.js';

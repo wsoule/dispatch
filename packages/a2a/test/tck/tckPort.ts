@@ -1,4 +1,4 @@
-import type { Message } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 
 import { A2AError } from '../../src/errors.js';
 import type {

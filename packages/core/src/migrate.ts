@@ -21,7 +21,7 @@ import type { ProjectStores, SqliteRecordStores } from './storeBackend.js';
 // task board under `.dispatch/tasks` and the append-only JSONL sidecars beside
 // it — into the daemon's SQLite database.
 //
-// This lives in `@dispatch/core` rather than in the daemon for one hard
+// This lives in `@dispatch-foo/core` rather than in the daemon for one hard
 // reason: `@dispatch/cli` must stay Node-runnable and cannot import
 // `@dispatch/server` at all (it is Bun-only and publishes no root export — the
 // CLI only resolves its package.json to find a script to spawn). Both the

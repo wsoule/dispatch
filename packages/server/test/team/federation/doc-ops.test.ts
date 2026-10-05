@@ -1,5 +1,5 @@
-import { buildOp } from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+import { buildOp } from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

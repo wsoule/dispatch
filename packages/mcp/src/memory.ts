@@ -1,4 +1,4 @@
-import { memoryReadView } from '@dispatch/core';
+import { memoryReadView } from '@dispatch-foo/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';

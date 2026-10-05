@@ -1,5 +1,5 @@
-import { ecThumbprint, loadOrCreateLinkKeys } from '@dispatch/a2a';
-import { TaskStore } from '@dispatch/core';
+import { ecThumbprint, loadOrCreateLinkKeys } from '@dispatch-foo/a2a';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';

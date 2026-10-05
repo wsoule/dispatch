@@ -1,4 +1,4 @@
-import { hasA2AProvenance } from '@dispatch/a2a';
+import { hasA2AProvenance } from '@dispatch-foo/a2a';
 import type {
   DocProposal,
   DocScope,
@@ -6,14 +6,14 @@ import type {
   PolicyRuling,
   TaskRisk,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   isCanceledStatus,
   isCompletedStatus,
   TaskParseError,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { MessageStore } from '@dispatch-foo/protocol';
 import type { MemoryStore, MemoryStores, Operator } from '@dispatch/memory';
-import type { MessageStore } from '@dispatch/protocol';
 
 import { spawnGitSync } from '../blockingGit.js';
 import type { EventBus } from '../events.js';

@@ -1,10 +1,10 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import type {
   CreateInput,
   LinearIssue,
   TaskDoc,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -1,4 +1,4 @@
-import { ATTACHMENT_MAX_BYTES } from '@dispatch/core/browser';
+import { ATTACHMENT_MAX_BYTES } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {

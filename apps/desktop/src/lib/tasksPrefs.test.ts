@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core/browser';
-import { defaultTaskFields } from '@dispatch/core/browser';
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { defaultTaskFields } from '@dispatch-foo/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import {

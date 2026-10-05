@@ -1,7 +1,7 @@
-import { TASK_ID_PATTERN } from '@dispatch/core';
-import { parseAddress } from '@dispatch/protocol';
-import type { Address, Message } from '@dispatch/protocol';
-import { REPLICA_ID } from '@dispatch/protocol/federation';
+import { TASK_ID_PATTERN } from '@dispatch-foo/core';
+import { parseAddress } from '@dispatch-foo/protocol';
+import type { Address, Message } from '@dispatch-foo/protocol';
+import { REPLICA_ID } from '@dispatch-foo/protocol/federation';
 import type {
   AgentBody,
   ChannelBody,
@@ -10,7 +10,7 @@ import type {
   MailTarget,
   PresenceBody,
   StatePayload,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 import { readCaps } from './caps.js';
 import type { FedStore } from './store.js';

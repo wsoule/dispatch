@@ -1,4 +1,4 @@
-import type { SubagentNode } from '@dispatch/core/browser';
+import type { SubagentNode } from '@dispatch-foo/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'bun:test';
 

@@ -3,8 +3,8 @@ import {
   INITIATIVE_FIELDS,
   ISSUE_FIELDS,
   PROJECT_FIELDS,
-} from '@dispatch/core';
-import type { FieldBase, LinearEntity, StatusRoles } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { FieldBase, LinearEntity, StatusRoles } from '@dispatch-foo/core';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,

@@ -1,4 +1,4 @@
-import { startRelay, startStandalone } from '@dispatch/a2a';
+import { startRelay, startStandalone } from '@dispatch-foo/a2a';
 import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -33,7 +33,7 @@ interface ListenOptions {
   token?: string;
 }
 
-// A typed name as `clients add` stores it; mirrors @dispatch/a2a's clientNameFor.
+// A typed name as `clients add` stores it; mirrors @dispatch-foo/a2a's clientNameFor.
 function clientNameFor(raw: string): string {
   const normalized = raw
     .toLowerCase()

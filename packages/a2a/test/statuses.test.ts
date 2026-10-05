@@ -1,4 +1,4 @@
-import { CANONICAL_STATUSES } from '@dispatch/core';
+import { CANONICAL_STATUSES } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import {

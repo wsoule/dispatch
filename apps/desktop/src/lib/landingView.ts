@@ -1,3 +1,5 @@
+import type { StatusModel } from '@dispatch-foo/core/browser';
+import { isCompletedStatus, isContainerKind } from '@dispatch-foo/core/browser';
 import type {
   GateStatus,
   LandingGate,
@@ -6,8 +8,6 @@ import type {
   LandingSnapshot,
   RepoPr,
 } from '@dispatch/client';
-import type { StatusModel } from '@dispatch/core/browser';
-import { isCompletedStatus, isContainerKind } from '@dispatch/core/browser';
 
 import { activeStatusModel } from './statusModel';
 

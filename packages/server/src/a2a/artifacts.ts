@@ -1,5 +1,5 @@
-import type { TaskFacts } from '@dispatch/a2a';
-import { diffstatFromPatch, evidenceFact, prFact } from '@dispatch/a2a';
+import type { TaskFacts } from '@dispatch-foo/a2a';
+import { diffstatFromPatch, evidenceFact, prFact } from '@dispatch-foo/a2a';
 
 import type { RunMeta } from '../orchestrator/types.js';
 import { runKind, TERMINAL_RUN_STATES } from '../orchestrator/types.js';

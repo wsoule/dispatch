@@ -1,5 +1,5 @@
-import type { AgentStatus } from '@dispatch/protocol';
-import { openMessagesDb, SqliteMessageStore } from '@dispatch/protocol';
+import type { AgentStatus } from '@dispatch-foo/protocol';
+import { openMessagesDb, SqliteMessageStore } from '@dispatch-foo/protocol';
 import { expect } from 'bun:test';
 import { join } from 'node:path';
 

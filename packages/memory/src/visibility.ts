@@ -1,4 +1,4 @@
-import type { Address } from '@dispatch/protocol';
+import type { Address } from '@dispatch-foo/protocol';
 
 import { MemoryError } from './errors.js';
 import type {

@@ -1,10 +1,10 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type {
   ApiClient,
   Message,
   RemoteDeliveryRow,
   Settlement,
 } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 import { memo, useEffect, useState } from 'react';
 
 import { isFromA2A } from '../../lib/a2a';

@@ -1,6 +1,6 @@
 import type { Message as A2AMessage } from '@a2a-js/sdk';
-import { isSystemMarker, MessagingError } from '@dispatch/protocol';
-import type { Address, JsonValue, Message, Ref } from '@dispatch/protocol';
+import { isSystemMarker, MessagingError } from '@dispatch-foo/protocol';
+import type { Address, JsonValue, Message, Ref } from '@dispatch-foo/protocol';
 
 import { A2AError } from './errors.js';
 import {

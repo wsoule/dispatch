@@ -1,5 +1,5 @@
 import { Task } from '@a2a-js/sdk';
-import { CANONICAL_STATUSES } from '@dispatch/core';
+import { CANONICAL_STATUSES } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import { decideState, project, projectionKey } from '../src/projection.js';

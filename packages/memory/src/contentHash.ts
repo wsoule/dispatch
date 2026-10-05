@@ -1,4 +1,4 @@
-import type { Ref } from '@dispatch/protocol';
+import type { Ref } from '@dispatch-foo/protocol';
 import { createHash } from 'node:crypto';
 
 import type { MemoryKind } from './types.js';

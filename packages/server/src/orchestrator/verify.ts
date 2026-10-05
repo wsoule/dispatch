@@ -1,5 +1,5 @@
-import { executorModels, loadConfig } from '@dispatch/core';
-import type { TaskDoc, TaskStorePort, VerifyConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch-foo/core';
+import type { TaskDoc, TaskStorePort, VerifyConfig } from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';

@@ -1,4 +1,4 @@
-import { parseTaskFile } from '@dispatch/core';
+import { parseTaskFile } from '@dispatch-foo/core';
 import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

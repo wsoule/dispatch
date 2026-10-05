@@ -1,5 +1,5 @@
 // Pure data shapes, no node:* imports, so this is safe for the desktop
-// webview via the '@dispatch/core/browser' entry point.
+// webview via the '@dispatch-foo/core/browser' entry point.
 
 export type FindingSeverity = 'critical' | 'important' | 'minor';
 export type FindingVerdict = 'open' | 'addressed' | 'parked' | 'blocked';

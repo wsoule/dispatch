@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core';
-import { defaultTaskFields } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { defaultTaskFields } from '@dispatch-foo/core';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';

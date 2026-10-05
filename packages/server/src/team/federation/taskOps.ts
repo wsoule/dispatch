@@ -1,6 +1,6 @@
-import type { JsonValue } from '@dispatch/protocol';
-import { MAX_OP_BYTES } from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { MAX_OP_BYTES } from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 
 import type { BoardOp } from '../boardSync/engine.js';
 import { recordLocal, splitBody } from '../boardSync/engine.js';

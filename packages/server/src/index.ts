@@ -17,7 +17,7 @@ import {
   syncSettings,
   TaskStore,
   totalImported,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CartoMode,
   CommentStorePort,
@@ -27,8 +27,8 @@ import type {
   SyncConfig,
   TaskStoreBackend,
   TaskStorePort,
-} from '@dispatch/core';
-import { printable } from '@dispatch/federation';
+} from '@dispatch-foo/core';
+import { printable } from '@dispatch-foo/federation';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
@@ -420,7 +420,7 @@ const DESKTOP_DIST_DIR = join(
  * recorded a choice yet; once it has, the marker is the answer. No marker and
  * no variable means `sqlite`: the database is the default, and a project that
  * still has a markdown board is moved across by the one-time import in
- * `@dispatch/core`'s migrate.ts, which `startServer` runs before it serves
+ * `@dispatch-foo/core`'s migrate.ts, which `startServer` runs before it serves
  * anything — the board is copied in one transaction, or the daemon refuses
  * to come up, so a boot never leaves a repo with two half-states. The marker
  * is written only after that import has committed.

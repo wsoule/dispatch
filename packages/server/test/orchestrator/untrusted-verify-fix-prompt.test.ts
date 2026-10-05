@@ -1,5 +1,5 @@
-import type { Finding, TaskDoc, VerifyConfig } from '@dispatch/core';
-import { defaultTaskFields } from '@dispatch/core';
+import type { Finding, TaskDoc, VerifyConfig } from '@dispatch-foo/core';
+import { defaultTaskFields } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import { buildFixPrompt } from '../../src/orchestrator/fixLoop.js';

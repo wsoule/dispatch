@@ -1,5 +1,5 @@
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { isDoneStatus } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 
 /**
  * The client-side v0 of the planning queue's weighted scoring (epic e-ba8bf1): a task's

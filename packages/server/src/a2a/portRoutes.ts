@@ -5,15 +5,15 @@ import type {
   ListQuery,
   ReceivedRequest,
   TaskStateName,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   FORWARDED_SIGNATURE_HEADERS,
   parsePortContinue,
   parsePortOpen,
   PORT_CLIENT_HEADER,
   portErrorJson,
-} from '@dispatch/a2a';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';

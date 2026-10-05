@@ -2,8 +2,8 @@ import {
   commentInputError,
   commentThreadIds,
   FileCommentStore,
-} from '@dispatch/core';
-import type { CommentStorePort, TaskComment } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { CommentStorePort, TaskComment } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { humanActor } from './caller.js';

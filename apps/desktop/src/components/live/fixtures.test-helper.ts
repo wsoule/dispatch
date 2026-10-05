@@ -1,5 +1,5 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { EpicProgress, EpicSession, RunMeta } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 
 // Builders for the Live view's tests: tasks, fan-out progress and runs, with just the
 // fields the Live model reads.

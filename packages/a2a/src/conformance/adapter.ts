@@ -1,6 +1,6 @@
 import { Message as A2AMessage } from '@a2a-js/sdk';
-import { MessagingError } from '@dispatch/protocol';
-import type { Address, Message, SendInput } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
+import type { Address, Message, SendInput } from '@dispatch-foo/protocol';
 import type {
   Hello,
   Json,
@@ -8,13 +8,13 @@ import type {
   Observation,
   RunnableVector,
   Step,
-} from '@dispatch/protocol-spec';
+} from '@dispatch-foo/protocol-spec';
 import {
   REFERENCE_HELLO,
   runVector,
   UnsupportedOp,
-} from '@dispatch/protocol/conformance';
-import type { OpContext, OpHandler } from '@dispatch/protocol/conformance';
+} from '@dispatch-foo/protocol/conformance';
+import type { OpContext, OpHandler } from '@dispatch-foo/protocol/conformance';
 
 import packageJson from '../../package.json';
 import { decodeInbound } from '../codec.js';

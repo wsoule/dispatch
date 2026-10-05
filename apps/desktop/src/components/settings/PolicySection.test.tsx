@@ -1,9 +1,9 @@
-import type { ApiClient } from '@dispatch/client';
 import type {
   DispatchConfig,
   LedgerEntry,
   PolicyConfig,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { ApiClient } from '@dispatch/client';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

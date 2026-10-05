@@ -15,7 +15,7 @@ import {
   TaskParseError,
   untrustedFenced,
   updateConfig,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CommentStorePort,
   ConfigPatch,
@@ -28,16 +28,16 @@ import type {
   TaskStoreBackend,
   UpdatePatch,
   VerifyConfig,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   ActorContext,
   EffortLevel,
   TaskDoc,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { Sender } from '@dispatch-foo/protocol';
+import { gateOf, MessagingError } from '@dispatch-foo/protocol';
 import { MemoryBusyError, MemoryError } from '@dispatch/memory';
-import type { Sender } from '@dispatch/protocol';
-import { gateOf, MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -6926,7 +6926,7 @@ export async function handleApi(
         413
       );
     }
-    // Messaging routes let @dispatch/protocol's MessagingError surface
+    // Messaging routes let @dispatch-foo/protocol's MessagingError surface
     // rather than pre-validating; `code` maps to the same statuses below.
     if (err instanceof MessagingError) {
       const status: Record<MessagingError['code'], number> = {

@@ -1,5 +1,5 @@
-import type { LedgerEntry } from '@dispatch/core/browser';
-import { describePolicyAuthorization } from '@dispatch/core/browser';
+import type { LedgerEntry } from '@dispatch-foo/core/browser';
+import { describePolicyAuthorization } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { isPolicyReceipt, policyReceipts } from './policyReceipts';

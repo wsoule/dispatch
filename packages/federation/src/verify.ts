@@ -4,12 +4,12 @@ import {
   isStub,
   opHash,
   verifyEntry,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   ChainHead,
   FederatedOp,
   LogEntry,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 /** A replica's keys as its key op carried them; pinned once, never replaced. */
 export interface PinnedKey {

@@ -2,8 +2,8 @@ import type {
   ActorContext,
   ProjectStores,
   ReceiptsScope,
-} from '@dispatch/core';
-import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch-foo/core';
 
 import type { EventBus, ServerEvent } from '../events.js';
 import type { PushTarget } from '../gitTarget.js';

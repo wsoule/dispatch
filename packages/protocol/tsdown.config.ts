@@ -10,6 +10,6 @@ export default defineConfig({
   },
   // The ./conformance types name the kit's (Hello, Observation, Step, …); the
   // kit is a devDependency, so its types are inlined, never imported.
-  dts: { resolve: ['@dispatch/protocol-spec'] },
+  dts: { resolve: ['@dispatch-foo/protocol-spec'] },
   format: ['esm'],
 });

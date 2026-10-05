@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { EventBus } from '../../src/events.js';

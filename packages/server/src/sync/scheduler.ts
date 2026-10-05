@@ -1,5 +1,5 @@
-import type { ActorContext } from '@dispatch/core';
-import { loadConfig } from '@dispatch/core';
+import type { ActorContext } from '@dispatch-foo/core';
+import { loadConfig } from '@dispatch-foo/core';
 
 import type { EventBus } from '../events.js';
 import { markBlockingSection } from '../watchdog.js';

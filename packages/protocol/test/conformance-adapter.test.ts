@@ -3,8 +3,8 @@ import {
   compare,
   loadRegistry,
   prepareVector,
-} from '@dispatch/protocol-spec';
-import type { Vector } from '@dispatch/protocol-spec';
+} from '@dispatch-foo/protocol-spec';
+import type { Vector } from '@dispatch-foo/protocol-spec';
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 

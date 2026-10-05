@@ -1,5 +1,5 @@
-import type { StreamResponseJson } from '@dispatch/a2a';
-import { handleA2A, IpLimiter, PUSH_LIMITS } from '@dispatch/a2a';
+import type { StreamResponseJson } from '@dispatch-foo/a2a';
+import { handleA2A, IpLimiter, PUSH_LIMITS } from '@dispatch-foo/a2a';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { gatherFacts } from '../../src/a2a/facts.js';

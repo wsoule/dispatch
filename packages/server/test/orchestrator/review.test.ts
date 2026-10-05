@@ -1,6 +1,6 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
-import type { Finding, TaskDoc, TaskRisk } from '@dispatch/core';
-import { defaultTaskFields } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch-foo/core';
+import type { Finding, TaskDoc, TaskRisk } from '@dispatch-foo/core';
+import { defaultTaskFields } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

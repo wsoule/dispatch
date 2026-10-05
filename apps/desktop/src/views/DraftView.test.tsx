@@ -1,5 +1,5 @@
+import type { CreateInput } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
-import type { CreateInput } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

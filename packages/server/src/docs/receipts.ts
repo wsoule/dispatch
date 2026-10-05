@@ -1,4 +1,4 @@
-import type { DocFileMeta } from '@dispatch/core';
+import type { DocFileMeta } from '@dispatch-foo/core';
 import {
   docBodyProblem,
   DOCS_LIMITS,
@@ -7,7 +7,7 @@ import {
   normalizeDocText,
   parseDocFile,
   renderDocFile,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { createHash } from 'node:crypto';
 import {
   existsSync,

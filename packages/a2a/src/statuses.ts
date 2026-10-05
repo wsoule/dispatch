@@ -1,4 +1,4 @@
-import { CANONICAL_STATUSES, canonicalStatus } from '@dispatch/core';
+import { CANONICAL_STATUSES, canonicalStatus } from '@dispatch-foo/core';
 
 // Where a task sits in a handoff's life, whatever the project calls the status.
 export type HandoffPhase =

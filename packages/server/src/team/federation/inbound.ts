@@ -1,6 +1,6 @@
-import type { RosterView } from '@dispatch/federation';
-import { MessagingError } from '@dispatch/protocol';
-import type { Delivery, DeliveryEngine, Message } from '@dispatch/protocol';
+import type { RosterView } from '@dispatch-foo/federation';
+import { MessagingError } from '@dispatch-foo/protocol';
+import type { Delivery, DeliveryEngine, Message } from '@dispatch-foo/protocol';
 import {
   contentHash,
   fromB64u,
@@ -9,13 +9,13 @@ import {
   openWithKey,
   opHash,
   unwrapContentKey,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   FederatedOp,
   MailPayload,
   MailTarget,
   StatePayload,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 import type { Homes } from './homes.js';
 import { recordSealed } from './mail.js';

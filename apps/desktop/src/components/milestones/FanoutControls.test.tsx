@@ -1,3 +1,5 @@
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
 import type {
   EpicChildPhase,
   EpicProgress,
@@ -5,8 +7,6 @@ import type {
   EpicSession,
   EpicWave,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

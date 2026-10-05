@@ -1,5 +1,5 @@
 {
-  "name": "@dispatch/core",
+  "name": "@dispatch-foo/core",
   "version": "0.24.0",
   "private": true,
   "license": "MIT",

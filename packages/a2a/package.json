@@ -1,5 +1,5 @@
 {
-  "name": "@dispatch/a2a",
+  "name": "@dispatch-foo/a2a",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -21,12 +21,12 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "catalog:",
-    "@dispatch/core": "workspace:*",
-    "@dispatch/protocol": "workspace:*",
+    "@dispatch-foo/core": "workspace:*",
+    "@dispatch-foo/protocol": "workspace:*",
     "jose": "catalog:"
   },
   "devDependencies": {
-    "@dispatch/protocol-spec": "workspace:*",
+    "@dispatch-foo/protocol-spec": "workspace:*",
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"

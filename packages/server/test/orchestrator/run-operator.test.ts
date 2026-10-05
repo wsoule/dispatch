@@ -1,4 +1,4 @@
-import { ActorContext } from '@dispatch/core';
+import { ActorContext } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';

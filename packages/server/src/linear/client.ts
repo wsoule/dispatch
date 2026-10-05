@@ -16,7 +16,7 @@ import type {
   LinearUser,
   LinearWorkflowState,
   TaskCycle,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import * as Q from './queries.js';
 

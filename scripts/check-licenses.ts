@@ -16,16 +16,16 @@ import { fileURLToPath } from 'node:url';
 // Expected license per workspace package; the CI guard for the hybrid
 // open-core decision (2026-08-23). UNLICENSED packages need no LICENSE file.
 const EXPECTED: Record<string, string> = {
-  '@dispatch/core': 'MIT',
+  '@dispatch-foo/core': 'MIT',
   '@dispatch/client': 'MIT',
   '@dispatch/cli': 'MIT',
   '@dispatch/mcp': 'MIT',
-  '@dispatch/protocol': 'MIT',
+  '@dispatch-foo/protocol': 'MIT',
   '@dispatch/memory': 'MIT',
-  '@dispatch/protocol-spec': 'Apache-2.0',
-  '@dispatch/a2a': 'MIT',
+  '@dispatch-foo/protocol-spec': 'Apache-2.0',
+  '@dispatch-foo/a2a': 'MIT',
   // Shared with the relay: log verification and the license check.
-  '@dispatch/federation': 'Elastic-2.0',
+  '@dispatch-foo/federation': 'Elastic-2.0',
   // The daemon is FSL, except its team features (see LICENSED_DIRS).
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',

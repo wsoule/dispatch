@@ -1,5 +1,5 @@
-import type { A2AConfig } from '@dispatch/core';
-import { DEFAULT_A2A } from '@dispatch/core';
+import type { A2AConfig } from '@dispatch-foo/core';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
 import { randomBytes } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';

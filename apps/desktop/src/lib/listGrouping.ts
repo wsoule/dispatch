@@ -3,13 +3,13 @@ import type {
   Priority,
   StatusModel,
   TaskListItem,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import {
   canonicalKind,
   isContainerKind,
   isDoneStatus,
   PRIORITY_ORDER,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 
 import { statusColor } from '../components/tasks/StatusIcon';
 import { isMilestoneFinished, rollupMilestoneStatus } from './milestoneRollup';

@@ -1,11 +1,11 @@
-import type { A2AConfig, A2ASkill } from '@dispatch/core';
+import type { A2AConfig, A2ASkill } from '@dispatch-foo/core';
 import type {
   Address,
   DeliveryState,
   JsonValue,
   Message,
   Ref,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 
 import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
 import type { PushConfigInput, PushConfigJson } from './push.js';

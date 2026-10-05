@@ -7,7 +7,7 @@
 export const DEEP_LINK_SCHEME = 'dispatch';
 
 // Hand-copied from packages/core/src/ids.ts's TASK_ID_PATTERN: core's `ids.ts`
-// imports `node:crypto` and is not re-exported from `@dispatch/core/browser`,
+// imports `node:crypto` and is not re-exported from `@dispatch-foo/core/browser`,
 // so the desktop cannot import `isTaskId`. Kept byte-identical so a link never
 // accepts an id the store would refuse.
 const TASK_ID_PATTERN = /^[te]-[0-9a-f]{6,12}$/;

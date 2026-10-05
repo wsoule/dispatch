@@ -1,9 +1,9 @@
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import {
   isContainerKind,
   isDoneStatus,
   parseLinearExternal,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import { ArrowUpRight, CalendarArrowUp, Link2, Move, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 

@@ -3,7 +3,7 @@ import {
   openSqliteDb,
   TaskStore,
   writeA2ASigningKey,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {

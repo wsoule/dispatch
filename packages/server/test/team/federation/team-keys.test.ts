@@ -1,4 +1,4 @@
-import type { RosterView } from '@dispatch/federation';
+import type { RosterView } from '@dispatch-foo/federation';
 import { describe, expect, it } from 'bun:test';
 
 import {

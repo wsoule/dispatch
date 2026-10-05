@@ -3,7 +3,7 @@ import type {
   Given,
   Json,
   JsonObject,
-} from '@dispatch/protocol-spec';
+} from '@dispatch-foo/protocol-spec';
 
 import type { Address } from '../address.js';
 import type { Sender } from '../engine.js';

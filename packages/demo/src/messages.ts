@@ -4,13 +4,13 @@ import {
   createUlidFactory,
   openMessagesDb,
   SqliteMessageStore,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import type {
   Address,
   Delivery,
   DeliveryState,
   Message,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 

@@ -6,12 +6,12 @@ import {
   sha256Hex,
   stubOf,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   FederatedOp,
   LogEntry,
   PresenceBody,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import { writeFileSync } from 'node:fs';
 
 // Regenerates vectors/chain from fixed seeds: `bun

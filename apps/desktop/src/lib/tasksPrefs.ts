@@ -1,4 +1,4 @@
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 
 import { TASKS_VIEW_TABS, type TasksViewMode } from './tasksViewMode';
 

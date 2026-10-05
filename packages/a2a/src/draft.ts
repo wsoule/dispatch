@@ -1,10 +1,10 @@
-import type { CreateInput } from '@dispatch/core';
+import type { CreateInput } from '@dispatch-foo/core';
 import {
   untrustedBlock,
   untrustedFenced,
   untrustedInline,
-} from '@dispatch/core';
-import type { Address } from '@dispatch/protocol';
+} from '@dispatch-foo/core';
+import type { Address } from '@dispatch-foo/protocol';
 
 import type { WorkRequestV1 } from './ext.js';
 

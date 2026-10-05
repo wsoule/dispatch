@@ -1,4 +1,4 @@
-import type { LedgerEntry } from '@dispatch/core/browser';
+import type { LedgerEntry } from '@dispatch-foo/core/browser';
 
 // The phrase core's describePolicyAuthorization writes into every
 // auto-decision's ledger detail — the one marker separating a policy receipt

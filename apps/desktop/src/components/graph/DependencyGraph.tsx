@@ -1,4 +1,4 @@
-import { statusLabel } from '@dispatch/core/browser';
+import { statusLabel } from '@dispatch-foo/core/browser';
 import { Waypoints } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';

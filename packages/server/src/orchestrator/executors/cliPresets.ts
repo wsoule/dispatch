@@ -1,4 +1,4 @@
-import type { ExecutorCommand } from '@dispatch/core';
+import type { ExecutorCommand } from '@dispatch-foo/core';
 
 /**
  * Ready-made invocations for CLI agents people already have installed.

@@ -1,4 +1,4 @@
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { childrenByParent } from '../flightplan/flightScope';

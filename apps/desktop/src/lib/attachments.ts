@@ -1,5 +1,5 @@
-import { ATTACHMENT_MAX_BYTES } from '@dispatch/core/browser';
-import type { TaskAttachment } from '@dispatch/core/browser';
+import { ATTACHMENT_MAX_BYTES } from '@dispatch-foo/core/browser';
+import type { TaskAttachment } from '@dispatch-foo/core/browser';
 
 import { formatBytes } from './formatBytes';
 

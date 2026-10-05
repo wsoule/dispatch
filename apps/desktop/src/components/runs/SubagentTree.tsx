@@ -1,5 +1,8 @@
-import type { SubagentNode, SubagentTreeNode } from '@dispatch/core/browser';
-import { flattenSubagentTree, nestSubagents } from '@dispatch/core/browser';
+import type {
+  SubagentNode,
+  SubagentTreeNode,
+} from '@dispatch-foo/core/browser';
+import { flattenSubagentTree, nestSubagents } from '@dispatch-foo/core/browser';
 import { Bot, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 

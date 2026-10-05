@@ -1,5 +1,5 @@
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
-import { opHash } from '@dispatch/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
+import { opHash } from '@dispatch-foo/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { chmodSync } from 'node:fs';
 

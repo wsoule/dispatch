@@ -1,3 +1,5 @@
+import { describeValue, parseLinearExternal } from '@dispatch-foo/core/browser';
+import type { StatusRoles } from '@dispatch-foo/core/browser';
 import { ApiError } from '@dispatch/client';
 import type {
   LinearIssueLink,
@@ -5,8 +7,6 @@ import type {
   LinearStatus,
   LinearSyncSummary,
 } from '@dispatch/client';
-import { describeValue, parseLinearExternal } from '@dispatch/core/browser';
-import type { StatusRoles } from '@dispatch/core/browser';
 
 import { formatRelativeTimeFromIso } from './format';
 

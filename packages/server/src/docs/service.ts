@@ -22,7 +22,7 @@ import type {
   PolicyRuling,
   ProposalState,
   RevisionCause,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   ASSET_NAME,
   assetNames,
@@ -38,10 +38,10 @@ import {
   parseDocFile,
   rewriteAssetLinks,
   untrustedInline,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
+import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
-import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 

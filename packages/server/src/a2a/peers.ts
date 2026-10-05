@@ -5,7 +5,7 @@ import type {
   PeerRow,
   PeerSecret,
   PeerStatus,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   a2aFingerprint,
   AddressRefusedError,
@@ -20,23 +20,23 @@ import {
   SIG_EXTENSION_URI,
   summarizeCard,
   UnresolvedHostError,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   clearPeerCredential,
   readPeerCredential,
   writePeerCredential,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   Address,
   ExternalAdmission,
   ExternalTarget,
   JsonValue,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import {
   MessagingError,
   PEER_ALIAS_PATTERN,
   SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import { createPublicKey, randomUUID } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 

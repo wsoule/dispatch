@@ -1,4 +1,4 @@
-import type { TaskComment } from '@dispatch/core/browser';
+import type { TaskComment } from '@dispatch-foo/core/browser';
 import { ArrowUp, Ellipsis, Link2, Reply } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 

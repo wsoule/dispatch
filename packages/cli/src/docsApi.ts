@@ -11,7 +11,7 @@ import type {
   DocSummary,
   LinkRel,
   ProposalState,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import { CliError } from './context.js';
 

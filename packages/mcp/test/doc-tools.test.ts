@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core';
-import { TaskStore } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';

@@ -1,5 +1,5 @@
-import type { TaskComment, TaskDoc } from '@dispatch/core';
-import { appendActivity, defaultTaskFields } from '@dispatch/core';
+import type { TaskComment, TaskDoc } from '@dispatch-foo/core';
+import { appendActivity, defaultTaskFields } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import type { RepoOrientation } from '../../src/orchestrator/orientation.js';

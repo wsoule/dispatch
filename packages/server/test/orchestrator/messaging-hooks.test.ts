@@ -3,7 +3,7 @@ import type {
   Options,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,

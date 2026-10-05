@@ -1,5 +1,5 @@
-import { describeValue, PRIORITIES, TASK_RISKS } from '@dispatch/core';
-import type { Priority, TaskRisk } from '@dispatch/core';
+import { describeValue, PRIORITIES, TASK_RISKS } from '@dispatch-foo/core';
+import type { Priority, TaskRisk } from '@dispatch-foo/core';
 
 import { OrchestratorClientError } from './types.js';
 

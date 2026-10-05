@@ -1,5 +1,5 @@
-import type { AddLedgerInput } from '@dispatch/core';
-import { openSqliteDb } from '@dispatch/core';
+import type { AddLedgerInput } from '@dispatch-foo/core';
+import { openSqliteDb } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

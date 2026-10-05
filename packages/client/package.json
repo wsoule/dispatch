@@ -20,7 +20,7 @@
     "react": "catalog:"
   },
   "devDependencies": {
-    "@dispatch/core": "workspace:*",
+    "@dispatch-foo/core": "workspace:*",
     "@types/bun": "catalog:",
     "@types/react": "catalog:",
     "tsdown": "catalog:",

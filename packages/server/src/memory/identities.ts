@@ -1,7 +1,12 @@
-import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
-import type { SqliteDatabase } from '@dispatch/core';
+import {
+  dbVersion,
+  openSqliteDb,
+  queryAll,
+  queryOne,
+} from '@dispatch-foo/core';
+import type { SqliteDatabase } from '@dispatch-foo/core';
+import { createUlidFactory } from '@dispatch-foo/protocol';
 import { isSqliteBusy, MemoryBusyError, MemoryError } from '@dispatch/memory';
-import { createUlidFactory } from '@dispatch/protocol';
 import { createHash, randomBytes as cryptoRandomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

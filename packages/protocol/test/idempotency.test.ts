@@ -1,4 +1,4 @@
-import type { SqliteDatabase } from '@dispatch/core';
+import type { SqliteDatabase } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DeliveryEngine } from '../src/engine.js';

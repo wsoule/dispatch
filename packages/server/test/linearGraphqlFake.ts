@@ -8,7 +8,7 @@ import type {
   LinearProject,
   LinearUser,
   LinearWorkflowState,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 export interface GraphqlWorld {
   viewer: LinearUser;

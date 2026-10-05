@@ -1,9 +1,8 @@
-import type { ApiClient } from '@dispatch/client';
 import type {
   EffortLevel,
   TaskListItem,
   UpdatePatch,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import {
   isCanceledStatus,
   isContainer,
@@ -11,7 +10,8 @@ import {
   parseLinearExternal,
   statusLabel,
   statusType,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { ApiClient } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
 import {
   Archive,

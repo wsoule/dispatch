@@ -1,4 +1,4 @@
-import { isClientAddress } from '@dispatch/a2a';
+import { isClientAddress } from '@dispatch-foo/a2a';
 import { timingSafeEqual } from 'node:crypto';
 
 import { tokenHash } from '../a2a/auth.js';

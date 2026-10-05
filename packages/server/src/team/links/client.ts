@@ -1,10 +1,10 @@
-import { PeerHttpError } from '@dispatch/a2a';
+import { PeerHttpError } from '@dispatch-foo/a2a';
 import type {
   LinkPayload,
   MessageJson,
   PeerSendResult,
   TaskJson,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 
 import type { LinkHub } from './hub.js';
 import { provisionalTaskId } from './hub.js';

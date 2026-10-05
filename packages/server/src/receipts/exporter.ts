@@ -3,9 +3,9 @@ import type {
   DispatchConfig,
   ReceiptsExport,
   ReceiptsScope,
-} from '@dispatch/core';
-import { DEFAULT_RECEIPTS, receiptSteps } from '@dispatch/core';
-import type { ProjectStores } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import { DEFAULT_RECEIPTS, receiptSteps } from '@dispatch-foo/core';
+import type { ProjectStores } from '@dispatch-foo/core';
 import {
   existsSync,
   mkdirSync,
@@ -20,7 +20,7 @@ import { receiptsDir as defaultReceiptsDir } from '../orchestrator/paths.js';
 import type { AsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';
 
-// The git half of the receipt log. `materializeReceipts` in @dispatch/core owns
+// The git half of the receipt log. `materializeReceipts` in @dispatch-foo/core owns
 // the FORMAT — which files exist and what is in them; this owns the REPOSITORY
 // — where the log lives, that it is a git repo at all, and when a commit
 // happens.

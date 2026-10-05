@@ -1,10 +1,10 @@
+import { statusModelOf } from '@dispatch-foo/core/browser';
+import type { LinearConfig, StatusRoles } from '@dispatch-foo/core/browser';
 import type {
   LinearSyncSummary,
   LinearTeam,
   LinearViewer,
 } from '@dispatch/client';
-import { statusModelOf } from '@dispatch/core/browser';
-import type { LinearConfig, StatusRoles } from '@dispatch/core/browser';
 import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 

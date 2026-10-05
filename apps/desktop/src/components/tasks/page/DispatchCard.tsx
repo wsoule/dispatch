@@ -1,5 +1,5 @@
+import type { EffortLevel } from '@dispatch-foo/core/browser';
 import type { ExecutorsResponse } from '@dispatch/client';
-import type { EffortLevel } from '@dispatch/core/browser';
 import {
   Check,
   CircleSlash,

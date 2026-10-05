@@ -1,6 +1,6 @@
-import type { CommandEvidence } from '@dispatch/core';
-import { untrustedInline } from '@dispatch/core';
-import type { JsonValue, Message } from '@dispatch/protocol';
+import type { CommandEvidence } from '@dispatch-foo/core';
+import { untrustedInline } from '@dispatch-foo/core';
+import type { JsonValue, Message } from '@dispatch-foo/protocol';
 
 import { utf8Bytes } from './ext.js';
 import type { WorkArtifactV1 } from './ext.js';

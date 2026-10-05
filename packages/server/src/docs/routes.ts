@@ -6,13 +6,13 @@ import type {
   LinkTarget,
   LinkTargetType,
   ProposalState,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   DOC_STATUSES,
   DOCS_LIMITS,
   LINK_RELS,
   LINK_TARGET_TYPES,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { humanOperator, requestActor } from '../api/caller.js';

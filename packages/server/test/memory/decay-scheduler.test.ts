@@ -1,4 +1,6 @@
-import { DEFAULT_MEMORY } from '@dispatch/core';
+import { DEFAULT_MEMORY } from '@dispatch-foo/core';
+import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
+import type { DeliveryEngine, Message } from '@dispatch-foo/protocol';
 import { createMemoryIds, insertFresh, newMemoryEntry } from '@dispatch/memory';
 import type {
   MemoryEntry,
@@ -6,8 +8,6 @@ import type {
   MemoryStore,
   Principal,
 } from '@dispatch/memory';
-import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import type { DeliveryEngine, Message } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';

@@ -1,5 +1,8 @@
-import { DEFAULT_STATUS_MODEL, statusModelOf } from '@dispatch/core/browser';
-import type { StatusModel } from '@dispatch/core/browser';
+import {
+  DEFAULT_STATUS_MODEL,
+  statusModelOf,
+} from '@dispatch-foo/core/browser';
+import type { StatusModel } from '@dispatch-foo/core/browser';
 import { useMemo, useSyncExternalStore } from 'react';
 
 // The open project's status types and lifecycle roles, held at module level

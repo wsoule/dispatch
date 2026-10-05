@@ -1,5 +1,5 @@
-import type { JsonValue } from '@dispatch/protocol';
-import { canonicalize } from '@dispatch/protocol/federation';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { canonicalize } from '@dispatch-foo/protocol/federation';
 import {
   createHash,
   createPublicKey,

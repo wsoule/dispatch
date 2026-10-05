@@ -1,5 +1,5 @@
-import type { DocStatus } from '@dispatch/core';
-import { untrustedInline, untrustedVerbatim } from '@dispatch/core';
+import type { DocStatus } from '@dispatch-foo/core';
+import { untrustedInline, untrustedVerbatim } from '@dispatch-foo/core';
 
 import { cutUtf8, splitLines, utf8Bytes } from './sections.js';
 

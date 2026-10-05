@@ -1,5 +1,5 @@
-import { ActorContext, fanoutScope, TaskStore } from '@dispatch/core';
-import type { CreateInput } from '@dispatch/core';
+import { ActorContext, fanoutScope, TaskStore } from '@dispatch-foo/core';
+import type { CreateInput } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -4,8 +4,8 @@ import {
   signText,
   TAG,
   verifyEntry,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 
 import type { ReadHints, SignedAcks, SyncRepo } from '../boardSync/repo.js';
 import { TransportOffline } from './transport.js';

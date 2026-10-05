@@ -8,8 +8,13 @@ import type {
   RevisionCause,
   SqliteDatabase,
   SqlValue,
-} from '@dispatch/core';
-import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import {
+  dbVersion,
+  openSqliteDb,
+  queryAll,
+  queryOne,
+} from '@dispatch-foo/core';
 import { statSync } from 'node:fs';
 
 // docs.db: every table of every stage, created at once so no later stage needs

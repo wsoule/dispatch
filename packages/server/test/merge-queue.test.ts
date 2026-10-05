@@ -1,4 +1,4 @@
-import { DISPATCH_DIR, TaskStore } from '@dispatch/core';
+import { DISPATCH_DIR, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,

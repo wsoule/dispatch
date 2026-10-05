@@ -1,7 +1,7 @@
-import { queryAll, queryOne } from '@dispatch/core';
-import type { SqliteDatabase, SqlValue } from '@dispatch/core';
-import type { Address } from '@dispatch/protocol';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { queryAll, queryOne } from '@dispatch-foo/core';
+import type { SqliteDatabase, SqlValue } from '@dispatch-foo/core';
+import type { Address } from '@dispatch-foo/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import {
   chmodSync,
   closeSync,

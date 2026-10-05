@@ -1,5 +1,5 @@
 {
-  "name": "@dispatch/protocol",
+  "name": "@dispatch-foo/protocol",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -31,10 +31,10 @@
     "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
-    "@dispatch/core": "workspace:*"
+    "@dispatch-foo/core": "workspace:*"
   },
   "devDependencies": {
-    "@dispatch/protocol-spec": "workspace:*",
+    "@dispatch-foo/protocol-spec": "workspace:*",
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"

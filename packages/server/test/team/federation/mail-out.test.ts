@@ -1,5 +1,8 @@
-import { fingerprint, openPayload } from '@dispatch/protocol/federation';
-import type { FederatedOp, MailPayload } from '@dispatch/protocol/federation';
+import { fingerprint, openPayload } from '@dispatch-foo/protocol/federation';
+import type {
+  FederatedOp,
+  MailPayload,
+} from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { MemoryRemote } from './helpers/memoryTransport.js';

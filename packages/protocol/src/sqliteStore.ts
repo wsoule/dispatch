@@ -1,5 +1,10 @@
-import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
-import type { SqliteDatabase, SqlValue } from '@dispatch/core';
+import {
+  dbVersion,
+  openSqliteDb,
+  queryAll,
+  queryOne,
+} from '@dispatch-foo/core';
+import type { SqliteDatabase, SqlValue } from '@dispatch-foo/core';
 
 import type { Address } from './address.js';
 import { hasGateData } from './constants.js';

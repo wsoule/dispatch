@@ -3,8 +3,8 @@ import {
   isCovered,
   printable,
   verifyLog,
-} from '@dispatch/federation';
-import type { LogCursor, RosterView } from '@dispatch/federation';
+} from '@dispatch-foo/federation';
+import type { LogCursor, RosterView } from '@dispatch-foo/federation';
 import {
   fingerprint as fingerprintOf,
   hlcWallMs,
@@ -13,12 +13,12 @@ import {
   opHash,
   verifyEntry,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   ChainHead,
   FederatedOp,
   LogEntry,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 import type { BoardOp } from '../boardSync/engine.js';
 import type { SyncLedger, SyncProblem } from '../boardSync/ledger.js';

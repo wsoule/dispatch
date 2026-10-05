@@ -3,8 +3,8 @@ import type {
   GateData,
   Message,
   Sender,
-} from '@dispatch/protocol';
-import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 export const SYSTEM_SENDER: Sender = {

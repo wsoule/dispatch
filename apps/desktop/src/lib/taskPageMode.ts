@@ -1,5 +1,5 @@
+import type { StatusType } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import type { StatusType } from '@dispatch/core/browser';
 
 import { deriveRunDisposition, isTerminalRunState } from './runState';
 

@@ -1,5 +1,5 @@
-import { childEnv, loadConfig } from '@dispatch/core';
-import type { RemoteConfig } from '@dispatch/core';
+import { childEnv, loadConfig } from '@dispatch-foo/core';
+import type { RemoteConfig } from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 

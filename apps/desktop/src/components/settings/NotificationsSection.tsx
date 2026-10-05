@@ -1,5 +1,11 @@
-import type { DispatchConfig, NotificationKind } from '@dispatch/core/browser';
-import { isMaskedSecretUrl, NOTIFICATION_KINDS } from '@dispatch/core/browser';
+import type {
+  DispatchConfig,
+  NotificationKind,
+} from '@dispatch-foo/core/browser';
+import {
+  isMaskedSecretUrl,
+  NOTIFICATION_KINDS,
+} from '@dispatch-foo/core/browser';
 import { useEffect, useState } from 'react';
 
 import { SettingsSwitch } from './fields';

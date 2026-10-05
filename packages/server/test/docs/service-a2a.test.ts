@@ -1,4 +1,4 @@
-import { TaskParseError } from '@dispatch/core';
+import { TaskParseError } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DocsError } from '../../src/docs/errors.js';

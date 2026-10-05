@@ -1,4 +1,4 @@
-import { startRelay } from '@dispatch/a2a';
+import { startRelay } from '@dispatch-foo/a2a';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

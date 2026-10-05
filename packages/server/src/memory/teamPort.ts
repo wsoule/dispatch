@@ -1,3 +1,5 @@
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
+import type { Address, Ref } from '@dispatch-foo/protocol';
 import {
   displayState,
   memoryContentHash,
@@ -16,8 +18,6 @@ import type {
   MemoryTrust,
   ProposalContent,
 } from '@dispatch/memory';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
-import type { Address, Ref } from '@dispatch/protocol';
 
 import type {
   ApplyOutcome,

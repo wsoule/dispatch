@@ -1,6 +1,6 @@
-import { decideState } from '@dispatch/a2a';
-import { openSqliteDb, TaskStore } from '@dispatch/core';
-import { MessagingError } from '@dispatch/protocol';
+import { decideState } from '@dispatch-foo/a2a';
+import { openSqliteDb, TaskStore } from '@dispatch-foo/core';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

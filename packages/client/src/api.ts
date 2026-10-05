@@ -37,7 +37,7 @@ import type {
   TaskListItem,
   TaskRisk,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 // Re-exported (not just imported) so a consumer of this package can name
 // these types directly, the same way it already can with `ApiClient`.
 export type {
@@ -51,7 +51,7 @@ export type {
   FindingVerdict,
   LedgerEntry,
   LedgerKind,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 // Extracted from @dispatch/web (Phase 2R Slice R2) so the same dispatchd
 // client can serve both @dispatch/web (baseUrl '' == same origin, since
@@ -191,7 +191,7 @@ export interface RunMeta {
   // How many sub-agents this run's agent has fanned out into and where they
   // stand, kept live by the daemon from the run's `agent` entries and rebuilt
   // from them on replay. Absent until the first sub-agent is spawned. Mirrors
-  // RunMeta.subagents / SubagentSummary in @dispatch/core.
+  // RunMeta.subagents / SubagentSummary in @dispatch-foo/core.
   subagents?: SubagentSummary;
   // What a live run's agent is doing, in words ("Editing src/a.ts"), and when
   // it said so — the step a list shows before any `run.log` event arrives.
@@ -708,10 +708,10 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// The ref types @dispatch/protocol registers; mirrors its RefType.
+// The ref types @dispatch-foo/protocol registers; mirrors its RefType.
 export type RefType = 'task' | 'run' | 'file' | 'commit' | 'message' | 'doc';
 
-// What a message points at; mirrors @dispatch/protocol's Ref. A message
+// What a message points at; mirrors @dispatch-foo/protocol's Ref. A message
 // received from a peer may carry any other identifier as its type.
 export interface Ref {
   type: RefType | (string & {});
@@ -720,7 +720,7 @@ export interface Ref {
   at?: string;
 }
 
-// Structural mirror of @dispatch/protocol's Message, so the client needs no
+// Structural mirror of @dispatch-foo/protocol's Message, so the client needs no
 // runtime dependency on the protocol package.
 export interface Message {
   id: string;
@@ -759,7 +759,7 @@ export type DeliveryState =
 export type DeliveryVia = 'direct' | 'channel';
 
 // One recipient's copy of a message, carrying that recipient's read state;
-// mirrors @dispatch/protocol's Delivery.
+// mirrors @dispatch-foo/protocol's Delivery.
 export interface Delivery {
   id: string;
   messageId: string;
@@ -770,7 +770,7 @@ export interface Delivery {
   updatedAt: string;
 }
 
-// Body of POST /api/messages — structural mirror of @dispatch/protocol's
+// Body of POST /api/messages — structural mirror of @dispatch-foo/protocol's
 // SendInput.
 export interface SendInput {
   to: string[];
@@ -798,7 +798,7 @@ export interface ReplyInput {
 }
 
 // Response of both a send and a reply — structural mirror of
-// @dispatch/protocol's SendResult.
+// @dispatch-foo/protocol's SendResult.
 export interface SendResult {
   message: Message;
   deliveries: Delivery[];
@@ -1150,7 +1150,7 @@ export interface MailboxItem {
   message: Message;
 }
 
-// Docs: @dispatch/core defines the wire types packages/server/src/docs/routes.ts
+// Docs: @dispatch-foo/core defines the wire types packages/server/src/docs/routes.ts
 // serves; these three are the client's own framing of its answers.
 export type {
   DocConflict,
@@ -1166,7 +1166,7 @@ export type {
   DocSaveResult,
   DocSummary,
   DocsHealth,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 /** POST /api/docs/:ref/publish: the publish task, and its run unless not dispatched. */
 export interface DocPublishResult {
@@ -1381,7 +1381,7 @@ export interface A2AClientSummary {
   status: AgentStatus;
 }
 
-// One row of GET /api/a2a/tasks. Mirrors TaskRow in @dispatch/a2a's store.
+// One row of GET /api/a2a/tasks. Mirrors TaskRow in @dispatch-foo/a2a's store.
 export interface A2ATaskSummary {
   id: string;
   client: string;

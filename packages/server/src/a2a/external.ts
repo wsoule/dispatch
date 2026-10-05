@@ -1,12 +1,12 @@
-import type { A2AStore } from '@dispatch/a2a';
+import type { A2AStore } from '@dispatch-foo/a2a';
 import {
   checkReachClient,
   isClientAddress,
   replyChain,
   TERMINAL_STATES,
-} from '@dispatch/a2a';
-import type { Address, DeliveryEngine, Message } from '@dispatch/protocol';
-import { isPeerAddress, MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import type { Address, DeliveryEngine, Message } from '@dispatch-foo/protocol';
+import { isPeerAddress, MessagingError } from '@dispatch-foo/protocol';
 
 import type { ExternalPolicy } from '../messaging/host.js';
 import { approvedTasksOf } from './handoff.js';

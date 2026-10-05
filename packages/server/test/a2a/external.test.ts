@@ -1,5 +1,5 @@
-import type { Message } from '@dispatch/protocol';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 
 import { bridgeExternalPolicy } from '../../src/a2a/external.js';

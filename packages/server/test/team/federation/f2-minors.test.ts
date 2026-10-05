@@ -1,4 +1,4 @@
-import { generateReplicaKeys } from '@dispatch/protocol/federation';
+import { generateReplicaKeys } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,7 +36,7 @@ async function pendingReader() {
   open.push(ada, cy, bob);
   ada.roster.found('acme');
   await settleAll([ada, cy]);
-  const { fingerprint } = await import('@dispatch/protocol/federation');
+  const { fingerprint } = await import('@dispatch-foo/protocol/federation');
   ada.roster.admit(cy.fed.replica, {
     fingerprint: fingerprint(cy.fed.keys.signPub, cy.fed.keys.sealPub),
   });

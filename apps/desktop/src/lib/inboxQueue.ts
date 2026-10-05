@@ -1,16 +1,16 @@
 import type {
+  StatusModel,
+  TaskDoc,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
+import type {
   DocSummary,
   FixLoopState,
   MergeQueueSnapshot,
   RepoPr,
   RunMeta,
 } from '@dispatch/client';
-import type {
-  StatusModel,
-  TaskDoc,
-  TaskListItem,
-} from '@dispatch/core/browser';
-import { isDoneStatus } from '@dispatch/core/browser';
 
 import type { TaskSpec } from '../components/tasks/TaskSpecView';
 import type { FeedRowModel } from './controlRoom';

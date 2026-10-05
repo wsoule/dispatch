@@ -1,5 +1,5 @@
+import type { TaskDoc } from '@dispatch-foo/core/browser';
 import type { DocSummary, RepoPr, RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import type { RunQuestion } from './gates';

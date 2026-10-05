@@ -11,7 +11,7 @@ import {
   loadConfig,
   releasesFanoutDependents,
   schedulableBatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   ActorContext,
   FanoutBlocker,
@@ -19,7 +19,7 @@ import type {
   TaskDoc,
   TaskListItem,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';

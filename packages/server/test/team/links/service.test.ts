@@ -3,8 +3,8 @@ import {
   openPayload,
   sealPayload,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it, setDefaultTimeout } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';

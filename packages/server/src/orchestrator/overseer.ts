@@ -1,7 +1,7 @@
-import { loadConfig, untrustedInline } from '@dispatch/core';
-import type { EffortLevel } from '@dispatch/core';
-import type { Message, Sender } from '@dispatch/protocol';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { loadConfig, untrustedInline } from '@dispatch-foo/core';
+import type { EffortLevel } from '@dispatch-foo/core';
+import type { Message, Sender } from '@dispatch-foo/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { EventBus } from '../events.js';

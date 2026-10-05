@@ -1,5 +1,5 @@
-import type { DocRevisionInfo } from '@dispatch/core';
-import { parseDocFile, renderDocFile } from '@dispatch/core';
+import type { DocRevisionInfo } from '@dispatch-foo/core';
+import { parseDocFile, renderDocFile } from '@dispatch-foo/core';
 import {
   afterAll,
   afterEach,

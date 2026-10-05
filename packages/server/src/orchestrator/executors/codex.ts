@@ -1,5 +1,9 @@
-import type { ExecutorPricing } from '@dispatch/core';
-import { CORE_VERSION, DISPATCH_MCP_TOOLS, loadConfig } from '@dispatch/core';
+import type { ExecutorPricing } from '@dispatch-foo/core';
+import {
+  CORE_VERSION,
+  DISPATCH_MCP_TOOLS,
+  loadConfig,
+} from '@dispatch-foo/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';

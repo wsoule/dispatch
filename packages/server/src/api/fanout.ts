@@ -1,5 +1,5 @@
-import { getSection } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import { getSection } from '@dispatch-foo/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import {

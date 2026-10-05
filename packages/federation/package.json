@@ -1,5 +1,5 @@
 {
-  "name": "@dispatch/federation",
+  "name": "@dispatch-foo/federation",
   "version": "0.1.0",
   "private": true,
   "license": "Elastic-2.0",
@@ -16,7 +16,7 @@
     "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
-    "@dispatch/protocol": "workspace:*"
+    "@dispatch-foo/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

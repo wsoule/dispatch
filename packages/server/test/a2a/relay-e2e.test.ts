@@ -1,4 +1,4 @@
-import { signRequest, startRelay } from '@dispatch/a2a';
+import { signRequest, startRelay } from '@dispatch-foo/a2a';
 import { describe, expect, it } from 'bun:test';
 import { createPrivateKey } from 'node:crypto';
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

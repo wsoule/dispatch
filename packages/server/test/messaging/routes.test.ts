@@ -1,6 +1,6 @@
-import { TaskStore } from '@dispatch/core';
-import type { Delivery, Message } from '@dispatch/protocol';
-import { gateOf } from '@dispatch/protocol';
+import { TaskStore } from '@dispatch-foo/core';
+import type { Delivery, Message } from '@dispatch-foo/protocol';
+import { gateOf } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

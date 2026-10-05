@@ -1,11 +1,11 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
+import type { DeliveryEngine } from '@dispatch-foo/protocol';
 import type { Principal } from '@dispatch/memory';
 import {
   createMemoryIds,
   newMemoryEntry,
   renderReceiptFile,
 } from '@dispatch/memory';
-import type { DeliveryEngine } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
 import {
   chmodSync,

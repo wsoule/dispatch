@@ -1,6 +1,6 @@
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import { fanoutCoverers } from '@dispatch-foo/core/browser';
 import type { EpicProgress, MergeQueueEntryState } from '@dispatch/client';
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { fanoutCoverers } from '@dispatch/core/browser';
 
 import { dagTaskFromDoc, dagWaves } from '../../lib/dagLayout';
 import { type FlightNavIndex, flightNavIndex } from '../flightplan/flightKeys';

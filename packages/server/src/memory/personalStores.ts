@@ -1,5 +1,5 @@
-import { openSqliteDb, queryAll, queryOne } from '@dispatch/core';
-import type { SqliteDatabase, SqlValue } from '@dispatch/core';
+import { openSqliteDb, queryAll, queryOne } from '@dispatch-foo/core';
+import type { SqliteDatabase, SqlValue } from '@dispatch-foo/core';
 import { MemoryError, openMemoryDb, SqliteMemoryStore } from '@dispatch/memory';
 import type { MemoryStore } from '@dispatch/memory';
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';

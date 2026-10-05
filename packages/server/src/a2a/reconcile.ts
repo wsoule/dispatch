@@ -1,19 +1,19 @@
-import type { HandoffRequest, TaskRow } from '@dispatch/a2a';
+import type { HandoffRequest, TaskRow } from '@dispatch-foo/a2a';
 import {
   handoffSupported,
   parseWorkExt,
   provenanceLine,
   shapeDraft,
   unwrapExternalData,
-} from '@dispatch/a2a';
-import type { TaskDoc } from '@dispatch/core';
-import { untrustedInline } from '@dispatch/core';
-import type { Message } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { untrustedInline } from '@dispatch-foo/core';
+import type { Message } from '@dispatch-foo/protocol';
 import {
   isDecidingAuthor,
   isSystemMarker,
   SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 
 import {
   finishCancel,

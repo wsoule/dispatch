@@ -1,4 +1,4 @@
-import { SECRET_URL_MASK_SUFFIX } from '@dispatch/core';
+import { SECRET_URL_MASK_SUFFIX } from '@dispatch-foo/core';
 
 // Webhook URLs (Slack, Discord) carry their secret in the path — the URL is
 // the credential. GET /api/config hands the whole config back to any client

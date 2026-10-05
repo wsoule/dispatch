@@ -1,4 +1,4 @@
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 
 // The seam every op type crosses (spec "The seam"): git first, the relay later.
 

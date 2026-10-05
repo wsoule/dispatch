@@ -1,7 +1,10 @@
-import { printable } from '@dispatch/federation';
-import type { DeliveryEngine, MessageStore } from '@dispatch/protocol';
-import { hlcWallMs } from '@dispatch/protocol/federation';
-import type { FederatedOp, PresenceBody } from '@dispatch/protocol/federation';
+import { printable } from '@dispatch-foo/federation';
+import type { DeliveryEngine, MessageStore } from '@dispatch-foo/protocol';
+import { hlcWallMs } from '@dispatch-foo/protocol/federation';
+import type {
+  FederatedOp,
+  PresenceBody,
+} from '@dispatch-foo/protocol/federation';
 
 import {
   BUILD_CAPS,

@@ -1,6 +1,6 @@
+import { claimConflictsWithWrites } from '@dispatch-foo/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import { claimConflictsWithWrites } from '@dispatch/core/browser';
-import type { TaskListItem } from '@dispatch/core/browser';
 
 import { formatUsd } from './epicSession';
 import { isTerminalRunState } from './runState';

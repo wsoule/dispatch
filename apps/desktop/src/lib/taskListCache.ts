@@ -2,8 +2,8 @@ import type {
   StatusModel,
   TaskListItem,
   TaskMeta,
-} from '@dispatch/core/browser';
-import { isContainerKind, isUnstartedStatus } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { isContainerKind, isUnstartedStatus } from '@dispatch-foo/core/browser';
 
 // The server's list order (packages/server/src/cache.ts): created, then id.
 function before(a: TaskMeta, b: TaskMeta): boolean {

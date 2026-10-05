@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import { parsePortContinue, parsePortOpen } from '../../src/http/input.js';

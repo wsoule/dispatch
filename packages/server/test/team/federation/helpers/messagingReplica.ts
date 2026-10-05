@@ -2,7 +2,7 @@ import {
   DeliveryEngine,
   openMessagesDb,
   SqliteMessageStore,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import type {
   Address,
   FederationHooks,
@@ -10,9 +10,9 @@ import type {
   MessagingHost,
   PolicyRuling,
   WakeResult,
-} from '@dispatch/protocol';
-import { fingerprint, sealPayload } from '@dispatch/protocol/federation';
-import type { StatePayload } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol';
+import { fingerprint, sealPayload } from '@dispatch-foo/protocol/federation';
+import type { StatePayload } from '@dispatch-foo/protocol/federation';
 import { join } from 'node:path';
 
 import type { ApiContext } from '../../../../src/api.js';

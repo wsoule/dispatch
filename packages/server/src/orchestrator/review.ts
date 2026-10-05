@@ -1,4 +1,4 @@
-import { executorModels, loadConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch-foo/core';
 import type {
   ActorContext,
   CommandEvidence,
@@ -10,7 +10,7 @@ import type {
   TaskDoc,
   TaskRisk,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 

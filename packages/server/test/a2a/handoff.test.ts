@@ -1,18 +1,18 @@
-import type { OpenInput, StatusVocabulary } from '@dispatch/a2a';
+import type { OpenInput, StatusVocabulary } from '@dispatch-foo/a2a';
 import {
   decideState,
   handoffStatuses,
   namedStatusVocabulary,
   wrapExternalData,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   DEFAULT_A2A,
   effectiveRung,
   loadConfig,
   POLICY_GATES,
   projectPolicy,
-} from '@dispatch/core';
-import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
+} from '@dispatch-foo/core';
+import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   appendFileSync,

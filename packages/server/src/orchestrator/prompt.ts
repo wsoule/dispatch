@@ -4,8 +4,8 @@ import {
   untrustedBlock,
   untrustedFenced,
   untrustedInline,
-} from '@dispatch/core';
-import type { TaskComment, TaskDoc } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { TaskComment, TaskDoc } from '@dispatch-foo/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';

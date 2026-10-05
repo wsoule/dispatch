@@ -234,7 +234,7 @@ behind the same seam.
    when a daemon reconnects — last-write-wins per field, or surface conflicts to
    a human. Needs deciding before phase 1, not before phase 0.
 3. ~~**Server repo location.**~~ Decided 2026-08-23: private repo consuming
-   published `@dispatch/core` from npm, MIT-licensed so the dependency is
+   published `@dispatch-foo/core` from npm, MIT-licensed so the dependency is
    frictionless (`LICENSING.md`).
 4. **Protocol.** Plain WebSocket + JSON mirroring `ServerEvent` until it hurts.
 5. **What of `.dispatch/` stays in-repo.** `config.yml` clearly; whether

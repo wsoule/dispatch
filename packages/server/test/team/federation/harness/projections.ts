@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 import { expect } from 'bun:test';
 
 import { taskFields } from '../../../../src/team/boardSync/engine.js';

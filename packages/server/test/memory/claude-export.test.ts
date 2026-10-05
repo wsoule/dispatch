@@ -1,4 +1,5 @@
-import { DEFAULT_MEMORY, TaskStore } from '@dispatch/core';
+import { DEFAULT_MEMORY, TaskStore } from '@dispatch-foo/core';
+import type { DeliveryEngine } from '@dispatch-foo/protocol';
 import {
   createMemoryIds,
   insertFresh,
@@ -14,7 +15,6 @@ import type {
   Principal,
   SqliteMemoryStore,
 } from '@dispatch/memory';
-import type { DeliveryEngine } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,

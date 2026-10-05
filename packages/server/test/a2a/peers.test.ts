@@ -1,4 +1,4 @@
-import { readPeerCredential } from '@dispatch/core';
+import { readPeerCredential } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import {

@@ -1,4 +1,4 @@
-import { compareHlc, parseOpHlc } from '@dispatch/protocol/federation';
+import { compareHlc, parseOpHlc } from '@dispatch-foo/protocol/federation';
 
 /** Where an op sits in fold order. */
 export interface Position {

@@ -4,8 +4,8 @@ import {
   TaskStore,
   writeCredential,
   writeProjectCredential,
-} from '@dispatch/core';
-import type { LinearWorkflowState } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { LinearWorkflowState } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

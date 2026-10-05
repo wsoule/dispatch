@@ -1,4 +1,4 @@
-import type { Priority } from '@dispatch/core/browser';
+import type { Priority } from '@dispatch-foo/core/browser';
 
 import type { BoardLane } from '../../lib/boardGrouping';
 import { AssigneeAvatar } from './AssigneeAvatar';

@@ -1,7 +1,7 @@
-import { untrustedInline } from '@dispatch/core';
-import type { MemoryConfig, PolicyRuling } from '@dispatch/core';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
-import type { Address, Ref } from '@dispatch/protocol';
+import { untrustedInline } from '@dispatch-foo/core';
+import type { MemoryConfig, PolicyRuling } from '@dispatch-foo/core';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
+import type { Address, Ref } from '@dispatch-foo/protocol';
 
 import { withoutPersonalDoc } from './claudeFiles.js';
 import { memoryContentHash, normalizeTitle } from './contentHash.js';

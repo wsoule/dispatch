@@ -1,4 +1,4 @@
-# @dispatch/a2a
+# @dispatch-foo/a2a
 
 The A2A 1.0 bridge for Dispatch, under the MIT license. It holds everything that
 decides how a Dispatch project looks to an A2A client:

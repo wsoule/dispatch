@@ -1,10 +1,10 @@
-import type { Message } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 import {
   b64u,
   sealPayload,
   unwrapContentKey,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { foundedTeam, foundedTeamWith } from './helpers/messagingReplica.js';

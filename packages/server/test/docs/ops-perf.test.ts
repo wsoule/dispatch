@@ -1,4 +1,4 @@
-import type { DocOp } from '@dispatch/core';
+import type { DocOp } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import { applyOps } from '../../src/docs/ops.js';

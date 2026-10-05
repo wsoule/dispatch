@@ -1,5 +1,5 @@
 {
-  "name": "@dispatch/protocol-spec",
+  "name": "@dispatch-foo/protocol-spec",
   "version": "1.0.0-draft.2",
   "private": true,
   "license": "Apache-2.0",

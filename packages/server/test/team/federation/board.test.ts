@@ -3,8 +3,8 @@ import {
   generateReplicaKeys,
   opHash,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

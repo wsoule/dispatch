@@ -1,4 +1,4 @@
-import { ConfigError, TaskParseError } from '@dispatch/core';
+import { ConfigError, TaskParseError } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

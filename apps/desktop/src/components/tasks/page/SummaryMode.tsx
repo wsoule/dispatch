@@ -1,9 +1,9 @@
-import type { RunMeta } from '@dispatch/client';
 import {
   isCanceledStatus,
   isDoneStatus,
   statusLabel,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { RunMeta } from '@dispatch/client';
 import { ArrowUpRight, GitCommitHorizontal } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';

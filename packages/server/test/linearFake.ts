@@ -15,7 +15,7 @@ import type {
   LinearUser,
   LinearWorkflowState,
   TaskCycle,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type {
   LinearClient,

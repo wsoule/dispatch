@@ -1,4 +1,4 @@
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import {
   canonicalKind,
   isCanceledStatus,
@@ -7,7 +7,7 @@ import {
   isDoneStatus,
   isStartedStatus,
   PRIORITY_ORDER,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 
 import { activeStatusModel } from './statusModel';
 
