@@ -297,9 +297,11 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
     const starter = progress.session?.startedBy ?? input.local;
     return starter === null ? unsigned : ownerOf(starter);
   };
-  // A run belongs to whoever dispatched it, else to whoever started its fan-out.
+  // A run belongs to the human it acts for, else whoever dispatched it, else
+  // whoever started its fan-out (XH-R9).
   const runOwner = (run: RunMeta): string | null => {
-    if (run.dispatchedBy !== undefined) return ownerOf(run.dispatchedBy);
+    const human = run.operator ?? run.dispatchedBy;
+    if (human !== undefined) return ownerOf(human);
     const progress = sessionOf.get(run.taskId);
     return progress === undefined ? unsigned : starterOf(progress);
   };

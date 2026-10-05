@@ -67,6 +67,20 @@ function renderAmendmentsSection(
       ].join('\n\n');
 }
 
+// How the prompt asks for scope: of the run's human, or of `decider` when
+// the run's human cannot grant it.
+function scopeAsk(human: string, decider: string | null): string {
+  const scope =
+    'kind: "question", blocking: true, choices: ["grant", "deny"], ' +
+    'data: { type: "scope", paths: [...], reason: "..." }) ';
+  if (decider === null || decider === human)
+    return `To edit outside your declared writes, ask first with msg_send(${scope}`;
+  return (
+    `To edit outside your declared writes, ask ${decider} first (${human} ` +
+    `cannot grant it) with msg_send(to: ["${decider}"], ${scope}`
+  );
+}
+
 // Builds the exact prompt handed to an executor for a dispatched task — its
 // own content plus carried-forward context. Pure, so it's snapshot-stable.
 export function buildTaskPrompt(
@@ -80,14 +94,18 @@ export function buildTaskPrompt(
   // False for executors with no dispatch MCP server (ExecutorProfile.dispatchMcp):
   // their prompt must not send the agent after tools it does not have.
   dispatchTools = true,
-  // The address the agent asks (the project owner); null names a placeholder.
+  // The address the agent asks: the run's operator, or the project owner for a
+  // run acting for no one (XH-R9); null names a placeholder.
   human: string | null = null,
   // The rendered `## Docs` section; null when docs are off or nothing links.
   docsSection: string | null = null,
   // The task's comment thread, oldest first; its newest entries join the prompt.
   comments: readonly TaskComment[] = [],
   // An A2A-origin task (XH-R5): amendments and comments fenced, no epic.
-  a2aOrigin = false
+  a2aOrigin = false,
+  // Who decides a scope request, when not `human`: the owner, for an
+  // operator who cannot decide (XH-R9).
+  scopeDecider: string | null = null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -170,10 +188,9 @@ export function buildTaskPrompt(
         'choices when the answer is one of a few options); it blocks until ' +
         'the human answers and returns their reply. Bundle everything you ' +
         'are unsure about into one question, and never ask what you can ' +
-        'settle by reading the repo. To edit outside your declared writes, ' +
-        'ask first with msg_send(kind: "question", blocking: true, ' +
-        'choices: ["grant", "deny"], data: { type: "scope", paths: [...], ' +
-        'reason: "..." }) and edit only on "grant". Messages for you arrive ' +
+        'settle by reading the repo. ' +
+        scopeAsk(askWho, scopeDecider) +
+        'and edit only on "grant". Messages for you arrive ' +
         'in this session; answer a question with `msg_reply`, and ' +
         '`inbox_read` lists anything you missed. A message to another task ' +
         'reaches its live run, or waits for its next one.'

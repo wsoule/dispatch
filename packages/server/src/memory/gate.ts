@@ -39,11 +39,12 @@ function openGateFor(
   });
 }
 
-// Sends the owner a content-free memory gate (the text stays in memory.db), keyed
-// by proposal so overlapping raises share one; an already open gate is reused.
+// Sends `to` (the proposing run's operator or the owner, XH-R9) a content-free
+// memory gate, keyed by proposal so overlapping raises share one; an already
+// open gate is reused.
 export async function raiseMemoryGate(
   engine: DeliveryEngine,
-  ownerRef: string,
+  to: string,
   p: MemoryProposal,
   kind: MemoryKind
 ): Promise<string> {
@@ -59,7 +60,7 @@ export async function raiseMemoryGate(
   ];
   const sent = await engine.send(
     {
-      to: [ownerRef],
+      to: [to],
       kind: 'question',
       blocking: true,
       choices: ['approve', 'reject'],

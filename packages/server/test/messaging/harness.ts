@@ -119,7 +119,10 @@ export async function openRecovered(
   orchestrator: Orchestrator,
   store: TaskStorePort,
   events: EventBus = new EventBus(),
-  extra: Pick<Parameters<typeof openMessaging>[0], 'scopeExpiry'> = {}
+  extra: Pick<
+    Parameters<typeof openMessaging>[0],
+    'scopeExpiry' | 'deciders'
+  > = {}
 ): Promise<Messaging> {
   const messaging = openMessaging({
     rootDir: root,

@@ -126,6 +126,42 @@ describe('buildTaskPrompt', () => {
     expect(prompt).not.toContain('request_scope');
   });
 
+  it("sends scope requests to the owner when the run's human cannot grant them (XH-R9)", () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      null,
+      null,
+      true,
+      'human:bo',
+      null,
+      [],
+      false,
+      'human:wyat'
+    );
+    expect(prompt).toContain('(to: ["human:bo"], kind: "question"');
+    expect(prompt).toContain(
+      'msg_send(to: ["human:wyat"], kind: "question", blocking: true, choices: ["grant", "deny"]'
+    );
+  });
+
+  it("asks the run's human for scope too when they can grant it", () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      null,
+      null,
+      true,
+      'human:ana',
+      null,
+      [],
+      false,
+      'human:ana'
+    );
+    expect(prompt).not.toContain('human:wyat');
+    expect(prompt).toContain('choices: ["grant", "deny"]');
+  });
+
   it('tells implementers to record evidence and mutation-test guards', () => {
     const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
     expect(prompt).toContain('record_evidence');

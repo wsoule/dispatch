@@ -53,9 +53,11 @@ export interface DaemonMemoryHostDeps {
     'taskIdOfRun' | 'list' | 'notifyRun' | 'isRunLive' | 'isA2ATask'
   >;
   events: Pick<EventBus, 'broadcast'>;
-  messaging: Pick<Messaging, 'engine'> & {
-    store: Pick<Messaging['store'], 'getAgent'>;
-  };
+  // `routing` sends a run's gate to its operator (XH-R9); omitted, the owner.
+  messaging: Pick<Messaging, 'engine'> &
+    Partial<Pick<Messaging, 'routing'>> & {
+      store: Pick<Messaging['store'], 'getAgent'>;
+    };
   ledgerStore: Pick<LedgerStorePort, 'add'>;
   appendPolicyActivity: (taskId: string, text: string) => void;
   /** Null while identities.db will not open. */
@@ -220,7 +222,7 @@ export class DaemonMemoryHost implements MemoryHost {
   raiseGate(p: MemoryProposal): Promise<string> {
     return raiseMemoryGate(
       this.deps.messaging.engine,
-      this.deps.ownerRef,
+      this.deps.messaging.routing?.gateFor(p.runId).to ?? this.deps.ownerRef,
       p,
       memoryGateKind(p, this.deps.shared())
     );

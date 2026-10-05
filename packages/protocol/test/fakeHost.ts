@@ -122,7 +122,10 @@ export class FakeHost implements MessagingHost {
   quotaGroup(sender: Address): Address[] {
     return this.quotaGroups.get(sender) ?? [sender];
   }
-  owner(): Address {
+  // Every owner() question, as [target, sender]: who the engine asked about.
+  readonly ownerAsks: [Address, Address | null][] = [];
+  owner(target: Address, sender?: Address): Address {
+    this.ownerAsks.push([target, sender ?? null]);
     return this.ownerAddress;
   }
   implicitMembers(channel: string): Address[] {

@@ -3,12 +3,18 @@ import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { DeliveryEngine, Message } from '@dispatch/protocol';
 
 import type { ApiContext } from '../api.js';
-import { closeGate } from '../messaging/gates.js';
+import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { runOperator } from '../orchestrator/types.js';
 
 type CascadeContext = Pick<
   ApiContext,
-  'messaging' | 'memory' | 'docs' | 'orchestrator' | 'events' | 'a2a'
+  | 'messaging'
+  | 'memory'
+  | 'docs'
+  | 'orchestrator'
+  | 'events'
+  | 'a2a'
+  | 'actorContext'
 >;
 
 /**
@@ -41,12 +47,18 @@ export async function revokeCascade(
       runOperatorOf(address) === human);
 
   step(`revoke ${handle}'s agents`, () => revokeAgents(ctx, prefix));
+  const closed: Message[] = [];
   step(`close ${handle}'s asks and proposals`, () => {
     for (const question of ctx.messaging.engine.openBlocking()) {
-      if (theirs(question.from) || theirs(proposer(ctx, question)))
-        closeGate(ctx.messaging.engine, question.id, reason);
+      if (!theirs(question.from) && !theirs(proposer(ctx, question))) continue;
+      step(`settle the proposal behind ${question.id}`, () =>
+        settleProposal(ctx, question, reason)
+      );
+      if (closeGate(ctx.messaging.engine, question.id, reason))
+        closed.push(question);
     }
   });
+  await tellOwner(ctx, human, closed);
   for (const meta of ctx.orchestrator.list()) {
     if (runOperator(meta) !== human || !ctx.orchestrator.isRunLive(meta.id))
       continue;
@@ -87,6 +99,55 @@ function revokeAgents(ctx: CascadeContext, prefix: string): void {
     }
     ctx.memory.host.agentDecided(agent.address, false);
     if (isClientAddress(agent.address)) ctx.a2a?.clientRevoked(agent.address);
+  }
+}
+
+// A close answers no gate handler, so the memory or doc proposal a closed
+// gate stood for is settled here: a memory proposal expires, a doc proposal
+// is rejected by the system with the revoke as its reason.
+function settleProposal(
+  ctx: CascadeContext,
+  question: Message,
+  reason: string
+): void {
+  if (question.from !== SYSTEM_ADDRESS) return;
+  const gate = gateOf(question);
+  if (gate?.type === 'memory')
+    ctx.memory.engine?.applyGateAnswer({
+      proposalId: gate.proposalId,
+      gateId: question.id,
+      choice: 'reject',
+      by: SYSTEM_ADDRESS,
+      reason,
+      expired: true,
+    });
+  else if (gate?.type === 'doc' && ctx.docs.available)
+    ctx.docs.rejectProposal(gate.proposal, SYSTEM_ADDRESS, reason);
+}
+
+// One notice to the owner listing what the revoke closed, so it stays seen.
+async function tellOwner(
+  ctx: CascadeContext,
+  human: string,
+  closed: readonly Message[]
+): Promise<void> {
+  if (closed.length === 0) return;
+  const lines = closed.map((m) => `- ${m.body.split('\n', 1)[0]} (${m.id})`);
+  try {
+    await ctx.messaging.engine.send(
+      {
+        to: [ctx.actorContext.humanRef],
+        kind: 'notice',
+        body: `Revoking ${human} closed ${closed.length} open item${closed.length === 1 ? '' : 's'}:\n${lines.join('\n')}`,
+        refs: closed.map((m) => ({ type: 'message' as const, id: m.id })),
+      },
+      SYSTEM_SENDER
+    );
+  } catch (err) {
+    console.error(
+      `dispatchd: could not tell the owner what revoking ${human} closed`,
+      err
+    );
   }
 }
 

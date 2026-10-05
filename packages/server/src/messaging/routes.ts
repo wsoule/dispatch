@@ -38,6 +38,7 @@ import {
   closeGate,
   openHumanDecisions,
   registrationKey,
+  SYSTEM_SENDER,
 } from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
@@ -376,6 +377,45 @@ function revokedSince(ctx: ApiContext, principal: Principal): boolean {
   );
 }
 
+// XH-R9: a run's scope gate goes only to its gate route (its operator when
+// they can decide, else the owner), so a run cannot pick its decider; the
+// other humans it named are returned to be told. Any other send as it came.
+function scopeReaddressed(
+  ctx: ApiContext,
+  principal: Principal,
+  input: SendInput
+): { input: SendInput; told: string[] } {
+  if (principal.kind !== 'run' || gateOf(input)?.type !== 'scope')
+    return { input, told: [] };
+  const runId = principal.address.slice('run:'.length);
+  const { to, told } = ctx.messaging.routing.scopeTo(runId, input.to);
+  return { input: { ...input, to }, told };
+}
+
+// Tells each human a run named on its scope gate who the gate went to instead.
+async function tellScopeNamed(
+  ctx: ApiContext,
+  gate: Message,
+  told: string[]
+): Promise<void> {
+  for (const ref of told) {
+    try {
+      await ctx.messaging.engine.send(
+        {
+          to: [ref],
+          kind: 'notice',
+          body: `${gate.from} asked you about its scope; the request went to ${gate.to.join(', ')}, who decides for that run.`,
+          refs: [{ type: 'message', id: gate.id }],
+          idempotencyKey: `scope-named:${gate.id}:${ref}`,
+        },
+        SYSTEM_SENDER
+      );
+    } catch (err) {
+      console.error('messaging: scope notice failed', err);
+    }
+  }
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -398,17 +438,17 @@ export async function sendMessage(
     a2aRunRefusal(ctx, principal, parsedInput.value.to);
   if (refusal !== null) return errorResponse(403, refusal);
 
+  const { input, told } = scopeReaddressed(ctx, principal, parsedInput.value);
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
   // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
   const result = await answeringWith(principal.ownerCredential === true, () =>
     ctx.messaging.engine.send(
-      idemKey === null
-        ? parsedInput.value
-        : { ...parsedInput.value, idempotencyKey: idemKey },
+      idemKey === null ? input : { ...input, idempotencyKey: idemKey },
       senderOf(principal)
     )
   );
+  if (result.replayed !== true) await tellScopeNamed(ctx, result.message, told);
   return jsonResponse(result, result.replayed === true ? 200 : 201);
 }
 

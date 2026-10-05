@@ -6,6 +6,17 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+- [clarification] A host may name a `wake` gate's owner by the message's sender
+  as well as the target (§2.3, §6.5). The Dispatch profile names the human a
+  session acts for: that human is asked and told about the session, and gets its
+  `tool-approval`, `scope`, `memory`, `doc` and `wake` gates when they may
+  decide, else the project's owner does and that human gets a notice (App. C.2,
+  C.3, C.7, C.8). A session's `scope` gate goes only where C.2 routes it,
+  whoever the session names; other named humans get a notice. The scripted host
+  still names one owner for every target, so these vectors are unchanged.
+  Vectors: `core.wake.ask-raises-a-wake-gate-to-the-owner`,
+  `core.guardrails.breaker-tells-the-owner-once-per-window`.
+
 ## 1.0.0-draft.2 (2026-10-04)
 
 - [clarification] A host reads an `a2a:` entry in an inbound `to` as its owner,
