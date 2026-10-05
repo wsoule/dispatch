@@ -1516,6 +1516,33 @@ describe('restored revisions are confirmed only by what vouches for them (T1)', 
     expect(service.read(owner(), 'spec').text).toBe('restored\n');
   });
 
+  it('refuses a named confirmation whose body is not the restored copy, unless a human vouches', () => {
+    restoreHead([ID(1), ID(2)]);
+    roots();
+    const evil = put(DOC, {
+      id: ID(3),
+      parents: [ID(1), ID(2)],
+      body: 'EVIL WORDS\n',
+      author: 'human:ada',
+    });
+    // rep-3 speaks for nobody: the receipt's author and parents are not enough.
+    expect(handler.apply(json(evil), meta('rep-3', 1))).toBe('dropped');
+    expect(store.revision(ID(3))).toMatchObject({
+      body: 'restored\n',
+      provisional: true,
+    });
+    expect(service.syncProblems(DOC).at(-1)).toContain(ID(3));
+    // The same bytes confirm it from anyone; other bytes only from ada's own replica.
+    const same = put(DOC, {
+      id: ID(3),
+      parents: [ID(1), ID(2)],
+      body: 'restored\n',
+      author: 'human:ada',
+    });
+    expect(handler.apply(json(same), meta('rep-3', 2))).toBe('applied');
+    expect(store.revision(ID(3))?.provisional).toBe(false);
+  });
+
   it('refuses a confirmation whose author differs and whom the publisher cannot speak for', () => {
     restoreHead([ID(1)]);
     handler.apply(
@@ -1578,12 +1605,16 @@ describe('a deleted doc leaves no sync rows behind', () => {
       { ...meta('rep-2', 1), hlc: at('2026-09-26T10:00:00.000Z') }
     );
     service.rename(owner(), 'spec', 'renamed');
+    service.markReviewed(owner(), 'renamed');
+    handler.published(handler.pendingDocOps());
+    expect(store.metaKeys(`sync:rv:${DOC}:`)).not.toEqual([]);
     service.syncWrite(() => service.syncProblem(DOC, 'an old problem'));
     service.remove(owner(), 'renamed');
     expect(store.metaKeys(`sync:field-by:${DOC}`)).toEqual([]);
     expect(store.metaKeys(`sync:seen:${DOC}`)).toEqual([]);
     expect(store.metaKeys(`sync-problems:${DOC}`)).toEqual([]);
     expect(store.metaKeys(`sync:meta:${DOC}`)).toEqual([]);
+    expect(store.metaKeys(`sync:rv:${DOC}:`)).toEqual([]);
     // Its removal is still owed to the team, with its revisions' known keys.
     expect(store.meta(`sync:pub:${ID(1)}`)).not.toBeNull();
     const removal = handler.pendingDocOps().filter((b) => b.kind === 'remove');

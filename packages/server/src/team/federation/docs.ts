@@ -471,7 +471,9 @@ export class DocOpHandler implements DocsPort {
             );
           fold = checked;
         } else {
+          // Named: the receipt's own revision, byte for byte.
           const named =
+            existing.hash === rev.hash &&
             existing.author === rev.author &&
             existing.parents.length === rev.parents.length &&
             existing.parents.every((p, i) => p === rev.parents[i]);
@@ -480,7 +482,7 @@ export class DocOpHandler implements DocsPort {
           if (!named && !vouched)
             return this.problem(
               body.doc,
-              `${rev.id} from ${meta.replica} does not match the restored revision's author and parents; the restored revision stays`
+              `${rev.id} from ${meta.replica} does not match the restored revision's author, parents and text; the restored revision stays`
             );
         }
         const differs = service.syncConfirmProvisional(

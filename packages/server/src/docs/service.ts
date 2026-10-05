@@ -5591,6 +5591,9 @@ export class DocsService {
     ])
       store.deleteMeta(key);
     const revs = store.revisionsOfDoc(docId).map((r) => r.id);
+    // Reviews of deleted revisions never travel again.
+    for (const key of store.metaKeys(`sync:rv:${docId}:`))
+      store.deleteMeta(key);
     if (owed && published && store.doc(docId)?.ns === 'team')
       store.setMeta(removalDueKey(docId), JSON.stringify(revs));
     else
