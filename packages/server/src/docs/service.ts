@@ -422,6 +422,8 @@ const problemKey = (docId: string): string => `problem:${docId}`;
 const syncProblemsKey = (docId: string): string => `sync-problems:${docId}`;
 const SYNC_PROBLEMS_KEPT = 20;
 const SYNC_DIRTY = 'sync:dirty:';
+// A local removal the team has not heard of yet, with its revisions' ids.
+const removalDueKey = (docId: string): string => `sync:rm-due:${docId}`;
 const syncDirtyKey = (docId: string): string => `${SYNC_DIRTY}${docId}`;
 
 /** What `docs sync repair` reaches: the bound team sync handler. */
@@ -477,7 +479,14 @@ function wallClock(atIso: string): string {
   return `${String(Date.parse(atIso)).padStart(13, '0')}.0000.local`;
 }
 
-type MetaField = 'slug' | 'aliases' | 'status' | 'links';
+// Links are attributed by tier: a spec or plan link is decide tier, so a
+// human's change there never travels under an agent's context link.
+type MetaField =
+  | 'slug'
+  | 'aliases'
+  | 'status'
+  | 'links-decide'
+  | 'links-context';
 type FieldActors = Partial<Record<MetaField, { by: string; order: number }>>;
 
 // The synced meta fields that differ between two readings.
@@ -491,7 +500,12 @@ function metaFieldsChanged(
   if (after.aliases.some((a) => !before.aliases.includes(a)))
     out.push('aliases');
   if (after.status !== before.status) out.push('status');
-  if (linksKey(after.links) !== linksKey(before.links)) out.push('links');
+  const tier = (links: SyncMeta['links'], decide: boolean) =>
+    linksKey(links.filter((l) => (l.rel !== 'context') === decide));
+  if (tier(after.links, true) !== tier(before.links, true))
+    out.push('links-decide');
+  if (tier(after.links, false) !== tier(before.links, false))
+    out.push('links-context');
   return out;
 }
 
@@ -2436,6 +2450,7 @@ export class DocsService {
         deletedBy: actor.address,
         at,
       });
+      this.clearSyncRows(doc.id, true);
       this.store().deleteDoc(doc.id);
       this.outbox.push({
         doc: doc.id,
@@ -5012,11 +5027,7 @@ export class DocsService {
     const t = this.store().tombstoneFull(id);
     if (t === null) return null;
     if (t.hlc !== null) return { at: t.at, hlc: t.hlc };
-    if (
-      t.ns === 'team' &&
-      this.syncSnapshot(id) !== null &&
-      !this.syncKnown({ kind: 'remove', doc: id })
-    )
+    if (t.ns === 'team' && this.store().meta(removalDueKey(id)) !== null)
       return { pending: true };
     return { at: t.at, hlc: wallClock(t.at) };
   }
@@ -5394,6 +5405,7 @@ export class DocsService {
       at,
       hlc,
     });
+    this.clearSyncRows(docId, false);
     store.deleteDoc(docId);
     this.outbox.push({
       doc: docId,
@@ -5562,6 +5574,40 @@ export class DocsService {
     }
   }
 
+  // A deleted doc's sync rows go in its delete transaction. A local removal
+  // the team must still hear of keeps its revisions' known keys until it is
+  // published (`owed`); otherwise they go too.
+  private clearSyncRows(docId: string, owed: boolean): void {
+    const store = this.store();
+    const published = this.syncSnapshot(docId) !== null;
+    for (const key of [
+      `sync:field-by:${docId}`,
+      `sync:seen:${docId}`,
+      `sync:meta:${docId}`,
+      `sync:fold:${docId}`,
+      syncProblemsKey(docId),
+      problemKey(docId),
+      heldKey(docId),
+    ])
+      store.deleteMeta(key);
+    const revs = store.revisionsOfDoc(docId).map((r) => r.id);
+    if (owed && published && store.doc(docId)?.ns === 'team')
+      store.setMeta(removalDueKey(docId), JSON.stringify(revs));
+    else
+      for (const id of revs)
+        store.deleteMeta(syncKnownKey({ kind: 'rev', rev: id }));
+  }
+
+  // A published removal: the known keys it kept, and the debt itself, go.
+  private forgetRemoved(docId: string): void {
+    const store = this.store();
+    const raw = store.meta(removalDueKey(docId));
+    if (raw === null) return;
+    for (const id of JSON.parse(raw) as string[])
+      store.deleteMeta(syncKnownKey({ kind: 'rev', rev: id }));
+    store.deleteMeta(removalDueKey(docId));
+  }
+
   /** A rolling note about one teammate's replica, shown with docs health. */
   syncNote(replica: string, note: string | null): void {
     const key = `sync-note:${replica}`;
@@ -5676,8 +5722,7 @@ export class DocsService {
       if (
         t !== null &&
         t.ns === 'team' &&
-        this.syncSnapshot(docId) !== null &&
-        !this.syncKnown({ kind: 'remove', doc: docId })
+        store.meta(removalDueKey(docId)) !== null
       )
         out.push({
           doc: docId,
@@ -5745,14 +5790,19 @@ export class DocsService {
       string,
       { order: number; meta: NonNullable<DocBody['meta']> }
     >();
-    for (const field of metaFieldsChanged(snap, now)) {
+    const changed = metaFieldsChanged(snap, now);
+    for (const field of changed) {
+      // The whole list travels once, as whoever changed its decide tier.
+      if (field === 'links-context' && changed.includes('links-decide'))
+        continue;
       const who = actors[field] ?? { by: doc.updatedBy, order: 0 };
       const g = groups.get(who.by) ?? { order: who.order, meta: {} };
       g.order = Math.max(g.order, who.order);
       if (field === 'slug') g.meta.slug = now.slug;
       if (field === 'aliases') g.meta.aliases = now.aliases;
       if (field === 'status') g.meta.status = now.status;
-      if (field === 'links') g.meta.links = now.links;
+      if (field === 'links-decide' || field === 'links-context')
+        g.meta.links = now.links;
       groups.set(who.by, g);
     }
     for (const [by, g] of [...groups].sort((a, b) => a[1].order - b[1].order))
@@ -5780,9 +5830,10 @@ export class DocsService {
         const hlc =
           stamps[i] === undefined || stamps[i] === '' ? null : stamps[i];
         if (body.kind === 'remove') {
-          this.syncMarkKnown({ kind: 'remove', doc: body.doc });
           // The removal's op clock is the one every replica orders it by.
           if (hlc !== null) store.setTombstoneHlc(body.doc, hlc);
+          // Published: its revisions' known keys go with the debt.
+          this.forgetRemoved(body.doc);
           return;
         }
         const clocks =

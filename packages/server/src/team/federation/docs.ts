@@ -279,12 +279,17 @@ function clampTime(
 }
 
 // A fold made by a replica: cause `sync`, by agent:dispatch, two parents.
+// A verified one is stored with no `via`; any other is content (T1).
 const isSyncMerge = (r: {
   cause: string;
   author: string;
   parents: readonly string[];
+  via: string | null;
 }): boolean =>
-  r.cause === 'sync' && r.author === SYSTEM_ADDRESS && r.parents.length === 2;
+  r.cause === 'sync' &&
+  r.author === SYSTEM_ADDRESS &&
+  r.parents.length === 2 &&
+  r.via === null;
 
 /** How long one missing parent's dropped ops are not asked for again. */
 const REREAD_EVERY_MS = 10 * 60 * 1000;
@@ -452,8 +457,34 @@ export class DocOpHandler implements DocsPort {
           this.askAgain(missing);
           return 'parked';
         }
+        // T1: a "sync merge" must be the fold of its parents, as for a new id;
+        // anything else confirms only what the receipt named, or what a human
+        // the publisher speaks for wrote.
+        let fold: Fold | null = null;
+        if (isFold) {
+          const checked = this.verifyFold(rev, rev.parents);
+          if (checked === 'parked') return 'parked';
+          if (checked === null)
+            return this.problem(
+              body.doc,
+              `${rev.id} from ${meta.replica} is a sync merge that does not follow from its parents; the restored revision stays`
+            );
+          fold = checked;
+        } else {
+          const named =
+            existing.author === rev.author &&
+            existing.parents.length === rev.parents.length &&
+            existing.parents.every((p, i) => p === rev.parents[i]);
+          const vouched =
+            rev.author.startsWith('human:') && meta.speaksFor(rev.author);
+          if (!named && !vouched)
+            return this.problem(
+              body.doc,
+              `${rev.id} from ${meta.replica} does not match the restored revision's author and parents; the restored revision stays`
+            );
+        }
         const differs = service.syncConfirmProvisional(
-          this.stored(body.doc, rev, meta, rev.parents, null, true, null)
+          this.stored(body.doc, rev, meta, rev.parents, null, true, fold)
         );
         this.known(body.doc, rev.id, meta.hlc);
         if (differs)

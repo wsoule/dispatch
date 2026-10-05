@@ -1455,3 +1455,156 @@ describe('folds converge however passes interleave', () => {
     }
   });
 });
+
+describe('restored revisions are confirmed only by what vouches for them (T1)', () => {
+  const restoreHead = (parents: string[], author = 'human:ada') =>
+    service.restoreDoc(
+      {
+        id: DOC,
+        slug: 'spec',
+        title: 'Spec',
+        status: 'draft',
+        rev: ID(3),
+        n: 3,
+        parents,
+        author,
+        cause: 'save',
+        createdAt: '2026-09-26T09:00:00.000Z',
+        hash: sha('restored\n'),
+        links: [],
+        authors: [author],
+        updatedAt: '2026-09-26T09:00:00.000Z',
+      },
+      'restored\n'
+    );
+  const roots = () => {
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'one\n', author: 'human:ada' })
+      ),
+      meta('rep-2', 1)
+    );
+    handler.apply(
+      json(
+        put(DOC, {
+          id: ID(2),
+          parents: [ID(1)],
+          body: 'two\n',
+          author: 'human:ada',
+        })
+      ),
+      meta('rep-2', 2)
+    );
+  };
+
+  it('refuses a "sync merge" that is not the fold of its parents, keeping the restored text', () => {
+    restoreHead([ID(1), ID(2)]);
+    roots();
+    const hidden = put(DOC, {
+      id: ID(3),
+      parents: [ID(1), ID(2)],
+      body: 'HIDDEN\n',
+      author: 'agent:dispatch',
+      cause: 'sync',
+    });
+    expect(handler.apply(json(hidden), meta('rep-2', 3))).toBe('dropped');
+    expect(store.revision(ID(3))).toMatchObject({
+      body: 'restored\n',
+      provisional: true,
+    });
+    handler.passComplete();
+    expect(service.read(owner(), 'spec').text).toBe('restored\n');
+  });
+
+  it('refuses a confirmation whose author differs and whom the publisher cannot speak for', () => {
+    restoreHead([ID(1)]);
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'one\n', author: 'human:ada' })
+      ),
+      meta('rep-2', 1)
+    );
+    const other = put(DOC, {
+      id: ID(3),
+      parents: [ID(1)],
+      body: 'x\n',
+      author: 'human:bob',
+    });
+    expect(handler.apply(json(other), meta('rep-2', 2))).toBe('dropped');
+    expect(store.revision(ID(3))?.provisional).toBe(true);
+    // The restored author and parents, from a replica that cannot speak for
+    // her, still confirm it: the receipt named them.
+    const same = put(DOC, {
+      id: ID(3),
+      parents: [ID(1)],
+      body: 'restored\n',
+      author: 'human:ada',
+    });
+    expect(handler.apply(json(same), meta('rep-1', 1))).toBe('applied');
+    expect(store.revision(ID(3))?.provisional).toBe(false);
+  });
+});
+
+describe('link changes travel by tier', () => {
+  it("never sends a human's spec link under an agent's later context link", () => {
+    const team = service.create(owner(), { title: 'Team', body: 'shared\n' });
+    service.seal(owner(), 'team');
+    handler.published(handler.pendingDocOps());
+    service.link(owner(), 'team', {
+      target: { type: 'task', id: 't-2' },
+      rel: 'spec',
+    });
+    service.link(service.actorFor(RUN), 'team', {
+      target: { type: 'task', id: 't-1' },
+      rel: 'context',
+    });
+    const linked = handler
+      .pendingDocOps()
+      .filter((b) => b.meta?.links !== undefined);
+    expect(linked).toHaveLength(1);
+    expect(linked[0]).toMatchObject({ doc: team.doc.id, by: 'human:wyat' });
+    expect(linked[0].meta?.links).toHaveLength(2);
+  });
+});
+
+describe('a deleted doc leaves no sync rows behind', () => {
+  it('clears attribution, problems and snapshot, and a revival under the same id starts clean', () => {
+    const at = (iso: string, replica = 'rep-2') =>
+      `${Date.parse(iso)}.0000.${replica}`;
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'v1\n', author: 'human:ada' })
+      ),
+      { ...meta('rep-2', 1), hlc: at('2026-09-26T10:00:00.000Z') }
+    );
+    service.rename(owner(), 'spec', 'renamed');
+    service.syncWrite(() => service.syncProblem(DOC, 'an old problem'));
+    service.remove(owner(), 'renamed');
+    expect(store.metaKeys(`sync:field-by:${DOC}`)).toEqual([]);
+    expect(store.metaKeys(`sync:seen:${DOC}`)).toEqual([]);
+    expect(store.metaKeys(`sync-problems:${DOC}`)).toEqual([]);
+    expect(store.metaKeys(`sync:meta:${DOC}`)).toEqual([]);
+    // Its removal is still owed to the team, with its revisions' known keys.
+    expect(store.meta(`sync:pub:${ID(1)}`)).not.toBeNull();
+    const removal = handler.pendingDocOps().filter((b) => b.kind === 'remove');
+    expect(removal).toHaveLength(1);
+    handler.published(removal, [at('2026-09-26T11:00:00.000Z', 'rep-1')]);
+    expect(store.meta(`sync:pub:${ID(1)}`)).toBeNull();
+    handler.apply(
+      json(
+        put(
+          DOC,
+          { id: ID(2), parents: [ID(1)], body: 'back\n', author: 'human:ada' },
+          { meta: undefined }
+        )
+      ),
+      { ...meta('rep-2', 2), hlc: at('2026-09-26T12:00:00.000Z') }
+    );
+    expect(service.read(owner(), DOC).text).toBe('back\n');
+    expect(store.meta(`sync:field-by:${DOC}`)).toBeNull();
+    expect(service.syncProblems(DOC)).toEqual([]);
+    expect(handler.pendingDocOps().filter((b) => b.meta !== undefined)).toEqual(
+      []
+    );
+  });
+});
