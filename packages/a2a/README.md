@@ -127,6 +127,91 @@ name, so a DNS answer that changes between the check and the connect (DNS
 rebinding) cannot redirect it. Redirects are not followed. A name that does not
 resolve is retried; a refused address is final.
 
+## Reaching your agent
+
+The listener binds loopback. To let agents on other machines reach it, put a
+tunnel in front of it and give the card the tunnel's URL. Commands below were
+checked against Tailscale's and Cloudflare's docs in October 2026.
+
+Whatever terminates TLS in front of the listener (Tailscale's Funnel edge,
+Cloudflare, a relay) can read bearer traffic: a plain A2A client's token and
+every body. Pair Dispatch peers (`dispatch a2a pair offer`) so their requests
+and replies are signed; the edge can still read and drop them, but cannot forge
+or alter them unnoticed.
+
+`--trust-forwarded-for` keys the per-IP limits on the right-most
+`X-Forwarded-For` value. Set trustForwardedFor only when the proxy in front
+appends the connecting address to that header; otherwise a client chooses its
+own address and steps around the per-IP lockout. Left off, every client of a
+loopback tunnel shares one budget, which is safe. To check a proxy, send a
+request with `X-Forwarded-For: 192.0.2.1` through it: the listener's access log
+should show your real address, not `192.0.2.1`.
+
+### Tailscale
+
+Within your tailnet (needs MagicDNS and HTTPS certificates on the tailnet):
+
+```bash
+dispatch a2a listen --port 7450 --public-url https://<machine>.<tailnet>.ts.net
+tailscale serve --bg --https=443 http://127.0.0.1:7450
+tailscale serve --https=443 off          # stop
+```
+
+A tailnet name resolves to a 100.64.0.0/10 address, which the outbound address
+checks refuse: a tailnet peer must be added or paired by someone at the operator
+tier, as for any private address.
+
+Public, through Tailscale Funnel (also needs the `funnel` node attribute in the
+tailnet policy; ports 443, 8443 or 10000):
+
+```bash
+dispatch a2a listen --port 7450 --public-url https://<machine>.<tailnet>.ts.net
+tailscale funnel --bg --https=443 http://127.0.0.1:7450
+tailscale funnel --https=443 off         # stop
+```
+
+Funnel's TLS ends on your machine, but Tailscale's docs do not say whether
+`serve` or `funnel` add `X-Forwarded-For`: run the check above before turning
+`--trust-forwarded-for` on.
+
+### Cloudflare Tunnel
+
+Use a named tunnel with your own hostname. Quick tunnels
+(`cloudflared tunnel --url …`) are for testing only: they do not carry
+Server-Sent Events, so A2A streaming and task subscriptions fail, and they cap
+in-flight requests at 200.
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create dispatch-a2a
+cloudflared tunnel route dns dispatch-a2a agent.example.com
+```
+
+`~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <tunnel-uuid>
+credentials-file: /Users/<you>/.cloudflared/<tunnel-uuid>.json
+ingress:
+  - hostname: agent.example.com
+    service: http://127.0.0.1:7450
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel ingress validate
+cloudflared tunnel run dispatch-a2a
+dispatch a2a listen --port 7450 --public-url https://agent.example.com \
+  --trust-forwarded-for
+```
+
+Cloudflare terminates TLS and can read and rewrite traffic: bearer clients are
+fully exposed to it, and signatures make any rewrite of a paired peer's request
+fail verification. Cloudflare appends the address that connected to it to
+`X-Forwarded-For`, so `--trust-forwarded-for` is safe here; `CF-Connecting-IP`
+is not read separately. Cloudflare Access in front of the tunnel works only for
+clients that can present Access credentials, which plain A2A clients cannot.
+
 ## Standalone host
 
 Use `dispatch a2a serve` when the public A2A listener should run on another
@@ -166,6 +251,10 @@ dispatch a2a serve --host 0.0.0.0 --public --port 443 \
 - The card is built for the host's configured public URL, never from a request's
   `Host` or `X-Forwarded-*` headers.
 - A standalone host offers no push configs; push is the daemon's own.
+- Pairing works through a host, but upgrading an existing bearer pair to
+  signatures through a standalone host is not supported yet: the host does not
+  forward the bearer the upgrade authenticates with. Upgrade over the daemon's
+  own listener, or pair afresh.
 
 ## Running the TCK
 
