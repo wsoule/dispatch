@@ -112,23 +112,24 @@ export function installOperatorNotices(
     if (!refs.some((r) => r.type === 'run'))
       refs.unshift({ type: 'run', id: runId });
     const first = question.body.split('\n', 1)[0];
-    const tellLater = () => {
+    // Async, so a store closed in the meantime rejects instead of throwing.
+    const tellLater = async () => {
       if (engine.answerOf(question.id) !== null) return;
-      void engine
-        .send(
-          {
-            to: [tell],
-            kind: 'notice',
-            body: `Your run ${runId} is waiting on ${question.to.join(', ')} to decide: ${first}`,
-            refs,
-            idempotencyKey: `operator-notice:${question.id}`,
-          },
-          SYSTEM_SENDER
-        )
-        .catch((err: unknown) =>
-          console.error('messaging: operator notice failed', err)
-        );
+      await engine.send(
+        {
+          to: [tell],
+          kind: 'notice',
+          body: `Your run ${runId} is waiting on ${question.to.join(', ')} to decide: ${first}`,
+          refs,
+          idempotencyKey: `operator-notice:${question.id}`,
+        },
+        SYSTEM_SENDER
+      );
     };
-    setTimeout(tellLater, 0);
+    setTimeout(() => {
+      tellLater().catch((err: unknown) =>
+        console.error('messaging: operator notice failed', err)
+      );
+    }, 0);
   });
 }
