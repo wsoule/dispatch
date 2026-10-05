@@ -93,7 +93,10 @@ export class DocSync implements Collector, OpHandler {
 
   /** A doc op on this replica's chain. */
   publish(body: DocBody): FederatedOp {
-    return this.deps.fed.append({ type: 'doc', body });
+    return this.deps.fed.append({
+      type: 'doc',
+      body: body as unknown as JsonValue,
+    });
   }
 
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped' {

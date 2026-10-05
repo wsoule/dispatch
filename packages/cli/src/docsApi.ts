@@ -125,6 +125,10 @@ export interface DocsApi {
   revert(ref: string, rev: string | number): Promise<DocSaveResult>;
   // A personal doc's head as a new team draft; its owner only.
   promote(ref: string): Promise<DocSaveResult>;
+  /** Makes a team doc a Linear document under its task's issue or project (decide tier). */
+  /** Asks teammates' logs to re-read dropped doc ops (decide tier). */
+  syncRepair(ref?: string): Promise<{ reread: number }>;
+  shareLinear(ref: string): Promise<{ documentId: string }>;
   setStatus(ref: string, status: DocStatus): Promise<DocRecord>;
   // An elevated task that writes the doc's head to `path` in the repo (humans only).
   publish(
@@ -269,6 +273,13 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
       ),
     revert: (ref, rev) => json('POST', `${docPath(ref)}/revert`, { rev }),
     promote: (ref) => json('POST', `${docPath(ref)}/promote`, {}),
+    shareLinear: (ref) => json('POST', `${docPath(ref)}/share-linear`, {}),
+    syncRepair: (ref) =>
+      json(
+        'POST',
+        '/api/docs/health/sync-repair',
+        ref === undefined ? {} : { ref }
+      ),
     setStatus: (ref, status) =>
       json('POST', `${docPath(ref)}/status`, { status }),
     publish: (ref, input) => json('POST', `${docPath(ref)}/publish`, input),

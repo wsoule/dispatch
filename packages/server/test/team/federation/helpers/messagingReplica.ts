@@ -12,6 +12,7 @@ import type {
   WakeResult,
 } from '@dispatch-foo/protocol';
 import { fingerprint, sealPayload } from '@dispatch-foo/protocol/federation';
+import type { DocBody } from '@dispatch-foo/protocol/federation';
 import type { StatePayload } from '@dispatch-foo/protocol/federation';
 import { join } from 'node:path';
 
@@ -39,6 +40,15 @@ import type { TestMemoryHost } from '../../../memory/fixtures.js';
 import { MemoryRemote } from './memoryTransport.js';
 import { MemoryV1, serviceReplica } from './serviceReplica.js';
 import type { ServiceReplica } from './serviceReplica.js';
+
+/** A marker doc body these routing tests number, typed as a DocBody;
+ *  only the docs side reads a body's fields. */
+export const asDoc = (marker: {
+  doc: string;
+  kind: 'put';
+  n: number;
+  text?: string;
+}): DocBody => marker as unknown as DocBody;
 
 // What the docs side saw and says back; implements the whole DocsPort
 // (cross-plan edit XD1). Bodies carry a test number `n`.
@@ -69,7 +79,7 @@ export class RecordingDocsPort implements DocsPort {
     ctx: Parameters<DocsPort['applyDocOp']>[1]
   ): 'applied' | 'parked' | 'dropped' {
     this.seen.push({
-      n: Number(op.body['n']),
+      n: Number((op.body as unknown as { n?: unknown }).n),
       replica: op.replica,
       seq: op.seq,
       forBob: ctx.speaksFor(op.replica, 'human:bob'),
@@ -77,14 +87,13 @@ export class RecordingDocsPort implements DocsPort {
     });
     return this.answer;
   }
-  pendingDocOps(): { doc: string; kind: 'put'; n: number }[] {
-    return this.pending;
+  pendingDocOps(): DocBody[] {
+    return this.pending.map(asDoc);
   }
-  published(
-    bodies: readonly { [key: string]: unknown }[],
-    clocks: readonly string[] = []
-  ): void {
-    this.publishedBatches.push(bodies.map((b) => Number(b['n'])));
+  published(bodies: readonly DocBody[], clocks: readonly string[] = []): void {
+    this.publishedBatches.push(
+      bodies.map((b) => Number((b as unknown as { n?: unknown }).n))
+    );
     this.publishedClocks.push([...clocks]);
     this.pending = this.keepUnpublished
       ? this.pending.slice(bodies.length)

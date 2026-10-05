@@ -56,6 +56,8 @@ interface WebhookRecord {
   createdAt: string;
   /** Hooks for the other linked teams, all signing with the same secret. */
   more?: { teamId: string; id: string }[];
+  /** What the hooks subscribe to; absent on a registration predating Document. */
+  resourceTypes?: string[];
 }
 
 /** Every hook a registration holds, the primary team's first. */
@@ -115,6 +117,8 @@ export interface LinearSyncState {
   /** Set by an upgrade that added a milestone field: the next pull reads
    *  every linked milestone once, not just those newer than the cursor. */
   milestoneWalk?: boolean;
+  /** High-water mark for the Linear documents pull; absent until the first. */
+  documentCursor?: string | null;
 }
 
 // Sync state is user-level, not project-level: `.dispatch/` is committed to the

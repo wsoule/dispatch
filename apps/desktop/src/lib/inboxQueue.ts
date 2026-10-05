@@ -515,6 +515,13 @@ export function inboxItemText(item: InboxItem): {
         subtitle: `Pull request by ${item.pr.author}`,
       };
     case 'doc':
+      // Markers block the doc outright, so they lead; a sync problem waits on a look.
+      if (!item.doc.conflicted && item.doc.problem !== undefined)
+        return {
+          id: item.doc.handle,
+          title: `${item.doc.problem.startsWith('Linear sync held') ? 'Linear sync held' : 'Linear sync problem'} in ${item.doc.title}`,
+          subtitle: item.doc.problem,
+        };
       return {
         id: item.doc.handle,
         title: `Conflict markers in ${item.doc.title}`,

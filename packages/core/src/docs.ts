@@ -72,6 +72,11 @@ export interface DocRecord {
   } | null;
   // The path the newest publish asked for, so the publish dialog can offer it again.
   lastPublishPath: string | null;
+  // What a human should see about the doc's Linear sync, worded for display:
+  // "Linear sync problem: …" (a push overwrote a Linear edit; cleared by a
+  // human's save or review) or "Linear sync held: …" (local changes wait,
+  // cleared once released). Absent when there is none.
+  problem?: string;
   createdBy: string;
   createdAt: string;
   updatedBy: string;

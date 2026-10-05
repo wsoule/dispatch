@@ -775,6 +775,33 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
     });
 
   docs
+    .command('sync')
+    .description('Team sync of docs')
+    .command('repair [ref]')
+    .description(
+      "Ask teammates' logs to re-read doc ops dropped here, for one doc or all (decide tier)"
+    )
+    .option(...tokenOpt)
+    .action(async (ref: string | undefined, o: { token?: string }) => {
+      const r = await (await docsClient(ctx, o.token)).syncRepair(ref);
+      ctx.log(`asked teammates' logs to re-read ${r.reread} dropped op(s)`);
+    });
+
+  docs
+    .command('share-linear <ref>')
+    .description(
+      "Make a team doc a Linear document under its task's issue or project (decide tier)"
+    )
+    .option(...tokenOpt)
+    .action(async (ref: string, o: { token?: string }) => {
+      // The daemon refuses these too; saying so here spares the round trip.
+      if (ref.startsWith('~'))
+        throw new Error('personal docs never go to Linear');
+      const r = await (await docsClient(ctx, o.token)).shareLinear(ref);
+      ctx.log(`${ref} shared to Linear as document ${r.documentId}`);
+    });
+
+  docs
     .command('publish <ref>')
     .description(
       'Write a reviewed or accepted team doc into the repo through an elevated task'

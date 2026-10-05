@@ -13,6 +13,7 @@ import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 
+import type { DocsService } from '../../docs/service.js';
 import type { AsyncGitRunner } from '../../sync/worktree.js';
 import type { SyncLedger } from '../boardSync/ledger.js';
 import type { ReadHints, SignedAcks } from '../boardSync/repo.js';
@@ -22,6 +23,7 @@ import type { Team } from '../index.js';
 import { syncSeats } from '../index.js';
 import { AgentSync } from './agents.js';
 import { ChannelSync } from './channels.js';
+import { DocOpHandler } from './docs.js';
 import { GitFederationTransport, signedEntry } from './git.js';
 import { Homes } from './homes.js';
 import type { HomeTasks } from './homes.js';
@@ -32,6 +34,7 @@ import { LegacyWindow } from './legacy.js';
 import { MailOut } from './mail.js';
 import { MemorySync } from './memory.js';
 import type { TeamMemoryPort } from './memory.js';
+import { DocSync } from './ops.js';
 import { Presence, trackWaiting } from './presence.js';
 import { RelayFederationTransport } from './relay.js';
 import { RosterService } from './roster.js';
@@ -199,6 +202,26 @@ export function wireAgentsAndChannels(
     held.onLiveRun(task, replica);
   });
   trackWaiting(deps.engine, deps.messages, deps.presence);
+}
+
+// Team docs over signed `doc` ops (docs Task 20): the handler folds what
+// arrives, DocSync routes and publishes, and `docs sync repair` reaches it.
+export function wireDocSync(
+  federation: Federation,
+  deps: { docs: DocsService }
+): DocOpHandler {
+  const { fed, roster, service } = federation;
+  const handler = new DocOpHandler({
+    service: deps.docs,
+    // One rule with the held proposal's own gate (FW-R38(2)).
+    policyAllows: (taskId) => deps.docs.syncPolicyAllows(taskId),
+  });
+  const docSync = new DocSync({ fed, roster, service, port: handler });
+  handler.bindFederation(docSync);
+  service.register(docSync);
+  service.addCollector(docSync);
+  deps.docs.bindSync(handler);
+  return handler;
 }
 
 // Board sync as one daemon runs it: the signed roster, signed task ops, the

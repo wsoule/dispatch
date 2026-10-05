@@ -1,10 +1,21 @@
-import { TASK_ID_PATTERN } from '@dispatch-foo/core';
+import {
+  DOC_STATUSES,
+  docBodyProblem,
+  DOCS_LIMITS,
+  docSlugProblem,
+  docTitleProblem,
+  LINK_RELS,
+  LINK_TARGET_TYPES,
+  TASK_ID_PATTERN,
+} from '@dispatch-foo/core';
+import type { RevisionCause } from '@dispatch-foo/core';
 import { parseAddress } from '@dispatch-foo/protocol';
 import type { Address, Message } from '@dispatch-foo/protocol';
 import { REPLICA_ID } from '@dispatch-foo/protocol/federation';
 import type {
   AgentBody,
   ChannelBody,
+  DocBody,
   ForwardPayload,
   MailPayload,
   MailTarget,
@@ -211,4 +222,167 @@ export function dropNote(
   message: string
 ): void {
   fed.problem(`${kind}:${replica}`, message);
+}
+
+const DOC_ID = /^doc-[0-9A-Z]{26}$/;
+const REV_ID = /^rev-[0-9A-Z]{26}$/;
+const HASH = /^[0-9a-f]{64}$/;
+const CAUSES: readonly RevisionCause[] = [
+  'create',
+  'save',
+  'edit',
+  'merge',
+  'revert',
+  'import',
+  'restore',
+  'proposal',
+  'approve',
+  'reject',
+  'sync',
+];
+/** The most parents one revision names: a merge, approve or reject has two. */
+const MAX_PARENTS = 16;
+const MAX_LINK_ID = 128;
+const utf8 = (v: string): number => Buffer.byteLength(v);
+
+// Doc authors are historical: any run id an older build minted still names one.
+const DOC_AUTHOR = /^(?:human|agent|run):[A-Za-z0-9._/@:-]{1,128}$/;
+const isDocAuthor = (v: unknown): v is Address =>
+  typeof v === 'string' && DOC_AUTHOR.test(v);
+// A proposal's source task id, as any build named it.
+const DOC_TASK = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const isRevId = (v: unknown): v is string =>
+  typeof v === 'string' && REV_ID.test(v);
+const isIso = (v: unknown): v is string =>
+  text(v, 64) && !Number.isNaN(Date.parse(v));
+
+function docRevision(v: unknown): DocBody['revision'] | null {
+  if (!isObj(v)) return null;
+  const { parents, approval, task } = v;
+  if (
+    !isRevId(v['id']) ||
+    !Array.isArray(parents) ||
+    parents.length > MAX_PARENTS ||
+    !parents.every(isRevId) ||
+    docTitleProblem(v['title']) !== null ||
+    docBodyProblem(v['body']) !== null ||
+    typeof v['hash'] !== 'string' ||
+    !HASH.test(v['hash']) ||
+    !isDocAuthor(v['author']) ||
+    !CAUSES.includes(v['cause'] as RevisionCause) ||
+    typeof v['summary'] !== 'string' ||
+    utf8(v['summary']) > DOCS_LIMITS.summaryBytes ||
+    !isIso(v['createdAt']) ||
+    !(task === undefined || (typeof task === 'string' && DOC_TASK.test(task)))
+  )
+    return null;
+  let checked: { by: Address; policy?: { rung: number } } | undefined;
+  if (approval !== undefined) {
+    if (!isObj(approval) || !isDocAuthor(approval['by'])) return null;
+    const policy = approval['policy'];
+    if (
+      policy !== undefined &&
+      !(
+        isObj(policy) &&
+        Number.isSafeInteger(policy['rung']) &&
+        (policy['rung'] as number) >= 0 &&
+        (policy['rung'] as number) <= 10
+      )
+    )
+      return null;
+    checked = {
+      by: approval['by'],
+      ...(policy === undefined
+        ? {}
+        : { policy: { rung: policy['rung'] as number } }),
+    };
+  }
+  return {
+    id: v['id'],
+    parents,
+    title: v['title'] as string,
+    body: v['body'] as string,
+    hash: v['hash'],
+    author: v['author'],
+    cause: v['cause'] as RevisionCause,
+    summary: v['summary'],
+    createdAt: v['createdAt'],
+    ...(checked === undefined ? {} : { approval: checked }),
+    ...(task === undefined ? {} : { task }),
+  };
+}
+
+function docMeta(v: unknown): DocBody['meta'] | null {
+  if (!isObj(v)) return null;
+  const { slug, aliases, title, status, links } = v;
+  if (slug !== undefined && docSlugProblem(slug) !== null) return null;
+  if (
+    aliases !== undefined &&
+    !(
+      Array.isArray(aliases) &&
+      aliases.length <= DOCS_LIMITS.linksPerDoc &&
+      aliases.every((a) => docSlugProblem(a) === null)
+    )
+  )
+    return null;
+  if (title !== undefined && docTitleProblem(title) !== null) return null;
+  if (status !== undefined && !DOC_STATUSES.includes(status as never))
+    return null;
+  let checkedLinks: NonNullable<DocBody['meta']>['links'];
+  if (links !== undefined) {
+    if (!Array.isArray(links) || links.length > DOCS_LIMITS.linksPerDoc)
+      return null;
+    checkedLinks = [];
+    for (const l of links) {
+      if (!isObj(l) || !isObj(l['target'])) return null;
+      const { type, id } = l['target'];
+      if (
+        !LINK_TARGET_TYPES.includes(type as never) ||
+        !text(id, MAX_LINK_ID) ||
+        !LINK_RELS.includes(l['rel'] as never)
+      )
+        return null;
+      checkedLinks.push({
+        target: { type: type as never, id },
+        rel: l['rel'] as never,
+      });
+    }
+  }
+  return {
+    ...(slug === undefined ? {} : { slug: slug as string }),
+    ...(aliases === undefined ? {} : { aliases: aliases as string[] }),
+    ...(title === undefined ? {} : { title: title as string }),
+    ...(status === undefined ? {} : { status: status as never }),
+    ...(checkedLinks === undefined ? {} : { links: checkedLinks }),
+  };
+}
+
+/** A doc op body exactly as an honest build writes it, within the docs
+ *  limits a producer enforces, or null. */
+export function docBody(v: unknown): DocBody | null {
+  if (!isObj(v)) return null;
+  const { doc, kind, by, revision, meta, review } = v;
+  if (
+    typeof doc !== 'string' ||
+    !DOC_ID.test(doc) ||
+    !(kind === 'put' || kind === 'remove') ||
+    !isDocAuthor(by)
+  )
+    return null;
+  const rev = revision === undefined ? undefined : docRevision(revision);
+  const m = meta === undefined ? undefined : docMeta(meta);
+  if (rev === null || m === null) return null;
+  if (review !== undefined && !(isObj(review) && isRevId(review['rev'])))
+    return null;
+  if (kind === 'remove' && (rev !== undefined || m !== undefined)) return null;
+  return {
+    doc,
+    kind,
+    by,
+    ...(rev === undefined ? {} : { revision: rev }),
+    ...(m === undefined ? {} : { meta: m }),
+    ...(review === undefined
+      ? {}
+      : { review: { rev: review['rev'] as string } }),
+  };
 }

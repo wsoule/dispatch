@@ -26,6 +26,13 @@ import type {
 import { randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';
+import { DocsError } from '../docs/errors.js';
+import type {
+  LinearDocsAdapter,
+  LinearDocsDeps,
+  LinearDocsPort,
+} from '../docs/linear.js';
+import type { DocsActor } from '../docs/service.js';
 import type { EventBus } from '../events.js';
 import { TaskChangeBatch } from './batch.js';
 import type {
@@ -146,7 +153,19 @@ export interface LinearSyncDeps {
   webhookUrl?: string | null;
   /** Delay before a webhook's changes are fetched, coalescing a burst. */
   webhookDebounceMs?: number;
+  /** Linear documents; absent, documents are not synced. */
+  documents?: LinearDocsBinding;
 }
+
+/** How the pass reaches the docs side: an adapter over a mapping it builds. */
+interface LinearDocsBinding {
+  adapter(link: Omit<LinearDocsDeps, 'service'>): LinearDocsAdapter;
+  /** Linear-origin docs with local changes to push. */
+  outstanding(): string[];
+}
+
+// A Linear read or write that failed; the document step stops for this pass.
+class DocumentCallFailed extends Error {}
 
 // 'both' is the ordinary pass; 'push' is the debounced local-edit trigger;
 // 'import' is the explicit "bring existing Linear issues down" action;
@@ -169,6 +188,8 @@ interface WebhookTargets {
   removedComments: Set<string>;
   /** A project changed: containers are re-read from the cursor. */
   containers: boolean;
+  /** Linear documents created or edited. */
+  documents: Set<string>;
 }
 
 function emptyTargets(): WebhookTargets {
@@ -178,6 +199,7 @@ function emptyTargets(): WebhookTargets {
     comments: new Set(),
     removedComments: new Set(),
     containers: false,
+    documents: new Set(),
   };
 }
 
@@ -276,6 +298,16 @@ function earliest(a: string | null, b: string | null): string | null {
 
 // One team-scoped page walk run for every linked team, the pages merged by
 // record id (a project shared by two linked teams comes back from both).
+// The Linear project or issue a task mirrors, as documentCreate takes it.
+function containerOf(
+  external: string | null | undefined
+): { projectId: string } | { issueId: string } | null {
+  const ref = parseLinearExternal(external);
+  if (ref?.entity === 'issue') return { issueId: ref.id };
+  if (ref?.entity === 'project') return { projectId: ref.id };
+  return null;
+}
+
 async function acrossTeams<T extends { id: string }>(
   teamIds: readonly string[],
   walk: (teamId: string) => Promise<LinearResult<LinearPage<T>>>
@@ -338,7 +370,8 @@ async function issuesAcrossTeams(
 // The idle probe for every linked team: a kind moved if it moved in any.
 async function probeTeams(
   session: Pick<Session, 'client' | 'teamIds'>,
-  since: string
+  since: string,
+  documentsSince: string
 ): Promise<LinearResult<LinearProbe>> {
   const out: LinearProbe = {
     issues: false,
@@ -346,9 +379,10 @@ async function probeTeams(
     projects: false,
     milestones: false,
     initiatives: false,
+    documents: false,
   };
   for (const teamId of session.teamIds) {
-    const probed = await session.client.probe(teamId, since);
+    const probed = await session.client.probe(teamId, since, documentsSince);
     if (!probed.ok) return probed;
     for (const key of Object.keys(out) as (keyof LinearProbe)[]) {
       out[key] = out[key] || probed.data[key];
@@ -601,7 +635,11 @@ export class LinearSync {
     else if (type === 'Comment') {
       (removed ? t.removedComments : t.comments).add(id);
     } else if (type === 'Project') t.containers = true;
-    else if (type === 'IssueLabel' || type === 'Cycle') {
+    // A deleted Linear document leaves its Dispatch doc as it is.
+    else if (type === 'Document') {
+      if (removed) return;
+      t.documents.add(id);
+    } else if (type === 'IssueLabel' || type === 'Cycle') {
       this.workspaceCache = null;
     } else return;
     if (this.webhookTimer !== null) clearTimeout(this.webhookTimer);
@@ -683,6 +721,39 @@ export class LinearSync {
     return this.enqueue({ mode: 'both', taskIds });
   }
 
+  /**
+   * "Share to Linear": a decide-tier human's team doc becomes a Linear document
+   * under the project or issue its task mirrors. The docs side refuses before
+   * any Linear call; nothing but this action sends a doc to Linear.
+   */
+  async shareDocument(actor: DocsActor, ref: string): Promise<string> {
+    const binding = this.deps.documents;
+    if (binding === undefined)
+      throw new DocsError('unavailable', 'Linear documents are off');
+    let client: LinearClient | null = null;
+    const adapter = binding.adapter({
+      port: this.documentsPort(
+        () => {
+          client ??= this.client();
+          if (client === null)
+            throw new DocsError('unavailable', 'no Linear API key configured');
+          return client;
+        },
+        [],
+        '',
+        (failure) => {
+          throw new DocsError('unavailable', this.note(failure));
+        }
+      ),
+      taskFor: () => null,
+      containerFor: (taskId) =>
+        containerOf(this.deps.store.get(taskId)?.meta.external),
+      personFor: () => null,
+      problem: () => undefined,
+    });
+    return adapter.share(actor, ref);
+  }
+
   /** Brings the team's whole backlog down: containers, issues, comments, links. */
   async importIssues(): Promise<LinearSyncSummary> {
     return this.enqueue({ mode: 'import' });
@@ -706,6 +777,102 @@ export class LinearSync {
       });
     this.inFlight = next;
     return next;
+  }
+
+  // Pulls Linear documents changed since the document cursor, then pushes
+  // Linear-origin docs changed locally; an import reads every document once.
+  // `delivered` set, it folds only those documents (a webhook pass).
+  private async syncDocuments(
+    run: Run,
+    delivered?: ReadonlySet<string>
+  ): Promise<void> {
+    const binding = this.deps.documents;
+    if (binding === undefined) return;
+    const { pass, session, state, ctx } = run;
+    const summary = pass.summary;
+    const adapter = binding.adapter({
+      port: this.documentsPort(
+        () => session.client,
+        session.teamIds,
+        session.workspace.viewer.id,
+        (failure) => {
+          if (pass.take(failure) === null) throw new DocumentCallFailed();
+        }
+      ),
+      taskFor: (parent) =>
+        parent !== null &&
+        (parent.kind === 'issue' ||
+          parent.kind === 'project' ||
+          parent.kind === 'initiative')
+          ? (ctx.taskByRemote.get(parent.id) ?? null)
+          : null,
+      containerFor: (taskId) => containerOf(ctx.tasks.get(taskId)?.external),
+      personFor: (userId) =>
+        userId === null ? null : (ctx.people.refByUser.get(userId) ?? null),
+      problem: (_docId, detail) => summary.errors.push(detail),
+    });
+    try {
+      if (delivered !== undefined) {
+        if (run.mayPull) await adapter.pullIds([...delivered]);
+        return;
+      }
+      if (run.mayPull) {
+        // A link made before documents synced starts at the issue cursor, so
+        // it does not pull the team's whole document history unasked.
+        const from = run.importing
+          ? null
+          : state.documentCursor !== undefined
+            ? state.documentCursor
+            : state.cursor;
+        const pulled = await adapter.pull(from);
+        state.documentCursor = pulled.cursor;
+      }
+      // An explicit task push and an import send no documents.
+      const pushes =
+        session.linear.direction !== 'pull' &&
+        run.taskIds === undefined &&
+        !run.importing;
+      if (pushes) {
+        for (const docId of binding.outstanding()) await adapter.push(docId);
+      }
+    } catch (err) {
+      if (pass.stopped) throw err;
+      if (!(err instanceof DocumentCallFailed)) {
+        summary.errors.push(
+          `Linear documents: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+  }
+
+  // The adapter's view of Linear over a client; `fail` records a failed call
+  // and throws, so a document step never acts on a half-read state.
+  private documentsPort(
+    client: () => LinearClient,
+    teamIds: readonly string[],
+    viewerId: string,
+    fail: (failure: LinearFailure) => void
+  ): LinearDocsPort {
+    const unwrap = <T>(result: LinearResult<T>): T => {
+      if (result.ok) return result.data;
+      fail(result);
+      throw new DocumentCallFailed();
+    };
+    return {
+      documentsUpdatedSince: async (cursor) =>
+        unwrap(
+          await acrossTeams(teamIds, (id) => client().documents(id, cursor))
+        ).nodes,
+      document: async (id) => unwrap(await client().document(id)),
+      documentUpdate: async (id, content) => {
+        unwrap(await client().updateDocument(id, content));
+      },
+      documentCreate: async (input) =>
+        unwrap(await client().createDocument(input)),
+      contentHistory: async (id) =>
+        unwrap(await client().documentContentHistory(id)),
+      integrationUserId: () => viewerId,
+    };
   }
 
   // Keeps the session's label list (the workspace cache's own array) in step
@@ -835,7 +1002,11 @@ export class LinearSync {
         // Cursors sit a second behind the newest record seen; the probe asks
         // about anything after that record itself, or an idle team never looks idle.
         const seen = new Date(Date.parse(from) + 1000).toISOString();
-        const probed = await probeTeams(session, seen);
+        const probed = await probeTeams(
+          session,
+          seen,
+          state.documentCursor ?? seen
+        );
         if (!probed.ok) {
           summary.errors.push(this.note(probed));
           summary.rateLimited = probed.kind === 'rate-limit';
@@ -849,12 +1020,14 @@ export class LinearSync {
           probe.projects ||
           probe.milestones ||
           probe.initiatives ||
-          probe.comments);
+          probe.comments ||
+          (probe.documents && this.deps.documents !== undefined));
       const idle =
         !moved &&
         (!pulls || probe !== null) &&
         !(pulls && state.milestoneWalk === true) &&
         !this.localDirty &&
+        (this.deps.documents?.outstanding().length ?? 0) === 0 &&
         !this.auditDue(state) &&
         this.webhookSettled(state, session);
       if (idle) {
@@ -987,6 +1160,9 @@ export class LinearSync {
     if (webhook) {
       if (!baselining && mayPull) {
         await pass.guarded(() => this.applyTargets(run, opts.targets));
+        const delivered = opts.targets?.documents;
+        if (delivered !== undefined && delivered.size > 0 && !pass.stopped)
+          await pass.guarded(() => this.syncDocuments(run, delivered));
       }
     } else if (baselining) {
       const now = new Date().toISOString();
@@ -1012,6 +1188,9 @@ export class LinearSync {
 
     if (!webhook && !baselining && !pass.stopped) {
       await pass.guarded(() => this.audit(run, run.importing));
+    }
+    if (!webhook && !baselining && !pass.stopped) {
+      await pass.guarded(() => this.syncDocuments(run));
     }
     if (!webhook && !pass.stopped) {
       await pass.guarded(() => this.ensureWebhook(run));
@@ -1160,6 +1339,7 @@ export class LinearSync {
       teamId: first.teamId,
       createdAt: new Date().toISOString(),
       ...(more.length === 0 ? {} : { more }),
+      resourceTypes: [...WEBHOOK_RESOURCE_TYPES],
     };
     if (hooks.length === session.teamIds.length) {
       state.webhookError = null;
@@ -1259,6 +1439,9 @@ export class LinearSync {
     if (!wanted) return current === null;
     if (current === null) return this.retrying(state);
     if (current.url !== url) return false;
+    // A registration missing a resource type we now subscribe to is redone.
+    const types = current.resourceTypes ?? [];
+    if (!WEBHOOK_RESOURCE_TYPES.every((t) => types.includes(t))) return false;
     const hooked = webhookHooks(current).map((h) => h.teamId);
     const covers =
       hooked.length === session.teamIds.length &&
@@ -1284,7 +1467,11 @@ export class LinearSync {
       // Cursors sit a second behind the newest record seen; the probe asks
       // about anything after that record itself, or an idle team never looks idle.
       const seen = new Date(Date.parse(probeFrom) + 1000).toISOString();
-      const probe = run.probe ?? pass.take(await probeTeams(session, seen));
+      const probe =
+        run.probe ??
+        pass.take(
+          await probeTeams(session, seen, state.documentCursor ?? seen)
+        );
       if (probe === null) return;
       records =
         walk ||

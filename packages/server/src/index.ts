@@ -72,6 +72,7 @@ import {
 } from './depmap.js';
 import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
+import { LinearDocsAdapter } from './docs/linear.js';
 import { docsRestoreDir, openDocs } from './docs/open.js';
 import { docsReceiptsStep } from './docs/receipts.js';
 import { redispatchPublishes } from './docs/routes.js';
@@ -185,6 +186,7 @@ import type { Federation } from './team/federation/daemon.js';
 import {
   buildFederation,
   wireAgentsAndChannels,
+  wireDocSync,
   wireMessagingFederation,
   wireTeamMemory,
 } from './team/federation/daemon.js';
@@ -1168,6 +1170,8 @@ async function bootServer(
     store,
     events,
     rootDir,
+    // Revision times and op clocks read one clock (the tests inject it).
+    now: federationNow,
     refreshTask: (taskId) => cache.refresh(store, [taskId]),
   });
   const docs = openDocs({
@@ -1614,6 +1618,14 @@ async function bootServer(
     })
   );
   messaging.gates.register('doc', docGateHandler(docs.service, docsHost));
+  if (federation !== null && docs.service.available) {
+    const fedService = federation.service;
+    wireDocSync(federation, { docs: docs.service });
+    // A team doc change here goes out soon, as a task edit does.
+    docsHost.onChange((change) => {
+      if (change.scope === 'team') fedService.notifyLocalChange();
+    });
+  }
   // Before messaging.recover() too: a replayed wake or dispatch starts runs,
   // and a run with no memory mode would load the host's native Claude memory.
   orchestrator.setMemoryPort(memory);
@@ -1997,6 +2009,11 @@ async function bootServer(
     localHumanRef: actorContext.humanRef,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
+    documents: {
+      adapter: (link) =>
+        new LinearDocsAdapter({ ...link, service: docs.service }),
+      outstanding: () => docs.service.linearOutstanding(),
+    },
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
@@ -2026,6 +2043,7 @@ async function bootServer(
     orchestrator,
     actorContext,
     reviewComments,
+    specLine: (taskId) => docs.service.specLine(taskId),
   });
 
   // Verification as its own dispatched run kind, exercising finished work
@@ -2036,6 +2054,7 @@ async function bootServer(
     cache,
     events,
     orchestrator,
+    specLine: (taskId) => docs.service.specLine(taskId),
   });
 
   // Constructed after ReviewRunner on purpose: terminal hooks fire in

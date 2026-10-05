@@ -190,6 +190,8 @@ export class DaemonDocsHost implements DocsHost {
       store: TaskStorePort;
       events: Pick<EventBus, 'broadcast'>;
       debounceMs?: number;
+      // The daemon's clock; tests inject one shared with federation.
+      now?: () => Date;
       // The project checkout publishes validate against and read git in.
       rootDir?: string;
       // Brings the daemon's task cache up to date after a task is created here.
@@ -594,6 +596,6 @@ export class DaemonDocsHost implements DocsHost {
   }
 
   now(): Date {
-    return new Date();
+    return this.deps.now?.() ?? new Date();
   }
 }

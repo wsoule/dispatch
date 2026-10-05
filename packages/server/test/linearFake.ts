@@ -17,8 +17,10 @@ import type {
   TaskCycle,
 } from '@dispatch-foo/core';
 
+import type { LinearDocument } from '../src/docs/linear.js';
 import type {
   LinearClient,
+  LinearContentHistoryEntry,
   LinearFailure,
   LinearIssuePage,
   LinearIssueRef,
@@ -143,6 +145,18 @@ export class FakeLinearClient implements LinearClient {
   milestoneList: LinearProjectMilestone[] = [];
   initiativeList: LinearInitiative[] = [];
   webhooks = new Map<string, LinearWebhookInput>();
+  documentList: LinearDocument[] = [];
+  /** Document id -> its content history, newest last. */
+  documentHistory = new Map<string, LinearContentHistoryEntry[]>();
+  documentWrites: { id: string; content: string }[] = [];
+  /** The cursor each documents() call was given. */
+  documentSince: (string | null)[] = [];
+  documentCreates: {
+    title: string;
+    content: string;
+    projectId?: string;
+    issueId?: string;
+  }[] = [];
 
   created: LinearIssueInput[] = [];
   updated: { id: string; input: LinearIssueInput }[] = [];
@@ -248,7 +262,11 @@ export class FakeLinearClient implements LinearClient {
     return ok(this.members.filter((m) => ids.includes(m.id)));
   }
 
-  probe(teamId: string, since: string): Promise<LinearResult<LinearProbe>> {
+  probe(
+    teamId: string,
+    since: string,
+    documentsSince: string = since
+  ): Promise<LinearResult<LinearProbe>> {
     const f = this.fail('probe');
     if (f !== null) return Promise.resolve(f);
     const after = (at: string) => at > since;
@@ -260,6 +278,7 @@ export class FakeLinearClient implements LinearClient {
       projects: this.projectList.some((p) => after(p.updatedAt)),
       milestones: this.milestoneList.some((m) => after(m.updatedAt)),
       initiatives: this.initiativeList.some((i) => after(i.updatedAt)),
+      documents: this.documentList.some((d) => d.updatedAt > documentsSince),
     });
   }
 
@@ -382,6 +401,81 @@ export class FakeLinearClient implements LinearClient {
         .map((i) => ({ ...i })),
       truncated: false,
     });
+  }
+
+  documents(
+    _teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearDocument>>> {
+    const f = this.fail('documents');
+    if (f !== null) return Promise.resolve(f);
+    this.documentSince.push(since);
+    return ok({
+      nodes: this.documentList
+        .filter((d) => since === null || d.updatedAt > since)
+        .map((d) => ({ ...d })),
+      truncated: false,
+    });
+  }
+
+  document(id: string): Promise<LinearResult<LinearDocument>> {
+    const f = this.fail('document');
+    if (f !== null) return Promise.resolve(f);
+    const doc = this.documentList.find((d) => d.id === id);
+    return doc === undefined ? missing('document', id) : ok({ ...doc });
+  }
+
+  updateDocument(
+    id: string,
+    content: string
+  ): Promise<LinearResult<LinearDocument>> {
+    const f = this.fail('updateDocument');
+    if (f !== null) return Promise.resolve(f);
+    const at = this.documentList.findIndex((d) => d.id === id);
+    if (at < 0) return missing('document', id);
+    const doc = {
+      ...this.documentList[at],
+      content,
+      updatedAt: this.stamp(),
+      updatedBy: this.viewerUser.id,
+    };
+    this.documentList[at] = doc;
+    this.documentWrites.push({ id, content });
+    return ok({ ...doc });
+  }
+
+  createDocument(input: {
+    title: string;
+    content: string;
+    projectId?: string;
+    issueId?: string;
+  }): Promise<LinearResult<LinearDocument>> {
+    const f = this.fail('createDocument');
+    if (f !== null) return Promise.resolve(f);
+    this.documentCreates.push(input);
+    const doc: LinearDocument = {
+      id: `doc-${this.next()}`,
+      title: input.title,
+      content: input.content,
+      updatedAt: this.stamp(),
+      updatedBy: this.viewerUser.id,
+      parent:
+        input.issueId !== undefined
+          ? { kind: 'issue', id: input.issueId }
+          : input.projectId !== undefined
+            ? { kind: 'project', id: input.projectId }
+            : null,
+    };
+    this.documentList.push(doc);
+    return ok({ ...doc });
+  }
+
+  documentContentHistory(
+    id: string
+  ): Promise<LinearResult<LinearContentHistoryEntry[]>> {
+    const f = this.fail('documentContentHistory');
+    if (f !== null) return Promise.resolve(f);
+    return ok([...(this.documentHistory.get(id) ?? [])]);
   }
 
   createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {

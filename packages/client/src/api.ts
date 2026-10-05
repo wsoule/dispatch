@@ -3955,6 +3955,8 @@ export interface ApiClient {
   revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
   /** Copies a personal doc's head into a new team draft (its owner only). */
   promoteDoc(ref: string): Promise<DocSaveResult>;
+  /** Makes a team doc a Linear document under its task's issue or project (decide tier). */
+  shareDocToLinear(ref: string): Promise<{ documentId: string }>;
   /** Stores an image for a doc (png, jpeg, gif or webp, typed by its bytes; ≤ 25 MiB). */
   uploadDocAsset(
     ref: string,
@@ -5032,6 +5034,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     promoteDoc: (ref) =>
       request(target, `${docPath(ref)}/promote`, { method: 'POST' }),
+    shareDocToLinear: (ref) =>
+      request(target, `${docPath(ref)}/share-linear`, { method: 'POST' }),
     uploadDocAsset: (ref, bytes) =>
       request(target, `${docPath(ref)}/assets`, {
         method: 'POST',

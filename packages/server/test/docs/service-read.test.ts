@@ -156,3 +156,42 @@ describe('doc_list from a run', () => {
     ).toEqual(['unrelated']);
   });
 });
+
+describe('specLine', () => {
+  it("renders only the task's own team spec as the spec line", () => {
+    const { service, host } = makeService();
+    host.operators.set('human:wyat', {
+      human: 'human:wyat',
+      identity: 'id-wyat',
+    });
+    const owner = service.actorFor(OWNER);
+    service.create(owner, {
+      title: 'Epic spec',
+      body: 'x\n',
+      links: [{ target: { type: 'task', id: 'e-1' }, rel: 'spec' }],
+    });
+    expect(service.specLine('t-1')).toBeNull();
+    // A personal spec is its owner's alone: it never reaches a review prompt.
+    service.create(owner, {
+      title: 'Private spec',
+      body: 'p\n',
+      scope: 'personal',
+      links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
+    });
+    expect(service.specLine('t-1')).toBeNull();
+    service.create(owner, {
+      title: 'Own',
+      body: 'y\n',
+      links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
+    });
+    expect(service.specLine('t-1')).toBe(
+      '- spec · own · draft · rev 1 · 1 KB: Own: y'
+    );
+  });
+
+  it('answers null while docs are unavailable', () => {
+    const { service } = makeService();
+    service.close();
+    expect(service.specLine('t-1')).toBeNull();
+  });
+});

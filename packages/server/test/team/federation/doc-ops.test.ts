@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 import { runGitSync } from '../../orchestrator/helpers.js';
 import { licenseFor, testKeys } from '../licenseKeys.js';
-import { foundedTeamWith } from './helpers/messagingReplica.js';
+import { asDoc, foundedTeamWith } from './helpers/messagingReplica.js';
 import type {
   MessagingReplica,
   RecordingDocsPort,
@@ -72,10 +72,22 @@ const parked = (r: MessagingReplica) =>
     .get()?.n;
 
 describe('doc ops (the routing the docs plan binds to)', () => {
+  it('drops a doc op with no body with a rolling note, never reaching the port', async () => {
+    open = await foundedTeamWith({ docs: true }, 'ada', 'bob');
+    at(1).fed.append({ type: 'doc', body: 'not a doc' });
+    await at(0).settleWith(at(1));
+    expect(docs(at(0)).seen).toEqual([]);
+    expect(
+      at(0)
+        .fed.problems()
+        .some((p) => p.subject === `malformed:${at(1).fed.replica}`)
+    ).toBe(true);
+  });
+
   it("reach the docs port in clock order, speaking for the publisher's own human only", async () => {
     open = await foundedTeamWith({ docs: true }, 'ada', 'bob');
-    sync(at(1)).publish({ doc: 'd-1', kind: 'put', n: 1 });
-    sync(at(1)).publish({ doc: 'd-1', kind: 'put', n: 2 });
+    sync(at(1)).publish(asDoc({ doc: 'd-1', kind: 'put', n: 1 }));
+    sync(at(1)).publish(asDoc({ doc: 'd-1', kind: 'put', n: 2 }));
     await at(0).settleWith(at(1));
     expect(docs(at(0)).seen.map((s) => s.n)).toEqual([1, 2]);
     expect(
@@ -91,7 +103,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
   it('keeps a parked doc op in fed_parked and offers it again next pass', async () => {
     open = await foundedTeamWith({ docs: true }, 'ada', 'bob');
     docs(at(0)).answer = 'parked';
-    sync(at(1)).publish({ doc: 'd-2', kind: 'put', n: 1 });
+    sync(at(1)).publish(asDoc({ doc: 'd-2', kind: 'put', n: 1 }));
     await at(0).settleWith(at(1));
     expect(parked(at(0))).toBe(1);
     docs(at(0)).answer = 'applied';
@@ -102,8 +114,8 @@ describe('doc ops (the routing the docs plan binds to)', () => {
 
   it('re-delivers the ops a docs fold asks for again', async () => {
     open = await foundedTeamWith({ docs: true }, 'ada', 'bob');
-    const op = sync(at(1)).publish({ doc: 'd-3', kind: 'put', n: 1 });
-    sync(at(1)).publish({ doc: 'd-3', kind: 'put', n: 2 });
+    const op = sync(at(1)).publish(asDoc({ doc: 'd-3', kind: 'put', n: 1 }));
+    sync(at(1)).publish(asDoc({ doc: 'd-3', kind: 'put', n: 2 }));
     await at(0).settleWith(at(1));
     sync(at(0)).rereadOps(at(1).fed.replica, [op.seq]);
     await at(0).service.syncNow();
@@ -119,8 +131,8 @@ describe('doc ops (the routing the docs plan binds to)', () => {
       'ada',
       'bob'
     );
-    const op = sync(at(1)).publish({ doc: 'd-15', kind: 'put', n: 1 });
-    sync(at(1)).publish({ doc: 'd-15', kind: 'put', n: 2 });
+    const op = sync(at(1)).publish(asDoc({ doc: 'd-15', kind: 'put', n: 1 }));
+    sync(at(1)).publish(asDoc({ doc: 'd-15', kind: 'put', n: 2 }));
     await at(0).settleWith(at(1));
     expect(docs(at(0)).seen.map((s) => s.n)).toEqual([1, 2]);
     sync(at(0)).rereadOps(at(1).fed.replica, [op.seq]);
@@ -130,13 +142,13 @@ describe('doc ops (the routing the docs plan binds to)', () => {
 
   it('refuses a reread op whose body was changed under its signed header', async () => {
     open = await foundedTeamWith({ docs: true }, 'ada', 'bob');
-    const op = sync(at(1)).publish({ doc: 'd-16', kind: 'put', n: 1 });
+    const op = sync(at(1)).publish(asDoc({ doc: 'd-16', kind: 'put', n: 1 }));
     await at(0).settleWith(at(1));
     const log = at(1).remote.logs.get(at(1).fed.replica) ?? [];
     const i = log.findIndex((o) => o.seq === op.seq);
     log[i] = {
       ...docOp(at(1), op.seq),
-      body: { doc: 'd-16', kind: 'put', n: 99 },
+      body: { doc: 'd-16', kind: 'put', n: 99 } as never,
     };
     sync(at(0)).rereadOps(at(1).fed.replica, [op.seq]);
     await at(0).service.syncNow();
@@ -151,7 +163,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
       'bob'
     );
     const [ada, cy, bob] = [at(0), at(1), at(2)];
-    const op = sync(bob).publish({ doc: 'd-17', kind: 'put', n: 1 });
+    const op = sync(bob).publish(asDoc({ doc: 'd-17', kind: 'put', n: 1 }));
     // Cy revokes bob below the doc op, which is on the branch.
     cy.roster.revoke(bob.fed.replica, 'left');
     await bob.service.syncNow();
@@ -186,9 +198,9 @@ describe('doc ops (the routing the docs plan binds to)', () => {
 
   it('rereads only the op whose hash was kept, never a fork of it (FW-R37(2))', async () => {
     open = await foundedTeamWith({ docs: true, seenOpsKept: 0 }, 'ada', 'bob');
-    const op = sync(at(1)).publish({ doc: 'd-18', kind: 'put', n: 1 });
+    const op = sync(at(1)).publish(asDoc({ doc: 'd-18', kind: 'put', n: 1 }));
     for (let i = 2; i <= 4; i++)
-      sync(at(1)).publish({ doc: 'd-18', kind: 'put', n: i });
+      sync(at(1)).publish(asDoc({ doc: 'd-18', kind: 'put', n: i }));
     await at(0).settleWith(at(1));
     fork(at(1), op.seq, 99);
     sync(at(0)).rereadOps(at(1).fed.replica, [op.seq]);
@@ -204,7 +216,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
       'cy'
     );
     const [ada, bob, cy] = [at(0), at(1), at(2)];
-    const op = sync(bob).publish({ doc: 'd-19', kind: 'put', n: 1 });
+    const op = sync(bob).publish(asDoc({ doc: 'd-19', kind: 'put', n: 1 }));
     await ada.settleWith(bob);
     await cy.settleWith(bob);
     cy.roster.revoke(bob.fed.replica, 'left');
@@ -217,7 +229,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
 
   it('refuses a reread with no kept hash for it', async () => {
     open = await foundedTeamWith({ docs: true, seenOpsKept: 0 }, 'ada', 'bob');
-    const op = sync(at(1)).publish({ doc: 'd-20', kind: 'put', n: 1 });
+    const op = sync(at(1)).publish(asDoc({ doc: 'd-20', kind: 'put', n: 1 }));
     await at(0).settleWith(at(1));
     at(0).fed.db.query('DELETE FROM fed_reread_seen').run();
     sync(at(0)).rereadOps(at(1).fed.replica, [op.seq]);
@@ -227,7 +239,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
 
   it('never re-delivers an op that is not a doc op of that publisher', async () => {
     open = await foundedTeamWith({ docs: true }, 'ada', 'bob');
-    sync(at(1)).publish({ doc: 'd-7', kind: 'put', n: 1 });
+    sync(at(1)).publish(asDoc({ doc: 'd-7', kind: 'put', n: 1 }));
     await at(0).settleWith(at(1));
     // Bob's key op is seq 1.
     sync(at(0)).rereadOps(at(1).fed.replica, [1]);
@@ -305,7 +317,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
   it('counts applied doc ops in the pass status, for quiescence', async () => {
     open = await foundedTeamWith({ docs: true }, 'ada', 'bob');
     const before = at(0).service.status().applied;
-    sync(at(1)).publish({ doc: 'd-14', kind: 'put', n: 1 });
+    sync(at(1)).publish(asDoc({ doc: 'd-14', kind: 'put', n: 1 }));
     await at(0).settleWith(at(1));
     expect(at(0).service.status().applied).toBe(before + 1);
   });
@@ -324,8 +336,8 @@ describe('doc ops (the routing the docs plan binds to)', () => {
       'bob'
     );
     docs(at(0)).answer = 'parked';
-    const first = sync(at(1)).publish({ doc: 'd-8', kind: 'put', n: 1 });
-    sync(at(1)).publish({ doc: 'd-8', kind: 'put', n: 2 });
+    const first = sync(at(1)).publish(asDoc({ doc: 'd-8', kind: 'put', n: 1 }));
+    sync(at(1)).publish(asDoc({ doc: 'd-8', kind: 'put', n: 2 }));
     await at(0).settleWith(at(1));
     expect(docs(at(0)).dropped).toEqual([
       { replica: at(1).fed.replica, seq: first.seq, reason: 'overflow', n: 1 },
@@ -341,7 +353,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
     );
     const [ada, bob, cy] = [at(0), at(1), at(2)];
     docs(ada).answer = 'parked';
-    const op = sync(bob).publish({ doc: 'd-6', kind: 'put', n: 1 });
+    const op = sync(bob).publish(asDoc({ doc: 'd-6', kind: 'put', n: 1 }));
     await ada.settleWith(bob);
     expect(parked(ada)).toBe(1);
     // Cy never read bob's doc op, so the cut is below it.
@@ -364,7 +376,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
     // Cy and bob revoke each other: bob reads as revoked while the fight is open.
     const [ada, cy, bob] = [at(0), at(1), at(2)];
     docs(ada).answer = 'parked';
-    sync(bob).publish({ doc: 'd-9', kind: 'put', n: 1 });
+    sync(bob).publish(asDoc({ doc: 'd-9', kind: 'put', n: 1 }));
     await ada.settleWith(bob);
     cy.roster.revoke(bob.fed.replica, 'left');
     bob.roster.revoke(cy.fed.replica, 'no, you');
@@ -394,7 +406,7 @@ describe('doc ops (the routing the docs plan binds to)', () => {
     );
     const [ada, dee] = [at(0), at(3)];
     for (const r of open) r.clock.now = new Date('2026-09-29T10:00:00.000Z');
-    sync(dee).publish({ doc: 'd-4', kind: 'put', n: 1 });
+    sync(dee).publish(asDoc({ doc: 'd-4', kind: 'put', n: 1 }));
     await ada.settleWith(dee);
     expect(docs(ada).seen).toEqual([]);
   });
