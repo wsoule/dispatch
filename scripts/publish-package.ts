@@ -5,6 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -137,18 +138,17 @@ export function checkPackedTypes(
   return problems;
 }
 
-// npm install argv for the smoke test: each packed workspace dependency from
-// its local tarball, so the package installs before its dependencies are public.
+// npm install argv for the smoke test: every packed workspace package (direct
+// or transitive) from its local tarball, so the package installs before its
+// dependencies are public. `pkg` is kept for the call shape the stage job uses.
 export function smokeInstallArgs(
-  pkg: PackageJson,
+  _pkg: PackageJson,
   packageTgz: string,
   depTarballs: Readonly<Record<string, string>>
 ): string[] {
-  const deps: string[] = [];
-  for (const name of Object.keys(pkg.dependencies ?? {})) {
-    const tgz = depTarballs[name];
-    if (tgz !== undefined) deps.push(`${name}@file:${tgz}`);
-  }
+  const deps = Object.keys(depTarballs)
+    .sort()
+    .map((name) => `${name}@file:${depTarballs[name] ?? ''}`);
   return ['install', '--no-audit', '--no-fund', ...deps, packageTgz];
 }
 
@@ -179,19 +179,28 @@ function publishedVersions(name: string): string[] {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-// The workspace packages a package depends on at runtime, by name → directory.
-function workspaceDeps(dir: string): Record<string, string> {
+// The workspace packages a package depends on at runtime, by name → directory;
+// with `transitive`, theirs too.
+function workspaceDeps(
+  dir: string,
+  transitive = false
+): Record<string, string> {
   const byName = new Map(
     Object.values(PUBLISHABLE).map((d) => [readPackage(d).name, d])
   );
-  const pkg = readPackage(dir);
   const out: Record<string, string> = {};
-  for (const field of RUNTIME)
-    for (const [name, spec] of Object.entries(pkg[field] ?? {})) {
-      const depDir = byName.get(name);
-      if (spec.startsWith('workspace:') && depDir !== undefined)
+  const visit = (from: string): void => {
+    const pkg = readPackage(from);
+    for (const field of RUNTIME)
+      for (const [name, spec] of Object.entries(pkg[field] ?? {})) {
+        const depDir = byName.get(name);
+        if (!spec.startsWith('workspace:') || depDir === undefined) continue;
+        if (name in out) continue;
         out[name] = depDir;
-    }
+        if (transitive) visit(depDir);
+      }
+  };
+  visit(dir);
   return out;
 }
 
@@ -242,7 +251,8 @@ function main(argv: string[]): number {
       return 0;
     }
     if (b === '--local' && c !== undefined) {
-      for (const dir of Object.values(deps)) pnpmPack(dir, c);
+      // The dry run installs the whole local chain, so pack it transitively.
+      for (const dir of Object.values(workspaceDeps(a, true))) pnpmPack(dir, c);
       return 0;
     }
   }
@@ -281,7 +291,8 @@ function main(argv: string[]): number {
       readFileSync(join(a, 'package.json'), 'utf8')
     ) as PackageJson;
     const tarballs: Record<string, string> = {};
-    if (b !== undefined)
+    // A package with no workspace dependencies packs none, so `b` may not exist.
+    if (b !== undefined && existsSync(b))
       for (const f of readdirSync(b).filter((n) => n.endsWith('.tgz'))) {
         const manifest = JSON.parse(
           run('tar', ['-xOzf', join(b, f), 'package/package.json'], root)

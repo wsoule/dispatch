@@ -167,6 +167,26 @@ describe('smokeInstallArgs', () => {
       '/out/package.tgz',
     ]);
   });
+  it('installs a transitive workspace dependency from its tarball too', () => {
+    const federation = {
+      ...good,
+      name: '@dispatch-foo/federation',
+      dependencies: { '@dispatch-foo/protocol': '0.2.0' },
+    };
+    expect(
+      smokeInstallArgs(federation, '/out/package.tgz', {
+        '@dispatch-foo/protocol': '/deps/p.tgz',
+        '@dispatch-foo/core': '/deps/c.tgz',
+      })
+    ).toEqual([
+      'install',
+      '--no-audit',
+      '--no-fund',
+      '@dispatch-foo/core@file:/deps/c.tgz',
+      '@dispatch-foo/protocol@file:/deps/p.tgz',
+      '/out/package.tgz',
+    ]);
+  });
   it('leaves a dependency with no local tarball to the registry (the stage job)', () => {
     expect(smokeInstallArgs(good, '/out/package.tgz', {})).toEqual([
       'install',
