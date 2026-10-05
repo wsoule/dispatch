@@ -1,6 +1,7 @@
 import { DEFAULT_A2A } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
+import { A2AError } from '../src/errors.js';
 import { handleA2A } from '../src/server/handle.js';
 import { IpLimiter } from '../src/server/limits.js';
 import { decodePageToken, encodePageToken } from '../src/server/paging.js';
@@ -346,6 +347,61 @@ describe('errors', () => {
       `message.metadata[${ENVELOPE_URI}].choices`
     );
   });
+
+  // A2A 1.0 §5.4: TaskNotCancelableError is HTTP 409 (CORE-CANCEL-002).
+  it('answers a cancel of a finished task with 409 TaskNotCancelableError', async () => {
+    port.onCancel = () => {
+      throw new A2AError('TASK_NOT_CANCELABLE', 'this task is finished');
+    };
+    const res = await call('/a2a/v1/tasks/m-root:cancel', {
+      method: 'POST',
+      body: {},
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: 409,
+        status: 'FAILED_PRECONDITION',
+        message: 'this task is finished',
+        details: [
+          {
+            '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+            reason: 'TASK_NOT_CANCELABLE',
+            domain: 'a2a-protocol.org',
+          },
+        ],
+      },
+    });
+  });
+
+  // A2A 1.0 §5.4: ContentTypeNotSupportedError is HTTP 415 (CORE-SEND-003).
+  it.each([
+    [{ raw: 'dGNr', mediaType: 'application/x-unsupported-tck-type' }],
+    [{ text: 'hi', mediaType: 'text/html' }],
+  ])(
+    'answers an unsupported part %j with 415 ContentTypeNotSupportedError',
+    async (part) => {
+      const res = await call('/a2a/v1/message:send', {
+        body: ask({ parts: [part] }),
+      });
+      expect(res.status).toBe(415);
+      const body = (await res.json()) as {
+        error: { code: number; status: string; details: unknown[] };
+      };
+      expect(body.error).toMatchObject({
+        code: 415,
+        status: 'INVALID_ARGUMENT',
+        details: [
+          {
+            '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+            reason: 'CONTENT_TYPE_NOT_SUPPORTED',
+            domain: 'a2a-protocol.org',
+          },
+        ],
+      });
+      expect(port.calls.some((c) => c.method === 'open')).toBe(false);
+    }
+  );
 
   it('refuses a continuation of a finished task, and a contextId that is not the task’s', async () => {
     port.tasks.set(

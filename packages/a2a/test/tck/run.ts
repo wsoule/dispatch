@@ -1,4 +1,10 @@
-import { cpSync, existsSync, mkdirSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 
 import { startSut } from './sut.js';
@@ -40,6 +46,33 @@ if (
   ])) !== 0
 )
   process.exit(1);
+
+// CORE-SEND-003 says ContentTypeNotSupportedError but, at this pin, sets no
+// expected_error, so the TCK's runner fails any error and passes only a send
+// that succeeds. Restore the file, then make it expect the error it names.
+const REQUIREMENTS = 'tck/requirements/core_operations.py';
+await run(['git', '-C', dir, 'checkout', '--quiet', '--', REQUIREMENTS]);
+const requirementsPath = resolve(dir, REQUIREMENTS);
+const requirements = readFileSync(requirementsPath, 'utf8');
+const patched = requirements
+  .replace(
+    '    EXTENSION_SUPPORT_REQUIRED_ERROR,\n',
+    '    CONTENT_TYPE_NOT_SUPPORTED_ERROR,\n    EXTENSION_SUPPORT_REQUIRED_ERROR,\n'
+  )
+  .replace(
+    '        expected_behavior="ContentTypeNotSupportedError returned",\n',
+    '        expected_behavior="ContentTypeNotSupportedError returned",\n        expected_error=CONTENT_TYPE_NOT_SUPPORTED_ERROR,\n'
+  );
+if (
+  patched.split('CONTENT_TYPE_NOT_SUPPORTED_ERROR').length !== 3 ||
+  !patched.includes('tck_id("send-003")')
+) {
+  console.error(
+    `a2a-tck: ${REQUIREMENTS} changed; revisit the CORE-SEND-003 patch`
+  );
+  process.exit(1);
+}
+writeFileSync(requirementsPath, patched);
 
 const sut = startSut();
 const code = await run(
