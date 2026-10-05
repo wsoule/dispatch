@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 import type { LinearDocsPort, LinearDocument } from '../../src/docs/linear.js';
 import { LinearDocsAdapter } from '../../src/docs/linear.js';
 import type { DocsService } from '../../src/docs/service.js';
+import type { SqliteDocStore } from '../../src/docs/store.js';
 import type { FakeDocsHost } from './fakeHost.js';
 import { AGENT, DECIDER, makeService, OWNER, TEAMMATE } from './fakeHost.js';
 
@@ -80,6 +81,7 @@ class FakeLinear implements LinearDocsPort {
 
 let service: DocsService;
 let host: FakeDocsHost;
+let docStore: SqliteDocStore;
 let linear: FakeLinear;
 let adapter: LinearDocsAdapter;
 let problems: string[];
@@ -105,7 +107,7 @@ const edit = (id: string, content: string, updatedBy = 'lin-wyat') =>
   });
 
 beforeEach(() => {
-  ({ service, host } = makeService());
+  ({ service, host, store: docStore } = makeService());
   host.operators.set('human:wyat', {
     human: 'human:wyat',
     identity: 'id-wyat',
@@ -369,5 +371,135 @@ describe('share', () => {
       code: 'invalid',
     });
     expect(linear.creates).toHaveLength(1);
+  });
+});
+
+describe('review fixes', () => {
+  it("pushes a human's resolution of a conflict, comparing against Linear's own text", async () => {
+    linear.docs.set('lin-a', doc('lin-a'));
+    await adapter.pull(null);
+    service.edit(as(OWNER), 'spec', {
+      ops: [{ op: 'replace', find: 'b\n', text: 'LOCAL\n' }],
+    });
+    service.seal(as(OWNER), 'spec');
+    edit('lin-a', 'a\nLINEAR\nc\n');
+    expect((await adapter.pull(null)).conflicted).toBe(1);
+    const read = service.read(as(OWNER), 'spec');
+    // Markers never go to Linear.
+    expect(await adapter.push(read.doc.id)).toBe('held');
+    expect(linear.writes).toEqual([]);
+    service.saveBody(as(OWNER), 'spec', {
+      baseRev: read.rev.id,
+      body: 'a\nboth\nc\n',
+    });
+    service.seal(as(OWNER), 'spec');
+    expect(await adapter.push(read.doc.id)).toBe('pushed');
+    expect(linear.writes.at(-1)?.content).toBe('a\nboth\nc\n');
+    expect(service.linearOutstanding()).toEqual([]);
+  });
+
+  it('compares normalized text, so CRLF from Linear does not block a push', async () => {
+    linear.docs.set('lin-a', doc('lin-a', { content: 'v1\r\nv2\r\n' }));
+    await adapter.pull(null);
+    const id = service.read(as(OWNER), 'spec').doc.id;
+    service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'v3' }] });
+    service.seal(as(OWNER), 'spec');
+    expect(await adapter.push(id)).toBe('pushed');
+    expect(linear.writes.at(-1)?.content).toBe('v1\nv2\nv3\n');
+  });
+
+  it('notes an oversized Linear document on create, and never pushes the cut copy over it', async () => {
+    const line = `${'x'.repeat(1000)}\n`;
+    linear.docs.set('lin-a', doc('lin-a', { content: line.repeat(900) }));
+    await adapter.pull(null);
+    const read = service.read(as(OWNER), 'spec');
+    expect(read.text).toContain('over the size limit');
+    expect(read.text.length).toBeLessThan(line.length * 900);
+    service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'more' }] });
+    service.seal(as(OWNER), 'spec');
+    expect(await adapter.push(read.doc.id)).toBe('held');
+    expect(linear.writes).toEqual([]);
+  });
+
+  it('treats literal conflict markers from Linear as a conflict', async () => {
+    const marked = '<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n';
+    linear.docs.set('lin-a', doc('lin-a', { content: marked }));
+    await adapter.pull(null);
+    expect(service.read(as(OWNER), 'spec').doc.conflicted).toBe(true);
+    linear.docs.set('lin-b', doc('lin-b', { title: 'Other', content: 'a\n' }));
+    await adapter.pull(null);
+    edit('lin-b', marked);
+    expect((await adapter.pull(null)).conflicted).toBe(1);
+    expect(service.read(as(OWNER), 'other').doc.conflicted).toBe(true);
+  });
+
+  it('holds an agent edit to a Linear-origin doc until a human reviews it', async () => {
+    linear.docs.set('lin-a', doc('lin-a', { content: 'v1\n' }));
+    await adapter.pull(null);
+    const id = service.read(as(OWNER), 'spec').doc.id;
+    service.markReviewed(as(OWNER), 'spec');
+    service.edit(as(AGENT), 'spec', { ops: [{ op: 'append', text: 'agent' }] });
+    service.seal(as(AGENT), 'spec');
+    expect(await adapter.push(id)).toBe('held');
+    expect(service.linearOutstanding()).toEqual([]);
+    service.markReviewed(as(OWNER), 'spec');
+    expect(service.linearOutstanding()).toEqual([id]);
+    expect(await adapter.push(id)).toBe('pushed');
+    expect(linear.writes.at(-1)?.content).toBe('v1\nagent\n');
+  });
+
+  it('shares only reviewed docs, once under concurrent shares, from manual task links only', async () => {
+    service.create(as(AGENT), {
+      title: 'Agent draft',
+      body: 'x\n',
+      links: [{ target: { type: 'task', id: 't-1' }, rel: 'context' }],
+    });
+    await expect(
+      adapter.share(as(DECIDER), 'agent-draft')
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    service.create(as(OWNER), {
+      title: 'Design',
+      body: 'x\n',
+      links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
+    });
+    const both = await Promise.allSettled([
+      adapter.share(as(DECIDER), 'design'),
+      adapter.share(as(DECIDER), 'design'),
+    ]);
+    expect(both.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(linear.creates).toHaveLength(1);
+
+    service.create(as(OWNER), { title: 'Mentioned', body: 'm\n' });
+    const mentioned = service.read(as(OWNER), 'mentioned').doc;
+    docStore.addLink({
+      docId: mentioned.id,
+      docNs: 'team',
+      targetType: 'task',
+      targetId: 't-1',
+      rel: 'context',
+      source: 'mention',
+      createdBy: 'human:wyat',
+      createdAt: '2026-09-26T10:00:00.000Z',
+    });
+    await expect(adapter.share(as(DECIDER), 'mentioned')).rejects.toMatchObject(
+      { code: 'invalid' }
+    );
+    expect(linear.creates).toHaveLength(1);
+  });
+
+  it('frees the share claim when Linear refuses, so a retry can go through', async () => {
+    service.create(as(OWNER), {
+      title: 'Design',
+      body: 'x\n',
+      links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
+    });
+    const create = linear.documentCreate.bind(linear);
+    linear.documentCreate = () => Promise.reject(new Error('linear is down'));
+    await expect(adapter.share(as(DECIDER), 'design')).rejects.toThrow(
+      'linear is down'
+    );
+    linear.documentCreate = create;
+    expect(await adapter.share(as(DECIDER), 'design')).toMatch(/^lin-/);
   });
 });

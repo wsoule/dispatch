@@ -1,5 +1,41 @@
+import { docBodyProblem, normalizeDocText } from '@dispatch/core';
+import { createHash } from 'node:crypto';
+
 import { DocsError } from './errors.js';
 import type { DocsActor, DocsService } from './service.js';
+import { splitForCap } from './transfer.js';
+
+const OVERSIZE_NOTE =
+  "[Linear's version of this doc is over the size limit; the rest is only in Linear]\n";
+
+/** Linear's markdown as docs compare and hold it. */
+export interface LinearText {
+  /** Normalized and cut to the body cap: the merge base Linear holds. */
+  cut: string;
+  /** What a doc made from it holds: `cut`, plus a note when cut. */
+  body: string;
+  /** sha256 of the whole normalized text, so both sides compare alike. */
+  hash: string;
+  over: boolean;
+}
+
+// Normalizes Linear's markdown (BOM, CRLF) and cuts it to the body cap the
+// way an import does; a cut copy carries a note and is never pushed back.
+export function linearText(content: string): LinearText {
+  const normal = normalizeDocText(content);
+  const hash = createHash('sha256').update(normal).digest('hex');
+  if (docBodyProblem(normal) === null)
+    return { cut: normal, body: normal, hash, over: false };
+  let cut = splitForCap(normal)[0] ?? '';
+  if (cut !== '' && !cut.endsWith('\n')) cut += '\n';
+  // Room for the note: drop trailing lines until the noted body fits.
+  while (cut !== '' && docBodyProblem(cut + OVERSIZE_NOTE) !== null) {
+    const lines = cut.split('\n');
+    cut = `${lines.slice(0, -2).join('\n')}\n`;
+    if (cut === '\n') cut = '';
+  }
+  return { cut, body: cut + OVERSIZE_NOTE, hash, over: true };
+}
 
 // One Linear document as the adapter sees it; `content` is Linear's markdown,
 // untrusted text that only ever reaches a prompt fenced as a doc body.
@@ -49,6 +85,7 @@ export interface LinearDocsDeps {
 
 export type LinearPushResult =
   | 'pushed'
+  | 'held'
   | 'pulled-first'
   | 'merged-back'
   | 'overwritten'
@@ -104,22 +141,24 @@ export class LinearDocsAdapter {
     const { service, port } = this.deps;
     const ready = service.linearPushSource(docId);
     if (ready === null) return 'not-linear';
-    const { state, head, baseBody } = ready;
+    const { state, head, held } = ready;
     const before = await port.document(state.documentId);
+    // Linear's text is compared as docs hold it, against Linear's own last text.
     if (
       before.updatedAt !== state.remoteUpdatedAt ||
-      before.content !== baseBody
+      linearText(before.content).hash !== state.remoteHash
     ) {
       this.fold(before);
       return 'pulled-first';
     }
-    if (head.id === state.baseRev) return 'pushed';
+    if (held) return 'held';
+    if (linearText(head.body).hash === state.remoteHash) return 'pushed';
     await port.documentUpdate(state.documentId, head.body);
     const after = await port.document(state.documentId);
     const history = await port.contentHistory(state.documentId);
     // Linear now holds the pushed revision; anything else in `after` is an
     // edit made after the write, merged in against it.
-    service.linearPushed(docId, head.id, before.updatedAt);
+    service.linearPushed(docId, head.id, head.body, before.updatedAt);
     const mergedBack = this.fold(after) !== 'unchanged';
     const integration = port.integrationUserId();
     const overwritten = history.find(
@@ -143,21 +182,33 @@ export class LinearDocsAdapter {
   async share(actor: DocsActor, ref: string): Promise<string> {
     const { service, port } = this.deps;
     const source = service.linearShareSource(actor, ref);
-    const container = source.taskIds
-      .map((t) => this.deps.containerFor(t))
-      .find((c) => c !== null);
-    if (container === undefined)
-      throw new DocsError(
-        'invalid',
-        'link the doc to a task synced with a Linear project or issue first',
-        'links'
-      );
-    const created = await port.documentCreate({
-      title: source.title,
-      content: source.body,
-      ...container,
-    });
-    service.linearShared(source.docId, created.id, created.updatedAt);
+    // The claim linearShareSource took is released on any refusal or failure.
+    let created: LinearDocument;
+    try {
+      const container = source.taskIds
+        .map((t) => this.deps.containerFor(t))
+        .find((c) => c !== null);
+      if (container === undefined)
+        throw new DocsError(
+          'invalid',
+          'link the doc to a task synced with a Linear project or issue first',
+          'links'
+        );
+      created = await port.documentCreate({
+        title: source.title,
+        content: source.body,
+        ...container,
+      });
+    } catch (err) {
+      service.linearShareFailed(source.docId);
+      throw err;
+    }
+    service.linearShared(
+      source.docId,
+      created.id,
+      created.updatedAt,
+      source.body
+    );
     return created.id;
   }
 

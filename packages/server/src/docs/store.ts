@@ -122,6 +122,8 @@ const LATER_COLUMNS: readonly { table: string; column: string; ddl: string }[] =
       ddl: 'dispatch_operator TEXT',
     },
     { table: 'assets', column: 'checked_at', ddl: 'checked_at TEXT' },
+    { table: 'linear_docs', column: 'remote_body', ddl: 'remote_body TEXT' },
+    { table: 'linear_docs', column: 'remote_hash', ddl: 'remote_hash TEXT' },
   ];
 
 function addMissingColumns(db: SqliteDatabase): void {
@@ -200,8 +202,13 @@ export interface DocRow {
 export interface LinearDocRow {
   docId: string;
   documentId: string;
+  // The last revision synced with Linear (a conflicted head after a conflict).
   baseRev: string;
   remoteUpdatedAt: string;
+  // Linear's own text when last synced, normalized and cut to the body cap,
+  // and the hash of the whole normalized text; null on rows from before both.
+  remoteBody: string | null;
+  remoteHash: string | null;
 }
 
 interface RawLinearDoc {
@@ -209,6 +216,8 @@ interface RawLinearDoc {
   document_id: string;
   base_rev: string;
   remote_updated_at: string;
+  remote_body: string | null;
+  remote_hash: string | null;
 }
 
 const toLinearDoc = (r: RawLinearDoc): LinearDocRow => ({
@@ -216,6 +225,8 @@ const toLinearDoc = (r: RawLinearDoc): LinearDocRow => ({
   documentId: r.document_id,
   baseRev: r.base_rev,
   remoteUpdatedAt: r.remote_updated_at,
+  remoteBody: r.remote_body,
+  remoteHash: r.remote_hash,
 });
 
 // One image stored for a doc; its file is docs-assets/<doc>/<name>.
@@ -1460,17 +1471,27 @@ export class SqliteDocStore {
     return r === undefined ? null : toLinearDoc(r);
   }
 
-  // Linear-synced docs whose head moved past the last synced revision.
-  linearChanged(): string[] {
-    return this.all<{ doc_id: string }>(
-      'SELECT l.doc_id FROM linear_docs l JOIN docs d ON d.id = l.doc_id WHERE d.head_id != l.base_rev ORDER BY l.doc_id'
-    ).map((r) => r.doc_id);
+  linearDocs(): LinearDocRow[] {
+    return this.all<RawLinearDoc>(
+      'SELECT * FROM linear_docs ORDER BY doc_id'
+    ).map(toLinearDoc);
+  }
+
+  setRevisionConflicted(id: string): void {
+    this.run('UPDATE revisions SET conflicted = 1 WHERE id = ?', [id]);
   }
 
   putLinearDoc(row: LinearDocRow): void {
     this.run(
-      'INSERT OR REPLACE INTO linear_docs (doc_id, document_id, base_rev, remote_updated_at) VALUES (?, ?, ?, ?)',
-      [row.docId, row.documentId, row.baseRev, row.remoteUpdatedAt]
+      'INSERT OR REPLACE INTO linear_docs (doc_id, document_id, base_rev, remote_updated_at, remote_body, remote_hash) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        row.docId,
+        row.documentId,
+        row.baseRev,
+        row.remoteUpdatedAt,
+        row.remoteBody,
+        row.remoteHash,
+      ]
     );
   }
 

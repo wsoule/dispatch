@@ -56,6 +56,8 @@ import {
 } from './assets.js';
 import { DocConflictError, DocsError } from './errors.js';
 import type { DocChange, DocsHost } from './host.js';
+import type { LinearText } from './linear.js';
+import { linearText } from './linear.js';
 import type { DiffChunk } from './merge.js';
 import { diffChunks, merge3 } from './merge.js';
 import { applyOps } from './ops.js';
@@ -405,6 +407,8 @@ function hasConflictMarkers(body: string): boolean {
 }
 
 const problemKey = (docId: string): string => `problem:${docId}`;
+const shareClaimKey = (docId: string): string => `linear-share:${docId}`;
+const SHARE_CLAIM_MS = 10 * 60_000;
 
 // A doc's stored sync problem as DocRecord carries it, or nothing.
 function problemOf(store: SqliteDocStore, docId: string): { problem?: string } {
@@ -2369,7 +2373,7 @@ export class DocsService {
   ): 'created' | 'merged' | 'conflicted' | 'proposed' | 'unchanged' {
     const store = this.store();
     const origin = `linear:${incoming.id}`;
-    const body = splitForCap(normalizeDocText(incoming.content))[0] ?? '';
+    const text = linearText(incoming.content);
     const state = store.linearDocByDocument(incoming.id);
     if (state === null) {
       if (store.tombstonedOrigin(origin)) return 'unchanged';
@@ -2378,7 +2382,7 @@ export class DocsService {
         this.linearActor(author),
         {
           title,
-          body,
+          body: text.body,
           scope: 'team',
           links:
             taskId !== null && this.host.exists({ type: 'task', id: taskId })
@@ -2393,11 +2397,19 @@ export class DocsService {
       if (doc === null) throw new Error(`doc ${made.doc.id} vanished`);
       this.write(() => {
         this.sealInTx(doc, this.headOf(doc));
+        // Markers typed in Linear make the doc conflicted, as a merge's would.
+        if (hasConflictMarkers(text.body)) {
+          store.setRevisionConflicted(doc.headId);
+          doc.conflicted = true;
+          store.putDoc(doc);
+        }
         store.putLinearDoc({
           docId: doc.id,
           documentId: incoming.id,
           baseRev: doc.headId,
           remoteUpdatedAt: incoming.updatedAt,
+          remoteBody: text.cut,
+          remoteHash: text.hash,
         });
       });
       return 'created';
@@ -2407,23 +2419,15 @@ export class DocsService {
     if (doc === null || doc.scope !== 'team' || doc.status === 'archived')
       return 'unchanged';
     if (state.remoteUpdatedAt === incoming.updatedAt) return 'unchanged';
-    const base = store.revision(state.baseRev);
-    if (base !== null && base.body === body) {
+    if (text.hash === this.linearRemoteHash(state)) {
       this.write(() =>
         store.putLinearDoc({ ...state, remoteUpdatedAt: incoming.updatedAt })
       );
       return 'unchanged';
     }
     if (this.gated(doc))
-      return this.linearPropose(
-        doc,
-        state,
-        body,
-        author,
-        origin,
-        incoming.updatedAt
-      );
-    return this.linearMerge(doc, state, body, author, incoming.updatedAt);
+      return this.linearPropose(doc, state, text, author, origin, incoming);
+    return this.linearMerge(doc, state, text, author, incoming.updatedAt);
   }
 
   // A Linear title as a doc title: one line within the limit.
@@ -2435,13 +2439,23 @@ export class DocsService {
     return line !== '' ? line : 'Linear document';
   }
 
+  // Linear's own last text, and its hash; rows from before both fall back to
+  // the base revision's body.
+  private linearRemote(state: LinearDocRow): string {
+    return state.remoteBody ?? this.store().revision(state.baseRev)?.body ?? '';
+  }
+
+  private linearRemoteHash(state: LinearDocRow): string {
+    return state.remoteHash ?? linearText(this.linearRemote(state)).hash;
+  }
+
   // Merges incoming Linear text into an editable head: a clean result is a
   // sync revision, a conflict a conflicted head with markers, and a result over
   // the limits a conflicted head that keeps the local text with a note.
   private linearMerge(
     doc: DocRow,
     state: LinearDocRow,
-    incoming: string,
+    text: LinearText,
     author: string,
     remoteUpdatedAt: string
   ): 'merged' | 'conflicted' {
@@ -2450,8 +2464,8 @@ export class DocsService {
     return this.write(() => {
       this.sealInTx(doc, this.headOf(doc));
       const head = this.headOf(doc);
-      const base = store.revision(state.baseRev);
-      const merged = merge3(base?.body ?? '', head.body, incoming, {
+      // The base is Linear's own last text, never a conflicted head's markers.
+      const merged = merge3(this.linearRemote(state), head.body, text.body, {
         head: head.id,
         base: state.baseRev,
         mine: `linear:${state.documentId}`,
@@ -2460,6 +2474,8 @@ export class DocsService {
       let conflicted = false;
       if (merged.clean && docBodyProblem(merged.body) === null) {
         body = merged.body;
+        // Markers typed in Linear itself conflict the doc too.
+        conflicted = hasConflictMarkers(body);
       } else if (!merged.clean && docBodyProblem(merged.marked) === null) {
         body = merged.marked;
         conflicted = true;
@@ -2485,7 +2501,13 @@ export class DocsService {
       this.reindex(doc, rev);
       this.rebuildMentions(doc, rev);
       store.putDoc(doc);
-      store.putLinearDoc({ ...state, baseRev: rev.id, remoteUpdatedAt });
+      store.putLinearDoc({
+        ...state,
+        baseRev: rev.id,
+        remoteUpdatedAt,
+        remoteBody: text.cut,
+        remoteHash: text.hash,
+      });
       this.outbox.push({
         doc: doc.id,
         scope: doc.scope,
@@ -2504,11 +2526,12 @@ export class DocsService {
   private linearPropose(
     doc: DocRow,
     state: LinearDocRow,
-    body: string,
+    text: LinearText,
     author: string,
     origin: string,
-    remoteUpdatedAt: string
+    incoming: { updatedAt: string }
   ): 'proposed' {
+    const body = text.body;
     const store = this.store();
     const at = this.nowIso();
     const open = store
@@ -2559,7 +2582,13 @@ export class DocsService {
         });
         created = rev.id;
       }
-      store.putLinearDoc({ ...state, remoteUpdatedAt });
+      // Linear holds this text now; pushes wait while the proposal is open.
+      store.putLinearDoc({
+        ...state,
+        remoteUpdatedAt: incoming.updatedAt,
+        remoteBody: text.cut,
+        remoteHash: text.hash,
+      });
       this.outbox.push({
         doc: doc.id,
         scope: doc.scope,
@@ -2575,36 +2604,88 @@ export class DocsService {
 
   // A Linear-origin team doc's sealed head and its sync state, for a push;
   // null for any other doc (only docs that came from Linear push back).
-  linearPushSource(
-    docId: string
-  ): { state: LinearDocRow; head: RevisionRow; baseBody: string } | null {
+  // `held` says the head must not go out yet (see linearHold).
+  linearPushSource(docId: string): {
+    state: LinearDocRow & { remoteHash: string };
+    head: RevisionRow;
+    held: boolean;
+  } | null {
     const store = this.store();
     const state = store.linearDoc(docId);
     const doc = store.doc(docId);
     if (state === null || doc === null || doc.scope !== 'team') return null;
     if (doc.origin !== `linear:${state.documentId}`) return null;
     this.write(() => this.sealInTx(doc, this.headOf(doc)));
-    const baseBody = store.revision(state.baseRev)?.body ?? '';
-    return { state, head: this.headOf(doc), baseBody };
+    return {
+      state: { ...state, remoteHash: this.linearRemoteHash(state) },
+      head: this.headOf(doc),
+      held: this.linearHold(doc, state),
+    };
   }
 
-  // Linear-origin team docs with local changes to push; none while docs are down.
+  // Why a Linear-origin head may not be pushed: it is conflicted (markers never
+  // go to Linear), Linear's text was cut to fit (a push would drop the rest),
+  // a Linear edit waits as an open proposal, or it carries agent text no human
+  // has reviewed since the last sync.
+  private linearHold(doc: DocRow, state: LinearDocRow): boolean {
+    const store = this.store();
+    if (doc.status === 'archived' || doc.conflicted) return true;
+    const remote = this.linearRemote(state);
+    if (linearText(remote).hash !== this.linearRemoteHash(state)) return true;
+    const origin = `linear:${state.documentId}`;
+    if (
+      store
+        .proposalRows({ doc: doc.id, states: ['open'] })
+        .some((p) => p.origin === origin)
+    )
+      return true;
+    if (!doc.unreviewed) return false;
+    // Walks the head's first parents back to the last synced revision.
+    let id: string | undefined = doc.headId;
+    for (let i = 0; i < 1000 && id !== undefined && id !== state.baseRev; i++) {
+      const rev = store.revisionMeta(id);
+      if (rev === null) break;
+      if (!rev.author.startsWith('human:') && rev.via !== 'linear') return true;
+      id = rev.parents[0];
+    }
+    return false;
+  }
+
+  // Linear-origin team docs with local changes ready to push; none while docs are down.
   linearOutstanding(): string[] {
     if (!this.available) return [];
     const store = this.store();
-    return store.linearChanged().filter((id) => {
-      const doc = store.doc(id);
-      return doc !== null && doc.scope === 'team' && doc.status !== 'archived';
+    return store.linearDocs().flatMap((state) => {
+      const doc = store.doc(state.docId);
+      if (doc === null || doc.scope !== 'team') return [];
+      if (doc.origin !== `linear:${state.documentId}`) return [];
+      const head = store.revision(doc.headId);
+      if (head === null) return [];
+      if (linearText(head.body).hash === this.linearRemoteHash(state))
+        return [];
+      return this.linearHold(doc, state) ? [] : [doc.id];
     });
   }
 
-  // After a push: the pushed revision is the base Linear now holds.
-  linearPushed(docId: string, revId: string, remoteUpdatedAt: string): void {
+  // After a push: Linear holds the pushed revision's text.
+  linearPushed(
+    docId: string,
+    revId: string,
+    body: string,
+    remoteUpdatedAt: string
+  ): void {
     const store = this.store();
     const state = store.linearDoc(docId);
     if (state === null) return;
+    const text = linearText(body);
     this.write(() =>
-      store.putLinearDoc({ ...state, baseRev: revId, remoteUpdatedAt })
+      store.putLinearDoc({
+        ...state,
+        baseRev: revId,
+        remoteUpdatedAt,
+        remoteBody: text.cut,
+        remoteHash: text.hash,
+      })
     );
   }
 
@@ -2639,31 +2720,62 @@ export class DocsService {
     if (!actor.decider)
       throw forbidden('only a decide-tier human shares a doc to Linear', 'doc');
     if (doc.status === 'archived') throw archivedError();
+    if (doc.status !== 'accepted' && doc.unreviewed)
+      throw new DocsError(
+        'conflict',
+        'review it first: agent text no human checked never goes to Linear',
+        'doc'
+      );
     const store = this.store();
     if (
       store.linearDoc(doc.id) !== null ||
       doc.origin?.startsWith('linear:') === true
     )
       throw new DocsError('conflict', 'the doc is already in Linear', 'doc');
-    this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    // One share at a time per doc: a claim, stale after ten minutes, stands
+    // until the share lands or fails.
+    const claim = store.meta(shareClaimKey(doc.id));
+    if (
+      claim !== null &&
+      this.host.now().getTime() - Date.parse(claim) < SHARE_CLAIM_MS
+    )
+      throw new DocsError(
+        'conflict',
+        'the doc is already being shared to Linear',
+        'doc'
+      );
+    this.write(() => {
+      store.setMeta(shareClaimKey(doc.id), this.nowIso());
+      this.sealInTx(doc, this.headOf(doc));
+    });
     const head = this.headOf(doc);
+    // A link a mention made is not a choice of container; only manual links are.
     const taskIds = store
       .links({ docId: doc.id })
-      .filter((l) => l.targetType === 'task')
+      .filter((l) => l.targetType === 'task' && l.source === 'manual')
       .map((l) => l.targetId);
     return { docId: doc.id, title: head.title, body: head.body, taskIds };
+  }
+
+  // A share Linear refused, or one refused before Linear: frees its claim.
+  linearShareFailed(docId: string): void {
+    const store = this.store();
+    this.write(() => store.deleteMeta(shareClaimKey(docId)));
   }
 
   // After a share: the doc is Linear-origin, synced at its head.
   linearShared(
     docId: string,
     documentId: string,
-    remoteUpdatedAt: string
+    remoteUpdatedAt: string,
+    sent: string
   ): void {
     const store = this.store();
     const doc = store.doc(docId);
     if (doc === null) return;
+    const text = linearText(sent);
     this.write(() => {
+      store.deleteMeta(shareClaimKey(docId));
       doc.origin = `linear:${documentId}`;
       store.putDoc(doc);
       store.putLinearDoc({
@@ -2671,6 +2783,8 @@ export class DocsService {
         documentId,
         baseRev: doc.headId,
         remoteUpdatedAt,
+        remoteBody: text.cut,
+        remoteHash: text.hash,
       });
       this.outbox.push({
         doc: doc.id,
