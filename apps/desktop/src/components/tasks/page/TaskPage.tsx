@@ -13,6 +13,7 @@ import type {
   UpdatePatch,
 } from '@dispatch/core/browser';
 import { parseExternal } from '@dispatch/core/browser';
+import { useQuery } from '@tanstack/react-query';
 import {
   Archive,
   Ban,
@@ -63,6 +64,7 @@ import {
   readDefaultModel,
 } from '../../../lib/models';
 import { notePatch } from '../../../lib/noteDraft';
+import { presenceLine } from '../../../lib/remotePresence';
 import { isTerminalRunState } from '../../../lib/runState';
 import { parseTaskSections } from '../../../lib/taskDisplay';
 import {
@@ -192,6 +194,41 @@ interface TaskPageProps extends TaskDetailPanelProps {
   onExpand?: () => void;
   /** Peek mode: closes the dialog. */
   onClose?: () => void;
+}
+
+// Where the task's run is live on the team and whom it waits on; nothing
+// when board sync is off or the task has no live run.
+function TeamPresenceLine({
+  client,
+  port,
+  taskId,
+}: {
+  client: ApiClient | null;
+  port: number | undefined;
+  taskId: string;
+}) {
+  const query = useQuery({
+    queryKey: ['task-presence', port, taskId],
+    queryFn: () => {
+      if (client === null) throw new Error('no client');
+      return client.getTaskPresence(taskId);
+    },
+    enabled: client !== null,
+    retry: false,
+  });
+  const line =
+    query.data === undefined
+      ? null
+      : presenceLine(query.data.presence, query.data.waitingOn);
+  if (line === null) return null;
+  return (
+    <p
+      data-slot="team-presence"
+      className="text-muted-foreground -mt-4 text-[12px]"
+    >
+      {line}
+    </p>
+  );
 }
 
 function errorMessage(err: unknown): string {
@@ -688,6 +725,7 @@ export function TaskPage({
         value={doc.meta.title}
         onCommit={(title) => void patch({ title })}
       />
+      <TeamPresenceLine client={client} port={port} taskId={doc.meta.id} />
 
       {/* Dispatch and the other verbs, as Linear's control row: the primary indigo button
           with the model select beside it, then pill buttons and a ghost. */}

@@ -321,3 +321,48 @@ describe('POST /api/team/runs/:run/resolve', () => {
     expect(none.status).toBe(400);
   });
 });
+
+describe('GET /api/team/presence?task=', () => {
+  it("names the machine a task's live run is on and whom it waits on", async () => {
+    open = await foundedTeam('ada', 'bob');
+    const ada = at(0);
+    at(1).startRun({
+      id: 'r-0000000000b9',
+      taskId: 't-00000a09',
+      kind: 'execute',
+    });
+    at(1).presence.waitingOn('r-0000000000b9', 'ada');
+    await ada.settleWith(at(1));
+    const ctx = {
+      caller: { tier: 'decide' },
+      boardSync: ada.service,
+      federation: {
+        roster: ada.roster,
+        fed: ada.fed,
+        label: (r: string) => ada.roster.label(r),
+        presenceOf: (task: string) => ada.presence.presenceOf(task, ada.homes),
+      },
+    } as unknown as ApiContext;
+    const get = async (task: string): Promise<unknown> =>
+      (
+        await handleFederationRoute(
+          new Request(`http://127.0.0.1/api/team/presence?task=${task}`),
+          ctx,
+          ['team', 'presence'],
+          'GET'
+        )
+      ).json();
+    expect(await get('t-00000a09')).toEqual({
+      presence: {
+        replica: at(1).fed.replica,
+        handle: 'bob',
+        device: 'bob-laptop',
+      },
+      waitingOn: 'ada',
+    });
+    expect(await get('t-00000aff')).toEqual({
+      presence: null,
+      waitingOn: null,
+    });
+  });
+});

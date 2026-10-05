@@ -1,4 +1,9 @@
-import type { Delivery, Message } from '@dispatch/client';
+import type {
+  Delivery,
+  Message,
+  RemoteDeliveryRow,
+  Settlement,
+} from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
@@ -33,6 +38,11 @@ export interface ThreadPaneProps {
   focus: string | null;
   /** The thread's deliveries: a teammate may reply only to what reached them. */
   deliveries: readonly Delivery[];
+  /** Recipients on teammates' machines, each question's settlement and an
+   *  admitted observer (federation); absent without board sync. */
+  remote?: readonly RemoteDeliveryRow[];
+  settlements?: Readonly<Record<string, Settlement>>;
+  observer?: string | null;
   me: string;
   openIds: ReadonlySet<string>;
   access: MessageAccess;
@@ -114,6 +124,7 @@ export function ThreadPane(props: ThreadPaneProps) {
               onAnswer={props.onAnswer}
               onOpen={props.onOpen}
               loadApprovalInput={props.loadApprovalInput}
+              {...federated(message, messages, props)}
             />
           ))}
         </div>
@@ -130,6 +141,32 @@ export function ThreadPane(props: ThreadPaneProps) {
       </div>
     </div>
   );
+}
+
+// A row's federation props: its remote recipients, the standing of a reply
+// at its question's settler, and an admitted observer.
+function federated(
+  message: Message,
+  messages: readonly Message[],
+  props: ThreadPaneProps
+): Partial<MessageRowProps> {
+  const remote = (props.remote ?? []).filter((r) => r.messageId === message.id);
+  const question =
+    message.replyTo === null
+      ? undefined
+      : messages.find((m) => m.id === message.replyTo);
+  const settlement: Settlement | undefined =
+    message.settledAs === 'pending' || message.settledAs === 'superseded'
+      ? message.settledAs
+      : undefined;
+  return {
+    ...(remote.length > 0 ? { remoteDeliveries: remote } : {}),
+    ...(settlement === undefined ? {} : { settlement }),
+    ...(question?.remoteLabel === undefined
+      ? {}
+      : { settlerLabel: question.remoteLabel }),
+    observer: props.observer ?? null,
+  };
 }
 
 // The typed reply under a thread, or why there is none.

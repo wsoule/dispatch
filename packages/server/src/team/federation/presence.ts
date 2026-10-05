@@ -1,7 +1,9 @@
+import { printable } from '@dispatch/federation';
 import type { DeliveryEngine, MessageStore } from '@dispatch/protocol';
 import { hlcWallMs } from '@dispatch/protocol/federation';
 import type { FederatedOp, PresenceBody } from '@dispatch/protocol/federation';
 
+import type { Homes } from './homes.js';
 import { RosterError } from './roster.js';
 import type { RosterService } from './roster.js';
 import type { Collector, OpHandler, StageContext } from './service.js';
@@ -402,6 +404,29 @@ export class Presence implements Collector, OpHandler {
     return row === null
       ? null
       : (JSON.parse(row.replicas_json) as Record<string, Claim | null>);
+  }
+
+  /** Where a task's honoured live run is, for the task page: the machine and
+   *  whom the run waits on. */
+  presenceOf(
+    task: string,
+    homes: Homes
+  ): {
+    presence: { replica: string; handle: string; device: string } | null;
+    waitingOn: string | null;
+  } {
+    const { fed, roster } = this.deps;
+    const live = homes.taskLiveRun(task);
+    if (live === null) return { presence: null, waitingOn: null };
+    const row = this.row(live.run);
+    return {
+      presence: {
+        replica: live.replica,
+        handle: roster.label(live.replica),
+        device: printable(fed.pinned(live.replica)?.device ?? live.replica),
+      },
+      waitingOn: row?.waiting_on ?? null,
+    };
   }
 
   // FW-R31(3): the run-conflict note can be acknowledged.

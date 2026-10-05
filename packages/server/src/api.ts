@@ -4245,6 +4245,7 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
+  { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },

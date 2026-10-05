@@ -1395,6 +1395,8 @@ async function bootServer(
     federationContext.resolveRun = (run, replica) => {
       presence.resolve(run, replica);
     };
+    const { homes } = mailFederation;
+    federationContext.presenceOf = (task) => presence.presenceOf(task, homes);
   }
   if (federation !== null && mailFederation !== null)
     wireAgentsAndChannels(federation, {

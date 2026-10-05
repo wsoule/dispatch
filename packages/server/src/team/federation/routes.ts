@@ -38,6 +38,11 @@ export interface FederationContext {
   /** Binds a contested run to one claimant (an admin's), when messaging
    *  federates; absent before then. */
   resolveRun?: (run: string, replica: string) => void;
+  /** Where a task's live run is, when messaging federates. */
+  presenceOf?: (task: string) => {
+    presence: { replica: string; handle: string; device: string } | null;
+    waitingOn: string | null;
+  };
   /** How long a route waits for its pass; ROUTE_PASS_WAIT_MS unless a test sets it. */
   passWaitMs?: number;
 }
@@ -132,6 +137,7 @@ const ACTIONS = new Set([
   'abandon-invite',
   'problems',
   'runs',
+  'presence',
 ]);
 
 // Notes a person may acknowledge: a race, a cut that cannot be checked, a
@@ -222,6 +228,12 @@ export async function handleFederationRoute(
     return errorResponse(409, 'board sync is not on');
   if (method === 'GET' && segments.length === 2 && segments[1] === 'keys')
     return jsonResponse(teamKeys(fedCtx, service));
+  if (method === 'GET' && segments.length === 2 && segments[1] === 'presence') {
+    const task = new URL(req.url).searchParams.get('task') ?? '';
+    return jsonResponse(
+      fedCtx.presenceOf?.(task) ?? { presence: null, waitingOn: null }
+    );
+  }
   if (method !== 'POST') return errorResponse(405, 'method not allowed');
   const parsed = await readJsonBodyOptional(req);
   if (!parsed.ok) return parsed.response;

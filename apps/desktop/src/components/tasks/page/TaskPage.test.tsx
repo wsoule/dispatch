@@ -689,4 +689,27 @@ describe('TaskPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(closed).toEqual(['expand', 'close']);
   });
+
+  test("shows where a task's run is live on the team and whom it waits on", async () => {
+    const client = new Proxy({} as ApiClient, {
+      get(_target, key) {
+        if (key === 'getTaskPresence')
+          return () =>
+            Promise.resolve({
+              presence: {
+                replica: 'bob-0000000b',
+                handle: 'bob',
+                device: 'desk',
+              },
+              waitingOn: 'ada',
+            });
+        if (typeof key === 'symbol' || key === 'then') return undefined;
+        return () => new Promise<never>(() => {});
+      },
+    });
+    mountPage(undefined, { client });
+    expect(
+      await screen.findByText("Running on bob's desk, waiting on ada")
+    ).toBeTruthy();
+  });
 });
