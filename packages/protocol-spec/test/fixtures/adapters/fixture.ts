@@ -135,7 +135,7 @@ function onLine(line: string): void {
 }
 
 if (mode === 'close-stdin-after-hello') {
-  // Under Node: waits for hello, closes fd 0 and answers, then stays up, so
+  // Waits for hello, closes fd 0 and answers, then stays up, so
   // the runner's next write fails with EPIPE every time.
   readSync(0, Buffer.alloc(4096));
   closeSync(0);

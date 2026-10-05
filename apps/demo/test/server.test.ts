@@ -66,9 +66,7 @@ async function withServer(
   try {
     await run(origin(server));
   } finally {
-    // Not awaited: on Bun 1.3.14/macOS, stop(true) did not resolve after a
-    // socket this server closed itself — the daemon-dropped case below.
-    void server.stop(true);
+    await server.stop(true);
   }
 }
 
