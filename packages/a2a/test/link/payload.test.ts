@@ -42,7 +42,7 @@ describe('checkLinkPayload', () => {
       },
       { kind: 'cancel', taskId: 't-1' },
       { kind: 'resync', taskId: 't-1' },
-      { kind: 'unpair', at: '2026-10-05T00:00:00.000Z' },
+      { kind: 'unpair', id: 'A'.repeat(22), at: '2026-10-05T00:00:00.000Z' },
       {
         kind: 'key-change',
         statement: {
@@ -80,7 +80,8 @@ describe('checkLinkPayload', () => {
       { kind: 'send', message: MESSAGE, configuration: { blocking: true } },
       { kind: 'event', taskId: 't-1', event: { status: {} } },
       { kind: 'event', taskId: 't-1', event: { task: {}, message: {} } },
-      { kind: 'unpair', at: 'yesterday' },
+      { kind: 'unpair', id: 'A'.repeat(22), at: 'yesterday' },
+      { kind: 'unpair', at: '2026-10-05T00:00:00.000Z' },
       { kind: 'key-change', statement: { v: 2 } },
     ]) {
       const r = checkLinkPayload(p);
@@ -101,5 +102,24 @@ describe('sealableLinkPayload', () => {
       },
     };
     expect(sealableLinkPayload(big)).toBe('oversize');
+  });
+});
+
+describe('relay re-review N3: the SDK-decoded form is what passes', () => {
+  it('drops fields the A2A schema does not have', () => {
+    const r = checkLinkPayload({
+      kind: 'send',
+      message: { ...MESSAGE, junk: '<script>' },
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.payload.kind !== 'send') throw new Error('refused');
+    expect(JSON.stringify(r.payload.message)).not.toContain('junk');
+    const e = checkLinkPayload({
+      kind: 'event',
+      taskId: 't-1',
+      event: { statusUpdate: { ...STATUS.statusUpdate, junk: 1 } },
+    });
+    if (!e.ok || e.payload.kind !== 'event') throw new Error('refused');
+    expect(JSON.stringify(e.payload.event)).not.toContain('junk');
   });
 });

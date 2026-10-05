@@ -3,7 +3,10 @@ import { CredentialsUnreadableError, ensureA2ALinkKeys } from '@dispatch/core';
 import type { JsonValue } from '@dispatch/protocol';
 import {
   canonicalize,
+  canSealTo,
   generateReplicaKeys,
+  signText,
+  verifyText,
 } from '@dispatch/protocol/federation';
 import { createPublicKey, sign, verify } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
@@ -22,19 +25,29 @@ export interface LinkKeysBinding {
   signPub: string;
   sealPub: string;
   at: string;
+  // The card key's signature, and the link sign key's over the same bytes:
+  // proof the binder holds the link key it names (relay re-review N2).
   sig: string;
+  linkSig: string;
 }
 
-function bindingBytes(b: Omit<LinkKeysBinding, 'sig'>): Buffer {
+function bindingBytes(b: Omit<LinkKeysBinding, 'sig' | 'linkSig'>): Buffer {
   return Buffer.from(
     `${LINKKEYS_TAG}\n${canonicalize(b as unknown as JsonValue)}`
+  );
+}
+
+// A raw 32-byte public key in base64url.
+function rawKey32(v: string): boolean {
+  return (
+    /^[A-Za-z0-9_-]{43}$/.test(v) && Buffer.from(v, 'base64url').length === 32
   );
 }
 
 /** The card key's statement that `link`'s public keys are this agent's. */
 export function linkKeysBinding(i: {
   card: { keyid: string; privateKey: KeyObject };
-  link: Pick<A2ALinkKeys, 'signPub' | 'sealPub'>;
+  link: Pick<A2ALinkKeys, 'signPriv' | 'signPub' | 'sealPub'>;
   at: Date;
 }): LinkKeysBinding {
   const unsigned = {
@@ -44,11 +57,13 @@ export function linkKeysBinding(i: {
     sealPub: i.link.sealPub,
     at: i.at.toISOString(),
   };
-  const sig = sign('sha256', bindingBytes(unsigned), {
+  const bytes = bindingBytes(unsigned);
+  const sig = sign('sha256', bytes, {
     key: i.card.privateKey,
     dsaEncoding: 'ieee-p1363',
   }).toString('base64url');
-  return { ...unsigned, sig };
+  const linkSig = signText(i.link.signPriv, bytes.toString('utf8'));
+  return { ...unsigned, sig, linkSig };
 }
 
 /** A binding the given card key made; never throws. */
@@ -66,7 +81,10 @@ export function checkLinkKeysBinding(
     typeof r.sealPub !== 'string' ||
     typeof r.at !== 'string' ||
     typeof r.sig !== 'string' ||
-    r.cardKid !== ecThumbprint(cardJwk)
+    typeof r.linkSig !== 'string' ||
+    r.cardKid !== ecThumbprint(cardJwk) ||
+    !rawKey32(r.signPub) ||
+    !canSealTo(r.sealPub)
   )
     return { ok: false };
   const unsigned = {
@@ -86,9 +104,13 @@ export function checkLinkKeysBinding(
       },
       Buffer.from(r.sig, 'base64url')
     );
-    return good
-      ? { ok: true, signPub: r.signPub, sealPub: r.sealPub }
-      : { ok: false };
+    if (!good) return { ok: false };
+    // The link key itself signed the same bytes (verifyText refuses small-order keys).
+    if (
+      !verifyText(r.signPub, bindingBytes(unsigned).toString('utf8'), r.linkSig)
+    )
+      return { ok: false };
+    return { ok: true, signPub: r.signPub, sealPub: r.sealPub };
   } catch {
     return { ok: false };
   }

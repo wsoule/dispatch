@@ -28,6 +28,7 @@ import {
   decodePageToken,
   encodePageToken,
   matchChoice,
+  normalizedPath,
   offeredSkills,
   peerSelfAddressed,
   SIG_EXTENSION_URI,
@@ -136,6 +137,7 @@ export interface BridgeDeps {
 // Whether a forwarded path lies under the host's own URL path (relay review
 // I1): '/t/<A>/a2a/v1/…' for tenant A, anything for a host at an origin.
 function underHostPath(path: string, publicUrl: string): boolean {
+  if (!normalizedPath(path)) return false;
   const base = new URL(publicUrl).pathname.replace(/\/$/, '');
   return base === '' || path.startsWith(`${base}/`);
 }

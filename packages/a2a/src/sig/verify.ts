@@ -215,10 +215,29 @@ export interface ReceivedRequest {
   body: Uint8Array | null;
 }
 
+/**
+ * Whether `path` is already in normal form: no `.` or `..` segment, raw or
+ * percent-encoded in any case, so what a host routes on is what was signed
+ * (relay re-review I1). A URL round trip must give it back unchanged.
+ */
+export function normalizedPath(path: string): boolean {
+  if (/(^|\/)(\.|%2e){1,2}(\/|$)/i.test(path)) return false;
+  try {
+    return new URL(path, 'http://normal.invalid').pathname === path;
+  } catch {
+    return false;
+  }
+}
+
 /** Verifies a request against the configured origin, then spends its nonce. */
 export function verifyRequest(req: ReceivedRequest, f: VerifyFacts): SigResult {
   const origin = bareOrigin(f.configuredOrigin);
-  if (origin === null || !PATH.test(req.path) || !QUERY.test(req.query))
+  if (
+    origin === null ||
+    !PATH.test(req.path) ||
+    !normalizedPath(req.path) ||
+    !QUERY.test(req.query)
+  )
     return refuse('sig_malformed');
   const t = tagged(req.headers);
   if (typeof t === 'string') return refuse(t);

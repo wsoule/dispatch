@@ -33,6 +33,7 @@ describe('the link-keys binding', () => {
     const c = card();
     const link = generateReplicaKeys();
     const b = linkKeysBinding({ card: c, link, at: AT });
+    expect(typeof b.linkSig).toBe('string');
     expect(checkLinkKeysBinding(JSON.parse(JSON.stringify(b)), c.jwk)).toEqual({
       ok: true,
       signPub: link.signPub,
@@ -52,6 +53,38 @@ describe('the link-keys binding', () => {
       checkLinkKeysBinding({ ...b, sealPub: other.sealPub }, c.jwk).ok
     ).toBe(false);
     expect(checkLinkKeysBinding('x', c.jwk).ok).toBe(false);
+  });
+});
+
+describe('relay re-review N2: the link key proves possession, and keys are real', () => {
+  it('refuses a binding whose link signature is missing or by another key', () => {
+    const c = card();
+    const link = generateReplicaKeys();
+    const b = linkKeysBinding({ card: c, link, at: AT });
+    const { linkSig: _dropped, ...withoutLinkSig } = b;
+    expect(checkLinkKeysBinding(withoutLinkSig, c.jwk).ok).toBe(false);
+    const other = linkKeysBinding({
+      card: c,
+      link: { ...link, signPriv: generateReplicaKeys().signPriv },
+      at: AT,
+    });
+    expect(checkLinkKeysBinding(other, c.jwk).ok).toBe(false);
+  });
+
+  it('refuses keys that are not 32-byte Ed25519 and X25519 publics', () => {
+    const c = card();
+    const link = generateReplicaKeys();
+    for (const bad of [
+      { ...link, signPub: 'AAAA' },
+      { ...link, sealPub: 'AAAA' },
+      { ...link, sealPub: Buffer.alloc(32, 0xff).toString('base64url') },
+    ])
+      expect(
+        checkLinkKeysBinding(
+          linkKeysBinding({ card: c, link: bad, at: AT }),
+          c.jwk
+        ).ok
+      ).toBe(false);
   });
 });
 

@@ -243,6 +243,15 @@ bodies and can drop them, but cannot forge a paired peer's signed requests,
 which are checked against the tenant URL. Run it for your own daemons, never as
 a public service.
 
+To change the tenants file while the relay runs, write the new list to a file
+beside it, `chmod 600` it and `mv` it over the old one (an atomic replace), then
+send the relay SIGHUP: it re-reads the list and drops tenants no longer on it.
+
+Connections that have not authenticated yet are capped per address (8) and in
+all (256). Behind `--trust-forwarded-for` on loopback, the per-address cap keys
+on the forwarded address. Many addresses together can still fill the overall cap
+for a while; each such connection closes after 10 s without a valid auth.
+
 ## Standalone host
 
 Use `dispatch a2a serve` when the public A2A listener should run on another

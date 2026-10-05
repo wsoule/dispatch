@@ -144,7 +144,8 @@ export class WsConnection {
       } else if (opcode === 0x0) {
         if (!this.fragmenting) return this.close(1002);
       } else {
-        return this.close(1003);
+        // A reserved opcode (3-7, 11-15).
+        return this.close(1002);
       }
       this.partsLength += payload.length;
       if (this.partsLength > this.maxMessage) return this.close(1009);

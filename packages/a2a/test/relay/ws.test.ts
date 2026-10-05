@@ -78,6 +78,15 @@ describe('WsConnection strictness (relay review M3)', () => {
     expect(closeCode(b.s)).toBe(1002);
   });
 
+  it('closes on a reserved opcode with 1002', () => {
+    const a = conn();
+    a.s.emit('data', frame(0x3, Buffer.from('x')));
+    expect(closeCode(a.s)).toBe(1002);
+    const b = conn();
+    b.s.emit('data', frame(0xb, Buffer.alloc(0)));
+    expect(closeCode(b.s)).toBe(1002);
+  });
+
   it('refuses RSV bits and invalid UTF-8', () => {
     const a = conn();
     a.s.emit('data', frame(0x1, Buffer.from('a'), true, 0x40));

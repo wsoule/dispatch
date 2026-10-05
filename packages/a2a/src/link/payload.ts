@@ -1,4 +1,4 @@
-import { SendMessageRequest, StreamResponse } from '@a2a-js/sdk';
+import { Message, SendMessageRequest, StreamResponse } from '@a2a-js/sdk';
 import type { JsonValue } from '@dispatch/protocol';
 import { canonicalize, MAX_OP_BYTES } from '@dispatch/protocol/federation';
 
@@ -20,7 +20,8 @@ export type LinkPayload =
   // OD-10: ask the receiver to re-publish a task's current snapshot.
   | { kind: 'resync'; taskId: string }
   | { kind: 'key-change'; statement: LinkStatement }
-  | { kind: 'unpair'; at: string };
+  // Names the pairing it ends, so it binds to this link (relay re-review N4).
+  | { kind: 'unpair'; id: string; at: string };
 
 /**
  * The largest payload a link op can seal: sealing adds a 16-byte tag, base64url
@@ -102,15 +103,27 @@ export function checkLinkPayload(raw: unknown): Check {
         )
           return no('configuration may only set returnImmediately: true');
       }
+      // The decoded form is what passes on, never the raw object (N3).
+      let message: MessageJson;
       try {
         const req = SendMessageRequest.fromJSON({ message: raw.message });
         const m = req.message;
         if (m === undefined || m.messageId === '' || m.parts.length === 0)
           return no('message needs a messageId and parts');
+        message = Message.toJSON(m) as MessageJson;
       } catch {
         return no('message is not an A2A Message');
       }
-      return { ok: true, payload: raw as LinkPayload };
+      return {
+        ok: true,
+        payload: {
+          kind: 'send',
+          message,
+          ...(raw.configuration === undefined
+            ? {}
+            : { configuration: { returnImmediately: true as const } }),
+        },
+      };
     }
     case 'event': {
       const extra = onlyKeys(raw, ['kind', 'taskId', 'event']);
@@ -125,12 +138,18 @@ export function checkLinkPayload(raw: unknown): Check {
         !isRecord(e[keys[0]])
       )
         return no('event is not one StreamResponse');
+      let event: StreamResponseJson;
       try {
-        StreamResponse.fromJSON(e);
+        event = StreamResponse.toJSON(
+          StreamResponse.fromJSON(e)
+        ) as StreamResponseJson;
       } catch {
         return no('event is not an A2A StreamResponse');
       }
-      return { ok: true, payload: raw as LinkPayload };
+      return {
+        ok: true,
+        payload: { kind: 'event', taskId: raw.taskId as string, event },
+      };
     }
     case 'cancel':
     case 'resync': {
@@ -146,8 +165,10 @@ export function checkLinkPayload(raw: unknown): Check {
       return { ok: true, payload: raw as LinkPayload };
     }
     case 'unpair': {
-      const extra = onlyKeys(raw, ['kind', 'at']);
+      const extra = onlyKeys(raw, ['kind', 'id', 'at']);
       if (extra !== null) return no(extra);
+      if (typeof raw.id !== 'string' || !/^[A-Za-z0-9_-]{16,64}$/.test(raw.id))
+        return no('id');
       if (!validAt(raw.at)) return no('at');
       return { ok: true, payload: raw as LinkPayload };
     }

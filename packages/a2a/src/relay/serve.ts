@@ -159,7 +159,20 @@ export async function startRelay(o: RelayOptions): Promise<{
       return;
     }
     // Unauthenticated connections are capped per IP and in all (review M2).
-    const ip = req.socket.remoteAddress ?? '-';
+    // Behind a trusted loopback tunnel, the forwarded address is the client's.
+    const xff = req.headers['x-forwarded-for'];
+    const forwardedIp =
+      typeof xff === 'string'
+        ? xff
+            .split(',')
+            .map((v) => v.trim())
+            .filter((v) => v !== '')
+            .at(-1)
+        : undefined;
+    const ip =
+      o.trustForwardedFor && LOOPBACK.has(o.host) && forwardedIp !== undefined
+        ? forwardedIp
+        : (req.socket.remoteAddress ?? '-');
     if (
       (preAuth.get(ip) ?? 0) >= (o.preAuthPerIp ?? 8) ||
       preAuthTotal >= (o.preAuthTotal ?? 256)

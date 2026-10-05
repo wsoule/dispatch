@@ -216,7 +216,7 @@ export {
   signRequest,
   signResponse,
 } from './sig/sign.js';
-export { verifyRequest, verifyResponse } from './sig/verify.js';
+export { normalizedPath, verifyRequest, verifyResponse } from './sig/verify.js';
 export type {
   ReceivedRequest,
   SigRefusal,

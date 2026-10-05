@@ -399,3 +399,45 @@ describe('relay review M2, M5, M3 liveness', () => {
     expect(t.ws.readyState).toBe(WebSocket.OPEN);
   });
 });
+
+describe('relay re-review N1', () => {
+  it('keys the pre-auth cap on the trusted forwarded address behind a loopback tunnel', async () => {
+    const r = await startRelay({
+      host: '127.0.0.1',
+      port: 0,
+      publicUrl: null,
+      tls: null,
+      publicBind: false,
+      trustForwardedFor: true,
+      tenantsFile: tenantsFile(`${newKey().tp}\n`),
+      log: (line) => lines.push(line),
+      preAuthPerIp: 1,
+    });
+    stops.push(r.stop);
+    const dial = (xff: string) => {
+      const ws = new WebSocket(`${r.url.replace(/^http/, 'ws')}/v1/tenants`, {
+        headers: { 'x-forwarded-for': xff },
+      } as unknown as string[]);
+      const got: string[] = [];
+      const closed = new Promise<void>((res) => (ws.onclose = () => res()));
+      const challenged = new Promise<void>((res) => {
+        ws.onmessage = (e) => {
+          got.push(String(e.data));
+          res();
+        };
+      });
+      stops.push(() => {
+        ws.close();
+        return Promise.resolve();
+      });
+      return { got, closed, challenged };
+    };
+    const one = dial('192.0.2.1');
+    const two = dial('192.0.2.2');
+    await one.challenged;
+    await two.challenged;
+    const again = dial('192.0.2.1');
+    await again.closed;
+    expect(again.got).toEqual([]);
+  });
+});

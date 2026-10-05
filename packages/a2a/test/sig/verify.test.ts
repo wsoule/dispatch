@@ -521,3 +521,25 @@ describe('review fixes (I1, M1-M4)', () => {
     }
   });
 });
+
+describe('relay re-review I1: only an already-normalized path verifies', () => {
+  it('refuses dot segments, raw or percent-encoded, in any case', () => {
+    for (const path of [
+      '/t/B/../A/a2a/v1/message:send',
+      '/t/B/%2e%2e/A/a2a/v1/message:send',
+      '/t/B/%2E%2E/A/a2a/v1/message:send',
+      '/t/B/./../A/a2a/v1/message:send',
+      '/a2a/v1/./message:send',
+      '/a2a/v1/%2e/message:send',
+    ]) {
+      const req = {
+        ...signed({ targetUri: `https://agent.example${path}` }),
+        path,
+      };
+      expect(verifyRequest(req, facts())).toEqual({
+        ok: false,
+        reason: 'sig_malformed',
+      });
+    }
+  });
+});

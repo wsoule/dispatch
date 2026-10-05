@@ -1030,3 +1030,32 @@ describe('relay review I1: a forwarded path stays under the host’s own URL', (
     expect(res.status).toBe(404);
   });
 });
+
+describe('relay re-review I1: a dot-segment path cannot reach another tenant', () => {
+  const RELAY = 'https://relay.example.com';
+  const A = 'A'.repeat(43);
+  const B = 'B'.repeat(43);
+  it('refuses /t/B/../A, /t/B/%2e%2e/A, /t/B/%2E%2E/A and /t/B/./../A for tenant A', async () => {
+    const { key } = await signatureClient('acme');
+    const port = handle.a2a.port!;
+    for (const [i, path] of [
+      `/t/${B}/../${A}/a2a/v1/message:send`,
+      `/t/${B}/%2e%2e/${A}/a2a/v1/message:send`,
+      `/t/${B}/%2E%2E/${A}/a2a/v1/message:send`,
+      `/t/${B}/./../${A}/a2a/v1/message:send`,
+    ].entries()) {
+      const body = send(`m-dots-${i}`);
+      const result = await port.authenticateSignedAt(
+        {
+          method: 'POST',
+          path,
+          query: '',
+          headers: signedHeaders(key, 'POST', `${RELAY}${path}`, body),
+          body,
+        },
+        `${RELAY}/t/${A}`
+      );
+      expect(result?.ok).toBe(false);
+    }
+  });
+});
