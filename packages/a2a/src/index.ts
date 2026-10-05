@@ -250,3 +250,14 @@ export type {
   TaskJson,
   TaskStatusJson,
 } from './wire.js';
+export { relayBridgePort, TenantChannel } from './relay/bridgePort.js';
+export {
+  answerChallenge,
+  challengeString,
+  checkAuth,
+} from './relay/challenge.js';
+export { callHeaders, MAX_FRAME_BODY, parseFrame } from './relay/frames.js';
+export type { DaemonToRelay, RelayToDaemon } from './relay/frames.js';
+export { DEFAULT_TENANT_LIMITS, TenantLimiter } from './relay/limits.js';
+export type { TenantLimits } from './relay/limits.js';
+export { TenantRouter } from './relay/router.js';
