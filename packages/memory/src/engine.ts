@@ -998,26 +998,6 @@ export class MemoryEngine {
     });
   }
 
-  // Raises a fresh gate for an open proposal and records it in place of the
-  // old one, which then decides nothing: for a gate whose addressee can no
-  // longer answer it (a revoked teammate). Null when nothing was re-raised.
-  async regate(
-    proposalId: string
-  ): Promise<{ from: string | null; to: string } | null> {
-    const store = this.deps.stores.shared();
-    const p = store.getProposal(proposalId);
-    if (p === null || p.state !== 'open') return null;
-    const gate = await this.raiseGateOrNull(p);
-    if (gate === null || gate === p.gate) return null;
-    const recorded = store.transaction(() => {
-      const current = store.getProposal(proposalId);
-      if (current === null || current.state !== 'open') return false;
-      store.updateProposal({ ...current, gate });
-      return true;
-    });
-    return recorded ? { from: p.gate, to: gate } : null;
-  }
-
   // Raises the gate of every open proposal left without one by a crash
   // between storing it and raising it; raiseGate finds a gate sent before.
   // One failing gate never blocks the rest, and one past its TTL expires.

@@ -14,9 +14,7 @@ type CascadeContext = Pick<
 /**
  * XH-R3: what revoking teammate `handle` takes with it, once their token is
  * gone. Their agents and A2A clients (`agent:<handle>/…`) are revoked; asks
- * they or their agents left open and proposals they raised are closed, except
- * that a memory or doc proposal their run raised is re-gated to the owner
- * (XH-R9) so it is not lost; live
+ * they or their agents left open and proposals they raised are closed; live
  * runs acting for them are stopped; their event sockets are closed. Each step
  * is logged and skipped on failure, so one stuck piece never keeps the rest
  * acting for someone who has left.
@@ -43,23 +41,8 @@ export async function revokeCascade(
       runOperatorOf(address) === human);
 
   step(`revoke ${handle}'s agents`, () => revokeAgents(ctx, prefix));
-  // A memory or doc proposal their run raised is re-gated, now to the owner,
-  // rather than lost (XH-R9); their own and their agents' asks close.
-  // The replacement gates, kept open by the close step below.
-  const replacements = new Set<string>();
-  for (const question of ctx.messaging.engine.openBlocking()) {
-    const by = proposer(ctx, question);
-    if (by === null || !by.startsWith('run:') || !theirs(by)) continue;
-    try {
-      const replacement = await regate(ctx, question);
-      if (replacement !== null) replacements.add(replacement);
-    } catch (err) {
-      console.error(`dispatchd: could not re-gate ${question.id}`, err);
-    }
-  }
   step(`close ${handle}'s asks and proposals`, () => {
     for (const question of ctx.messaging.engine.openBlocking()) {
-      if (replacements.has(question.id)) continue;
       if (theirs(question.from) || theirs(proposer(ctx, question)))
         closeGate(ctx.messaging.engine, question.id, reason);
     }
@@ -105,26 +88,6 @@ function revokeAgents(ctx: CascadeContext, prefix: string): void {
     ctx.memory.host.agentDecided(agent.address, false);
     if (isClientAddress(agent.address)) ctx.a2a?.clientRevoked(agent.address);
   }
-}
-
-// Raises a fresh gate for the memory or doc proposal `question` asks about,
-// recorded in its place so closing `question` decides nothing; the new gate's
-// id, or null when none was raised.
-async function regate(
-  ctx: CascadeContext,
-  question: Message
-): Promise<string | null> {
-  const gate = gateOf(question);
-  let replacement: string | null = null;
-  if (gate?.type === 'memory') {
-    const moved = await ctx.memory.engine?.regate(gate.proposalId);
-    replacement = moved?.to ?? null;
-  } else if (gate?.type === 'doc') {
-    await ctx.docs.regate(gate.proposal);
-    const p = ctx.docs.proposalForGate(gate.proposal);
-    replacement = p !== null && p.state === 'open' ? p.gate : null;
-  }
-  return replacement === question.id ? null : replacement;
 }
 
 // Who raised the proposal a system gate asks about, or null for any other

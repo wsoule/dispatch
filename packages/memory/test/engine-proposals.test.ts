@@ -597,43 +597,6 @@ describe('proposals', () => {
     expect(t.shared.countEntries()).toBe(1);
   });
 
-  it('regate raises a fresh gate and records it, so the old one no longer decides', async () => {
-    const t = setup();
-    const saved = await t.engine.save(RUN, team);
-    if (saved.status !== 'proposed') throw new Error('not proposed');
-    expect(await t.engine.regate(saved.proposal)).toEqual({
-      from: 'm-gate-1',
-      to: 'm-gate-2',
-    });
-    const [p] = t.engine.proposals(OWNER, 'open');
-    expect(p.gate).toBe('m-gate-2');
-    const closeOld = {
-      proposalId: p.id,
-      gateId: 'm-gate-1',
-      choice: 'reject' as const,
-      by: 'agent:dispatch',
-      reason: 'revoked',
-      expired: true,
-    };
-    expect(t.engine.applyGateAnswer(closeOld).outcome).toBe('skipped');
-    expect(t.engine.proposals(OWNER, 'open')).toHaveLength(1);
-  });
-
-  it('regate leaves a decided proposal and a failed raise alone', async () => {
-    const t = setup();
-    expect(await t.engine.regate('mp-missing')).toBeNull();
-    const saved = await t.engine.save(RUN, team);
-    if (saved.status !== 'proposed') throw new Error('not proposed');
-    t.host.failing.add('raiseGate');
-    const errors = spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      expect(await t.engine.regate(saved.proposal)).toBeNull();
-    } finally {
-      errors.mockRestore();
-    }
-    expect(t.engine.proposals(OWNER, 'open')[0].gate).toBe('m-gate-1');
-  });
-
   it('recovers a proposal whose gate was never recorded', async () => {
     const t = setup();
     await ledgerRow(t, 'ledger:l-9@t');

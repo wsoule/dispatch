@@ -23,21 +23,18 @@ export function memoryGateKind(
   return shared.getEntry(p.target)?.kind ?? 'fact';
 }
 
-// The open memory gate the system raised for `proposalId` to `to`, if any. One
-// from anyone else is never adopted (M5): its text was not the system's. One
-// to someone else is not reused, so a re-raise can re-address it.
+// The open memory gate the system raised for `proposalId`, if any. One from
+// anyone else is never adopted (M5): its text was not the system's.
 function openGateFor(
   engine: DeliveryEngine,
-  proposalId: string,
-  to: string
+  proposalId: string
 ): Message | undefined {
   return engine.openBlocking().find((m) => {
     const gate = gateOf(m);
     return (
       m.from === SYSTEM_ADDRESS &&
       gate?.type === 'memory' &&
-      gate.proposalId === proposalId &&
-      m.to.includes(to)
+      gate.proposalId === proposalId
     );
   });
 }
@@ -51,7 +48,7 @@ export async function raiseMemoryGate(
   p: MemoryProposal,
   kind: MemoryKind
 ): Promise<string> {
-  const open = openGateFor(engine, p.id, to);
+  const open = openGateFor(engine, p.id);
   if (open !== undefined) return open.id;
   const verb = p.action === 'retire' ? 'proposes retiring' : 'proposes';
   const source = isRestoredOrigin(p.origin)
@@ -76,7 +73,7 @@ export async function raiseMemoryGate(
         scope: p.scope,
         kind,
       },
-      idempotencyKey: `memory-gate:${p.id}:${to}`,
+      idempotencyKey: `memory-gate:${p.id}`,
     },
     SYSTEM_SENDER
   );

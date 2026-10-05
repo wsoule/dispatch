@@ -25,7 +25,7 @@ function proposer(p: DocProposal): string {
 
 // Sends `to` (the proposing run's operator or the owner, XH-R9) a content-free
 // gate for a proposal (title, body and diff stay in docs.db); an open gate for
-// the same proposal to the same human is reused.
+// the same proposal is reused.
 export async function raiseDocGate(
   engine: DeliveryEngine,
   to: string,
@@ -33,7 +33,7 @@ export async function raiseDocGate(
 ): Promise<string> {
   const open = engine.openBlocking().find((m) => {
     const gate = gateOf(m);
-    return gate?.type === 'doc' && gate.proposal === p.rev && m.to.includes(to);
+    return gate?.type === 'doc' && gate.proposal === p.rev;
   });
   if (open !== undefined) return open.id;
   const refs: Ref[] = [
