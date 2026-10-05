@@ -60,7 +60,9 @@ Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
   conformance kit.
 - `packages/federation`, `packages/server/src/team/` and
   `packages/server/test/team/` are Elastic-2.0 (their own `LICENSE` files): the
-  team tier.
+  team tier. Federation spans three of the four: its wire format and the
+  engine's receive side are MIT (`packages/protocol`), its roster, transport and
+  mail are ELv2, and the daemon wiring and desktop are FSL.
 - Everything else (`packages/server`, `packages/ui`, `packages/web`,
   `packages/demo`, `apps/desktop`, `apps/demo`, `apps/site`) is `FSL-1.1-ALv2`
   (`LICENSE`), source-available and converting to Apache-2.0 two years after

@@ -497,7 +497,21 @@ async function threadRead(
   );
   if (!fetched.ok) return fetchFailed(fetched, 'thread_read');
   if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
-  return toolResult((await fetched.res.json()) as Record<string, unknown>);
+  const body = (await fetched.res.json()) as Record<string, unknown>;
+  // A teammate's message names its machine: `from (remote: <handle>)`.
+  if (Array.isArray(body['messages']))
+    body['messages'] = body['messages'].map((m: unknown) => {
+      if (typeof m !== 'object' || m === null) return m;
+      const row = m as Record<string, unknown>;
+      return typeof row['remoteLabel'] === 'string' &&
+        typeof row['from'] === 'string'
+        ? {
+            ...row,
+            fromLabel: `${row['from']} (remote: ${row['remoteLabel']})`,
+          }
+        : row;
+    });
+  return toolResult(body);
 }
 
 // POST /api/channels/:name/members — `member` omitted lets the server apply
@@ -607,7 +621,9 @@ export function registerMessagingTools(
         'human; no decision before the wait ends means denied. Your human: ' +
         'inside a run, the address in ' +
         'your task prompt; otherwise human:<handle> from your own ' +
-        'agent:<handle>/<name>.',
+        'agent:<handle>/<name>. ' +
+        "Recipients on a teammate's machine get your message within about a " +
+        'minute. Gates and overseer conversations never leave this machine.',
       inputSchema: {
         to: z.array(z.string()).min(1),
         kind: MESSAGE_KIND_SCHEMA,

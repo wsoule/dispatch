@@ -1273,3 +1273,45 @@ describe('withBearer', () => {
     }
   });
 });
+
+describe('msg_send description', () => {
+  it("tells agents how teammates' machines and gates behave", async () => {
+    const client = await connectClient(root);
+    const { tools } = await client.listTools();
+    const send = tools.find((t) => t.name === 'msg_send');
+    expect(send?.description).toContain(
+      "Recipients on a teammate's machine get your message within about a minute. Gates and overseer conversations never leave this machine."
+    );
+  });
+});
+
+describe('thread_read on a federated thread', () => {
+  it('marks a message from another machine as (remote: <handle>)', async () => {
+    daemon = new FakeDaemon();
+    daemon.threadBody = {
+      messages: [
+        {
+          id: 'm-1',
+          from: 'human:bob',
+          origin: 'bob-0000000b',
+          remoteLabel: 'bob',
+        },
+        { id: 'm-2', from: 'human:wyat' },
+      ],
+      deliveries: [],
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+    const result = (await client.callTool({
+      name: 'thread_read',
+      arguments: { threadId: 'm-1' },
+    })) as ToolCallResult;
+    const messages = (
+      result.structuredContent as {
+        messages: { id: string; fromLabel?: string }[];
+      }
+    ).messages;
+    expect(messages[0]?.fromLabel).toBe('human:bob (remote: bob)');
+    expect(messages[1] !== undefined && 'fromLabel' in messages[1]).toBe(false);
+  });
+});
