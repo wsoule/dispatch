@@ -320,6 +320,23 @@ describe('buildCockpit: In flight', () => {
   });
 });
 
+describe('buildCockpit: whose run it is (XH-R9)', () => {
+  test('a run is the human it acts for, not who dispatched it', () => {
+    const tasks = [task('t-1', { status: 'working' })];
+    const runs = [
+      run('r-1', 't-1', { dispatchedBy: ME, operator: 'human:maya' }),
+    ];
+    expect(buildCockpit(input({ tasks, runs })).flight).toEqual([]);
+    expect(
+      keys(
+        buildCockpit(
+          input({ tasks, runs, scope: { kind: 'person', ref: 'human:maya' } })
+        ).flight
+      )
+    ).toEqual(['run:r-1']);
+  });
+});
+
 describe('buildCockpit: whose run it is', () => {
   const unsigned = (id: string, taskId: string) =>
     run(id, taskId, { dispatchedBy: undefined });

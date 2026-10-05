@@ -28,6 +28,18 @@ describe('messaging config', () => {
       loadConfig(rootWith('messaging:\n  urgentPerHour: 0\n'))
     ).toThrow(/messaging.urgentPerHour/);
   });
+  it("reads a teammate's hourly remote mail quota, 600 by default", () => {
+    expect(loadConfig(rootWith('')).messaging.remoteMailPerReplicaPerHour).toBe(
+      600
+    );
+    expect(
+      loadConfig(rootWith('messaging:\n  remoteMailPerReplicaPerHour: 50\n'))
+        .messaging.remoteMailPerReplicaPerHour
+    ).toBe(50);
+    expect(() =>
+      loadConfig(rootWith('messaging:\n  remoteMailPerReplicaPerHour: 0\n'))
+    ).toThrow(/messaging.remoteMailPerReplicaPerHour/);
+  });
   it('caps agentBlockingTimeoutSec at 1800 seconds', () => {
     expect(
       loadConfig(rootWith('messaging:\n  agentBlockingTimeoutSec: 1800\n'))

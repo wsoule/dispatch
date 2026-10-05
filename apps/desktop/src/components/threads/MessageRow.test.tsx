@@ -307,6 +307,63 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
   expect(screen.getByText('commit:abc1234def')).toBeTruthy();
 });
 
+test('marks a message from another machine', () => {
+  renderRow(
+    msg('m-r', {
+      from: 'human:bob',
+      origin: 'bob-0000000b',
+      remoteLabel: 'bob',
+    })
+  );
+  expect(screen.getByText('remote: bob')).toBeTruthy();
+});
+
+test('names remote recipient states: sent to their machine, delivered, read, answered, refused', () => {
+  for (const [state, label] of [
+    ['forwarded', 'sent to their machine'],
+    ['pushed', 'delivered'],
+    ['read', 'read'],
+    ['answered', 'answered'],
+    ['refused', 'refused by their machine'],
+  ] as const) {
+    cleanup();
+    renderRow(msg('m-s'), {
+      remoteDeliveries: [
+        {
+          messageId: 'm-s',
+          recipient: 'human:bob',
+          via: 'direct',
+          state,
+          remote: true,
+        },
+      ],
+    });
+    expect(screen.getByText(`human:bob: ${label}`)).toBeTruthy();
+  }
+});
+
+test('shows a pending settlement and a superseded answer', () => {
+  renderRow(msg('m-a', { kind: 'answer' }), {
+    settlement: 'pending',
+    settlerLabel: 'ada',
+  });
+  expect(
+    screen.getByText("answered here, waiting for ada's machine")
+  ).toBeTruthy();
+  cleanup();
+  renderRow(msg('m-b'), { settlement: 'superseded' });
+  expect(screen.getByText('superseded')).toBeTruthy();
+});
+
+test('says an observer reads the thread when one is admitted and a participant is remote', () => {
+  renderRow(msg('m-o', { origin: 'bob-0000000b', remoteLabel: 'bob' }), {
+    observer: "ops's server",
+  });
+  expect(
+    screen.getByText("an observer (ops's server) reads this thread")
+  ).toBeTruthy();
+});
+
 test('a doc ref chip names its whole section and opens the doc there', () => {
   const onOpen = mock((_action: unknown) => {});
   renderRow(

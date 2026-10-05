@@ -30,6 +30,17 @@ CREATE TABLE IF NOT EXISTS fed_cursors (replica TEXT PRIMARY KEY, seq INTEGER, h
 -- the fold reads only those on each replica's decided key (FW-R24).
 CREATE TABLE IF NOT EXISTS fed_roster (replica TEXT NOT NULL, sign_pub TEXT NOT NULL, seq INTEGER NOT NULL, hlc TEXT NOT NULL, hash TEXT NOT NULL, body_json TEXT NOT NULL, PRIMARY KEY (replica, sign_pub, seq));
 CREATE TABLE IF NOT EXISTS fed_runs (run TEXT PRIMARY KEY, replica TEXT NOT NULL, task TEXT, run_kind TEXT NOT NULL, live INTEGER NOT NULL, waiting_on TEXT, hlc TEXT NOT NULL);
+-- A run two replicas claimed first: bound to neither until all but one claimant is revoked.
+CREATE TABLE IF NOT EXISTS fed_run_conflicts (run TEXT PRIMARY KEY, replicas_json TEXT NOT NULL);
+-- Claims refused because their run was bound here first, for an admin's resolution.
+CREATE TABLE IF NOT EXISTS fed_run_claims (run TEXT PRIMARY KEY, claims_json TEXT NOT NULL);
+-- State entries waiting for the next pass, by their recipients ("a,b").
+-- Every mail op verified here, so a forward carries only a real one (FW-R32(2)).
+-- Never pruned (FW-R36(1)): a forward is judged against these hashes alone.
+CREATE TABLE IF NOT EXISTS fed_mail_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash BLOB NOT NULL, PRIMARY KEY (replica, seq));
+-- Pruned run ids and the replica that ran each: never claimed by another.
+CREATE TABLE IF NOT EXISTS fed_run_tombs (run TEXT PRIMARY KEY, replica TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_state_out (id INTEGER PRIMARY KEY, recipients TEXT NOT NULL, entry_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_replicas (replica TEXT PRIMARY KEY, build TEXT NOT NULL, device TEXT NOT NULL, last_hlc TEXT NOT NULL, skew_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_members (channel TEXT NOT NULL, member TEXT NOT NULL, joined INTEGER NOT NULL, hlc TEXT NOT NULL, PRIMARY KEY (channel, member));
 CREATE TABLE IF NOT EXISTS fed_agents (address TEXT PRIMARY KEY, replica TEXT NOT NULL, display_name TEXT NOT NULL, client TEXT NOT NULL, status TEXT NOT NULL, hlc TEXT NOT NULL);
@@ -64,4 +75,10 @@ INSERT INTO fed_roster (replica, sign_pub, seq, hlc, hash, body_json)
   FROM fed_roster_v0 r LEFT JOIN fed_keys k ON k.replica = r.replica;
 DROP TABLE fed_roster_v0;
 INSERT OR IGNORE INTO fed_key_claims SELECT * FROM fed_keys;
+`;
+
+/** Brings fed_mail_seen from hex text with a time to the 32-byte hash alone. */
+export const FED_MIGRATE_MAIL_SEEN = `
+ALTER TABLE fed_mail_seen RENAME TO fed_mail_seen_v0;
+CREATE TABLE fed_mail_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash BLOB NOT NULL, PRIMARY KEY (replica, seq));
 `;

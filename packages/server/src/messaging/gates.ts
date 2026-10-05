@@ -106,6 +106,8 @@ export function closeRunGates(
 ): number {
   let closed = 0;
   for (const question of engine.openBlocking()) {
+    // A teammate's question is closed only by its settler (spec "Only the settler closes").
+    if (question.origin !== undefined) continue;
     const gate = gateOf(question);
     const parked = gate?.type === 'tool-approval' && gate.runId === run.id;
     const orphaned = question.from === `run:${run.id}` && !run.hasTask;
@@ -127,6 +129,7 @@ export function closeOrphanedGates(
   let closed = 0;
   const dead = new Set<string>();
   for (const question of engine.openBlocking()) {
+    if (question.origin !== undefined) continue;
     const gate = gateOf(question);
     const conversation =
       gate?.type === 'overseer-action' || gate?.type === 'tool-approval'

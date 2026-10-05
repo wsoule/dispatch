@@ -29,6 +29,8 @@ export async function cluster(
   opts: {
     skewMs?: Record<string, number>;
     gitNames?: Record<string, string>;
+    /** Extra .dispatch/config.yml lines per member. */
+    config?: Record<string, string>;
   } = {}
 ): Promise<Cluster> {
   const env = daemons();
@@ -45,10 +47,12 @@ export async function cluster(
         : Math.max(...members.map((m) => m.clock.ms));
     const clock = { ms: now + (opts.skewMs?.[name] ?? 0) };
     const gitName = more.gitName ?? opts.gitNames?.[name];
+    const config = opts.config?.[name];
     const handle = await env.teammate(name, {
       federationNow: () => clock.ms,
       federationDebounceMs: 0,
       ...(gitName === undefined ? {} : { gitName }),
+      ...(config === undefined ? {} : { config }),
     });
     const member = { name, handle, clock };
     members.push(member);

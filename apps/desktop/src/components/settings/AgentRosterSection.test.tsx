@@ -314,4 +314,26 @@ describe('AgentRosterSection', () => {
     expect(await screen.findByText('No agents yet')).toBeTruthy();
     expect(screen.getByText(/dispatch mcp/)).toBeTruthy();
   });
+
+  test('marks a remote agent and offers only Mute for it', async () => {
+    mount(
+      rosterClient([
+        agent({
+          address: 'agent:bob/codex',
+          displayName: 'codex',
+          client: 'codex',
+          remote: 'bob',
+        }),
+      ])
+    );
+    const remote = await row('agent:bob/codex');
+    expect(within(remote).getByText('remote: bob')).toBeTruthy();
+    expect(
+      within(remote).getByRole('button', { name: 'Mute agent:bob/codex' })
+    ).toBeTruthy();
+    expect(
+      within(remote).queryByRole('button', { name: /Approve/ })
+    ).toBeNull();
+    expect(within(remote).queryByRole('button', { name: /Revoke/ })).toBeNull();
+  });
 });

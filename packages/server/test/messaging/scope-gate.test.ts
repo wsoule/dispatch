@@ -29,7 +29,8 @@ function setPolicy(yaml: string): void {
 
 async function liveRun(
   risk?: 'critical',
-  extra: Parameters<typeof openRecovered>[4] = {}
+  extra: Parameters<typeof openRecovered>[4] = {},
+  operator?: string
 ) {
   const { orchestrator, store, events } = makeOrchestrator(project.root());
   const stalling = new StallingExecutor();
@@ -47,7 +48,9 @@ async function liveRun(
     title: 'Touches routes',
     ...(risk === undefined ? {} : { risk }),
   });
-  const meta = await orchestrator.dispatch(task.meta.id, 'stalling', {});
+  const meta = await orchestrator.dispatch(task.meta.id, 'stalling', {
+    ...(operator === undefined ? {} : { operator }),
+  });
   const run: Sender = { address: `run:${meta.id}`, canDecide: false };
   return { orchestrator, messaging, meta, run, task, stalling, broadcast };
 }
@@ -71,6 +74,51 @@ function askScope(
 }
 
 const ledger = () => new LedgerStore(project.root()).list();
+
+// The notices `ref` received.
+function noticesTo(
+  messaging: Awaited<ReturnType<typeof liveRun>>['messaging'],
+  ref: string
+): Message[] {
+  return messaging.store
+    .deliveries({ recipient: ref })
+    .map((d) => messaging.store.getMessage(d.messageId))
+    .filter((m): m is Message => m?.kind === 'notice');
+}
+
+describe("scope gates of a teammate's run (XH-R9)", () => {
+  it('tell a teammate who cannot decide that the owner was asked', async () => {
+    const { orchestrator, messaging, meta, run } = await liveRun(
+      undefined,
+      {},
+      'human:bo'
+    );
+    await askScope(messaging, run);
+    await waitFor(() => noticesTo(messaging, 'human:bo').length > 0);
+    expect(noticesTo(messaging, 'human:bo')[0]).toMatchObject({
+      from: 'agent:dispatch',
+      body: `Your run ${meta.id} is waiting on human:wyat to decide: I need routes.ts`,
+      refs: [{ type: 'run', id: meta.id }],
+    });
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it('tell no one when policy grants the request', async () => {
+    setPolicy('policy:\n  rung: 2\n');
+    const { orchestrator, messaging, meta, run } = await liveRun(
+      undefined,
+      {},
+      'human:bo'
+    );
+    const { message: gate } = await askScope(messaging, run);
+    await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(noticesTo(messaging, 'human:bo')).toEqual([]);
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+});
 
 describe('scope gates', () => {
   it('a human grant writes one ledger decision naming the gate', async () => {

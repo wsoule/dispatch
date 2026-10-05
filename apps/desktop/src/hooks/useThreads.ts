@@ -8,9 +8,11 @@ import type {
   MailboxItem,
   Message,
   ThreadSummary as RecentThread,
+  RemoteDeliveryRow,
   SendInput,
   SendResult,
   ServerEvent,
+  Settlement,
   ThreadDetail,
 } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
@@ -323,6 +325,11 @@ export interface OpenThread {
   thread: string | null;
   messages: Message[];
   deliveries: Delivery[];
+  /** Recipients on teammates' machines, each question's settlement and an
+   *  admitted observer, when board sync federates. */
+  remote: RemoteDeliveryRow[];
+  settlements: Record<string, Settlement>;
+  observer: string | null;
   loading: boolean;
   error: Error | null;
 }
@@ -369,7 +376,10 @@ export function useThread(
   return {
     thread,
     messages: detail.data?.messages ?? NO_MESSAGES,
-    deliveries: detail.data?.deliveries ?? NO_DELIVERIES,
+    deliveries: localDeliveries(detail.data?.deliveries),
+    remote: remoteRows(detail.data?.deliveries),
+    settlements: detail.data?.settlements ?? NO_SETTLEMENTS,
+    observer: detail.data?.observer ?? null,
     loading: resolved.isLoading || detail.isLoading,
     error: resolved.error ?? detail.error ?? null,
   };
@@ -597,4 +607,21 @@ export function useThreadActions(
     () => ({ send, reply, answer, markRead }),
     [send, reply, answer, markRead]
   );
+}
+
+const NO_SETTLEMENTS: Record<string, Settlement> = {};
+const NO_REMOTE: RemoteDeliveryRow[] = [];
+
+// A thread's own deliveries, and its teammates' machines' rows, apart.
+function localDeliveries(
+  all: (Delivery | RemoteDeliveryRow)[] | undefined
+): Delivery[] {
+  if (all === undefined) return NO_DELIVERIES;
+  return all.filter((d): d is Delivery => !('remote' in d));
+}
+function remoteRows(
+  all: (Delivery | RemoteDeliveryRow)[] | undefined
+): RemoteDeliveryRow[] {
+  if (all === undefined) return NO_REMOTE;
+  return all.filter((d): d is RemoteDeliveryRow => 'remote' in d);
 }

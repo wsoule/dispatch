@@ -63,20 +63,19 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable (2026-07-16)
         with:
           toolchain: stable
+          components: rustfmt, clippy
 
       - name: Cache cargo build artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: apps/desktop/src-tauri
 
-      # `apps/desktop/src-tauri` is not fmt-clean or clippy-clean as-is:
-      # `cargo fmt --check` reformats
-      # dozens of pre-existing lines, and `cargo clippy -- -D warnings` fails on
-      # pre-existing findings (an unused import, a manual range-contains, two
-      # too-many-arguments functions, a `.nth(0)` call). Both were verified
-      # locally before writing this job. Re-run them by hand after a
-      # re-vendoring pass and gate on them once the vendored code is clean;
-      # for now only `cargo test`, which is green, is enforced.
+      # Formatting needs no build, so it runs before the placeholder step and
+      # fails fast.
+      - name: Format
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --check
+
       # tauri-build's build script errors if any bundle resource is missing.
       # The sidecar binaries are gitignored build products (release.yml builds
       # the real ones); cargo test never runs them, so empty placeholders do.
@@ -85,6 +84,13 @@ jobs:
         run:
           touch resources/dispatchd resources/dispatch-mcp
           resources/dispatch-cli
+
+      # --all-targets lints the test modules too. The release-only paths
+      # (`cfg(not(debug_assertions))`) are not linted here; they were clean
+      # under `cargo clippy --release` when this gate was added.
+      - name: Clippy
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Test
         working-directory: apps/desktop/src-tauri

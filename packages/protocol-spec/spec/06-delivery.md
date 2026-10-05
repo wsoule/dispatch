@@ -140,7 +140,8 @@ target and the message), and:
   stays held, and the host SHOULD send the sender a notice saying why;
 - on `deny`, leaves the message held, and SHOULD send the sender a notice;
 - on `ask`, raises a `wake` gate from the system address to the owner of the
-  target ([§5.9](05-gates.md#s5.9)).
+  target ([§5.9](05-gates.md#s5.9)), which a host may name by the message's
+  sender as well as the target.
 
 A failing wake, a failing policy and a failing notice never fail the send: the
 message is already committed. A notice to a sender that is an ended session goes

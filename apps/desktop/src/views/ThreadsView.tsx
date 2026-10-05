@@ -195,6 +195,9 @@ export function ThreadsView({
                   messages={open.messages}
                   focus={focus}
                   deliveries={open.deliveries}
+                  remote={open.remote}
+                  settlements={open.settlements}
+                  observer={open.observer}
                   me={me}
                   openIds={rail.openIds}
                   access={access}

@@ -169,6 +169,20 @@ describe('opt-in guardrails', () => {
     });
   });
 
+  it("names the wake gate's owner for the target and the sender asking", async () => {
+    host.ruling = 'ask';
+    await engine.send(
+      {
+        to: ['task:t-000009'],
+        kind: 'message',
+        body: 'wake up',
+        wake: 'request',
+      },
+      run1
+    );
+    expect(host.ownerAsks).toEqual([['task:t-000009', run1.address]]);
+  });
+
   it('keeps one open wake gate per target', async () => {
     engine = new DeliveryEngine({
       store,

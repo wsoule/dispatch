@@ -35,6 +35,7 @@ import type {
   TransportHealth,
   Watermarks,
 } from './transport.js';
+import { dropNote } from './validate.js';
 
 // When board sync runs, and what it reports. Before a team is founded a pass
 // is today's v1 pass step for step; once founded it exchanges signed ops
@@ -49,6 +50,15 @@ import type {
 export const CLOCK_GUARD_MS = MAX_CLOCK_LEAD_MS;
 /** An op this far ahead also names its machine's clock as wrong. */
 const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
+/** Waiting ops one publisher may hold here (FW-R33(5)). */
+const MAX_PARKED_PER_PUBLISHER = 10_000;
+/** Waiting ops restaged per publisher, and in all, each pass. */
+const RESTAGE_PER_PUBLISHER = 200;
+const RESTAGE_PER_PASS = 2_000;
+
+/** Team messaging op types, applied only once mailReady (FW-R32(7)). */
+const F2_TYPES = new Set(['presence', 'agent', 'channel', 'mail', 'state']);
+
 /** How soon the next pass runs while an asker waits (fastUntil). */
 const FAST_PASS_MS = 10_000;
 /** fed_applied rows kept for the revocation race (F-D34). */
@@ -100,9 +110,10 @@ export interface FederationStatus extends SyncStatus {
   federationProblems: { subject: string; message: string; at: string }[];
 }
 
-/** Run and agent evidence from this pull's verified ops (Task 14 fills it). */
-interface Evidence {
-  runs: Map<string, string>;
+/** Run and agent claims among this pull's verified ops: run id -> every
+ *  replica claiming it, agent address -> its publisher. */
+export interface Evidence {
+  runs: Map<string, string[]>;
   agents: Map<string, string>;
 }
 
@@ -116,6 +127,8 @@ export interface OpHandler {
   readonly type: string;
   /** Inside the state.db transaction; 'parked' keeps the op for a later pass. */
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped';
+  /** After each pass that ran to the end: project what the pass applied. */
+  passComplete?(): void;
 }
 
 /** Queues ops into fed_outbox before publishing (spec "Collect"). */
@@ -139,6 +152,10 @@ export interface V1Branch extends V1Log {
 }
 
 export interface FederationServiceOptions {
+  /** Waiting ops per publisher before the oldest go (tests lower it). */
+  maxParkedPerPublisher?: number;
+  /** Waiting ops restaged per publisher each pass (tests lower it). */
+  restagePerPublisher?: number;
   store: SyncedTaskStore;
   ledger: SyncLedger;
   v1: V1Branch;
@@ -193,6 +210,11 @@ export class FederationService {
   private readonly collectors: Collector[] = [];
   private inbox: InboxDrainer | null = null;
   private fast: Date | null = null;
+  private restageStart = 0;
+  private restagePass = 0;
+  // When each waiting op was last restaged, by pass (FW-R35(3)). Known limit:
+  // kept in memory, so a restart tries each publisher's oldest ops first once.
+  private readonly restageTried = new Map<string, number>();
 
   constructor(private readonly opts: FederationServiceOptions) {}
 
@@ -360,6 +382,7 @@ export class FederationService {
       await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
       await transport.ack(this.watermarks());
+      for (const h of this.handlers.values()) h.passComplete?.();
       if (fed.outbox().length > 0) this.notifyLocalChange();
       this.lastSyncAt = now.toISOString();
       // A route's late sync failure is over once a sync goes through.
@@ -866,7 +889,7 @@ export class FederationService {
       const ctx: StageContext = {
         view,
         now,
-        evidence: { runs: new Map(), agents: new Map() },
+        evidence: evidenceOf(verified, view),
       };
       this.restage(ctx);
       const blocked = new Set<string>();
@@ -960,6 +983,9 @@ export class FederationService {
       });
       return 'moved';
     }
+    // FW-R32(2), FW-R33(1): every verified mail op, a pruned one too, is
+    // remembered before it can wait, so a forward of it can be checked.
+    if (entry.type === 'mail') fed.rememberMail(r, entry.seq, opHash(entry));
     const ahead = (hlcWallMs(entry.hlc) ?? 0) - now.getTime();
     if (ahead > CLOCK_GUARD_MS) {
       if (ahead > CLOCK_PROBLEM_MS) this.clockProblem(r, ahead);
@@ -1002,8 +1028,11 @@ export class FederationService {
       return 'changed';
     }
     const handler = this.handlers.get(entry.type);
-    if (handler !== undefined) {
-      if (handler.stage(entry, ctx) === 'parked') this.park(entry, 'parked');
+    // FW-R32(7): team messaging ops wait until this machine is firmly in.
+    const waiting = F2_TYPES.has(entry.type) && !this.opts.roster.mailReady();
+    if (handler !== undefined && !waiting) {
+      if (this.stageSafely(handler, entry, ctx) === 'parked')
+        this.park(entry, 'parked');
       return 'moved';
     }
     fed.db
@@ -1011,7 +1040,28 @@ export class FederationService {
         'INSERT OR IGNORE INTO fed_unknown (replica, seq, op_json) VALUES (?, ?, ?)'
       )
       .run(r, entry.seq, JSON.stringify(entry));
+    this.makeRoom('fed_unknown', entry);
     return 'moved';
+  }
+
+  // FW-R32(3): a handler that throws drops that one op with a rolling note;
+  // no op can stop a pass.
+  private stageSafely(
+    handler: OpHandler,
+    op: FederatedOp,
+    ctx: StageContext
+  ): 'applied' | 'parked' | 'dropped' {
+    try {
+      return handler.stage(op, ctx);
+    } catch (err) {
+      dropNote(
+        this.opts.fed,
+        'malformed',
+        op.replica,
+        `${this.opts.roster.label(op.replica)}'s ${op.type} op at seq ${op.seq} could not be applied and was dropped: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown error'}`
+      );
+      return 'dropped';
+    }
   }
 
   // "<handle>'s <device> runs N minutes ahead", once per message, with an
@@ -1031,6 +1081,7 @@ export class FederationService {
   }
 
   private park(op: FederatedOp, reason: string): void {
+    this.makeRoom('fed_parked', op);
     this.opts.fed.db
       .query(
         'INSERT OR REPLACE INTO fed_parked (replica, seq, op_json, reason, first_at) VALUES (?, ?, ?, ?, ?)'
@@ -1044,28 +1095,92 @@ export class FederationService {
       );
   }
 
+  // FW-R33(5): one publisher's waiting ops are capped; past the cap its
+  // oldest goes, with a rolling note.
+  private makeRoom(table: 'fed_parked' | 'fed_unknown', op: FederatedOp): void {
+    const { db } = this.opts.fed;
+    const cap = this.opts.maxParkedPerPublisher ?? MAX_PARKED_PER_PUBLISHER;
+    const held =
+      db
+        .query<{ n: number }, [string, number]>(
+          `SELECT COUNT(*) AS n FROM ${table} WHERE replica = ? AND seq != ?`
+        )
+        .get(op.replica, op.seq)?.n ?? 0;
+    if (held < cap) return;
+    db.query(
+      `DELETE FROM ${table} WHERE replica = ? AND seq IN (SELECT seq FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?)`
+    ).run(op.replica, op.replica, op.seq, held - cap + 1);
+    dropNote(
+      this.opts.fed,
+      'mail-drop',
+      op.replica,
+      `${this.opts.roster.label(op.replica)} has more than ${cap} ops waiting here; the oldest were dropped`
+    );
+  }
+
   // Parked ops and ops of a type now registered get their handler again.
   private restage(ctx: StageContext): void {
     const { db } = this.opts.fed;
-    const rows = [
-      ...db
-        .query<{ replica: string; seq: number; op_json: string }, []>(
-          'SELECT replica, seq, op_json FROM fed_parked'
+    // FW-R33(5), FW-R35(3): a budget per publisher and per pass; within a
+    // publisher the least recently tried go first, so stuck ops cannot
+    // starve the ones behind them, and publishers rotate.
+    const perPublisher = this.opts.restagePerPublisher ?? RESTAGE_PER_PUBLISHER;
+    const keys = (['fed_parked', 'fed_unknown'] as const).flatMap((table) =>
+      db
+        .query<{ replica: string; seq: number }, []>(
+          `SELECT replica, seq FROM ${table}`
         )
         .all()
-        .map((row) => ({ ...row, table: 'fed_parked' })),
-      ...db
-        .query<{ replica: string; seq: number; op_json: string }, []>(
-          'SELECT replica, seq, op_json FROM fed_unknown'
+        .map((row) => ({ ...row, table }))
+    );
+    const tried = (k: { table: string; replica: string; seq: number }) =>
+      this.restageTried.get(`${k.table}:${k.replica}:${k.seq}`) ?? -1;
+    const byPublisher = new Map<string, typeof keys>();
+    for (const k of keys) {
+      const list = byPublisher.get(k.replica) ?? [];
+      list.push(k);
+      byPublisher.set(k.replica, list);
+    }
+    const all = [...byPublisher.values()].flatMap((list) =>
+      list
+        .sort((a, b) =>
+          tried(a) !== tried(b) ? tried(a) - tried(b) : a.seq - b.seq
         )
-        .all()
-        .map((row) => ({ ...row, table: 'fed_unknown' })),
-    ];
+        .slice(0, perPublisher)
+        .sort((a, b) => a.seq - b.seq)
+        .map((k) => ({
+          ...k,
+          op_json:
+            db
+              .query<{ op_json: string }, [string, number]>(
+                `SELECT op_json FROM ${k.table} WHERE replica = ? AND seq = ?`
+              )
+              .get(k.replica, k.seq)?.op_json ?? 'null',
+        }))
+    );
+    const publishers = [...new Set(all.map((r) => r.replica))].sort();
+    const start =
+      publishers.length === 0 ? 0 : this.restageStart % publishers.length;
+    this.restageStart += 1;
+    const order = [...publishers.slice(start), ...publishers.slice(0, start)];
+    const rows = order
+      .flatMap((r) => all.filter((row) => row.replica === r))
+      .slice(0, RESTAGE_PER_PASS);
+    const ready = this.opts.roster.mailReady();
+    const pass = ++this.restagePass;
+    // Rows no longer waiting are forgotten.
+    const waitingNow = new Set(
+      keys.map((k) => `${k.table}:${k.replica}:${k.seq}`)
+    );
+    for (const key of this.restageTried.keys())
+      if (!waitingNow.has(key)) this.restageTried.delete(key);
     for (const row of rows) {
+      this.restageTried.set(`${row.table}:${row.replica}:${row.seq}`, pass);
       const op = JSON.parse(row.op_json) as FederatedOp;
       const handler = this.handlers.get(op.type);
       if (handler === undefined) continue;
-      const parked = handler.stage(op, ctx) === 'parked';
+      if (F2_TYPES.has(op.type) && !ready) continue;
+      const parked = this.stageSafely(handler, op, ctx) === 'parked';
       if (parked && row.table === 'fed_parked') continue;
       db.query(`DELETE FROM ${row.table} WHERE replica = ? AND seq = ?`).run(
         row.replica,
@@ -1235,4 +1350,44 @@ function keyOpSignPub(e: LogEntry): string | null {
   if (e.type !== 'key' || isStub(e)) return null;
   const body = e.body as { signPub?: unknown } | undefined;
   return typeof body?.signPub === 'string' ? body.signPub : null;
+}
+
+// The run and agent claims a pull's verified ops make, read before any is
+// staged, so a run claimed twice in one pull binds to neither.
+function evidenceOf(
+  verified: Map<string, Verified>,
+  view: RosterView
+): Evidence {
+  const evidence: Evidence = { runs: new Map(), agents: new Map() };
+  for (const [replica, v] of verified)
+    for (const { entry } of v.entries) {
+      // FW-R32(5): only a replica standing at its op makes a claim.
+      if (isStub(entry) || !standsAt(view, replica, entry.seq)) continue;
+      const body = entry.body as Record<string, unknown> | undefined;
+      if (body === undefined) continue;
+      if (
+        entry.type === 'presence' &&
+        body['kind'] === 'run' &&
+        typeof body['run'] === 'string'
+      ) {
+        const claims = evidence.runs.get(body['run']) ?? [];
+        if (!claims.includes(replica)) claims.push(replica);
+        evidence.runs.set(body['run'], claims);
+      } else if (entry.type === 'agent' && typeof body['address'] === 'string')
+        evidence.agents.set(body['address'], replica);
+    }
+  return evidence;
+}
+
+/** Whether `replica` stood in the team at its op `seq`: a member that is no
+ *  observer, or a revoked one at or below its cut. */
+export function standsAt(
+  view: RosterView,
+  replica: string,
+  seq: number
+): boolean {
+  const cut = view.revoked.get(replica);
+  if (cut !== undefined) return seq <= cut.afterSeq && !cut.observer;
+  const m = view.members.get(replica);
+  return m !== undefined && !m.observer;
 }

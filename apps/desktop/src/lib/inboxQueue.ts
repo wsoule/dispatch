@@ -42,6 +42,9 @@ export interface InboxInput {
    * that person's to answer: still listed, under Teammates, but not in Needs you
    * and not in the badge. Absent means everything is yours — a solo project. */
   me?: string | null;
+  /** Runs with an open gate addressed to `me`: theirs to answer whoever the
+   *  run acts for, as when a request-tier teammate's run asks the owner. */
+  asksMe?: ReadonlySet<string>;
   /** The project's statuses, which say a task is already landed or dropped. A memo keyed
    * on config passes that config's; absent reads the open project's. */
   model?: StatusModel;
@@ -113,15 +116,17 @@ export function buildInbox(input: InboxInput): InboxData {
 
   const readyToLand = collectReadyToLand(input);
 
-  // The "whose attention" axis. A run someone else dispatched is theirs to
+  // The "whose attention" axis. A run acting for someone else is theirs to
   // answer for: its asks stay visible, the way a recorded gate stays in the
-  // ledger, but they stop demanding anything of you.
+  // ledger, but they stop demanding anything of you, unless a gate of it
+  // names you (XH-R9).
   const me = input.me ?? null;
   const teammateOwners = new Map<string, string>();
   if (me !== null) {
     for (const run of input.runs) {
-      if (run.dispatchedBy !== undefined && run.dispatchedBy !== me) {
-        teammateOwners.set(run.id, run.dispatchedBy);
+      const human = run.operator ?? run.dispatchedBy;
+      if (human !== undefined && human !== me && !input.asksMe?.has(run.id)) {
+        teammateOwners.set(run.id, human);
       }
     }
   }

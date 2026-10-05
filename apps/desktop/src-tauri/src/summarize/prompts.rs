@@ -248,8 +248,11 @@ mod tests {
         // (extract_excerpts against this same fixture), so this only needs to confirm the glue
         // works end to end, not re-prove either half's correctness.
         let ctx = SessionPromptContext {
-            raw_log_path: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/session_basic.jsonl")
-                .to_string(),
+            raw_log_path: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/session_basic.jsonl"
+            )
+            .to_string(),
             file_paths: vec!["src/main.rs".to_string()],
         };
 

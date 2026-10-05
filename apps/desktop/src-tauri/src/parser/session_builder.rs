@@ -28,7 +28,8 @@ pub fn ingest_record(
     // is handled as its own early branch rather than falling into the cwd/timestamp checks
     // below, which it would never pass.
     if record.record_type == "ai-title" {
-        if let (Some(session_id), Some(title)) = (record.session_id.clone(), record.ai_title.clone())
+        if let (Some(session_id), Some(title)) =
+            (record.session_id.clone(), record.ai_title.clone())
         {
             queries::update_session_title(conn, &session_id, &title)?;
             outcome.session_updated = Some(session_id);
@@ -129,7 +130,14 @@ fn ingest_tool_use(
             // "every line is new," which is exactly what a Write is.
             let lines_added = content.lines().count() as i64;
             queries::insert_file_changed(
-                conn, session_id, file_path, "write", lines_added, 0, occurred_at, None,
+                conn,
+                session_id,
+                file_path,
+                "write",
+                lines_added,
+                0,
+                occurred_at,
+                None,
                 Some(content),
             )?;
         }
@@ -358,16 +366,19 @@ mod tests {
                 ("src/main.rs".to_string(), "edit".to_string(), 1, 1),
                 ("src/lib.rs".to_string(), "multi_edit".to_string(), 1, 1),
                 ("src/lib.rs".to_string(), "multi_edit".to_string(), 1, 1),
-                ("notebook.ipynb".to_string(), "notebook_edit".to_string(), 1, 1),
+                (
+                    "notebook.ipynb".to_string(),
+                    "notebook_edit".to_string(),
+                    1,
+                    1
+                ),
             ]
         );
 
         let (lines_added, lines_removed): (i64, i64) = conn
-            .query_row(
-                "SELECT lines_added, lines_removed FROM sessions",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
+            .query_row("SELECT lines_added, lines_removed FROM sessions", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
             .unwrap();
         assert_eq!(lines_added, 7);
         assert_eq!(lines_removed, 4);
@@ -465,13 +476,23 @@ mod tests {
         // `ParsedRecord`. Cursor's parser is used here since it's the simplest (stateless).
         let conn = in_memory_db();
         let line = r#"{"type":"user","sessionId":"cur-session-1","cwd":"/tmp/cursor-project","timestamp":"2026-01-01T10:00:00Z","text":"hello"}"#;
-        let record = crate::parser::cursor_jsonl::parse_line(line).expect("cursor line should parse");
+        let record =
+            crate::parser::cursor_jsonl::parse_line(line).expect("cursor line should parse");
 
-        let outcome = ingest_record(&conn, "/Users/testuser/.cursor/logs/cur-session-1.jsonl", record).unwrap();
+        let outcome = ingest_record(
+            &conn,
+            "/Users/testuser/.cursor/logs/cur-session-1.jsonl",
+            record,
+        )
+        .unwrap();
         assert_eq!(outcome.session_created.as_deref(), Some("cur-session-1"));
 
         let agent: String = conn
-            .query_row("SELECT agent FROM sessions WHERE id = 'cur-session-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT agent FROM sessions WHERE id = 'cur-session-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(agent, "cursor");
     }
@@ -495,8 +516,7 @@ mod tests {
     #[test]
     fn ingesting_a_dispatch_worktree_cwd_attributes_the_session_to_the_repo_root() {
         let conn = in_memory_db();
-        let (repo, worktree) =
-            crate::parser::dispatch_worktree::tests::linked_worktree("ingest");
+        let (repo, worktree) = crate::parser::dispatch_worktree::tests::linked_worktree("ingest");
 
         let record = synthetic_record(&worktree, "wt-session", 1_700_000_000);
         let outcome = ingest_record(&conn, RAW_LOG_PATH, record).unwrap();
@@ -533,19 +553,36 @@ mod tests {
         // Ingestion places no ceiling on projects or sessions — every distinct project and
         // session is tracked.
         for i in 0..10 {
-            let record = synthetic_record(&format!("/tmp/project-{i}"), &format!("s{i}"), 1_700_000_000 + i);
+            let record = synthetic_record(
+                &format!("/tmp/project-{i}"),
+                &format!("s{i}"),
+                1_700_000_000 + i,
+            );
             let outcome = ingest_record(&conn, RAW_LOG_PATH, record).unwrap();
-            assert!(outcome.project_touched.is_some(), "project {i} should be created");
-            assert!(outcome.session_created.is_some(), "session {i} should be created");
+            assert!(
+                outcome.project_touched.is_some(),
+                "project {i} should be created"
+            );
+            assert!(
+                outcome.session_created.is_some(),
+                "session {i} should be created"
+            );
         }
-        let project_count: i64 = conn.query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0)).unwrap();
-        let session_count: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
+        let project_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        let session_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(project_count, 10);
         assert_eq!(session_count, 10);
 
         // A second record for an already-tracked session updates rather than duplicating it.
         let more_activity = synthetic_record("/tmp/project-0", "s0", 1_700_002_000);
         let outcome = ingest_record(&conn, RAW_LOG_PATH, more_activity).unwrap();
-        assert!(outcome.session_updated.is_some(), "existing session should keep receiving updates");
+        assert!(
+            outcome.session_updated.is_some(),
+            "existing session should keep receiving updates"
+        );
     }
 }

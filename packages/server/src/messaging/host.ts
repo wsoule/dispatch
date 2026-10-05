@@ -10,6 +10,7 @@ import type {
   ExternalAdmission,
   ExternalKind,
   ExternalTarget,
+  FederationHooks,
   Message,
   MessagingHost,
   PolicyRequest,
@@ -24,6 +25,7 @@ import { consultProjectPolicy } from '../policyEngine.js';
 import { statusModelFor } from '../statuses.js';
 import type { GateHandlers } from './gates.js';
 import { answeredWithOwnerCredential } from './gates.js';
+import type { OperatorRouting } from './operatorRouting.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -51,11 +53,15 @@ export interface DaemonHostDeps {
   // epic channel membership.
   store: TaskStorePort;
   ownerRef: string;
+  // Who a run's notices and wake gates name (XH-R9); omitted, the owner.
+  routing?: Pick<OperatorRouting, 'humanFor' | 'gateFor'>;
   gates: GateHandlers;
   onHumanMessage: (actor: string, message: Message) => void;
   // Told when a wake could not start a run, so the caller can retry it later.
   onWakeFailed?: (target: Address, message: Message, acting: WakeActor) => void;
   now?: () => Date;
+  // Present when board sync federates: where mail lives, and its clock.
+  federation?: FederationHooks;
 }
 
 // An epic channel's implicit members: every task parented to its epic, as
@@ -96,8 +102,11 @@ export type ExternalPolicy = Required<
 // and epic membership from the task store, gate effects from GateHandlers.
 export class DaemonMessagingHost implements MessagingHost {
   private externalPolicy: ExternalPolicy | null = null;
+  readonly federation?: FederationHooks;
 
-  constructor(private readonly deps: DaemonHostDeps) {}
+  constructor(private readonly deps: DaemonHostDeps) {
+    if (deps.federation !== undefined) this.federation = deps.federation;
+  }
 
   // Installed by the A2A bridge; without one nothing is external.
   setExternalPolicy(policy: ExternalPolicy | null): void {
@@ -238,8 +247,18 @@ export class DaemonMessagingHost implements MessagingHost {
     return ruling.mode === 'auto' ? 'allow' : 'ask';
   }
 
-  owner(): Address {
-    return this.deps.ownerRef;
+  // XH-R9: a wake a run asked for is gated by that run's operator when they
+  // can decide; a notice about a run (the breaker, a voided answer) tells its
+  // operator. Everything else names the owner.
+  owner(target: Address, sender?: Address): Address {
+    const routing = this.deps.routing;
+    const runOf = (address: Address | undefined) =>
+      address?.startsWith('run:') === true
+        ? address.slice('run:'.length)
+        : null;
+    if (routing === undefined) return this.deps.ownerRef;
+    if (sender !== undefined) return routing.gateFor(runOf(sender)).to;
+    return routing.humanFor(runOf(target));
   }
 
   // XH-R2: every run acting for the same operator (no one counting as one)
