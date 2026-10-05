@@ -31,6 +31,10 @@ export interface FederationTransport {
   stamp(replicas: readonly string[] | null): string;
   /** Drops what the full scans hold for these replicas (all when null). */
   forgetScans(replicas: readonly string[] | null): void;
+  /** The lines the branch holds for `replica` at `seq` (an op or its stub,
+   *  or a forgery the caller checks), outside the per-pass caps: for a
+   *  forwarded op this machine no longer remembers (FW-R35(2)). */
+  findOp(replica: string, seq: number): Promise<LogEntry[]>;
   /** Who the transport sees connected, or null when it cannot tell (git). */
   presence(): { replica: string; since: string }[] | null;
   health(): TransportHealth;

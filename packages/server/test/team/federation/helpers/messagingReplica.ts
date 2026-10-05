@@ -277,6 +277,7 @@ export function messagingReplica(
     homes,
     now: () => base.clock.now,
     state,
+    findOp: (replica, seq) => base.service.findOp(replica, seq),
   });
   base.service.register(inbound);
   base.service.register(inbound.stateHandler(stateOut));

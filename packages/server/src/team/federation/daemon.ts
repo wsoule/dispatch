@@ -159,6 +159,7 @@ export function wireAgentsAndChannels(
     perReplicaPerHour: deps.perReplicaPerHour,
     now: deps.now,
     state: stateOut,
+    findOp: (replica, seq) => service.findOp(replica, seq),
   });
   service.register(inbound);
   service.register(inbound.stateHandler(stateOut));

@@ -212,7 +212,8 @@ export class FederationService {
   private fast: Date | null = null;
   private restageStart = 0;
   private restagePass = 0;
-  // When each waiting op was last restaged, by pass (FW-R35(3)).
+  // When each waiting op was last restaged, by pass (FW-R35(3)). Known limit:
+  // kept in memory, so a restart tries each publisher's oldest ops first once.
   private readonly restageTried = new Map<string, number>();
 
   constructor(private readonly opts: FederationServiceOptions) {}
@@ -276,6 +277,11 @@ export class FederationService {
   addCollector(collector: Collector): void {
     this.collectors.push(collector);
     this.collectors.sort((a, b) => a.order - b.order);
+  }
+
+  /** The branch's lines for one op of a replica (FW-R35(2)). */
+  findOp(replica: string, seq: number): Promise<LogEntry[]> {
+    return this.opts.transport.findOp(replica, seq);
   }
 
   setInbox(inbox: InboxDrainer): void {

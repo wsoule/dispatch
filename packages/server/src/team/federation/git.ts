@@ -131,6 +131,10 @@ export class GitFederationTransport implements FederationTransport {
     return Promise.resolve(this.deps.repo.scanFull(replicas));
   }
 
+  findOp(replica: string, seq: number): Promise<LogEntry[]> {
+    return Promise.resolve(this.deps.repo.findOp(replica, seq));
+  }
+
   async ack(through: Watermarks): Promise<void> {
     const body = {
       v: 1 as const,

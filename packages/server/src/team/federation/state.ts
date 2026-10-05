@@ -15,6 +15,7 @@ import type {
 } from '@dispatch/protocol/federation';
 
 import type { Homes } from './homes.js';
+import { UNVERIFIABLE } from './inbound.js';
 import type { MailOut } from './mail.js';
 import { wasSealedTo } from './mail.js';
 import type { RosterService } from './roster.js';
@@ -155,8 +156,14 @@ export class StateOut implements Collector {
       } else if (e.t === 'refused') {
         const rows = messages.remoteDeliveries({ messageId: e.message });
         if (rows.some((r) => r.homes.includes(publisher))) entries.push(e);
-        // FW-R35(2): a refused hand-off is tried again on the next pass.
-        if (handedTo(fed, e.message, publisher))
+        // FW-R35(2): a hand-off refused because its original is gone keeps
+        // the copy here and says so; any other refusal is tried again.
+        if (handedTo(fed, e.message, publisher) && e.reason === UNVERIFIABLE)
+          fed.problem(
+            `mail-out:${e.message}`,
+            `${e.message} could not be handed to ${roster.label(publisher)}'s machine: its original is no longer on the branch; it stays here`
+          );
+        else if (handedTo(fed, e.message, publisher))
           fed.db
             .query(
               "DELETE FROM fed_published WHERE kind = 'held-out' AND ref = ?"

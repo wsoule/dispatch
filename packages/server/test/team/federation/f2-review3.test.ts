@@ -67,8 +67,10 @@ describe('X1: a delivery report counts only from a home of its recipient (FW-R35
   });
 });
 
-describe('X2: a forward of an op no longer remembered waits (FW-R35(2))', () => {
-  it('parks a forward whose original is past the seen rows, and the holder retries a refusal', async () => {
+describe('X2: a forward of an op no longer remembered (FW-R35(2))', () => {
+  // Bob held ada's task mail when his run ended; cy's run takes the task
+  // after cy's seen rows have moved past ada's original.
+  async function handoff(gone: boolean) {
     open = await foundedTeamWith({ mailSeenKept: 1 }, 'ada', 'bob', 'cy');
     const [ada, bob, cy] = [at(0), at(1), at(2)];
     const task = ada.store.create({ title: 'held', assignee: 'human' }).meta.id;
@@ -89,21 +91,92 @@ describe('X2: a forward of an op no longer remembered waits (FW-R35(2))', () => 
     await bob.settleWith(ada);
     await cy.settleWith(ada);
     await cy.service.syncNow();
+    if (gone) {
+      // The branch no longer carries ada's original, not even its stub.
+      const original = (ada.remote.logs.get(ada.fed.replica) ?? []).find(
+        (e) => e.type === 'mail' && (e.to ?? []).includes(bob.fed.replica)
+      );
+      if (original === undefined) throw new Error('no original');
+      ada.remote.gone.add(original);
+    }
     bob.presence.runEnded({
       id: 'r-0000000000b1',
       taskId: task,
       kind: 'execute',
     });
     await cy.startExecute(task, 'r-0000000000c1');
+    for (let i = 0; i < 3; i++) {
+      await bob.settleWith(cy);
+      await cy.settleWith(bob);
+    }
+    return { ada, bob, cy, task, message };
+  }
+
+  it('checks the original against the branch and delivers it', async () => {
+    const { bob, cy, task, message } = await handoff(false);
+    expect(cy.host.pushed.map((p) => p.messageId)).toContain(message.id);
+    expect(
+      cy.fed.db
+        .query<{ n: number }, []>('SELECT COUNT(*) AS n FROM fed_parked')
+        .get()?.n
+    ).toBe(0);
     await bob.settleWith(cy);
-    await cy.settleWith(bob);
-    const parked = cy.fed.db
-      .query<{ n: number }, [string]>(
-        'SELECT COUNT(*) AS n FROM fed_parked WHERE replica = ?'
+    expect(
+      bob.messages.deliveries({
+        messageId: message.id,
+        recipient: `task:${task}`,
+      })
+    ).toEqual([]);
+  });
+
+  it('refuses a forward whose original the branch no longer has; the holder keeps its copy', async () => {
+    const { bob, cy, task, message } = await handoff(true);
+    expect(cy.host.pushed.map((p) => p.messageId)).not.toContain(message.id);
+    expect(
+      cy.fed.db
+        .query<{ n: number }, []>('SELECT COUNT(*) AS n FROM fed_parked')
+        .get()?.n
+    ).toBe(0);
+    expect(
+      bob.messages
+        .deliveries({ messageId: message.id, recipient: `task:${task}` })
+        .map((d) => d.state)
+    ).toEqual(['held']);
+    expect(
+      bob.fed.problems().some((p) => p.subject === `mail-out:${message.id}`)
+    ).toBe(true);
+    // Nothing would verify it now, so bob does not forward it again.
+    const before = bob.fed.head()?.seq ?? 0;
+    await bob.service.syncNow();
+    await bob.service.syncNow();
+    expect(
+      (bob.remote.logs.get(bob.fed.replica) ?? []).filter(
+        (e) => e.type === 'mail' && e.seq > before
       )
-      .get(bob.fed.replica)?.n;
-    expect(parked).toBe(1);
-    // Cy refuses it: bob forwards again on its next pass.
+    ).toEqual([]);
+  });
+
+  it('hands a held copy on again after any other refusal', async () => {
+    open = await foundedTeam('ada', 'bob', 'cy');
+    const [ada, bob, cy] = [at(0), at(1), at(2)];
+    const task = ada.store.create({ title: 'held', assignee: 'human' }).meta.id;
+    for (const r of [bob, cy]) await r.settleWith(ada);
+    await bob.startExecute(task, 'r-0000000000b2');
+    await ada.settleWith(bob);
+    bob.host.endRun(task);
+    const { message } = await ada.engine.send(
+      { to: [`task:${task}`], kind: 'message', body: 'context' },
+      human('ada')
+    );
+    await bob.settleWith(ada);
+    bob.presence.runEnded({
+      id: 'r-0000000000b2',
+      taskId: task,
+      kind: 'execute',
+    });
+    await cy.startExecute(task, 'r-0000000000c2');
+    await bob.settleWith(cy);
+    // Cy refuses before it reads the forward: bob hands it on again.
     report(cy, bob, [
       {
         t: 'refused',
@@ -115,10 +188,11 @@ describe('X2: a forward of an op no longer remembered waits (FW-R35(2))', () => 
     const before = bob.fed.head()?.seq ?? 0;
     await bob.settleWith(cy);
     await bob.service.syncNow();
-    const forwards = (bob.remote.logs.get(bob.fed.replica) ?? []).filter(
-      (e) => e.type === 'mail' && e.seq > before
-    );
-    expect(forwards.length).toBeGreaterThan(0);
+    expect(
+      (bob.remote.logs.get(bob.fed.replica) ?? []).filter(
+        (e) => e.type === 'mail' && e.seq > before
+      ).length
+    ).toBeGreaterThan(0);
   });
 });
 

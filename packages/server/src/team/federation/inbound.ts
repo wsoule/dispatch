@@ -9,9 +9,11 @@ import {
   openWithKey,
   opHash,
   unwrapContentKey,
+  verifyEntry,
 } from '@dispatch/protocol/federation';
 import type {
   FederatedOp,
+  LogEntry,
   MailPayload,
   MailTarget,
   StatePayload,
@@ -32,6 +34,10 @@ import {
 } from './validate.js';
 
 const INBOX_MAX_ATTEMPTS = 3;
+/** A refused forward whose original the branch no longer has: its holder
+ *  keeps its copy and does not hand it on again (FW-R35(2)). */
+export const UNVERIFIABLE =
+  "unverifiable: the original is no longer on its sender's log";
 /** Verified mail ops remembered per publisher, newest first (FW-R33(1)). */
 const MAIL_SEEN_PER_PUBLISHER = 100_000;
 /** Queued messages one publisher may have before its mail waits parked. */
@@ -91,6 +97,8 @@ export class Inbound implements OpHandler, InboxDrainer {
       stateOpsPerHour?: number;
       /** Seen mail ops kept per publisher (tests lower it). */
       mailSeenKept?: number;
+      /** The branch's lines for one op (FederationService.findOp). */
+      findOp?: (replica: string, seq: number) => Promise<LogEntry[]>;
     }
   ) {}
 
@@ -276,7 +284,9 @@ export class Inbound implements OpHandler, InboxDrainer {
     const { fed, roster } = this.deps;
     // FW-R32(8): nothing is delivered while the roster is paused.
     if ((roster.view()?.unknown ?? null) !== null) return;
+    // Pruned first: a row a check adds must last until the next restage.
     this.pruneSeen();
+    await this.checkForwards();
     const hour = now.toISOString().slice(0, 13);
     const stopped = new Set<string>();
     const rows = fed.db
@@ -352,6 +362,74 @@ export class Inbound implements OpHandler, InboxDrainer {
         return 'applied';
       },
     };
+  }
+
+  // FW-R35(2): each forward parked on an op this machine no longer
+  // remembers is checked against the publisher's log on the branch: the op
+  // or its stub there, signed by the publisher, with the same hash, makes it
+  // seen (the next pass applies the forward); nothing there refuses the
+  // forward to its holder, which keeps its copy.
+  private async checkForwards(): Promise<void> {
+    const { fed, findOp, state } = this.deps;
+    if (findOp === undefined) return;
+    const checks = fed.db
+      .query<
+        {
+          replica: string;
+          seq: number;
+          hash: string;
+          forwarder: string;
+          forwarder_seq: number;
+          message_id: string;
+        },
+        []
+      >('SELECT * FROM fed_forward_checks LIMIT 50')
+      .all();
+    for (const c of checks) {
+      let lines: LogEntry[];
+      try {
+        lines = await findOp(c.replica, c.seq);
+      } catch {
+        continue;
+      }
+      const pin = fed.pinned(c.replica);
+      const match = lines.find((e) => {
+        try {
+          return (
+            opHash(e) === c.hash &&
+            pin !== null &&
+            // Signed by the publisher; its chain position is the hash's to vouch for.
+            verifyEntry(
+              { seq: e.seq - 1, hash: e.prev, hlc: '0000000000000.0000.x' },
+              e,
+              pin.signPub
+            ).ok
+          );
+        } catch {
+          return false;
+        }
+      });
+      fed.atomically(() => {
+        fed.db
+          .query(
+            'DELETE FROM fed_forward_checks WHERE replica = ? AND seq = ? AND forwarder = ? AND forwarder_seq = ?'
+          )
+          .run(c.replica, c.seq, c.forwarder, c.forwarder_seq);
+        if (match !== undefined) {
+          fed.db
+            .query(
+              'INSERT OR IGNORE INTO fed_mail_seen (replica, seq, hash, at) VALUES (?, ?, ?, ?)'
+            )
+            .run(c.replica, c.seq, c.hash, this.deps.now().toISOString());
+          return;
+        }
+        fed.db
+          .query('DELETE FROM fed_parked WHERE replica = ? AND seq = ?')
+          .run(c.forwarder, c.forwarder_seq);
+        if (c.message_id !== '')
+          state?.refused(c.message_id, UNVERIFIABLE, c.forwarder);
+      });
+    }
   }
 
   // FW-R33(1): seen mail is pruned by count per publisher, never by age,
@@ -538,8 +616,8 @@ export class Inbound implements OpHandler, InboxDrainer {
     if (seen === null) {
       const head = fed.cursor(inner.replica).head?.seq ?? 0;
       if (head < inner.seq) return 'parked';
-      // FW-R35(2): one this machine no longer remembers waits; a refusal
-      // would lose the holder's copy, so nothing is refused here.
+      // FW-R35(2): one this machine no longer remembers waits while the
+      // drain checks it against the publisher's log on the branch.
       if (
         fed.db
           .query<{ n: number }, [string]>(
@@ -548,12 +626,19 @@ export class Inbound implements OpHandler, InboxDrainer {
           .get(inner.replica)?.n ===
         (this.deps.mailSeenKept ?? MAIL_SEEN_PER_PUBLISHER)
       ) {
-        dropNote(
-          fed,
-          'mail-drop',
-          op.replica,
-          `${label} forwarded an op of ${roster.label(inner.replica)}'s this machine no longer remembers; it waits`
-        );
+        let messageId = '';
+        try {
+          messageId =
+            mailPayload(openWithKey(inner, fromB64u(fwd.key)))?.message.id ??
+            '';
+        } catch {
+          messageId = '';
+        }
+        fed.db
+          .query(
+            'INSERT OR IGNORE INTO fed_forward_checks (replica, seq, hash, forwarder, forwarder_seq, message_id) VALUES (?, ?, ?, ?, ?, ?)'
+          )
+          .run(inner.replica, inner.seq, hash, op.replica, op.seq, messageId);
         return 'parked';
       }
       dropNote(

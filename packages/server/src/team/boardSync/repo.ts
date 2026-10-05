@@ -88,6 +88,8 @@ const TAIL_PASS_BYTES = 8 * 1024 * 1024;
 // FW-R30(3): all partial lines together.
 const MAX_PARTIAL_BYTES = 16 * 1024 * 1024;
 // FW-R29(3): what every full scan together may read in one pass.
+/** What one forwarded-op lookup may read of a replica's files. */
+const FIND_OP_BYTES = 64 * 1024 * 1024;
 const SCAN_PASS_BYTES = 32 * 1024 * 1024;
 // FW-R25: fresh bytes a pass reads across all replicas, the unknown ids it
 // probes for a key op, and how much of each file a probe reads.
@@ -1219,6 +1221,24 @@ export class SyncRepo {
 
   // One replica's segment files, by name. A name orders nothing (FW-R23);
   // only regular files under the segment pattern are read.
+  /** Every line of `replica`'s segments at `seq`, read in full within
+   *  FIND_OP_BYTES: a forwarded op the caller no longer remembers. */
+  findOp(replica: string, seq: number): LogEntry[] {
+    const found: LogEntry[] = [];
+    let budget = FIND_OP_BYTES;
+    for (const name of this.segments(replica)) {
+      const file = join(this.dir, FED_DIR, replica, name);
+      const state = newStream();
+      while (!state.done && budget > 0)
+        budget -= readStream(file, state, budget, MAX_LINE_BYTES, (line) => {
+          const entry = parseEntry(line);
+          if (entry?.replica === replica && entry.seq === seq)
+            found.push(entry);
+        });
+    }
+    return found;
+  }
+
   private segments(replica: string): string[] {
     const dir = join(this.dir, FED_DIR, replica);
     return listDir(dir)

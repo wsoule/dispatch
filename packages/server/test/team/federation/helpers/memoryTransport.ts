@@ -97,6 +97,13 @@ export class MemoryTransport implements FederationTransport {
         .flatMap(([, log]) => log.filter((e) => !this.remote.gone.has(e)))
     );
   }
+  findOp(replica: string, seq: number): Promise<LogEntry[]> {
+    return Promise.resolve(
+      (this.remote.logs.get(replica) ?? []).filter(
+        (e) => e.seq === seq && !this.remote.gone.has(e)
+      )
+    );
+  }
   ack(): Promise<void> {
     return Promise.resolve();
   }
