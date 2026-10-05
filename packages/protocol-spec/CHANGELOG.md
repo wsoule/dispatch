@@ -24,6 +24,10 @@ vector ids (see §14.2).
   still names one owner for every target, so these vectors are unchanged.
   Vectors: `core.wake.ask-raises-a-wake-gate-to-the-owner`,
   `core.guardrails.breaker-tells-the-owner-once-per-window`.
+- [editorial] Appendix A says the delivery read route answers a caller that may
+  not read the delivery's message with the absent id's 404. Dispatch's daemon
+  now meets §9.3 there and in `GET /api/decisions`, so its conformance report
+  declares no deviation.
 
 ## 1.0.0-draft.2 (2026-10-04)
 
