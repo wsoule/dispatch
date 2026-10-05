@@ -187,15 +187,20 @@ export class TenantChannel {
   }
 }
 
-/** handleA2A's port for one tenant: HttpBridgePort over its channel. */
+/**
+ * handleA2A's port for one tenant: HttpBridgePort over its channel, for the
+ * tenant URL `<relay>/t/<thumbprint>`, whose path prefix forwarded request
+ * paths carry.
+ */
 export function relayBridgePort(
   channel: TenantChannel,
-  publicUrl: string
+  tenantUrl: string
 ): HttpBridgePort {
   return new HttpBridgePort({
     daemonUrl: 'relay://tenant',
     hostToken: 'relay',
-    publicUrl,
+    publicUrl: tenantUrl,
+    pathPrefix: new URL(tenantUrl).pathname.replace(/\/$/, ''),
     fetchImpl: channel.fetch as typeof fetch,
   });
 }

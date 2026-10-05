@@ -27,6 +27,10 @@ export interface HttpBridgePortOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   reconnectMs?: number;
+  // A path the public URL serves this agent under (a relay tenant's
+  // /t/<thumbprint>): forwarded request paths carry it, so the daemon checks
+  // a signature against the URL the client actually called.
+  pathPrefix?: string;
 }
 
 // The 700 s call timeout covers the longest legitimate call, a blocking open
@@ -110,7 +114,7 @@ export class HttpBridgePort implements BridgePort {
     if (!req.headers.has('signature-input')) return null;
     return this.call<AuthResult | null>('POST', '/authenticate-signed', null, {
       method: req.method,
-      path: req.path,
+      path: `${this.o.pathPrefix ?? ''}${req.path}`,
       query: req.query,
       headers: forwardedHeaders(req.headers),
       body: req.body === null ? null : Buffer.from(req.body).toString('base64'),
@@ -126,7 +130,7 @@ export class HttpBridgePort implements BridgePort {
     try {
       out = await this.call<typeof out>('POST', `/dispatch/${route}`, null, {
         method: req.method,
-        path: url.pathname,
+        path: `${this.o.pathPrefix ?? ''}${url.pathname}`,
         query: url.search,
         headers: forwardedHeaders(req.headers),
         body: Buffer.from(body).toString('base64'),
@@ -165,7 +169,7 @@ export class HttpBridgePort implements BridgePort {
         body: bytes === null ? null : Buffer.from(bytes).toString('base64'),
         request: {
           method: req.method,
-          path: url.pathname,
+          path: `${this.o.pathPrefix ?? ''}${url.pathname}`,
           query: url.search,
           headers: forwardedHeaders(req.headers),
         },
