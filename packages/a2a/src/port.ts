@@ -20,6 +20,9 @@ import type { ArtifactJson } from './wire.js';
 export interface Caller {
   address: Address;
   name: string;
+  // The card-key thumbprint a signed caller proved; every re-check requires
+  // the client row to pin it still.
+  keyid?: string;
   // The client's own bearer, which a standalone host forwards to the daemon;
   // opaque to handleA2A.
   credential?: string;
@@ -27,7 +30,17 @@ export interface Caller {
 
 export type AuthResult =
   | { ok: true; caller: Caller }
-  | { ok: false; status: 401 | 403; reason: string; message: string };
+  | {
+      ok: false;
+      // 429 only for a signed caller at its nonce cap.
+      status: 401 | 403 | 429;
+      reason: string;
+      message: string;
+      retryAfterSec?: number;
+      // Set when the signature verified but the caller may not call: its
+      // refusal is signed, so the peer can trust it.
+      verified?: Caller;
+    };
 
 export type OpenKind = 'ask' | 'message' | 'notice' | 'handoff' | 'status';
 

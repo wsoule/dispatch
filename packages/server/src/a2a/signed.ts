@@ -14,6 +14,7 @@ import { authenticateSignedAgent } from './auth.js';
 
 // Live nonces one key may hold before its requests answer 429.
 const NONCE_CAP = 10_000;
+const BUSY_RETRY_SEC = 30;
 
 const REFUSED: AuthResult = {
   ok: false,
@@ -59,25 +60,66 @@ export function verifySignedClient(
       d.store.rememberNonce(keyid, nonce, expiresAt, NONCE_CAP, now),
   });
   if (!result.ok && result.reason === 'sig_missing') return null;
-  // One uniform refusal, so a client learns nothing of which check failed.
+  // One uniform refusal, so a client learns nothing of which check failed;
+  // a key at its nonce cap verified, so it gets a signed 429 instead.
   if (!result.ok) {
     console.warn(`a2a: signed request refused (${result.reason})`);
-    return REFUSED;
+    const signer =
+      result.reason === 'sig_busy' && result.keyid !== undefined
+        ? signerOf(d.store, result.keyid)
+        : null;
+    return signer === null
+      ? REFUSED
+      : {
+          ok: false,
+          status: 429,
+          reason: 'AUTH_BUSY',
+          message: 'too many signed requests at once; retry shortly',
+          retryAfterSec: BUSY_RETRY_SEC,
+          verified: signer,
+        };
   }
+  const signer = signerOf(d.store, result.keyid);
+  if (signer === null) return REFUSED;
   const client = d.store.clientByThumbprint(result.keyid);
-  if (client === null) return REFUSED;
-  return authenticateSignedAgent(
-    d.messages.getAgent(client.address),
-    client.auth ?? null
+  const auth = authenticateSignedAgent(
+    d.messages.getAgent(signer.address),
+    client?.auth ?? null
   );
+  // The signature verified either way: a refusal is signed so the peer can trust it.
+  return auth.ok
+    ? { ok: true, caller: { ...auth.caller, keyid: result.keyid } }
+    : { ...auth, verified: signer };
 }
 
-// Whether a caller that signed in is still allowed: its row still signs and
-// its agent is still approved.
+// The caller a verified key belongs to: the one client row that pins it.
+function signerOf(store: A2AStore, keyid: string): Caller | null {
+  const client = store.clientByThumbprint(keyid);
+  if (client === null) return null;
+  return {
+    address: client.address,
+    name: client.address.slice(client.address.indexOf('/') + 1),
+    keyid,
+  };
+}
+
+// Whether a caller that signed in is still allowed: its row still pins the
+// key it signed with, still signs, and its agent is still approved.
 export function revalidateSigned(d: SignedDeps, caller: Caller): boolean {
-  const client = d.store.getClient(caller.address);
-  return authenticateSignedAgent(
-    d.messages.getAgent(caller.address),
-    client?.auth ?? null
-  ).ok;
+  return authenticateByKey(d, caller.address, caller.keyid).ok;
+}
+
+/** A signed caller re-checked by address and the key it proved. */
+export function authenticateByKey(
+  d: SignedDeps,
+  address: string,
+  keyid: string | undefined
+): AuthResult {
+  const client = d.store.getClient(address);
+  if (keyid === undefined || client?.keyThumbprint !== keyid) return REFUSED;
+  const auth = authenticateSignedAgent(
+    d.messages.getAgent(address),
+    client.auth ?? null
+  );
+  return auth.ok ? { ok: true, caller: { ...auth.caller, keyid } } : auth;
 }

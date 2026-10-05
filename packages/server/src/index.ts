@@ -360,6 +360,8 @@ export interface StartServerOptions {
   a2a?: ListenerOverrides;
   // Standalone hosts' watch-stream limits; tests shorten the keepalive.
   a2aWatchLimits?: Partial<WatchLimits>;
+  // Unverifiable replies before a signature peer is auth-failed; tests lower it.
+  a2aUnverifiedLimit?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -1637,6 +1639,9 @@ async function bootServer(
     ...(opts.a2aWatchLimits === undefined
       ? {}
       : { watchLimits: opts.a2aWatchLimits }),
+    ...(opts.a2aUnverifiedLimit === undefined
+      ? {}
+      : { unverifiedLimit: opts.a2aUnverifiedLimit }),
     ...(opts.tls === undefined
       ? {}
       : {

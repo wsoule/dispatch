@@ -159,6 +159,8 @@ interface OpenBridgeDeps {
   teamTls?: { certPath: string; keyPath: string };
   // Standalone hosts' watch-stream limits over the defaults (tests).
   watchLimits?: Partial<WatchLimits>;
+  // Unverifiable replies before a signature peer is auth-failed (tests).
+  unverifiedLimit?: number;
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -343,6 +345,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     try {
       outbound = startOutbound(peerService, {
         changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+        ...(deps.unverifiedLimit === undefined
+          ? {}
+          : { unverifiedLimit: deps.unverifiedLimit }),
       });
     } catch (err) {
       console.error('dispatchd: the A2A outbound worker did not start', err);

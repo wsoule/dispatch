@@ -57,12 +57,16 @@ import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import type { RunResultsMemo } from './artifacts.js';
-import { authenticateA2AClient, authenticateSignedAgent } from './auth.js';
+import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
 import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
-import { revalidateSigned, verifySignedClient } from './signed.js';
+import {
+  authenticateByKey,
+  revalidateSigned,
+  verifySignedClient,
+} from './signed.js';
 import type { CardSigner } from './signing.js';
 import type { BridgeWatch } from './watch.js';
 
@@ -377,14 +381,13 @@ export class DaemonBridgePort implements BridgePort {
     });
   }
 
-  // A signed caller re-checked by address (a standalone host's session).
-  authenticateSignedAddress(address: string): Promise<AuthResult> {
-    return settle(() =>
-      authenticateSignedAgent(
-        this.deps.messages.getAgent(address),
-        this.deps.store.getClient(address)?.auth ?? null
-      )
-    );
+  // A signed caller re-checked by address and the key it proved (a
+  // standalone host's session).
+  authenticateSignedAddress(
+    address: string,
+    keyid: string
+  ): Promise<AuthResult> {
+    return settle(() => authenticateByKey(this.deps, address, keyid));
   }
 
   // Requests per minute and open streams, per client, in memory.

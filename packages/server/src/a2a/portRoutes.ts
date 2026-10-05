@@ -13,7 +13,7 @@ import {
   portErrorJson,
 } from '@dispatch/a2a';
 import { MessagingError } from '@dispatch/protocol';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
 import { jsonResponse, readJsonBody } from '../api/http.js';
@@ -64,35 +64,44 @@ export class PortLeases {
   }
 }
 
+// A signed client's session on one host: who signed, with which key, and the
+// hash of the request signature it was opened with.
+export interface SignedSession {
+  hostId: string;
+  address: string;
+  keyid: string;
+  signatureHash: string;
+}
+
 // Short-lived stand-ins for a signed client's bearer across one host's port
 // calls: the host verified nothing itself, so each session is bound to the
-// host that opened it and re-checked against the client row on every use.
+// host that opened it and re-checked against the client row and its key on
+// every use.
 export class SignedSessions {
   private readonly sessions = new Map<
     string,
-    { hostId: string; address: string; expiresAt: number }
+    SignedSession & { expiresAt: number }
   >();
   constructor(
     private readonly ttlMs = 65 * 60_000,
     private readonly now = () => Date.now()
   ) {}
 
-  open(hostId: string, address: string): string {
+  open(session: SignedSession): string {
     this.prune();
     const token = randomBytes(32).toString('hex');
     this.sessions.set(token, {
-      hostId,
-      address,
+      ...session,
       expiresAt: this.now() + this.ttlMs,
     });
     return token;
   }
 
-  // The client address, only for the host that opened the session.
-  resolve(token: string, hostId: string): string | null {
+  // The session, only for the host that opened it.
+  resolve(token: string, hostId: string): SignedSession | null {
     this.prune();
     const s = this.sessions.get(token);
-    return s === undefined || s.hostId !== hostId ? null : s.address;
+    return s === undefined || s.hostId !== hostId ? null : s;
   }
 
   endHost(hostId: string): void {
@@ -109,6 +118,13 @@ export class SignedSessions {
     for (const [token, s] of [...this.sessions])
       if (s.expiresAt <= now) this.sessions.delete(token);
   }
+}
+
+// The hash a session keeps of the request signature it was opened with.
+function signatureHash(signature: string | null): string {
+  return createHash('sha256')
+    .update(signature ?? '')
+    .digest('hex');
 }
 
 export interface WatchLimits {
@@ -228,23 +244,40 @@ const NO_CLIENT: Extract<AuthResult, { ok: false }> = {
 };
 
 // The client a host forwards: a bearer, or a session from a signature this
-// daemon verified for that same host.
+// daemon verified for that same host, re-checked against the key it proved.
 async function clientAuth(
   header: string | null,
   bridge: NonNullable<ApiContext['a2a']>,
   hostId: string
-): Promise<AuthResult> {
+): Promise<{ auth: AuthResult; session: SignedSession | null }> {
   const port = bridge.port;
-  if (port === null || header === null) return NO_CLIENT;
-  const session = /^Signed[ ]+(\S+)$/.exec(header.trim())?.[1];
-  if (session !== undefined) {
-    const address = bridge.signedSessions.resolve(session, hostId);
-    return address === null
-      ? { ...NO_CLIENT, reason: 'AUTH_INVALID_TOKEN', message: 'unknown token' }
-      : port.authenticateSignedAddress(address);
+  if (port === null || header === null)
+    return { auth: NO_CLIENT, session: null };
+  const token = /^Signed[ ]+(\S+)$/.exec(header.trim())?.[1];
+  if (token !== undefined) {
+    const session = bridge.signedSessions.resolve(token, hostId);
+    if (session === null)
+      return {
+        auth: {
+          ...NO_CLIENT,
+          reason: 'AUTH_INVALID_TOKEN',
+          message: 'unknown token',
+        },
+        session: null,
+      };
+    return {
+      auth: await port.authenticateSignedAddress(
+        session.address,
+        session.keyid
+      ),
+      session,
+    };
   }
   const bearer = bearerOf(header);
-  return bearer === null ? NO_CLIENT : port.authenticate(bearer);
+  return {
+    auth: bearer === null ? NO_CLIENT : await port.authenticate(bearer),
+    session: null,
+  };
 }
 
 // What a host forwards of a signed request it received, checked field by field.
@@ -304,8 +337,14 @@ async function authenticateForwarded(
   );
   // No Dispatch signature: the host falls back to the client's bearer.
   if (result === null) return jsonResponse(null);
-  if (!result.ok) return jsonResponse(result);
-  const token = bridge.signedSessions.open(host.id, result.caller.address);
+  if (!result.ok || result.caller.keyid === undefined)
+    return jsonResponse(result);
+  const token = bridge.signedSessions.open({
+    hostId: host.id,
+    address: result.caller.address,
+    keyid: result.caller.keyid ?? '',
+    signatureHash: signatureHash(forwarded.headers.get('signature')),
+  });
   return jsonResponse({
     ok: true,
     caller: { ...result.caller, credential: `Signed ${token}` },
@@ -317,20 +356,22 @@ const QUERY = /^(?:\?[^#]*)?$/;
 const MAX_SIGNED_BODY = 4 * 1024 * 1024;
 
 // POST /api/a2a/port/sign-response: the card key stays with the daemon, so it
-// signs a host's reply to a signed client, for the host's pinned URL and only
-// within that client's signed session.
+// signs a host's reply to a signed client, for the host's pinned URL, only
+// within that client's session and for the request it was opened with. The
+// host is the trusted responder for its URL: it terminates TLS and chooses the
+// reply, so a peer that trusts the signature trusts the host as well.
 function signForHost(
   raw: unknown,
   port: NonNullable<NonNullable<ApiContext['a2a']>['port']>,
   host: HostRow,
-  signedSession: boolean
+  session: SignedSession | null
 ): Response {
   const invalid = (message: string) =>
     jsonResponse(
       { error: { kind: 'messaging', code: 'invalid', message, field: 'body' } },
       400
     );
-  if (!signedSession)
+  if (session === null)
     return jsonResponse(
       {
         error: {
@@ -358,6 +399,19 @@ function signForHost(
     !QUERY.test(request.query)
   )
     return invalid('body: expected the reply and the request it answers');
+  // Only the reply to the request this session was opened with (review N2).
+  if (signatureHash(request.headers.get('signature')) !== session.signatureHash)
+    return jsonResponse(
+      {
+        error: {
+          kind: 'auth',
+          status: 403,
+          reason: 'AUTH_NOT_SIGNED',
+          message: 'not the request this session was opened with',
+        },
+      },
+      403
+    );
   let body: Uint8Array | null = null;
   if (typeof r.body === 'string') {
     const bytes = Buffer.from(r.body, 'base64');
@@ -452,9 +506,9 @@ export async function handlePortRoute(
   )
     return authenticateForwarded(req, bridge, host);
   const clientHeader = req.headers.get(PORT_CLIENT_HEADER);
-  const resolveClient = (): Promise<AuthResult> =>
-    clientAuth(clientHeader, bridge, host.id);
-  const auth = await resolveClient();
+  const resolveClient = async (): Promise<AuthResult> =>
+    (await clientAuth(clientHeader, bridge, host.id)).auth;
+  const { auth, session } = await clientAuth(clientHeader, bridge, host.id);
   if (rest[0] === 'whoami' && rest.length === 1 && method === 'GET')
     return jsonResponse(auth);
   if (!auth.ok)
@@ -515,12 +569,7 @@ export async function handlePortRoute(
         await port.continue(caller, parsePortContinue(await raw()))
       );
     if (rest[0] === 'sign-response' && rest.length === 1 && method === 'POST')
-      return signForHost(
-        await raw(),
-        port,
-        host,
-        /^Signed[ ]/.test((clientHeader ?? '').trim())
-      );
+      return signForHost(await raw(), port, host, session);
     if (rest[0] === 'cancel' && rest.length === 1 && method === 'POST') {
       const { taskId } = await body();
       if (typeof taskId !== 'string') return taskNotFound();

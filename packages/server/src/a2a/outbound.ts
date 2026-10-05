@@ -74,6 +74,8 @@ export interface OutboundDeps {
   now?: () => Date;
   pollMs?: (polls: number) => number;
   concurrency?: number;
+  // Consecutive unverifiable replies before auth-failed (UNVERIFIED_LIMIT).
+  unverifiedLimit?: number;
 }
 
 // The next stream event as 'tick', or 'done' when the stream ends or fails.
@@ -119,20 +121,54 @@ function addressRefusal(err: unknown): string | null {
 }
 
 // A refused credential: 401, or a 403 whose reason is AUTH_*. Any other 403
-// (FORBIDDEN_ADDRESS, say) fails only the message.
-function authRefusal(err: unknown): boolean {
+// (FORBIDDEN_ADDRESS, say) fails only the message. A signature peer's reply
+// reaches here only once verified, and then only an AUTH_* reason refuses.
+function authRefusal(err: unknown, signed: boolean): boolean {
   if (!(err instanceof PeerHttpError)) return false;
+  const auth = (err.reason ?? '').startsWith('AUTH_');
+  if (signed) return (err.status === 401 || err.status === 403) && auth;
+  return err.status === 401 || (err.status === 403 && auth);
+}
+
+// A signature peer's reply that could not be verified (unsigned, stale, a
+// proxy's own page): retried like a network fault, never a credential verdict.
+function unverifiable(err: unknown): boolean {
   return (
-    err.status === 401 ||
-    (err.status === 403 && (err.reason ?? '').startsWith('AUTH_'))
+    err instanceof PeerHttpError &&
+    err.status === null &&
+    (err.reason ?? '').startsWith('sig_')
   );
 }
+
+// Consecutive unverifiable replies after which a signature peer is marked
+// auth-failed: a sustained run means its key or clock no longer matches.
+const UNVERIFIED_LIMIT = 20;
 
 // The outbound worker (spec:1444-1531): relays held a2a: deliveries one at a
 // time per peer, at most `concurrency` peers at once, then follows each peer
 // task and records what the peer says. What to record and when to retry come
 // from @dispatch/a2a; this class only does I/O, timers and bookkeeping.
 export class OutboundWorker {
+  // Consecutive unverifiable replies per signature peer, reset by any verified one.
+  private readonly unverified = new Map<string, number>();
+
+  // Counts an unverifiable reply; true once the run reaches the limit, after
+  // which the peer is auth-failed and the count starts over.
+  private unverifiedRunEnds(alias: string, err: unknown): boolean {
+    if (!unverifiable(err)) return false;
+    const n = (this.unverified.get(alias) ?? 0) + 1;
+    if (n < (this.deps.unverifiedLimit ?? UNVERIFIED_LIMIT)) {
+      this.unverified.set(alias, n);
+      return false;
+    }
+    this.unverified.delete(alias);
+    return true;
+  }
+
+  private signedPeer(alias: string): boolean {
+    return this.deps.store.getPeer(alias)?.auth === 'signature';
+  }
+
   private readonly queues = new Map<string, string[]>();
   private readonly busy = new Set<string>();
   private readonly trackers = new Map<string, AbortController>();
@@ -364,6 +400,7 @@ export class OutboundWorker {
       await this.sendFailed(d, message, base, err);
       return;
     }
+    this.unverified.delete(alias);
     // The peer may have been removed, or the row given up, while the send was
     // in flight: keep it failed and leave the delivery as the removal left it.
     const after = this.deps.store.getOutbound(message.id, alias);
@@ -478,7 +515,8 @@ export class OutboundWorker {
     }
     if (
       (err instanceof MessagingError && err.field === 'token') ||
-      authRefusal(err)
+      authRefusal(err, this.signedPeer(row.alias)) ||
+      this.unverifiedRunEnds(row.alias, err)
     ) {
       // Parked: the peer is auth-failed and its deliveries wait for `enable`.
       this.deps.store.putOutbound({
@@ -794,6 +832,7 @@ export class OutboundWorker {
     let task: TaskJson;
     try {
       task = await client.getTask(row.remoteTaskId);
+      this.unverified.delete(row.alias);
     } catch (err) {
       const refusal = addressRefusal(err);
       if (refusal !== null) {
@@ -804,7 +843,10 @@ export class OutboundWorker {
         return true;
       }
       const status = err instanceof PeerHttpError ? err.status : null;
-      if (authRefusal(err)) {
+      if (
+        authRefusal(err, this.signedPeer(row.alias)) ||
+        this.unverifiedRunEnds(row.alias, err)
+      ) {
         this.deps.markAuthFailed(row.alias);
         return true;
       }
@@ -966,6 +1008,7 @@ export function startOutbound(
     pollMs?: (polls: number) => number;
     concurrency?: number;
     changed?: () => void;
+    unverifiedLimit?: number;
   } = {}
 ): { worker: OutboundWorker; stop: () => void } {
   const d = peers.deps;

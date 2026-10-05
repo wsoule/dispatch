@@ -1,5 +1,5 @@
 import { openSqliteDb } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -660,5 +660,58 @@ describe('key pins (review M5)', () => {
     );
     third.close();
     expect(store.getClient('agent:wyat/a2a.one')?.keyJwk).toBeNull();
+  });
+});
+
+describe('review N5', () => {
+  const pairingRow = (id: string) => ({
+    id,
+    role: 'offer' as const,
+    secretHash: 'mac-key',
+    alias: 'bob',
+    reach: { kind: 'url' as const, card: 'https://bob.example/card' },
+    createdBy: 'human:wyat',
+    createdTier: 'decide' as const,
+    createdAt: '2026-10-01T00:00:00.000Z',
+    expiresAt: '2026-10-01T00:15:00.000Z',
+    state: 'offered' as const,
+    peerThumbprint: null,
+    completedAt: null,
+  });
+
+  it('drops the MAC key once a pairing leaves offered', () => {
+    store.putPairing(pairingRow('p-1'));
+    store.putPairing(pairingRow('p-2'));
+    store.completePairing('p-1', 'tp', '2026-10-01T00:05:00.000Z');
+    store.setPairingState('p-2', 'canceled');
+    expect(store.pairing('p-1')?.secretHash).toBeNull();
+    expect(store.pairing('p-2')?.secretHash).toBeNull();
+  });
+
+  it('clears duplicate pins with a warning instead of refusing to open', () => {
+    const path = join(dir, 'dup.db');
+    const first = new SqliteA2AStore(openA2ADb(path));
+    first.close();
+    const raw = openSqliteDb(path);
+    raw.exec('DROP INDEX IF EXISTS clients_key_unique');
+    for (const a of ['agent:wyat/a2a.one', 'agent:wyat/a2a.two'])
+      raw.exec(
+        `INSERT INTO clients (addr, name, recipients_json, created_by, created_at, key_thumbprint, key_jwk, auth) VALUES ('${a}', 'x', '[]', 'h', 't', 'tp-dup', '{"kty":"EC","crv":"P-256","x":"a","y":"b"}', 'signature')`
+      );
+    raw.close();
+    const warned: string[] = [];
+    const spy = spyOn(console, 'warn').mockImplementation((...a: unknown[]) => {
+      warned.push(a.map(String).join(' '));
+    });
+    let reopened: SqliteA2AStore;
+    try {
+      reopened = new SqliteA2AStore(openA2ADb(path));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(warned.join('\n')).toContain('tp-dup');
+    expect(reopened.getClient('agent:wyat/a2a.one')?.keyThumbprint).toBeNull();
+    expect(reopened.getClient('agent:wyat/a2a.two')?.keyThumbprint).toBeNull();
+    reopened.close();
   });
 });

@@ -450,7 +450,7 @@ describe('signed responses and outbound signing (T40)', () => {
 
   it('signs requests to a pinned peer and reads its signed reply; an unsigned reply marks it auth-failed', async () => {
     const peerKey = newKey();
-    let mode: 'signed' | 'unsigned' = 'signed';
+    let mode: 'signed' | 'unsigned' | 'signed401' = 'signed';
     let verified = 0;
     const daemonPub = await daemonKey();
     const daemonKid = ecThumbprint(
@@ -504,16 +504,35 @@ describe('signed responses and outbound signing (T40)', () => {
         verified += 1;
         if (req.headers.get('authorization') !== null)
           return new Response('no bearer to a signature peer', { status: 400 });
-        const reply = new Response(
-          JSON.stringify({
-            message: {
-              messageId: 'r-1',
-              role: 'ROLE_AGENT',
-              parts: [{ text: 'Signed and answered.' }],
-            },
-          }),
-          { headers: { 'content-type': 'application/json' } }
-        );
+        const reply =
+          mode === 'signed401'
+            ? new Response(
+                JSON.stringify({
+                  error: {
+                    code: 401,
+                    status: 'UNAUTHENTICATED',
+                    message: 'revoked',
+                    details: [
+                      {
+                        '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                        reason: 'AUTH_AGENT_REVOKED',
+                        domain: 'dispatch.foo',
+                      },
+                    ],
+                  },
+                }),
+                { status: 401, headers: { 'content-type': 'application/json' } }
+              )
+            : new Response(
+                JSON.stringify({
+                  message: {
+                    messageId: `r-${verified}`,
+                    role: 'ROLE_AGENT',
+                    parts: [{ text: 'Signed and answered.' }],
+                  },
+                }),
+                { headers: { 'content-type': 'application/json' } }
+              );
         if (mode === 'unsigned') return reply;
         return signResponseFor(
           reply,
@@ -552,9 +571,26 @@ describe('signed responses and outbound signing (T40)', () => {
         10_000
       );
       expect(verified).toBe(1);
+      // Review J1: an unsigned reply is unverifiable, so it retries; the peer stays active.
       mode = 'unsigned';
-      await handle.messaging.engine.send(
+      const { message: again } = await handle.messaging.engine.send(
         { to: ['a2a:signed'], kind: 'message', body: 'Again.' },
+        { address: 'human:test', canDecide: true }
+      );
+      await waitFor(
+        () =>
+          (handle.a2a.store!.getOutbound(again.id, 'signed')?.attempts ?? 0) >=
+          1,
+        10_000
+      );
+      expect(handle.a2a.store!.getOutbound(again.id, 'signed')).toMatchObject({
+        state: 'queued',
+      });
+      expect(handle.a2a.store!.getPeer('signed')?.status).toBe('active');
+      // A verified refusal of our credential is final.
+      mode = 'signed401';
+      await handle.messaging.engine.send(
+        { to: ['a2a:signed'], kind: 'message', body: 'Third.' },
         { address: 'human:test', canDecide: true }
       );
       await waitFor(
@@ -640,6 +676,229 @@ describe('signed responses and outbound signing (T40)', () => {
       expect(bearer.status).toBe(401);
     } finally {
       await relay.stop();
+    }
+  });
+});
+
+describe('review J1, N1, N2', () => {
+  const RELAY = 'https://relay.example.com';
+  const covered = [
+    'signature-input',
+    'signature',
+    'content-digest',
+    'content-type',
+    'a2a-version',
+  ];
+  const forward = (h: Headers, b: Uint8Array) => ({
+    method: 'POST',
+    path: '/a2a/v1/message:send',
+    query: '',
+    headers: Object.fromEntries(covered.map((n) => [n, h.get(n) ?? ''])),
+    body: Buffer.from(b).toString('base64'),
+  });
+  async function hostToken(): Promise<string> {
+    await fetch(`${base}/api/a2a/listener/standalone`, {
+      method: 'PUT',
+      headers: json,
+      body: JSON.stringify({ enabled: true }),
+    });
+    const res = await fetch(`${base}/api/a2a/hosts`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ name: 'relay', publicUrl: RELAY }),
+    });
+    return ((await res.json()) as { token: string }).token;
+  }
+  async function openSession(
+    token: string,
+    key: SigningKey,
+    messageId: string
+  ) {
+    const b = send(messageId);
+    const h = signedHeaders(key, 'POST', `${RELAY}/a2a/v1/message:send`, b);
+    const res = await rawFetch(`${base}/api/a2a/port/authenticate-signed`, {
+      method: 'POST',
+      headers: { ...json, authorization: `Bearer ${token}` },
+      body: JSON.stringify(forward(h, b)),
+    });
+    const opened = (await res.json()) as { caller: { credential: string } };
+    return { credential: opened.caller.credential, headers: h, body: b };
+  }
+
+  it('signs a revoked client’s 401, so its peer can trust the refusal', async () => {
+    const { caller, key } = await signatureClient('acme');
+    await fetch(
+      `${base}/api/agents/${encodeURIComponent(caller.address)}/revoke`,
+      { method: 'POST' }
+    );
+    const body = send('m-revoked');
+    const headers = signedHeaders(
+      key,
+      'POST',
+      `${listenerUrl}/a2a/v1/message:send`,
+      body
+    );
+    const res = await rawFetch(`${listenerUrl}/a2a/v1/message:send`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(res.status).toBe(401);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const pub = await daemonKey();
+    const kid = ecThumbprint(
+      pub.export({ format: 'jwk' }) as Record<string, string>
+    )!;
+    expect(
+      verifyResponse(
+        { status: 401, headers: res.headers, body: bytes },
+        {
+          method: 'POST',
+          targetUri: `${listenerUrl}/a2a/v1/message:send`,
+          headers,
+        },
+        {
+          keyFor: (id) => (id === kid ? pub : null),
+          now: new Date(),
+          guardMs: 300_000,
+        }
+      ).ok
+    ).toBe(true);
+  });
+
+  it('N1: a session and a stream re-check go by the key that signed, not the row', async () => {
+    const { caller, key } = await signatureClient('acme');
+    expect(
+      await handle.a2a.port!.revalidate({ ...caller, keyid: key.keyid })
+    ).toBe(true);
+    const token = await hostToken();
+    const { credential } = await openSession(token, key, 'm-n1');
+    const tasks = () =>
+      rawFetch(`${base}/api/a2a/port/tasks`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          [PORT_CLIENT_HEADER]: credential,
+        },
+      });
+    expect((await tasks()).status).toBe(200);
+    // The client row is re-pinned to another key (a rotation, say).
+    const next = newKey();
+    expect(
+      handle.a2a.store!.setClientKey(caller.address, {
+        thumbprint: next.keyid,
+        jwk: next.jwk,
+        auth: 'signature',
+        pairedId: null,
+      })
+    ).toBe(true);
+    expect((await tasks()).status).toBe(401);
+    expect(
+      await handle.a2a.port!.revalidate({ ...caller, keyid: key.keyid })
+    ).toBe(false);
+  });
+
+  it('N2: a host’s reply is signed only for the request its session opened on', async () => {
+    const { key } = await signatureClient('acme');
+    const token = await hostToken();
+    const first = await openSession(token, key, 'm-n2-a');
+    const signFor = (h: Headers, b: Uint8Array) =>
+      rawFetch(`${base}/api/a2a/port/sign-response`, {
+        method: 'POST',
+        headers: {
+          ...json,
+          authorization: `Bearer ${token}`,
+          [PORT_CLIENT_HEADER]: first.credential,
+        },
+        body: JSON.stringify({
+          status: 200,
+          contentType: 'application/json',
+          body: Buffer.from('{}').toString('base64'),
+          request: { ...forward(h, b), body: null },
+        }),
+      });
+    expect((await signFor(first.headers, first.body)).status).toBe(200);
+    const b2 = send('m-n2-b');
+    const h2 = signedHeaders(key, 'POST', `${RELAY}/a2a/v1/message:send`, b2);
+    expect((await signFor(h2, b2)).status).toBe(403);
+  });
+
+  it('J1: a run of unverifiable replies, at the configured limit, marks the peer auth-failed', async () => {
+    await handle.stop();
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      webDistDir: null,
+      a2aUnverifiedLimit: 2,
+    });
+    useTestAuth(handle);
+    base = `http://127.0.0.1:${handle.port}`;
+    useSeedBase(base);
+    const peerKey = newKey();
+    const peer = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (req) => {
+        const url = new URL(req.url);
+        if (url.pathname === '/.well-known/agent-card.json')
+          return Response.json({
+            name: 'Proxy-fronted peer',
+            description: 'A fixture.',
+            version: '1',
+            capabilities: { streaming: false },
+            skills: [],
+            supportedInterfaces: [
+              {
+                url: `${url.origin}/a2a/v1`,
+                protocolBinding: 'HTTP+JSON',
+                protocolVersion: '1.0',
+              },
+            ],
+            securitySchemes: {
+              bearer: { httpAuthSecurityScheme: { scheme: 'Bearer' } },
+            },
+            securityRequirements: [{ schemes: { bearer: { list: [] } } }],
+          });
+        return new Response('bad gateway', { status: 502 });
+      },
+    });
+    try {
+      const origin = `http://127.0.0.1:${peer.port}`;
+      const added = await fetch(`${base}/api/a2a/peers`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({
+          alias: 'flaky',
+          cardUrl: `${origin}/.well-known/agent-card.json`,
+          token: 'unused',
+        }),
+      });
+      expect(added.status).toBe(201);
+      handle.a2a.store!.setPeerKey('flaky', {
+        thumbprint: peerKey.keyid,
+        jwk: peerKey.jwk,
+        auth: 'signature',
+        pairedId: null,
+      });
+      const sendOne = (body: string) =>
+        handle.messaging.engine.send(
+          { to: ['a2a:flaky'], kind: 'message', body },
+          { address: 'human:test', canDecide: true }
+        );
+      const { message: one } = await sendOne('One.');
+      await waitFor(
+        () =>
+          (handle.a2a.store!.getOutbound(one.id, 'flaky')?.attempts ?? 0) >= 1,
+        10_000
+      );
+      expect(handle.a2a.store!.getPeer('flaky')?.status).toBe('active');
+      await sendOne('Two.');
+      await waitFor(
+        () => handle.a2a.store!.getPeer('flaky')?.status === 'auth-failed',
+        10_000
+      );
+    } finally {
+      await peer.stop(true);
     }
   });
 });

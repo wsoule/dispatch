@@ -232,7 +232,22 @@ async function authenticate(
       body,
     });
     if (signed !== null) {
-      if (!signed.ok) return fail(signed.status, signed.reason, signed.message);
+      if (!signed.ok) {
+        if (signed.verified === undefined)
+          return fail(
+            signed.status === 403 ? 403 : 401,
+            signed.reason,
+            signed.message
+          );
+        // A verified signer's refusal is signed and never counts toward the IP lockout.
+        const refusal =
+          signed.status === 429
+            ? rateLimited(signed.retryAfterSec ?? 1)
+            : authFailure(signed.status, signed.reason, signed.message);
+        return port.signResponse === undefined
+          ? refusal
+          : await port.signResponse(refusal, req, signed.verified);
+      }
       const caller = signed.caller;
       return {
         caller,
@@ -251,7 +266,12 @@ async function authenticate(
       'send Authorization: Bearer <token>'
     );
   const result = await port.authenticate(bearer);
-  if (!result.ok) return fail(result.status, result.reason, result.message);
+  if (!result.ok)
+    return fail(
+      result.status === 403 ? 403 : 401,
+      result.reason,
+      result.message
+    );
   return {
     caller: result.caller,
     req,

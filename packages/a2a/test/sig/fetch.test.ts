@@ -30,7 +30,13 @@ afterEach(async () => {
   server = null;
 });
 
-type Mode = 'signed' | 'unsigned' | 'impostor' | 'tampered' | 'stream';
+type Mode =
+  | 'signed'
+  | 'unsigned'
+  | 'impostor'
+  | 'tampered'
+  | 'stream'
+  | 'signed401';
 
 // A peer that checks our signature, then answers signed by its own key.
 function startPeer(mode: Mode): string {
@@ -61,6 +67,7 @@ function startPeer(mode: Mode): string {
       );
       if (!ok.ok) return new Response(ok.reason, { status: 401 });
       const stream = mode === 'stream';
+      const status = mode === 'signed401' ? 401 : 200;
       const payload = new TextEncoder().encode(
         stream ? 'data: {}\n\n' : '{"ok":true}'
       );
@@ -70,7 +77,7 @@ function startPeer(mode: Mode): string {
       if (mode !== 'unsigned') {
         const signer = mode === 'impostor' ? impostor : peer;
         const out = signResponse({
-          status: 200,
+          status,
           headers,
           body: stream ? null : payload,
           request: {
@@ -88,7 +95,7 @@ function startPeer(mode: Mode): string {
         mode === 'tampered'
           ? new TextEncoder().encode('{"ok":false}')
           : payload;
-      return new Response(sent, { status: 200, headers });
+      return new Response(sent, { status, headers });
     },
   });
   return `http://127.0.0.1:${server.port}`;
@@ -128,13 +135,35 @@ describe('signedFetch', () => {
     ['impostor', 'sig_key_unknown'],
     ['tampered', 'sig_digest'],
   ] as const)(
-    'refuses a %s response as a 401 the worker reads as auth-failed',
+    'reads a %s reply as unverifiable: retryable like a network fault, never a 401',
     async (mode, reason) => {
-      const err = await post(startPeer(mode)).catch((e: unknown) => e);
+      const box = {
+        status: 200 as number | null,
+        retryAfterSec: null,
+        network: false,
+        reason: null as string | null,
+      };
+      const f = signedFetch(fetch, {
+        keyid: me.keyid,
+        privateKey: me.privateKey,
+        peerKey: peer.publicKey,
+        box,
+      });
+      const err = await f(`${startPeer(mode)}/a2a/v1/message:send`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(PeerHttpError);
-      expect(err).toMatchObject({ status: 401, reason });
+      expect(err).toMatchObject({ status: null, reason });
+      expect(box).toMatchObject({ status: null, network: true, reason });
     }
   );
+
+  it('passes a verified 401 through, so the caller can read its AUTH_* reason', async () => {
+    const res = await post(startPeer('signed401'));
+    expect(res.status).toBe(401);
+  });
 
   it('verifies an event stream by its headers and leaves the body to stream', async () => {
     const res = await post(startPeer('stream'));

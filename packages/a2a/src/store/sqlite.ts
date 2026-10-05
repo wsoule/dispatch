@@ -355,6 +355,18 @@ function addKeyColumns(db: SqliteDatabase): void {
       if (!have.has(name))
         db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
+    // A key pinned on two rows (written before this index) pins neither.
+    for (const { tp } of queryAll<{ tp: string }>(
+      db,
+      `SELECT key_thumbprint AS tp FROM ${table} WHERE key_thumbprint IS NOT NULL GROUP BY key_thumbprint HAVING COUNT(*) > 1`
+    )) {
+      console.warn(
+        `a2a: key ${tp} was pinned on more than one ${table} row; those pins are cleared`
+      );
+      db.prepare(
+        `UPDATE ${table} SET key_thumbprint = NULL, key_jwk = NULL WHERE key_thumbprint = ?`
+      ).run(tp);
+    }
     // One key pins one row per table.
     db.exec(
       `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_key_unique ON ${table} (key_thumbprint) WHERE key_thumbprint IS NOT NULL`
@@ -1277,7 +1289,7 @@ export class SqliteA2AStore implements A2AStore {
       Number(
         this.db
           .prepare(
-            "UPDATE pairings SET state = 'completed', peer_thumbprint = ?, completed_at = ? WHERE id = ? AND state = 'offered'"
+            "UPDATE pairings SET state = 'completed', peer_thumbprint = ?, completed_at = ?, secret_hash = NULL WHERE id = ? AND state = 'offered'"
           )
           .run(peerThumbprint, at, id).changes
       ) > 0
@@ -1286,8 +1298,10 @@ export class SqliteA2AStore implements A2AStore {
 
   setPairingState(id: string, state: PairingRow['state']): void {
     this.db
-      .prepare('UPDATE pairings SET state = ? WHERE id = ?')
-      .run(state, id);
+      .prepare(
+        "UPDATE pairings SET state = ?, secret_hash = CASE WHEN ? = 'offered' THEN secret_hash ELSE NULL END WHERE id = ?"
+      )
+      .run(state, state, id);
   }
 
   recordKeyEvent(e: KeyEvent): void {

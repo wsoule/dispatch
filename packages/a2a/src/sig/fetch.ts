@@ -36,9 +36,9 @@ function bodyBytes(body: unknown): Uint8Array | null {
 
 /**
  * A fetch that signs every request with this project's card key (RFC 9421)
- * and accepts only responses the pinned peer key signed for that request. A
- * refused response surfaces as a 401 PeerHttpError, which marks the peer
- * auth-failed. It wraps the peer fetch from outside, so it signs the URL the
+ * and accepts only responses the pinned peer key signed for that request. An
+ * unverifiable response is a retryable PeerHttpError (status null) with the
+ * refusal class as its reason; only a verified reply can refuse a credential. It wraps the peer fetch from outside, so it signs the URL the
  * peer was told to serve, never a pinned address.
  */
 export function signedFetch(
@@ -88,15 +88,17 @@ export function signedFetch(
         guardMs: MAX_CLOCK_LEAD_MS,
       }
     );
+    // Unverifiable is never a credential verdict: a proxy's 502, a peer's
+    // stale clock or a stripped header retries like a network fault.
     if (!verdict.ok) {
       if (o.box !== undefined) {
-        o.box.status = 401;
+        o.box.status = null;
         o.box.reason = verdict.reason;
-        o.box.network = false;
+        o.box.network = true;
       }
       throw new PeerHttpError(
-        401,
-        `the peer's response is not signed by its pinned key (${verdict.reason})`,
+        null,
+        `the peer's reply could not be verified (${verdict.reason})`,
         null,
         verdict.reason
       );

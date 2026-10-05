@@ -180,12 +180,18 @@ describe('signed requests', () => {
     const f = facts();
     const req = signed();
     expect(verifyRequest(req, f).ok).toBe(true);
-    expect(verifyRequest(req, f)).toEqual({ ok: false, reason: 'sig_replay' });
+    // The signature verified, so the refusal names the key that made it.
+    expect(verifyRequest(req, f)).toEqual({
+      ok: false,
+      reason: 'sig_replay',
+      keyid: alice.keyid,
+    });
     expect(
       verifyRequest(signed(), facts({ rememberNonce: () => 'full' }))
     ).toEqual({
       ok: false,
       reason: 'sig_busy',
+      keyid: alice.keyid,
     });
   });
 

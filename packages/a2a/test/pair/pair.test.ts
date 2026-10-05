@@ -246,3 +246,69 @@ describe('pairing records', () => {
     expect(pairingStatus({ ...base, state: 'canceled' }, NOW)).toBe('canceled');
   });
 });
+
+describe('review N3, N4', () => {
+  const codeWith = (over: Record<string, unknown>) =>
+    `dispatch-a2a-pair:${Buffer.from(JSON.stringify({ ...offer().code, ...over })).toString('base64url')}`;
+
+  it('refuses a link reach that is too deep or too large, without throwing', () => {
+    let deep: Record<string, unknown> = {};
+    for (let i = 0; i < 40; i += 1) deep = { d: deep };
+    expect(() =>
+      decodePairingCode(
+        codeWith({ reach: { kind: 'link', transport: deep } }),
+        NOW
+      )
+    ).toThrow(MessagingError);
+    const big = { kind: 'link', transport: { pad: 'x'.repeat(5000) } };
+    expect(() => decodePairingCode(codeWith({ reach: big }), NOW)).toThrow(
+      MessagingError
+    );
+    const o = offer();
+    const proof = {
+      ...makeProof({
+        code: o.code,
+        reach: BOB_REACH,
+        name: 'Bob',
+        privateKey: bob.privateKey,
+        jwk: bob.jwk,
+      }),
+      reach: { kind: 'link', transport: deep },
+    };
+    expect(checkProof(proof, row(o), NOW)).toEqual({
+      ok: false,
+      reason: 'invalid',
+    });
+  });
+
+  it('refuses a name carrying bidi or other format characters', () => {
+    expect(() =>
+      decodePairingCode(
+        codeWith({ name: `Alice${String.fromCodePoint(0x202e)}mallory` }),
+        NOW
+      )
+    ).toThrow(MessagingError);
+    expect(() =>
+      decodePairingCode(
+        codeWith({ name: `Ali${String.fromCodePoint(0x200b)}ce` }),
+        NOW
+      )
+    ).toThrow(MessagingError);
+  });
+
+  it('keeps a card URL in its normalized form', () => {
+    const code = decodePairingCode(
+      codeWith({
+        reach: {
+          kind: 'url',
+          card: 'HTTPS://Alice.Example:443/.well-known/agent-card.json',
+        },
+      }),
+      NOW
+    );
+    expect(code.reach).toEqual({
+      kind: 'url',
+      card: 'https://alice.example/.well-known/agent-card.json',
+    });
+  });
+});

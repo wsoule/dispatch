@@ -26,7 +26,8 @@ export type SigRefusal =
 
 export type SigResult =
   | { ok: true; keyid: string }
-  | { ok: false; reason: SigRefusal };
+  // keyid is set when the signature itself verified (a replay, a busy key).
+  | { ok: false; reason: SigRefusal; keyid?: string };
 
 export interface VerifyFacts {
   // The origin this verifier is configured to serve: never Host or X-Forwarded-*.
@@ -239,8 +240,9 @@ export function verifyRequest(req: ReceivedRequest, f: VerifyFacts): SigResult {
     t.nonce,
     new Date(t.expires * 1000 + f.guardMs)
   );
-  if (seen === 'replay') return refuse('sig_replay');
-  if (seen === 'full') return refuse('sig_busy');
+  if (seen === 'replay')
+    return { ok: false, reason: 'sig_replay', keyid: t.keyid };
+  if (seen === 'full') return { ok: false, reason: 'sig_busy', keyid: t.keyid };
   return result;
 }
 

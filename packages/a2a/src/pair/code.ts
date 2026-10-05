@@ -56,8 +56,18 @@ const THUMBPRINT = B64U(43);
 const NONCE = /^[A-Za-z0-9_-]{22,64}$/;
 const MAC = B64U(43);
 const SIG = B64U(86);
-// One line of printable text, at most 100 characters.
-const NAME = /^[^\p{Cc}\p{Zl}\p{Zp}]{1,100}$/u;
+// One line of printable text, at most 100 characters, with no format
+// characters (bidi overrides, zero-width joiners) that would disguise it.
+const NAME = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]{1,100}$/u;
+const MAX_LINK_BYTES = 4096;
+const MAX_LINK_DEPTH = 8;
+
+// JSON nesting below `depth` levels; stops at the first level too deep.
+function shallow(v: unknown, depth: number): boolean {
+  if (depth < 0) return false;
+  if (typeof v !== 'object' || v === null) return true;
+  return Object.values(v).every((x) => shallow(x, depth - 1));
+}
 
 const invalid = (why: string): never => {
   throw new MessagingError('invalid', `pairing code: ${why}`, 'code');
@@ -76,16 +86,25 @@ function parseReach(raw: unknown): Reach | null {
       const u = new URL(raw.card);
       if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
       if (u.username !== '' || u.password !== '') return null;
-      return { kind: 'url', card: raw.card };
+      return { kind: 'url', card: u.href };
     } catch {
       return null;
     }
   }
-  if (raw.kind === 'link' && isRecord(raw.transport))
+  if (raw.kind === 'link' && isRecord(raw.transport)) {
+    if (!shallow(raw.transport, MAX_LINK_DEPTH)) return null;
+    let size: number;
+    try {
+      size = JSON.stringify(raw.transport).length;
+    } catch {
+      return null;
+    }
+    if (size > MAX_LINK_BYTES) return null;
     return {
       kind: 'link',
       transport: raw.transport as Record<string, JsonValue>,
     };
+  }
   return null;
 }
 
@@ -281,7 +300,12 @@ export function checkProof(
     row.secretHash === null
   )
     return { ok: false, reason: 'not-found' };
-  const bytes = proofBytes(proof);
+  let bytes: Buffer;
+  try {
+    bytes = proofBytes(proof);
+  } catch {
+    return { ok: false, reason: 'invalid' };
+  }
   const expected = createHmac(
     'sha256',
     Buffer.from(row.secretHash, 'base64url')
