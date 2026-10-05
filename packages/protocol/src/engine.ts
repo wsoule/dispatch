@@ -143,8 +143,6 @@ const LOCAL_RANK: Record<DeliveryState, number> = {
 
 export class DeliveryEngine {
   private readonly store: MessageStore;
-  // Superseded-answer notices sent, by question.
-  private readonly supersededNotices = new Map<string, number>();
   private readonly host: MessagingHost;
   private readonly limits: EngineLimits;
   private readonly ulid: (nowMs: number) => string;
@@ -1320,7 +1318,7 @@ export class DeliveryEngine {
       if (
         answer.supersededBy !== null &&
         message.replyTo !== null &&
-        this.noteSuperseded(message.replyTo)
+        this.mayNoteSuperseded(message.replyTo, message.id)
       )
         await this.noticeTo(
           message.from,
@@ -1939,12 +1937,16 @@ export class DeliveryEngine {
 
   // Tells a sender something went sideways, as a system notice in its thread;
   // a sender run that has ended hears it through its task.
-  // Counts a superseded-answer notice for a question; false past the cap.
-  private noteSuperseded(questionId: string): boolean {
-    const sent = this.supersededNotices.get(questionId) ?? 0;
-    if (sent >= MAX_SUPERSEDED_NOTICES) return false;
-    this.supersededNotices.set(questionId, sent + 1);
-    return true;
+  // Whether `answerId`'s superseded notice is within the question's cap.
+  // Counted from the store (one notice per earlier superseded answer), so a
+  // restart keeps the count.
+  private mayNoteSuperseded(questionId: string, answerId: string): boolean {
+    const earlier = this.store
+      .answerCandidates(questionId)
+      .filter(
+        (c) => c.settledAs === 'superseded' && c.message.id !== answerId
+      ).length;
+    return earlier < MAX_SUPERSEDED_NOTICES;
   }
 
   private async noticeTo(

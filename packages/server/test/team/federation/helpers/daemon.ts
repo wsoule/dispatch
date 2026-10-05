@@ -108,6 +108,9 @@ export interface TeammateDaemon {
   }>;
   /** Registers agent:<handle>/<name> and approves it with the app token. */
   registerAgent(name: string): Promise<{ address: string; token: string }>;
+  /** FW-R34: the board names an assignee only by kind, so a test that needs
+   *  a person writes one straight into this daemon's task store. */
+  assignPerson(taskId: string, person: string): void;
   /** Read-only, messages.db. */
   messagesDb<T>(sql: string, params?: (string | number)[]): T[];
   replica(): Promise<string>;
@@ -343,6 +346,17 @@ export function daemons(): {
           method: 'POST',
         });
         return reg;
+      },
+      assignPerson: (taskId, person) => {
+        const db = new Database(join(root, '.dispatch', 'dispatch.db'));
+        try {
+          db.query('UPDATE tasks SET assignee = ? WHERE id = ?').run(
+            person,
+            taskId
+          );
+        } finally {
+          db.close();
+        }
       },
       messagesDb: <T>(sql: string, params: (string | number)[] = []): T[] => {
         const db = new Database(join(runsDir(root), 'messages.db'), {

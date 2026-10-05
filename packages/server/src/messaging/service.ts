@@ -254,11 +254,19 @@ export function openMessaging(deps: {
   // A human approved waking a held task. A no-op while a live execute run can
   // take the task's mail; any other live run makes the wake fail with a notice.
   gates.register('wake', async (question, answer) => {
-    if (answer.choice !== 'approve') return;
     const gate = gateOf(question);
     if (gate === null || gate.type !== 'wake') return;
     const original = store.getMessage(gate.message);
     if (original === null) return;
+    // A denied wake tells its sender, so a run waiting on it does not wait on.
+    if (answer.choice !== 'approve') {
+      if (answer.choice === 'deny')
+        await noticeWakeSender(
+          original,
+          `Not woken: ${answer.from} denied waking ${gate.target}. Your message is waiting for it.`
+        );
+      return;
+    }
     if (gate.target.startsWith('task:')) {
       const taskId = gate.target.slice('task:'.length);
       const live = deps.orchestrator.liveRunIdForTask(taskId);

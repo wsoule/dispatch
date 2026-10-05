@@ -163,6 +163,29 @@ describe('at the settler: the question was asked here', () => {
     expect(notices).toHaveLength(5);
   });
 
+  it('keeps the cap of five superseded notices across a restart', async () => {
+    await engine.receive(
+      answerTo(q, 'm-a1', 'human:bob'),
+      fromBob([here('run:r-00000000000a')])
+    );
+    for (let i = 0; i < 4; i++)
+      await engine.receive(answerTo(q, `m-ay${i}`, 'human:cy'), {
+        replica: CY,
+        targets: [here('run:r-00000000000a')],
+      });
+    // A restart: a new engine over the same store.
+    engine = new DeliveryEngine({ store, host });
+    for (let i = 4; i < 8; i++)
+      await engine.receive(answerTo(q, `m-ay${i}`, 'human:cy'), {
+        replica: CY,
+        targets: [here('run:r-00000000000a')],
+      });
+    const notices = store
+      .remoteDeliveries({ recipient: 'human:cy' })
+      .filter((r) => r.messageId !== q.id);
+    expect(notices).toHaveLength(5);
+  });
+
   it('answers a later local answer with conflict, as today', async () => {
     await engine.receive(
       answerTo(q, 'm-a1', 'human:bob'),

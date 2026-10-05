@@ -52,10 +52,16 @@ async function team(names: string[], opts: TeamOpts = {}): Promise<Cluster> {
 async function finish(
   c: Cluster,
   members: Member[] = c.members,
-  planted: readonly string[] = []
+  planted: readonly string[] = [],
+  // A store-level assignment (FW-R34) is not a board op, so a member's
+  // rebuild may undo it; those scenarios compare the roster and mail only.
+  board = true
 ): Promise<void> {
   await quiesce(members);
-  await expectConverged(members, [boardProjection, rosterProjection]);
+  await expectConverged(
+    members,
+    board ? [boardProjection, rosterProjection] : [rosterProjection]
+  );
   expectMessagesConverged(members);
   expect(q7Violations(c.remote, members)).toEqual([]);
   expect(plantedBodiesInHistory(c.remote, planted)).toEqual([]);
@@ -565,6 +571,156 @@ describe('mail convergence over git', () => {
         body: planted[3],
       });
       await finish(c, c.members, planted);
+    },
+    SLOW
+  );
+
+  // FW-R34: a task homes on a person's machines only when the board names
+  // the person, which only a store write does today (assignPerson).
+  const assignOn = (members: Member[], task: string, person: string) => {
+    for (const m of members) m.handle.assignPerson(task, person);
+  };
+
+  it(
+    'runs exactly one wake, on wakeAt, for a task with two homes (Review Focus 4)',
+    async () => {
+      const c = await team(['bob', 'ada', 'ada2'], {
+        gitNames: { ada2: 'ada' },
+      });
+      const [bob, ada, ada2] = c.members as [Member, Member, Member];
+      const task = await bob.handle.create('assigned to ada');
+      await quiesce(c.members);
+      assignOn(c.members, task, 'human:ada');
+      await bob.handle.send({
+        to: [`task:${task}`],
+        kind: 'message',
+        body: 'please pick this up',
+        wake: 'request',
+      });
+      await quiesce(c.members);
+      const open = await Promise.all(
+        [ada, ada2].map((m) => m.handle.openDecisions())
+      );
+      expect(open.flat()).toHaveLength(1);
+      const home = (open[0] ?? []).length === 1 ? ada : ada2;
+      await home.handle.reply(open.flat()[0] ?? '', {
+        choice: 'approve',
+        body: '',
+      });
+      await finish(c, c.members, [], false);
+      expect(
+        ada.handle.executor.started.length + ada2.handle.executor.started.length
+      ).toBe(1);
+    },
+    SLOW
+  );
+
+  it(
+    "gates a teammate's wake at the default rung, naming them as remote, and starts nothing until approved",
+    async () => {
+      const c = await team(['ada', 'bob']);
+      const [ada, bob] = c.members as [Member, Member];
+      const task = await bob.handle.create('ada works this');
+      await quiesce(c.members);
+      assignOn(c.members, task, 'human:ada');
+      await bob.handle.send({
+        to: [`task:${task}`],
+        kind: 'message',
+        body: 'wake up',
+        wake: 'request',
+      });
+      await quiesce(c.members);
+      const gate = (await ada.handle.openDecisions())[0] ?? '';
+      expect(
+        rows<{ body: string }>(ada, 'SELECT body FROM messages WHERE id = ?', [
+          gate,
+        ])[0]?.body
+      ).toContain('human:bob (remote: bob)');
+      expect(ada.handle.executor.started).toHaveLength(0);
+      await ada.handle.reply(gate, { choice: 'approve', body: '' });
+      await finish(c, c.members, [], false);
+      expect(ada.handle.executor.started).toHaveLength(1);
+    },
+    SLOW
+  );
+
+  it(
+    "tells a remote run its wake was denied, through the run's task",
+    async () => {
+      const c = await team(['ada', 'bob']);
+      const [ada, bob] = c.members as [Member, Member];
+      const theirs = await ada.handle.create('homed on ada');
+      const mine = await bob.handle.create("bob's run's task", {
+        assignee: 'human',
+      });
+      await quiesce(c.members);
+      assignOn(c.members, theirs, 'human:ada');
+      const run = await bob.handle.startRun(mine);
+      await quiesce(c.members);
+      await bob.handle.send(
+        {
+          to: [`task:${theirs}`],
+          kind: 'message',
+          body: 'wake it',
+          wake: 'request',
+        },
+        run.token
+      );
+      await quiesce(c.members);
+      const gates = await ada.handle.openDecisions();
+      expect(gates.length).toBeGreaterThan(0);
+      for (const g of gates)
+        await ada.handle.reply(g, { choice: 'deny', body: '' });
+      await finish(c, c.members, [], false);
+      expect(ada.handle.executor.started).toHaveLength(0);
+      const notices = rows<{ body: string }>(
+        bob,
+        "SELECT m.body FROM messages m JOIN deliveries d ON d.message_id = m.id WHERE m.from_addr = 'agent:dispatch' AND d.recipient IN (?, ?)",
+        [`run:${run.runId}`, `task:${mine}`]
+      );
+      expect(notices.some((n) => n.body.includes('denied'))).toBe(true);
+    },
+    SLOW
+  );
+
+  it(
+    'turns a remote answer the origin refused back into a reply, and reopens the question where it was given',
+    async () => {
+      const c = await team(['ada', 'bob'], {
+        config: { ada: 'messaging:\n  agentTurnsPerThreadPerHour: 1\n' },
+      });
+      const [ada, bob] = c.members as [Member, Member];
+      const tb = await ada.handle.create('on bob', { assignee: 'human' });
+      const ta = await ada.handle.create('asks', { assignee: 'human' });
+      await quiesce(c.members);
+      const ra = await ada.handle.startRun(ta);
+      const rb = await bob.handle.startRun(tb);
+      await quiesce(c.members);
+      const q = await ada.handle.send(
+        { to: [`task:${tb}`], kind: 'question', blocking: true, body: 'ok?' },
+        ra.token
+      );
+      await quiesce(c.members);
+      // The question is the thread's one agent turn on ada, so the breaker
+      // refuses the answer there.
+      const a = await bob.handle.reply(q.id, { body: 'ok' }, rb.token);
+      await finish(c);
+      expect((await ada.handle.answerOf(q.id)).answer).toBeNull();
+      expect(
+        rows(bob, 'SELECT kind, settled_as FROM messages WHERE id = ?', [
+          a.id,
+        ])[0]
+      ).toEqual({
+        kind: 'message',
+        settled_as: null,
+      });
+      expect(
+        rows<{ state: string }>(
+          bob,
+          'SELECT state FROM deliveries WHERE message_id = ?',
+          [q.id]
+        ).map((d) => d.state)
+      ).not.toContain('answered');
     },
     SLOW
   );
