@@ -46,8 +46,10 @@ function refAt(ref: Message['refs'][number]): string {
   return ref.type === 'doc' ? `#${ref.at}` : `@${ref.at.slice(0, 7)}`;
 }
 
-// The agent that wrote a message a human sent (sendAsHuman's data.draftedBy).
+// The agent that wrote a message a human sent (sendAsHuman's data.draftedBy);
+// only this machine's daemon sets it, so another machine's claim is ignored.
 function draftedByOf(message: Message): string | null {
+  if (message.origin !== undefined) return null;
   const data = message.data;
   if (typeof data !== 'object' || data === null || Array.isArray(data))
     return null;

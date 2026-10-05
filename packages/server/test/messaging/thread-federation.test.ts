@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 
 import type { ApiContext } from '../../src/api.js';
 import {
+  conversationScan,
   listBusConversation,
   newestOpenRoot,
 } from '../../src/messaging/conversations.js';
@@ -168,6 +169,70 @@ describe('GET /api/conversations with federated rows', () => {
     expect(body.messages).toEqual([
       expect.objectContaining({ id: 'm-09remote-dm', remoteLabel: 'bob' }),
     ]);
+  });
+});
+
+describe('a conversation page that hits the scan ceiling', () => {
+  it('hands back the oldest kept row as its cursor, never an unreadable id', async () => {
+    const saved = { ...conversationScan };
+    conversationScan.batch = 2;
+    conversationScan.ceiling = 4;
+    try {
+      // Newest first: u5 u4 r2 u3 u2 u1 r1; only r* reach human:sam.
+      const order = ['r1', 'u1', 'u2', 'u3', 'r2', 'u4', 'u5'];
+      order.forEach((name, i) => {
+        const id = `m-0${i}${name}`;
+        messaging.store.insertMessage({
+          id,
+          thread: id,
+          replyTo: null,
+          from: 'human:wyat',
+          to: ['channel:room'],
+          kind: 'message',
+          body: name,
+          refs: [],
+          urgent: false,
+          blocking: false,
+          wake: 'none',
+          createdAt: '2026-10-05T10:00:00.000Z',
+        });
+        if (name.startsWith('r'))
+          messaging.store.insertDelivery({
+            id: `d-${id}`,
+            messageId: id,
+            recipient: 'human:sam',
+            runId: null,
+            via: 'channel',
+            state: 'notified',
+            updatedAt: '2026-10-05T10:00:00.000Z',
+          });
+      });
+      const ctx = {
+        ...ctxFor(messaging),
+        federation: null,
+        principal: { address: 'human:sam', canDecide: false, kind: 'human' },
+      } as unknown as ApiContext;
+      const page = async (q: string) =>
+        (await listBusConversation(
+          ctx,
+          new URL(`http://127.0.0.1/api/conversations?about=channel:room${q}`)
+        ).json()) as {
+          messages: { body: string; id: string }[];
+          next: string | null;
+        };
+      const first = await page('&limit=5');
+      expect(first.messages.map((m) => m.body)).toEqual(['r2']);
+      expect(first.next).toBe(first.messages[0].id);
+      const second = await page(`&limit=5&before=${first.next}`);
+      expect(second.messages.map((m) => m.body)).toEqual(['r1']);
+      expect(second.next).toBeNull();
+      // A ceiling hit with nothing kept gives no cursor at all.
+      conversationScan.ceiling = 2;
+      const empty = await page('&limit=5');
+      expect(empty).toEqual({ messages: [], next: null });
+    } finally {
+      Object.assign(conversationScan, saved);
+    }
   });
 });
 

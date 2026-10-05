@@ -243,7 +243,8 @@ function parseSendInput(
     body: body.body,
   };
   if (body.refs !== undefined) value.refs = body.refs;
-  if (body.data !== undefined) value.data = body.data as JsonValue;
+  const data = withoutDraftedBy(body.data as JsonValue | undefined);
+  if (data !== undefined) value.data = data;
   if (body.urgent !== undefined) value.urgent = body.urgent;
   if (body.blocking !== undefined) value.blocking = body.blocking;
   if (body.choices !== undefined) value.choices = body.choices;
@@ -252,6 +253,22 @@ function parseSendInput(
   if (body.wake !== undefined) value.wake = body.wake;
   if (body.session !== undefined) value.session = body.session;
   return { ok: true, value };
+}
+
+// `data.draftedBy` is set only by the Overseer's sendAsHuman on the bus; a
+// request that names it is claiming an agent wrote its text, so drop it.
+function withoutDraftedBy(data: JsonValue | undefined): JsonValue | undefined {
+  if (
+    typeof data !== 'object' ||
+    data === null ||
+    Array.isArray(data) ||
+    !('draftedBy' in data)
+  )
+    return data;
+  const rest = Object.fromEntries(
+    Object.entries(data).filter(([key]) => key !== 'draftedBy')
+  ) as JsonValue & object;
+  return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
 interface RawReplyBody {
@@ -314,7 +331,8 @@ function parseReplyInput(raw: unknown):
   } = { body: body.body };
   if (body.choice !== undefined) value.choice = body.choice;
   if (body.refs !== undefined) value.refs = body.refs;
-  if (body.data !== undefined) value.data = body.data as JsonValue;
+  const data = withoutDraftedBy(body.data as JsonValue | undefined);
+  if (data !== undefined) value.data = data;
   if (body.session !== undefined) value.session = body.session;
   return { ok: true, value };
 }

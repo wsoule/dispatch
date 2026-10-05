@@ -186,6 +186,37 @@ describe('GET /api/conversations', () => {
   });
 });
 
+describe('draftedBy', () => {
+  it('is stripped from a plain send and a reply; other data stays', async () => {
+    const w = world();
+    const sam = await invite(w, 'sam@example.com', 'request');
+    const spoof = await send(w, sam.token, {
+      to: [OWNER],
+      body: 'spoofed',
+      data: { draftedBy: 'agent:test/overseer', note: 1 },
+    });
+    expect(spoof.data).toEqual({ note: 1 });
+    const bare = await send(w, sam.token, {
+      to: [OWNER],
+      body: 'bare',
+      data: { draftedBy: 'agent:test/overseer' },
+    });
+    expect(bare.data).toBeUndefined();
+    const reply = await call(
+      w,
+      w.app,
+      'POST',
+      `/api/messages/${bare.id}/reply`,
+      {
+        body: 'back',
+        data: { draftedBy: 'agent:x/y' },
+      }
+    );
+    expect(reply.status).toBe(201);
+    expect(reply.json.message.data).toBeUndefined();
+  });
+});
+
 describe('GET /api/channels?member=me', () => {
   it("lists only the caller's channels", async () => {
     const w = world();
@@ -256,16 +287,19 @@ describe('continuing a root', () => {
     expect(third.thread).toBe(third.id);
   });
 
-  it('starts a new root when the newest one is an answered question', async () => {
+  it('never continues a question or handoff root, open or answered', async () => {
     const w = world();
     const { runId, runToken } = await liveRun(w, w.app, 'Task');
-    const q = await call(w, runToken, 'POST', '/api/messages', {
-      to: [OWNER],
-      kind: 'question',
-      body: 'which?',
-    });
-    const question = q.json.message as Row;
-    await call(w, w.app, 'POST', `/api/messages/${question.id}/reply`, {
+    const ask = async (body: string, kind = 'question') =>
+      (
+        await call(w, runToken, 'POST', '/api/messages', {
+          to: [OWNER],
+          kind,
+          body,
+        })
+      ).json.message as Row;
+    const answered = await ask('which?');
+    await call(w, w.app, 'POST', `/api/messages/${answered.id}/reply`, {
       body: 'that one',
     });
     const steer = await send(w, w.app, {
@@ -274,20 +308,34 @@ describe('continuing a root', () => {
       continueThread: true,
     });
     expect(steer.thread).toBe(steer.id);
-    // An open question is a root to continue.
-    const open = (
-      await call(w, runToken, 'POST', '/api/messages', {
-        to: [OWNER],
-        kind: 'question',
-        body: 'and now?',
-      })
-    ).json.message as Row;
+    // Open asks are newer, yet the steer's plain root is what continues.
+    const open = await ask('and now?');
+    const handoff = await ask('take this', 'handoff');
     const next = await send(w, w.app, {
       to: [`run:${runId}`],
       body: 'go on',
       continueThread: true,
     });
-    expect(next.thread).toBe(open.thread);
+    expect(next.thread).toBe(steer.id);
+    expect([open.thread, handoff.thread]).not.toContain(next.thread);
+    expect(next.replyTo).toBe(steer.id);
+  });
+
+  it('starts a root when only asks exist', async () => {
+    const w = world();
+    const { runId, runToken } = await liveRun(w, w.app, 'Task');
+    await call(w, runToken, 'POST', '/api/messages', {
+      to: [OWNER],
+      kind: 'question',
+      body: 'open ask',
+    });
+    const steer = await send(w, w.app, {
+      to: [`run:${runId}`],
+      body: 'unrelated',
+      continueThread: true,
+    });
+    expect(steer.thread).toBe(steer.id);
+    expect(steer.replyTo).toBeNull();
   });
 
   it("keeps a DM in the pair's newest root, never a third party's", async () => {

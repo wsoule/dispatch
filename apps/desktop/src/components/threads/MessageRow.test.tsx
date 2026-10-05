@@ -369,6 +369,16 @@ test('names the agent that drafted a send', () => {
   expect(screen.getByText(/^drafted by /)).toBeTruthy();
 });
 
+test('never shows drafted-by on a message another machine sent', () => {
+  renderRow(
+    msg('m-dr2', {
+      origin: 'bob-0000000b',
+      data: { draftedBy: 'agent:wyat/overseer' },
+    })
+  );
+  expect(screen.queryByText(/^drafted by /)).toBeNull();
+});
+
 test('a doc ref chip names its whole section and opens the doc there', () => {
   const onOpen = mock((_action: unknown) => {});
   renderRow(

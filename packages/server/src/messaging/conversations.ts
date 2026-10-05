@@ -14,10 +14,9 @@ import type { Orchestrator } from '../orchestrator/orchestrator.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-// Rows read per scan step, and the most one request reads before it stops
-// and hands back a cursor, so an unreadable history cannot pin the daemon.
-const SCAN_BATCH = 200;
-const SCAN_CEILING = 5000;
+// Rows read per scan step, and the most one request reads before it stops,
+// so an unreadable history cannot pin the daemon; mutable for tests.
+export const conversationScan = { batch: 200, ceiling: 5000 };
 
 type RunLookup = Pick<Orchestrator, 'isRunLive' | 'taskIdOfRun' | 'list'>;
 
@@ -116,35 +115,37 @@ export function listBusConversation(ctx: ApiContext, url: URL): Response {
 
   const store = ctx.messaging.store;
   const kept: Message[] = [];
-  // The last row scanned: the oldest kept on a full page, or where a scan
-  // that hit the ceiling stopped.
+  // The last row scanned; only ever handed back when it is a kept row.
   let cursor = before ?? undefined;
   let scanned = 0;
   let done = false;
-  while (!done && kept.length < limit && scanned < SCAN_CEILING) {
+  while (!done && kept.length < limit && scanned < conversationScan.ceiling) {
     const batch = store.conversation(match, {
       before: cursor,
-      limit: SCAN_BATCH,
+      limit: conversationScan.batch,
     });
     let read = 0;
     for (const m of batch) {
       cursor = m.id;
       read++;
       if (canRead(m.thread)) kept.push(m);
-      if (kept.length === limit) break;
+      if (kept.length === limit || scanned + read >= conversationScan.ceiling)
+        break;
     }
     scanned += read;
     // Read to the end of the match: a short batch, wholly consumed.
-    done = batch.length < SCAN_BATCH && read === batch.length;
+    done = batch.length < conversationScan.batch && read === batch.length;
   }
-  // A scan that read to the end says nothing of rows it could not show.
+  // The cursor is the oldest kept row, never a scanned one the caller cannot
+  // read; a scan that read to the end, or kept nothing, says nothing more.
+  const oldest = kept.at(-1)?.id;
   const older =
     !done &&
-    cursor !== undefined &&
-    store.conversation(match, { before: cursor, limit: 1 }).length > 0;
+    oldest !== undefined &&
+    store.conversation(match, { before: oldest, limit: 1 }).length > 0;
   return jsonResponse({
     messages: kept.reverse().map((m) => federatedRow(ctx, m)),
-    next: older ? (cursor ?? null) : null,
+    next: older ? oldest : null,
   });
 }
 
@@ -156,8 +157,9 @@ export type RootFinder = (sender: Sender, to: Address) => Message | null;
  * run, a task or a person gets one conversation instead of a root per send:
  * - a live run or a task: a root about that task that `sender` is a party to;
  * - a human or agent: the pair's own root (one sender, one recipient).
- * A root is skipped when it is answered or closed, local-only (gates, the
- * Overseer, A2A) or unreadable. An ended run gets null, because replying would
+ * Only plain-message roots continue: never a question or handoff, open or
+ * answered, so a send can never become a reply to an ask. Local-only (gates,
+ * the Overseer, A2A) and unreadable roots are skipped too. An ended run gets null, because replying would
  * re-address it to its task and change which run a wake continues.
  */
 export function newestOpenRoot(
@@ -202,23 +204,15 @@ export function newestOpenRoot(
   }
   const roots = deps.store.conversation(match, {
     rootsOnly: true,
-    limit: SCAN_BATCH,
+    limit: conversationScan.batch,
   });
   return (
     roots.find(
       (root) =>
+        root.kind === 'message' &&
         fits(root) &&
         localOnlyReason(root, null, null) === null &&
-        !closed(deps.engine, root) &&
         deps.engine.canRead(root.id, sender)
     ) ?? null
-  );
-}
-
-// An answered or closed question or handoff takes no more of the talk.
-function closed(engine: DeliveryEngine, root: Message): boolean {
-  return (
-    (root.kind === 'question' || root.kind === 'handoff') &&
-    engine.answerOf(root.id) !== null
   );
 }
