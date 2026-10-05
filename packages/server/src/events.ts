@@ -174,6 +174,7 @@ export interface SocketAudience {
 // pass plain mock objects instead of real sockets.
 export interface BroadcastClient {
   send(data: string): void;
+  close?(code?: number, reason?: string): void;
   readonly data?: SocketAudience;
 }
 
@@ -183,10 +184,7 @@ export type AudienceCheck = (client: BroadcastClient) => SocketAudience | null;
 
 // Fan-out hub for connected WS clients. The watcher (external file edits) and
 // the API mutation handlers (our own writes) both call `broadcast()`.
-// Sockets are closed via `Bun.serve`'s own `server.stop(true)` on shutdown
-// (see index.ts) rather than a `closeAll()` here — closing each
-// ServerWebSocket ourselves right before `server.stop(true)` hangs that call
-// forever on Bun 1.3.14, so `stop(true)` is left to own the close.
+// On shutdown `server.stop(true)` (see index.ts) closes every socket.
 export class EventBus {
   private readonly clients = new Set<BroadcastClient>();
   private readonly listeners = new Set<(event: ServerEvent) => void>();
@@ -246,15 +244,15 @@ export class EventBus {
   }
 
   // The socket's audience as its credential stands now, or null after
-  // detaching a socket whose credential is gone. Detached, not closed: on Bun
-  // 1.3.14 any server-side close hangs server.stop(true) (see above), so the
-  // socket hears nothing more and its owner's next reconnect is refused.
+  // detaching and closing (1008, policy violation) a socket whose credential
+  // is gone; its owner's next reconnect is refused.
   private current(client: BroadcastClient): SocketAudience | undefined | null {
     if (this.check === null || client.data === undefined) return client.data;
     const who = this.check(client);
     if (who !== null) return who;
     this.clients.delete(client);
     this.onDetach?.(client);
+    client.close?.(1008, 'credential revoked');
     return null;
   }
 }

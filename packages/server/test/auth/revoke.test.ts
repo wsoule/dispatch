@@ -71,6 +71,7 @@ describe('revoking a teammate', () => {
     await new Promise((r) => (ws.onopen = r));
     const frames: string[] = [];
     ws.onmessage = (e) => frames.push(String(e.data));
+    const closed = new Promise<number>((r) => (ws.onclose = (e) => r(e.code)));
 
     const rv = await call(w, w.app, 'DELETE', `/api/team/tokens/${ada.handle}`);
     expect(rv.status).toBe(200);
@@ -97,7 +98,8 @@ describe('revoking a teammate', () => {
       (await call(w, run.runToken, 'GET', '/api/memory?scope=personal')).status
     ).toBe(401);
 
-    // Her socket hears nothing more (detached; see EventBus.current).
+    // Her socket is closed as a policy violation and hears nothing more.
+    expect(await closed).toBe(1008);
     const heard = frames.length;
     await call(w, w.app, 'POST', '/api/messages', {
       to: ['human:test'],
@@ -107,7 +109,6 @@ describe('revoking a teammate', () => {
     await call(w, w.app, 'POST', '/api/tasks', { title: 'after revoke' });
     await new Promise((r) => setTimeout(r, 200));
     expect(frames.slice(heard)).toEqual([]);
-    ws.close();
   });
 
   it('cancels the run, and its run token stops working everywhere', async () => {
