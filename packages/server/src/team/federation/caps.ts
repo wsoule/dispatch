@@ -1,3 +1,5 @@
+import { compareHlc, parseOpHlc } from '@dispatch/protocol/federation';
+
 import type { FedStore } from './store.js';
 
 // FW-R39: what a build speaks, announced in its key op and re-announced in
@@ -36,6 +38,19 @@ export function recordKeyCaps(
     .run(replica, signPub, JSON.stringify(readCaps(caps) ?? []));
 }
 
+// Whether a presence at `hlc` is later than the one the row was written
+// from, compared as clocks rather than text.
+function laterThanRow(fed: FedStore, replica: string, hlc: string): boolean {
+  const row = fed.db
+    .query<{ hlc: string }, [string]>(
+      'SELECT hlc FROM fed_caps_presence WHERE replica = ?'
+    )
+    .get(replica);
+  if (row === null) return true;
+  const [a, b] = [parseOpHlc(hlc), parseOpHlc(row.hlc)];
+  return a === null || b === null ? hlc > row.hlc : compareHlc(a, b) > 0;
+}
+
 /** Records the caps a replica's latest presence re-announced. */
 export function recordPresenceCaps(
   fed: FedStore,
@@ -43,11 +58,24 @@ export function recordPresenceCaps(
   caps: readonly string[],
   hlc: string
 ): void {
+  if (!laterThanRow(fed, replica, hlc)) return;
   fed.db
     .query(
-      'INSERT INTO fed_caps_presence (replica, caps_json, hlc) VALUES (?, ?, ?) ON CONFLICT (replica) DO UPDATE SET caps_json = excluded.caps_json, hlc = excluded.hlc WHERE excluded.hlc > fed_caps_presence.hlc'
+      'INSERT OR REPLACE INTO fed_caps_presence (replica, caps_json, hlc) VALUES (?, ?, ?)'
     )
     .run(replica, JSON.stringify(caps), hlc);
+}
+
+/** Drops a re-announcement older than a presence that carries no caps. */
+export function forgetPresenceCaps(
+  fed: FedStore,
+  replica: string,
+  hlc: string
+): void {
+  if (laterThanRow(fed, replica, hlc))
+    fed.db
+      .query('DELETE FROM fed_caps_presence WHERE replica = ?')
+      .run(replica);
 }
 
 /** What a replica speaks: its latest presence re-announcement, else its

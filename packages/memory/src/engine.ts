@@ -857,6 +857,57 @@ export class MemoryEngine {
     this.changedFor(entry);
   }
 
+  /** The caller's personal entries narrowed to other checkouts than this
+   *  one, by key: what a moved checkout left behind (D33). Humans only. */
+  personalProjectKeys(principal: Principal): {
+    current: string;
+    others: { key: string; count: number }[];
+  } {
+    const store = this.humanPersonalStore(principal, 'reads its re-homing');
+    const current = this.deps.host.projectKey();
+    return {
+      current,
+      others: store.projectKeyCounts().filter((c) => c.key !== current),
+    };
+  }
+
+  /** Moves the caller's own active entries narrowed to `fromKey` to this
+   *  checkout: one `edit` revision each, in one transaction (D33). */
+  rehome(principal: Principal, fromKey: string): { moved: number } {
+    const store = this.humanPersonalStore(principal, 're-homes its memory');
+    const current = this.deps.host.projectKey();
+    if (!/^[0-9a-f]{12}$/.test(fromKey) || fromKey === current)
+      throw new MemoryError(
+        'invalid',
+        'from: expected another checkout’s 12-hex project key',
+        'from'
+      );
+    const moved = store.transaction(() => {
+      let n = 0;
+      for (const entry of store.listEntries({ scopes: ['personal'] }))
+        if (entry.status === 'active' && entry.projectKey === fromKey) {
+          this.revise(
+            store,
+            entry,
+            { projectKey: current },
+            principal.address,
+            'edit'
+          );
+          n += 1;
+        }
+      return n;
+    });
+    this.deps.host.changed({ scope: 'personal' });
+    return { moved };
+  }
+
+  // A human's own personal store; a run or agent may not move or list it.
+  private humanPersonalStore(principal: Principal, what: string): MemoryStore {
+    if (principal.kind !== 'human')
+      throw new MemoryError('forbidden', `only a human ${what}`, 'principal');
+    return this.personalStoreFor(this.viewer(principal));
+  }
+
   // The caller's own personal activity, oldest first, the newest 200 rows.
   activity(principal: Principal, since: string): ActivityRow[] {
     const viewer = this.viewer(principal);

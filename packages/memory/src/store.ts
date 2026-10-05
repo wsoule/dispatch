@@ -159,6 +159,8 @@ export interface MemoryStore {
   /** Writes a 0600 copy to `path`, replacing the previous one; not inside a transaction. */
   backup(path: string): void;
   close(): void;
+  /** Active personal entries per project key, NULL keys left out, by key. */
+  projectKeyCounts(): { key: string; count: number }[];
   /** Revisions written after `afterRowid`, in write order, at most `limit`. */
   revisionsSince(afterRowid: number, limit: number): RevisionMark[];
 }

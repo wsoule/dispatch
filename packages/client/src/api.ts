@@ -3796,6 +3796,13 @@ export interface ApiClient {
   ): Promise<MemorySaveResult>;
   /** The entry and its history, for good. */
   deleteMemory(ref: string): Promise<void>;
+  /** The caller's personal entries narrowed to other checkouts, by key. */
+  memoryProjectKeys(): Promise<{
+    current: string;
+    others: { key: string; count: number }[];
+  }>;
+  /** Moves the caller's entries narrowed to `from` to this checkout. */
+  rehomeMemory(from: string): Promise<{ moved: number }>;
   /** Deciding humans see every proposal; anyone else their own. */
   listMemoryProposals(
     state?: MemoryProposalState
@@ -4816,6 +4823,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `${memoryPath(ref)}/promote`, {
         method: 'POST',
         ...jsonBody({ scope }),
+      }),
+    memoryProjectKeys: () => request(target, '/api/memory/rehome'),
+    rehomeMemory: (from) =>
+      request(target, '/api/memory/rehome', {
+        method: 'POST',
+        body: JSON.stringify({ from }),
       }),
     deleteMemory: async (ref) => {
       await send(target, memoryPath(ref), { method: 'DELETE' });

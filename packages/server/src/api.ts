@@ -215,6 +215,8 @@ import {
   memoryIdentityRoute,
   memoryIndexRoute,
   memoryRecallsRoute,
+  memoryRehomeKeysRoute,
+  memoryRehomeRoute,
   saveMemoryRoute,
   searchMemory,
   startLinkRoute,
@@ -4805,6 +4807,7 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['memory', 'import', 'claude'] },
   { method: 'POST', segments: ['memory'] },
   { method: 'POST', segments: ['memory', 'link'] },
+  { method: 'POST', segments: ['memory', 'rehome'] },
   { method: 'POST', segments: ['memory', 'link', '*'] },
   { method: 'POST', segments: ['memory', '*', '*'] },
   { method: 'DELETE', segments: ['memory', '*'] },
@@ -6148,10 +6151,12 @@ export async function handleApi(
         if (segments[1] === 'activity') return memoryActivityRoute(ctx, url);
         if (segments[1] === 'identity') return memoryIdentityRoute(ctx);
         if (segments[1] === 'ingest-problems') return ingestProblemsRoute(ctx);
+        if (segments[1] === 'rehome') return memoryRehomeKeysRoute(ctx);
         return getMemory(ctx, segments[1]);
       }
       if (segments.length === 2 && method === 'POST') {
         if (segments[1] === 'link') return await startLinkRoute(req, ctx);
+        if (segments[1] === 'rehome') return await memoryRehomeRoute(req, ctx);
       }
       if (segments.length === 2 && method === 'DELETE') {
         return deleteMemoryRoute(ctx, segments[1]);
