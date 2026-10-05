@@ -1,8 +1,19 @@
 {
   "name": "@dispatch-foo/federation",
   "version": "0.1.0",
-  "private": true,
+  "description": "Federation wire for Dispatch teams: signed operations, rosters, keys and replication between replicas.",
+  "homepage": "https://dispatch.foo/",
   "license": "Elastic-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wsoule/dispatch.git",
+    "directory": "packages/federation"
+  },
+  "files": [
+    "dist",
+    "vectors",
+    "LICENSE"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -10,10 +21,14 @@
       "import": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsdown --clean",
     "test": "bun test",
-    "tsc": "tsgo --noEmit --pretty"
+    "tsc": "tsgo --noEmit --pretty",
+    "prepublishOnly": "moon run federation:prepublish"
   },
   "dependencies": {
     "@dispatch-foo/protocol": "workspace:*"
@@ -22,5 +37,8 @@
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

@@ -2,7 +2,7 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 
 language: 'typescript'
 layer: 'library'
-tags: ['tsdown']
+tags: ['tsdown', 'publishable']
 
 tasks:
   # test/vectors.test.ts reads the kit's registries, vectors and source at run

@@ -19,6 +19,13 @@ own artifacts, because clients read the first artifact as the result.
 It uses `@a2a-js/sdk` 1.2.0 for the wire types, ProtoJSON, SSE framing and the
 client, never for its server. The package never imports server code.
 
+```bash
+npm install @dispatch-foo/a2a
+```
+
+It runs on Node 22.13 or later, and needs `@dispatch-foo/protocol` and
+`@dispatch-foo/core`, which install with it.
+
 ## MUST deviations
 
 **A blocking send is bounded** (A2A §3.2.2; the TCK's

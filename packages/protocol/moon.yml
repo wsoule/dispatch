@@ -2,7 +2,7 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 
 language: 'typescript'
 layer: 'library'
-tags: ['tsdown']
+tags: ['tsdown', 'publishable']
 
 tasks:
   # The tests read the kit's files and App. C (no build hashes them) and run
