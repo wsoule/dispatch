@@ -1442,6 +1442,8 @@ export interface A2ALinkHealth {
   ready: boolean;
   // Accepted here, and the offerer's first op not read yet.
   pending: boolean;
+  // Snapshots of the other side's tasks kept here.
+  remoteTasks: number;
   // Fresh bytes the link read in the last pass.
   readThisPass: number;
   waiting: number;
@@ -1462,6 +1464,7 @@ export interface A2ALinkOffer {
   remote: string;
   branch: string;
   createdAt: string;
+  readThisPass: number;
   problems: string[];
 }
 

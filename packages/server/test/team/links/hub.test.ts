@@ -22,9 +22,10 @@ const MIB = 1024 * 1024;
 
 function hubOf(over: Partial<ConstructorParameters<typeof LinkHub>[0]> = {}) {
   const failed: string[] = [];
+  const keys = linkKeys();
   const hub = new LinkHub({
     dir: join(s.dir, `hub-${hubs.length}`),
-    keys: linkKeys(),
+    keys,
     paired: () => true,
     serve: () => Promise.resolve(new Response('{}')),
     watch: () => () => {},
@@ -35,7 +36,7 @@ function hubOf(over: Partial<ConstructorParameters<typeof LinkHub>[0]> = {}) {
     ...over,
   });
   hubs.push(hub);
-  return { hub, failed };
+  return { hub, failed, keys };
 }
 
 // A peer branch padded with `mib` MiB of junk under the peer's own files.
@@ -159,5 +160,64 @@ describe('an accepted link waits for the offerer (one-sided pairing)', () => {
     s.clock.ms += 60 * 60_000;
     await hub.settle();
     expect(failed).toEqual([]);
+  });
+});
+
+describe('T55 review M5 and M6', () => {
+  it('reads an offer branch within its share (M5)', async () => {
+    s = scratch();
+    const { hub } = hubOf({
+      linkReadBytes: 1 * MIB,
+      totalReadBytes: 2 * MIB,
+      offerState: () => 'offered',
+      offerProof: () => ({ ok: false, why: 'test' }),
+    });
+    const branch = 'dispatch-a2a-00000000000000bb';
+    bloat(branch, 'mallory.x-00000000', 4);
+    hub.watchOffer({ pairedId: 'O1', alias: 'bob', remote: s.remote, branch });
+    await hub.settle();
+    const o = hub.offers()[0];
+    expect(o?.readThisPass ?? Infinity).toBeLessThanOrEqual(1 * MIB);
+  });
+
+  it('caps remote task snapshots per link and prunes finished ones (M6)', async () => {
+    s = scratch();
+    const { hub, keys } = hubOf({ maxRemoteTasks: 3 });
+    const peer = linkKeys();
+    const id = 'L6';
+    const branch = 'dispatch-a2a-00000000000000cc';
+    hub.add({
+      alias: 'ada',
+      pairedId: id,
+      remote: s.remote,
+      branch,
+      signPub: peer.signPub,
+      sealPub: peer.sealPub,
+      createdAt: new Date(s.clock.ms).toISOString(),
+    });
+    const raw = new RawPeer(s, peer, linkReplicaId(peer.signPub, id), branch);
+    const to = { to: keys, toReplica: linkReplicaId(keys.signPub, id) };
+    const task = (n: number, state: string) => ({
+      kind: 'event',
+      taskId: `t-${n}`,
+      event: {
+        task: { id: `t-${n}`, contextId: 'c-1', status: { state } },
+      },
+    });
+    const ops = [raw.next({ type: 'key', body: { link: id } })];
+    for (let n = 1; n <= 5; n++)
+      ops.push(
+        raw.next({ payload: task(n, 'TASK_STATE_WORKING'), ...to }, ops.at(-1))
+      );
+    await raw.write(...ops);
+    await hub.settle();
+    expect(hub.health()[0]?.remoteTasks).toBe(3);
+    const done = raw.next({ payload: task(9, 'TASK_STATE_COMPLETED'), ...to });
+    await raw.write(done);
+    await hub.settle();
+    expect(hub.snapshot('ada', 't-9')).not.toBeNull();
+    s.clock.ms += 2 * 86_400_000;
+    await hub.settle();
+    expect(hub.snapshot('ada', 't-9')).toBeNull();
   });
 });

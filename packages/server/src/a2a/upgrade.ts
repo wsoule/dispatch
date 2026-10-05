@@ -132,6 +132,12 @@ export class Upgrades {
     const peer = this.d.store.getPeer(i.alias);
     if (peer === null)
       throw new MessagingError('not-found', `no A2A peer ${i.alias}`);
+    // M4: a link peer is reached over its branch and already signs both ways.
+    if (peer.auth === 'link')
+      throw new MessagingError(
+        'invalid',
+        `a2a:${i.alias} is reached over a teammate link, which signs both ways already; there is nothing to upgrade`
+      );
     let client = i.client === undefined ? null : this.clientNamed(i.client);
     // Unnamed, the approval may come over any approved, unpinned bearer
     // client: with more than one, which is the peer must be said (review R1).

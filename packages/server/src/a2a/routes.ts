@@ -418,6 +418,13 @@ async function peerRoute(
           'confirmFingerprint',
           "confirmFingerprint is required: the peer's fingerprint as its owner reads it"
         );
+      // M4: said before the listener check, which a link peer never needs.
+      const alias = decodeURIComponent(rest[0]);
+      if (b.store.getPeer(alias)?.auth === 'link')
+        return invalid(
+          'alias',
+          `a2a:${alias} is reached over a teammate link, which signs both ways already; there is nothing to upgrade`
+        );
       const ourCard = ourCardUrl(b.a2a);
       if (ourCard === null)
         return errorResponse(
@@ -679,13 +686,13 @@ async function pairingRoute(
   if (link !== null) {
     const result =
       link.kind === 'offer'
-        ? offerLinkPairing(d, b.a2a.links, {
+        ? await offerLinkPairing(d, b.a2a.links, {
             alias: body.alias,
             remote: link.remote,
             ...(typeof body.ttlMin === 'number' ? { ttlMin: body.ttlMin } : {}),
             caller,
           })
-        : acceptLinkPairing(d, b.a2a.links, {
+        : await acceptLinkPairing(d, b.a2a.links, {
             code: link.code,
             alias: body.alias,
             caller,

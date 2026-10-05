@@ -10,6 +10,7 @@ import type { AsyncGitRunner } from '../../sync/worktree.js';
 import { defaultAsyncGitRunner } from '../../sync/worktree.js';
 import { SyncRepo } from '../boardSync/repo.js';
 import { signedEntry } from '../federation/git.js';
+import { linkGitRunner, redactRemotes } from './remote.js';
 import { LINK_READ_BYTES, linkReplicaId, LinkService } from './service.js';
 import type { LinkKeys, PublishResult } from './service.js';
 import type { LinkProblem } from './store.js';
@@ -34,6 +35,8 @@ export interface LinkHealth {
   ready: boolean;
   // Accepted here, and the offerer's first op not read yet.
   pending: boolean;
+  // Snapshots of the other side's tasks kept here.
+  remoteTasks: number;
   // Fresh bytes this link read in the last pass (0 when it waited).
   readThisPass: number;
   waiting: number;
@@ -71,10 +74,15 @@ export interface LinkHubDeps {
   linkReadBytes?: number;
   /** All links' fresh reads a pass (LINK_TOTAL_READ_BYTES). */
   totalReadBytes?: number;
+  /** Remote task snapshots, and served tasks, kept per link (M6). */
+  maxRemoteTasks?: number;
 }
 
 /** What every link together may read a pass; round-robin past it (P-D6). */
 const LINK_TOTAL_READ_BYTES = 24 * 1024 * 1024;
+// How long a finished remote task's snapshot is kept (M6).
+const FINISHED_KEEP_MS = 86_400_000;
+const MAX_REMOTE_TASKS = 500;
 // Below this a link waits for the next pass rather than read a sliver.
 const MIN_SHARE_BYTES = 64 * 1024;
 
@@ -88,6 +96,8 @@ export interface LinkOffer {
   remote: string;
   branch: string;
   createdAt: string;
+  // Fresh bytes the last pass read on the offer's branch.
+  readThisPass: number;
   problems: string[];
 }
 
@@ -98,6 +108,12 @@ const TERMINAL = new Set([
   'TASK_STATE_CANCELED',
   'TASK_STATE_REJECTED',
 ]);
+
+// Whether a task snapshot is in a final state.
+function isTerminal(task: Record<string, unknown>): boolean {
+  const state = (task['status'] as { state?: string } | undefined)?.state;
+  return state !== undefined && TERMINAL.has(state);
+}
 
 // The receiver's latest view of a task as one JSON Task, from any StreamResponse.
 function taskOf(
@@ -124,6 +140,7 @@ export class LinkHub {
   private readonly listeners = new Set<(alias: string) => void>();
   private readonly offerProblems = new Map<string, string[]>();
   private readonly readThisPass = new Map<string, number>();
+  private readonly offerRead = new Map<string, number>();
   private rotation = 0;
   private running: Promise<void> | null = null;
   private again = false;
@@ -141,7 +158,7 @@ export class LinkHub {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS links (alias TEXT PRIMARY KEY, paired_id TEXT NOT NULL UNIQUE, remote TEXT NOT NULL, branch TEXT NOT NULL, sign_pub TEXT NOT NULL, seal_pub TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sent (alias TEXT NOT NULL, message_id TEXT NOT NULL, task_id TEXT NOT NULL, PRIMARY KEY (alias, message_id));
-      CREATE TABLE IF NOT EXISTS remote_tasks (alias TEXT NOT NULL, task_id TEXT NOT NULL, json TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (alias, task_id));
+      CREATE TABLE IF NOT EXISTS remote_tasks (alias TEXT NOT NULL, task_id TEXT NOT NULL, json TEXT NOT NULL, at TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (alias, task_id));
       CREATE TABLE IF NOT EXISTS served (alias TEXT NOT NULL, task_id TEXT NOT NULL, for_id TEXT NOT NULL, PRIMARY KEY (alias, task_id));
       CREATE TABLE IF NOT EXISTS key_bodies (alias TEXT PRIMARY KEY, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pending (alias TEXT PRIMARY KEY, until TEXT NOT NULL);
@@ -259,7 +276,8 @@ export class LinkHub {
       paired: () => this.deps.paired(row.alias),
       deliver: (payload, from) => this.deliver(row, payload, from.replica),
       now: this.deps.now,
-      ...(this.deps.git === undefined ? {} : { git: this.deps.git }),
+      // M1: only https, ssh and git, plus file for a local remote.
+      git: linkGitRunner(this.deps.git ?? defaultAsyncGitRunner, row.remote),
     });
     this.services.set(row.alias, service);
     for (const s of this.db
@@ -323,12 +341,15 @@ export class LinkHub {
   // share and all within the total, so read cost stays bounded however many
   // links there are (P-D6). A link past the total waits for the next pass.
   private async passAll(): Promise<void> {
-    await this.scanOffers();
+    const share = this.deps.linkReadBytes ?? LINK_READ_BYTES;
+    // Offers read within the same total, each within a link's share (M5).
+    let left =
+      (this.deps.totalReadBytes ?? LINK_TOTAL_READ_BYTES) -
+      (await this.scanOffers(share));
+    this.pruneRemoteTasks();
     const all = [...this.services];
     const start = all.length === 0 ? 0 : this.rotation % all.length;
     this.rotation += 1;
-    const share = this.deps.linkReadBytes ?? LINK_READ_BYTES;
-    let left = this.deps.totalReadBytes ?? LINK_TOTAL_READ_BYTES;
     for (let i = 0; i < all.length; i++) {
       if (this.stopped) return;
       const [alias, s] = all[(start + i) % all.length];
@@ -343,7 +364,9 @@ export class LinkHub {
         left -= used;
       } catch (err) {
         this.readThisPass.set(alias, 0);
-        console.error(`a2a: link a2a:${alias} pass failed`, err);
+        console.error(
+          `a2a: link a2a:${alias} pass failed: ${redactRemotes(String(err))}`
+        );
       }
       this.checkPending(alias, s);
     }
@@ -437,10 +460,13 @@ export class LinkHub {
       .map((r) => ({
         pairedId: r.paired_id,
         alias: r.alias,
-        remote: r.remote,
+        remote: redactRemotes(r.remote),
         branch: r.branch,
         createdAt: r.created_at,
-        problems: this.offerProblems.get(r.paired_id) ?? [],
+        readThisPass: this.offerRead.get(r.paired_id) ?? 0,
+        problems: (this.offerProblems.get(r.paired_id) ?? []).map(
+          redactRemotes
+        ),
       }));
   }
 
@@ -452,9 +478,23 @@ export class LinkHub {
   // Reads each open offer's branch for key ops carrying a proof. A proof that
   // checks out and an op its bound key signed for this link complete it;
   // anything else is ignored with a note.
-  private async scanOffers(): Promise<void> {
-    for (const o of this.offers()) {
-      if (this.stopped) return;
+  private async scanOffers(share: number): Promise<number> {
+    let read = 0;
+    for (const o of this.db
+      .query<
+        { paired_id: string; alias: string; remote: string; branch: string },
+        []
+      >(
+        'SELECT paired_id, alias, remote, branch FROM offers ORDER BY created_at'
+      )
+      .all()
+      .map((r) => ({
+        pairedId: r.paired_id,
+        alias: r.alias,
+        remote: r.remote,
+        branch: r.branch,
+      }))) {
+      if (this.stopped) return read;
       const state = this.deps.offerState?.(o.pairedId) ?? 'gone';
       if (state !== 'offered') {
         this.dropOffer(o.pairedId);
@@ -465,18 +505,29 @@ export class LinkHub {
         o.remote,
         o.branch,
         'offer-00000000',
-        this.deps.git ?? defaultAsyncGitRunner
+        linkGitRunner(this.deps.git ?? defaultAsyncGitRunner, o.remote)
       );
       try {
         await repo.ensure();
         const res = await repo.exchange();
         if (res.offline !== undefined) continue;
       } catch (err) {
-        console.error(`a2a: reading link offer ${o.pairedId} failed`, err);
+        console.error(
+          `a2a: reading link offer ${o.pairedId} failed: ${redactRemotes(String(err))}`
+        );
         continue;
       }
       const notes: string[] = [];
-      for (const e of repo.scanFull(null)) {
+      // M5: the budgeted reader, to each id's key op only, within a share.
+      const entries = repo.readV2(new Map(), {
+        budget: share,
+        totalBudget: share,
+        tier: () => 2,
+        maxUnknown: 16,
+      });
+      this.offerRead.set(o.pairedId, repo.lastPassBytes());
+      read += repo.lastPassBytes();
+      for (const e of entries) {
         if (e.type !== 'key' || isStub(e)) continue;
         // After isStub, `e` is a full op.
         const body = e.body as Record<string, unknown> | undefined;
@@ -513,6 +564,43 @@ export class LinkHub {
           `${notes.length} key op${notes.length === 1 ? '' : 's'} on the link branch offered a pairing proof that did not check out (${notes[0]}); ignored`,
         ]);
     }
+    return read;
+  }
+
+  private remoteTaskCount(alias: string): number {
+    return (
+      this.db
+        .query<{ n: number }, [string]>(
+          'SELECT COUNT(*) AS n FROM remote_tasks WHERE alias = ?'
+        )
+        .get(alias)?.n ?? 0
+    );
+  }
+
+  // M6: finished snapshots go after a day, and each link keeps at most
+  // maxRemoteTasks, newest first; their send mappings go with them.
+  private pruneRemoteTasks(): void {
+    const cutoff = new Date(
+      this.deps.now().getTime() - FINISHED_KEEP_MS
+    ).toISOString();
+    this.db
+      .query('DELETE FROM remote_tasks WHERE done = 1 AND at < ?')
+      .run(cutoff);
+    this.capRemoteTasks();
+  }
+
+  private capRemoteTasks(): void {
+    const cap = this.deps.maxRemoteTasks ?? MAX_REMOTE_TASKS;
+    for (const { alias } of this.links())
+      this.db
+        .query(
+          `DELETE FROM remote_tasks WHERE alias = ?1 AND task_id NOT IN
+             (SELECT task_id FROM remote_tasks WHERE alias = ?1 ORDER BY at DESC, rowid DESC LIMIT ?2)`
+        )
+        .run(alias, cap);
+    this.db.exec(
+      'DELETE FROM sent WHERE NOT EXISTS (SELECT 1 FROM remote_tasks r WHERE r.alias = sent.alias AND r.task_id = sent.task_id)'
+    );
   }
 
   publish(alias: string, payload: LinkPayload): PublishResult {
@@ -529,16 +617,19 @@ export class LinkHub {
       const h = s?.health();
       return {
         alias: l.alias,
-        remote: l.remote,
+        remote: redactRemotes(l.remote),
         branch: l.branch,
         ready: s?.linkReady() ?? false,
         pending: this.isPending(l.alias),
         readThisPass: this.readThisPass.get(l.alias) ?? 0,
         waiting: s?.waiting() ?? 0,
         lastExchangeAt: h?.lastExchangeAt ?? null,
-        lastError: h?.lastError ?? null,
+        lastError: h?.lastError == null ? null : redactRemotes(h.lastError),
+        remoteTasks: this.remoteTaskCount(l.alias),
         unpublished: h?.unpublished ?? 0,
-        problems: [...this.notes(l.alias), ...(s?.problems() ?? [])],
+        problems: [...this.notes(l.alias), ...(s?.problems() ?? [])].map(
+          (p) => ({ ...p, message: redactRemotes(p.message) })
+        ),
       };
     });
   }
@@ -635,15 +726,17 @@ export class LinkHub {
         .run(alias, p.for, p.taskId);
     this.db
       .query(
-        `INSERT INTO remote_tasks (alias, task_id, json, at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(alias, task_id) DO UPDATE SET json = excluded.json, at = excluded.at`
+        `INSERT INTO remote_tasks (alias, task_id, json, at, done) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(alias, task_id) DO UPDATE SET json = excluded.json, at = excluded.at, done = excluded.done`
       )
       .run(
         alias,
         p.taskId,
         JSON.stringify(task),
-        this.deps.now().toISOString()
+        this.deps.now().toISOString(),
+        isTerminal(task) ? 1 : 0
       );
+    this.capRemoteTasks();
     for (const fn of this.listeners) fn(alias);
   }
 
@@ -688,7 +781,15 @@ export class LinkHub {
         )
         .run(row.alias, taskId, messageId);
       this.publishTask(row.alias, taskId, messageId, task);
-      this.follow(row.alias, taskId, messageId);
+      // M6: at most maxRemoteTasks followed per link; the rest answer once.
+      const served =
+        this.db
+          .query<{ n: number }, [string]>(
+            'SELECT COUNT(*) AS n FROM served WHERE alias = ?'
+          )
+          .get(row.alias)?.n ?? 0;
+      if (served <= (this.deps.maxRemoteTasks ?? MAX_REMOTE_TASKS))
+        this.follow(row.alias, taskId, messageId);
       return 'applied';
     }
     const id = provisionalTaskId(messageId);

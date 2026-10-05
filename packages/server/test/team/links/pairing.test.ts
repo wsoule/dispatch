@@ -9,7 +9,7 @@ import type { LinkDaemon } from './daemons.js';
 // Real daemons pairing over a scratch bare repo, with no listener.
 setDefaultTimeout(90_000);
 
-const { daemon, remote } = useLinkDaemons();
+const { daemon, remote, linkPair } = useLinkDaemons();
 
 const call = (d: LinkDaemon, path: string, body?: unknown, token?: string) =>
   fetch(`http://127.0.0.1:${d.handle.port}${path}`, {
@@ -131,5 +131,74 @@ describe('pairing over a link (T55)', () => {
     expect(body.links[0]).toMatchObject({ alias: 'ada', unpublished: 0 });
     expect(body.links[0].lastExchangeAt).not.toBeNull();
     expect(Array.isArray(body.links[0].problems)).toBe(true);
+  });
+});
+
+describe('T55 review M1-M4', () => {
+  it('refuses a helper-form remote at the offer', async () => {
+    const ada = await daemon('link-ada-');
+    for (const remote of ['ext::sh -c touch% /tmp/pwned', '--upload-pack=x'])
+      expect(
+        (
+          await call(ada, '/api/a2a/pairings', {
+            alias: 'bob',
+            link: { remote },
+          })
+        ).status
+      ).toBe(400);
+  });
+
+  it('needs the operator tier for a network remote on a private or loopback host (AR1)', async () => {
+    const ada = await daemon('link-ada-');
+    const lead = ada.handle.team.teammates.issue('lead', 'decide');
+    for (const remote of [
+      'https://127.0.0.1/links.git',
+      'git@10.0.0.5:acme/links.git',
+    ])
+      expect(
+        (
+          await call(
+            ada,
+            '/api/a2a/pairings',
+            { alias: 'bob', link: { remote } },
+            lead
+          )
+        ).status
+      ).toBe(403);
+    expect(
+      (
+        await call(ada, '/api/a2a/pairings', {
+          alias: 'bob',
+          link: { remote: 'https://127.0.0.1/links.git' },
+        })
+      ).status
+    ).toBe(201);
+  });
+
+  it('redacts userinfo in remotes and errors on GET /api/a2a/links', async () => {
+    const ada = await daemon('link-ada-');
+    expect(
+      (
+        await call(ada, '/api/a2a/pairings', {
+          alias: 'bob',
+          link: { remote: 'https://ada:swordfish@127.0.0.1:9/links.git' },
+        })
+      ).status
+    ).toBe(201);
+    await ada.handle.a2a.links!.settle();
+    const text = await (await call(ada, '/api/a2a/links')).text();
+    expect(text).toContain('127.0.0.1');
+    expect(text).not.toContain('swordfish');
+  });
+
+  it('refuses to upgrade a link peer, saying why (M4)', async () => {
+    const ada = await daemon('link-ada-');
+    const bob = await daemon('link-bob-');
+    await linkPair(ada, 'bob', bob, 'ada');
+    const res = await call(ada, '/api/a2a/peers/bob/upgrade', {
+      confirmFingerprint: 'A1B2-C3D4-0000-0000-0000-0000',
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('link');
   });
 });
