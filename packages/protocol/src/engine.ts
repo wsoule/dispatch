@@ -2054,7 +2054,7 @@ export class DeliveryEngine {
             : `${message.from} (remote: ${label})`;
         await this.send(
           {
-            to: [this.host.owner(d.recipient)],
+            to: [this.host.owner(d.recipient, message.from)],
             kind: 'question',
             blocking: true,
             choices: ['approve', 'deny'],
