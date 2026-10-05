@@ -93,6 +93,7 @@ export function dataWith(
     tasks: [],
     runs: [],
     me: null,
+    ownerCredential: false,
     // No messaging: Memory's lessons browser stays a one-line explanation.
     messageAccess: { canDecide: false, canMessage: false, explanation: null },
     linearStatus: {

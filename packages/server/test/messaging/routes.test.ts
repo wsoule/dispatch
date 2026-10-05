@@ -1892,9 +1892,13 @@ describe('messaging routes — direct unit coverage', () => {
       createdAt: new Date().toISOString(),
     });
   }
-  function approverCtx(tier: 'decide' | 'operator'): ApiContext {
+  function approverCtx(
+    tier: 'decide' | 'operator',
+    ownerCredential = tier === 'operator'
+  ): ApiContext {
     return {
       messaging,
+      ownerCredential,
       actorContext: {
         humanRef: 'human:test',
         agentRef: (id: string) => `agent:test/${id}`,
@@ -1921,13 +1925,22 @@ describe('messaging routes — direct unit coverage', () => {
     }
   });
 
-  it('re-approves the owner’s revoked Overseer at the operator tier only', async () => {
+  it('re-approves the owner’s revoked Overseer only with the owner credential', async () => {
     revokedAgent('agent:test/overseer');
     const refused = await approveAgent(
       approverCtx('decide'),
       'agent:test/overseer'
     );
     expect(refused.status).toBe(403);
+    expect(messaging.store.getAgent('agent:test/overseer')?.status).toBe(
+      'revoked'
+    );
+    // A teammate issued operator is not the owner: the off switch is theirs alone.
+    const teammate = await approveAgent(
+      approverCtx('operator', false),
+      'agent:test/overseer'
+    );
+    expect(teammate.status).toBe(403);
     expect(messaging.store.getAgent('agent:test/overseer')?.status).toBe(
       'revoked'
     );

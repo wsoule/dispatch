@@ -987,6 +987,40 @@ describe('agent-registration gate handler', () => {
     messaging.close();
   });
 
+  it('an approving answer never revives a revoked row (a stale or legacy gate)', async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    const messaging = openMessaging({
+      rootDir: project.root(),
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(project.root(), 'messages.db'),
+    });
+    await messaging.recover();
+    seedPendingAgent(messaging);
+    const revoked = messaging.store.getAgent('agent:reviewer');
+    if (revoked !== null)
+      messaging.store.putAgent({ ...revoked, status: 'revoked' });
+    const question = registrationQuestion();
+    await messaging.gates.handle(
+      question,
+      stubMessage({
+        id: 'm-answer0000000000000000009',
+        thread: question.thread,
+        replyTo: question.id,
+        from: 'human:wyat',
+        to: [SYSTEM_ADDRESS],
+        kind: 'answer',
+        choice: 'approve',
+      })
+    );
+    const agent = messaging.store.getAgent('agent:reviewer');
+    expect(agent?.status).toBe('revoked');
+    expect(agent?.approvedBy).toBeNull();
+    messaging.close();
+  });
+
   it('deny sets the agent revoked with no approver', async () => {
     const { orchestrator, store } = makeOrchestrator(project.root());
     const events = new EventBus();

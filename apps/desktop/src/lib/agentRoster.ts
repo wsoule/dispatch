@@ -1,9 +1,4 @@
-import type {
-  AgentStatus,
-  AgentSummary,
-  AuthTier,
-  Message,
-} from '@dispatch/client';
+import type { AgentStatus, AgentSummary, Message } from '@dispatch/client';
 
 const STATUS_ORDER: Record<AgentStatus, number> = {
   pending: 0,
@@ -34,13 +29,13 @@ interface RosterActions {
   revoke: boolean;
 }
 
-/** The owner's own Overseer, `agent:<owner>/overseer`, named only for an
- *  operator-tier viewer: re-approving it is the owner's off switch. */
+/** The owner's own Overseer, `agent:<owner>/overseer`, named only for a
+ *  window holding the owner's app token: re-approving it is their off switch. */
 export function ownerOverseer(
   me: string | null,
-  tier: AuthTier | null
+  ownerCredential: boolean
 ): string | null {
-  if (me === null || tier !== 'operator') return null;
+  if (me === null || !ownerCredential) return null;
   return `agent:${handleOf(me)}/overseer`;
 }
 

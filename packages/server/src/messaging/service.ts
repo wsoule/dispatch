@@ -387,7 +387,8 @@ export function openMessaging(deps: {
   };
 
   // A deciding human approved or denied an agent's registration. A replay is a
-  // no-op, and only an approval records who approved it.
+  // no-op, only an approval records who approved it, and no answer revives a
+  // revoked row (XH-R3): a stale or legacy gate's approve changes nothing.
   gates.register('agent-registration', (question, answer) =>
     settle(() => {
       const gate = gateOf(question);
@@ -401,7 +402,7 @@ export function openMessaging(deps: {
       )
         return;
       if (answer.choice === 'approve') {
-        if (agent.status === 'approved') return;
+        if (agent.status !== 'pending') return;
         store.putAgent({
           ...agent,
           status: 'approved',

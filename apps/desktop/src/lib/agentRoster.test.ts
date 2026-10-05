@@ -86,16 +86,17 @@ describe('rosterActions', () => {
         owners
       ).approve
     ).toBe(false);
-    // Below the operator tier no owner Overseer is named, so no Approve.
+    // Without the owner credential no owner Overseer is named, so no Approve.
     expect(
       rosterActions(agent({ address: owners, status: 'revoked' }), null).approve
     ).toBe(false);
   });
 
-  test('ownerOverseer names the Overseer only for the operator', () => {
-    expect(ownerOverseer('human:wyat', 'operator')).toBe('agent:wyat/overseer');
-    expect(ownerOverseer('human:wyat', 'decide')).toBeNull();
-    expect(ownerOverseer(null, 'operator')).toBeNull();
+  test('ownerOverseer names the Overseer only for the owner (the app token)', () => {
+    expect(ownerOverseer('human:wyat', true)).toBe('agent:wyat/overseer');
+    // A teammate issued operator holds no app token.
+    expect(ownerOverseer('human:ada', false)).toBeNull();
+    expect(ownerOverseer(null, true)).toBeNull();
   });
 
   test('a revoked agent offers nothing: it must register again', () => {

@@ -430,6 +430,9 @@ export interface DispatchProjectData {
   /** Whether this window attached to a daemon it did not start, and so holds
    *  only the request-tier agent token even for the machine's owner. */
   attachedWithoutAppToken: boolean;
+  /** Whether this window holds the owner's app token: only the owner may turn
+   *  their revoked Overseer back on. */
+  ownerCredential: boolean;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -3162,6 +3165,11 @@ export function useDispatchProject(
         connection !== undefined &&
         connection.session === undefined &&
         (connection.appToken === null || connection.appToken === ''),
+      ownerCredential:
+        connection !== undefined &&
+        connection.session === undefined &&
+        connection.appToken !== null &&
+        connection.appToken !== '',
       portLoading,
       portError,
       portErrorDetail,

@@ -1193,7 +1193,7 @@ async function decideAgent(
     );
   // Revoking is final (XH-R3): a revoked teammate's agents and A2A clients
   // stay off. Only the owner's own Overseer, their off switch, comes back,
-  // and only at the operator tier.
+  // and only through the owner's own credential (the app token).
   if (choice === 'approve' && agent.status === 'revoked') {
     if (address !== ctx.actorContext.agentRef('overseer'))
       return jsonResponse(
@@ -1203,13 +1203,18 @@ async function decideAgent(
         },
         409
       );
-    if (!tierAllows(ctx.caller?.tier ?? 'request', 'operator'))
+    if (
+      ctx.ownerCredential !== true ||
+      !tierAllows(ctx.caller?.tier ?? 'request', 'operator')
+    )
       return errorResponse(
         403,
-        'turning the Overseer back on needs the operator tier'
+        "only this daemon's owner can turn the Overseer back on"
       );
   }
-  const gate = openRegistrationGateFor(ctx, address);
+  // A revoked row ignores its gate's answers, so the Overseer's comes back by a direct write.
+  const gate =
+    agent.status === 'revoked' ? null : openRegistrationGateFor(ctx, address);
   if (gate !== null) {
     await ctx.messaging.engine.reply(
       gate.id,

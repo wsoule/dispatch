@@ -93,7 +93,7 @@ function RosterAction({
 export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   const { client, port } = data;
   const { canDecide, decideReason } = useSettingsAccess();
-  const overseer = ownerOverseer(data.me, data.myTier);
+  const overseer = ownerOverseer(data.me, data.ownerCredential);
   const queryClient = useQueryClient();
   const rosterKey = agentRosterKey(port);
   // Addresses with a change in flight, whose row's buttons wait for it.
