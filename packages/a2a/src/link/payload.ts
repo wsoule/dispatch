@@ -15,7 +15,9 @@ export type LinkPayload =
       message: MessageJson;
       configuration?: { returnImmediately: true };
     }
-  | { kind: 'event'; taskId: string; event: StreamResponseJson }
+  // `for`: the messageId of the send this task came from, so the sender can
+  // tie its own record to the receiver's task id.
+  | { kind: 'event'; taskId: string; for?: string; event: StreamResponseJson }
   | { kind: 'cancel'; taskId: string }
   // OD-10: ask the receiver to re-publish a task's current snapshot.
   | { kind: 'resync'; taskId: string }
@@ -126,9 +128,10 @@ export function checkLinkPayload(raw: unknown): Check {
       };
     }
     case 'event': {
-      const extra = onlyKeys(raw, ['kind', 'taskId', 'event']);
+      const extra = onlyKeys(raw, ['kind', 'taskId', 'for', 'event']);
       if (extra !== null) return no(extra);
       if (!taskId(raw.taskId)) return no('taskId');
+      if (raw.for !== undefined && !taskId(raw.for)) return no('for');
       const e = raw.event;
       if (!isRecord(e)) return no('event is not an object');
       const keys = Object.keys(e);
@@ -148,7 +151,12 @@ export function checkLinkPayload(raw: unknown): Check {
       }
       return {
         ok: true,
-        payload: { kind: 'event', taskId: raw.taskId as string, event },
+        payload: {
+          kind: 'event',
+          taskId: raw.taskId as string,
+          ...(raw.for === undefined ? {} : { for: raw.for as string }),
+          event,
+        },
       };
     }
     case 'cancel':

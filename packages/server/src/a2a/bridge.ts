@@ -28,6 +28,7 @@ import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir, transcriptPath } from '../orchestrator/paths.js';
 import { replayTranscript } from '../orchestrator/transcript.js';
+import type { LinkHub } from '../team/links/hub.js';
 import type { AuthTier } from '../tiers.js';
 import { RunResultsMemo } from './artifacts.js';
 import { bridgeExternalPolicy } from './external.js';
@@ -43,6 +44,7 @@ import {
 import { handleProposal } from './handoff.js';
 import { KeyService } from './keys.js';
 import { A2ALineage } from './lineage.js';
+import { LinkWiring } from './links.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
 import type { OutboundWorker } from './outbound.js';
 import { startOutbound } from './outbound.js';
@@ -119,6 +121,8 @@ export interface A2ABridge {
   probeUnverified(): Promise<void>;
   // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
   readonly outbound: OutboundWorker | null;
+  // Teammate links (T54); null until the link keys load, or when a2a.db is down.
+  readonly links: LinkHub | null;
   // Whether standalone hosts may use /api/a2a/port/* (the settings file).
   standalone(): boolean;
   // Changes only that flag in the settings file; the listener is untouched.
@@ -195,6 +199,8 @@ interface OpenBridgeDeps {
   unverifiedWindowMs?: number;
   // Unpair notices' and key pushes' retry delays (tests shorten them).
   noticeBackoffMs?: number[];
+  // How often teammate links exchange (tests shorten it).
+  linkIntervalMs?: number;
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -266,6 +272,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let stopUpgradeAnswers: (() => void) | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
+  let links: LinkWiring | null = null;
   const leases = new PortLeases();
   const watches = new PortWatches(deps.watchLimits);
   const signedSessions = new SignedSessions();
@@ -355,6 +362,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       emit: peerService.emit,
       revokeClient: (address) => bridge.clientRevoked(address),
       changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      linkUnpair: (alias, id) =>
+        links?.unpair(alias, id) ?? Promise.resolve(false),
       ...(deps.noticeBackoffMs === undefined
         ? {}
         : { backoffMs: deps.noticeBackoffMs }),
@@ -370,12 +379,35 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       resetSigner: () => {
         signer = undefined;
       },
+      linkStatement: (alias, statement) =>
+        links?.statement(alias, statement) ?? false,
       ...(deps.noticeBackoffMs === undefined
         ? {}
         : { backoffMs: deps.noticeBackoffMs }),
     });
     bridgeDeps.keys = () => keyService;
     keys = keyService;
+    links = new LinkWiring({
+      rootDir,
+      store,
+      messages: messaging.store,
+      port: () => port,
+      policy: () => a2aConfig(rootDir).policy,
+      unpaired: (id) =>
+        unpairer?.drop(
+          id,
+          (a) =>
+            `a2a:${a} unpaired: the other side removed this pairing over the link. Its records are kept, disabled.`
+        ),
+      keyChange: (id, statement) => keyService.receiveOverLink(id, statement),
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      ...(deps.linkIntervalMs === undefined
+        ? {}
+        : { intervalMs: deps.linkIntervalMs }),
+    });
+    peerService.onChange((alias, what) => {
+      if (what === 'removed') links?.removed(alias);
+    });
     const upgradeService = new Upgrades({
       ...peerService.deps,
       notices: peerService.notices,
@@ -456,6 +488,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
           ? {}
           : { unverifiedWindowMs: deps.unverifiedWindowMs }),
         keyUnknown: (alias) => keyService.keyUnknown(alias),
+        linkClientFor: (row) => links?.clientFor(row) ?? null,
       });
     } catch (err) {
       console.error('dispatchd: the A2A outbound worker did not start', err);
@@ -600,6 +633,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     get outbound() {
       return outbound?.worker ?? null;
     },
+    get links() {
+      return links?.links ?? null;
+    },
     leases,
     watches,
     signedSessions,
@@ -653,6 +689,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         if (settingsError !== null)
           console.error(`dispatchd: ${settingsError}`);
         settings = applyOverrides(read.settings, deps.overrides);
+        try {
+          await links?.start();
+        } catch (err) {
+          console.error('dispatchd: teammate links did not start', err);
+        }
         for (const warning of a2aConfig(rootDir).warnings)
           console.warn(`dispatchd: ${warning}`);
         await reopen();
@@ -750,6 +791,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         stopUpgradeAnswers?.();
         outbound?.stop();
         outbound = null;
+        await links?.stop();
         leases.closeAll();
         watches.closeAll();
         signedSessions.closeAll();

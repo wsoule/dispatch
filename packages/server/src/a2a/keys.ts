@@ -33,6 +33,8 @@ export interface KeyDeps extends UnpairDeps {
   unpairer: Unpairer;
   // Drops the cached signer, so the next use loads the keys as now stored.
   resetSigner: () => void;
+  // Publishes one statement on a teammate link (T54); false when it cannot.
+  linkStatement?: (alias: string, statement: unknown) => boolean;
 }
 
 export interface Rotation {
@@ -112,6 +114,13 @@ export class KeyService {
     const pending = this.d.store.notices('key-push').find((n) => n.id === id);
     const peer = this.d.store.peers().find((p) => p.pairedId === id);
     if (pending === undefined || peer?.keyJwk == null) return true;
+    // Over a link each statement is an op the other side reads when it can.
+    if (peer.auth === 'link') {
+      for (const statement of JSON.parse(pending.body) as unknown[])
+        if (this.d.linkStatement?.(peer.alias, statement) !== true)
+          return false;
+      return true;
+    }
     const send = pairedFetch(
       this.d,
       peer,
@@ -303,6 +312,18 @@ export class KeyService {
     );
   }
 
+  /**
+   * A statement read on pairing `pairedId`'s link (N4): it applies only when
+   * it names the key this pairing pins, under applyStatement's own rules.
+   */
+  receiveOverLink(pairedId: string, raw: unknown): boolean {
+    const client = this.d.store.clients().find((c) => c.pairedId === pairedId);
+    const pinned = client?.keyThumbprint ?? null;
+    if (pinned === null || !isRecord(raw)) return false;
+    if (raw.old !== pinned && raw.revoked !== pinned) return false;
+    return this.applyStatement(raw).ok;
+  }
+
   // A key change re-pins the pairing that pins its old key; a revocation
   // drops every pairing that ever pinned the revoked key, so a hostile key
   // change made with a stolen key cannot outrun the owner's revocation.
@@ -368,12 +389,13 @@ export class KeyService {
         status: 409,
         reason: 'older than the key change already applied',
       };
+    const client = this.d.store.clients().find((c) => c.pairedId === id);
+    // A re-pin keeps how the pairing is reached: signed HTTP, or a link.
     const pin = pairingPin(
       { thumbprint: change.newThumbprint, jwk: change.newJwk },
       id,
-      'signature'
+      client?.auth === 'link' ? 'link' : 'signature'
     );
-    const client = this.d.store.clients().find((c) => c.pairedId === id);
     try {
       this.d.store.transaction(() => {
         if (

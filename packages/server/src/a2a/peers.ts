@@ -313,7 +313,11 @@ export function markAuthFailed(
 export async function probeUnverifiedPeers(peers: PeerService): Promise<void> {
   const d = peers.deps;
   for (const row of d.store.peers()) {
-    if (row.status !== 'auth-failed' || row.statusReason !== 'unverifiable')
+    if (
+      row.status !== 'auth-failed' ||
+      row.statusReason !== 'unverifiable' ||
+      row.auth === 'link'
+    )
       continue;
     try {
       await peerClientFor(d, row).getTask(`dispatch-probe-${randomUUID()}`);
@@ -380,6 +384,8 @@ export async function refreshPeer(
   alias: string
 ): Promise<PeerRow> {
   const row = mustPeer(deps, alias);
+  // A link peer has no card to fetch; its keys come with the pairing.
+  if (row.auth === 'link') return row;
   const guard = peerGuard(deps, row);
   const refused = await refusedUrl(guard, row.cardUrl);
   if (refused !== null)
@@ -481,7 +487,11 @@ export async function refreshDuePeers(
   const cutoff = nowOf(deps).getTime() - DAY_MS;
   let refreshed = 0;
   for (const row of deps.store.peers()) {
-    if (row.status === 'disabled' || Date.parse(row.fetchedAt) > cutoff)
+    if (
+      row.status === 'disabled' ||
+      row.auth === 'link' ||
+      Date.parse(row.fetchedAt) > cutoff
+    )
       continue;
     try {
       await refreshPeer(deps, notices, row.alias);
@@ -502,7 +512,7 @@ export async function setPeerEnabled(
   token?: string
 ): Promise<PeerRow> {
   const row = mustPeer(deps, alias);
-  const guard = peerGuard(deps, row);
+  const guard = row.auth === 'link' ? undefined : peerGuard(deps, row);
   if (enabled && guard !== undefined) {
     await guardPublicUrl(row.cardUrl, { ...guard, field: 'cardUrl' });
     await guardPublicUrl(row.interfaceUrl, { ...guard, field: 'cardUrl' });

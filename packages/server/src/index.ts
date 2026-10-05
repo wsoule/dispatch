@@ -372,6 +372,8 @@ export interface StartServerOptions {
   a2aUnverifiedWindowMs?: number;
   // Unpair notices' and key pushes' retry delays; tests shorten them.
   a2aNoticeBackoffMs?: number[];
+  // How often teammate links exchange (15 s); tests shorten it.
+  a2aLinkIntervalMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -1728,6 +1730,9 @@ async function bootServer(
     ...(opts.a2aUnverifiedWindowMs === undefined
       ? {}
       : { unverifiedWindowMs: opts.a2aUnverifiedWindowMs }),
+    ...(opts.a2aLinkIntervalMs === undefined
+      ? {}
+      : { linkIntervalMs: opts.a2aLinkIntervalMs }),
     ...(opts.a2aNoticeBackoffMs === undefined
       ? {}
       : { noticeBackoffMs: opts.a2aNoticeBackoffMs }),

@@ -123,3 +123,24 @@ describe('relay re-review N3: the SDK-decoded form is what passes', () => {
     expect(JSON.stringify(e.payload.event)).not.toContain('junk');
   });
 });
+
+describe('the event payload names the send it answers (T54)', () => {
+  it('keeps a valid for, and refuses a bad one', () => {
+    const ok = checkLinkPayload({
+      kind: 'event',
+      taskId: 't-1',
+      for: 'm-1',
+      event: STATUS,
+    });
+    expect(ok.ok && ok.payload.kind === 'event' && ok.payload.for).toBe('m-1');
+    for (const bad of ['', 'a\nb', 7])
+      expect(
+        checkLinkPayload({
+          kind: 'event',
+          taskId: 't-1',
+          for: bad,
+          event: STATUS,
+        }).ok
+      ).toBe(false);
+  });
+});

@@ -218,6 +218,53 @@ async function cardSignedBy(
 }
 
 /** A new offer: the printed code, shown once, and the row that waits for it. */
+/**
+ * A pairing over a teammate link (T54, T55): the peer has no card URL, so its
+ * row names the link, and both records pin its card key with auth 'link'.
+ * The link's own registry (remote, branch, link keys) is the caller's.
+ */
+export function writeLinkPairedRecords(
+  d: PairingDeps,
+  i: {
+    alias: string;
+    pairedId: string;
+    name: string;
+    peer: { thumbprint: string; jwk: Record<string, string> };
+    creator: Address;
+    creatorTier: 'decide' | 'operator';
+  },
+  first: () => void = () => {}
+): void {
+  const at = now(d).toISOString();
+  const where = `link:${i.pairedId}`;
+  writePairedRecords(
+    d,
+    {
+      alias: i.alias,
+      cardUrl: where,
+      interfaceUrl: where,
+      binding: 'JSONRPC',
+      // Streaming: the link client yields on each event the link brings.
+      cardJson: JSON.stringify({
+        name: i.name.slice(0, 200),
+        capabilities: { streaming: true },
+      }),
+      etag: null,
+      fetchedAt: at,
+      status: 'active',
+      addedBy: i.creator,
+      addedTier: i.creatorTier,
+      allowHttp: false,
+      allowOrigin: false,
+      apiKeyHeader: null,
+      createdAt: at,
+    },
+    pairingPin(i.peer, i.pairedId, 'link'),
+    i.creator,
+    first
+  );
+}
+
 export function offerPairing(
   d: PairingDeps,
   i: { alias: string; ourCard: string; ttlMin?: number; caller: Caller }
@@ -482,6 +529,9 @@ export function pairingSummaries(d: PairingDeps): Record<string, unknown>[] {
 export interface UnpairDeps extends PairingDeps {
   // Revokes a paired client the way a revoke route does (closes its asks).
   revokeClient: (address: Address) => void;
+  // Publishes the unpair notice on a teammate link and runs a pass, so it is
+  // on the branch before the link goes; true once published there.
+  linkUnpair?: (alias: string, pairedId: string) => Promise<boolean>;
   changed: () => void;
   backoffMs?: number[];
 }
@@ -587,6 +637,9 @@ export class Unpairer {
   private async send(id: string): Promise<boolean> {
     const peer = this.peerOf(id);
     if (peer === null || peer.keyJwk == null) return true;
+    // Over a link the notice is an op the other side reads when it can.
+    if (peer.auth === 'link')
+      return (await this.d.linkUnpair?.(peer.alias, id)) ?? true;
     const res = await pairedFetch(
       this.d,
       peer,

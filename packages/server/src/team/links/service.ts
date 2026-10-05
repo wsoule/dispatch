@@ -74,7 +74,7 @@ export interface LinkServiceDeps {
   deliver: (
     payload: LinkPayload,
     from: { replica: string; seq: number }
-  ) => 'applied' | 'parked';
+  ) => 'applied' | 'parked' | Promise<'applied' | 'parked'>;
   now: () => Date;
   git?: AsyncGitRunner;
   readBytes?: number;
@@ -250,7 +250,7 @@ export class LinkService {
     this.store.clearProblem('transport:offline');
     this.reached = true;
     if (this.linkReady()) this.drainOutbox();
-    this.read(entries);
+    await this.read(entries);
     if (this.fresh.length > 0) await this.transport.publish(this.takeFresh());
     const peer = this.peerReplica();
     const cursor = peer === null ? null : this.store.cursor(peer);
@@ -352,7 +352,7 @@ export class LinkService {
   // Walks the peer's chain from the cursor. Entries are hints: only the one
   // that verifies on the head is followed. A signed line that differs from a
   // kept hash, or a second signed child of one op, is a fork and halts.
-  private read(entries: readonly LogEntry[]): void {
+  private async read(entries: readonly LogEntry[]): Promise<void> {
     const peer = this.deps.peer();
     const peerId = this.peerReplica();
     if (peer === null || peerId === null) return;
@@ -377,7 +377,7 @@ export class LinkService {
         : { seq: cursor.seq, hash: cursor.hash, hlc: cursor.hlc };
     // Parked ops go first, each still matching its kept hash (FW-R37).
     for (const op of this.store.parked(peerId)) {
-      const done = this.deliverOp(peer, op);
+      const done = await this.deliverOp(peer, op);
       if (done === 'parked' || done === 'held') return;
       this.store.release(peerId, op.seq);
     }
@@ -410,7 +410,7 @@ export class LinkService {
       this.store.clearProblem(`link-clock:${peerId}`);
       this.clock.observe(e.hlc);
       if (e.type === 'a2a' && !isStub(e)) {
-        const done = this.deliverOp(peer, e);
+        const done = await this.deliverOp(peer, e);
         if (done === 'held') return;
         if (done === 'parked' && !this.store.park(e)) {
           this.store.problem(
@@ -432,10 +432,10 @@ export class LinkService {
 
   // Opens, validates and hands over one a2a op. 'held' leaves the cursor on
   // it: a payload claiming a time past its op's hlc or now (FW-R32(1)).
-  private deliverOp(
+  private async deliverOp(
     peer: LinkPeer,
     op: FederatedOp
-  ): 'applied' | 'parked' | 'dropped' | 'held' {
+  ): Promise<'applied' | 'parked' | 'dropped' | 'held'> {
     const peerId = linkReplicaId(peer.signPub);
     let opened: JsonValue | null = null;
     try {
@@ -470,7 +470,10 @@ export class LinkService {
       return 'held';
     }
     if (!this.linkReady()) return 'parked';
-    return this.deps.deliver(checked.payload, { replica: peerId, seq: op.seq });
+    return await this.deps.deliver(checked.payload, {
+      replica: peerId,
+      seq: op.seq,
+    });
   }
 
   // FW-R24: a key op on the branch that the pinned link key did not sign is a

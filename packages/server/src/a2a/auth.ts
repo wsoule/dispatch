@@ -60,9 +60,11 @@ export function authenticateA2AClient(
 // and its row still authenticates by signature.
 export function authenticateSignedAgent(
   agent: AgentRecord | null,
-  auth: AuthMode | null
+  auth: AuthMode | null,
+  // 'link' only from a teammate link's own delivery path (T54).
+  expected: 'signature' | 'link' = 'signature'
 ): AuthResult {
-  if (agent === null || !isClientAddress(agent.address) || auth !== 'signature')
+  if (agent === null || !isClientAddress(agent.address) || auth !== expected)
     return UNKNOWN;
   if (agent.status === 'revoked')
     return {

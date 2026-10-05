@@ -57,13 +57,18 @@ const QUOTA_RECHECK_MS = 5 * 60_000;
 // How soon a send held by an unreadable credentials file looks again.
 const LOCAL_RETRY_MS = 60_000;
 
+/** What the worker needs of a peer client: HTTP, or a teammate link (T54). */
+export type OutboundClient = Pick<PeerClient, 'send' | 'getTask'> & {
+  changes?: PeerClient['changes'];
+};
+
 export interface OutboundDeps {
   engine: DeliveryEngine;
   messages: SqliteMessageStore;
   store: A2AStore;
   policy: () => A2AConfig;
   // peerClientFor; throws MessagingError 'token' when the credential is missing.
-  clientFor: (row: PeerRow) => PeerClient;
+  clientFor: (row: PeerRow) => OutboundClient;
   refreshPeer: (alias: string) => Promise<void>;
   markAuthFailed: (alias: string, reason?: string | null) => void;
   // Re-resolves and re-checks a decide-tier peer's interface URL before a
@@ -757,7 +762,7 @@ export class OutboundWorker {
       )
         return;
       if (await this.expired(current)) return;
-      let client: PeerClient;
+      let client: OutboundClient;
       try {
         client = this.deps.clientFor(peer);
       } catch (err) {
@@ -797,11 +802,12 @@ export class OutboundWorker {
   // the 7-day limit holds even while events keep arriving. True when tracking
   // ends; false when the stream ended or failed and polling should take over.
   private async stream(
-    client: PeerClient,
+    client: OutboundClient,
     row: OutboundRow,
     signal: AbortSignal
   ): Promise<boolean> {
     if (row.remoteTaskId === null) return true;
+    if (client.changes === undefined) return false;
     const floor = this.deps.pollMs?.(0) ?? pollDelayMs(0);
     const idleCheck = this.deps.pollMs?.(4) ?? pollDelayMs(4);
     const ticks = client.changes(row.remoteTaskId, signal);
@@ -842,7 +848,7 @@ export class OutboundWorker {
 
   // Reads the peer task once and records what changed; true when tracking ends.
   private async poll(
-    client: PeerClient,
+    client: OutboundClient,
     row: OutboundRow,
     signal: AbortSignal
   ): Promise<boolean> {
@@ -1037,16 +1043,25 @@ export function startOutbound(
     changed?: () => void;
     unverifiedWindowMs?: number;
     keyUnknown?: (alias: string) => void;
+    // A teammate link's client (T54); null when links are off here.
+    linkClientFor?: (row: PeerRow) => OutboundClient | null;
   } = {}
 ): { worker: OutboundWorker; stop: () => void } {
   const d = peers.deps;
-  const { changed = () => {}, ...workerOpts } = opts;
+  const { changed = () => {}, linkClientFor, ...workerOpts } = opts;
   const worker: OutboundWorker = new OutboundWorker({
     engine: d.engine,
     messages: d.messages,
     store: d.store,
     policy: () => d.policy(),
-    clientFor: (row) => peerClientFor(d, row),
+    clientFor: (row) => {
+      if (row.auth !== 'link') return peerClientFor(d, row);
+      const client = linkClientFor?.(row) ?? null;
+      // Retried like an unreachable peer until links come back.
+      if (client === null)
+        throw new PeerHttpError(null, 'teammate links are off on this machine');
+      return client;
+    },
     refreshPeer: async (alias) => {
       const row = await refreshPeer(d, peers.notices, alias);
       if (row.status !== 'active') peers.emit(alias, 'disabled');
@@ -1059,6 +1074,8 @@ export function startOutbound(
     },
     // Read at call time (d.lookup, not a copy), so a test can swap the resolver.
     guard: async (row) => {
+      // A link peer has no address to check: it is reached through a branch.
+      if (row.auth === 'link') return;
       const guard = peerGuard(d, row);
       if (guard === undefined) return; // an operator admitted private addresses on purpose
       await guardPublicUrl(row.interfaceUrl, {
