@@ -6,6 +6,7 @@ import {
   handleOf,
   mayChangeAgentRoster,
   mutedAddresses,
+  ownerOverseer,
   rosterActions,
   sortRoster,
 } from './agentRoster';
@@ -73,18 +74,28 @@ describe('rosterActions', () => {
     });
   });
 
-  test('a revoked Overseer can be approved again, nothing else', () => {
+  test("only the owner's own revoked Overseer can be approved again, by the operator", () => {
+    const owners = 'agent:wyat/overseer';
     expect(
-      rosterActions(
-        agent({ address: 'agent:wyat/overseer', status: 'revoked' })
-      )
+      rosterActions(agent({ address: owners, status: 'revoked' }), owners)
     ).toEqual({ approve: true, mute: false, revoke: false });
-    // Only the `<owner>/overseer` name; a look-alike suffix stays dead.
+    // A teammate's agent named overseer stays revoked (XH-R3).
     expect(
       rosterActions(
-        agent({ address: 'agent:wyat/my-overseer', status: 'revoked' })
+        agent({ address: 'agent:ada/overseer', status: 'revoked' }),
+        owners
       ).approve
     ).toBe(false);
+    // Below the operator tier no owner Overseer is named, so no Approve.
+    expect(
+      rosterActions(agent({ address: owners, status: 'revoked' }), null).approve
+    ).toBe(false);
+  });
+
+  test('ownerOverseer names the Overseer only for the operator', () => {
+    expect(ownerOverseer('human:wyat', 'operator')).toBe('agent:wyat/overseer');
+    expect(ownerOverseer('human:wyat', 'decide')).toBeNull();
+    expect(ownerOverseer(null, 'operator')).toBeNull();
   });
 
   test('a revoked agent offers nothing: it must register again', () => {

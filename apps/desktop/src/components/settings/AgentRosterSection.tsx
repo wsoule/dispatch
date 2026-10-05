@@ -8,6 +8,7 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import {
   agentRosterKey,
   handleOf,
+  ownerOverseer,
   rosterActions,
   sortRoster,
 } from '../../lib/agentRoster';
@@ -92,6 +93,7 @@ function RosterAction({
 export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   const { client, port } = data;
   const { canDecide, decideReason } = useSettingsAccess();
+  const overseer = ownerOverseer(data.me, data.myTier);
   const queryClient = useQueryClient();
   const rosterKey = agentRosterKey(port);
   // Addresses with a change in flight, whose row's buttons wait for it.
@@ -131,7 +133,9 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
       const updated = await change(client);
       setRefocus({
         agent: updated,
-        label: rosterActions(updated).mute ? muteLabel(updated) : null,
+        label: rosterActions(updated, overseer).mute
+          ? muteLabel(updated)
+          : null,
         from,
       });
       queryClient.setQueryData<{ agents: AgentSummary[] }>(rosterKey, (prev) =>
@@ -255,7 +259,7 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   function rosterRowActions(agent: AgentSummary): ReactElement {
     // A teammate's agent is approved or revoked only on its own machine.
     const remote = typeof agent.remote === 'string';
-    const base = rosterActions(agent);
+    const base = rosterActions(agent, overseer);
     const offered = remote ? { ...base, approve: false, revoke: false } : base;
     const disabled = !canDecide || busy.has(agent.address);
     const hint = (label: string) => (canDecide ? label : decideReason);

@@ -314,8 +314,9 @@ export class OverseerManager {
     const bus = this.ctx.bus;
     if (bus?.revoked() === true) {
       throw new OrchestratorConflictError(
-        `the overseer is revoked: approve ${bus.overseer} in Agents to use it again`,
-        'overseer_revoked'
+        'the overseer is revoked',
+        'overseer_revoked',
+        `approve ${bus.overseer} in Settings → Connected agents to use it again`
       );
     }
   }

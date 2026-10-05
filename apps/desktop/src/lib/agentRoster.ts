@@ -1,4 +1,9 @@
-import type { AgentStatus, AgentSummary, Message } from '@dispatch/client';
+import type {
+  AgentStatus,
+  AgentSummary,
+  AuthTier,
+  Message,
+} from '@dispatch/client';
 
 const STATUS_ORDER: Record<AgentStatus, number> = {
   pending: 0,
@@ -29,17 +34,27 @@ interface RosterActions {
   revoke: boolean;
 }
 
-// The daemon-owned Overseer, `agent:<owner>/overseer`: the server lets a human re-approve it.
-const OVERSEER_ADDRESS = /^agent:[^/]+\/overseer$/;
+/** The owner's own Overseer, `agent:<owner>/overseer`, named only for an
+ *  operator-tier viewer: re-approving it is the owner's off switch. */
+export function ownerOverseer(
+  me: string | null,
+  tier: AuthTier | null
+): string | null {
+  if (me === null || tier !== 'operator') return null;
+  return `agent:${handleOf(me)}/overseer`;
+}
 
 /** What a roster row offers. A revoked agent's token is dead and it returns
- *  only by registering again, so its row offers nothing; the exception is a
- *  revoked Overseer, which only Approve brings back. */
-export function rosterActions(agent: AgentSummary): RosterActions {
+ *  only by registering again, so its row offers nothing (XH-R3); the one
+ *  exception is `overseer`, the owner's revoked Overseer, which Approve
+ *  brings back. */
+export function rosterActions(
+  agent: AgentSummary,
+  overseer: string | null = null
+): RosterActions {
   const live = agent.status !== 'revoked';
   const approve =
-    agent.status === 'pending' ||
-    (!live && OVERSEER_ADDRESS.test(agent.address));
+    agent.status === 'pending' || (!live && agent.address === overseer);
   return { approve, mute: live, revoke: live };
 }
 

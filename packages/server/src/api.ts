@@ -108,6 +108,7 @@ import {
   stopFixLoop,
 } from './api/fixLoop.js';
 import {
+  conflictResponse,
   errorResponse,
   jsonResponse,
   jsonTextResponse,
@@ -6911,9 +6912,7 @@ export async function handleApi(
       return errorResponse(404, err.message);
     }
     if (err instanceof OrchestratorConflictError) {
-      return err.code === undefined
-        ? errorResponse(409, err.message)
-        : jsonResponse({ error: err.message, code: err.code }, 409);
+      return conflictResponse(err, ctx.caller?.tier);
     }
     // The message says which file and what to do; it never quotes the file.
     if (err instanceof CredentialsUnreadableError) {
