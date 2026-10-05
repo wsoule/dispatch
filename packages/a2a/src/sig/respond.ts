@@ -15,8 +15,19 @@ export async function signResponseFor(
   now = new Date()
 ): Promise<Response> {
   const stream = isEventStream(res.headers);
-  const bytes = stream ? null : new Uint8Array(await res.arrayBuffer());
   const headers = new Headers(res.headers);
+  let bytes: Uint8Array | null = null;
+  if (!stream) {
+    // A string or JSON body's type is only set when sent; set it now so the
+    // signature covers the header the client will see.
+    const blob = await res.blob();
+    bytes = new Uint8Array(await blob.arrayBuffer());
+    if (!headers.has('content-type') && bytes.length > 0)
+      headers.set(
+        'content-type',
+        blob.type === '' ? 'application/octet-stream' : blob.type
+      );
+  }
   const signed = signResponse({
     status: res.status,
     headers,
