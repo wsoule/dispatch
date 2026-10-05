@@ -452,6 +452,18 @@ export async function handleDocsRoute(
     if (head === 'proposals' && rest.length === 2 && method === 'GET') {
       return jsonResponse(docs.proposal(actor, decode(rest[1], 'rev')));
     }
+    // Under the reserved `health` word, so no doc slug can shadow it.
+    if (
+      head === 'health' &&
+      rest.length === 2 &&
+      rest[1] === 'sync-repair' &&
+      method === 'POST'
+    ) {
+      return await write(async () => {
+        const ref = optStr((await body()).ref, 'ref');
+        return jsonResponse(docs.syncRepair(actor, ref));
+      });
+    }
     const ref = decode(head, 'doc');
     if (rest.length === 1) {
       if (method === 'GET') {

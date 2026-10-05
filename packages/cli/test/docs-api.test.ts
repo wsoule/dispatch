@@ -149,6 +149,16 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('asks the daemon to re-read dropped doc ops, for one doc or all', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await api.syncRepair('spec');
+    await api.syncRepair();
+    expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
+      ['POST', '/api/docs/health/sync-repair', '{"ref":"spec"}'],
+      ['POST', '/api/docs/health/sync-repair', '{}'],
+    ]);
+  });
+
   it('shares a doc to Linear', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await api.shareLinear('spec');

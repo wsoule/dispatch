@@ -775,6 +775,19 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
     });
 
   docs
+    .command('sync')
+    .description('Team sync of docs')
+    .command('repair [ref]')
+    .description(
+      "Ask teammates' logs to re-read doc ops dropped here, for one doc or all (decide tier)"
+    )
+    .option(...tokenOpt)
+    .action(async (ref: string | undefined, o: { token?: string }) => {
+      const r = await (await docsClient(ctx, o.token)).syncRepair(ref);
+      ctx.log(`asked teammates' logs to re-read ${r.reread} dropped op(s)`);
+    });
+
+  docs
     .command('share-linear <ref>')
     .description(
       "Make a team doc a Linear document under its task's issue or project (decide tier)"

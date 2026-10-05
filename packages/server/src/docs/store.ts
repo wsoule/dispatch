@@ -977,11 +977,204 @@ export class SqliteDocStore {
     origin: string | null;
     deletedBy: string;
     at: string;
+    hlc?: string | null;
   }): void {
     this.run(
-      'INSERT OR REPLACE INTO tombstones (doc_id, ns, slug, origin, deleted_by, at) VALUES (?, ?, ?, ?, ?, ?)',
-      [t.docId, t.ns, t.slug, t.origin, t.deletedBy, t.at]
+      'INSERT OR REPLACE INTO tombstones (doc_id, ns, slug, origin, deleted_by, at, hlc) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [t.docId, t.ns, t.slug, t.origin, t.deletedBy, t.at, t.hlc ?? null]
     );
+  }
+
+  // ---- team sync (v2) ------------------------------------------------------
+
+  // A tombstone with who removed it and its op clock (null until published).
+  tombstoneFull(docId: string): {
+    docId: string;
+    ns: string;
+    deletedBy: string;
+    at: string;
+    hlc: string | null;
+  } | null {
+    const r = this.one<{
+      doc_id: string;
+      ns: string;
+      deleted_by: string;
+      at: string;
+      hlc: string | null;
+    }>(
+      'SELECT doc_id, ns, deleted_by, at, hlc FROM tombstones WHERE doc_id = ?',
+      [docId]
+    );
+    return r === undefined
+      ? null
+      : {
+          docId: r.doc_id,
+          ns: r.ns,
+          deletedBy: r.deleted_by,
+          at: r.at,
+          hlc: r.hlc,
+        };
+  }
+
+  teamTombstones(): { docId: string; deletedBy: string }[] {
+    return this.all<{ doc_id: string; deleted_by: string }>(
+      "SELECT doc_id, deleted_by FROM tombstones WHERE ns = 'team' ORDER BY at, doc_id"
+    ).map((r) => ({ docId: r.doc_id, deletedBy: r.deleted_by }));
+  }
+
+  setTombstoneHlc(docId: string, hlc: string): void {
+    this.run('UPDATE tombstones SET hlc = ? WHERE doc_id = ?', [hlc, docId]);
+  }
+
+  deleteTombstone(docId: string): void {
+    this.run('DELETE FROM tombstones WHERE doc_id = ?', [docId]);
+  }
+
+  // Every revision of a doc, proposals and held ones included.
+  revisionsOfDoc(docId: string): RevisionMeta[] {
+    return this.all<RawRevision>(
+      `SELECT ${REVISION_COLUMNS} FROM revisions WHERE doc_id = ? ORDER BY rowid`,
+      [docId]
+    ).map(toMeta);
+  }
+
+  provisionalRevisions(): RevisionMeta[] {
+    return this.all<RawRevision>(
+      `SELECT ${REVISION_COLUMNS} FROM revisions WHERE provisional = 1 ORDER BY doc_id, n`
+    ).map(toMeta);
+  }
+
+  // Rewrites a revision row in place (a provisional one confirmed or adopted).
+  replaceRevision(r: RevisionRow): void {
+    this.run(
+      `UPDATE revisions SET parents_json = ?, restored_parents_json = ?, title = ?, body = ?, hash = ?,
+        bytes = ?, author = ?, cause = ?, summary = ?, approval_json = ?, unreviewed = ?, provisional = ?,
+        via = ?, created_at = ? WHERE id = ?`,
+      [
+        JSON.stringify(r.parents),
+        r.restoredParents === null ? null : JSON.stringify(r.restoredParents),
+        r.title,
+        r.body,
+        r.hash,
+        r.bytes,
+        r.author,
+        r.cause,
+        r.summary,
+        r.approval === null ? null : JSON.stringify(r.approval),
+        bit(r.unreviewed),
+        bit(r.provisional),
+        r.via,
+        r.createdAt,
+        r.id,
+      ]
+    );
+  }
+
+  // Sealed, numbered, confirmed team revisions not yet marked published, in
+  // doc and history order.
+  unpublishedTeamRevisions(): RevisionMeta[] {
+    return this.all<RawRevision>(
+      `SELECT ${REVISION_COLUMNS.split(', ')
+        .map((c) => `r.${c}`)
+        .join(', ')} FROM revisions r JOIN docs d ON d.id = r.doc_id
+       LEFT JOIN meta m ON m.key = 'sync:pub:' || r.id
+       WHERE d.ns = 'team' AND r.n IS NOT NULL AND r.sealed = 1 AND r.provisional = 0 AND m.key IS NULL
+       ORDER BY r.doc_id, r.n`
+    ).map(toMeta);
+  }
+
+  reviewsOf(docId: string): { rev: string; by: string }[] {
+    return this.all<{ rev_id: string; by: string }>(
+      'SELECT rev_id, by FROM reviews WHERE doc_id = ? ORDER BY at, rev_id, by',
+      [docId]
+    ).map((r) => ({ rev: r.rev_id, by: r.by }));
+  }
+
+  aliasesOf(docId: string): string[] {
+    return this.all<{ slug: string }>(
+      'SELECT slug FROM slug_aliases WHERE doc_id = ? ORDER BY slug',
+      [docId]
+    ).map((r) => r.slug);
+  }
+
+  // Every team doc's claimed slug and retired slugs, for handles.
+  teamClaims(): { id: string; slug: string; aliases: string[] }[] {
+    return this.all<{ id: string; slug: string }>(
+      "SELECT id, slug FROM docs WHERE ns = 'team' ORDER BY id"
+    ).map((r) => ({ ...r, aliases: this.aliasesOf(r.id) }));
+  }
+
+  setHandle(docId: string, handle: string): void {
+    this.run('UPDATE docs SET handle = ? WHERE id = ?', [handle, docId]);
+  }
+
+  // Per-field op clocks of a doc's synced meta, and the newest revision op's.
+  metaClocks(docId: string): Record<string, string> {
+    const raw = this.one<{ meta_hlc_json: string | null }>(
+      'SELECT meta_hlc_json FROM docs WHERE id = ?',
+      [docId]
+    )?.meta_hlc_json;
+    return raw == null ? {} : (JSON.parse(raw) as Record<string, string>);
+  }
+
+  setMetaClocks(docId: string, clocks: Record<string, string>): void {
+    this.run('UPDATE docs SET meta_hlc_json = ? WHERE id = ?', [
+      JSON.stringify(clocks),
+      docId,
+    ]);
+  }
+
+  addSyncMissing(row: {
+    revId: string;
+    docId: string;
+    replica: string;
+    seq: number;
+    droppedAt: string;
+  }): void {
+    this.run(
+      'INSERT OR IGNORE INTO sync_missing (rev_id, doc_id, replica, seq, dropped_at) VALUES (?, ?, ?, ?, ?)',
+      [row.revId, row.docId, row.replica, row.seq, row.droppedAt]
+    );
+  }
+
+  // Dropped revisions this replica may re-read, one doc's or all, by replica and seq.
+  syncMissing(filter: { docId?: string; revId?: string } = {}): {
+    revId: string;
+    docId: string;
+    replica: string;
+    seq: number;
+    droppedAt: string;
+  }[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (filter.docId !== undefined) {
+      where.push('doc_id = ?');
+      params.push(filter.docId);
+    }
+    if (filter.revId !== undefined) {
+      where.push('rev_id = ?');
+      params.push(filter.revId);
+    }
+    const clause = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`;
+    return this.all<{
+      rev_id: string;
+      doc_id: string;
+      replica: string;
+      seq: number;
+      dropped_at: string;
+    }>(`SELECT * FROM sync_missing${clause} ORDER BY replica, seq`, params).map(
+      (r) => ({
+        revId: r.rev_id,
+        docId: r.doc_id,
+        replica: r.replica,
+        seq: r.seq,
+        droppedAt: r.dropped_at,
+      })
+    );
+  }
+
+  deleteSyncMissing(revId: string): void {
+    this.run('DELETE FROM sync_missing WHERE rev_id = ?', [revId]);
   }
 
   tombstone(
@@ -1447,6 +1640,14 @@ export class SqliteDocStore {
       this.one<{ value: string }>('SELECT value FROM meta WHERE key = ?', [key])
         ?.value ?? null
     );
+  }
+
+  // Meta keys under a prefix, for flags kept per doc.
+  metaKeys(prefix: string): string[] {
+    return this.all<{ key: string }>(
+      "SELECT key FROM meta WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+      [`${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`]
+    ).map((r) => r.key);
   }
 
   deleteMeta(key: string): void {

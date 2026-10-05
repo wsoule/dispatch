@@ -186,6 +186,7 @@ import type { Federation } from './team/federation/daemon.js';
 import {
   buildFederation,
   wireAgentsAndChannels,
+  wireDocSync,
   wireMessagingFederation,
 } from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
@@ -1596,6 +1597,22 @@ async function bootServer(
     })
   );
   messaging.gates.register('doc', docGateHandler(docs.service, docsHost));
+  if (federation !== null && docs.service.available) {
+    const fedService = federation.service;
+    wireDocSync(federation, {
+      docs: docs.service,
+      // A held change from a teammate is approved here only as this
+      // daemon's own doc policy would approve it.
+      policyAllows: (taskId) =>
+        docsHost.rule(
+          taskId === null ? 'elevated' : store.get(taskId)?.meta.risk
+        ).mode === 'auto',
+    });
+    // A team doc change here goes out soon, as a task edit does.
+    docsHost.onChange((change) => {
+      if (change.scope === 'team') fedService.notifyLocalChange();
+    });
+  }
   // Before messaging.recover() too: a replayed wake or dispatch starts runs,
   // and a run with no memory mode would load the host's native Claude memory.
   orchestrator.setMemoryPort(memory);

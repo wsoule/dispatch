@@ -42,6 +42,8 @@ import {
 import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
 import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { compareHlc, parseOpHlc } from '@dispatch/protocol/federation';
+import type { DocBody } from '@dispatch/protocol/federation';
 import { createHash, randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 
@@ -417,6 +419,72 @@ interface DirectCommit {
 }
 
 const problemKey = (docId: string): string => `problem:${docId}`;
+const syncProblemsKey = (docId: string): string => `sync-problems:${docId}`;
+const SYNC_PROBLEMS_KEPT = 20;
+
+/** What `docs sync repair` reaches: the bound team sync handler. */
+export interface SyncRepairPort {
+  repair(docId?: string): { reread: number };
+}
+
+/** A teammate's revision as the sync handler stores it. */
+export interface SyncedRevision {
+  id: string;
+  docId: string;
+  parents: string[];
+  restoredParents: string[] | null;
+  title: string;
+  body: string;
+  hash: string;
+  author: string;
+  cause: RevisionCause;
+  summary: string;
+  createdAt: string;
+  approval: { by: string; policy?: { rung: number } } | null;
+  // Arrived from a publisher that cannot speak for its author.
+  via: string | null;
+  // In history (numbered), or held back out of it.
+  numbered: boolean;
+  // Its text counts as unreviewed whatever its cause.
+  taint: boolean;
+  conflicted: boolean;
+}
+
+/** The meta fields team sync carries, last writer wins per field. */
+export interface SyncMeta {
+  slug: string;
+  aliases: string[];
+  status: DocStatus;
+  links: { target: LinkTarget; rel: LinkRel }[];
+}
+
+/** What this replica knows a teammate's log already holds. */
+export type SyncKnown =
+  | { kind: 'rev'; rev: string }
+  | { kind: 'review'; doc: string; rev: string; by: string }
+  | { kind: 'remove'; doc: string };
+
+function syncKnownKey(k: SyncKnown): string {
+  if (k.kind === 'rev') return `sync:pub:${k.rev}`;
+  if (k.kind === 'remove') return `sync:rm:${k.doc}`;
+  return `sync:rv:${k.doc}:${k.rev}:${k.by}`;
+}
+
+const linksKey = (links: SyncMeta['links']): string =>
+  links
+    .map((l) => `${l.target.type}:${l.target.id}:${l.rel}`)
+    .sort()
+    .join('\n');
+
+/** Whether op clock `a` is later than `b` (or `b` is unset). */
+export function laterClock(a: string, b: string | undefined): boolean {
+  if (b === undefined) return true;
+  const pa = parseOpHlc(a);
+  const pb = parseOpHlc(b);
+  if (pa === null || pb === null) return a > b;
+  const c = compareHlc(pa, pb);
+  return c !== 0 ? c > 0 : pa.replica > pb.replica;
+}
 const heldKey = (docId: string): string => `held:${docId}`;
 const shareClaimKey = (docId: string): string => `linear-share:${docId}`;
 // A share is one Linear call; its claim outlives that call's timeout threefold.
@@ -437,6 +505,9 @@ export class DocsService {
   private notices: DocReadRecorder | null = null;
   // Whether a proposal merges cleanly onto a head, keyed by both bodies' revisions.
   private readonly mergeable = new Map<string, boolean>();
+  // Team sync (v2): the bound handler, and what a sync write queued for after it.
+  private syncPort: SyncRepairPort | null = null;
+  private readonly syncAfter: (() => void)[] = [];
 
   constructor(private readonly deps: DocsServiceDeps) {}
 
@@ -1821,7 +1892,8 @@ export class DocsService {
     if (!open.sealed) this.write(() => this.sealInTx(doc, open));
     const head = this.headOf(doc);
     const prop = store.revision(p.rev);
-    const base = prop === null ? null : store.revision(prop.parents[0]);
+    // A held sync chain's base is below its first held revision (Team sync).
+    const base = prop === null ? null : store.revision(p.base);
     if (prop === null || base === null)
       return fail('the proposal lost its base');
     let body = prop.body;
@@ -1839,8 +1911,12 @@ export class DocsService {
     const at = this.nowIso();
     const approver = policy === null ? by : SYSTEM_ADDRESS;
     this.write(() => {
-      store.setRevisionN(prop.id, store.maxN(doc.id) + 1);
-      store.sealRevision(prop.id);
+      if (p.origin.startsWith('sync:'))
+        for (const id of this.heldChain(prop.id)) this.syncNumber(id);
+      else {
+        store.setRevisionN(prop.id, store.maxN(doc.id) + 1);
+        store.sealRevision(prop.id);
+      }
       const a = this.makeRevision(doc.id, {
         parents: [head.id, prop.id],
         title: prop.title,
@@ -1883,18 +1959,54 @@ export class DocsService {
     return { ok: true };
   }
 
-  // The answer's body is the reason; the author's live run hears it.
+  // The answer's body is the reason; the author's live run hears it. A held
+  // sync change is rejected with a `reject` revision [head, tip] that keeps
+  // this head's body, so it travels and removes the change for everyone.
   rejectProposal(revId: string, by: string, reason: string): void {
     const store = this.store();
     const p = this.proposalRow(revId);
     if (p.state !== 'open') return;
     const doc = store.doc(p.doc);
     this.write(() => {
+      let result: string | null = null;
+      if (doc !== null && p.origin.startsWith('sync:')) {
+        this.sealInTx(doc, this.headOf(doc));
+        const head = this.headOf(doc);
+        const tip = store.revisionMeta(p.rev);
+        for (const id of this.heldChain(p.rev)) this.syncNumber(id);
+        const at = this.nowIso();
+        const r = this.makeRevision(doc.id, {
+          parents: [head.id, p.rev],
+          title: head.title,
+          body: head.body,
+          author: by,
+          cause: 'reject',
+          summary: `rejected: ${tip?.summary ?? p.rev}`,
+          sealed: true,
+          numbered: true,
+          at,
+        });
+        store.insertRevision(r);
+        this.setHead(doc, r, by, at);
+        this.reindex(doc, r);
+        this.rebuildMentions(doc, r);
+        store.putDoc(doc);
+        this.outbox.push({
+          doc: doc.id,
+          scope: doc.scope,
+          kind: 'sealed',
+          author: by,
+          rev: r.id,
+          summary: r.summary,
+        });
+        result = r.id;
+      }
       store.putProposal({
         ...p,
         state: 'rejected',
         reason,
         decidedBy: by,
+        result,
         decidedAt: this.nowIso(),
       });
       if (doc !== null) this.proposalChanged(doc, p, by, 'rejected');
@@ -4758,6 +4870,811 @@ export class DocsService {
       store.deleteImportSession(id);
     store.setMeta('sweep:last', now.toISOString());
     return { sealed, reindexed };
+  }
+
+  // ---- team sync (v2) -------------------------------------------------------
+  // Primitives the federation `doc` handler (ELv2, team/federation/docs.ts)
+  // writes through; it owns the rules, these own docs.db.
+
+  /** Binds the team sync handler, or unbinds it with null. */
+  bindSync(port: SyncRepairPort | null): void {
+    this.syncPort = port;
+  }
+
+  /** Asks teammates' logs again for revisions retention dropped here. */
+  syncRepair(actor: DocsActor, ref?: string): { reread: number } {
+    if (!actor.decider)
+      throw forbidden('only a decide-tier human repairs team sync');
+    const docId = ref === undefined ? undefined : this.resolve(actor, ref).id;
+    if (this.syncPort === null)
+      throw new DocsError('conflict', 'team sync is not on');
+    return this.syncPort.repair(docId);
+  }
+
+  /** The doc's team sync problems, oldest first. */
+  syncProblems(docId: string): string[] {
+    const raw = this.store().meta(syncProblemsKey(docId));
+    return raw === null ? [] : (JSON.parse(raw) as string[]);
+  }
+
+  /** Runs `fn` as one docs.db write, then what it queued for after. */
+  syncWrite<T>(fn: () => T): T {
+    const out = this.write(fn);
+    for (const after of this.syncAfter.splice(0)) {
+      try {
+        after();
+      } catch (err) {
+        console.error('docs: a team sync follow-up failed', err);
+      }
+    }
+    return out;
+  }
+
+  syncDoc(id: string): DocRow | null {
+    return this.store().doc(id);
+  }
+
+  syncTombstone(id: string): { hlc: string | null; at: string } | null {
+    return this.store().tombstoneFull(id);
+  }
+
+  syncRevision(id: string): RevisionRow | null {
+    return this.store().revision(id);
+  }
+
+  syncRevisions(docId: string): RevisionMeta[] {
+    return this.store().revisionsOfDoc(docId);
+  }
+
+  // Grounded: stored, confirmed, and every parent grounded (Team sync).
+  syncGrounded(revId: string, memo = new Map<string, boolean>()): boolean {
+    const store = this.store();
+    const stack = [revId];
+    while (stack.length > 0) {
+      const id = stack[stack.length - 1];
+      if (memo.has(id)) {
+        stack.pop();
+        continue;
+      }
+      const meta = store.revisionMeta(id);
+      if (meta === null || meta.provisional) {
+        memo.set(id, false);
+        stack.pop();
+        continue;
+      }
+      const open = meta.parents.filter((p) => !memo.has(p));
+      if (open.length > 0) {
+        stack.push(...open);
+        continue;
+      }
+      memo.set(
+        id,
+        meta.parents.every((p) => memo.get(p) === true)
+      );
+      stack.pop();
+    }
+    return memo.get(revId) === true;
+  }
+
+  /** A team doc a teammate's root revision brings; its head is set after. */
+  syncCreateDoc(input: {
+    id: string;
+    slug: string;
+    title: string;
+    by: string;
+    at: string;
+  }): DocRow {
+    const store = this.store();
+    store.deleteTombstone(input.id);
+    const doc: DocRow = {
+      id: input.id,
+      ns: 'team',
+      slug: input.slug,
+      handle: `~sync-${input.id}`,
+      title: input.title,
+      scope: 'team',
+      ownerIdentity: null,
+      ownerHuman: null,
+      status: 'draft',
+      archivedFrom: null,
+      restoredStatus: null,
+      restoredAt: null,
+      headId: '',
+      reviewedRev: null,
+      unreviewed: false,
+      conflicted: false,
+      origin: null,
+      publishedPath: null,
+      publishedRev: null,
+      publishedTask: null,
+      publishedCommit: null,
+      createdBy: input.by,
+      createdAt: input.at,
+      updatedBy: input.by,
+      updatedAt: input.at,
+      indexedHash: null,
+    };
+    store.putDoc(doc);
+    this.outbox.push({
+      doc: doc.id,
+      scope: 'team',
+      kind: 'created',
+      author: input.by,
+      rev: null,
+      summary: 'created by a teammate',
+    });
+    return doc;
+  }
+
+  /** Stores a teammate's revision, its flag computed as a local one is. */
+  syncInsertRevision(input: SyncedRevision): RevisionRow {
+    const store = this.store();
+    const rev: RevisionRow = {
+      id: input.id,
+      docId: input.docId,
+      n: input.numbered ? store.maxN(input.docId) + 1 : null,
+      parents: input.parents,
+      restoredParents: input.restoredParents,
+      title: input.title,
+      body: input.body,
+      hash: input.hash,
+      bytes: utf8Bytes(input.body),
+      author: input.author,
+      cause: input.cause,
+      summary: cutUtf8(input.summary, DOCS_LIMITS.summaryBytes),
+      approval: input.approval,
+      conflicted: input.conflicted,
+      sealed: true,
+      unreviewed: this.syncUnreviewed(input),
+      provisional: false,
+      via: input.via,
+      createdAt: input.createdAt,
+      updatedAt: input.createdAt,
+    };
+    store.insertRevision(rev);
+    store.deleteSyncMissing(rev.id);
+    return rev;
+  }
+
+  private syncUnreviewed(input: SyncedRevision): boolean {
+    const store = this.store();
+    const state = (id: string) => {
+      const meta = store.revisionMeta(id);
+      return meta === null
+        ? { unreviewed: false, reviewed: false }
+        : { unreviewed: meta.unreviewed, reviewed: store.hasReview(id) };
+    };
+    return (
+      input.taint ||
+      unreviewedAtCreation({
+        author: input.author,
+        cause: input.cause,
+        approval: input.approval,
+        unverifiedVia: input.via !== null,
+        parents: input.parents.map(state),
+      })
+    );
+  }
+
+  /** A provisional revision confirmed by the signed one: whether the bodies differed. */
+  syncConfirmProvisional(input: SyncedRevision): boolean {
+    const store = this.store();
+    const held = store.revision(input.id);
+    if (held === null) return false;
+    store.replaceRevision({
+      ...held,
+      parents: input.parents,
+      restoredParents: null,
+      title: input.title,
+      body: input.body,
+      hash: input.hash,
+      bytes: utf8Bytes(input.body),
+      author: input.author,
+      cause: input.cause,
+      summary: cutUtf8(input.summary, DOCS_LIMITS.summaryBytes),
+      approval: input.approval,
+      unreviewed: this.syncUnreviewed(input),
+      provisional: false,
+      via: input.via,
+      createdAt: input.createdAt,
+    });
+    store.deleteSyncMissing(input.id);
+    const doc = store.doc(held.docId);
+    if (doc !== null && doc.headId === held.id) {
+      const fresh = this.headOf(doc);
+      this.setHead(doc, fresh, input.author, this.nowIso());
+      this.reindex(doc, fresh);
+      this.rebuildMentions(doc, fresh);
+      store.putDoc(doc);
+    }
+    return held.hash !== input.hash;
+  }
+
+  /** Gives a revision held out of history its place in it. */
+  syncNumber(revId: string): void {
+    const store = this.store();
+    const meta = store.revisionMeta(revId);
+    if (meta === null || meta.n !== null) return;
+    store.setRevisionN(revId, store.maxN(meta.docId) + 1);
+    store.sealRevision(revId);
+  }
+
+  /** Seals a doc's open head, so a fold may read it and it may travel. */
+  syncSealOpenHead(docId: string): void {
+    const doc = this.store().doc(docId);
+    if (doc === null || doc.headId === '') return;
+    const head = this.store().revisionMeta(doc.headId);
+    if (head !== null && !head.sealed) this.sealInTx(doc, head);
+  }
+
+  /** Points a doc at a new head, rebuilding what a sealed head derives. */
+  syncSetHead(docId: string, revId: string): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    const rev = store.revision(revId);
+    if (doc === null || rev === null || doc.headId === revId) return;
+    const at = this.nowIso();
+    this.setHead(doc, rev, rev.author, at);
+    this.reindex(doc, rev);
+    this.rebuildMentions(doc, rev);
+    store.putDoc(doc);
+    this.outbox.push({
+      doc: doc.id,
+      scope: doc.scope,
+      kind: 'sealed',
+      author: rev.author,
+      rev: rev.id,
+      summary: rev.summary,
+    });
+  }
+
+  /** A doc's synced meta as this replica holds it. */
+  syncMetaOf(docId: string): SyncMeta | null {
+    const store = this.store();
+    const doc = store.doc(docId);
+    if (doc === null) return null;
+    return {
+      slug: doc.slug,
+      aliases: store.aliasesOf(docId),
+      status: doc.status,
+      links: store
+        .links({ docId })
+        .filter((l) => l.source === 'manual')
+        .map((l) => ({
+          target: { type: l.targetType, id: l.targetId },
+          rel: l.rel,
+        })),
+    };
+  }
+
+  syncMetaClocks(docId: string): Record<string, string> {
+    return this.store().metaClocks(docId);
+  }
+
+  syncSetMetaClocks(docId: string, clocks: Record<string, string>): void {
+    this.store().setMetaClocks(docId, clocks);
+  }
+
+  /** Applies meta fields a teammate's op won, as its `by`. */
+  syncApplyMeta(docId: string, fields: Partial<SyncMeta>, by: string): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    if (doc === null) return;
+    const at = this.nowIso();
+    if (fields.slug !== undefined && fields.slug !== doc.slug) {
+      doc.slug = fields.slug;
+      store.putDoc(doc);
+    }
+    for (const alias of fields.aliases ?? [])
+      if (alias !== doc.slug) store.addAlias(doc.ns, alias, doc.id, at);
+    if (fields.links !== undefined) {
+      const keep = new Set(
+        fields.links.map((l) => `${l.target.type}:${l.target.id}`)
+      );
+      for (const l of store.links({ docId }))
+        if (l.source === 'manual' && !keep.has(`${l.targetType}:${l.targetId}`))
+          store.removeLink(docId, l.targetType, l.targetId);
+      for (const l of fields.links)
+        store.addLink({
+          docId,
+          docNs: doc.ns,
+          targetType: l.target.type,
+          targetId: l.target.id,
+          rel: l.rel,
+          source: 'manual',
+          createdBy: by,
+          createdAt: at,
+        });
+    }
+    if (fields.status !== undefined && fields.status !== doc.status) {
+      const leaving = doc.status === 'accepted';
+      this.sealInTx(doc, this.headOf(doc));
+      if (fields.status === 'archived') {
+        doc.archivedFrom = doc.status === 'accepted' ? 'accepted' : 'draft';
+        doc.status = 'archived';
+      } else {
+        doc.status = fields.status;
+        doc.archivedFrom = null;
+      }
+      if (fields.status === 'accepted') {
+        doc.restoredStatus = null;
+        doc.restoredAt = null;
+      }
+      if (leaving) {
+        const reason =
+          fields.status === 'archived' ? 'the doc was archived' : REOPENED;
+        const withdrawn = store
+          .proposalRows({ doc: docId, states: ['open'] })
+          .filter((p) => !p.origin.startsWith('sync:'));
+        for (const p of withdrawn)
+          store.putProposal({
+            ...p,
+            state: 'withdrawn',
+            reason,
+            decidedAt: at,
+          });
+        this.syncAfter.push(() => this.afterWithdraw(withdrawn, doc, reason));
+      }
+    }
+    doc.updatedBy = by;
+    doc.updatedAt = at;
+    store.putDoc(doc);
+    this.outbox.push({
+      doc: doc.id,
+      scope: doc.scope,
+      kind: 'meta',
+      author: by,
+      rev: null,
+      summary: 'changed by a teammate',
+    });
+  }
+
+  /** Every team doc's claimed slug, for handles. */
+  syncClaims(): { id: string; slug: string; aliases: string[] }[] {
+    return this.store().teamClaims();
+  }
+
+  /** Sets handles in two steps, so no swap trips the uniqueness rule. */
+  syncSetHandles(handles: ReadonlyMap<string, string>): void {
+    const store = this.store();
+    const changed = [...handles].filter(
+      ([id, handle]) => store.doc(id)?.handle !== handle
+    );
+    for (const [id] of changed) store.setHandle(id, `~sync-${id}`);
+    for (const [id, handle] of changed) store.setHandle(id, handle);
+  }
+
+  /** A human's review of a revision, from a teammate's replica. */
+  syncReview(docId: string, revId: string, by: string): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    if (doc === null) return;
+    store.addReview(docId, revId, by, this.nowIso());
+    if (doc.headId === revId) {
+      doc.unreviewed = false;
+      doc.reviewedRev = revId;
+      store.putDoc(doc);
+    }
+  }
+
+  /** A teammate's removal: the doc's rows go and a tombstone keeps its clock. */
+  syncRemove(docId: string, by: string, hlc: string): void {
+    const store = this.store();
+    const doc = store.doc(docId);
+    const at = this.nowIso();
+    if (doc === null) {
+      if (store.tombstoneFull(docId) === null)
+        store.putTombstone({
+          docId,
+          ns: 'team',
+          slug: '',
+          origin: null,
+          deletedBy: by,
+          at,
+          hlc,
+        });
+      return;
+    }
+    const reason = 'the doc was deleted';
+    const withdrawn = store.proposalRows({ doc: docId, states: ['open'] });
+    for (const p of withdrawn)
+      store.putProposal({ ...p, state: 'withdrawn', reason, decidedAt: at });
+    this.syncAfter.push(() => this.afterWithdraw(withdrawn, doc, reason));
+    store.putTombstone({
+      docId,
+      ns: doc.ns,
+      slug: doc.handle,
+      origin: doc.origin,
+      deletedBy: by,
+      at,
+      hlc,
+    });
+    store.deleteDoc(docId);
+    this.outbox.push({
+      doc: docId,
+      scope: doc.scope,
+      kind: 'deleted',
+      author: by,
+      rev: null,
+      summary: 'deleted by a teammate',
+    });
+  }
+
+  /** Records a team sync problem on the doc; the newest 20 are kept. */
+  syncProblem(docId: string, detail: string): void {
+    const store = this.store();
+    const list = [...this.syncProblems(docId), cutUtf8(detail, 500)].slice(
+      -SYNC_PROBLEMS_KEPT
+    );
+    store.setMeta(syncProblemsKey(docId), JSON.stringify(list));
+    const doc = store.doc(docId);
+    if (doc !== null)
+      this.outbox.push({
+        doc: docId,
+        scope: doc.scope,
+        kind: 'meta',
+        author: SYSTEM_ADDRESS,
+        rev: null,
+        summary: 'sync problem',
+      });
+  }
+
+  /** The held-back revisions of a doc: every open sync proposal's chain. */
+  syncHeld(docId: string): Set<string> {
+    const store = this.store();
+    const held = new Set<string>();
+    for (const p of store.proposalRows({ doc: docId, states: ['open'] })) {
+      if (!p.origin.startsWith('sync:')) continue;
+      for (const id of this.heldChain(p.rev)) held.add(id);
+    }
+    return held;
+  }
+
+  // A held tip and the held revisions below it: unnumbered, parents first.
+  private heldChain(tip: string): string[] {
+    const store = this.store();
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const visit = (id: string): void => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      const meta = store.revisionMeta(id);
+      if (meta === null || meta.n !== null) return;
+      for (const p of meta.parents) visit(p);
+      out.push(id);
+    };
+    visit(tip);
+    return out;
+  }
+
+  /** Holds a teammate's revision out of the head as (or onto) one open sync proposal. */
+  syncHold(input: {
+    docId: string;
+    tip: string;
+    replica: string;
+    task: string | null;
+  }): void {
+    const store = this.store();
+    const doc = store.doc(input.docId);
+    const tip = store.revisionMeta(input.tip);
+    if (doc === null || tip === null) return;
+    const at = this.nowIso();
+    const open = store
+      .proposalRows({ doc: doc.id, states: ['open'] })
+      .filter((p) => p.origin.startsWith('sync:'));
+    const chain = this.heldChain(tip.id);
+    // A later held revision on an open proposal's tip takes its place.
+    const extended = open.find(
+      (p) => chain.includes(p.rev) && p.rev !== tip.id
+    );
+    if (extended !== undefined) {
+      store.putProposal({
+        ...extended,
+        state: 'withdrawn',
+        reason: 'a later held change replaced it',
+        decidedAt: at,
+      });
+      if (extended.gate !== null) {
+        const gate = extended.gate;
+        this.syncAfter.push(() =>
+          this.closeGateQuietly(gate, 'a later held change replaced it')
+        );
+      }
+    }
+    let base = chain[0];
+    for (
+      let meta = store.revisionMeta(base);
+      meta !== null && meta.n === null;
+    ) {
+      base = meta.parents[0] ?? base;
+      const next = store.revisionMeta(base);
+      if (next === null || next.n !== null) break;
+      meta = next;
+    }
+    const p: DocProposal = {
+      rev: tip.id,
+      doc: doc.id,
+      base,
+      author: tip.author,
+      operator: null,
+      runId: null,
+      taskId: input.task,
+      origin: `sync:${input.replica}`,
+      gate: null,
+      state: 'open',
+      decidedBy: null,
+      decidedByPolicy: null,
+      reason: null,
+      result: null,
+      createdAt: at,
+      decidedAt: null,
+    };
+    store.putProposal(p);
+    this.proposalChanged(doc, p, tip.author, 'opened');
+    this.syncAfter.push(() => this.gateSyncProposal(p));
+  }
+
+  // Gated here as a local proposal is: this replica's policy may approve it.
+  private gateSyncProposal(p: DocProposal): void {
+    const task = p.taskId === null ? null : this.host.task(p.taskId);
+    const ruling = this.host.rule(task === null ? 'elevated' : task.risk);
+    if (ruling.mode === 'auto') {
+      const out = this.approveProposal(p.rev, SYSTEM_ADDRESS, {
+        rung: ruling.rung,
+        authorizedBy: ruling.authorizedBy,
+      });
+      if (out.ok) {
+        this.recordPolicyApproval(p.rev, ruling);
+        return;
+      }
+    }
+    void this.ensureGate(p.rev);
+  }
+
+  /** Lets held revisions join the history: a decision elsewhere covered them,
+   *  or the doc is no longer accepted here. */
+  syncRelease(docId: string, reason: string): void {
+    const store = this.store();
+    const at = this.nowIso();
+    for (const p of store.proposalRows({ doc: docId, states: ['open'] })) {
+      if (!p.origin.startsWith('sync:')) continue;
+      for (const id of this.heldChain(p.rev)) this.syncNumber(id);
+      store.putProposal({ ...p, state: 'withdrawn', reason, decidedAt: at });
+      if (p.gate !== null) {
+        const gate = p.gate;
+        this.syncAfter.push(() => this.closeGateQuietly(gate, reason));
+      }
+    }
+  }
+
+  /** Docs whose heads wait for the end-of-pass fold. */
+  syncFoldDue(): string[] {
+    return this.store()
+      .metaKeys('sync:fold:')
+      .map((k) => k.slice('sync:fold:'.length));
+  }
+
+  syncSetFoldDue(docId: string, due: boolean): void {
+    if (due) this.store().setMeta(`sync:fold:${docId}`, '1');
+    else this.store().deleteMeta(`sync:fold:${docId}`);
+  }
+
+  /** Marks revisions a teammate published as known there. */
+  syncMarkKnown(key: SyncKnown): void {
+    this.store().setMeta(syncKnownKey(key), '1');
+  }
+
+  syncKnown(key: SyncKnown): boolean {
+    return this.store().meta(syncKnownKey(key)) !== null;
+  }
+
+  /** The meta last published for a doc (null before its first op). */
+  syncSnapshot(docId: string): SyncMeta | null {
+    const raw = this.store().meta(`sync:meta:${docId}`);
+    return raw === null ? null : (JSON.parse(raw) as SyncMeta);
+  }
+
+  syncSetSnapshot(docId: string, fields: Partial<SyncMeta>): void {
+    const base = this.syncSnapshot(docId) ?? {
+      slug: '',
+      aliases: [],
+      status: 'draft',
+      links: [],
+    };
+    this.store().setMeta(
+      `sync:meta:${docId}`,
+      JSON.stringify({ ...base, ...fields })
+    );
+  }
+
+  recordSyncMissing(row: {
+    revId: string;
+    docId: string;
+    replica: string;
+    seq: number;
+  }): void {
+    this.store().addSyncMissing({ ...row, droppedAt: this.nowIso() });
+  }
+
+  syncMissingRows(filter: { docId?: string; revId?: string } = {}): {
+    revId: string;
+    docId: string;
+    replica: string;
+    seq: number;
+    droppedAt: string;
+  }[] {
+    return this.store().syncMissing(filter);
+  }
+
+  /** What travels this pass: confirmed revisions parents first, then meta
+   *  changes, reviews and removals of team docs (Team sync). */
+  pendingSync(): DocBody[] {
+    if (!this.available) return [];
+    const store = this.store();
+    const out: DocBody[] = [];
+    const memo = new Map<string, boolean>();
+    const rooted = new Set<string>();
+    for (const meta of store.unpublishedTeamRevisions()) {
+      if (!this.syncGrounded(meta.id, memo)) continue;
+      const rev = store.revision(meta.id);
+      const doc = store.doc(meta.docId);
+      if (rev === null || doc === null) continue;
+      const first = this.syncSnapshot(doc.id) === null && !rooted.has(doc.id);
+      if (first) rooted.add(doc.id);
+      const task =
+        rev.cause === 'approve'
+          ? (store
+              .proposalRows({ doc: doc.id })
+              .find((p) => p.result === rev.id)?.taskId ?? null)
+          : null;
+      out.push({
+        doc: doc.id,
+        kind: 'put',
+        by: rev.author,
+        revision: {
+          id: rev.id,
+          parents: rev.parents,
+          title: rev.title,
+          body: rev.body,
+          hash: rev.hash,
+          author: rev.author,
+          cause: rev.cause,
+          summary: rev.summary,
+          createdAt: rev.createdAt,
+          ...(rev.approval === null
+            ? {}
+            : {
+                approval: rev.approval as NonNullable<
+                  NonNullable<DocBody['revision']>['approval']
+                >,
+              }),
+          ...(task === null ? {} : { task }),
+        },
+        ...(first
+          ? {
+              meta: {
+                slug: doc.slug,
+                title: doc.title,
+                aliases: store.aliasesOf(doc.id),
+                ...(doc.status === 'draft' ? { status: doc.status } : {}),
+              },
+            }
+          : {}),
+      });
+    }
+    const { rows } = store.listDocs({
+      ns: ['team'],
+      statuses: DOC_STATUSES,
+      limit: Number.MAX_SAFE_INTEGER,
+      offset: 0,
+    });
+    for (const doc of rows) {
+      const snap = this.syncSnapshot(doc.id);
+      if (snap === null) continue;
+      const now = this.syncMetaOf(doc.id);
+      if (now === null) continue;
+      const meta: NonNullable<DocBody['meta']> = {};
+      if (now.slug !== snap.slug) meta.slug = now.slug;
+      if (now.aliases.some((a) => !snap.aliases.includes(a)))
+        meta.aliases = now.aliases;
+      if (now.status !== snap.status) meta.status = now.status;
+      if (linksKey(now.links) !== linksKey(snap.links)) meta.links = now.links;
+      const by = doc.updatedBy.startsWith('human:')
+        ? doc.updatedBy
+        : this.deps.ownerRef;
+      if (Object.keys(meta).length > 0)
+        out.push({ doc: doc.id, kind: 'put', by, meta });
+      for (const r of store.reviewsOf(doc.id)) {
+        if (!r.by.startsWith('human:')) continue;
+        const key: SyncKnown = {
+          kind: 'review',
+          doc: doc.id,
+          rev: r.rev,
+          by: r.by,
+        };
+        if (this.syncKnown(key)) continue;
+        if (store.revisionMeta(r.rev)?.n == null) continue;
+        out.push({
+          doc: doc.id,
+          kind: 'put',
+          by: r.by,
+          review: { rev: r.rev },
+        });
+      }
+    }
+    for (const t of store.teamTombstones()) {
+      if (this.syncSnapshot(t.docId) === null) continue;
+      if (this.syncKnown({ kind: 'remove', doc: t.docId })) continue;
+      out.push({
+        doc: t.docId,
+        kind: 'remove',
+        by: t.deletedBy.startsWith('human:') ? t.deletedBy : this.deps.ownerRef,
+      });
+    }
+    return out;
+  }
+
+  /** After DocSync signed them: each body is known to the team, at its clock. */
+  markSynced(bodies: readonly DocBody[], stamps: readonly string[] = []): void {
+    this.syncWrite(() => {
+      const store = this.store();
+      bodies.forEach((body, i) => {
+        const hlc =
+          stamps[i] === undefined || stamps[i] === '' ? null : stamps[i];
+        if (body.kind === 'remove') {
+          this.syncMarkKnown({ kind: 'remove', doc: body.doc });
+          if (hlc !== null) store.setTombstoneHlc(body.doc, hlc);
+          return;
+        }
+        const clocks =
+          store.doc(body.doc) === null ? null : store.metaClocks(body.doc);
+        if (body.revision !== undefined) {
+          this.syncMarkKnown({ kind: 'rev', rev: body.revision.id });
+          if (clocks !== null && hlc !== null && laterClock(hlc, clocks.rev))
+            clocks.rev = hlc;
+        }
+        if (body.meta !== undefined) {
+          const { title: _title, ...fields } = body.meta;
+          this.syncSetSnapshot(body.doc, fields as Partial<SyncMeta>);
+          if (clocks !== null && hlc !== null)
+            for (const field of Object.keys(fields)) clocks[field] = hlc;
+        }
+        if (body.review !== undefined)
+          this.syncMarkKnown({
+            kind: 'review',
+            doc: body.doc,
+            rev: body.review.rev,
+            by: body.by,
+          });
+        if (clocks !== null) store.setMetaClocks(body.doc, clocks);
+      });
+    });
+  }
+
+  /** After a complete pass: restored revisions no replica confirmed keep
+   *  their place, dropping parents nobody supplied (Team sync). */
+  adoptProvisional(): string[] {
+    if (!this.available) return [];
+    const store = this.store();
+    const docs = new Set<string>();
+    this.syncWrite(() => {
+      for (const meta of store.provisionalRevisions()) {
+        const rev = store.revision(meta.id);
+        if (rev === null) continue;
+        const present = rev.parents.filter(
+          (p) => store.revisionMeta(p) !== null
+        );
+        const missing = rev.parents.filter((p) => !present.includes(p));
+        store.replaceRevision({
+          ...rev,
+          parents: present,
+          restoredParents: missing.length === 0 ? null : missing,
+          provisional: false,
+        });
+        docs.add(rev.docId);
+      }
+    });
+    return [...docs];
   }
 
   close(): void {
