@@ -57,6 +57,33 @@ describe('docBuffer', () => {
     expect(b.buffer.status).toBe('clean');
   });
 
+  it('a proposed save keeps the head as its base and names the proposal', () => {
+    const b = docSaveSucceeded(
+      sent('a\nb\n'),
+      {
+        ...result('proposed', { id: 'rev-p', n: 0, hash: 'hp' }),
+        rev: { id: 'rev-p', n: null, hash: 'hp' },
+        proposal: 'rev-p',
+      },
+      null
+    );
+    // The head did not move, so the next save amends the same proposal.
+    expect(b.base).toEqual(BASE);
+    expect(b.proposal).toBe('rev-p');
+    expect(b.buffer.status).toBe('clean');
+    expect(b.buffer.text).toBe('a\nb\n');
+    // A refresh of the unchanged head keeps the proposed text in the editor.
+    expect(
+      reloadIfClean(b, { rev: { ...BASE, id: 'rev-1' }, text: 'a\n' })
+    ).toBe(b);
+    // An approved proposal moves the head; the reload drops the proposal.
+    const moved = reloadIfClean(b, {
+      rev: { id: 'rev-2', n: 2, hash: 'h3' },
+      text: 'a\nb\n',
+    });
+    expect(moved.proposal).toBeNull();
+  });
+
   it('review focus 1: keeps typing that raced a save, and saves it next', () => {
     let b = sent('a\nb\n');
     b = editDocBuffer(b, 'a\nb\nc\n');

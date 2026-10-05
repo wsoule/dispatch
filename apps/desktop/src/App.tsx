@@ -1561,6 +1561,7 @@ function App() {
                                       onSelectDoc={(docId) =>
                                         openDoc(docId, null)
                                       }
+                                      onOpenRef={openRef}
                                     />
                                   )}
                                   {navState.projectView === 'memory' && (

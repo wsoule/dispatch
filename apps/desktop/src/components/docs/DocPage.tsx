@@ -9,6 +9,7 @@ import {
   useOpenDocProposals,
 } from '../../hooks/useDocs';
 import { describeError } from '../../lib/actionFeedback';
+import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { DocBuffer } from '../../lib/docBuffer';
 import {
   autosaveDelay,
@@ -33,11 +34,14 @@ import {
   revisionsSinceReview,
   sameRevisions,
 } from '../../lib/docs';
+import { openGatesKey } from '../../lib/gates';
 import { relativeTime } from '../../lib/landingView';
 import { parseMarked } from '../../lib/mergeLayout';
+import type { RefAction } from '../../lib/threadSources';
 import { DiffSurface } from '../code/DiffSurface';
 import { AssetImage } from './AssetImage';
 import { DocEditor } from './DocEditor';
+import { DocGateCard } from './DocGateCard';
 import { DocHistory } from './DocHistory';
 import { DocLinksRail } from './DocLinksRail';
 import { DocMergeView } from './DocMergeView';
@@ -55,7 +59,20 @@ interface DocPageProps {
   mergeProposal?: string | null;
   /** Opens another doc (the team copy a promote makes). */
   onOpenDoc?: (id: string) => void;
+  /** Opens a linked target, as a thread's ref chip would. */
+  onOpenRef?: (action: RefAction) => void;
+  /** A run's task, so a run link opens on its task page. */
+  taskIdOfRun?: (runId: string) => string | null;
+  /** Lets the proposals banner decide gates in place; without it the
+   *  banner only lists them. */
+  gates?: {
+    availability: DecideAvailability;
+    onRestartDaemon: () => Promise<void>;
+  };
 }
+
+// The reject reason when a conflict was resolved in the doc itself.
+const RESOLVED_IN_DOC = 'resolved in the doc';
 
 // The most saves one flush sends; a 409 on the way marks the text against the
 // new head, which then goes out again.
@@ -79,6 +96,9 @@ export function DocPage({
   anchor = null,
   mergeProposal = null,
   onOpenDoc,
+  onOpenRef,
+  taskIdOfRun,
+  gates,
 }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
@@ -105,6 +125,9 @@ export function DocPage({
   // so a newer head goes through the server's merge or 409 instead of being overwritten.
   const [mergeBase, setMergeBase] = useState<DocBuffer['base'] | null>(null);
   const [mergeNote, setMergeNote] = useState<string | null>(null);
+  // The proposal whose conflict the merge view resolved: its gate offers
+  // Reject as resolved in the banner.
+  const [resolved, setResolved] = useState<string | null>(null);
   const proposalMerge = useQuery({
     queryKey: [...docsKey(port), 'proposal', mergeProposal],
     enabled: mergeProposal !== null,
@@ -252,6 +275,15 @@ export function DocPage({
     );
   };
 
+  // Answers a proposal's gate from the banner, then refreshes the open gates.
+  const answerGate = (gate: string, choice: string, body: string): void =>
+    act(async () => {
+      await client.replyToMessage(gate, { body, choice });
+      setResolved(null);
+      setMergeNote(null);
+      await queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
+    });
+
   const text = buf?.buffer.text ?? '';
   const marked = useMemo(
     () => parseMarked(text).some((p) => p.kind === 'conflict'),
@@ -285,6 +317,7 @@ export function DocPage({
     update((b) => editDocBuffer(base === null ? b : { ...b, base }, resolved));
     setPanel('editor');
     if (mergeText !== null) {
+      setResolved(proposalMerge.data?.proposal.rev ?? mergeProposal);
       setMergeText(null);
       setMergeBase(null);
       setMergeNote(
@@ -511,14 +544,56 @@ export function DocPage({
           ))}
       </header>
       {doc.status === 'accepted' && proposals.length > 0 && (
-        <div className="flex flex-col gap-0.5 border-b border-[var(--color-border)] px-3 py-1 text-xs">
+        <div
+          data-testid="doc-proposals"
+          className="flex max-h-[50vh] flex-col gap-0.5 overflow-auto border-b border-[var(--color-border)] px-3 py-1 text-xs"
+        >
           <p>Open proposals, each waiting on its gate in Needs you:</p>
-          <ul>
-            {proposals.map((p) => (
-              <li
-                key={p.rev}
-              >{`${p.rev} · ${p.author} · ${relativeTime(p.createdAt, Date.now())}`}</li>
-            ))}
+          <ul className="flex flex-col gap-2">
+            {proposals.map((p) => {
+              const gate = canDecide ? p.gate : null;
+              return (
+                <li key={p.rev} className="flex flex-col gap-1">
+                  <span>{`${p.rev} · ${p.author} · ${relativeTime(p.createdAt, Date.now())}`}</span>
+                  {gate !== null && p.rev === resolved && (
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      className="self-start"
+                      data-testid="reject-as-resolved"
+                      onClick={() =>
+                        answerGate(gate, 'reject', RESOLVED_IN_DOC)
+                      }
+                    >
+                      Reject as resolved
+                    </Button>
+                  )}
+                  {gate !== null && gates !== undefined && (
+                    <DocGateCard
+                      doc={doc.id}
+                      proposal={p.rev}
+                      client={client}
+                      port={port}
+                      availability={gates.availability}
+                      onRestartDaemon={gates.onRestartDaemon}
+                      onDecide={async (choice, body) => {
+                        await client.replyToMessage(gate, { body, choice });
+                        setResolved(null);
+                        await queryClient.invalidateQueries({
+                          queryKey: docsKey(port),
+                        });
+                        await queryClient.invalidateQueries({
+                          queryKey: openGatesKey(port),
+                        });
+                      }}
+                      onOpenDoc={(docId, merge) =>
+                        onOpenRef?.({ kind: 'doc', docId, anchor: null, merge })
+                      }
+                    />
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -686,7 +761,11 @@ export function DocPage({
             />
           </div>
         </main>
-        <DocLinksRail links={read.links} />
+        <DocLinksRail
+          links={read.links}
+          onOpen={onOpenRef}
+          taskIdOfRun={taskIdOfRun}
+        />
       </div>
     </div>
   );

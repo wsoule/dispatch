@@ -110,6 +110,7 @@ export function docStatusLine(b: DocBuffer | null): string {
   if (b.buffer.status === 'saving') return 'Saving…';
   if (b.buffer.status === 'dirty') return 'Unsaved';
   if (b.buffer.status === 'error') return b.buffer.error ?? 'Save failed';
+  if (b.proposal !== null) return 'Proposed · waiting on review';
   return b.base.n === null ? 'Saved' : `Saved · rev ${b.base.n}`;
 }
 

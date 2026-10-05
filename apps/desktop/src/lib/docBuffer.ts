@@ -30,6 +30,9 @@ export interface DocBuffer {
   failures: number;
   // The daemon refused the last save (a 4xx); autosave waits for the next keystroke.
   refused: boolean;
+  // The open proposal the saved text went to (an accepted doc's edit
+  // awaiting review); null once the head holds the text.
+  proposal: string | null;
 }
 
 // The marker lines a 409's text carries (Merge's labels), which hold autosave
@@ -57,6 +60,7 @@ export function openDocBuffer(
     conflict: null,
     failures: 0,
     refused: false,
+    proposal: null,
   };
 }
 
@@ -122,6 +126,17 @@ export function docSaveSucceeded(
   headBody: string | null
 ): DocBuffer {
   const typedSince = b.buffer.text !== b.buffer.inFlightText;
+  // The text went to a proposal, not the head: the base stays, so the next
+  // save amends the same proposal.
+  if (result.status === 'proposed') {
+    return {
+      ...b,
+      buffer: saveSucceeded(b.buffer),
+      conflict: bannerIfMarked(b, b.buffer.text),
+      failures: 0,
+      proposal: result.proposal ?? result.rev.id,
+    };
+  }
   if (result.status === 'merged') {
     if (!typedSince && headBody !== null) {
       return {
@@ -184,6 +199,7 @@ export function docSaveConflicted(
       text === head.body ? null : { headN: head.n, headAuthor: head.author },
     failures: 0,
     refused: false,
+    proposal: null,
   };
 }
 
