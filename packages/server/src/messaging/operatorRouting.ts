@@ -17,6 +17,9 @@ interface GateRoute {
 export interface OperatorRouting {
   humanFor(runId: string | null): Address;
   gateFor(runId: string | null): GateRoute;
+  // A run's scope gate recipients with every human who cannot decide replaced
+  // by the gate's route, so the gate never waits on someone who cannot answer.
+  scopeTo(runId: string, to: readonly Address[]): Address[];
 }
 
 export interface OperatorRoutingDeps {
@@ -37,14 +40,23 @@ export function operatorRouting(deps: OperatorRoutingDeps): OperatorRouting {
     if (operator === null || operator === deps.owner) return null;
     return deps.hasAccess(operator) ? operator : null;
   };
+  const gateFor = (runId: string | null): GateRoute => {
+    const operator = operatorFor(runId);
+    if (operator === null) return { to: deps.owner, tell: null };
+    return deps.canDecide(operator)
+      ? { to: operator, tell: null }
+      : { to: deps.owner, tell: operator };
+  };
+  const decides = (ref: Address) => ref === deps.owner || deps.canDecide(ref);
   return {
     humanFor: (runId) => operatorFor(runId) ?? deps.owner,
-    gateFor: (runId) => {
-      const operator = operatorFor(runId);
-      if (operator === null) return { to: deps.owner, tell: null };
-      return deps.canDecide(operator)
-        ? { to: operator, tell: null }
-        : { to: deps.owner, tell: operator };
+    gateFor,
+    scopeTo: (runId, to) => {
+      const route = gateFor(runId).to;
+      const out = to.map((ref) =>
+        ref.startsWith('human:') && !decides(ref) ? route : ref
+      );
+      return [...new Set(out)];
     },
   };
 }

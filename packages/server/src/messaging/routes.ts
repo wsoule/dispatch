@@ -378,6 +378,18 @@ function revokedSince(ctx: ApiContext, principal: Principal): boolean {
 
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
+// A run's scope gate with its non-deciding human recipients re-addressed to
+// the run's operator or the owner (XH-R9); any other send as it came.
+function scopeReaddressed(
+  ctx: ApiContext,
+  principal: Principal,
+  input: SendInput
+): SendInput {
+  if (principal.kind !== 'run' || gateOf(input)?.type !== 'scope') return input;
+  const runId = principal.address.slice('run:'.length);
+  return { ...input, to: ctx.messaging.routing.scopeTo(runId, input.to) };
+}
+
 export async function sendMessage(
   req: Request,
   ctx: ApiContext
@@ -398,14 +410,14 @@ export async function sendMessage(
     a2aRunRefusal(ctx, principal, parsedInput.value.to);
   if (refusal !== null) return errorResponse(403, refusal);
 
+  // XH-R9: a run's scope gate never waits on a human who cannot decide it.
+  const input = scopeReaddressed(ctx, principal, parsedInput.value);
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
   // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
   const result = await answeringWith(principal.ownerCredential === true, () =>
     ctx.messaging.engine.send(
-      idemKey === null
-        ? parsedInput.value
-        : { ...parsedInput.value, idempotencyKey: idemKey },
+      idemKey === null ? input : { ...input, idempotencyKey: idemKey },
       senderOf(principal)
     )
   );

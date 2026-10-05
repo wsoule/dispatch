@@ -163,3 +163,53 @@ describe("the decision feed for a teammate's run (XH-R4, XH-R9)", () => {
     expect(theirs.text).not.toContain(gateId);
   });
 });
+
+// Sends a scope gate as the run to `to`, returning the stored gate.
+async function askScopeOf(
+  w: World,
+  runToken: string,
+  to: string[]
+): Promise<Message> {
+  const sent = await call(w, runToken, 'POST', '/api/messages', {
+    to,
+    kind: 'question',
+    blocking: true,
+    choices: ['grant', 'deny'],
+    body: 'need routes.ts',
+    data: { type: 'scope', paths: ['src/routes.ts'], reason: 'handler' },
+  });
+  expect(sent.status).toBe(201);
+  return sent.json.message as Message;
+}
+
+describe('a scope gate addressed to someone who cannot decide (XH-R9)', () => {
+  it('goes to the owner instead, and the request-tier operator is told', async () => {
+    const w = world();
+    const bo = await invite(w, 'bo@example.com', 'request');
+    const run = await liveRun(w, bo.token);
+    const gate = await askScopeOf(w, run.runToken, [`human:${bo.handle}`]);
+    expect(gate.to).toEqual([OWNER]);
+    await waitFor(() => noticesTo(w, `human:${bo.handle}`).length > 0);
+  });
+
+  it('goes to an operator who can decide when the run asked a request-tier teammate', async () => {
+    const w = world();
+    const ana = await invite(w, 'ana@example.com', 'decide');
+    const bo = await invite(w, 'bo@example.com', 'request');
+    const run = await liveRun(w, ana.token);
+    const gate = await askScopeOf(w, run.runToken, [`human:${bo.handle}`]);
+    expect(gate.to).toEqual([`human:${ana.handle}`]);
+  });
+
+  it('keeps a decider it was addressed to, and other recipients', async () => {
+    const w = world();
+    const ana = await invite(w, 'ana@example.com', 'decide');
+    const bo = await invite(w, 'bo@example.com', 'request');
+    const run = await liveRun(w, w.app);
+    const gate = await askScopeOf(w, run.runToken, [
+      `human:${ana.handle}`,
+      `human:${bo.handle}`,
+    ]);
+    expect(gate.to).toEqual([`human:${ana.handle}`, OWNER]);
+  });
+});
