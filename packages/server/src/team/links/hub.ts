@@ -367,9 +367,16 @@ export class LinkHub {
   }
 
   /** One pass over every link, awaited (tests and the e2e use it). */
+  // Waits out the pass in flight, then for one full pass begun after the
+  // call: the timer's, if it started one meanwhile, else its own. Bounded,
+  // however often the timer kicks.
   async settle(): Promise<void> {
-    while (this.running !== null) await this.running;
+    if (this.running !== null) await this.running;
     if (this.stopped) return;
+    if (this.running !== null) {
+      await this.running;
+      return;
+    }
     this.running = this.passAll().finally(() => {
       this.running = null;
     });

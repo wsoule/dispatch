@@ -684,15 +684,17 @@ async function pairingRoute(
   if (link === 'invalid')
     return invalid('link.remote', 'link.remote must be a git remote');
   if (link !== null) {
+    // Link keys are made here, on a link's first offer or accept.
+    const hub = await b.a2a.ensureLinks();
     const result =
       link.kind === 'offer'
-        ? await offerLinkPairing(d, b.a2a.links, {
+        ? await offerLinkPairing(d, hub, {
             alias: body.alias,
             remote: link.remote,
             ...(typeof body.ttlMin === 'number' ? { ttlMin: body.ttlMin } : {}),
             caller,
           })
-        : await acceptLinkPairing(d, b.a2a.links, {
+        : await acceptLinkPairing(d, hub, {
             code: link.code,
             alias: body.alias,
             caller,
@@ -767,7 +769,8 @@ export async function handleA2ARoute(
     if (!b.ok) return b.response;
     const hub = b.a2a.links;
     return jsonResponse({
-      enabled: hub !== null,
+      // Links work wherever a2a.db does; keys come with the first link.
+      enabled: b.a2a.store !== null,
       links: hub?.health() ?? [],
       offers: hub?.offers() ?? [],
     });
