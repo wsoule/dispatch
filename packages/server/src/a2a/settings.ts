@@ -364,12 +364,12 @@ export interface RelaySettings {
 
 export const DEFAULT_RELAY: RelaySettings = { enabled: false, url: null };
 
-export function relaySettingsPath(rootDir: string): string {
+function relaySettingsPath(rootDir: string): string {
   return join(runsDir(rootDir), 'a2a-relay.json');
 }
 
 // A relay origin: https, or http on loopback; no path, query or credentials.
-export function relayOrigin(raw: unknown): string | null {
+function relayOrigin(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   try {
     const u = new URL(raw);
