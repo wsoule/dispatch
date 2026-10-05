@@ -229,3 +229,81 @@ describe('a scope gate addressed to someone who cannot decide (XH-R9)', () => {
     expect(gate.to).toEqual([OWNER]);
   });
 });
+
+describe("revoking a decide-tier teammate with their run's gates open (XH-R3)", () => {
+  it('closes the memory and doc proposals, keeps them visible, and tells the owner once', async () => {
+    const w = world();
+    const ana = await invite(w, 'ana@example.com', 'decide');
+    const run = await liveRun(w, ana.token);
+    await proposeMemory(w, run.runToken);
+    await proposeDocEdit(w, run.runToken);
+    const memory = await openGate(w, 'memory');
+    const doc = await openGate(w, 'doc');
+    // The feed has seen both open.
+    const before = await call(w, w.app, 'GET', '/api/decisions');
+    const openIds = (before.json.items as { id: string }[]).map((i) => i.id);
+    for (const gate of [memory, doc])
+      expect(openIds.some((id) => id.endsWith(`:${gate.id}`))).toBe(true);
+
+    const rv = await call(w, w.app, 'DELETE', `/api/team/tokens/${ana.handle}`);
+    expect(rv.status).toBeLessThan(300);
+
+    // Both proposals closed: the gates carry a close and nothing reopened.
+    const { engine } = w.handle.messaging;
+    for (const gate of [memory, doc]) {
+      await waitFor(() => engine.answerOf(gate.id) !== null);
+      expect(engine.answerOf(gate.id)?.data).toMatchObject({
+        type: 'x-closed',
+      });
+    }
+    expect(
+      engine
+        .openBlocking()
+        .filter((m) => ['memory', 'doc'].includes(gateOf(m)?.type ?? ''))
+    ).toEqual([]);
+    const memoryGate = gateOf(memory);
+    if (memoryGate?.type !== 'memory') throw new Error('not a memory gate');
+    await waitFor(
+      () =>
+        w.handle.memory.shared?.getProposal(memoryGate.proposalId)?.state ===
+        'expired'
+    );
+
+    const docGate = gateOf(doc);
+    if (docGate?.type !== 'doc') throw new Error('not a doc gate');
+    await waitFor(async () => {
+      const r = await call(
+        w,
+        w.app,
+        'GET',
+        `/api/docs/proposals/${docGate.proposal}`
+      );
+      return JSON.stringify(r.json).includes('"state":"rejected"');
+    });
+
+    // Still visible: the gate messages stay readable, and the feed lists them
+    // among its resolved items.
+    for (const gate of [memory, doc]) {
+      const read = await call(w, w.app, 'GET', `/api/messages/${gate.id}`);
+      expect(read.status).toBe(200);
+    }
+    const feed = await call(w, w.app, 'GET', '/api/decisions?resolved=1');
+    const resolved = (
+      feed.json.items as { id: string; state: string }[]
+    ).filter((i) => i.state === 'resolved');
+    for (const gate of [memory, doc])
+      expect(resolved.some((i) => i.id.endsWith(`:${gate.id}`))).toBe(true);
+
+    // One notice to the owner, naming both closed gates.
+    await waitFor(() =>
+      noticesTo(w, OWNER).some((m) => m.body.includes(`human:${ana.handle}`))
+    );
+    const notices = noticesTo(w, OWNER).filter((m) =>
+      m.body.includes(`human:${ana.handle}`)
+    );
+    expect(notices).toHaveLength(1);
+    const refIds = notices[0]?.refs.map((r) => r.id) ?? [];
+    expect(refIds).toContain(memory.id);
+    expect(refIds).toContain(doc.id);
+  });
+});
