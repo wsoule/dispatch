@@ -97,13 +97,6 @@ export class Inbound implements OpHandler, InboxDrainer {
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped' {
     const { fed } = this.deps;
     const me = fed.replica;
-    // FW-R32(2): every mail op this machine verifies is remembered, so a
-    // forward can carry only an op of a publisher's real chain.
-    fed.db
-      .query(
-        'INSERT OR IGNORE INTO fed_mail_seen (replica, seq, hash, at) VALUES (?, ?, ?, ?)'
-      )
-      .run(op.replica, op.seq, opHash(op), ctx.now.toISOString());
     if (!(op.to ?? []).includes(me)) return 'dropped';
     // FW-R31(5): ops above a settled revocation's cut go; a contested one
     // keeps them parked until the fight is decided.
@@ -500,11 +493,7 @@ export class Inbound implements OpHandler, InboxDrainer {
     } catch {
       return malformed('forwards an op that does not read');
     }
-    const seen = fed.db
-      .query<{ hash: string }, [string, number]>(
-        'SELECT hash FROM fed_mail_seen WHERE replica = ? AND seq = ?'
-      )
-      .get(inner.replica, inner.seq);
+    const seen = fed.mailSeen(inner.replica, inner.seq);
     if (seen === null) {
       const head = fed.cursor(inner.replica).head?.seq ?? 0;
       if (head < inner.seq) return 'parked';
@@ -532,7 +521,7 @@ export class Inbound implements OpHandler, InboxDrainer {
         this.deps.state?.refused(messageId, UNVERIFIABLE, op.replica);
       return 'dropped';
     }
-    if (seen.hash !== hash) {
+    if (seen !== hash) {
       dropNote(
         fed,
         'mail-drop',

@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS fed_run_claims (run TEXT PRIMARY KEY, claims_json TEX
 -- State entries waiting for the next pass, by their recipients ("a,b").
 -- Every mail op verified here, so a forward carries only a real one (FW-R32(2)).
 -- Never pruned (FW-R36(1)): a forward is judged against these hashes alone.
-CREATE TABLE IF NOT EXISTS fed_mail_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (replica, seq));
+CREATE TABLE IF NOT EXISTS fed_mail_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash BLOB NOT NULL, PRIMARY KEY (replica, seq));
 -- Pruned run ids and the replica that ran each: never claimed by another.
 CREATE TABLE IF NOT EXISTS fed_run_tombs (run TEXT PRIMARY KEY, replica TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_state_out (id INTEGER PRIMARY KEY, recipients TEXT NOT NULL, entry_json TEXT NOT NULL);
@@ -75,4 +75,10 @@ INSERT INTO fed_roster (replica, sign_pub, seq, hlc, hash, body_json)
   FROM fed_roster_v0 r LEFT JOIN fed_keys k ON k.replica = r.replica;
 DROP TABLE fed_roster_v0;
 INSERT OR IGNORE INTO fed_key_claims SELECT * FROM fed_keys;
+`;
+
+/** Brings fed_mail_seen from hex text with a time to the 32-byte hash alone. */
+export const FED_MIGRATE_MAIL_SEEN = `
+ALTER TABLE fed_mail_seen RENAME TO fed_mail_seen_v0;
+CREATE TABLE fed_mail_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash BLOB NOT NULL, PRIMARY KEY (replica, seq));
 `;

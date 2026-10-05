@@ -21,7 +21,11 @@ import type { Database } from 'bun:sqlite';
 import type { SyncLedger } from '../boardSync/ledger.js';
 import type { AuditKind } from './audit.js';
 import { AUDIT_KINDS } from './audit.js';
-import { FED_MIGRATE_KEYS, FED_SCHEMA } from './schema.js';
+import {
+  FED_MIGRATE_KEYS,
+  FED_MIGRATE_MAIL_SEEN,
+  FED_SCHEMA,
+} from './schema.js';
 
 /** Key claims kept per replica id; more are refused with a problem (FW-R24). */
 export const MAX_KEY_CLAIMS = 4;
@@ -109,6 +113,45 @@ export class FedStore {
       !legacyRoster.some((c) => c.name === 'sign_pub')
     )
       db.transaction(() => db.exec(FED_MIGRATE_KEYS))();
+    const mailSeen = db
+      .query<{ name: string }, []>(
+        "SELECT name FROM pragma_table_info('fed_mail_seen')"
+      )
+      .all();
+    if (mailSeen.some((c) => c.name === 'at'))
+      db.transaction(() => {
+        db.exec(FED_MIGRATE_MAIL_SEEN);
+        const rows = db
+          .query<{ replica: string; seq: number; hash: string }, []>(
+            'SELECT replica, seq, hash FROM fed_mail_seen_v0'
+          )
+          .all();
+        const put = db.query(
+          'INSERT OR IGNORE INTO fed_mail_seen (replica, seq, hash) VALUES (?, ?, ?)'
+        );
+        for (const r of rows)
+          put.run(r.replica, r.seq, Buffer.from(r.hash, 'hex'));
+        db.exec('DROP TABLE fed_mail_seen_v0');
+      })();
+  }
+
+  /** Remembers a verified mail op's hash, so a forward of it can be checked. */
+  rememberMail(replica: string, seq: number, hash: string): void {
+    this.db
+      .query(
+        'INSERT OR IGNORE INTO fed_mail_seen (replica, seq, hash) VALUES (?, ?, ?)'
+      )
+      .run(replica, seq, Buffer.from(hash, 'hex'));
+  }
+
+  /** The hex hash of a mail op verified here, or null when none was. */
+  mailSeen(replica: string, seq: number): string | null {
+    const row = this.db
+      .query<{ hash: Uint8Array }, [string, number]>(
+        'SELECT hash FROM fed_mail_seen WHERE replica = ? AND seq = ?'
+      )
+      .get(replica, seq);
+    return row === null ? null : Buffer.from(row.hash).toString('hex');
   }
 
   get db(): Database {

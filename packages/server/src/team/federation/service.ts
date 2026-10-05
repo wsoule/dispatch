@@ -983,19 +983,15 @@ export class FederationService {
       });
       return 'moved';
     }
+    // FW-R32(2), FW-R33(1): every verified mail op, a pruned one too, is
+    // remembered before it can wait, so a forward of it can be checked.
+    if (entry.type === 'mail') fed.rememberMail(r, entry.seq, opHash(entry));
     const ahead = (hlcWallMs(entry.hlc) ?? 0) - now.getTime();
     if (ahead > CLOCK_GUARD_MS) {
       if (ahead > CLOCK_PROBLEM_MS) this.clockProblem(r, ahead);
       return 'block';
     }
     if (isStub(entry)) {
-      // FW-R33(1): a pruned mail op stays forwardable by its header and sig.
-      if (entry.type === 'mail')
-        fed.db
-          .query(
-            'INSERT OR IGNORE INTO fed_mail_seen (replica, seq, hash, at) VALUES (?, ?, ?, ?)'
-          )
-          .run(r, entry.seq, opHash(entry), now.toISOString());
       if (entry.to?.includes(fed.replica) === true)
         fed.problem(
           `op:${r}:${entry.seq}`,

@@ -322,7 +322,9 @@ const fp = (r: MessagingReplica) =>
   fingerprint(r.fed.keys.signPub, r.fed.keys.sealPub);
 
 // Runs a pass on each replica in turn, three times.
-async function settleAll(rs: readonly MessagingReplica[]): Promise<void> {
+export async function settleAll(
+  rs: readonly MessagingReplica[]
+): Promise<void> {
   for (let round = 0; round < 3; round++)
     for (const r of rs) await r.service.syncNow();
 }
