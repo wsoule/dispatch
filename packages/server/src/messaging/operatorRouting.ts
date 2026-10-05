@@ -6,7 +6,7 @@ import { tierAllows } from '../tiers.js';
 import { SYSTEM_SENDER } from './gates.js';
 
 // Where a decision gate raised for a run goes, and who else hears of it.
-export interface GateRoute {
+interface GateRoute {
   to: Address;
   // The operator, told by notice when the gate went to the owner instead.
   tell: Address | null;
@@ -75,7 +75,7 @@ export function teamDeciders(teammates: {
 
 // The run a gate was raised for: its sender run, the run its data or refs
 // name, or for a wake gate the run that asked for the wake; null for none.
-export function gateRunOf(
+function gateRunOf(
   engine: Pick<DeliveryEngine, 'getMessage'>,
   question: Message
 ): string | null {
