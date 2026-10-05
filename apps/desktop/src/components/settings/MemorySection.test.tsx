@@ -6,6 +6,7 @@ import type {
 import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -107,6 +108,36 @@ function chooseOption(name: string) {
 }
 
 describe('MemorySection', () => {
+  it("offers moving a moved checkout's personal entries here, and hides the group when none are", async () => {
+    const rehomeMemory = mock((_key: string) => Promise.resolve({ moved: 3 }));
+    const client = {
+      ...memoryClient(),
+      memoryProjectKeys: () =>
+        Promise.resolve({
+          current: 'aaaaaaaaaaaa',
+          others: [{ key: 'bbbbbbbbbbbb', count: 3 }],
+        }),
+      rehomeMemory,
+    };
+    renderSection(client as unknown as ReturnType<typeof memoryClient>);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Move them to this project' })
+    );
+    await waitFor(() =>
+      expect(rehomeMemory).toHaveBeenCalledWith('bbbbbbbbbbbb')
+    );
+    expect(screen.getByText('Moved checkouts')).toBeTruthy();
+    cleanup();
+
+    renderSection({
+      ...memoryClient(),
+      memoryProjectKeys: () =>
+        Promise.resolve({ current: 'aaaaaaaaaaaa', others: [] }),
+    } as unknown as ReturnType<typeof memoryClient>);
+    expect(await screen.findByText('Lessons')).toBeTruthy();
+    expect(screen.queryByText('Moved checkouts')).toBeNull();
+  });
+
   it('shows the store, its warnings, the parity report and pinned overflow', async () => {
     renderSection(
       memoryClient({

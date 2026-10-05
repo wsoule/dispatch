@@ -118,6 +118,7 @@ function renderView(opts: {
   } as unknown as ApiClient;
   const data = {
     client,
+    runs: [],
     port: 1,
     messageAccess: {
       canDecide: opts.canDecide,
@@ -268,6 +269,7 @@ function renderTwoDocs(
         data={
           {
             client: c,
+            runs: [],
             port: 1,
             messageAccess: {
               canDecide: true,
@@ -726,6 +728,7 @@ function renderNamed(initialDoc: string | null, initialAnchor: string | null) {
   } as unknown as ApiClient;
   const data = {
     client,
+    runs: [],
     port: 1,
     messageAccess: { canDecide: true, canMessage: true, explanation: null },
   } as unknown as DispatchProjectData;
@@ -852,6 +855,7 @@ test('a named proposal opens the doc on its marked merge', async () => {
   } as unknown as ApiClient;
   const data = {
     client,
+    runs: [],
     port: 1,
     messageAccess: { canDecide: true, canMessage: true, explanation: null },
   } as unknown as DispatchProjectData;
@@ -942,6 +946,7 @@ function renderList(
   } as unknown as ApiClient;
   const data = {
     client,
+    runs: [],
     port: 1,
     messageAccess: { canDecide: true, canMessage: true, explanation: null },
   } as unknown as DispatchProjectData;

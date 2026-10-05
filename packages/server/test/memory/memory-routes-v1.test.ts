@@ -765,7 +765,7 @@ describe('owner-attributed agents', () => {
     expect(decided).toEqual([[approved.address, true]]);
   });
 
-  it("a teammate's re-approval after a revoke drops the owner's approval", async () => {
+  it("a revoke ends the owner's approval for good: no one may approve the agent again", async () => {
     const { secret, address, token } = await setup('again');
     await approveAs(address, handle.tokens.appToken);
     expect(await personalIds(token)).toContain(secret);
@@ -775,8 +775,13 @@ describe('owner-attributed agents', () => {
       { method: 'POST', headers: authHeaders(ada) }
     );
     expect(revoked.status).toBe(200);
-    expect((await approveAs(address, ada)).status).toBe(200);
-    expect(await personalIds(token)).toEqual([]);
+    for (const approver of [ada, handle.tokens.appToken]) {
+      const again = await approveAs(address, approver);
+      expect(again.status).toBe(409);
+      expect((await json<{ code?: string }>(again)).code).toBe('revoked_final');
+    }
+    const after = await personalIds(token);
+    expect(Array.isArray(after) && after.includes(secret)).toBe(false);
   });
 
   it("the owner's approval survives a restart", async () => {

@@ -19,6 +19,17 @@ type DecisionKind =
   | 'fix-loop-capped'
   | 'run-stalled';
 
+/** Mirrors core's FloorCheck, plus the feed's `'unknown'` for a hold whose
+ * check can no longer be named. */
+type DecisionFloor =
+  | 'force-push'
+  | 'delete-outside-writes'
+  | 'budget-cap'
+  | 'publish'
+  | 'repo-settings'
+  | 'finding-ruling'
+  | 'unknown';
+
 /** Mirrors DecisionItem in packages/server/src/decisionFeed.ts: one thing
  * awaiting a human, as the daemon sees it right now. */
 export interface DecisionItem {
@@ -27,6 +38,8 @@ export interface DecisionItem {
   kind: DecisionKind;
   summary: string;
   reason?: string;
+  /** `scope-request` only: every path the agent asked for. */
+  paths?: string[];
   runId?: string;
   taskId?: string;
   taskTitle?: string;
@@ -35,6 +48,15 @@ export interface DecisionItem {
   ageMs: number;
   state: 'open' | 'resolved';
   resolvedAt?: string;
+  /** Set when the irreversibility floor holds this item; it always blocks. */
+  floor?: DecisionFloor;
+  /** ActorRef of the human it is for (the run's, or a system gate's
+   * addressee); absent means everyone's. */
+  owner?: string;
+  /** The gate message behind a gate item. */
+  messageId?: string;
+  /** The Overseer conversation an overseer-action or tool-approval gate is parked on. */
+  conversation?: string;
   /** The policy engine's split: `blocking` items demand an answer, `recorded`
    * ones land quietly. Everything is `blocking` until epic e-ad1978 ships. */
   disposition: 'blocking' | 'recorded';
@@ -103,7 +125,10 @@ export type DecisionTarget =
  */
 export function decisionTarget(item: DecisionItem): DecisionTarget | null {
   if (item.kind === 'memory' || item.kind === 'doc') {
-    return { kind: 'thread', messageId: item.id.slice(item.kind.length + 1) };
+    return {
+      kind: 'thread',
+      messageId: item.messageId ?? item.id.slice(item.kind.length + 1),
+    };
   }
   const tab: TaskTab =
     item.kind === 'fix-loop-capped' || item.kind === 'run-stalled'

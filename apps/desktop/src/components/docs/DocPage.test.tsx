@@ -62,6 +62,8 @@ function renderPage(opts: {
   canDecide?: boolean;
   mergeProposal?: string | null;
   client?: Partial<ApiClient>;
+  gates?: boolean;
+  onOpenRef?: (action: unknown) => void;
 }) {
   const calls: string[] = [];
   const d = opts.doc ?? doc();
@@ -95,6 +97,20 @@ function renderPage(opts: {
         refId="doc-1"
         canDecide={opts.canDecide ?? true}
         mergeProposal={opts.mergeProposal ?? null}
+        onOpenRef={opts.onOpenRef}
+        gates={
+          opts.gates === true
+            ? {
+                availability: {
+                  enabled: true,
+                  notice: null,
+                  explanation: null,
+                  restart: null,
+                },
+                onRestartDaemon: () => Promise.resolve(),
+              }
+            : undefined
+        }
       />
     </QueryClientProvider>
   );
@@ -177,6 +193,101 @@ test("opens on a conflicting proposal's marked merge and saves the resolution", 
   expect(
     await screen.findByText(/reject the proposal as resolved/)
   ).toBeDefined();
+});
+
+test('offers Reject as resolved on the proposal its merge resolved, answering its gate', async () => {
+  const marked =
+    '# Auth\n<<<<<<< rev-head\nhuman\n||||||| rev-base\nv1\n=======\nrun\n>>>>>>> rev-p\n';
+  const replyToMessage = mock((_id: string, _input: unknown) =>
+    Promise.resolve({})
+  );
+  renderPage({
+    doc: doc({ status: 'accepted' }),
+    mergeProposal: 'rev-p',
+    client: {
+      getDocProposal: () =>
+        Promise.resolve({
+          proposal: { rev: 'rev-p', author: 'run:r-1', state: 'open' },
+          title: 'Auth refactor',
+          body: '# Auth\nrun\n',
+          chunks: [],
+          mergeable: { clean: false, headN: 2 },
+          marked,
+        }),
+      listDocProposals: () =>
+        Promise.resolve({
+          proposals: [
+            {
+              rev: 'rev-p',
+              author: 'run:r-1',
+              gate: 'm-gate',
+              state: 'open',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      replyToMessage,
+    } as unknown as Partial<ApiClient>,
+  });
+  const conflict = await screen.findByRole('region', {
+    name: 'Conflict 1 of 1',
+  });
+  expect(screen.queryByTestId('reject-as-resolved')).toBeNull();
+  fireEvent.click(within(conflict).getByRole('button', { name: 'Take yours' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save resolution' }));
+  fireEvent.click(await screen.findByTestId('reject-as-resolved'));
+  await waitFor(() =>
+    expect(replyToMessage).toHaveBeenCalledWith('m-gate', {
+      body: 'resolved in the doc',
+      choice: 'reject',
+    })
+  );
+});
+
+test("hosts each open proposal's gate card in the banner, for a decider", async () => {
+  const replyToMessage = mock((_id: string, _input: unknown) =>
+    Promise.resolve({})
+  );
+  const onOpenRef = mock((_a: unknown) => {});
+  renderPage({
+    doc: doc({ status: 'accepted' }),
+    gates: true,
+    onOpenRef,
+    client: {
+      getDocProposal: () =>
+        Promise.resolve({
+          proposal: { rev: 'rev-p', author: 'run:r-1', state: 'open' },
+          title: 'Auth refactor',
+          body: '# Auth\nrun\n',
+          chunks: [],
+          mergeable: { clean: true, headN: 1 },
+          marked: null,
+        }),
+      listDocProposals: () =>
+        Promise.resolve({
+          proposals: [
+            {
+              rev: 'rev-p',
+              author: 'run:r-1',
+              gate: 'm-gate',
+              state: 'open',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      replyToMessage,
+    } as unknown as Partial<ApiClient>,
+  });
+  const banner = await screen.findByTestId('doc-proposals');
+  const approve = await within(banner).findByRole('radio', { name: 'Approve' });
+  await waitFor(() => expect(approve.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(approve);
+  await waitFor(() =>
+    expect(replyToMessage).toHaveBeenCalledWith('m-gate', {
+      body: '',
+      choice: 'approve',
+    })
+  );
 });
 
 test('lists open proposals with how long ago each was made', async () => {

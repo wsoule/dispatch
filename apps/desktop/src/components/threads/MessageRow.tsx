@@ -1,44 +1,32 @@
-import type { TaskListItem } from '@dispatch-foo/core/browser';
-import type {
-  ApiClient,
-  Message,
-  RemoteDeliveryRow,
-  Settlement,
-} from '@dispatch/client';
-import { memo, useEffect, useState } from 'react';
+import type { Message, RemoteDeliveryRow, Settlement } from '@dispatch/client';
+import { memo, useState } from 'react';
 
 import { isFromA2A } from '../../lib/a2a';
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
-import { approvalReply, isSystemMarker, taskProposalOf } from '../../lib/gates';
+import { isSystemMarker, taskProposalOf } from '../../lib/gates';
 import { formatShortDate } from '../../lib/taskDates';
 import type {
   ParkedCall,
   RefAction,
-  RowControl,
   ThreadLookups,
 } from '../../lib/threadSources';
 import {
   addressAction,
   kindLabel,
-  offersAnswer,
   participantLabel,
   refAction,
   rowControl,
 } from '../../lib/threadSources';
-import { DocGateCard } from '../docs/DocGateCard';
-import { MemoryGateCard } from '../memory/MemoryGateCard';
-import { ApprovalCard } from '../runs/ApprovalCard';
+import type { GateClient, GateReply } from '../gates/GateCard';
+import { GateCard } from '../gates/GateCard';
 import { Markdown } from '../runs/Markdown';
-import { ScopeRequestCard } from '../runs/ScopeRequestCard';
 import { A2ADeclineAction } from './A2ADeclineAction';
-import { TaskProposalCard } from './TaskProposalCard';
 import { cn } from '@/lib/utils';
 import { ChatMessage } from '@/ui/ai/chat';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 import { Pill, PillButton } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
 
-type Reply = { body: string; choice?: string };
+type Reply = GateReply;
 
 // A ref chip's suffix: a doc's whole section anchor, or a commit's short sha.
 function refAt(ref: Message['refs'][number]): string {
@@ -72,10 +60,7 @@ export interface MessageRowProps {
   /** Declines an open question from an A2A client, reads a memory or doc
    *  gate's proposal and a task proposal's draft body; without it there is
    *  no Decline and no proposal to show. */
-  client?: Pick<
-    ApiClient,
-    'declineA2ATask' | 'getMemoryProposal' | 'getDocProposal' | 'fetchTask'
-  > | null;
+  client?: GateClient | null;
   /** The daemon's port, keying a proposal read under memory's or docs' queries. */
   port?: number;
 }
@@ -225,7 +210,7 @@ export const MessageRow = memo(function MessageRow({
               {`an observer (${observer}) reads this thread`}
             </p>
           )}
-          <Control
+          <GateCard
             message={message}
             control={rowControl(message, { me, open, access })}
             lookups={lookups}
@@ -234,7 +219,7 @@ export const MessageRow = memo(function MessageRow({
             onRestartDaemon={onRestartDaemon}
             answer={answer}
             loadApprovalInput={loadApprovalInput}
-            client={client}
+            client={client ?? null}
             port={port}
           />
           {open && (
@@ -254,212 +239,3 @@ export const MessageRow = memo(function MessageRow({
     </article>
   );
 });
-
-// The row's answer affordance: a gate card, choice buttons, or why there are none.
-function Control({
-  message,
-  control,
-  lookups,
-  onOpen,
-  availability,
-  onRestartDaemon,
-  answer,
-  loadApprovalInput,
-  client,
-  port,
-}: {
-  message: Message;
-  control: RowControl;
-  lookups: ThreadLookups;
-  onOpen: (action: RefAction) => void;
-  availability: DecideAvailability;
-  onRestartDaemon: () => Promise<void>;
-  answer: (reply: Reply) => Promise<void>;
-  loadApprovalInput: MessageRowProps['loadApprovalInput'];
-  client: MessageRowProps['client'];
-  port: number | undefined;
-}) {
-  if (control.kind === 'read-only') {
-    return (
-      <p className="text-muted-foreground text-[12px]">{control.reason}</p>
-    );
-  }
-  // Drawn for every viewer; its answers wait on the decide tier.
-  if (control.kind === 'task-proposal') {
-    return (
-      <TaskProposalGate
-        gate={message}
-        item={lookups.task(control.task)}
-        client={client ?? null}
-        onAnswer={(choice) => answer({ body: '', choice })}
-        onOpenTask={(taskId) => onOpen({ kind: 'task', taskId })}
-        canDecide={control.canDecide}
-      />
-    );
-  }
-  if (!offersAnswer(control)) return null;
-  switch (control.kind) {
-    case 'tool-approval': {
-      const { call } = control;
-      return (
-        <ApprovalCard
-          toolName={control.tool}
-          toolInput={control.input}
-          truncated={control.truncated}
-          loadFullInput={
-            call === null ? undefined : () => loadApprovalInput(call)
-          }
-          availability={availability}
-          onRestartDaemon={onRestartDaemon}
-          onDecide={(allow, opts) => answer(approvalReply(allow, opts))}
-        />
-      );
-    }
-    case 'scope':
-      return (
-        <ScopeRequestCard
-          paths={control.paths}
-          reason={control.reason}
-          availability={availability}
-          onRestartDaemon={onRestartDaemon}
-          onDecide={(granted) =>
-            answer({ body: '', choice: granted ? 'grant' : 'deny' })
-          }
-        />
-      );
-    case 'memory':
-      return client === null || client === undefined ? (
-        <p className="text-muted-foreground text-[12px]">
-          This window cannot read the proposal, so it cannot decide it.
-        </p>
-      ) : (
-        <MemoryGateCard
-          proposalId={control.proposalId}
-          client={client}
-          port={port}
-          availability={availability}
-          onRestartDaemon={onRestartDaemon}
-          onDecide={(choice) => answer({ body: '', choice })}
-        />
-      );
-    case 'doc':
-      return client === null || client === undefined ? (
-        <p className="text-muted-foreground text-[12px]">
-          This window cannot read the proposal, so it cannot decide it.
-        </p>
-      ) : (
-        <DocGateCard
-          doc={control.doc}
-          proposal={control.proposal}
-          client={client}
-          port={port}
-          availability={availability}
-          onRestartDaemon={onRestartDaemon}
-          onDecide={(choice, body) => answer({ body, choice })}
-          onOpenDoc={(docId, merge) =>
-            onOpen({ kind: 'doc', docId, anchor: null, merge })
-          }
-        />
-      );
-    case 'choices':
-      return (
-        <Choices
-          choices={control.choices}
-          gate={control.gate}
-          answer={answer}
-        />
-      );
-  }
-}
-
-// Choice buttons that hold while one answer is in flight, so a double click
-// answers once rather than failing the second time as already answered.
-function Choices({
-  choices,
-  gate,
-  answer,
-}: {
-  choices: string[];
-  gate: boolean;
-  answer: (reply: Reply) => Promise<void>;
-}) {
-  const [pending, setPending] = useState<string | null>(null);
-  const choose = async (choice: string): Promise<void> => {
-    if (pending !== null) return;
-    setPending(choice);
-    try {
-      await answer(gate ? { body: '', choice } : { body: choice, choice });
-    } finally {
-      setPending(null);
-    }
-  };
-  return (
-    <div
-      role="group"
-      aria-label="Answer"
-      aria-busy={pending === null ? undefined : true}
-      className="flex flex-wrap gap-1.5"
-    >
-      {choices.map((choice) => (
-        <Button
-          key={choice}
-          size="sm"
-          variant="outline"
-          disabled={pending !== null}
-          onClick={() => void choose(choice)}
-        >
-          {pending === choice ? 'Sending…' : choice}
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-// The board list carries no bodies, so the proposal card fetches its draft's
-// body, again whenever the draft is edited.
-function TaskProposalGate({
-  item,
-  client,
-  ...card
-}: {
-  gate: Message;
-  item: TaskListItem | null;
-  client: Pick<ApiClient, 'fetchTask'> | null;
-  onAnswer: (choice: 'approve' | 'decline') => Promise<void>;
-  onOpenTask: (id: string) => void;
-  canDecide: boolean;
-}) {
-  const [body, setBody] = useState<{
-    key: string;
-    text: string | null;
-  } | null>(null);
-  const id = item?.meta.id ?? null;
-  const key = item === null ? '' : `${item.meta.id}@${item.meta.updated}`;
-  useEffect(() => {
-    if (id === null || client === null) return;
-    let live = true;
-    client.fetchTask(id).then(
-      (doc) => {
-        if (live) setBody({ key, text: doc.body });
-      },
-      () => {
-        // A draft that cannot be read shows as not on the board.
-        if (live) setBody({ key, text: null });
-      }
-    );
-    return () => {
-      live = false;
-    };
-  }, [client, id, key]);
-  const settled = body !== null && body.key === key;
-  const text = settled ? body.text : null;
-  return (
-    <TaskProposalCard
-      {...card}
-      task={
-        item === null || text === null ? null : { meta: item.meta, body: text }
-      }
-      loading={item !== null && !settled}
-    />
-  );
-}

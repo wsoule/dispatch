@@ -92,6 +92,9 @@ export function dataWith(
     retryWhoami: () => {},
     tasks: [],
     runs: [],
+    me: null,
+    // No messaging: Memory's lessons browser stays a one-line explanation.
+    messageAccess: { canDecide: false, canMessage: false, explanation: null },
     linearStatus: {
       enabled: false,
       connected,

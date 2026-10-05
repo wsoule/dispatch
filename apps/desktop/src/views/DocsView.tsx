@@ -10,6 +10,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { docsKey, useDocList, useDocSearch } from '../hooks/useDocs';
 import type { DocFilter } from '../lib/docs';
 import { filterDocs } from '../lib/docs';
+import type { RefAction } from '../lib/threadSources';
 import { Button } from '@/ui/button';
 
 // The most search hits a query asks the daemon for.
@@ -23,6 +24,7 @@ export function DocsView({
   initialAnchor = null,
   initialMerge = null,
   onSelectDoc,
+  onOpenRef,
 }: {
   data: DispatchProjectData;
   initialDoc?: string | null;
@@ -30,8 +32,21 @@ export function DocsView({
   /** A conflicting proposal whose marked merge the named doc opens on. */
   initialMerge?: string | null;
   onSelectDoc?: (docId: string) => void;
+  /** Opens a doc link's target, as a thread's ref chip would. */
+  onOpenRef?: (action: RefAction) => void;
 }) {
-  const { client, port, messageAccess } = data;
+  const { client, port, messageAccess, runs } = data;
+  const taskIdOfRun = useMemo(() => {
+    const byRun = new Map(runs.map((r) => [r.id, r.taskId]));
+    return (runId: string) => byRun.get(runId) ?? null;
+  }, [runs]);
+  const gates = useMemo(
+    () => ({
+      availability: data.scopeDecide,
+      onRestartDaemon: data.handleRestartDaemon,
+    }),
+    [data.scopeDecide, data.handleRestartDaemon]
+  );
   const [filter, setFilter] = useState<DocFilter>({
     query: '',
     scope: 'all',
@@ -150,6 +165,9 @@ export function DocsView({
             anchor={anchor}
             mergeProposal={merge}
             onOpenDoc={select}
+            onOpenRef={onOpenRef}
+            taskIdOfRun={taskIdOfRun}
+            gates={gates}
           />
         )}
       </main>

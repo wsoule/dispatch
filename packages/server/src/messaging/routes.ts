@@ -33,6 +33,7 @@ import {
 } from '../api/http.js';
 import { speaksForRevoked } from '../api/revoke.js';
 import { runMessageRefusal } from '../orchestrator/types.js';
+import { tierAllows } from '../tiers.js';
 import {
   answeringWith,
   closeGate,
@@ -1190,17 +1191,24 @@ async function decideAgent(
       409,
       `${address} is registered on ${registeringHandle(ctx, address)}'s machine; approve or revoke it there`
     );
-  // Revoking an A2A client is final: its tasks were failed and its push
-  // configs deleted, so approving it again is refused; add a new client.
-  if (
-    choice === 'approve' &&
-    agent.status === 'revoked' &&
-    isClientAddress(address)
-  )
-    return errorResponse(
-      409,
-      `${address} was revoked, which is final; add a new A2A client instead`
-    );
+  // Revoking is final (XH-R3): a revoked teammate's agents and A2A clients
+  // stay off. Only the owner's own Overseer, their off switch, comes back,
+  // and only at the operator tier.
+  if (choice === 'approve' && agent.status === 'revoked') {
+    if (address !== ctx.actorContext.agentRef('overseer'))
+      return jsonResponse(
+        {
+          error: `${address} was revoked, which is final; register a new agent instead`,
+          code: 'revoked_final',
+        },
+        409
+      );
+    if (!tierAllows(ctx.caller?.tier ?? 'request', 'operator'))
+      return errorResponse(
+        403,
+        'turning the Overseer back on needs the operator tier'
+      );
+  }
   const gate = openRegistrationGateFor(ctx, address);
   if (gate !== null) {
     await ctx.messaging.engine.reply(

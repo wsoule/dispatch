@@ -13,6 +13,7 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import {
   answerLongPoll,
+  approveAgent,
   getMailbox,
   joinChannel,
   markDeliveryRead,
@@ -1875,6 +1876,69 @@ describe('messaging routes — direct unit coverage', () => {
     expect((await json<{ answer: unknown }>(res)).answer).toBeNull();
     // Never subscribed at all — still at baseline, not baseline+1-then-back.
     expect(messaging.engine.listenerCount).toBe(baseline);
+  });
+
+  // A revoked row stays revoked (XH-R3); only the owner's own Overseer comes
+  // back, and only at the operator tier.
+  function revokedAgent(address: string): void {
+    messaging.store.putAgent({
+      address,
+      displayName: address,
+      client: 'test',
+      tokenHash: `hash:${address}`,
+      status: 'revoked',
+      muted: false,
+      approvedBy: null,
+      createdAt: new Date().toISOString(),
+    });
+  }
+  function approverCtx(tier: 'decide' | 'operator'): ApiContext {
+    return {
+      messaging,
+      actorContext: {
+        humanRef: 'human:test',
+        agentRef: (id: string) => `agent:test/${id}`,
+      },
+      caller: { handle: 'test', ref: 'human:test', tier },
+      memory: { host: { agentDecided: () => {} } },
+    } as unknown as ApiContext;
+  }
+  const code = async (res: Response) =>
+    (await json<{ code?: string }>(res)).code;
+
+  it('refuses re-approving any revoked agent but the owner’s Overseer, with a detectable code', async () => {
+    for (const address of [
+      'agent:test/a2a.acme',
+      'agent:ada/helper',
+      'agent:ada/overseer',
+      'agent:test/helper',
+    ]) {
+      revokedAgent(address);
+      const res = await approveAgent(approverCtx('operator'), address);
+      expect(res.status).toBe(409);
+      expect(await code(res)).toBe('revoked_final');
+      expect(messaging.store.getAgent(address)?.status).toBe('revoked');
+    }
+  });
+
+  it('re-approves the owner’s revoked Overseer at the operator tier only', async () => {
+    revokedAgent('agent:test/overseer');
+    const refused = await approveAgent(
+      approverCtx('decide'),
+      'agent:test/overseer'
+    );
+    expect(refused.status).toBe(403);
+    expect(messaging.store.getAgent('agent:test/overseer')?.status).toBe(
+      'revoked'
+    );
+    const approved = await approveAgent(
+      approverCtx('operator'),
+      'agent:test/overseer'
+    );
+    expect(approved.status).toBe(200);
+    expect(messaging.store.getAgent('agent:test/overseer')?.status).toBe(
+      'approved'
+    );
   });
 
   it('reverts the agent to revoked and 500s if the registration gate fails to send', async () => {

@@ -79,7 +79,8 @@ function rosterClient(initial: AgentSummary[] = ROSTER) {
 
 function mount(
   client: unknown,
-  tier: 'request' | 'decide' | 'operator' = 'operator'
+  tier: 'request' | 'decide' | 'operator' = 'operator',
+  me: string | null = null
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -88,7 +89,12 @@ function mount(
     <QueryClientProvider client={queryClient}>
       <SettingsAccessProvider access={accessFor(tier, false)}>
         <AgentRosterSection
-          data={dataWith({ client: client as never, port: PORT })}
+          data={dataWith({
+            client: client as never,
+            port: PORT,
+            me,
+            myTier: tier,
+          })}
         />
       </SettingsAccessProvider>
     </QueryClientProvider>
@@ -123,6 +129,27 @@ describe('AgentRosterSection', () => {
         name: 'Approved by wyat',
       })
     ).toBeTruthy();
+  });
+
+  test("offers Approve on the owner's revoked Overseer only, never a teammate's agent named overseer", async () => {
+    const client = rosterClient([
+      agent({ address: 'agent:wyat/overseer', status: 'revoked' }),
+      agent({ address: 'agent:ada/overseer', status: 'revoked' }),
+    ]);
+    mount(client, 'operator', 'human:wyat');
+    fireEvent.click(
+      within(await row('agent:wyat/overseer')).getByRole('button', {
+        name: 'Approve agent:wyat/overseer',
+      })
+    );
+    await waitFor(() =>
+      expect(client.approveAgent).toHaveBeenCalledWith('agent:wyat/overseer')
+    );
+    expect(
+      within(await row('agent:ada/overseer')).queryByRole('button', {
+        name: 'Approve agent:ada/overseer',
+      })
+    ).toBeNull();
   });
 
   test('a revoked row shows its status and offers no actions', async () => {

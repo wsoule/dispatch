@@ -124,6 +124,12 @@ describe('docs helpers', () => {
         openDocBuffer('doc-1', 'a', { rev: 'rev-2', n: 2, hash: 'h' })
       )
     ).toBe('Saved · rev 2');
+    expect(
+      docStatusLine({
+        ...openDocBuffer('doc-1', 'a', { rev: 'rev-2', n: 2, hash: 'h' }),
+        proposal: 'rev-p',
+      })
+    ).toBe('Proposed · waiting on review');
   });
 });
 
