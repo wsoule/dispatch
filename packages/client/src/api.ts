@@ -3346,11 +3346,14 @@ export interface ApiClient {
   setReplicaHosts(replica: string, hosts: string[]): Promise<RosterAnswer>;
   closeLegacy(): Promise<RosterAnswer>;
   /** Switches the team between git and a relay; a relay needs
-   *  `confirmed: true` once its disclosure was shown (F-D31). */
+   *  `confirmed: true` once its disclosure was shown (F-D31). The
+   *  switch registers the team at the relay first. */
   switchTransport(body: {
     kind: 'git' | 'relay';
     url?: string;
     confirmed?: boolean;
+    /** Sent only in the relay registration the switch makes; never kept. */
+    registrationToken?: string;
   }): Promise<RosterAnswer>;
   /** FW-R8: takes an op no build reads out of every fold. */
   dismissRosterOp(

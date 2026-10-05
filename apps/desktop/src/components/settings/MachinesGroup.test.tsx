@@ -508,6 +508,32 @@ test('shows the relay disclosure before switching, and switches only on confirm'
   );
 });
 
+test('sends an optional registration token with the switch, from a password field', async () => {
+  const switchTransport = mock(() => Promise.resolve({ ok: true }));
+  mount(closed, 'operator', { switchTransport });
+  fireEvent.change(await screen.findByLabelText('Relay URL'), {
+    target: { value: 'wss://relay.example' },
+  });
+  const token = screen.getByLabelText('Relay registration token (optional)');
+  expect(token.getAttribute('type')).toBe('password');
+  fireEvent.change(token, { target: { value: ' relay-secret ' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to the relay' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Switch' }));
+  await waitFor(() =>
+    expect(switchTransport).toHaveBeenCalledWith({
+      kind: 'relay',
+      url: 'wss://relay.example',
+      confirmed: true,
+      registrationToken: 'relay-secret',
+    })
+  );
+  // The field forgets the token once the switch went through.
+  const field = screen.getByLabelText<HTMLInputElement>(
+    'Relay registration token (optional)'
+  );
+  await waitFor(() => expect(field.value).toBe(''));
+});
+
 test('offers no relay switch while the legacy window is open, or below the operator tier', async () => {
   mount(founded);
   expect(await screen.findByText('Syncing over git')).toBeTruthy();

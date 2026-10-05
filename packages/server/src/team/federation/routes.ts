@@ -1,5 +1,6 @@
 import { HANDLE, printable } from '@dispatch-foo/federation';
 import { fingerprint } from '@dispatch-foo/protocol/federation';
+import type { LogEntry } from '@dispatch-foo/protocol/federation';
 import { basename } from 'node:path';
 
 import type { ApiContext } from '../../api.js';
@@ -11,6 +12,11 @@ import {
 import type { AuthTier } from '../../tiers.js';
 import { tierAllows } from '../../tiers.js';
 import { capsOf } from './caps.js';
+import {
+  founderChain,
+  registerAtRelay,
+  RelayRegistrationError,
+} from './relay.js';
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
 import type { FedStore } from './store.js';
@@ -389,7 +395,7 @@ async function act(
       roster.abandonInvite();
       return after(null);
     case 'transport':
-      return switchTransport(fedCtx, body, after);
+      return switchTransport(fedCtx, service, body, after);
     default:
       return errorResponse(404, 'not found');
   }
@@ -411,9 +417,12 @@ function relayUrlProblem(url: string, loopback: boolean): string | null {
 
 // POST /api/team/transport: an admin switches the team between git and a
 // relay. The relay needs every admitted machine to speak it (FW-R39), the legacy
-// window closed, and its disclosure confirmed first (F-D31).
+// window closed, its disclosure confirmed first (F-D31), and the team
+// registered at the relay before the `transport` op is signed. The optional
+// `registrationToken` goes only into that registration request.
 async function switchTransport(
   fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>,
   body: Body,
   after: (
     value: Record<string, unknown> | null
@@ -457,11 +466,61 @@ async function switchTransport(
         },
         409
       );
+    const token = body.registrationToken;
+    if (token !== undefined && (typeof token !== 'string' || token === ''))
+      throw new RosterError(
+        'invalid',
+        'registrationToken must be a non-empty string'
+      );
+    roster.requireAdmin('switch the team transport');
+    const refused = await registerTeam(fedCtx, service, url, token);
+    if (refused !== null)
+      return jsonResponse(
+        { error: refused, code: 'relay_registration_failed' },
+        502
+      );
     roster.setTransport('relay', url);
     return after({ ok: true, disclosure: RELAY_DISCLOSURE });
   }
   roster.setTransport('git');
   return after(null);
+}
+
+// Registers the team at the relay from the founder's chain: this machine's
+// own log on the founder, else what the current transport holds of the
+// founder's log. Answers why it could not, or null once the relay holds it.
+async function registerTeam(
+  fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>,
+  url: string,
+  token: string | undefined
+): Promise<string | null> {
+  const { fed, roster } = fedCtx;
+  const founder = fed.meta('founder');
+  const foundSeq = Number(fed.meta('founder_seq'));
+  if (founder === null || !Number.isSafeInteger(foundSeq))
+    return 'this machine holds no founding to register the team with';
+  let log: LogEntry[];
+  try {
+    log =
+      founder === fed.replica ? fed.ownLog() : await service.scan([founder]);
+  } catch (err) {
+    return `could not register the team at the relay: this machine could not read ${fedCtx.label(founder)}'s log (${(err as Error).message.slice(0, 200)})`;
+  }
+  const chain = founderChain(log, founder, foundSeq);
+  if (chain === null)
+    return `could not register the team at the relay: this machine does not hold ${fedCtx.label(founder)}'s key and found ops yet; pull, then try again`;
+  try {
+    const teamId = await registerAtRelay(url, chain, {
+      ...(token === undefined ? {} : { token }),
+    });
+    if (teamId !== roster.teamId())
+      return `could not register the team at the relay: it registered team ${teamId}, not this team`;
+  } catch (err) {
+    if (err instanceof RelayRegistrationError) return err.message;
+    throw err;
+  }
+  return null;
 }
 
 async function keyAction(

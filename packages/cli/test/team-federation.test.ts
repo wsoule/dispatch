@@ -131,6 +131,7 @@ describe('the API client', () => {
       kind: 'relay',
       url: 'wss://relay.example',
       confirmed: true,
+      registrationToken: 'relay-token',
     });
     expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
       ['POST', '/api/team/found', { name: 'acme' }],
@@ -156,7 +157,12 @@ describe('the API client', () => {
       [
         'POST',
         '/api/team/transport',
-        { kind: 'relay', url: 'wss://relay.example', confirmed: true },
+        {
+          kind: 'relay',
+          url: 'wss://relay.example',
+          confirmed: true,
+          registrationToken: 'relay-token',
+        },
       ],
     ]);
   });
@@ -201,6 +207,36 @@ describe('dispatch team transport', () => {
       { kind: 'relay', url: 'wss://relay.example', confirmed: true },
       { kind: 'git' },
     ]);
+  });
+
+  it('sends a registration token with a relay switch, and refuses one for git', async () => {
+    const a = api();
+    await switchTeamTransport(
+      a,
+      'relay',
+      'wss://relay.example',
+      true,
+      () => {},
+      () => Promise.resolve('relay-token')
+    );
+    expect(a.calls).toEqual([
+      {
+        kind: 'relay',
+        url: 'wss://relay.example',
+        confirmed: true,
+        registrationToken: 'relay-token',
+      },
+    ]);
+    await expect(
+      switchTeamTransport(
+        a,
+        'git',
+        undefined,
+        false,
+        () => {},
+        () => Promise.resolve('relay-token')
+      )
+    ).rejects.toThrow('A registration token is for a switch to the relay.');
   });
 
   it('says which transport the team syncs over', () => {

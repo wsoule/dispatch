@@ -61,6 +61,7 @@ describe('team federation bindings', () => {
         kind: 'relay',
         url: 'wss://relay.example',
         confirmed: true,
+        registrationToken: 'relay-token',
       });
       expect(stub.calls.map((c) => [c.init?.method, c.url])).toEqual([
         ['POST', `${BASE}/api/team/found`],
@@ -77,6 +78,7 @@ describe('team federation bindings', () => {
         kind: 'relay',
         url: 'wss://relay.example',
         confirmed: true,
+        registrationToken: 'relay-token',
       });
       expect(sentJson(stub.calls[3] ?? {})).toEqual({ hosts: ['eve'] });
       expect(sentJson(stub.calls[6] ?? {})).toEqual({

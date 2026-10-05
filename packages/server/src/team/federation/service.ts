@@ -587,6 +587,13 @@ export class FederationService {
     return true;
   }
 
+  /** Every entry the current transport holds for these replicas, outside
+   *  the per-pass caps: a relay registration reads the founder's chain here
+   *  on a machine that is not the founder. */
+  scan(replicas: readonly string[]): Promise<LogEntry[]> {
+    return this.current.scan(replicas);
+  }
+
   /** FW-R28: the key op an admit names that no probe found, from a scan of
    *  that id's files outside the caps; true once a claim with it is held. */
   async findKey(replica: string, fingerprint: string): Promise<boolean> {

@@ -72,41 +72,63 @@ export interface FakeRelay {
 // A frame over this many bytes closes the socket (the contract's cap).
 const FRAME_MAX_BYTES = 8 * 1024 * 1024;
 
-/** A relay for the founder's team, registered from its `key` and `found`
- *  ops as `POST /v1/teams` would. */
+/** A relay for the founder's team. It serves the team only once it is
+ *  registered through `POST /v1/teams`, as the real relay does; with a
+ *  `registrationToken`, that call needs `Authorization: Bearer <token>`. */
 export function startFakeRelay(
   founder: { fed: { ownLog(): LogEntry[] }; clock?: { now: Date } },
   opts: {
     licensePublicKey?: string | null;
     limits?: Partial<RelayLimits>;
+    registrationToken?: string;
   } = {}
 ): Promise<FakeRelay> {
-  const own = founder.fed.ownLog();
-  const key = own.find((e) => e.type === 'key');
-  const found = own.find(
-    (e) =>
-      e.type === 'roster' &&
-      !isStub(e) &&
-      (e.body as { action?: string } | undefined)?.action === 'found'
-  );
-  if (key === undefined || found === undefined)
-    throw new Error('the founder has no key and found op');
+  const found = founder.fed
+    .ownLog()
+    .find(
+      (e) =>
+        e.type === 'roster' &&
+        !isStub(e) &&
+        (e.body as { action?: string } | undefined)?.action === 'found'
+    );
+  if (found === undefined) throw new Error('the founder has no found op');
   const teamId = opHash(found).slice(0, 32);
-  const relay = new Relay(
-    teamId,
-    key,
-    found,
-    opts.licensePublicKey ?? null,
-    founder.clock ?? { now: new Date() },
-    { ...LIMITS, ...opts.limits }
-  );
+  const clock = founder.clock ?? { now: new Date() };
+  let relay: Relay | null = null;
+  const register = async (req: Request): Promise<Response> => {
+    const token = opts.registrationToken;
+    if (
+      token !== undefined &&
+      req.headers.get('authorization') !== `Bearer ${token}`
+    )
+      return answer(401, { error: 'registration needs the relay’s token' });
+    let body: { key?: LogEntry; found?: LogEntry; ops?: LogEntry[] };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return answer(400, { error: 'expected a JSON body' });
+    }
+    const chain = verifiedChain(body);
+    if (typeof chain === 'string') return answer(400, { error: chain });
+    if (opHash(chain.found).slice(0, 32) !== teamId)
+      return answer(400, { error: 'this relay serves another team' });
+    if (relay !== null) return answer(200, { teamId });
+    relay = new Relay(teamId, chain, opts.licensePublicKey ?? null, clock, {
+      ...LIMITS,
+      ...opts.limits,
+    });
+    return answer(201, { teamId });
+  };
   const server = Bun.serve<Conn>({
     port: 0,
     hostname: '127.0.0.1',
     fetch(req, srv) {
       const path = new URL(req.url).pathname;
-      if (path !== `/v1/teams/${teamId}`)
-        return new Response('no such team', { status: 404 });
+      if (path === '/v1/teams' && req.method === 'POST') return register(req);
+      if (path !== `/v1/teams/${teamId}` || relay === null)
+        return answer(404, { error: 'no such team' });
+      if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket')
+        return answer(426, { error: 'upgrade to a WebSocket' });
       const host = req.headers.get('host') ?? '';
       const ok = srv.upgrade(req, {
         data: {
@@ -117,7 +139,7 @@ export function startFakeRelay(
           status: null,
         },
       });
-      return ok ? undefined : new Response('upgrade failed', { status: 400 });
+      return ok ? undefined : answer(400, { error: 'upgrade failed' });
     },
     websocket: {
       maxPayloadLength: FRAME_MAX_BYTES,
@@ -125,11 +147,11 @@ export function startFakeRelay(
         send(ws, { t: 'challenge', nonce: ws.data.nonce });
       },
       message(ws, raw) {
-        relay.onMessage(ws, typeof raw === 'string' ? raw : raw.toString());
+        relay?.onMessage(ws, typeof raw === 'string' ? raw : raw.toString());
       },
       close(ws) {
-        relay.conns.delete(ws);
-        relay.announce();
+        relay?.conns.delete(ws);
+        relay?.announce();
       },
     },
   });
@@ -137,17 +159,63 @@ export function startFakeRelay(
   return Promise.resolve({
     url,
     teamId,
-    stored: (r) => relay.stored(r),
-    clock: relay.clock,
-    publishFrames: () => relay.publishFrames,
+    stored: (r) => relay?.stored(r) ?? [],
+    clock,
+    publishFrames: () => relay?.publishFrames ?? 0,
     sendRaw: (text) => {
-      for (const ws of relay.conns.keys()) ws.send(text);
+      for (const ws of relay?.conns.keys() ?? []) ws.send(text);
     },
     stop: async () => {
-      for (const ws of relay.conns.keys()) ws.close();
+      for (const ws of relay?.conns.keys() ?? []) ws.close();
       await server.stop(true);
     },
   });
+}
+
+const answer = (status: number, body: unknown): Response =>
+  Response.json(body, { status });
+
+interface FounderChain {
+  key: LogEntry;
+  found: LogEntry;
+  /** The key op, the found op and any further ops, verified, in seq order. */
+  entries: LogEntry[];
+}
+
+// A registration body's founder chain, verified from its key op as the real
+// relay does, or why it is refused.
+function verifiedChain(body: {
+  key?: LogEntry;
+  found?: LogEntry;
+  ops?: LogEntry[];
+}): FounderChain | string {
+  const { key, found } = body;
+  const ops = body.ops ?? [];
+  if (
+    key?.type !== 'key' ||
+    found?.type !== 'roster' ||
+    isStub(found) ||
+    (found.body as { action?: string } | undefined)?.action !== 'found' ||
+    found.replica !== key.replica ||
+    !Array.isArray(ops)
+  )
+    return 'key must be the founder’s key op and found its found op';
+  const bySeq = new Map<number, LogEntry>();
+  for (const e of [key, found, ...ops])
+    if (e.replica === key.replica && !bySeq.has(e.seq)) bySeq.set(e.seq, e);
+  const entries = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  const verified = verifyLog(
+    key.replica,
+    entries,
+    { head: null, halted: null },
+    null
+  );
+  if (
+    verified.accepted.length !== entries.length ||
+    verified.cursor.halted !== null
+  )
+    return 'the ops do not verify as the founder’s chain';
+  return { key, found, entries };
 }
 
 function send(ws: ServerWebSocket<Conn>, frame: RelayFrame): void {
@@ -166,16 +234,20 @@ class Relay {
   /** Key ops offered by pending connections, by replica. */
   private readonly offered = new Map<string, LogEntry>();
 
+  private readonly founderKey: LogEntry;
+  private readonly found: LogEntry;
+
   constructor(
     private readonly teamId: string,
-    private readonly founderKey: LogEntry,
-    private readonly found: LogEntry,
+    chain: FounderChain,
     private readonly licensePublicKey: string | null,
     /** The founder's clock in tests, so invites and retention share it. */
     readonly clock: { now: Date },
     private readonly limits: RelayLimits
   ) {
-    this.logs.set(founderKey.replica, [founderKey, found]);
+    this.founderKey = chain.key;
+    this.found = chain.found;
+    this.logs.set(chain.key.replica, [...chain.entries]);
   }
 
   stored(replica: string): LogEntry[] {
