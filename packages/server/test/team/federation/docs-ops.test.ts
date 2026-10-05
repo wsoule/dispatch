@@ -4,9 +4,9 @@ import { createHash } from 'node:crypto';
 
 import type { DocsService } from '../../../src/docs/service.js';
 import type { SqliteDocStore } from '../../../src/docs/store.js';
-import { DocOpHandler } from '../../../src/team/federation/docs.js';
+import { DocOpHandler, foldPair } from '../../../src/team/federation/docs.js';
 import type { FakeDocsHost } from '../../docs/fakeHost.js';
-import { makeService, OWNER, TEAMMATE } from '../../docs/fakeHost.js';
+import { makeService, OWNER, RUN, TEAMMATE } from '../../docs/fakeHost.js';
 
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
 const ID = (n: number, prefix: 'doc' | 'rev' = 'rev'): string =>
@@ -747,6 +747,440 @@ describe('what is published', () => {
     service.remove(owner(), 'team');
     expect(handler.pendingDocOps()).toEqual([
       { doc: team.doc.id, kind: 'remove', by: 'human:wyat' },
+    ]);
+  });
+});
+
+describe('sync problems a human can see', () => {
+  it('shows a sync problem on the doc and in the conflicted list until a human reviews it', () => {
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'v1\n', author: 'human:ada' })
+      ),
+      meta('rep-2', 1)
+    );
+    handler.apply(
+      json(
+        put(DOC, {
+          id: ID(1),
+          parents: [],
+          body: 'forged\n',
+          author: 'human:ada',
+        })
+      ),
+      meta('rep-2', 2)
+    );
+    const doc = service.read(owner(), 'spec').doc;
+    expect(doc.problem).toContain('Team sync problem');
+    expect(doc.problem).toContain('arrived with a different hash');
+    expect(
+      service.list(owner(), { conflicted: true }).docs.map((d) => d.id)
+    ).toEqual([DOC]);
+    service.markReviewed(owner(), 'spec');
+    expect(service.read(owner(), 'spec').doc.problem).toBeUndefined();
+    expect(service.list(owner(), { conflicted: true }).docs).toEqual([]);
+  });
+});
+
+describe('a local removal not yet published', () => {
+  // An op clock at a wall time, as a teammate's replica stamps it.
+  const at = (iso: string, replica = 'rep-2') =>
+    `${Date.parse(iso)}.0000.${replica}`;
+  function removedHere(): void {
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'v1\n', author: 'human:ada' })
+      ),
+      meta('rep-2', 1)
+    );
+    host.clock = new Date('2026-09-26T11:00:00.000Z');
+    service.remove(owner(), 'spec');
+  }
+
+  it('is clocked at the time it was made, on its tombstone', () => {
+    removedHere();
+    expect(store.tombstoneFull(DOC)?.hlc).toBe(
+      `${Date.parse('2026-09-26T11:00:00.000Z')}.0000.local`
+    );
+  });
+
+  it('spends a revision older than the removal and revives on a later one, by that clock', () => {
+    removedHere();
+    const older = put(DOC, {
+      id: ID(2),
+      parents: [ID(1)],
+      body: 'older\n',
+      author: 'human:ada',
+    });
+    expect(
+      handler.apply(json(older), {
+        ...meta('rep-2', 2),
+        hlc: at('2026-09-26T10:30:00.000Z'),
+      })
+    ).toBe('applied');
+    expect(store.doc(DOC)).toBeNull();
+    const later = put(DOC, {
+      id: ID(3),
+      parents: [ID(1)],
+      body: 'later\n',
+      author: 'human:ada',
+    });
+    expect(
+      handler.apply(json(later), {
+        ...meta('rep-2', 3),
+        hlc: at('2026-09-26T11:30:00.000Z'),
+      })
+    ).toBe('applied');
+    expect(service.read(owner(), 'spec').text).toBe('later\n');
+  });
+
+  it('keeps its own clock when the removal is published', () => {
+    removedHere();
+    handler.published(
+      handler.pendingDocOps().filter((b) => b.kind === 'remove'),
+      [at('2026-09-26T12:00:00.000Z', 'rep-1')]
+    );
+    expect(store.tombstoneFull(DOC)?.hlc).toBe(
+      `${Date.parse('2026-09-26T11:00:00.000Z')}.0000.local`
+    );
+  });
+});
+
+describe('what a pass reads', () => {
+  it('looks only at docs changed since they were last found clean', () => {
+    const team = service.create(owner(), { title: 'Team', body: 'shared\n' });
+    service.seal(owner(), 'team');
+    handler.published(handler.pendingDocOps());
+    expect(handler.pendingDocOps()).toEqual([]);
+    expect(store.metaKeys('sync:dirty:')).toEqual([]);
+    service.setStatus(owner(), 'team', 'accepted');
+    expect(store.metaKeys('sync:dirty:')).toEqual([
+      `sync:dirty:${team.doc.id}`,
+    ]);
+    expect(handler.pendingDocOps().map((b) => b.meta?.status)).toContain(
+      'accepted'
+    );
+  });
+});
+
+// FW-R38: the docs team-sync review's reproductions.
+describe('what a teammate cannot slip in (FW-R38)', () => {
+  const base = () => {
+    handler.apply(
+      json(
+        put(DOC, {
+          id: ID(1),
+          parents: [],
+          body: 'a\nb\nc\n',
+          author: 'human:ada',
+        })
+      ),
+      meta('rep-2', 1)
+    );
+    handler.apply(
+      json(
+        put(DOC, {
+          id: ID(2),
+          parents: [ID(1)],
+          body: 'A\nb\nc\n',
+          author: 'human:ada',
+        })
+      ),
+      meta('rep-2', 2)
+    );
+    handler.apply(
+      json(
+        put(DOC, {
+          id: ID(3),
+          parents: [ID(1)],
+          body: 'a\nb\nC\n',
+          author: 'human:wyat',
+        })
+      ),
+      meta('rep-1', 1)
+    );
+  };
+  // The fold a replica computes for ID(2) and ID(3).
+  const fold = () => {
+    const get = (id: string) => {
+      const r = store.revision(id);
+      return r === null ? null : { ...r };
+    };
+    return foldPair(get(ID(2)) as never, get(ID(3)) as never, get);
+  };
+  const merge = (over: { title?: string; createdAt?: string } = {}) => {
+    const f = fold();
+    const body = put(DOC, {
+      id: f.id,
+      parents: [...f.parents],
+      body: f.body,
+      author: 'agent:dispatch',
+      cause: 'sync',
+    });
+    const rev = body.revision as NonNullable<DocBody['revision']>;
+    rev.title = over.title ?? f.title;
+    rev.createdAt = over.createdAt ?? f.createdAt;
+    delete body.meta;
+    return body;
+  };
+
+  it('drops a sync merge whose title or time is not the fold of its parents', () => {
+    base();
+    expect(
+      handler.apply(json(merge({ title: 'PWNED TITLE' })), meta('rep-2', 3))
+    ).toBe('dropped');
+    expect(
+      handler.apply(
+        json(merge({ createdAt: '2099-01-01T00:00:00.000Z' })),
+        meta('rep-2', 4)
+      )
+    ).toBe('dropped');
+    expect(handler.apply(json(merge()), meta('rep-2', 5))).toBe('applied');
+    handler.passComplete();
+    const read = service.read(owner(), 'spec');
+    expect(read.doc.title).toBe('Spec');
+    expect(store.revisionMeta(fold().id)?.createdAt).toBe(fold().createdAt);
+  });
+
+  function accepted(allows: boolean): DocOpHandler {
+    const h = new DocOpHandler({ service, policyAllows: () => allows });
+    h.bindFederation({ speaksFor, rereadOps: () => {} });
+    h.apply(
+      json(
+        put(DOC, {
+          id: ID(1),
+          parents: [],
+          body: 'l1\nl2\n',
+          author: 'human:wyat',
+        })
+      ),
+      meta('rep-1', 1)
+    );
+    service.setStatus(owner(), 'spec', 'accepted');
+    return h;
+  }
+
+  it('holds a policy approval that sits on no held change, whatever the policy says', () => {
+    const h = accepted(true);
+    const sneak = put(DOC, {
+      id: ID(2),
+      parents: [ID(1)],
+      body: 'fresh text\n',
+      author: 'agent:dispatch',
+      cause: 'approve',
+      approval: { by: 'agent:dispatch', policy: { rung: 0 } },
+      task: 't-easy',
+    });
+    expect(h.apply(json(sneak), meta('rep-2', 2))).toBe('applied');
+    expect(service.read(owner(), 'spec').text).toBe('l1\nl2\n');
+    expect(service.proposals(owner(), { state: ['open'] })).toHaveLength(1);
+  });
+
+  it('lets a policy approval of the held change join when this replica would approve it too', () => {
+    const h = accepted(true);
+    h.apply(
+      json(
+        put(DOC, {
+          id: ID(2),
+          parents: [ID(1)],
+          body: 'l1\nl2\nagent\n',
+          author: 'run:r-9',
+          cause: 'edit',
+          task: 't-1',
+        })
+      ),
+      meta('rep-2', 2)
+    );
+    const approve = put(DOC, {
+      id: ID(3),
+      parents: [ID(1), ID(2)],
+      body: 'l1\nl2\nagent\n',
+      author: 'agent:dispatch',
+      cause: 'approve',
+      approval: { by: 'agent:dispatch', policy: { rung: 4 } },
+      task: 't-1',
+    });
+    expect(h.apply(json(approve), meta('rep-2', 3))).toBe('applied');
+    expect(service.read(owner(), 'spec').text).toBe('l1\nl2\nagent\n');
+  });
+
+  it('rules an approval for a task unknown here as elevated', () => {
+    expect(service.syncPolicyAllows('t-nowhere')).toBe(false);
+    host.ruling = (risk) =>
+      risk === 'elevated'
+        ? { mode: 'block' }
+        : { mode: 'auto', gate: 'doc', rung: 4, authorizedBy: 'rung' };
+    expect(service.syncPolicyAllows('t-1')).toBe(true);
+    expect(service.syncPolicyAllows('t-nowhere')).toBe(false);
+    expect(service.syncPolicyAllows(null)).toBe(false);
+  });
+
+  it('keeps a removed doc removed against a later revision no human covers', () => {
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'v1\n', author: 'human:ada' })
+      ),
+      meta('rep-2', 1, 1)
+    );
+    handler.apply(
+      { doc: DOC, kind: 'remove', by: 'human:ada' },
+      meta('rep-2', 2, 2)
+    );
+    handler.apply(
+      json(
+        put(DOC, {
+          id: ID(3),
+          parents: [ID(1)],
+          body: 'run\n',
+          author: 'run:r-9',
+        })
+      ),
+      meta('rep-2', 3, 5)
+    );
+    expect(store.doc(DOC)).toBeNull();
+    expect(service.syncProblems(DOC).at(-1)).toContain('run:r-9');
+  });
+
+  it('drops a slug change from a human the publisher cannot speak for', () => {
+    handler.apply(
+      json(
+        put(DOC, { id: ID(1), parents: [], body: 'v1\n', author: 'human:ada' })
+      ),
+      meta('rep-2', 1)
+    );
+    expect(
+      handler.apply(
+        { doc: DOC, kind: 'put', by: 'human:bob', meta: { slug: 'hijack' } },
+        meta('rep-2', 2)
+      )
+    ).toBe('dropped');
+    expect(service.read(owner(), 'spec').doc.slug).toBe('spec');
+  });
+
+  it('caps new docs per publisher per hour, parking the rest with a note', () => {
+    const h = new DocOpHandler({
+      service,
+      policyAllows: () => false,
+      limits: { newDocsPerHour: 1, heldPerPublisher: 10 },
+    });
+    h.bindFederation({ speaksFor, rereadOps: () => {} });
+    expect(
+      h.apply(
+        json(
+          put(DOC, { id: ID(1), parents: [], body: 'a\n', author: 'human:ada' })
+        ),
+        meta('rep-2', 1)
+      )
+    ).toBe('applied');
+    expect(
+      h.apply(
+        json(
+          put(DOC2, {
+            id: ID(20),
+            parents: [],
+            body: 'b\n',
+            author: 'human:ada',
+          })
+        ),
+        meta('rep-2', 2)
+      )
+    ).toBe('parked');
+    expect(service.health(owner()).warnings.join('\n')).toContain('rep-2');
+    host.advance(61);
+    expect(
+      h.apply(
+        json(
+          put(DOC2, {
+            id: ID(20),
+            parents: [],
+            body: 'b\n',
+            author: 'human:ada',
+          })
+        ),
+        meta('rep-2', 2)
+      )
+    ).toBe('applied');
+  });
+
+  it('caps held proposals per publisher, parking the rest with a note', () => {
+    const h = new DocOpHandler({
+      service,
+      policyAllows: () => false,
+      limits: { newDocsPerHour: 100, heldPerPublisher: 1 },
+    });
+    h.bindFederation({ speaksFor, rereadOps: () => {} });
+    for (const [doc, root] of [
+      [DOC, ID(1)],
+      [DOC2, ID(20)],
+    ] as const) {
+      h.apply(
+        json(
+          put(
+            doc,
+            { id: root, parents: [], body: 'l1\n', author: 'human:wyat' },
+            {
+              meta: {
+                slug: doc === DOC ? 'spec' : 'other',
+                title: 'Spec',
+                status: 'draft',
+              },
+            }
+          )
+        ),
+        meta('rep-1', doc === DOC ? 1 : 2)
+      );
+      service.setStatus(owner(), doc, 'accepted');
+    }
+    const edit = (doc: string, id: string, parent: string) =>
+      put(
+        doc,
+        {
+          id,
+          parents: [parent],
+          body: 'l1\nrun\n',
+          author: 'run:r-9',
+          cause: 'edit',
+          task: 't-1',
+        },
+        { meta: undefined }
+      );
+    expect(h.apply(json(edit(DOC, ID(2), ID(1))), meta('rep-2', 1))).toBe(
+      'applied'
+    );
+    expect(h.apply(json(edit(DOC2, ID(21), ID(20))), meta('rep-2', 2))).toBe(
+      'parked'
+    );
+    expect(service.health(owner()).warnings.join('\n')).toContain('held');
+  });
+
+  it("clamps a revision's time to its op clock", () => {
+    const body = put(DOC, {
+      id: ID(1),
+      parents: [],
+      body: 'v1\n',
+      author: 'human:ada',
+    });
+    (body.revision as NonNullable<DocBody['revision']>).createdAt =
+      '2099-01-01T00:00:00.000Z';
+    handler.apply(json(body), meta('rep-2', 1));
+    expect(store.revisionMeta(ID(1))?.createdAt).toBe(
+      new Date(1758880000000).toISOString()
+    );
+  });
+
+  it("publishes an agent's link change as the agent's, never the owner's", () => {
+    const team = service.create(owner(), { title: 'Team', body: 'shared\n' });
+    service.seal(owner(), 'team');
+    handler.published(handler.pendingDocOps());
+    service.link(service.actorFor(RUN), 'team', {
+      target: { type: 'task', id: 't-1' },
+      rel: 'context',
+    });
+    const linked = handler
+      .pendingDocOps()
+      .filter((b) => b.meta?.links !== undefined);
+    expect(linked).toEqual([
+      expect.objectContaining({ doc: team.doc.id, by: 'run:r-1' }),
     ]);
   });
 });

@@ -2,6 +2,7 @@ import type { RevisionCause } from '@dispatch/core';
 import { docBodyProblem, DOCS_LIMITS, docSlug } from '@dispatch/core';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { Address, JsonValue } from '@dispatch/protocol';
+import { hlcWallMs, MAX_CLOCK_LEAD_MS } from '@dispatch/protocol/federation';
 import type { DocBody } from '@dispatch/protocol/federation';
 import { createHash } from 'node:crypto';
 
@@ -252,6 +253,20 @@ export function covered(
 
 // ---- the doc op handler ------------------------------------------------------
 
+/** Per teammate replica: new docs an hour, and held proposals open here. */
+const SYNC_LIMITS = { newDocsPerHour: 500, heldPerPublisher: 50 };
+
+// A revision stamped later than its op's clock allows reads as that clock's time.
+function clampTime(
+  rev: NonNullable<DocBody['revision']>,
+  hlc: string
+): NonNullable<DocBody['revision']> {
+  const wall = hlcWallMs(hlc);
+  if (wall === null || Date.parse(rev.createdAt) <= wall + MAX_CLOCK_LEAD_MS)
+    return rev;
+  return { ...rev, createdAt: new Date(wall).toISOString() };
+}
+
 /** How long one missing parent's dropped ops are not asked for again. */
 const REREAD_EVERY_MS = 10 * 60 * 1000;
 
@@ -280,8 +295,43 @@ export class DocOpHandler implements DocsPort {
     private readonly deps: {
       service: DocsService;
       policyAllows(taskId: string | null): boolean;
+      limits?: { newDocsPerHour: number; heldPerPublisher: number };
     }
   ) {}
+
+  private get limits(): { newDocsPerHour: number; heldPerPublisher: number } {
+    return this.deps.limits ?? SYNC_LIMITS;
+  }
+
+  // Whether a policy approval sits on a change held here: [head, held tip]
+  // with the tip's text, or the clean merge an approval here would write.
+  private onHeldTip(
+    rev: NonNullable<DocBody['revision']>,
+    parents: readonly string[],
+    held: ReadonlySet<string>
+  ): boolean {
+    const { service } = this.deps;
+    if (parents.length !== 2 || !held.has(parents[1])) return false;
+    const head = service.syncRevision(parents[0]);
+    const tip = service.syncRevision(parents[1]);
+    if (head === null || tip === null) return false;
+    if (rev.body === tip.body) return true;
+    let baseId = tip.id;
+    for (let r = tip; held.has(r.id); ) {
+      const next = service.syncRevision(r.parents[0] ?? '');
+      if (next === null) return false;
+      baseId = next.id;
+      r = next;
+    }
+    const base = service.syncRevision(baseId);
+    if (base === null) return false;
+    const merged = merge3(base.body, head.body, tip.body, {
+      head: head.id,
+      base: base.id,
+      mine: tip.id,
+    });
+    return merged.clean && merged.body === rev.body;
+  }
 
   /** Late: DocSync takes this handler as its port. */
   bindFederation(fed: Pick<DocSync, 'speaksFor' | 'rereadOps'>): void {
@@ -356,10 +406,13 @@ export class DocOpHandler implements DocsPort {
 
   private revision(
     body: DocBody,
-    rev: NonNullable<DocBody['revision']>,
+    given: NonNullable<DocBody['revision']>,
     meta: ApplyMeta
   ): Outcome {
     const { service } = this.deps;
+    const isFold = given.cause === 'sync' && given.author === SYSTEM_ADDRESS;
+    // A fold's time is checked against its parents instead.
+    const rev = isFold ? given : clampTime(given, meta.hlc);
     if (sha256(rev.body) !== rev.hash)
       return this.problem(
         body.doc,
@@ -406,8 +459,15 @@ export class DocOpHandler implements DocsPort {
       const tomb = service.syncTombstone(body.doc);
       if (tomb !== null) {
         // A revision later than the removal revives the doc; others are spent.
-        if (tomb.hlc === null || !laterClock(meta.hlc, tomb.hlc))
+        if (!laterClock(meta.hlc, tomb.hlc)) return 'applied';
+        // FW-R38(3): only a human's edit brings a removed doc back.
+        if (!(rev.author.startsWith('human:') && meta.speaksFor(rev.author))) {
+          service.syncProblem(
+            body.doc,
+            `${rev.id} by ${rev.author} did not revive the removed doc: only a human ${meta.replica} speaks for can`
+          );
           return 'applied';
+        }
         reviving = true;
       }
     }
@@ -422,19 +482,29 @@ export class DocOpHandler implements DocsPort {
         body.doc,
         `${rev.id} from ${meta.replica} names a parent of another doc; it was dropped`
       );
-    const isFold = rev.cause === 'sync' && rev.author === SYSTEM_ADDRESS;
-    let conflicted = false;
+    let fold: Fold | null = null;
     if (isFold) {
-      const fold = this.verifyFold(rev, parents);
-      if (fold === 'parked') return 'parked';
-      if (fold === null)
+      const checked = this.verifyFold(rev, parents);
+      if (checked === 'parked') return 'parked';
+      if (checked === null)
         return this.problem(
           body.doc,
-          `${rev.id} from ${meta.replica} is a sync merge whose id or text does not follow from its parents; it was dropped`
+          `${rev.id} from ${meta.replica} is a sync merge that does not follow from its parents; it was dropped`
         );
-      conflicted = fold.conflicted;
+      fold = checked;
     }
     if (doc === null) {
+      // FW-R38(4): one replica brings at most so many new docs an hour.
+      if (
+        service.syncNewDocs(meta.replica, false) >= this.limits.newDocsPerHour
+      ) {
+        service.syncNote(
+          meta.replica,
+          `more than ${this.limits.newDocsPerHour} new docs this hour; the rest wait`
+        );
+        return 'parked';
+      }
+      service.syncNewDocs(meta.replica, true);
       const slug = body.meta?.slug ?? docSlug(rev.title);
       doc = service.syncCreateDoc({
         id: body.doc,
@@ -455,25 +525,43 @@ export class DocOpHandler implements DocsPort {
     if (doc.status === 'accepted') {
       const heldNow = service.syncHeld(doc.id);
       const parentHeld = parents.some((p) => heldNow.has(p));
+      // FW-R38(2): a policy approval counts only on a change held here.
+      const policy =
+        rev.cause === 'approve' && rev.approval?.policy !== undefined;
       const isCovered =
         isFold ||
-        covered(
-          {
-            author: rev.author,
-            cause: rev.cause,
-            approval: rev.approval ?? null,
-            task: rev.task ?? null,
-          },
-          {
-            publisher: meta.replica,
-            speaksFor: (_replica, address) => meta.speaksFor(address),
-            policyAllows: (task) => this.deps.policyAllows(task),
-          }
-        );
+        (policy
+          ? this.onHeldTip(rev, parents, heldNow) &&
+            this.deps.policyAllows(rev.task ?? null)
+          : covered(
+              {
+                author: rev.author,
+                cause: rev.cause,
+                approval: rev.approval ?? null,
+                task: rev.task ?? null,
+              },
+              {
+                publisher: meta.replica,
+                speaksFor: (_replica, address) => meta.speaksFor(address),
+                policyAllows: (task) => this.deps.policyAllows(task),
+              }
+            ));
       const decision = rev.cause === 'approve' || rev.cause === 'reject';
       if (isCovered && decision && parentHeld)
         service.syncRelease(doc.id, `decided on ${meta.replica}`);
       else held = parentHeld || !isCovered;
+      // FW-R38(4): one replica holds at most so many proposals open here.
+      if (
+        held &&
+        !parentHeld &&
+        service.syncHeldFrom(meta.replica) >= this.limits.heldPerPublisher
+      ) {
+        service.syncNote(
+          meta.replica,
+          `more than ${this.limits.heldPerPublisher} held changes wait for a decision; the rest wait`
+        );
+        return 'parked';
+      }
     }
     service.syncInsertRevision(
       this.stored(
@@ -483,7 +571,7 @@ export class DocOpHandler implements DocsPort {
         parents,
         reviving && missing.length > 0 ? missing : null,
         !held,
-        isFold ? { conflicted } : null
+        fold
       )
     );
     this.known(doc.id, rev.id, meta.hlc);
@@ -506,7 +594,7 @@ export class DocOpHandler implements DocsPort {
     parents: string[],
     restoredParents: string[] | null,
     numbered: boolean,
-    fold: { conflicted: boolean } | null
+    fold: Fold | null
   ): SyncedRevision {
     const via =
       fold !== null || meta.speaksFor(rev.author) ? null : meta.replica;
@@ -515,13 +603,14 @@ export class DocOpHandler implements DocsPort {
       docId,
       parents,
       restoredParents,
-      title: rev.title,
-      body: rev.body,
-      hash: rev.hash,
+      // A verified fold is stored as computed here, never as sent.
+      title: fold?.title ?? rev.title,
+      body: fold?.body ?? rev.body,
+      hash: fold === null ? rev.hash : sha256(fold.body),
       author: rev.author,
       cause: rev.cause,
       summary: rev.summary,
-      createdAt: rev.createdAt,
+      createdAt: fold?.createdAt ?? rev.createdAt,
       approval: rev.approval ?? null,
       via,
       numbered,
@@ -544,7 +633,15 @@ export class DocOpHandler implements DocsPort {
     const [a, b] = parents.map((p) => get(p));
     if (a === null || b === null) return 'parked';
     const fold = foldPair(a, b, get);
-    return fold.id === rev.id && sha256(fold.body) === rev.hash ? fold : null;
+    // FW-R38(1): every field must be the fold's.
+    const same =
+      fold.id === rev.id &&
+      sha256(fold.body) === rev.hash &&
+      fold.title === rev.title &&
+      fold.createdAt === rev.createdAt &&
+      fold.parents[0] === rev.parents[0] &&
+      fold.parents[1] === rev.parents[1];
+    return same ? fold : null;
   }
 
   // Revisions as the fold reads them, cached for one op.
@@ -595,6 +692,8 @@ export class DocOpHandler implements DocsPort {
     const refused: string[] = [];
     if (m.status !== undefined && m.status !== current.status && !human)
       refused.push(`a change of status to ${m.status}`);
+    if (m.slug !== undefined && m.slug !== current.slug && !human)
+      refused.push(`a change of slug to ${m.slug}`);
     if (
       m.links !== undefined &&
       !human &&
@@ -605,7 +704,7 @@ export class DocOpHandler implements DocsPort {
       const detail = `${refused.join(' and ')} by ${body.by} was dropped: ${meta.replica} cannot speak for that human`;
       if (body.revision === undefined) return this.problem(body.doc, detail);
       this.deps.service.syncProblem(body.doc, detail);
-      m = { ...m, status: undefined, links: undefined };
+      m = { ...m, status: undefined, links: undefined, slug: undefined };
     }
     const clocks = service.syncMetaClocks(body.doc);
     const won: Partial<SyncMeta> = {};

@@ -421,6 +421,8 @@ interface DirectCommit {
 const problemKey = (docId: string): string => `problem:${docId}`;
 const syncProblemsKey = (docId: string): string => `sync-problems:${docId}`;
 const SYNC_PROBLEMS_KEPT = 20;
+const SYNC_DIRTY = 'sync:dirty:';
+const syncDirtyKey = (docId: string): string => `${SYNC_DIRTY}${docId}`;
 
 /** What `docs sync repair` reaches: the bound team sync handler. */
 export interface SyncRepairPort {
@@ -470,6 +472,12 @@ function syncKnownKey(k: SyncKnown): string {
   return `sync:rv:${k.doc}:${k.rev}:${k.by}`;
 }
 
+/** A local change's op clock, at the wall time it was made: what a teammate's
+ *  later revision is compared with before the change is published. */
+function localClock(atIso: string): string {
+  return `${String(Date.parse(atIso)).padStart(13, '0')}.0000.local`;
+}
+
 const linksKey = (links: SyncMeta['links']): string =>
   links
     .map((l) => `${l.target.type}:${l.target.id}:${l.rel}`)
@@ -495,6 +503,10 @@ const SHARE_CLAIM_MS = 3 * LINEAR_REQUEST_TIMEOUT_MS;
 function problemOf(store: SqliteDocStore, docId: string): { problem?: string } {
   const problem = store.meta(problemKey(docId));
   if (problem !== null) return { problem: `Linear sync problem: ${problem}` };
+  const team = store.meta(syncProblemsKey(docId));
+  const latest =
+    team === null ? undefined : (JSON.parse(team) as string[]).at(-1);
+  if (latest !== undefined) return { problem: `Team sync problem: ${latest}` };
   const held = store.meta(heldKey(docId));
   return held === null ? {} : { problem: `Linear sync held: ${held}` };
 }
@@ -545,7 +557,11 @@ export class DocsService {
   // Runs `fn` in one transaction, then hands the changes it queued to the host.
   private write<T>(fn: () => T): T {
     try {
-      const out = this.store().transaction(fn);
+      const out = this.store().transaction(() => {
+        const result = fn();
+        this.markSyncDirty();
+        return result;
+      });
       const changes = this.outbox;
       this.outbox = [];
       for (const change of changes) {
@@ -560,6 +576,34 @@ export class DocsService {
       this.outbox = [];
       throw err;
     }
+  }
+
+  // Team sync reads only docs a write touched since it last found them clean.
+  private markSyncDirty(): void {
+    const store = this.store();
+    for (const change of this.outbox) {
+      if (change.scope !== 'team') continue;
+      store.setMeta(syncDirtyKey(change.doc), '1');
+      // Who made a meta change is who it travels as (FW-R38 minor).
+      if (change.kind === 'meta')
+        store.setMeta(`sync:by:${change.doc}`, change.author);
+    }
+  }
+
+  // The docs a pass looks at; the first ever pass looks at every team doc.
+  private syncDirty(): string[] {
+    const store = this.store();
+    if (store.meta('sync:seeded') === null) {
+      const { rows } = store.listDocs({
+        ns: ['team'],
+        statuses: DOC_STATUSES,
+        limit: Number.MAX_SAFE_INTEGER,
+        offset: 0,
+      });
+      for (const doc of rows) store.setMeta(syncDirtyKey(doc.id), '1');
+      store.setMeta('sync:seeded', '1');
+    }
+    return store.metaKeys(SYNC_DIRTY).map((k) => k.slice(SYNC_DIRTY.length));
   }
 
   attachNotices(notices: DocReadRecorder): void {
@@ -1254,7 +1298,10 @@ export class DocsService {
     return this.write(() => {
       const store = this.store();
       // A human's own save settles a sync problem.
-      if (actor.kind === 'human') store.deleteMeta(problemKey(doc.id));
+      if (actor.kind === 'human') {
+        store.deleteMeta(problemKey(doc.id));
+        store.deleteMeta(syncProblemsKey(doc.id));
+      }
       if (amend) {
         const summary = cutUtf8(
           `${head.summary}; ${next.summary}`,
@@ -2310,6 +2357,7 @@ export class DocsService {
       this.store().putDoc(doc);
       // A human's review settles a sync problem too.
       this.store().deleteMeta(problemKey(doc.id));
+      this.store().deleteMeta(syncProblemsKey(doc.id));
       this.refreshLinearHold(doc.id);
       this.outbox.push({
         doc: doc.id,
@@ -2350,6 +2398,7 @@ export class DocsService {
         origin: doc.origin,
         deletedBy: actor.address,
         at,
+        hlc: localClock(at),
       });
       this.store().deleteDoc(doc.id);
       this.outbox.push({
@@ -4665,6 +4714,10 @@ export class DocsService {
         ...decide,
       };
     }
+    for (const key of store.metaKeys('sync-note:'))
+      warnings.push(
+        `team sync, ${key.slice('sync-note:'.length)}: ${store.meta(key) ?? ''}`
+      );
     const bytes = store.fileBytes();
     if (bytes > 100 * 1024 * 1024)
       warnings.push(
@@ -4914,8 +4967,10 @@ export class DocsService {
     return this.store().doc(id);
   }
 
-  syncTombstone(id: string): { hlc: string | null; at: string } | null {
-    return this.store().tombstoneFull(id);
+  /** A tombstone with its clock; one from before clocks reads as its wall time. */
+  syncTombstone(id: string): { hlc: string; at: string } | null {
+    const t = this.store().tombstoneFull(id);
+    return t === null ? null : { at: t.at, hlc: t.hlc ?? localClock(t.at) };
   }
 
   syncRevision(id: string): RevisionRow | null {
@@ -5414,10 +5469,20 @@ export class DocsService {
     this.syncAfter.push(() => this.gateSyncProposal(p));
   }
 
+  /** This replica's doc policy for a teammate's change: a task unknown here,
+   *  or none, rules as elevated (FW-R38(2)). */
+  syncPolicyAllows(taskId: string | null): boolean {
+    return this.syncRuling(taskId).mode === 'auto';
+  }
+
+  private syncRuling(taskId: string | null): PolicyRuling {
+    const task = taskId === null ? null : this.host.task(taskId);
+    return this.host.rule(task?.risk ?? 'elevated');
+  }
+
   // Gated here as a local proposal is: this replica's policy may approve it.
   private gateSyncProposal(p: DocProposal): void {
-    const task = p.taskId === null ? null : this.host.task(p.taskId);
-    const ruling = this.host.rule(task === null ? 'elevated' : task.risk);
+    const ruling = this.syncRuling(p.taskId);
     if (ruling.mode === 'auto') {
       const out = this.approveProposal(p.rev, SYSTEM_ADDRESS, {
         rung: ruling.rung,
@@ -5445,6 +5510,29 @@ export class DocsService {
         this.syncAfter.push(() => this.closeGateQuietly(gate, reason));
       }
     }
+  }
+
+  /** A rolling note about one teammate's replica, shown with docs health. */
+  syncNote(replica: string, note: string | null): void {
+    const key = `sync-note:${replica}`;
+    if (note === null) this.store().deleteMeta(key);
+    else this.store().setMeta(key, cutUtf8(note, 500));
+  }
+
+  /** New docs `replica` brought this clock hour, counting one more when `add`. */
+  syncNewDocs(replica: string, add: boolean): number {
+    const store = this.store();
+    const key = `sync:new:${replica}:${this.nowIso().slice(0, 13)}`;
+    const n = Number(store.meta(key) ?? '0') + (add ? 1 : 0);
+    if (add) store.setMeta(key, String(n));
+    return n;
+  }
+
+  /** Open held proposals from `replica`. */
+  syncHeldFrom(replica: string): number {
+    return this.store()
+      .proposalRows({ states: ['open'] })
+      .filter((p) => p.origin === `sync:${replica}`).length;
   }
 
   /** Docs whose heads wait for the end-of-pass fold. */
@@ -5513,14 +5601,42 @@ export class DocsService {
     const store = this.store();
     const out: DocBody[] = [];
     const memo = new Map<string, boolean>();
-    const rooted = new Set<string>();
-    for (const meta of store.unpublishedTeamRevisions()) {
+    for (const docId of this.syncDirty()) {
+      const bodies = this.pendingFor(docId, memo);
+      // Clean: off the list until a write touches it again.
+      if (bodies.length === 0) store.deleteMeta(syncDirtyKey(docId));
+      out.push(...bodies);
+    }
+    return out;
+  }
+
+  // One doc's unpublished revisions (parents first), meta changes, reviews
+  // and, once deleted, its removal.
+  private pendingFor(docId: string, memo: Map<string, boolean>): DocBody[] {
+    const store = this.store();
+    const out: DocBody[] = [];
+    const doc = store.doc(docId);
+    if (doc === null) {
+      const t = store.tombstoneFull(docId);
+      if (
+        t !== null &&
+        t.ns === 'team' &&
+        this.syncSnapshot(docId) !== null &&
+        !this.syncKnown({ kind: 'remove', doc: docId })
+      )
+        out.push({
+          doc: docId,
+          kind: 'remove',
+          by: t.deletedBy,
+        });
+      return out;
+    }
+    if (doc.ns !== 'team') return out;
+    let first = this.syncSnapshot(doc.id) === null;
+    for (const meta of store.unpublishedTeamRevisions(doc.id)) {
       if (!this.syncGrounded(meta.id, memo)) continue;
       const rev = store.revision(meta.id);
-      const doc = store.doc(meta.docId);
-      if (rev === null || doc === null) continue;
-      const first = this.syncSnapshot(doc.id) === null && !rooted.has(doc.id);
-      if (first) rooted.add(doc.id);
+      if (rev === null) continue;
       const task =
         rev.cause === 'approve'
           ? (store
@@ -5561,55 +5677,31 @@ export class DocsService {
             }
           : {}),
       });
+      first = false;
     }
-    const { rows } = store.listDocs({
-      ns: ['team'],
-      statuses: DOC_STATUSES,
-      limit: Number.MAX_SAFE_INTEGER,
-      offset: 0,
-    });
-    for (const doc of rows) {
-      const snap = this.syncSnapshot(doc.id);
-      if (snap === null) continue;
-      const now = this.syncMetaOf(doc.id);
-      if (now === null) continue;
-      const meta: NonNullable<DocBody['meta']> = {};
-      if (now.slug !== snap.slug) meta.slug = now.slug;
-      if (now.aliases.some((a) => !snap.aliases.includes(a)))
-        meta.aliases = now.aliases;
-      if (now.status !== snap.status) meta.status = now.status;
-      if (linksKey(now.links) !== linksKey(snap.links)) meta.links = now.links;
-      const by = doc.updatedBy.startsWith('human:')
-        ? doc.updatedBy
-        : this.deps.ownerRef;
-      if (Object.keys(meta).length > 0)
-        out.push({ doc: doc.id, kind: 'put', by, meta });
-      for (const r of store.reviewsOf(doc.id)) {
-        if (!r.by.startsWith('human:')) continue;
-        const key: SyncKnown = {
-          kind: 'review',
-          doc: doc.id,
-          rev: r.rev,
-          by: r.by,
-        };
-        if (this.syncKnown(key)) continue;
-        if (store.revisionMeta(r.rev)?.n == null) continue;
-        out.push({
-          doc: doc.id,
-          kind: 'put',
-          by: r.by,
-          review: { rev: r.rev },
-        });
-      }
-    }
-    for (const t of store.teamTombstones()) {
-      if (this.syncSnapshot(t.docId) === null) continue;
-      if (this.syncKnown({ kind: 'remove', doc: t.docId })) continue;
-      out.push({
-        doc: t.docId,
-        kind: 'remove',
-        by: t.deletedBy.startsWith('human:') ? t.deletedBy : this.deps.ownerRef,
-      });
+    const snap = this.syncSnapshot(doc.id);
+    const now = this.syncMetaOf(doc.id);
+    if (snap === null || now === null) return out;
+    const meta: NonNullable<DocBody['meta']> = {};
+    if (now.slug !== snap.slug) meta.slug = now.slug;
+    if (now.aliases.some((a) => !snap.aliases.includes(a)))
+      meta.aliases = now.aliases;
+    if (now.status !== snap.status) meta.status = now.status;
+    if (linksKey(now.links) !== linksKey(snap.links)) meta.links = now.links;
+    const by = store.meta(`sync:by:${doc.id}`) ?? doc.updatedBy;
+    if (Object.keys(meta).length > 0)
+      out.push({ doc: doc.id, kind: 'put', by, meta });
+    for (const r of store.reviewsOf(doc.id)) {
+      if (!r.by.startsWith('human:')) continue;
+      const key: SyncKnown = {
+        kind: 'review',
+        doc: doc.id,
+        rev: r.rev,
+        by: r.by,
+      };
+      if (this.syncKnown(key)) continue;
+      if (store.revisionMeta(r.rev)?.n == null) continue;
+      out.push({ doc: doc.id, kind: 'put', by: r.by, review: { rev: r.rev } });
     }
     return out;
   }
@@ -5623,7 +5715,9 @@ export class DocsService {
           stamps[i] === undefined || stamps[i] === '' ? null : stamps[i];
         if (body.kind === 'remove') {
           this.syncMarkKnown({ kind: 'remove', doc: body.doc });
-          if (hlc !== null) store.setTombstoneHlc(body.doc, hlc);
+          // A local removal keeps the clock it was made at (localClock).
+          if (hlc !== null && store.tombstoneFull(body.doc)?.hlc == null)
+            store.setTombstoneHlc(body.doc, hlc);
           return;
         }
         const clocks =

@@ -623,7 +623,7 @@ export class SqliteDocStore {
     // A doc with a sync problem or a held push needs a human as a conflicted one does.
     if (filter.conflicted === true)
       where.push(
-        "(conflicted = 1 OR id IN (SELECT substr(key, 9) FROM meta WHERE key LIKE 'problem:%') OR id IN (SELECT substr(key, 6) FROM meta WHERE key LIKE 'held:%'))"
+        "(conflicted = 1 OR id IN (SELECT substr(key, 9) FROM meta WHERE key LIKE 'problem:%') OR id IN (SELECT substr(key, 15) FROM meta WHERE key LIKE 'sync-problems:%') OR id IN (SELECT substr(key, 6) FROM meta WHERE key LIKE 'held:%'))"
       );
     if (filter.ids !== undefined) {
       if (filter.ids.length === 0) return { rows: [], total: 0 };
@@ -1016,12 +1016,6 @@ export class SqliteDocStore {
         };
   }
 
-  teamTombstones(): { docId: string; deletedBy: string }[] {
-    return this.all<{ doc_id: string; deleted_by: string }>(
-      "SELECT doc_id, deleted_by FROM tombstones WHERE ns = 'team' ORDER BY at, doc_id"
-    ).map((r) => ({ docId: r.doc_id, deletedBy: r.deleted_by }));
-  }
-
   setTombstoneHlc(docId: string, hlc: string): void {
     this.run('UPDATE tombstones SET hlc = ? WHERE doc_id = ?', [hlc, docId]);
   }
@@ -1070,16 +1064,17 @@ export class SqliteDocStore {
     );
   }
 
-  // Sealed, numbered, confirmed team revisions not yet marked published, in
-  // doc and history order.
-  unpublishedTeamRevisions(): RevisionMeta[] {
+  // A team doc's sealed, numbered, confirmed revisions not yet marked
+  // published, in history order.
+  unpublishedTeamRevisions(docId: string): RevisionMeta[] {
     return this.all<RawRevision>(
       `SELECT ${REVISION_COLUMNS.split(', ')
         .map((c) => `r.${c}`)
         .join(', ')} FROM revisions r JOIN docs d ON d.id = r.doc_id
        LEFT JOIN meta m ON m.key = 'sync:pub:' || r.id
-       WHERE d.ns = 'team' AND r.n IS NOT NULL AND r.sealed = 1 AND r.provisional = 0 AND m.key IS NULL
-       ORDER BY r.doc_id, r.n`
+       WHERE r.doc_id = ? AND d.ns = 'team' AND r.n IS NOT NULL AND r.sealed = 1 AND r.provisional = 0 AND m.key IS NULL
+       ORDER BY r.n`,
+      [docId]
     ).map(toMeta);
   }
 

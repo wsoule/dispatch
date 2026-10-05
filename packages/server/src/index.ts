@@ -1161,6 +1161,8 @@ async function bootServer(
     store,
     events,
     rootDir,
+    // Revision times and op clocks read one clock (the tests inject it).
+    now: federationNow,
     refreshTask: (taskId) => cache.refresh(store, [taskId]),
   });
   const docs = openDocs({
@@ -1603,15 +1605,7 @@ async function bootServer(
   messaging.gates.register('doc', docGateHandler(docs.service, docsHost));
   if (federation !== null && docs.service.available) {
     const fedService = federation.service;
-    wireDocSync(federation, {
-      docs: docs.service,
-      // A held change from a teammate is approved here only as this
-      // daemon's own doc policy would approve it.
-      policyAllows: (taskId) =>
-        docsHost.rule(
-          taskId === null ? 'elevated' : store.get(taskId)?.meta.risk
-        ).mode === 'auto',
-    });
+    wireDocSync(federation, { docs: docs.service });
     // A team doc change here goes out soon, as a task edit does.
     docsHost.onChange((change) => {
       if (change.scope === 'team') fedService.notifyLocalChange();

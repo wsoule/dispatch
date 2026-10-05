@@ -197,15 +197,13 @@ export function wireAgentsAndChannels(
 // arrives, DocSync routes and publishes, and `docs sync repair` reaches it.
 export function wireDocSync(
   federation: Federation,
-  deps: {
-    docs: DocsService;
-    policyAllows: (taskId: string | null) => boolean;
-  }
+  deps: { docs: DocsService }
 ): DocOpHandler {
   const { fed, roster, service } = federation;
   const handler = new DocOpHandler({
     service: deps.docs,
-    policyAllows: deps.policyAllows,
+    // One rule with the held proposal's own gate (FW-R38(2)).
+    policyAllows: (taskId) => deps.docs.syncPolicyAllows(taskId),
   });
   const docSync = new DocSync({ fed, roster, service, port: handler });
   handler.bindFederation(docSync);
