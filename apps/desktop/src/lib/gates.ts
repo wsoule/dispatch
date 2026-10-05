@@ -245,12 +245,15 @@ function firstLine(text: string): string {
 }
 
 /** The OS notification a new gate raises, or null: overseer gates show in the
- *  chat, and the question edge detector already notifies a run's question. */
+ *  chat, the question edge detector already notifies a run's question, and a
+ *  gate addressed to another human is theirs (XH-R9) once `me` is known. */
 export function gateNotification(
   message: Message,
-  titleOfRun: (runId: string) => string | undefined
+  titleOfRun: (runId: string) => string | undefined,
+  me: string | null = null
 ): { title: string; body: string; kind: NotificationKind } | null {
   if (!message.to.some((address) => address.startsWith('human:'))) return null;
+  if (me !== null && !message.to.includes(me)) return null;
   const kind = notificationKindForMessage(message);
   if (kind === null) return null;
   const gate = gateOf(message);

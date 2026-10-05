@@ -189,6 +189,14 @@ describe('gate adapters', () => {
 });
 
 describe('gateNotification', () => {
+  it('notifies only the human a gate names, once this window knows who it is (XH-R9)', () => {
+    const toAna = { ...approval, to: ['human:ana'] };
+    expect(gateNotification(toAna, () => 'Checkout', 'human:wyat')).toBeNull();
+    expect(
+      gateNotification(toAna, () => 'Checkout', 'human:ana')
+    ).not.toBeNull();
+    expect(gateNotification(toAna, () => 'Checkout', null)).not.toBeNull();
+  });
   it('notifies a tool approval as today, under the approval toggle', () => {
     expect(gateNotification(approval, () => 'Checkout')).toEqual({
       title: 'Approval needed',

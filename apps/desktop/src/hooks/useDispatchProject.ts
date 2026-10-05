@@ -1784,7 +1784,9 @@ export function useDispatchProject(
                   (runId) =>
                     queryClient
                       .getQueryData<RunMeta[]>(runsQueryKey)
-                      ?.find((r) => r.id === runId)?.taskTitle
+                      ?.find((r) => r.id === runId)?.taskTitle,
+                  queryClient.getQueryData<{ ref: string }>(whoamiQueryKey)
+                    ?.ref ?? null
                 )
               : null;
           if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
