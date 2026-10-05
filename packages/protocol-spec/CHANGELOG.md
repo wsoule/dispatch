@@ -6,6 +6,10 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+- [editorial] Appendix F lists a draft op type, `a2a`, for teammate links: a
+  sealed, prunable A2A payload on a link's own log, which a replica drops when
+  it finds one on a team's log (§F.1). The appendix is informative, so no vector
+  changes.
 - [clarification] A host may name a `wake` gate's owner by the message's sender
   as well as the target (§2.3, §6.5). The Dispatch profile names the human a
   session acts for: that human is asked and told about the session, and gets its

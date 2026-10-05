@@ -513,3 +513,54 @@ describe('verifyEntry along a chain', () => {
     );
   });
 });
+
+describe('the a2a op type (teammate links, P5)', () => {
+  it('is sealed like mail: a sealed a2a op and its stub verify; a clear one is refused', () => {
+    const key = buildOp(
+      {
+        replica: R,
+        seq: 1,
+        prev: ZERO_HASH,
+        hlc: hlc(1000),
+        type: 'key',
+        body: { handle: 'ada' },
+      },
+      keys.signPriv
+    );
+    const head: ChainHead = { seq: 1, hash: opHash(key), hlc: key.hlc };
+    const { to, sealed } = sealPayload({
+      replica: R,
+      seq: 2,
+      type: 'a2a',
+      payload: { kind: 'cancel', taskId: 't-1' },
+      recipients: new Map([['bob-0000000b', peer.sealPub]]),
+    });
+    const op = buildOp(
+      {
+        replica: R,
+        seq: 2,
+        prev: head.hash,
+        hlc: hlc(2000),
+        type: 'a2a',
+        to,
+        sealed,
+      },
+      keys.signPriv
+    );
+    expect(verifyEntry(head, op, keys.signPub).ok).toBe(true);
+    expect(verifyEntry(head, stubOf(op), keys.signPub).ok).toBe(true);
+    expect(() =>
+      buildOp(
+        {
+          replica: R,
+          seq: 2,
+          prev: head.hash,
+          hlc: hlc(2000),
+          type: 'a2a',
+          body: { clear: true },
+        },
+        keys.signPriv
+      )
+    ).toThrow(RangeError);
+  });
+});

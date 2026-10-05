@@ -23,7 +23,7 @@ export function sealedAad(replica: string, seq: number, type: string): string {
 export function sealPayload(input: {
   replica: string;
   seq: number;
-  type: 'mail' | 'state';
+  type: 'mail' | 'state' | 'a2a';
   payload: JsonValue;
   recipients: ReadonlyMap<string, string>;
 }): { to: string[]; sealed: Sealed; key: Buffer } {
