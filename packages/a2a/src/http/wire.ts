@@ -1,7 +1,7 @@
 import type { MessagingErrorCode } from '@dispatch-foo/protocol';
 import { MessagingError } from '@dispatch-foo/protocol';
 
-import { A2AError } from '../errors.js';
+import { A2A_SPECS, A2AError } from '../errors.js';
 import type { A2AReason } from '../errors.js';
 
 /** The header a standalone host forwards its A2A client's bearer in. */
@@ -66,7 +66,7 @@ export function portErrorJson(err: unknown): {
   }
   if (err instanceof A2AError)
     return {
-      status: err.reason === 'TASK_NOT_FOUND' ? 404 : 400,
+      status: A2A_SPECS[err.reason].http,
       body: {
         error: { kind: 'a2a', reason: err.reason, message: err.message },
       },

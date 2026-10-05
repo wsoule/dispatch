@@ -29,13 +29,14 @@ const DISPATCH_DOMAIN = 'dispatch.foo';
 const ERROR_INFO = 'type.googleapis.com/google.rpc.ErrorInfo';
 const BAD_REQUEST = 'type.googleapis.com/google.rpc.BadRequest';
 
-// HTTP and google.rpc status per reason, as @a2a-js/sdk 1.2.0 defines them.
-const A2A_SPECS: Record<A2AReason, { http: number; status: string }> = {
+// google.rpc status per reason as @a2a-js/sdk 1.2.0 names it; HTTP status per
+// the A2A 1.0 §5.4 table, which the TCK checks and the SDK's 400s miss twice.
+export const A2A_SPECS: Record<A2AReason, { http: number; status: string }> = {
   TASK_NOT_FOUND: { http: 404, status: 'NOT_FOUND' },
-  TASK_NOT_CANCELABLE: { http: 400, status: 'FAILED_PRECONDITION' },
+  TASK_NOT_CANCELABLE: { http: 409, status: 'FAILED_PRECONDITION' },
   PUSH_NOTIFICATION_NOT_SUPPORTED: { http: 400, status: 'FAILED_PRECONDITION' },
   UNSUPPORTED_OPERATION: { http: 400, status: 'FAILED_PRECONDITION' },
-  CONTENT_TYPE_NOT_SUPPORTED: { http: 400, status: 'INVALID_ARGUMENT' },
+  CONTENT_TYPE_NOT_SUPPORTED: { http: 415, status: 'INVALID_ARGUMENT' },
   EXTENDED_AGENT_CARD_NOT_CONFIGURED: {
     http: 400,
     status: 'FAILED_PRECONDITION',
