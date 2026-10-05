@@ -720,6 +720,8 @@ test('Links shows each link’s health and an offer’s problem, as text (T55)',
           remote: 'git@github.com:acme/links.git',
           branch: 'dispatch-a2a-0123456789abcdef',
           ready: true,
+          pending: false,
+          readThisPass: 0,
           waiting: 2,
           lastExchangeAt: '2026-10-05T00:00:00.000Z',
           lastError: null,
@@ -751,6 +753,33 @@ test('Links shows each link’s health and an offer’s problem, as text (T55)',
   expect(screen.getByText(/<b>1 key op<\/b>/)).toBeTruthy();
   expect(document.querySelector('b')).toBeNull();
   expect(screen.getByText(/did not check out/)).toBeTruthy();
+});
+
+test('a link still waiting for the offerer says so (T55)', async () => {
+  mount('decide', {
+    links: {
+      enabled: true,
+      links: [
+        {
+          alias: 'ada',
+          remote: '/srv/links.git',
+          branch: 'dispatch-a2a-0123456789abcdef',
+          ready: true,
+          pending: true,
+          readThisPass: 0,
+          waiting: 0,
+          lastExchangeAt: null,
+          lastError: null,
+          unpublished: 0,
+          problems: [],
+        },
+      ],
+      offers: [],
+    },
+  });
+  expect(
+    await screen.findByText(/Waiting for the other side to start the link/)
+  ).toBeTruthy();
 });
 
 test('below decide there is no pairing form', async () => {

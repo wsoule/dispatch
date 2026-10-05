@@ -27,6 +27,8 @@ export interface LinkWiringDeps {
   port: () => BridgePort | null;
   policy: () => A2APolicy;
   unpaired: (pairedId: string) => void;
+  // An accepted link whose offerer never started it in time.
+  failed: (pairedId: string) => void;
   keyChange: (pairedId: string, statement: unknown) => void;
   changed: () => void;
   // What link pairing needs to complete an offer (T55).
@@ -92,6 +94,7 @@ export class LinkWiring {
         return port.watch(caller, taskId, onChange);
       },
       unpaired: (_alias, pairedId) => this.d.unpaired(pairedId),
+      pairingFailed: (_alias, pairedId) => this.d.failed(pairedId),
       keyChange: (alias, statement) => {
         const id = this.pairedId(alias);
         if (id !== null) this.d.keyChange(id, statement);

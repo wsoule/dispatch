@@ -1582,7 +1582,11 @@ function LinksGroup({
             <span className="flex min-w-0 flex-col">
               <span className="truncate font-mono">{l.remote}</span>
               <span>
-                {l.ready ? 'Ready' : 'Not reached yet'}
+                {l.pending
+                  ? 'Waiting for the other side to start the link'
+                  : l.ready
+                    ? 'Ready'
+                    : 'Not reached yet'}
                 {l.lastExchangeAt === null
                   ? ''
                   : ` · last exchange ${formatShortDate(l.lastExchangeAt)}`}

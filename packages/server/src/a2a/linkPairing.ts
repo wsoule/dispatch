@@ -39,6 +39,8 @@ interface GitTransport {
 }
 
 const BRANCH = /^dispatch-a2a-[0-9a-f]{16}$/;
+// How long past an offer's expiry the accepter waits for the offerer's link.
+const PENDING_GRACE_MS = 10 * 60_000;
 const MAX_REMOTE = 1024;
 
 const now = (d: PairingDeps): Date => d.now?.() ?? new Date();
@@ -228,7 +230,14 @@ export function acceptLinkPairing(
       sealPub: theirs.sealPub,
       createdAt: at,
     },
-    { proof: proof as unknown as JsonValue }
+    { proof: proof as unknown as JsonValue },
+    // Pending until the offerer's first op: past the offer's life and a
+    // grace period, the pairing is one-sided and fails visibly.
+    {
+      pendingUntil: new Date(
+        Date.parse(code.expires) + PENDING_GRACE_MS
+      ).toISOString(),
+    }
   );
   return {
     alias: i.alias,

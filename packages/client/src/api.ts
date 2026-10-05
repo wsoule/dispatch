@@ -1440,6 +1440,10 @@ export interface A2ALinkHealth {
   remote: string;
   branch: string;
   ready: boolean;
+  // Accepted here, and the offerer's first op not read yet.
+  pending: boolean;
+  // Fresh bytes the link read in the last pass.
+  readThisPass: number;
   waiting: number;
   lastExchangeAt: string | null;
   lastError: string | null;

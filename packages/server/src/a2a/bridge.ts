@@ -399,6 +399,12 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
           (a) =>
             `a2a:${a} unpaired: the other side removed this pairing over the link. Its records are kept, disabled.`
         ),
+      failed: (id) =>
+        unpairer?.drop(
+          id,
+          (a) =>
+            `a2a:${a}: the other side never started this link, so the pairing did not complete there (its offer may have expired first). It is disabled here: remove it and pair again.`
+        ),
       keyChange: (id, statement) => keyService.receiveOverLink(id, statement),
       pairing: () => ({
         ...peerService.deps,

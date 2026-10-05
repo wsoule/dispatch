@@ -121,6 +121,8 @@ export class LinkService {
   private readonly transport: GitFederationTransport;
   private readonly clock: OpClock;
   private ensured = false;
+  // This pass's read share, as the hub gives it (P-D6).
+  private passBudget: number | null = null;
   private reached = false;
   private fresh: FederatedOp[] = [];
 
@@ -234,8 +236,17 @@ export class LinkService {
     return this.store.outbox().length;
   }
 
-  /** One exchange: publish, read the peer's chain, deliver, then ack. */
-  async sync(): Promise<void> {
+  /** Whether the other side's chain has been read here at all. */
+  peerSeen(): boolean {
+    const peer = this.peerReplica();
+    const c = peer === null ? null : this.store.cursor(peer);
+    return c !== null && c.hash !== '';
+  }
+
+  /** One exchange: publish, read the peer's chain, deliver, then ack;
+   *  `readBytes` caps this pass's fresh reads. */
+  async sync(opts: { readBytes?: number } = {}): Promise<void> {
+    this.passBudget = opts.readBytes ?? null;
     if (!this.ensured) {
       await this.repo.ensure();
       this.ensured = true;
@@ -285,7 +296,7 @@ export class LinkService {
     const peer = this.deps.peer();
     const peerId = this.peerReplica();
     const c = peerId === null ? null : this.store.cursor(peerId);
-    const budget = this.deps.readBytes ?? LINK_READ_BYTES;
+    const budget = this.passBudget ?? this.deps.readBytes ?? LINK_READ_BYTES;
     const heads = new Map<string, string>();
     if (peerId !== null && c !== null && c.hash !== '')
       heads.set(peerId, c.hash);

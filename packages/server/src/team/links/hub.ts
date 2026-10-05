@@ -10,7 +10,7 @@ import type { AsyncGitRunner } from '../../sync/worktree.js';
 import { defaultAsyncGitRunner } from '../../sync/worktree.js';
 import { SyncRepo } from '../boardSync/repo.js';
 import { signedEntry } from '../federation/git.js';
-import { linkReplicaId, LinkService } from './service.js';
+import { LINK_READ_BYTES, linkReplicaId, LinkService } from './service.js';
 import type { LinkKeys, PublishResult } from './service.js';
 import type { LinkProblem } from './store.js';
 
@@ -32,6 +32,10 @@ export interface LinkHealth {
   remote: string;
   branch: string;
   ready: boolean;
+  // Accepted here, and the offerer's first op not read yet.
+  pending: boolean;
+  // Fresh bytes this link read in the last pass (0 when it waited).
+  readThisPass: number;
   waiting: number;
   lastExchangeAt: string | null;
   lastError: string | null;
@@ -61,7 +65,18 @@ export interface LinkHubDeps {
   offerState?: (pairedId: string) => string | null;
   /** Checks a proof read on an offer's branch (linkPairing.checkLinkProof). */
   offerProof?: (pairedId: string, proof: unknown) => OfferProof;
+  /** An accepted link the offerer never answered in time: end the pairing. */
+  pairingFailed?: (alias: string, pairedId: string) => void;
+  /** One link's fresh reads a pass (LINK_READ_BYTES). */
+  linkReadBytes?: number;
+  /** All links' fresh reads a pass (LINK_TOTAL_READ_BYTES). */
+  totalReadBytes?: number;
 }
+
+/** What every link together may read a pass; round-robin past it (P-D6). */
+const LINK_TOTAL_READ_BYTES = 24 * 1024 * 1024;
+// Below this a link waits for the next pass rather than read a sliver.
+const MIN_SHARE_BYTES = 64 * 1024;
 
 type OfferProof =
   | { ok: true; signPub: string; sealPub: string; complete: () => boolean }
@@ -108,6 +123,8 @@ export class LinkHub {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly listeners = new Set<(alias: string) => void>();
   private readonly offerProblems = new Map<string, string[]>();
+  private readonly readThisPass = new Map<string, number>();
+  private rotation = 0;
   private running: Promise<void> | null = null;
   private again = false;
   private stopped = false;
@@ -127,6 +144,8 @@ export class LinkHub {
       CREATE TABLE IF NOT EXISTS remote_tasks (alias TEXT NOT NULL, task_id TEXT NOT NULL, json TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (alias, task_id));
       CREATE TABLE IF NOT EXISTS served (alias TEXT NOT NULL, task_id TEXT NOT NULL, for_id TEXT NOT NULL, PRIMARY KEY (alias, task_id));
       CREATE TABLE IF NOT EXISTS key_bodies (alias TEXT PRIMARY KEY, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pending (alias TEXT PRIMARY KEY, until TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS notes (alias TEXT NOT NULL, subject TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (alias, subject));
       CREATE TABLE IF NOT EXISTS offers (paired_id TEXT PRIMARY KEY, alias TEXT NOT NULL, remote TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
     for (const row of this.links()) this.open(row);
@@ -167,8 +186,18 @@ export class LinkHub {
     return this.deps.keys;
   }
 
-  /** Records a link and starts serving it; `keyBody` joins its key op. */
-  add(row: LinkRow, keyBody?: Record<string, JsonValue>): void {
+  /** Records a link and starts serving it; `keyBody` joins its key op. An
+   *  accepted link stays pending until the offerer's first op, or fails at
+   *  `pendingUntil`. */
+  add(
+    row: LinkRow,
+    keyBody?: Record<string, JsonValue>,
+    opts: { pendingUntil?: string } = {}
+  ): void {
+    if (opts.pendingUntil !== undefined)
+      this.db
+        .query('INSERT OR REPLACE INTO pending (alias, until) VALUES (?, ?)')
+        .run(row.alias, opts.pendingUntil);
     if (keyBody !== undefined)
       this.db
         .query('INSERT OR REPLACE INTO key_bodies (alias, json) VALUES (?, ?)')
@@ -205,6 +234,8 @@ export class LinkHub {
       'remote_tasks',
       'served',
       'key_bodies',
+      'pending',
+      'notes',
     ])
       this.db.query(`DELETE FROM ${table} WHERE alias = ?`).run(alias);
   }
@@ -288,17 +319,83 @@ export class LinkHub {
     await this.running;
   }
 
+  // One pass: every link in turn from a rotating start, each within its
+  // share and all within the total, so read cost stays bounded however many
+  // links there are (P-D6). A link past the total waits for the next pass.
   private async passAll(): Promise<void> {
     await this.scanOffers();
-    for (const [alias, s] of [...this.services]) {
+    const all = [...this.services];
+    const start = all.length === 0 ? 0 : this.rotation % all.length;
+    this.rotation += 1;
+    const share = this.deps.linkReadBytes ?? LINK_READ_BYTES;
+    let left = this.deps.totalReadBytes ?? LINK_TOTAL_READ_BYTES;
+    for (let i = 0; i < all.length; i++) {
       if (this.stopped) return;
+      const [alias, s] = all[(start + i) % all.length];
+      if (left < MIN_SHARE_BYTES) {
+        this.readThisPass.set(alias, 0);
+        continue;
+      }
       try {
-        await s.sync();
+        await s.sync({ readBytes: Math.min(share, left) });
+        const used = s.health().readBytes;
+        this.readThisPass.set(alias, used);
+        left -= used;
       } catch (err) {
+        this.readThisPass.set(alias, 0);
         console.error(`a2a: link a2a:${alias} pass failed`, err);
       }
+      this.checkPending(alias, s);
     }
     this.deps.changed?.();
+  }
+
+  // An accepted link is pending until the offerer's first op is read; past
+  // its deadline, the pairing fails with a note the owner sees.
+  private checkPending(alias: string, s: LinkService): void {
+    const row = this.db
+      .query<{ until: string }, [string]>(
+        'SELECT until FROM pending WHERE alias = ?'
+      )
+      .get(alias);
+    if (row === null) return;
+    if (s.peerSeen()) {
+      this.db.query('DELETE FROM pending WHERE alias = ?').run(alias);
+      return;
+    }
+    if (this.deps.now().getTime() <= Date.parse(row.until)) return;
+    this.db.query('DELETE FROM pending WHERE alias = ?').run(alias);
+    this.db
+      .query(
+        'INSERT OR REPLACE INTO notes (alias, subject, message, at) VALUES (?, ?, ?, ?)'
+      )
+      .run(
+        alias,
+        `link-unanswered:${this.get(alias)?.pairedId ?? alias}`,
+        'the other side never started this link, so it never completed the pairing (its offer may have expired before it read the acceptance). The pairing is disabled: remove it and pair again.',
+        this.deps.now().toISOString()
+      );
+    const pairedId = this.get(alias)?.pairedId;
+    if (pairedId !== undefined) this.deps.pairingFailed?.(alias, pairedId);
+  }
+
+  private notes(alias: string): LinkProblem[] {
+    return this.db
+      .query<{ subject: string; message: string; at: string }, [string]>(
+        'SELECT subject, message, at FROM notes WHERE alias = ?'
+      )
+      .all(alias)
+      .map((n) => ({ ...n, dismissible: false }));
+  }
+
+  private isPending(alias: string): boolean {
+    return (
+      this.db
+        .query<{ n: number }, [string]>(
+          'SELECT COUNT(*) AS n FROM pending WHERE alias = ?'
+        )
+        .get(alias)?.n === 1
+    );
   }
 
   // ---- offers waiting for the accepter's proof on their branch (T55) ----
@@ -435,11 +532,13 @@ export class LinkHub {
         remote: l.remote,
         branch: l.branch,
         ready: s?.linkReady() ?? false,
+        pending: this.isPending(l.alias),
+        readThisPass: this.readThisPass.get(l.alias) ?? 0,
         waiting: s?.waiting() ?? 0,
         lastExchangeAt: h?.lastExchangeAt ?? null,
         lastError: h?.lastError ?? null,
         unpublished: h?.unpublished ?? 0,
-        problems: s?.problems() ?? [],
+        problems: [...this.notes(l.alias), ...(s?.problems() ?? [])],
       };
     });
   }

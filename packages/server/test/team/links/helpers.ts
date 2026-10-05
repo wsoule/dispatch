@@ -134,13 +134,14 @@ export class RawPeer {
   constructor(
     private readonly s: Scratch,
     readonly keys: LinkKeys,
-    replica?: string
+    replica?: string,
+    branch = BRANCH
   ) {
     this.replica = replica ?? linkReplicaId(keys.signPub, 'L1');
     this.repo = new SyncRepo(
       join(s.dir, `raw-${this.replica}-${Math.random().toString(36).slice(2)}`),
       s.remote,
-      BRANCH,
+      branch,
       this.replica,
       defaultAsyncGitRunner
     );
