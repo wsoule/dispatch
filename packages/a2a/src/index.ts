@@ -225,6 +225,7 @@ export type {
   ClientRow,
   HostRow,
   KeyEvent,
+  KeyPush,
   KeyPin,
   OutboundRow,
   OutboundState,

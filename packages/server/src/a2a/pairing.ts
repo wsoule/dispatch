@@ -35,6 +35,7 @@ import { tierAllows } from '../tiers.js';
 import { tokenHash } from './auth.js';
 import type { PeerChange, PeerDeps, PeerNotices } from './peers.js';
 import { checkNewPeer, peerGuard, removePeer } from './peers.js';
+import { NoticeRetries } from './retry.js';
 
 // Symmetric pairing in the daemon (P5): offering a code, accepting one, and
 // completing an offer when the accepter's proof arrives on the listener.
@@ -413,10 +414,6 @@ export function pairingSummaries(d: PairingDeps): Record<string, unknown>[] {
 }
 
 /** How long to wait before each retry of an unpair notice; then it gives up. */
-const UNPAIR_BACKOFF_MS = [
-  30_000, 120_000, 600_000, 3_600_000, 21_600_000, 86_400_000,
-];
-
 export interface UnpairDeps extends PairingDeps {
   // Revokes a paired client the way a revoke route does (closes its asks).
   revokeClient: (address: Address) => void;
@@ -431,20 +428,21 @@ export interface UnpairDeps extends PairingDeps {
  * up on) the peer row is removed and its parked mail fails.
  */
 export class Unpairer {
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly retries: NoticeRetries;
   private stopped = false;
-  constructor(private readonly d: UnpairDeps) {}
+  constructor(private readonly d: UnpairDeps) {
+    this.retries = new NoticeRetries(d.backoffMs);
+  }
 
   /** Resumes the notices a restart interrupted. */
   resume(): void {
     for (const p of this.d.store.pairings())
-      if (p.state === 'unpairing') this.schedule(p.id, 0, 0);
+      if (p.state === 'unpairing') this.schedule(p.id);
   }
 
   stop(): void {
     this.stopped = true;
-    for (const t of this.timers.values()) clearTimeout(t);
-    this.timers.clear();
+    this.retries.stop();
   }
 
   /** The peer row was asked to go; false when a plain removal will do. */
@@ -469,7 +467,7 @@ export class Unpairer {
     this.d.store.setPairingState(id, 'unpairing');
     this.disable(id);
     this.d.changed();
-    this.schedule(id, 0, 0);
+    this.schedule(id);
   }
 
   // Revokes the client and disables the peer of pairing `id`; the peer's
@@ -498,39 +496,29 @@ export class Unpairer {
     return this.d.store.peers().find((p) => p.pairedId === id) ?? null;
   }
 
-  private schedule(id: string, attempt: number, delayMs: number): void {
-    if (this.stopped) return;
-    clearTimeout(this.timers.get(id));
-    const t = setTimeout(() => {
-      this.timers.delete(id);
-      void this.attempt(id, attempt);
-    }, delayMs);
-    t.unref();
-    this.timers.set(id, t);
+  private schedule(id: string): void {
+    this.retries.start(
+      id,
+      () => this.send(id),
+      (told) => this.settle(id, told)
+    );
   }
 
-  private async attempt(id: string, attempt: number): Promise<void> {
+  // One unpair notice; true once the other side answered it signed.
+  private async send(id: string): Promise<boolean> {
     const peer = this.peerOf(id);
-    if (peer === null || peer.keyJwk == null) return this.settle(id, true);
-    try {
-      const res = await pairedFetch(
-        this.d,
-        peer,
-        peer.keyJwk
-      )(`${peer.interfaceUrl}${UNPAIR_PATH}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(unpairNotice(id, now(this.d))),
-      });
-      // Signed either way: heard, or the other side no longer has it.
-      if (res.status === 200 || res.status === 404)
-        return this.settle(id, true);
-    } catch {
-      // Unreachable or unverifiable: retried.
-    }
-    const backoff = this.d.backoffMs ?? UNPAIR_BACKOFF_MS;
-    if (attempt >= backoff.length) return this.settle(id, false);
-    this.schedule(id, attempt + 1, backoff[attempt]);
+    if (peer === null || peer.keyJwk == null) return true;
+    const res = await pairedFetch(
+      this.d,
+      peer,
+      peer.keyJwk
+    )(`${peer.interfaceUrl}${UNPAIR_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(unpairNotice(id, now(this.d))),
+    });
+    // Signed either way: heard, or the other side no longer has it.
+    return res.status === 200 || res.status === 404;
   }
 
   private settle(id: string, told: boolean): void {
@@ -596,8 +584,7 @@ export class Unpairer {
    */
   drop(id: string, notice: (alias: string) => string): string | null {
     this.d.store.setPairingState(id, 'unpaired');
-    clearTimeout(this.timers.get(id));
-    this.timers.delete(id);
+    this.retries.cancel(id);
     const peer = this.disable(id, 'unpaired');
     const alias = peer?.alias ?? null;
     if (alias !== null) this.d.notices.send(alias, 'unpaired', notice(alias));

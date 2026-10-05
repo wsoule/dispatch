@@ -688,6 +688,32 @@ describe('review N5', () => {
     expect(store.pairing('p-2')?.secretHash).toBeNull();
   });
 
+  it('keeps pending key pushes per pairing until they are settled', () => {
+    expect(store.keyPushes()).toEqual([]);
+    store.putKeyPush({
+      pairedId: 'p-1',
+      statement: '{"a":1}',
+      at: '2026-10-01T00:00:00.000Z',
+    });
+    store.putKeyPush({
+      pairedId: 'p-2',
+      statement: '{"a":2}',
+      at: '2026-10-01T00:00:01.000Z',
+    });
+    // A later statement for the same pairing replaces the earlier one.
+    store.putKeyPush({
+      pairedId: 'p-1',
+      statement: '{"a":3}',
+      at: '2026-10-01T00:00:02.000Z',
+    });
+    expect(store.keyPushes()).toEqual([
+      { pairedId: 'p-2', statement: '{"a":2}', at: '2026-10-01T00:00:01.000Z' },
+      { pairedId: 'p-1', statement: '{"a":3}', at: '2026-10-01T00:00:02.000Z' },
+    ]);
+    store.deleteKeyPush('p-2');
+    expect(store.keyPushes().map((k) => k.pairedId)).toEqual(['p-1']);
+  });
+
   it('keeps the unpair states', () => {
     store.putPairing(pairingRow('p-3'));
     store.setPairingState('p-3', 'unpairing');

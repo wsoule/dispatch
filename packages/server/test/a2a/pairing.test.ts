@@ -423,7 +423,7 @@ describe('unpairing', () => {
   });
 
   it('an unpair the other side cannot hear yet parks this side’s rows until it settles', async () => {
-    const a = await daemon('a2a-pair-a-', { unpairBackoffMs: [300, 300] });
+    const a = await daemon('a2a-pair-a-', { noticeBackoffMs: [300, 300] });
     const b = await daemon('a2a-pair-b-');
     await paired(a, b);
     await stop(b);

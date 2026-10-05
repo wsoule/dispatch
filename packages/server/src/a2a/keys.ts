@@ -11,7 +11,7 @@ import {
   publicJwkOf,
   signResponseFor,
 } from '@dispatch/a2a';
-import type { AuthResult, PeerRow, RequestParts } from '@dispatch/a2a';
+import type { PeerRow, RequestParts } from '@dispatch/a2a';
 import {
   promoteA2ASigningKey,
   readA2AKeyStatement,
@@ -22,6 +22,7 @@ import { MessagingError } from '@dispatch/protocol';
 import type { UnpairDeps, Unpairer } from './pairing.js';
 import { pairedFetch } from './pairing.js';
 import { peerGuard } from './peers.js';
+import { NoticeRetries } from './retry.js';
 import { KEY_OVERLAP_MS, newPrivateJwk } from './signing.js';
 
 // Key rotation and revocation (P5): this side's rotations, peers' statements
@@ -51,7 +52,61 @@ const nowOf = (d: KeyDeps): Date => d.now?.() ?? new Date();
 
 export class KeyService {
   private readonly lookedUp = new Map<string, number>();
-  constructor(private readonly d: KeyDeps) {}
+  private readonly retries: NoticeRetries;
+  constructor(private readonly d: KeyDeps) {
+    this.retries = new NoticeRetries(d.backoffMs);
+  }
+
+  /** Resumes the pushes a restart interrupted. */
+  resume(): void {
+    for (const p of this.d.store.keyPushes()) this.schedulePush(p.pairedId);
+  }
+
+  stop(): void {
+    this.retries.stop();
+  }
+
+  private schedulePush(id: string, delayMs = 0, attempt = 0): void {
+    this.retries.start(
+      id,
+      () => this.push(id),
+      (heard) => this.settlePush(id, heard),
+      delayMs,
+      attempt
+    );
+  }
+
+  // Sends pairing `id` its pending statement; true once the peer answered
+  // it signed (applied, or refused as stale: either way it decided). The
+  // statement authenticates itself, so the request is signed by whichever
+  // key is active, even one the peer does not know yet.
+  private async push(id: string): Promise<boolean> {
+    const pending = this.d.store.keyPushes().find((p) => p.pairedId === id);
+    const peer = this.d.store.peers().find((p) => p.pairedId === id);
+    if (pending === undefined || peer?.keyJwk == null) return true;
+    await pairedFetch(
+      this.d,
+      peer,
+      peer.keyJwk,
+      this.signer().requestKey()
+    )(`${peer.interfaceUrl}${KEY_CHANGE_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: pending.statement,
+    });
+    return true;
+  }
+
+  private settlePush(id: string, heard: boolean): void {
+    this.d.store.deleteKeyPush(id);
+    const alias = this.d.store.peers().find((p) => p.pairedId === id)?.alias;
+    if (!heard && alias !== undefined)
+      this.d.notices.send(
+        alias,
+        'key-push-untold',
+        `a2a:${alias} could not be told this project's key changed; it will look the change up the next time our reply surprises it.`
+      );
+  }
 
   private signer() {
     const signer = this.d.signer?.() ?? null;
@@ -110,26 +165,31 @@ export class KeyService {
     if (compromised) promoteA2ASigningKey(this.d.rootDir);
     this.d.resetSigner();
     const peers = this.pairedPeers();
+    const text = JSON.stringify(statement);
+    for (const peer of peers)
+      this.d.store.putKeyPush({
+        pairedId: peer.pairedId!,
+        statement: text,
+        at: at.toISOString(),
+      });
     const told: string[] = [];
     const untold: string[] = [];
-    // Signed by the old key, the one each peer still pins.
     await Promise.all(
       peers.map(async (peer) => {
+        const id = peer.pairedId!;
+        let heard = false;
         try {
-          const res = await pairedFetch(
-            this.d,
-            peer,
-            peer.keyJwk!,
-            current
-          )(`${peer.interfaceUrl}${KEY_CHANGE_PATH}`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(statement),
-          });
-          (res.status === 200 ? told : untold).push(peer.alias);
+          heard = await this.push(id);
         } catch {
-          untold.push(peer.alias);
+          // Retried below.
         }
+        if (heard) {
+          this.d.store.deleteKeyPush(id);
+          told.push(peer.alias);
+          return;
+        }
+        untold.push(peer.alias);
+        this.schedulePush(id, this.retries.delay(1) ?? 0, 1);
       })
     );
     const mustRepair: string[] = [];
@@ -159,34 +219,42 @@ export class KeyService {
   }
 
   /**
-   * POST <base>/dispatch/key-change: a statement from a paired client, the
-   * request signed by the key it pins. A verified sender always gets a
-   * signed reply; anything else is an unsigned 404.
+   * POST <base>/dispatch/key-change: a key-change or revocation statement.
+   * It authenticates itself (signed by the key it names, which a paired
+   * client must pin), so the request needs no signature: a revoked key can
+   * still revoke itself. The reply is always signed, so the sender can settle.
    */
   async receive(
-    auth: AuthResult | null,
     body: Uint8Array | null,
     request: RequestParts
   ): Promise<Response> {
-    const signer =
-      auth === null ? undefined : auth.ok ? auth.caller : auth.verified;
-    if (signer === undefined) return new Response('not found', { status: 404 });
-    const client = this.d.store.getClient(signer.address);
+    let raw: unknown = null;
+    try {
+      raw = JSON.parse(new TextDecoder().decode(body ?? new Uint8Array()));
+    } catch {
+      // Refused below.
+    }
+    const r =
+      typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : {};
+    const named =
+      typeof r.revoked === 'string'
+        ? r.revoked
+        : typeof r.old === 'string'
+          ? r.old
+          : null;
+    const client =
+      named === null ? null : this.d.store.clientByThumbprint(named);
+    const live =
+      client?.pairedId != null &&
+      client.keyJwk != null &&
+      this.d.store.pairing(client.pairedId)?.state !== 'unpaired';
     let res: Response;
-    if (
-      auth?.ok !== true ||
-      client?.pairedId == null ||
-      client.keyJwk == null
-    ) {
+    if (!live) {
       res = new Response('not found', { status: 404 });
     } else {
-      let raw: unknown = null;
-      try {
-        raw = JSON.parse(new TextDecoder().decode(body ?? new Uint8Array()));
-      } catch {
-        // Refused below.
-      }
-      const outcome = this.apply(client.pairedId, client.keyJwk, raw);
+      const outcome = this.apply(client.pairedId!, client.keyJwk!, raw);
       res = outcome.ok
         ? Response.json({ applied: true })
         : Response.json({ error: outcome.reason }, { status: outcome.status });

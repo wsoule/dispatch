@@ -120,6 +120,22 @@ describe('a planned key rotation', () => {
         ),
       });
     };
+    // Unsigned, naming the pinned key but signed by another: refused.
+    const forger = newPrivateJwk();
+    const forged = await rawFetch(`${b.listener}/a2a/v1/dispatch/key-change`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify({
+        ...makeKeyChange({
+          oldJwk: k2Public,
+          oldKey: createPrivateKey({ key: forger, format: 'jwk' }),
+          newJwk: publicJwkOf(forger),
+          at: new Date(applied + 120_000),
+        }),
+      }),
+    });
+    expect(forged.status).toBe(400);
+    expect(b.handle.a2a.store!.getPeer('alice')?.keyThumbprint).toBe(k2Kid);
     const older = await post(applied - 60_000);
     expect(older.status).toBe(409);
     expect(b.handle.a2a.store!.getPeer('alice')?.keyThumbprint).toBe(k2Kid);
@@ -149,6 +165,64 @@ describe('a planned key rotation', () => {
       before
     );
     expect(bListener).toBeDefined();
+  }, 30_000);
+});
+
+describe('a key push the peer could not hear', () => {
+  it('is retried, across a restart, until the peer re-pins', async () => {
+    const a = await daemon('a2a-keys-a-', {
+      noticeBackoffMs: [500, 500, 500, 500, 500, 500],
+    });
+    const b = await daemon('a2a-keys-b-');
+    await paired(a, b);
+    const port = Number(b.listener.split(':').pop());
+    const listener = (enabled: boolean) =>
+      b.call('/api/a2a/listener', {
+        method: 'PUT',
+        body: { enabled, host: '127.0.0.1', port },
+      });
+    expect((await listener(false)).status).toBe(200);
+    const out = await rotate(a);
+    expect(out).toMatchObject({ told: [], untold: ['bob'] });
+    const next = readA2ANextSigningKey(a.root);
+    if (next.status !== 'ok') throw new Error('no next key');
+    const newKid = ecThumbprint(publicJwkOf(next.next.jwk))!;
+    // The pending push is durable: a restart picks it up.
+    await restart(a, { noticeBackoffMs: [500, 500, 500, 500, 500, 500] });
+    expect((await listener(true)).status).toBe(200);
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.keyThumbprint === newKid,
+      15_000
+    );
+    expect(clientOf(b, 'a2a.alice').keyThumbprint).toBe(newKid);
+    await waitFor(() => a.handle.a2a.store!.keyPushes().length === 0, 5000);
+  }, 30_000);
+
+  it('a revocation is retried too, and honoured without the revoked key signing the request', async () => {
+    const a = await daemon('a2a-keys-a-', {
+      noticeBackoffMs: [500, 500, 500, 500],
+    });
+    const b = await daemon('a2a-keys-b-');
+    await paired(a, b);
+    const port = Number(b.listener.split(':').pop());
+    const listener = (enabled: boolean) =>
+      b.call('/api/a2a/listener', {
+        method: 'PUT',
+        body: { enabled, host: '127.0.0.1', port },
+      });
+    expect((await listener(false)).status).toBe(200);
+    const out = await rotate(a, true);
+    expect(out).toMatchObject({
+      told: [],
+      untold: ['bob'],
+      mustRepair: ['bob'],
+    });
+    expect((await listener(true)).status).toBe(200);
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      15_000
+    );
+    expect(pairingState(b)).toBe('unpaired');
   }, 30_000);
 });
 

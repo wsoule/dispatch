@@ -165,8 +165,8 @@ interface OpenBridgeDeps {
   watchLimits?: Partial<WatchLimits>;
   // Unverifiable replies before a signature peer is auth-failed (tests).
   unverifiedLimit?: number;
-  // The unpair notice's retry delays (tests shorten them).
-  unpairBackoffMs?: number[];
+  // Unpair notices' and key pushes' retry delays (tests shorten them).
+  noticeBackoffMs?: number[];
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -321,9 +321,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       emit: peerService.emit,
       revokeClient: (address) => bridge.clientRevoked(address),
       changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
-      ...(deps.unpairBackoffMs === undefined
+      ...(deps.noticeBackoffMs === undefined
         ? {}
-        : { backoffMs: deps.unpairBackoffMs }),
+        : { backoffMs: deps.noticeBackoffMs }),
     });
     bridgeDeps.unpairer = () => unpairer;
     const keyService = new KeyService({
@@ -336,6 +336,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       resetSigner: () => {
         signer = undefined;
       },
+      ...(deps.noticeBackoffMs === undefined
+        ? {}
+        : { backoffMs: deps.noticeBackoffMs }),
     });
     bridgeDeps.keys = () => keyService;
     keys = keyService;
@@ -392,6 +395,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     }
     try {
       unpairer.resume();
+      keyService.resume();
     } catch (err) {
       console.error('dispatchd: A2A unpair resume failed', err);
     }
@@ -638,6 +642,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     close: () =>
       serial(async () => {
         unpairer?.stop();
+        keys?.stop();
         outbound?.stop();
         outbound = null;
         leases.closeAll();

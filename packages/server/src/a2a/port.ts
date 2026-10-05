@@ -434,11 +434,7 @@ export class DaemonBridgePort implements BridgePort {
     if (route === 'key-change') {
       const keys = this.deps.keys?.() ?? null;
       if (keys === null) return new Response('not found', { status: 404 });
-      return keys.receive(
-        await this.authenticateSignedAt(r, publicUrl),
-        r.body,
-        parts
-      );
+      return keys.receive(r.body, parts);
     }
     if (unpairer === null) return new Response('not found', { status: 404 });
     return unpairer.receive(

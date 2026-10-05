@@ -145,6 +145,13 @@ export interface PairingRow {
   completedAt: string | null;
 }
 
+// A key-change or revocation statement a paired peer has not yet heard.
+export interface KeyPush {
+  pairedId: string;
+  statement: string;
+  at: string;
+}
+
 export interface KeyEvent {
   thumbprint: string;
   event: string;
@@ -268,6 +275,10 @@ export interface A2AStore {
   completePairing(id: string, peerThumbprint: string, at: string): boolean;
   setPairingState(id: string, state: PairingRow['state']): void;
   recordKeyEvent(e: KeyEvent): void;
+  // Oldest first; one per pairing, a newer statement replacing an older one.
+  putKeyPush(p: KeyPush): void;
+  keyPushes(): KeyPush[];
+  deleteKeyPush(pairedId: string): void;
   // Oldest first.
   keyEvents(thumbprint: string): KeyEvent[];
   // Prunes expired entries, then records the nonce: 'replay' when seen,
@@ -336,6 +347,9 @@ CREATE TABLE IF NOT EXISTS key_events (
   statement TEXT, at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS key_events_tp ON key_events (thumbprint, seq);
+CREATE TABLE IF NOT EXISTS key_pushes (
+  paired_id TEXT PRIMARY KEY, statement TEXT NOT NULL, at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS seen_nonces (
   thumbprint TEXT NOT NULL, nonce TEXT NOT NULL, expires_at TEXT NOT NULL,
   PRIMARY KEY (thumbprint, nonce)
@@ -1311,6 +1325,26 @@ export class SqliteA2AStore implements A2AStore {
         "UPDATE pairings SET state = ?, secret_hash = CASE WHEN ? = 'offered' THEN secret_hash ELSE NULL END WHERE id = ?"
       )
       .run(state, state, id);
+  }
+
+  putKeyPush(p: KeyPush): void {
+    this.db
+      .prepare(
+        'INSERT INTO key_pushes (paired_id, statement, at) VALUES (?,?,?) ON CONFLICT(paired_id) DO UPDATE SET statement = excluded.statement, at = excluded.at'
+      )
+      .run(p.pairedId, p.statement, p.at);
+  }
+
+  keyPushes(): KeyPush[] {
+    return queryAll<KeyPush>(
+      this.db,
+      'SELECT paired_id AS pairedId, statement, at FROM key_pushes ORDER BY at, paired_id',
+      []
+    );
+  }
+
+  deleteKeyPush(pairedId: string): void {
+    this.db.prepare('DELETE FROM key_pushes WHERE paired_id = ?').run(pairedId);
   }
 
   recordKeyEvent(e: KeyEvent): void {

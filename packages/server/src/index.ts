@@ -362,8 +362,8 @@ export interface StartServerOptions {
   a2aWatchLimits?: Partial<WatchLimits>;
   // Unverifiable replies before a signature peer is auth-failed; tests lower it.
   a2aUnverifiedLimit?: number;
-  // The unpair notice's retry delays; tests shorten them.
-  a2aUnpairBackoffMs?: number[];
+  // Unpair notices' and key pushes' retry delays; tests shorten them.
+  a2aNoticeBackoffMs?: number[];
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -1644,9 +1644,9 @@ async function bootServer(
     ...(opts.a2aUnverifiedLimit === undefined
       ? {}
       : { unverifiedLimit: opts.a2aUnverifiedLimit }),
-    ...(opts.a2aUnpairBackoffMs === undefined
+    ...(opts.a2aNoticeBackoffMs === undefined
       ? {}
-      : { unpairBackoffMs: opts.a2aUnpairBackoffMs }),
+      : { noticeBackoffMs: opts.a2aNoticeBackoffMs }),
     ...(opts.tls === undefined
       ? {}
       : {

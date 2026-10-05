@@ -23,7 +23,7 @@ export interface Daemon {
 }
 
 interface DaemonOptions {
-  unpairBackoffMs?: number[];
+  noticeBackoffMs?: number[];
 }
 
 // Two or more in-process daemons, each on its own scratch root with its A2A
@@ -56,9 +56,9 @@ export function useDaemons() {
       port: 0,
       writeDaemonFile: false,
       webDistDir: null,
-      ...(options.unpairBackoffMs === undefined
+      ...(options.noticeBackoffMs === undefined
         ? {}
-        : { a2aUnpairBackoffMs: options.unpairBackoffMs }),
+        : { a2aNoticeBackoffMs: options.noticeBackoffMs }),
     });
   }
 
