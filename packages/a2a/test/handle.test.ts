@@ -67,6 +67,21 @@ async function reason(res: Response): Promise<string | undefined> {
   return body.error?.details?.[0]?.reason;
 }
 
+describe('the extensions a bearer client presents', () => {
+  it('passes the A2A-Extensions header to authenticate', async () => {
+    await call('/a2a/v1/tasks/x', {
+      headers: {
+        'A2A-Extensions':
+          'https://a.example/x, https://dispatch.foo/a2a/ext/sig/v1',
+      },
+    });
+    expect(port.calls.find((c) => c.method === 'authenticate')?.args).toEqual([
+      'good',
+      ['https://a.example/x', 'https://dispatch.foo/a2a/ext/sig/v1'],
+    ]);
+  });
+});
+
 describe('routes', () => {
   it('sends an ask and answers with the task as application/json', async () => {
     const res = await call('/a2a/v1/message:send', { body: ask() });

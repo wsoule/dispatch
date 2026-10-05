@@ -601,6 +601,29 @@ describe('P5 keys and pairings', () => {
   });
 });
 
+describe('a client that presented the signature extension', () => {
+  it('is remembered, and kept across an upsert', () => {
+    store.putClient({
+      address: CLIENT,
+      name: 'a2a.acme',
+      recipients: [],
+      createdBy: 'human:wyat',
+      createdAt: 't',
+    });
+    expect(store.getClient(CLIENT)?.sigPresented ?? false).toBe(false);
+    store.markSigPresented(CLIENT);
+    expect(store.getClient(CLIENT)?.sigPresented).toBe(true);
+    store.putClient({
+      address: CLIENT,
+      name: 'a2a.acme',
+      recipients: ['human:ada'],
+      createdBy: 'human:wyat',
+      createdAt: 't',
+    });
+    expect(store.getClient(CLIENT)?.sigPresented).toBe(true);
+  });
+});
+
 describe('key pins (review M5)', () => {
   const JWK = { kty: 'EC', crv: 'P-256', x: 'x-1', y: 'y-1' };
   const client = (address: string) =>

@@ -81,7 +81,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 // A reach as a remote party wrote it: an http(s) card URL with no userinfo,
 // or a link transport (validated by the link code, P5c).
-function parseReach(raw: unknown): Reach | null {
+export function parseReach(raw: unknown): Reach | null {
   if (!isRecord(raw)) return null;
   if (raw.kind === 'url' && typeof raw.card === 'string') {
     try {

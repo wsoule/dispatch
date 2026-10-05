@@ -392,6 +392,44 @@ async function peerRoute(
       changedPeer(alias, 'removed');
       return new Response(null, { status: 204 });
     }
+    if (rest.length === 2 && method === 'POST' && rest[1] === 'upgrade') {
+      if (ctx.viaAgentToken === true)
+        return jsonResponse(
+          {
+            error: 'an agent cannot upgrade a peer; a human does',
+            code: 'auth_agent_token',
+          },
+          403
+        );
+      const b = bridge(ctx);
+      if (!b.ok) return b.response;
+      const upgrades = b.a2a.upgrades;
+      if (upgrades === null)
+        return errorResponse(503, 'the A2A bridge is unavailable');
+      const parsed = await readJsonBody(req);
+      if (!parsed.ok) return parsed.response;
+      const confirm = (parsed.value as { confirmFingerprint?: unknown })
+        .confirmFingerprint;
+      if (typeof confirm !== 'string')
+        return invalid(
+          'confirmFingerprint',
+          "confirmFingerprint is required: the peer's fingerprint as its owner reads it"
+        );
+      const ourCard = ourCardUrl(b.a2a);
+      if (ourCard === null)
+        return errorResponse(
+          409,
+          'open the A2A listener first: the other side needs to reach this agent'
+        );
+      const started = await upgrades.start({
+        alias,
+        confirmFingerprint: confirm,
+        ourCard,
+        caller,
+      });
+      changed(ctx);
+      return jsonResponse(started, 202);
+    }
     if (rest.length === 2 && method === 'POST' && rest[1] === 'refresh') {
       const row = await refreshPeer(service.deps, service.notices, alias);
       changedPeer(alias, row.status === 'disabled' ? 'disabled' : 'refreshed');
@@ -493,6 +531,14 @@ async function hostRoute(
   return null;
 }
 
+// This side's card URL at the open listener, or null when it is closed.
+function ourCardUrl(a2a: Running['a2a']): string | null {
+  const status = a2a.status();
+  return status.listening && status.url !== null
+    ? `${status.url.replace(/\/$/, '')}/.well-known/agent-card.json`
+    : null;
+}
+
 // POST /api/a2a/keys/rotate { compromised? }: operator tier (ELEVATED_ROUTES).
 async function rotateKeys(req: Request, ctx: ApiContext): Promise<Response> {
   if (ctx.viaAgentToken === true)
@@ -557,13 +603,8 @@ async function pairingRoute(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as Record<string, unknown>;
   // This side's card URL: the open listener's, or one given (a host or relay).
-  const status = b.a2a.status();
   const ourCard =
-    typeof body.cardUrl === 'string'
-      ? body.cardUrl
-      : status.listening && status.url !== null
-        ? `${status.url.replace(/\/$/, '')}/.well-known/agent-card.json`
-        : null;
+    typeof body.cardUrl === 'string' ? body.cardUrl : ourCardUrl(b.a2a);
   if (ourCard === null)
     return errorResponse(
       409,

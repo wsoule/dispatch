@@ -36,6 +36,9 @@ export interface ClientRow extends KeyFields {
   recipients: Address[];
   createdBy: Address;
   createdAt: string;
+  // Its agent once named the signature extension: a Dispatch agent, which
+  // a2a.requireSignedDispatchPeers refuses to take a bearer from. Read-only.
+  sigPresented?: boolean;
 }
 
 export interface TaskRow {
@@ -128,7 +131,8 @@ export interface PushConfigRow {
 // Only the secret's hash is kept, and only on the offering side.
 export interface PairingRow {
   id: string;
-  role: 'offer' | 'accept';
+  // 'upgrade': a bearer pair moving to signatures (P5), on either side.
+  role: 'offer' | 'accept' | 'upgrade';
   secretHash: string | null;
   alias: string;
   reach: Reach;
@@ -151,7 +155,9 @@ export interface PairingRow {
 // A notice a paired peer has not yet heard (an unpair, a key push), kept
 // with its attempts so a restart neither repeats nor resets its backoff.
 export interface PendingNotice {
-  kind: 'unpair' | 'key-push';
+  // 'upgrade': an approved upgrade still telling the other side;
+  // 'upgrade-gate': an upgrade waiting on its owner question (body: its id).
+  kind: 'unpair' | 'key-push' | 'upgrade' | 'upgrade-gate';
   id: string;
   body: string;
   at: string;
@@ -280,6 +286,7 @@ export interface A2AStore {
   revokeHost(id: string, at: string): boolean;
   // False when the row is absent or another row already holds this key.
   setClientKey(address: Address, pin: KeyPin): boolean;
+  markSigPresented(address: Address): void;
   clientByThumbprint(thumbprint: string): ClientRow | null;
   setPeerKey(alias: string, pin: KeyPin): boolean;
   peerByThumbprint(thumbprint: string): PeerRow | null;
@@ -411,6 +418,15 @@ function addKeyColumns(db: SqliteDatabase): void {
   );
   if (!peerColumns.has('status_reason'))
     db.exec('ALTER TABLE peers ADD COLUMN status_reason TEXT');
+  const clientColumns = new Set(
+    queryAll<{ name: string }>(db, 'PRAGMA table_info(clients)').map(
+      (c) => c.name
+    )
+  );
+  if (!clientColumns.has('sig_presented'))
+    db.exec(
+      'ALTER TABLE clients ADD COLUMN sig_presented INTEGER NOT NULL DEFAULT 0'
+    );
   const events = new Set(
     queryAll<{ name: string }>(db, 'PRAGMA table_info(key_events)').map(
       (c) => c.name
@@ -518,6 +534,7 @@ interface ClientDbRow extends KeyDbFields {
   recipients_json: string;
   created_by: string;
   created_at: string;
+  sig_presented?: number;
 }
 
 interface PairingDbRow {
@@ -548,7 +565,7 @@ const PAIRING_STATES: readonly PairingRow['state'][] = [
 function toPairing(r: PairingDbRow): PairingRow {
   return {
     id: r.id,
-    role: r.role === 'accept' ? 'accept' : 'offer',
+    role: r.role === 'accept' || r.role === 'upgrade' ? r.role : 'offer',
     secretHash: r.secret_hash,
     alias: r.alias,
     reach: JSON.parse(r.reach_json) as Reach,
@@ -736,6 +753,7 @@ function toClient(r: ClientDbRow): ClientRow {
     recipients: JSON.parse(r.recipients_json) as Address[],
     createdBy: r.created_by,
     createdAt: r.created_at,
+    sigPresented: r.sig_presented === 1,
     ...keyFields(r),
   };
 }
@@ -1283,6 +1301,12 @@ export class SqliteA2AStore implements A2AStore {
           .run(at, id).changes
       ) > 0
     );
+  }
+
+  markSigPresented(address: Address): void {
+    this.db
+      .prepare('UPDATE clients SET sig_presented = 1 WHERE addr = ?')
+      .run(address);
   }
 
   setClientKey(address: Address, pin: KeyPin): boolean {

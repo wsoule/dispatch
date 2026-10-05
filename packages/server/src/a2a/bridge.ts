@@ -67,6 +67,7 @@ import {
   writeListenerSettings,
 } from './settings.js';
 import { CardSigner, finishRotation, loadSigningKeys } from './signing.js';
+import { Upgrades } from './upgrade.js';
 import { BridgeWatch } from './watch.js';
 
 interface ListenerStatus {
@@ -95,6 +96,7 @@ export interface A2ABridge {
   readonly peers: PeerService | null;
   readonly unpairer: Unpairer | null;
   readonly keys: KeyService | null;
+  readonly upgrades: Upgrades | null;
   // XH-R3: cancels the open pairing offers `ref` made.
   cancelOffersBy(ref: string): void;
   // Probes each peer auth-failed only for unverifiable replies (hourly).
@@ -243,6 +245,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let peers: PeerService | null = null;
   let unpairer: Unpairer | null = null;
   let keys: KeyService | null = null;
+  let upgrades: Upgrades | null = null;
+  let stopUpgradeAnswers: (() => void) | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
   const leases = new PortLeases();
@@ -355,6 +359,22 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     });
     bridgeDeps.keys = () => keyService;
     keys = keyService;
+    const upgradeService = new Upgrades({
+      ...peerService.deps,
+      notices: peerService.notices,
+      emit: peerService.emit,
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      ...(deps.noticeBackoffMs === undefined
+        ? {}
+        : { backoffMs: deps.noticeBackoffMs }),
+    });
+    bridgeDeps.upgrades = () => upgradeService;
+    upgrades = upgradeService;
+    // The owner's answers to upgrade questions (plain questions: a new gate
+    // type would be a protocol registry change).
+    stopUpgradeAnswers = messaging.engine.subscribe((e) => {
+      if (e.type === 'message') upgradeService.answered(e.message);
+    });
     messaging.setExternalPolicy(
       bridgeExternalPolicy(bridgeDeps, peerService.notices)
     );
@@ -416,6 +436,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     try {
       unpairer.resume();
       keyService.resume();
+      upgradeService.resume();
       void finishRotation(rootDir).then(
         (finished) => {
           if (finished) signer = undefined;
@@ -520,6 +541,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     },
     get keys() {
       return keys;
+    },
+    get upgrades() {
+      return upgrades;
     },
     get port() {
       return port;
@@ -681,6 +705,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       serial(async () => {
         unpairer?.stop();
         keys?.stop();
+        upgrades?.stop();
+        stopUpgradeAnswers?.();
         outbound?.stop();
         outbound = null;
         leases.closeAll();

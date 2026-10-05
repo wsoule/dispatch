@@ -30,6 +30,7 @@ import {
   matchChoice,
   offeredSkills,
   peerSelfAddressed,
+  SIG_EXTENSION_URI,
   signResponse,
   signResponseFor,
   statusReply,
@@ -74,6 +75,7 @@ import {
   verifySignedClient,
 } from './signed.js';
 import type { CardSigner } from './signing.js';
+import type { Upgrades } from './upgrade.js';
 import type { BridgeWatch } from './watch.js';
 
 const MINUTE_MS = 60_000;
@@ -125,6 +127,8 @@ export interface BridgeDeps {
   unpairer?: () => Unpairer | null;
   // Rotations and peers' key statements, once a2a.db is open.
   keys?: () => KeyService | null;
+  // Bearer-to-signature upgrades, once a2a.db is open.
+  upgrades?: () => Upgrades | null;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
@@ -329,14 +333,34 @@ export class DaemonBridgePort implements BridgePort {
     return { ok: true };
   }
 
-  authenticate(bearer: string): Promise<AuthResult> {
-    return settle(() =>
-      authenticateA2AClient(
+  // A bearer client, refused under a2a.requireSignedDispatchPeers once its
+  // agent has named the signature extension (remembered from `presented`).
+  authenticate(bearer: string, presented?: string[]): Promise<AuthResult> {
+    return settle(() => {
+      const result = authenticateA2AClient(
         this.deps.messages,
         (a) => this.deps.store.getClient(a)?.auth ?? null,
         bearer
+      );
+      if (!result.ok) return result;
+      const address = result.caller.address;
+      const client = this.deps.store.getClient(address);
+      const presents = presented?.includes(SIG_EXTENSION_URI) === true;
+      if (presents && client?.sigPresented !== true)
+        this.deps.store.markSigPresented(address);
+      if (
+        (presents || client?.sigPresented === true) &&
+        this.deps.policy().requireSignedDispatchPeers
       )
-    );
+        return {
+          ok: false,
+          status: 401,
+          reason: 'AUTH_SIGNATURE_REQUIRED',
+          message:
+            'this project takes only signed requests from Dispatch agents; upgrade the pairing (dispatch a2a peers upgrade)',
+        };
+      return result;
+    });
   }
 
   // The in-daemon listener verifies against its own configured URL.
@@ -441,6 +465,11 @@ export class DaemonBridgePort implements BridgePort {
     };
     if (route === 'pair')
       return completePairing(d, r.body ?? new Uint8Array(), parts);
+    if (route === 'upgrade') {
+      const upgrades = this.deps.upgrades?.() ?? null;
+      if (upgrades === null) return new Response('not found', { status: 404 });
+      return upgrades.receive(r, publicUrl);
+    }
     if (route === 'key-change') {
       const keys = this.deps.keys?.() ?? null;
       if (keys === null) return new Response('not found', { status: 404 });
@@ -486,9 +515,11 @@ export class DaemonBridgePort implements BridgePort {
     };
     const signer = this.deps.signer?.() ?? null;
     if (signer === null) return inputs;
+    // A signed card also advertises the signature extension.
+    const signing = { ...inputs, signing: true };
     return {
-      ...inputs,
-      signatures: await signer.signaturesFor(inputs),
+      ...signing,
+      signatures: await signer.signaturesFor(signing),
       jwks: signer.jwks(),
     };
   }

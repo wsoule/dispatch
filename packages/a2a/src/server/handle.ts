@@ -72,7 +72,7 @@ interface Op {
 
 const MAX_BODY_BYTES = 256 * 1024;
 // <base>/dispatch/<route>, the Dispatch extension routes.
-const EXTENSION = /^\/dispatch\/(pair|unpair|key-change)$/;
+const EXTENSION = /^\/dispatch\/(pair|unpair|key-change|upgrade)$/;
 /** Where a peer that missed a rotation's push finds the statement. */
 export const KEY_STATEMENT_PATH = '/.well-known/dispatch-a2a-key-change.json';
 const CARD_PATH = '/.well-known/agent-card.json';
@@ -270,7 +270,13 @@ async function authenticate(
       'AUTH_MISSING_TOKEN',
       'send Authorization: Bearer <token>'
     );
-  const result = await port.authenticate(bearer);
+  const presented = (req.headers.get('a2a-extensions') ?? '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter((u) => u !== '');
+  const result = await (presented.length === 0
+    ? port.authenticate(bearer)
+    : port.authenticate(bearer, presented));
   if (!result.ok)
     return fail(
       result.status === 403 ? 403 : 401,

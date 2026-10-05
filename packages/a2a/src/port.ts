@@ -173,6 +173,8 @@ export interface CardInputs {
   skills: A2ASkill[];
   blockingWaitSec: number;
   pushNotifications: boolean;
+  // Signed by the card key: the card advertises the signature extension.
+  signing?: boolean;
   signatures?: CardSignatureJson[];
   jwks?: Jwks;
 }
@@ -204,10 +206,11 @@ export interface PushConfigPort {
   delete(caller: Caller, taskId: string, id: string): Promise<void>;
 }
 
-export type ExtensionRoute = 'pair' | 'unpair' | 'key-change';
+export type ExtensionRoute = 'pair' | 'unpair' | 'key-change' | 'upgrade';
 
 export interface BridgePort {
-  authenticate(bearer: string): Promise<AuthResult>;
+  // `presented`: the extension URIs the request's A2A-Extensions header named.
+  authenticate(bearer: string, presented?: string[]): Promise<AuthResult>;
   // A request a Dispatch peer signed (RFC 9421). null when it carries no
   // Dispatch signature, so the bearer path decides; absent, signatures are ignored.
   authenticateSigned?(req: ReceivedRequest): Promise<AuthResult | null>;

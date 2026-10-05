@@ -86,4 +86,16 @@ describe('a2a config', () => {
       )
     ).toEqual([]);
   });
+
+  it('reads requireSignedDispatchPeers, false by default (OD-11)', () => {
+    expect(DEFAULT_A2A.requireSignedDispatchPeers).toBe(false);
+    expect(
+      loadConfig(rootWith('a2a:\n  requireSignedDispatchPeers: true\n')).a2a
+    ).toEqual({ ...DEFAULT_A2A, requireSignedDispatchPeers: true });
+    const bad = loadConfig(
+      rootWith('a2a:\n  requireSignedDispatchPeers: yes please\n')
+    );
+    expect(bad.a2a).toEqual(DEFAULT_A2A);
+    expect(String(bad.a2aWarnings)).toContain('requireSignedDispatchPeers');
+  });
 });

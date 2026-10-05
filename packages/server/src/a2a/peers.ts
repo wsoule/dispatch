@@ -16,6 +16,7 @@ import {
   PeerClient,
   PeerHttpError,
   pickInterface,
+  SIG_EXTENSION_URI,
   summarizeCard,
   UnresolvedHostError,
 } from '@dispatch/a2a';
@@ -574,13 +575,7 @@ export function peerClientFor(deps: PeerDeps, row: PeerRow): PeerClient {
     ...(guard === undefined ? {} : { guard }),
   };
   if (row.auth === undefined || row.auth === 'bearer')
-    return new PeerClient({
-      ...common,
-      headers: authHeaders(
-        peerAuthFor(card, row.apiKeyHeader ?? undefined),
-        readPeerCredential(deps.rootDir, row.alias)
-      ),
-    });
+    return new PeerClient({ ...common, headers: bearerHeadersFor(deps, row) });
   // A paired peer gets no bearer: its requests are signed, and only replies
   // its pinned key signed are read. Without a key to sign with, the delivery
   // parks as auth-failed (the 'token' field), never sent unsigned.
@@ -589,6 +584,39 @@ export function peerClientFor(deps: PeerDeps, row: PeerRow): PeerClient {
     headers: {},
     signed: signedFor(deps, row),
   });
+}
+
+/**
+ * A bearer peer's request headers: its stored credential and, for a peer
+ * whose card offers signed requests, the signature extension named, so it
+ * knows this agent can sign (a2a.requireSignedDispatchPeers keys on that).
+ * Throws MessagingError 'token' when the card needs a credential not stored.
+ */
+export function bearerHeadersFor(
+  deps: Pick<PeerDeps, 'rootDir'>,
+  row: PeerRow
+): Record<string, string> {
+  const card = cardOf(row);
+  const headers = authHeaders(
+    peerAuthFor(card, row.apiKeyHeader ?? undefined),
+    readPeerCredential(deps.rootDir, row.alias)
+  );
+  return offersSignatures(JSON.parse(row.cardJson) as unknown)
+    ? { ...headers, 'a2a-extensions': SIG_EXTENSION_URI }
+    : headers;
+}
+
+/** Whether a card advertises Dispatch's signature extension. */
+export function offersSignatures(card: unknown): boolean {
+  const extensions = (
+    card as { capabilities?: { extensions?: unknown } } | null
+  )?.capabilities?.extensions;
+  return (
+    Array.isArray(extensions) &&
+    extensions.some(
+      (e) => (e as { uri?: unknown } | null)?.uri === SIG_EXTENSION_URI
+    )
+  );
 }
 
 function signedFor(

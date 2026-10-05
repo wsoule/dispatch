@@ -512,6 +512,9 @@ export interface A2AConfig {
   openTasksPerClient: number;
   streamsPerClient: number;
   outboundPerHour: number;
+  /** Refuse bearer tokens from a client whose agent ever presented the
+   *  signature extension, so a paired Dispatch peer must sign (OD-11). */
+  requireSignedDispatchPeers: boolean;
 }
 
 export const DEFAULT_A2A: A2AConfig = {
@@ -525,6 +528,7 @@ export const DEFAULT_A2A: A2AConfig = {
   openTasksPerClient: 20,
   streamsPerClient: 5,
   outboundPerHour: 60,
+  requireSignedDispatchPeers: false,
 };
 
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */

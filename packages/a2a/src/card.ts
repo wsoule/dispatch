@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import type { CardInputs, CardSignatureJson } from './port.js';
 import { ecThumbprint } from './sig/keys.js';
+import { SIG_EXTENSION_URI } from './sig/sign.js';
 import { handoffSupported } from './statuses.js';
 import type { HandoffStatuses } from './statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from './uris.js';
@@ -99,6 +100,17 @@ export function unsignedCardJson(
             'Handoff fields, task status and work artifacts (PR, diffstat, evidence).',
           required: false,
         },
+        // A paired Dispatch agent signs its requests and replies (RFC 9421).
+        ...(inputs.signing === true
+          ? [
+              {
+                uri: SIG_EXTENSION_URI,
+                description:
+                  'Signed requests and replies between paired Dispatch agents (RFC 9421).',
+                required: false,
+              },
+            ]
+          : []),
       ],
     },
     securitySchemes: {
@@ -242,6 +254,24 @@ function hasDuplicateKeys(text: string): boolean {
     }
   }
   return false;
+}
+
+/** The kid of each Dispatch signature on a served card (never the SDK form). */
+export function dispatchSignatureKids(card: Record<string, unknown>): string[] {
+  if (!Array.isArray(card.signatures)) return [];
+  const kids: string[] = [];
+  for (const sig of card.signatures as { protected?: unknown }[]) {
+    try {
+      const header = JSON.parse(
+        Buffer.from(String(sig.protected), 'base64url').toString('utf8')
+      ) as { kid?: unknown; typ?: unknown };
+      if (header.typ === DISPATCH_CARD_TYP && typeof header.kid === 'string')
+        kids.push(header.kid);
+    } catch {
+      // Not a JWS header: skipped.
+    }
+  }
+  return kids;
 }
 
 // Whether Dispatch's own signature (typ DISPATCH_CARD_TYP; never the SDK-form
