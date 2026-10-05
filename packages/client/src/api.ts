@@ -185,6 +185,9 @@ export interface RunMeta {
   /** ActorRef of the human the run is for (who dispatched it, or started its
    *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
+  /** ActorRef of the human the run acts for; null for no one, absent on runs
+   *  from before the field (read dispatchedBy then) — see runOperator. */
+  operator?: string | null;
   // How many sub-agents this run's agent has fanned out into and where they
   // stand, kept live by the daemon from the run's `agent` entries and rebuilt
   // from them on replay. Absent until the first sub-agent is spawned. Mirrors

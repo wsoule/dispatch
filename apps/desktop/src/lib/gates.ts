@@ -99,6 +99,21 @@ export function runIdOf(message: Message): string | null {
   return message.from.startsWith('run:') ? message.from.slice(4) : null;
 }
 
+/** Runs with an open gate or question addressed to `me` (XH-R9): theirs to
+ *  answer, whoever the run acts for. */
+export function runsAskingMe(
+  gates: readonly Message[],
+  me: string | null
+): Set<string> {
+  const runs = new Set<string>();
+  if (me === null) return runs;
+  for (const message of gates) {
+    const runId = runIdOf(message);
+    if (runId !== null && message.to.includes(me)) runs.add(runId);
+  }
+  return runs;
+}
+
 /** A plain blocking question (no gate data) from a `run:` sender, else null. */
 export function toRunQuestion(message: Message): RunQuestion | null {
   if (!isBlockingQuestion(message) || gateOf(message) !== null) return null;
