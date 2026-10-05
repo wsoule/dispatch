@@ -62,6 +62,17 @@ function asLinkClient(
   return view;
 }
 
+/** A link's pairing tier: operator only when its row says so; a missing
+ *  row is the decide tier, so the stricter rules apply (fail closed). */
+export function linkTierOf(
+  store: { pairing(id: string): { createdTier: string } | null },
+  pairedId: string
+): 'operator' | 'decide' {
+  return store.pairing(pairedId)?.createdTier === 'operator'
+    ? 'operator'
+    : 'decide';
+}
+
 // Teammate links in the daemon (T54): the hub once the link keys load, the
 // worker's link clients, and the receiver's A2A requests as the paired client.
 export class LinkWiring {
@@ -92,10 +103,7 @@ export class LinkWiring {
         return port.watch(caller, taskId, onChange);
       },
       unpaired: (_alias, pairedId) => this.d.unpaired(pairedId),
-      tierOf: (id) =>
-        this.d.store.pairing(id)?.createdTier === 'decide'
-          ? 'decide'
-          : 'operator',
+      tierOf: (id) => linkTierOf(this.d.store, id),
       keyChange: (alias, statement) => {
         const id = this.pairedId(alias);
         if (id !== null) this.d.keyChange(id, statement);

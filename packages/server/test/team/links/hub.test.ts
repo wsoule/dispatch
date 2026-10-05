@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, setDefaultTimeout } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { linkTierOf } from '../../../src/a2a/links.js';
 import { defaultAsyncGitRunner } from '../../../src/sync/worktree.js';
 import { LinkHub } from '../../../src/team/links/hub.js';
 import { linkReplicaId } from '../../../src/team/links/service.js';
@@ -343,5 +344,21 @@ describe('final review P1: a link connects only to the address it checked', () =
     expect(hub.health()[0]?.problems.map((p) => p.subject)).toContain(
       'link-address:L1'
     );
+  });
+});
+
+describe('final verdict M2: an unknown pairing is the decide tier', () => {
+  it('reads a missing pairing row as decide, never operator', () => {
+    const store = {
+      pairing: (id: string) =>
+        id === 'op'
+          ? { createdTier: 'operator' }
+          : id === 'dec'
+            ? { createdTier: 'decide' }
+            : null,
+    };
+    expect(linkTierOf(store, 'op')).toBe('operator');
+    expect(linkTierOf(store, 'dec')).toBe('decide');
+    expect(linkTierOf(store, 'missing')).toBe('decide');
   });
 });

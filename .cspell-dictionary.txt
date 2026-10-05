@@ -530,6 +530,7 @@ tybys
 typer
 typesafe
 uall
+urlmatch
 überblick
 ulid
 ulids

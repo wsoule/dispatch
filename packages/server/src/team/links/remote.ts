@@ -134,7 +134,17 @@ export function linkGitRunner(
     }
     return base(
       cwd,
-      [...flags, '-c', 'http.proxy=', ...pin(), ...args],
+      // A per-URL proxy beats http.proxy, so this URL's is emptied too: an
+      // exact URL is the most specific match git's urlmatch knows.
+      [
+        ...flags,
+        '-c',
+        'http.proxy=',
+        '-c',
+        `http.${remote}.proxy=`,
+        ...pin(),
+        ...args,
+      ],
       { ...env, ...noProxy },
       maxOut
     );

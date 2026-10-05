@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -115,7 +115,7 @@ describe('final review P2: redirects, proxies and decide-tier schemes', () => {
         return new Response('# service=git-upload-pack\n');
       },
     });
-    const redirector = Bun.serve({
+    const bouncer = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
       fetch: (req) =>
@@ -125,7 +125,7 @@ describe('final review P2: redirects, proxies and decide-tier schemes', () => {
         ),
     });
     try {
-      const url = `http://127.0.0.1:${redirector.port}/x.git`;
+      const url = `http://127.0.0.1:${bouncer.port}/x.git`;
       // http is not a link protocol; this test allows it after the link flags.
       const allowHttp = ['-c', 'protocol.http.allow=always'];
       const dir = mkdtempSync(join(tmpdir(), 'link-302-'));
@@ -148,7 +148,7 @@ describe('final review P2: redirects, proxies and decide-tier schemes', () => {
       expect(inner).toBe(0);
       rmSync(dir, { recursive: true, force: true });
     } finally {
-      await redirector.stop(true);
+      await bouncer.stop(true);
       await internal.stop(true);
     }
   });
@@ -206,5 +206,39 @@ describe('final review P2: redirects, proxies and decide-tier schemes', () => {
       '-c',
       'http.curloptResolve=links.example.:443:93.184.216.34',
     ]);
+  });
+});
+
+describe('final verdict M1: a per-URL proxy in gitconfig never applies', () => {
+  it('overrides exact and wildcard http.<url>.proxy entries for a decide-tier link', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'link-proxy-'));
+    const global = join(dir, 'gitconfig');
+    writeFileSync(
+      global,
+      '[http "https://links.example/"]\n\tproxy = http://exact.invalid:3128\n' +
+        '[http "https://*.example"]\n\tproxy = http://wild.invalid:3128\n' +
+        '[http "https://links.example/x.git"]\n\tproxy = http://path.invalid:3128\n'
+    );
+    const url = 'https://links.example/x.git';
+    const args = ['config', '--get-urlmatch', 'http.proxy', url];
+    const env = { GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: '1' };
+    // Control: plain git picks the user's proxy for this URL.
+    const plain = await defaultAsyncGitRunner(dir, args, env);
+    expect(plain.stdout).toContain('.invalid:3128');
+    const decide = await linkGitRunner(
+      defaultAsyncGitRunner,
+      url,
+      () => [],
+      () => 'decide'
+    )(dir, args, env);
+    expect(decide.stdout.trim()).toBe('');
+    const operator = await linkGitRunner(
+      defaultAsyncGitRunner,
+      url,
+      () => [],
+      () => 'operator'
+    )(dir, args, env);
+    expect(operator.stdout).toContain('.invalid:3128');
+    rmSync(dir, { recursive: true, force: true });
   });
 });

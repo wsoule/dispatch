@@ -271,7 +271,10 @@ accepts the code as usual. Messages wait on the branch while a laptop sleeps.
 - **Proxies.** A proxy resolves the host itself, which would undo the pin, so a
   decide-tier link runs with no proxy (`http.proxy` empty, and `http_proxy`,
   `https_proxy`, `all_proxy` and `no_proxy` cleared, in both cases, for its git
-  commands). An operator-tier link keeps your proxy settings.
+  commands). A per-URL `http.<url>.proxy` in your gitconfig, wildcards included,
+  is overridden too: the link sets `http.<its exact remote>.proxy` empty, the
+  most specific match git knows. An operator-tier link keeps your proxy
+  settings.
 
 ## Standalone host
 
