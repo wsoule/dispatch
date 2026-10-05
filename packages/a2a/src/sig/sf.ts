@@ -13,7 +13,12 @@ export class SfToken {
   constructor(readonly value: string) {}
 }
 
-type BareItem = number | string | boolean | SfToken | Uint8Array;
+// A Decimal, kept apart from Integers so 1.0 is never read as 1.
+export class SfDecimal {
+  constructor(readonly value: number) {}
+}
+
+type BareItem = number | SfDecimal | string | boolean | SfToken | Uint8Array;
 export type Params = Map<string, BareItem>;
 export interface Item {
   value: BareItem;
@@ -59,7 +64,7 @@ function parseKey(r: Reader): string {
   return key;
 }
 
-function parseNumber(r: Reader): number {
+function parseNumber(r: Reader): number | SfDecimal {
   let text = '';
   if (r.peek() === '-') text += r.take();
   if (!DIGIT.test(r.peek())) throw new SfError('bad number');
@@ -80,7 +85,7 @@ function parseNumber(r: Reader): number {
   const [whole, frac] = digits.split('.');
   if (whole.length > 12 || frac.length === 0 || frac.length > 3)
     throw new SfError('bad decimal');
-  return Number(text);
+  return new SfDecimal(Number(text));
 }
 
 function parseString(r: Reader): string {
@@ -201,9 +206,12 @@ export function parseDictionary(text: string): Map<string, Member> {
 function serializeBare(v: BareItem): string {
   if (typeof v === 'boolean') return v ? '?1' : '?0';
   if (typeof v === 'number') {
-    if (!Number.isFinite(v)) throw new SfError('bad number');
-    if (Number.isInteger(v)) return String(v);
-    const fixed = v.toFixed(3).replace(/0+$/, '');
+    if (!Number.isSafeInteger(v)) throw new SfError('not an integer');
+    return String(v);
+  }
+  if (v instanceof SfDecimal) {
+    if (!Number.isFinite(v.value)) throw new SfError('bad decimal');
+    const fixed = v.value.toFixed(3).replace(/0+$/, '');
     return fixed.endsWith('.') ? `${fixed}0` : fixed;
   }
   if (v instanceof SfToken) return v.value;

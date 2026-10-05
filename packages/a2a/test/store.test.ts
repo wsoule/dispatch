@@ -585,3 +585,80 @@ describe('P5 keys and pairings', () => {
     expect(store.keyEvents('other')).toEqual([]);
   });
 });
+
+describe('key pins (review M5)', () => {
+  const JWK = { kty: 'EC', crv: 'P-256', x: 'x-1', y: 'y-1' };
+  const client = (address: string) =>
+    store.putClient({
+      address,
+      name: address.split('/')[1],
+      recipients: [],
+      createdBy: 'human:wyat',
+      createdAt: '2026-10-01T00:00:00.000Z',
+    });
+
+  it('(b, d) pins one key to one row per table, and says whether a pin took', () => {
+    client('agent:wyat/a2a.one');
+    client('agent:wyat/a2a.two');
+    const pin = {
+      thumbprint: 'tp-1',
+      jwk: JWK,
+      auth: 'signature' as const,
+      pairedId: null,
+    };
+    expect(store.setClientKey('agent:wyat/a2a.one', pin)).toBe(true);
+    expect(store.setClientKey('agent:wyat/a2a.two', pin)).toBe(false);
+    expect(
+      store.setClientKey('agent:wyat/a2a.missing', {
+        ...pin,
+        thumbprint: 'tp-9',
+      })
+    ).toBe(false);
+    expect(store.clientByThumbprint('tp-1')?.address).toBe(
+      'agent:wyat/a2a.one'
+    );
+    // The same key may be a peer as well as a client: one row in each table.
+    store.putPeer(peer('one'));
+    expect(store.setPeerKey('one', pin)).toBe(true);
+    store.putPeer(peer('two'));
+    expect(store.setPeerKey('two', pin)).toBe(false);
+  });
+
+  it('(a, c) reads an unknown auth or a damaged key as no key at all', () => {
+    client('agent:wyat/a2a.one');
+    store.setClientKey('agent:wyat/a2a.one', {
+      thumbprint: 'tp-1',
+      jwk: JWK,
+      auth: 'signature',
+      pairedId: null,
+    });
+    const raw = openSqliteDb(join(dir, 'a2a.db'));
+    raw.exec(
+      "UPDATE clients SET auth = 'telepathy' WHERE addr = 'agent:wyat/a2a.one'"
+    );
+    raw.close();
+    expect(store.getClient('agent:wyat/a2a.one')).toMatchObject({
+      auth: 'signature',
+      keyThumbprint: null,
+      keyJwk: null,
+    });
+    const again = openSqliteDb(join(dir, 'a2a.db'));
+    again.exec(
+      "UPDATE clients SET auth = 'signature', key_jwk = '{not json' WHERE addr = 'agent:wyat/a2a.one'"
+    );
+    again.exec(
+      "UPDATE clients SET key_thumbprint = 'tp-2' WHERE addr = 'agent:wyat/a2a.one'"
+    );
+    again.close();
+    expect(store.getClient('agent:wyat/a2a.one')).toMatchObject({
+      keyThumbprint: null,
+      keyJwk: null,
+    });
+    const third = openSqliteDb(join(dir, 'a2a.db'));
+    third.exec(
+      `UPDATE clients SET key_jwk = '{"kty":7}' WHERE addr = 'agent:wyat/a2a.one'`
+    );
+    third.close();
+    expect(store.getClient('agent:wyat/a2a.one')?.keyJwk).toBeNull();
+  });
+});

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   parseDictionary,
   serializeInnerList,
+  SfDecimal,
   SfError,
   SfToken,
 } from '../../src/sig/sf.js';
@@ -40,7 +41,7 @@ describe('RFC 8941 dictionaries', () => {
     expect((dict.get('c') as Item).value).toEqual(new SfToken('tok/en'));
     expect(
       (dict.get('c') as { params: Map<string, unknown> }).params.get('p')
-    ).toBe(1.5);
+    ).toEqual(new SfDecimal(1.5));
   });
 
   it('escapes and unescapes strings', () => {
@@ -68,5 +69,20 @@ describe('RFC 8941 dictionaries', () => {
 
   it('refuses a dictionary that names one key twice, unlike RFC 8941, which keeps the last', () => {
     expect(() => parseDictionary('a=1, a=2')).toThrow(SfError);
+  });
+});
+
+describe('numbers (M3)', () => {
+  it('keeps integers as numbers and tags decimals, so 1.0 is never read as 1', () => {
+    const dict = parseDictionary('a=1, b=1.0, c=-2.25');
+    expect((dict.get('a') as Item).value).toBe(1);
+    expect((dict.get('b') as Item).value).toEqual(new SfDecimal(1));
+    expect((dict.get('c') as Item).value).toEqual(new SfDecimal(-2.25));
+    expect(
+      serializeInnerList({
+        items: [],
+        params: new Map([['d', new SfDecimal(1)]]),
+      })
+    ).toBe('();d=1.0');
   });
 });

@@ -1,4 +1,9 @@
-import { serializeInnerList, serializeItem } from './sf.js';
+import {
+  isInnerList,
+  parseDictionary,
+  serializeInnerList,
+  serializeItem,
+} from './sf.js';
 import type { InnerList, Item } from './sf.js';
 
 // The signature base of RFC 9421 §2.5: one line per covered component, then
@@ -72,9 +77,12 @@ function componentValue(item: Item, msg: MessageParts): string {
   if (typeof item.value !== 'string')
     throw new SigBaseError('a component name must be a string');
   const name = item.value;
-  for (const [param, value] of item.params)
-    if (param !== 'req' || value !== true)
-      throw new SigBaseError(`parameter ${param} is not understood`);
+  for (const [param, value] of item.params) {
+    const known =
+      (param === 'req' && value === true) ||
+      (param === 'key' && typeof value === 'string');
+    if (!known) throw new SigBaseError(`parameter ${param} is not understood`);
+  }
   const req = item.params.has('req');
   if (req && msg.response === undefined)
     throw new SigBaseError('req on a request');
@@ -82,15 +90,34 @@ function componentValue(item: Item, msg: MessageParts): string {
   if (context === undefined) throw new SigBaseError(`no message for ${name}`);
   if (name === '@signature-params')
     throw new SigBaseError('@signature-params is never a covered component');
-  if (name.startsWith('@')) return derived(name, context);
+  const key = item.params.get('key');
+  if (name.startsWith('@')) {
+    if (key !== undefined) throw new SigBaseError('key on a derived component');
+    return derived(name, context);
+  }
   if (name !== name.toLowerCase())
     throw new SigBaseError('field names are lowercase');
   const value = context.headers.get(name);
   if (value === null) throw new SigBaseError(`no ${name} field`);
+  if (typeof key === 'string') return dictionaryMember(name, value, key);
   const trimmed = value.trim();
   if (!PRINTABLE.test(trimmed))
     throw new SigBaseError(`${name} is not printable ASCII`);
   return trimmed;
+}
+
+// One member of a Dictionary field, re-serialized strictly (RFC 9421 §2.1.2).
+function dictionaryMember(name: string, value: string, key: string): string {
+  let member;
+  try {
+    member = parseDictionary(value).get(key);
+  } catch {
+    throw new SigBaseError(`${name} is not a Dictionary`);
+  }
+  if (member === undefined) throw new SigBaseError(`${name} has no ${key}`);
+  return isInnerList(member)
+    ? serializeInnerList(member)
+    : serializeItem(member);
 }
 
 /** The signature base for `covered` over a request, or a response (with its request). */

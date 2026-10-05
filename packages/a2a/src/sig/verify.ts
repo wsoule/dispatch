@@ -43,6 +43,31 @@ export interface VerifyFacts {
 }
 
 const refuse = (reason: SigRefusal): SigResult => ({ ok: false, reason });
+// Dispatch writes 16 random bytes; anything shorter guesses, anything longer bloats the cache.
+const NONCE = /^[A-Za-z0-9_-]{22,64}$/;
+const PATH = /^\/[^?#]*$/;
+const QUERY = /^(?:\?[^#]*)?$/;
+const EMPTY = new Uint8Array(0);
+
+// The configured origin as scheme://host[:port], or null when it is more than that.
+function bareOrigin(configured: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(configured);
+  } catch {
+    return null;
+  }
+  if (
+    u.username !== '' ||
+    u.password !== '' ||
+    u.search !== '' ||
+    u.hash !== ''
+  )
+    return null;
+  if (u.pathname !== '/' && u.pathname !== '') return null;
+  if (configured.includes('?') || configured.includes('#')) return null;
+  return u.origin;
+}
 
 /** ECDSA P-256 over a signature base: r||s, 64 octets (RFC 9421 §3.3.4). */
 export function verifyBase(
@@ -108,6 +133,7 @@ function tagged(headers: Headers): Tagged | SigRefusal {
     p.get('alg') !== SIG_ALG ||
     typeof keyid !== 'string' ||
     typeof nonce !== 'string' ||
+    !NONCE.test(nonce) ||
     typeof created !== 'number' ||
     typeof expires !== 'number' ||
     !Number.isInteger(created) ||
@@ -167,7 +193,13 @@ function check(
     if (err instanceof SigBaseError) return refuse('sig_malformed');
     throw err;
   }
-  if (body !== null && !digestMatches(headers.get('content-digest'), body))
+  const digestCovered = t.covered.items.some(
+    (i) => i.value === 'content-digest' && i.params.size === 0
+  );
+  if (
+    digestCovered &&
+    !digestMatches(headers.get('content-digest'), body ?? EMPTY)
+  )
     return refuse('sig_digest');
   if (!verifyBase(base, t.signature, key)) return refuse('sig_bad');
   return { ok: true, keyid: t.keyid };
@@ -184,9 +216,12 @@ export interface ReceivedRequest {
 
 /** Verifies a request against the configured origin, then spends its nonce. */
 export function verifyRequest(req: ReceivedRequest, f: VerifyFacts): SigResult {
+  const origin = bareOrigin(f.configuredOrigin);
+  if (origin === null || !PATH.test(req.path) || !QUERY.test(req.query))
+    return refuse('sig_malformed');
   const t = tagged(req.headers);
   if (typeof t === 'string') return refuse(t);
-  const targetUri = `${f.configuredOrigin.replace(/\/$/, '')}${req.path}${req.query}`;
+  const targetUri = `${origin}${req.path}${req.query}`;
   const result = check(
     t,
     requestComponents(req.body !== null),

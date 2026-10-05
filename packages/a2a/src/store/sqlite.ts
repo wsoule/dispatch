@@ -248,9 +248,10 @@ export interface A2AStore {
   hostByTokenHash(hash: string): HostRow | null;
   // True when a live host was revoked.
   revokeHost(id: string, at: string): boolean;
-  setClientKey(address: Address, pin: KeyPin): void;
+  // False when the row is absent or another row already holds this key.
+  setClientKey(address: Address, pin: KeyPin): boolean;
   clientByThumbprint(thumbprint: string): ClientRow | null;
-  setPeerKey(alias: string, pin: KeyPin): void;
+  setPeerKey(alias: string, pin: KeyPin): boolean;
   peerByThumbprint(thumbprint: string): PeerRow | null;
   putPairing(row: PairingRow): void;
   pairing(id: string): PairingRow | null;
@@ -354,8 +355,9 @@ function addKeyColumns(db: SqliteDatabase): void {
       if (!have.has(name))
         db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
+    // One key pins one row per table.
     db.exec(
-      `CREATE INDEX IF NOT EXISTS ${table}_key ON ${table} (key_thumbprint)`
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${table}_key_unique ON ${table} (key_thumbprint) WHERE key_thumbprint IS NOT NULL`
     );
   }
 }
@@ -391,17 +393,35 @@ interface KeyDbFields {
 
 const AUTH_MODES: readonly AuthMode[] = ['bearer', 'signature', 'link'];
 
-// An unknown auth mode reads as signature with no key, so it authenticates nothing.
+const NO_KEY = { keyThumbprint: null, keyJwk: null };
+
+// A stored JWK as an object of strings, or null when the column is damaged.
+function readJwk(text: string | null): Record<string, string> | null {
+  if (text === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+    return null;
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.some(([, v]) => typeof v !== 'string')) return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+// An unknown auth mode, or a damaged key, reads as signature with no key at
+// all, so the row authenticates nothing either way.
 function keyFields(r: KeyDbFields): Required<KeyFields> {
+  if (!AUTH_MODES.includes(r.auth as AuthMode))
+    return { auth: 'signature', ...NO_KEY, pairedId: r.paired_id };
+  const keyJwk = readJwk(r.key_jwk);
   return {
-    auth: AUTH_MODES.includes(r.auth as AuthMode)
-      ? (r.auth as AuthMode)
-      : 'signature',
-    keyThumbprint: r.key_thumbprint,
-    keyJwk:
-      r.key_jwk === null
-        ? null
-        : (JSON.parse(r.key_jwk) as Record<string, string>),
+    auth: r.auth as AuthMode,
+    ...(keyJwk === null || r.key_thumbprint === null
+      ? NO_KEY
+      : { keyThumbprint: r.key_thumbprint, keyJwk }),
     pairedId: r.paired_id,
   };
 }
@@ -1153,18 +1173,43 @@ export class SqliteA2AStore implements A2AStore {
     );
   }
 
-  setClientKey(address: Address, pin: KeyPin): void {
-    this.db
-      .prepare(
-        'UPDATE clients SET key_thumbprint = ?, key_jwk = ?, auth = ?, paired_id = ? WHERE addr = ?'
-      )
-      .run(
-        pin.thumbprint,
-        JSON.stringify(pin.jwk),
-        pin.auth,
-        pin.pairedId,
-        address
+  setClientKey(address: Address, pin: KeyPin): boolean {
+    return this.pin('clients', 'addr', address, pin);
+  }
+
+  // Pins a key on one row; a key another row holds is refused, never moved.
+  private pin(
+    table: 'clients' | 'peers',
+    keyColumn: 'addr' | 'alias',
+    id: string,
+    pin: KeyPin
+  ): boolean {
+    const holder = queryOne<{ id: string }>(
+      this.db,
+      `SELECT ${keyColumn} AS id FROM ${table} WHERE key_thumbprint = ?`,
+      [pin.thumbprint]
+    );
+    if (holder !== undefined && holder.id !== id) return false;
+    try {
+      return (
+        Number(
+          this.db
+            .prepare(
+              `UPDATE ${table} SET key_thumbprint = ?, key_jwk = ?, auth = ?, paired_id = ? WHERE ${keyColumn} = ?`
+            )
+            .run(
+              pin.thumbprint,
+              JSON.stringify(pin.jwk),
+              pin.auth,
+              pin.pairedId,
+              id
+            ).changes
+        ) > 0
       );
+    } catch {
+      // The unique index refused a pin that raced in.
+      return false;
+    }
   }
 
   clientByThumbprint(thumbprint: string): ClientRow | null {
@@ -1176,18 +1221,8 @@ export class SqliteA2AStore implements A2AStore {
     return r === undefined ? null : toClient(r);
   }
 
-  setPeerKey(alias: string, pin: KeyPin): void {
-    this.db
-      .prepare(
-        'UPDATE peers SET key_thumbprint = ?, key_jwk = ?, auth = ?, paired_id = ? WHERE alias = ?'
-      )
-      .run(
-        pin.thumbprint,
-        JSON.stringify(pin.jwk),
-        pin.auth,
-        pin.pairedId,
-        alias
-      );
+  setPeerKey(alias: string, pin: KeyPin): boolean {
+    return this.pin('peers', 'alias', alias, pin);
   }
 
   peerByThumbprint(thumbprint: string): PeerRow | null {

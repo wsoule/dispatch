@@ -376,3 +376,142 @@ describe('the keys verify needs', () => {
     expect(() => createPrivateKey({ key: jwk, format: 'jwk' })).toThrow();
   });
 });
+
+describe('review fixes (I1, M1-M4)', () => {
+  const getRequest = () => {
+    const headers = new Headers({ 'a2a-version': '1.0' });
+    const out = signRequest({
+      method: 'GET',
+      targetUri: 'https://agent.example/a2a/v1/tasks/t-1',
+      headers,
+      body: null,
+      keyid: alice.keyid,
+      privateKey: alice.privateKey,
+      now: NOW,
+    });
+    for (const [k, v] of Object.entries(out)) headers.set(k, v);
+    return {
+      method: 'GET',
+      targetUri: 'https://agent.example/a2a/v1/tasks/t-1',
+      headers,
+    };
+  };
+  const rf = {
+    keyFor: (id: string) => (id === alice.keyid ? alice.publicKey : null),
+    now: NOW,
+    guardMs: GUARD,
+  };
+
+  it('I1: binds a response to its own request, so an identical request cannot take it', () => {
+    const first = getRequest();
+    const second = getRequest(); // same method, URL and second; another nonce
+    const headers = new Headers({ 'content-type': 'application/json' });
+    const out = signResponse({
+      status: 200,
+      headers,
+      body,
+      request: first,
+      keyid: alice.keyid,
+      privateKey: alice.privateKey,
+      now: NOW,
+    });
+    for (const [k, v] of Object.entries(out)) headers.set(k, v);
+    expect(headers.get('signature-input')).toContain(
+      '"signature";key="a2a";req'
+    );
+    const res = { status: 200, headers, body };
+    expect(verifyResponse(res, first, rf).ok).toBe(true);
+    expect(verifyResponse(res, second, rf)).toEqual({
+      ok: false,
+      reason: 'sig_bad',
+    });
+  });
+
+  it('M1: refuses a path or query that could move the target to another origin', () => {
+    const req = signed();
+    for (const [path, query] of [
+      ['@evil.example/a2a/v1/message:send', ''],
+      ['/a2a/v1/message:send?x=1', ''],
+      ['/a2a/v1/message:send#f', ''],
+      ['/a2a/v1/message:send', 'x=1'],
+      ['/a2a/v1/message:send', '?x#y'],
+    ])
+      expect(verifyRequest({ ...req, path, query }, facts())).toEqual({
+        ok: false,
+        reason: 'sig_malformed',
+      });
+    for (const origin of [
+      'https://agent.example/base',
+      'https://user@agent.example',
+      'https://agent.example?q',
+      'not a url',
+    ])
+      expect(
+        verifyRequest(signed(), facts({ configuredOrigin: origin }))
+      ).toEqual({ ok: false, reason: 'sig_malformed' });
+    expect(
+      verifyRequest(
+        signed(),
+        facts({ configuredOrigin: 'https://agent.example/' })
+      ).ok
+    ).toBe(true);
+  });
+
+  it('M2: checks a covered digest against an empty body when none arrived', () => {
+    const req = signed();
+    expect(verifyRequest({ ...req, body: null }, facts())).toEqual({
+      ok: false,
+      reason: 'sig_digest',
+    });
+  });
+
+  it('M3: refuses created or expires written as decimals', () => {
+    const req = signed();
+    req.headers.set(
+      'signature-input',
+      req.headers
+        .get('signature-input')!
+        .replace(/created=(\d+)/, 'created=$1.0')
+    );
+    expect(verifyRequest(req, facts())).toEqual({
+      ok: false,
+      reason: 'sig_malformed',
+    });
+  });
+
+  it('M4: refuses a nonce that is not 22 to 64 base64url characters', () => {
+    for (const nonce of [
+      'short',
+      'has space in it that is long enough',
+      'x'.repeat(65),
+    ]) {
+      const headers = new Headers({
+        'content-type': 'application/json',
+        'a2a-version': '1.0',
+      });
+      const out = signRequest({
+        method: 'POST',
+        targetUri: 'https://agent.example/a2a/v1/message:send',
+        headers,
+        body,
+        keyid: alice.keyid,
+        privateKey: alice.privateKey,
+        now: NOW,
+        nonce,
+      });
+      for (const [k, v] of Object.entries(out)) headers.set(k, v);
+      expect(
+        verifyRequest(
+          {
+            method: 'POST',
+            path: '/a2a/v1/message:send',
+            query: '',
+            headers,
+            body,
+          },
+          facts()
+        )
+      ).toEqual({ ok: false, reason: 'sig_malformed' });
+    }
+  });
+});

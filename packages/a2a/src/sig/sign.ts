@@ -28,19 +28,20 @@ export function requestComponents(hasBody: boolean): string[] {
   ];
 }
 
-/** The components the request's own Dispatch signature covered, else the request basics. */
-function signedRequestItems(headers: Headers): Item[] {
+// The request's own Dispatch signature: its label and covered components.
+function taggedRequest(
+  headers: Headers
+): { label: string; items: Item[] } | null {
   const input = headers.get('signature-input');
-  if (input !== null) {
-    try {
-      for (const member of parseDictionary(input).values())
-        if (isInnerList(member) && member.params.get('tag') === SIG_TAG)
-          return member.items;
-    } catch {
-      // An unreadable input covers nothing; fall back below.
-    }
+  if (input === null) return null;
+  try {
+    for (const [label, member] of parseDictionary(input))
+      if (isInnerList(member) && member.params.get('tag') === SIG_TAG)
+        return { label, items: member.items };
+  } catch {
+    // An unreadable input names no signature.
   }
-  return ['@method', '@target-uri', '@authority'].map(plain);
+  return null;
 }
 
 function sigParams(keyid: string, now: Date, nonce: string): Params {
@@ -113,18 +114,37 @@ export interface SignResponseInput {
   now: Date;
 }
 
-/** Response components: status and content, then every request component under req (RFC 9421 §2.4). */
+/**
+ * Response components: status and content, every request component under
+ * req, and the request's own signature (RFC 9421 §2.4), so the response binds
+ * to that one request and not to any identical one.
+ */
 export function responseItems(
   hasBody: boolean,
   requestHeaders: Headers
 ): Item[] {
+  const signed = taggedRequest(requestHeaders);
+  const asReq = (item: Item): Item => ({
+    value: item.value,
+    params: new Map([...item.params, ['req', true]]) as Params,
+  });
   return [
     plain('@status'),
     ...(hasBody ? [plain('content-digest'), plain('content-type')] : []),
-    ...signedRequestItems(requestHeaders).map((item) => ({
-      value: item.value,
-      params: new Map([['req', true]]) as Params,
-    })),
+    ...(
+      signed?.items ?? ['@method', '@target-uri', '@authority'].map(plain)
+    ).map(asReq),
+    ...(signed === null
+      ? []
+      : [
+          {
+            value: 'signature',
+            params: new Map<string, string | boolean>([
+              ['key', signed.label],
+              ['req', true],
+            ]) as Params,
+          },
+        ]),
   ];
 }
 
