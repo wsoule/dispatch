@@ -123,7 +123,10 @@ fn backfill(app_handle: &AppHandle, watch_dir: &Path, source: &AgentSource) {
     }
 }
 
-fn run_watcher(app_handle: AppHandle, roots: Vec<(PathBuf, &'static AgentSource)>) -> notify::Result<()> {
+fn run_watcher(
+    app_handle: AppHandle,
+    roots: Vec<(PathBuf, &'static AgentSource)>,
+) -> notify::Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut debouncer = new_debouncer(Duration::from_millis(DEBOUNCE_MS), tx)?;
 
@@ -137,13 +140,21 @@ fn run_watcher(app_handle: AppHandle, roots: Vec<(PathBuf, &'static AgentSource)
         let target = if root.exists() {
             root.clone()
         } else {
-            root.parent().map(Path::to_path_buf).unwrap_or_else(|| root.clone())
+            root.parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| root.clone())
         };
         if !watched_targets.contains(&target) {
-            debouncer.watcher().watch(&target, notify::RecursiveMode::Recursive)?;
+            debouncer
+                .watcher()
+                .watch(&target, notify::RecursiveMode::Recursive)?;
             watched_targets.push(target.clone());
         }
-        log::info!("watching {} for {} session logs", target.display(), source.agent);
+        log::info!(
+            "watching {} for {} session logs",
+            target.display(),
+            source.agent
+        );
     }
 
     for result in rx {

@@ -1,6 +1,10 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch/core';
 import { DEFAULT_MESSAGING, loadConfig } from '@dispatch/core';
-import type { Message, MessageStore } from '@dispatch/protocol';
+import type {
+  FederationHooks,
+  Message,
+  MessageStore,
+} from '@dispatch/protocol';
 import {
   DeliveryEngine,
   gateOf,
@@ -23,6 +27,7 @@ import type {
 import {
   OrchestratorNotFoundError,
   runKind,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from '../orchestrator/types.js';
 import { statusModelFor } from '../statuses.js';
@@ -38,6 +43,8 @@ import {
 } from './gates.js';
 import type { ExternalPolicy, WakeActor } from './host.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
+import type { OperatorRouting } from './operatorRouting.js';
+import { installOperatorNotices, operatorRouting } from './operatorRouting.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 import {
@@ -92,6 +99,8 @@ export interface Messaging {
   engine: DeliveryEngine;
   store: SqliteMessageStore;
   runTokens: RunTokens;
+  // XH-R9: who a run's questions, notices and gates go to.
+  routing: OperatorRouting;
   gates: GateHandlers;
   // Lets overseer-action and overseer tool-approval answers apply; until then
   // they are logged and the answerer told.
@@ -101,6 +110,8 @@ export interface Messaging {
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
   // Installs (or with null removes) the A2A bridge's say on external recipients.
   setExternalPolicy(policy: ExternalPolicy | null): void;
+  /** messaging.agentBlockingTimeoutSec as read at open. */
+  agentWaitSec: number;
   close(): void;
 }
 
@@ -113,6 +124,9 @@ function messageAudience(
   const participants = new Set<string>([message.from, ...message.to]);
   for (const d of store.deliveries({ messageId: message.id }))
     participants.add(d.recipient);
+  // A recipient on a teammate's machine follows the thread here too.
+  for (const r of store.remoteDeliveries({ messageId: message.id }))
+    participants.add(r.recipient);
   return (who) => {
     if (who === undefined || who.agentToken) return false;
     if (
@@ -141,6 +155,15 @@ export function openMessaging(deps: {
   appendPolicyActivity?: (taskId: string, text: string) => void;
   // How often the scope-gate sweep runs, and its clock; tests shorten both.
   scopeExpiry?: { sweepMs?: number; now?: () => number };
+  // Federation's hooks, and a nudge for the next pass once mail is stored.
+  federation?: FederationHooks;
+  onFederatedMessage?: () => void;
+  // Who may answer gates and who still holds a credential, for routing a
+  // teammate's run (XH-R9); omitted, only the owner decides.
+  deciders?: {
+    canDecide(ref: string): boolean;
+    hasAccess(ref: string): boolean;
+  };
 }): Messaging {
   const db = openMessagesDb(
     deps.dbPath ?? join(runsDir(deps.rootDir), 'messages.db')
@@ -148,7 +171,6 @@ export function openMessaging(deps: {
   const store = new SqliteMessageStore(db);
 
   const runTokens = createRunTokens(randomBytes(32));
-  deps.orchestrator.setRunTokenMinter(runTokens.mint);
 
   // Whether any run of the task is still going, winding down included.
   const hasActiveRun = (taskId: string) =>
@@ -159,17 +181,34 @@ export function openMessaging(deps: {
   // (one winding down, say); retried when a run of that task ends.
   const blockedWakes = new Map<string, BlockedWake[]>();
 
+  const routing = operatorRouting({
+    owner: deps.ownerRef,
+    operatorOf: (runId) => {
+      const run = deps.orchestrator.list().find((r) => r.id === runId);
+      return run === undefined ? undefined : runOperator(run);
+    },
+    canDecide: (ref) =>
+      ref === deps.ownerRef || deps.deciders?.canDecide(ref) === true,
+    hasAccess: (ref) =>
+      ref === deps.ownerRef || (deps.deciders?.hasAccess(ref) ?? true),
+  });
+
+  deps.orchestrator.setRunTokenMinter(runTokens.mint);
+  deps.orchestrator.setOperatorRouting(routing);
+
   const gates = new GateHandlers();
   const host = new DaemonMessagingHost({
     rootDir: deps.rootDir,
     orchestrator: deps.orchestrator,
     store: deps.store,
     ownerRef: deps.ownerRef,
+    routing,
     gates,
     onHumanMessage: () => {
       // message.new already reaches the desktop over the EventBus; no OS
       // notification is raised for a human's message yet.
     },
+    ...(deps.federation === undefined ? {} : { federation: deps.federation }),
     onWakeFailed: (target, message, acting) => {
       const taskId = target.slice('task:'.length);
       if (!hasActiveRun(taskId)) return;
@@ -261,11 +300,22 @@ export function openMessaging(deps: {
   // A human approved waking a held task. A no-op while a live execute run can
   // take the task's mail; any other live run makes the wake fail with a notice.
   gates.register('wake', async (question, answer) => {
-    if (answer.choice !== 'approve') return;
     const gate = gateOf(question);
     if (gate === null || gate.type !== 'wake') return;
     const original = store.getMessage(gate.message);
     if (original === null) return;
+    // A denied wake tells its sender, so a run waiting on it does not wait on.
+    if (answer.choice !== 'approve') {
+      // A teammate's machine hears that it was denied, not by whom.
+      if (answer.choice === 'deny')
+        await noticeWakeSender(
+          original,
+          original.origin === undefined
+            ? `Not woken: ${answer.from} denied waking ${gate.target}. Your message is waiting for it.`
+            : `Not woken: waking ${gate.target} was denied. Your message is waiting for it.`
+        );
+      return;
+    }
     if (gate.target.startsWith('task:')) {
       const taskId = gate.target.slice('task:'.length);
       const live = deps.orchestrator.liveRunIdForTask(taskId);
@@ -382,7 +432,7 @@ export function openMessaging(deps: {
   // Tool approvals: the orchestrator parks the run; this asks the owner.
   deps.orchestrator.setApprovalGate({
     raise: (request) => {
-      raiseToolApproval(engine, deps.ownerRef, request)
+      raiseToolApproval(engine, routing.gateFor(request.runId).to, request)
         .then((gate) => {
           // The run ended, or this call was settled, while the gate was being written.
           if (!deps.orchestrator.isRunLive(request.runId))
@@ -524,6 +574,7 @@ export function openMessaging(deps: {
     );
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
+  const uninstallOperatorNotices = installOperatorNotices(engine, routing);
   // Grants what policy covers before expiring, so a covered gate is never denied.
   const scopeSweep = setInterval(() => {
     void sweepScopeGates(
@@ -558,6 +609,7 @@ export function openMessaging(deps: {
         { type: 'message.new', message: e.message },
         messageAudience(store, e.message)
       );
+      deps.onFederatedMessage?.();
       return;
     }
     // Channel membership reaches no socket; only the federation router reads it.
@@ -587,6 +639,8 @@ export function openMessaging(deps: {
   // run only gets mail addressed to its own run.
   const unsubscribeRunStarted = deps.orchestrator.onRunStarted((meta) => {
     if (runKind(meta) !== 'execute') return;
+    // Task mail a teammate's machine held for this task comes here first.
+    if (deps.federation !== undefined) engine.claimRemote(meta.taskId);
     engine
       .deliverHeld(meta.id, meta.taskId)
       .catch((err) => console.error('messaging: deliverHeld failed', err));
@@ -596,11 +650,13 @@ export function openMessaging(deps: {
     engine,
     store,
     runTokens,
+    routing,
     gates,
     bindOverseer(target) {
       overseer = target;
     },
     recover: () => engine.recover(),
+    agentWaitSec: limits.agentBlockingTimeoutSec,
     setExternalPolicy(policy) {
       host.setExternalPolicy(policy);
     },
@@ -609,6 +665,7 @@ export function openMessaging(deps: {
       host.setExternalPolicy(null);
       clearInterval(scopeSweep);
       uninstallScopePolicy();
+      uninstallOperatorNotices();
       unsubscribeRunStarted();
       unsubscribeRunTerminal();
       blockedWakes.clear();

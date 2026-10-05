@@ -46,6 +46,37 @@ export async function rosterProjection(m: Member): Promise<unknown> {
   };
 }
 
+/** Every message more than one member holds reads the same on each: its
+ *  body, and whether it is the accepted answer (accepted on one, accepted on
+ *  all). A losing answer may stay pending where the winner never arrives
+ *  (FW-R33), so that is not compared. */
+export function expectMessagesConverged(members: Member[]): void {
+  const held = new Map<string, { name: string; row: unknown }[]>();
+  for (const m of members)
+    for (const row of m.handle.messagesDb<{
+      id: string;
+      kind: string;
+      settled_as: string | null;
+      body: string;
+    }>('SELECT id, kind, settled_as, body FROM messages')) {
+      const list = held.get(row.id) ?? [];
+      list.push({
+        name: m.name,
+        row: { body: row.body, accepted: row.settled_as === 'accepted' },
+      });
+      held.set(row.id, list);
+    }
+  for (const [id, copies] of held) {
+    const [first, ...rest] = copies;
+    for (const other of rest)
+      expect({ id, on: other.name, ...(other.row as object) }).toEqual({
+        id,
+        on: other.name,
+        ...(first?.row as object),
+      });
+  }
+}
+
 /** Every projection is the same on every member. */
 export async function expectConverged(
   members: Member[],

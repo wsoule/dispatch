@@ -17,7 +17,10 @@ direct messages, channels and threads, with one inbox.
   tool approvals, scope requests, wakes, new agents, task proposals, memory and
   doc edits. Each kind has fixed rules for who can raise it and who can answer.
 - **Runs act for the human who started them.** An agent's actions are attributed
-  to the person who caused the run, never to the project owner by default.
+  to the person who caused the run, never to the project owner by default. A
+  teammate's run asks that teammate its questions and sends them its approvals.
+  When the teammate can't decide one, it goes to the project owner and the
+  teammate is told.
 - **Agents use it natively.** MCP tools (`msg_*`, `inbox_*`, `thread_*`,
   `channel_*`) work in Claude Code, Codex and any MCP client.
 

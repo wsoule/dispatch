@@ -13,6 +13,7 @@ import {
   openGatesAfter,
   questionsByRun,
   runIdOf,
+  runsAskingMe,
   scopeRequestsByRun,
   taskProposalOf,
   toRunQuestion,
@@ -188,6 +189,14 @@ describe('gate adapters', () => {
 });
 
 describe('gateNotification', () => {
+  it('notifies only the human a gate names, once this window knows who it is (XH-R9)', () => {
+    const toAna = { ...approval, to: ['human:ana'] };
+    expect(gateNotification(toAna, () => 'Checkout', 'human:wyat')).toBeNull();
+    expect(
+      gateNotification(toAna, () => 'Checkout', 'human:ana')
+    ).not.toBeNull();
+    expect(gateNotification(toAna, () => 'Checkout', null)).not.toBeNull();
+  });
   it('notifies a tool approval as today, under the approval toggle', () => {
     expect(gateNotification(approval, () => 'Checkout')).toEqual({
       title: 'Approval needed',
@@ -469,5 +478,38 @@ describe('isSystemMarker', () => {
     expect(
       isSystemMarker({ from: 'agent:dispatch', data: 'x-closed' }, 'x-closed')
     ).toBe(false);
+  });
+});
+
+describe('runsAskingMe (XH-R9)', () => {
+  const approval = msg('m-1', {
+    to: ['human:ana'],
+    data: {
+      type: 'tool-approval',
+      requestId: 'req-1',
+      runId: 'r-1',
+      tool: 'Bash',
+      input: {},
+      floor: false,
+    },
+  });
+  const ask = msg('m-2', { from: 'run:r-2', to: ['human:wyat'] });
+  const scope = msg('m-3', {
+    from: 'run:r-3',
+    to: ['human:ana'],
+    data: { type: 'scope', paths: ['a'], reason: 'r' },
+  });
+
+  it('collects the runs whose open gate or question names me', () => {
+    expect(runsAskingMe([approval, ask, scope], 'human:ana')).toEqual(
+      new Set(['r-1', 'r-3'])
+    );
+    expect(runsAskingMe([approval, ask, scope], 'human:wyat')).toEqual(
+      new Set(['r-2'])
+    );
+  });
+
+  it('names nothing without a viewer', () => {
+    expect(runsAskingMe([approval, ask], null)).toEqual(new Set());
   });
 });

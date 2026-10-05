@@ -23,7 +23,7 @@ const DIFF_CONTENT_RETENTION_DAYS: i64 = 90;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+    tauri::Builder::default()
     // Folder picker for the add-project flow — the frontend calls the dialog
     // plugin's JS `open({ directory: true })` API directly (see `pickDirectory`
     // in tauri.ts), gated by the `dialog:default` capability permission.
@@ -126,15 +126,14 @@ pub fn run() {
 /// cleared rather than failing the boot — a full disk of old diffs is a problem, but not one
 /// worth refusing to start over.
 fn prune_old_diff_content(conn: &rusqlite::Connection) {
-  let cutoff =
-    chrono::Utc::now().timestamp() - DIFF_CONTENT_RETENTION_DAYS * 24 * 60 * 60;
-  match db::queries::prune_file_diff_content(conn, cutoff) {
-    Ok(0) => {}
-    Ok(n) => log::info!(
+    let cutoff = chrono::Utc::now().timestamp() - DIFF_CONTENT_RETENTION_DAYS * 24 * 60 * 60;
+    match db::queries::prune_file_diff_content(conn, cutoff) {
+        Ok(0) => {}
+        Ok(n) => log::info!(
       "cleared stored diff text on {n} file changes older than {DIFF_CONTENT_RETENTION_DAYS} days"
     ),
-    Err(e) => log::warn!("failed to prune old diff content: {e:#}"),
-  }
+        Err(e) => log::warn!("failed to prune old diff content: {e:#}"),
+    }
 }
 
 /// Recomputes cost_usd for every session from its currently-stored token totals against the
@@ -142,26 +141,26 @@ fn prune_old_diff_content(conn: &rusqlite::Connection) {
 /// managed state — cheap enough at this scale that an equality check before writing isn't
 /// worth the complexity.
 fn backfill_session_costs(conn: &rusqlite::Connection) {
-  let totals = match db::queries::all_session_token_totals(conn) {
-    Ok(totals) => totals,
-    Err(e) => {
-      log::warn!("failed to load session token totals for cost backfill: {e:#}");
-      return;
-    }
-  };
+    let totals = match db::queries::all_session_token_totals(conn) {
+        Ok(totals) => totals,
+        Err(e) => {
+            log::warn!("failed to load session token totals for cost backfill: {e:#}");
+            return;
+        }
+    };
 
-  for t in totals {
-    let cost = cost::pricing::cost_usd(
-      t.model.as_deref(),
-      t.prompt_tokens,
-      t.completion_tokens,
-      t.cache_read_tokens,
-      t.cache_creation_tokens,
-    );
-    if let Err(e) = db::queries::update_cost(conn, &t.id, cost) {
-      log::warn!("failed to backfill cost for session {}: {e:#}", t.id);
+    for t in totals {
+        let cost = cost::pricing::cost_usd(
+            t.model.as_deref(),
+            t.prompt_tokens,
+            t.completion_tokens,
+            t.cache_read_tokens,
+            t.cache_creation_tokens,
+        );
+        if let Err(e) = db::queries::update_cost(conn, &t.id, cost) {
+            log::warn!("failed to backfill cost for session {}: {e:#}", t.id);
+        }
     }
-  }
 }
 
 /// Ticks every `SWEEP_INTERVAL_SECS`, finalizing any session that has gone idle for longer
@@ -177,40 +176,41 @@ fn backfill_session_costs(conn: &rusqlite::Connection) {
 /// away from the app — would otherwise stall every other DB access for the whole backlog's
 /// combined read time.
 fn spawn_idle_sweep(app_handle: tauri::AppHandle) {
-  tauri::async_runtime::spawn(async move {
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
-    loop {
-      interval.tick().await;
+    tauri::async_runtime::spawn(async move {
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(SWEEP_INTERVAL_SECS));
+        loop {
+            interval.tick().await;
 
-      let db = app_handle.state::<db::Db>();
-      let now = chrono::Utc::now().timestamp();
+            let db = app_handle.state::<db::Db>();
+            let now = chrono::Utc::now().timestamp();
 
-      // Phase 1 (locked, DB-only): finalize idle sessions, then gather what tag
-      // classification needs — just an id + raw_log_path pair per session, no file I/O yet.
-      let (any_finalized, tag_targets) = {
-        let conn = db.0.lock().unwrap();
+            // Phase 1 (locked, DB-only): finalize idle sessions, then gather what tag
+            // classification needs — just an id + raw_log_path pair per session, no file I/O yet.
+            let (any_finalized, tag_targets) = {
+                let conn = db.0.lock().unwrap();
 
-        let ids = match db::queries::sessions_to_finalize(&conn, IDLE_THRESHOLD_SECS, now) {
-          Ok(ids) => ids,
-          Err(e) => {
-            log::warn!("idle sweep: failed to query sessions_to_finalize: {e:#}");
-            Vec::new()
-          }
-        };
+                let ids = match db::queries::sessions_to_finalize(&conn, IDLE_THRESHOLD_SECS, now) {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        log::warn!("idle sweep: failed to query sessions_to_finalize: {e:#}");
+                        Vec::new()
+                    }
+                };
 
-        let mut any_finalized = false;
-        for id in &ids {
-          match db::queries::finalize_session(&conn, id) {
-            Ok(()) => any_finalized = true,
-            Err(e) => log::warn!("idle sweep: failed to finalize session {id}: {e:#}"),
-          }
-        }
+                let mut any_finalized = false;
+                for id in &ids {
+                    match db::queries::finalize_session(&conn, id) {
+                        Ok(()) => any_finalized = true,
+                        Err(e) => log::warn!("idle sweep: failed to finalize session {id}: {e:#}"),
+                    }
+                }
 
-        // Tag classification runs after finalize in this same tick, since `sessions_needing_tags`
-        // only returns 'ended' sessions — a session finalized above becomes eligible immediately.
-        // This also naturally backfills tags for any session finalized before this feature
-        // existed, same pattern as `backfill_session_costs` at startup.
-        let tag_targets = match db::queries::sessions_needing_tags(&conn) {
+                // Tag classification runs after finalize in this same tick, since `sessions_needing_tags`
+                // only returns 'ended' sessions — a session finalized above becomes eligible immediately.
+                // This also naturally backfills tags for any session finalized before this feature
+                // existed, same pattern as `backfill_session_costs` at startup.
+                let tag_targets = match db::queries::sessions_needing_tags(&conn) {
           Ok(tag_ids) => tag_ids
             .into_iter()
             .map(|id| {
@@ -234,53 +234,55 @@ fn spawn_idle_sweep(app_handle: tauri::AppHandle) {
           }
         };
 
-        (any_finalized, tag_targets)
-      }; // conn dropped here — file I/O below runs with no lock held.
+                (any_finalized, tag_targets)
+            }; // conn dropped here — file I/O below runs with no lock held.
 
-      // Phase 2 (unlocked): the actual file reads + classification, one per session needing
-      // tags. This is the I/O this whole three-phase split exists to keep off the DB lock.
-      let tag_writes: Vec<(String, String)> = tag_targets
-        .into_iter()
-        .map(|(id, raw_log_path)| {
-          let tags_json = compute_tags_json(&id, &raw_log_path);
-          (id, tags_json)
-        })
-        .collect();
+            // Phase 2 (unlocked): the actual file reads + classification, one per session needing
+            // tags. This is the I/O this whole three-phase split exists to keep off the DB lock.
+            let tag_writes: Vec<(String, String)> = tag_targets
+                .into_iter()
+                .map(|(id, raw_log_path)| {
+                    let tags_json = compute_tags_json(&id, &raw_log_path);
+                    (id, tags_json)
+                })
+                .collect();
 
-      // Phase 3 (locked again, briefly): write the computed tags back, then hand off to
-      // summary generation — which only needs the lock for its own quick `sessions_needing_summary`
-      // query here; each spawned summary task re-acquires the lock independently and briefly,
-      // for the same reason this phase does (see `spawn_summary_tasks`'s doc comment).
-      let any_tagged = {
-        let conn = db.0.lock().unwrap();
+            // Phase 3 (locked again, briefly): write the computed tags back, then hand off to
+            // summary generation — which only needs the lock for its own quick `sessions_needing_summary`
+            // query here; each spawned summary task re-acquires the lock independently and briefly,
+            // for the same reason this phase does (see `spawn_summary_tasks`'s doc comment).
+            let any_tagged = {
+                let conn = db.0.lock().unwrap();
 
-        let mut any_tagged = false;
-        for (id, tags_json) in &tag_writes {
-          match db::queries::update_tags(&conn, id, tags_json) {
-            Ok(()) => any_tagged = true,
-            Err(e) => log::warn!("idle sweep: failed to write tags for session {id}: {e:#}"),
-          }
+                let mut any_tagged = false;
+                for (id, tags_json) in &tag_writes {
+                    match db::queries::update_tags(&conn, id, tags_json) {
+                        Ok(()) => any_tagged = true,
+                        Err(e) => {
+                            log::warn!("idle sweep: failed to write tags for session {id}: {e:#}")
+                        }
+                    }
+                }
+
+                // Summary generation runs after tag classification in this same tick, for the same
+                // reason tag classification runs after finalize: `sessions_needing_summary` only
+                // returns 'ended' sessions, so a session finalized earlier in this tick is eligible
+                // immediately. Its tasks emit their own `data-changed` events on success (they
+                // complete well after this tick's synchronous work and its emit below), so they don't
+                // contribute to `any_finalized`/`any_tagged` here.
+                spawn_summary_tasks(&app_handle, &conn);
+
+                any_tagged
+            }; // conn dropped here.
+
+            if any_finalized || any_tagged {
+                let _ = app_handle.emit(
+                    "data-changed",
+                    serde_json::json!({ "entity": "session", "kind": "updated" }),
+                );
+            }
         }
-
-        // Summary generation runs after tag classification in this same tick, for the same
-        // reason tag classification runs after finalize: `sessions_needing_summary` only
-        // returns 'ended' sessions, so a session finalized earlier in this tick is eligible
-        // immediately. Its tasks emit their own `data-changed` events on success (they
-        // complete well after this tick's synchronous work and its emit below), so they don't
-        // contribute to `any_finalized`/`any_tagged` here.
-        spawn_summary_tasks(&app_handle, &conn);
-
-        any_tagged
-      }; // conn dropped here.
-
-      if any_finalized || any_tagged {
-        let _ = app_handle.emit(
-          "data-changed",
-          serde_json::json!({ "entity": "session", "kind": "updated" }),
-        );
-      }
-    }
-  });
+    });
 }
 
 /// Computes the tag list for one session as a JSON array string: reads its raw log (no DB
@@ -291,24 +293,24 @@ fn spawn_idle_sweep(app_handle: tauri::AppHandle) {
 /// NULL" — otherwise a session with an unreadable log would be retried, and logged about, on
 /// every single sweep tick forever.
 fn compute_tags_json(session_id: &str, raw_log_path: &str) -> String {
-  // An empty raw_log_path means the gather phase already logged why (missing row or DB error)
-  // — nothing further to log here, just fall through to "no text captured."
-  let first_user_text = if raw_log_path.is_empty() {
-    None
-  } else {
-    match parser::extract_excerpts(raw_log_path) {
-      Ok(excerpts) => excerpts.first_user_text,
-      Err(e) => {
-        log::warn!(
+    // An empty raw_log_path means the gather phase already logged why (missing row or DB error)
+    // — nothing further to log here, just fall through to "no text captured."
+    let first_user_text = if raw_log_path.is_empty() {
+        None
+    } else {
+        match parser::extract_excerpts(raw_log_path) {
+            Ok(excerpts) => excerpts.first_user_text,
+            Err(e) => {
+                log::warn!(
           "idle sweep: failed to extract transcript excerpts for session {session_id} at {raw_log_path}: {e:#}"
         );
-        None
-      }
-    }
-  };
+                None
+            }
+        }
+    };
 
-  let tags = tags::classify(&first_user_text.unwrap_or_default());
-  serde_json::to_string(&tags).unwrap_or_else(|_| "[]".to_string())
+    let tags = tags::classify(&first_user_text.unwrap_or_default());
+    serde_json::to_string(&tags).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Looks at every session with `status='ended' AND summary IS NULL`, skips any session
@@ -329,121 +331,125 @@ fn compute_tags_json(session_id: &str, raw_log_path: &str) -> String {
 /// connection hostage, blocking every other DB access (including this same sweep's next tick,
 /// and any UI command) for as long as it takes.
 fn spawn_summary_tasks(app_handle: &tauri::AppHandle, conn: &rusqlite::Connection) {
-  let api_key = app_handle.state::<summarize::ApiKeyState>().0.clone();
-  let Some(api_key) = api_key else {
-    // Already logged once at startup (see `setup()`) — nothing further to log here, and
-    // logging again per-tick is exactly what `log_summarization_disabled_once` prevents.
-    return;
-  };
+    let api_key = app_handle.state::<summarize::ApiKeyState>().0.clone();
+    let Some(api_key) = api_key else {
+        // Already logged once at startup (see `setup()`) — nothing further to log here, and
+        // logging again per-tick is exactly what `log_summarization_disabled_once` prevents.
+        return;
+    };
 
-  let Some(model) = cost::pricing::haiku_model_id() else {
-    summarize::log_summarization_disabled_once(
-      "bundled pricing.json has no model entry containing \"haiku\"",
-    );
-    return;
-  };
+    let Some(model) = cost::pricing::haiku_model_id() else {
+        summarize::log_summarization_disabled_once(
+            "bundled pricing.json has no model entry containing \"haiku\"",
+        );
+        return;
+    };
 
-  let ids = match db::queries::sessions_needing_summary(conn) {
-    Ok(ids) => ids,
-    Err(e) => {
-      log::warn!("idle sweep: failed to query sessions_needing_summary: {e:#}");
-      return;
+    let ids = match db::queries::sessions_needing_summary(conn) {
+        Ok(ids) => ids,
+        Err(e) => {
+            log::warn!("idle sweep: failed to query sessions_needing_summary: {e:#}");
+            return;
+        }
+    };
+
+    if ids.is_empty() {
+        return;
     }
-  };
 
-  if ids.is_empty() {
-    return;
-  }
+    let to_spawn: Vec<String> = {
+        let in_flight = app_handle.state::<summarize::InFlight>();
+        let mut set = in_flight.0.lock().unwrap();
+        ids.into_iter()
+            .filter(|id| set.insert(id.clone()))
+            .collect()
+    };
 
-  let to_spawn: Vec<String> = {
-    let in_flight = app_handle.state::<summarize::InFlight>();
-    let mut set = in_flight.0.lock().unwrap();
-    ids.into_iter().filter(|id| set.insert(id.clone())).collect()
-  };
+    if to_spawn.is_empty() {
+        return; // every eligible session is already being summarized from an earlier tick
+    }
 
-  if to_spawn.is_empty() {
-    return; // every eligible session is already being summarized from an earlier tick
-  }
+    let client = app_handle.state::<summarize::HttpClient>().0.clone();
 
-  let client = app_handle.state::<summarize::HttpClient>().0.clone();
+    for session_id in to_spawn {
+        let app_handle = app_handle.clone();
+        let api_key = api_key.clone();
+        let model = model.to_string();
+        let client = client.clone();
 
-  for session_id in to_spawn {
-    let app_handle = app_handle.clone();
-    let api_key = api_key.clone();
-    let model = model.to_string();
-    let client = client.clone();
+        tauri::async_runtime::spawn(async move {
+            // Removes `session_id` from the in-flight set when this async block ends, on every
+            // exit path — normal completion below, or any of the early `return`s on error/skip
+            // branches. See `InFlightGuard`'s doc comment.
+            let _guard = summarize::InFlightGuard::new(app_handle.clone(), session_id.clone());
 
-    tauri::async_runtime::spawn(async move {
-      // Removes `session_id` from the in-flight set when this async block ends, on every
-      // exit path — normal completion below, or any of the early `return`s on error/skip
-      // branches. See `InFlightGuard`'s doc comment.
-      let _guard = summarize::InFlightGuard::new(app_handle.clone(), session_id.clone());
+            // DB-only: gather what's needed to build a prompt. `conn` (the MutexGuard) is dropped
+            // at the end of this block — held only for these two quick queries, never across the
+            // file read that follows or the `.await` after that.
+            let context_result = {
+                let db = app_handle.state::<db::Db>();
+                let conn = db.0.lock().unwrap();
+                summarize::prompts::session_prompt_context(&conn, &session_id)
+            };
 
-      // DB-only: gather what's needed to build a prompt. `conn` (the MutexGuard) is dropped
-      // at the end of this block — held only for these two quick queries, never across the
-      // file read that follows or the `.await` after that.
-      let context_result = {
-        let db = app_handle.state::<db::Db>();
-        let conn = db.0.lock().unwrap();
-        summarize::prompts::session_prompt_context(&conn, &session_id)
-      };
-
-      let context = match context_result {
-        Ok(Some(context)) => context,
-        Ok(None) => {
-          log::debug!(
+            let context = match context_result {
+                Ok(Some(context)) => context,
+                Ok(None) => {
+                    log::debug!(
             "idle sweep: session {session_id} has no raw_log_path row; leaving summary NULL"
           );
-          return;
-        }
-        Err(e) => {
-          log::warn!("idle sweep: failed to gather prompt context for session {session_id}: {e:#}");
-          return;
-        }
-      };
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("idle sweep: failed to gather prompt context for session {session_id}: {e:#}");
+                    return;
+                }
+            };
 
-      // Filesystem, no lock held: re-reads the session's raw log. This is the I/O the
-      // DB-lock/file-read split exists to keep off the shared connection mutex — see
-      // `build_prompt_from_context`'s doc comment.
-      let prompt = match summarize::prompts::build_prompt_from_context(&context) {
-        Ok(Some(prompt)) => prompt,
-        Ok(None) => {
-          log::debug!(
+            // Filesystem, no lock held: re-reads the session's raw log. This is the I/O the
+            // DB-lock/file-read split exists to keep off the shared connection mutex — see
+            // `build_prompt_from_context`'s doc comment.
+            let prompt = match summarize::prompts::build_prompt_from_context(&context) {
+                Ok(Some(prompt)) => prompt,
+                Ok(None) => {
+                    log::debug!(
             "idle sweep: session {session_id} has nothing to summarize (no captured user text); leaving summary NULL"
           );
-          return;
-        }
-        Err(e) => {
-          log::warn!("idle sweep: failed to build summary prompt for session {session_id}: {e:#}");
-          return;
-        }
-      };
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("idle sweep: failed to build summary prompt for session {session_id}: {e:#}");
+                    return;
+                }
+            };
 
-      match summarize::call_anthropic_api(&client, &api_key, &model, prompt).await {
-        Ok(summary) => {
-          let write_result = {
-            let db = app_handle.state::<db::Db>();
-            let conn = db.0.lock().unwrap();
-            db::queries::update_summary(&conn, &session_id, &summary)
-          };
-          match write_result {
-            Ok(()) => {
-              let _ = app_handle.emit(
-                "data-changed",
-                serde_json::json!({ "entity": "session", "kind": "updated" }),
-              );
+            match summarize::call_anthropic_api(&client, &api_key, &model, prompt).await {
+                Ok(summary) => {
+                    let write_result = {
+                        let db = app_handle.state::<db::Db>();
+                        let conn = db.0.lock().unwrap();
+                        db::queries::update_summary(&conn, &session_id, &summary)
+                    };
+                    match write_result {
+                        Ok(()) => {
+                            let _ = app_handle.emit(
+                                "data-changed",
+                                serde_json::json!({ "entity": "session", "kind": "updated" }),
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("idle sweep: failed to write summary for session {session_id}: {e:#}")
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "idle sweep: summarization API call failed for session {session_id}: {e:#}"
+                    );
+                }
             }
-            Err(e) => {
-              log::warn!("idle sweep: failed to write summary for session {session_id}: {e:#}")
-            }
-          }
-        }
-        Err(e) => {
-          log::warn!("idle sweep: summarization API call failed for session {session_id}: {e:#}");
-        }
-      }
-      // `_guard` drops here (or at whichever `return` above fired), removing session_id from
-      // the in-flight set either way.
-    });
-  }
+            // `_guard` drops here (or at whichever `return` above fired), removing session_id from
+            // the in-flight set either way.
+        });
+    }
 }

@@ -63,7 +63,7 @@ const GIT_TIMEOUT_MS = 30_000;
 // dependency on test code.
 export const defaultGitRunner: GitRunner = (cwd, args) => {
   const result = spawnGitSync(cwd, args, {
-    env: { ...process.env, ...NO_PROMPT_ENV },
+    env: childEnv(NO_PROMPT_ENV),
     timeoutMs: GIT_TIMEOUT_MS,
   });
   return {
@@ -101,7 +101,7 @@ export const defaultAsyncGitRunner: AsyncGitRunner = (
     ['git', ...args],
     cwd,
     GIT_TIMEOUT_MS,
-    { ...process.env, ...NO_PROMPT_ENV, ...env },
+    childEnv({ ...NO_PROMPT_ENV, ...env }),
     maxOut
   );
 

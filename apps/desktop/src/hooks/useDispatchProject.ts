@@ -107,6 +107,7 @@ import {
   openGatesAfter,
   openGatesKey,
   questionsByRun,
+  runsAskingMe,
   scopeRequestsByRun,
 } from '../lib/gates';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
@@ -686,6 +687,9 @@ export interface DispatchProjectData {
   handleRestartDaemon: () => Promise<void>;
   /** Run id -> every blocking question that run's agent sent a human, oldest first. */
   openQuestions: Map<string, RunQuestion[]>;
+  /** Runs with an open gate or question addressed to this window's human
+   *  (XH-R9): theirs to answer, whoever the run acts for. */
+  asksMe: ReadonlySet<string>;
   /** The daemon's decision feed: everything awaiting a human plus the
    * just-resolved tail, in the server's order (open longest-waiting first). */
   decisions: DecisionItem[];
@@ -1255,6 +1259,8 @@ export function useDispatchProject(
   );
   // Keyed by run so a view holding one run finds its questions in one lookup.
   const openQuestions = useMemo(() => questionsByRun(openGates), [openGates]);
+  const me = whoami?.ref ?? null;
+  const asksMe = useMemo(() => runsAskingMe(openGates, me), [openGates, me]);
   // `retry: false` on both the run detail and diff queries below: `selectedRunId` comes from
   // nav state and can — for one render, e.g. mid project-switch — point at an id that belongs
   // to a different project's daemon (a stale `activeRunId` briefly surviving until
@@ -1778,7 +1784,9 @@ export function useDispatchProject(
                   (runId) =>
                     queryClient
                       .getQueryData<RunMeta[]>(runsQueryKey)
-                      ?.find((r) => r.id === runId)?.taskTitle
+                      ?.find((r) => r.id === runId)?.taskTitle,
+                  queryClient.getQueryData<{ ref: string }>(whoamiQueryKey)
+                    ?.ref ?? null
                 )
               : null;
           if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
@@ -3211,6 +3219,7 @@ export function useDispatchProject(
       messageAccess: access,
       handleRestartDaemon,
       openQuestions,
+      asksMe,
       decisions: decisionList ?? [],
       handleAnswerQuestion,
 
@@ -3356,6 +3365,7 @@ export function useDispatchProject(
       access,
       handleRestartDaemon,
       openQuestions,
+      asksMe,
       decisionList,
       handleAnswerQuestion,
       planId,

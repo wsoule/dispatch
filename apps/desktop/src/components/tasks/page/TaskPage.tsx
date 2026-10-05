@@ -1,3 +1,4 @@
+import type { ApiClient } from '@dispatch/client';
 import type {
   EffortLevel,
   TaskListItem,
@@ -11,6 +12,7 @@ import {
   statusLabel,
   statusType,
 } from '@dispatch/core/browser';
+import { useQuery } from '@tanstack/react-query';
 import {
   Archive,
   ArchiveRestore,
@@ -48,6 +50,7 @@ import {
   isLinearConfigured,
   pushToLinearError,
 } from '../../../lib/linearSettings';
+import { presenceLine } from '../../../lib/remotePresence';
 import { criteriaItems } from '../../../lib/reviewCriteria';
 import { isTerminalRunState } from '../../../lib/runState';
 import { useStatusModelOf } from '../../../lib/statusModel';
@@ -119,6 +122,41 @@ export interface TaskPageProps {
   onExpand?: () => void;
   /** Leaves the full page once its task has gone. */
   onBack?: () => void;
+}
+
+// Where the task's run is live on the team and whom it waits on; nothing
+// when board sync is off or the task has no live run.
+function TeamPresenceLine({
+  client,
+  port,
+  taskId,
+}: {
+  client: ApiClient | null;
+  port: number | undefined;
+  taskId: string;
+}) {
+  const query = useQuery({
+    queryKey: ['task-presence', port, taskId],
+    queryFn: () => {
+      if (client === null) throw new Error('no client');
+      return client.getTaskPresence(taskId);
+    },
+    enabled: client !== null,
+    retry: false,
+  });
+  const line =
+    query.data === undefined
+      ? null
+      : presenceLine(query.data.presence, query.data.waitingOn);
+  if (line === null) return null;
+  return (
+    <p
+      data-slot="team-presence"
+      className="text-muted-foreground -mt-4 text-[12px]"
+    >
+      {line}
+    </p>
+  );
 }
 
 function errorMessage(err: unknown): string {
@@ -815,6 +853,11 @@ function TaskPageLoaded({
                 />
               </div>
             </div>
+            <TeamPresenceLine
+              client={project.client}
+              port={project.port}
+              taskId={meta.id}
+            />
             {layout === 'split' && !railOpen && (
               <PropertyChips page={page} onOpenRail={() => setRailOpen(true)} />
             )}

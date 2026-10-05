@@ -49,4 +49,20 @@ describe('child process environments', () => {
     }
     expect(missing).toEqual([]);
   });
+
+  // An env built from process.env carries any DISPATCH_*TOKEN* set at launch;
+  // childEnv() is the base that strips them.
+  it('never builds a child env from the whole process env', () => {
+    const leaks: string[] = [];
+    for (const dir of SOURCES) {
+      for (const file of files(join(PACKAGES, dir))) {
+        const source = readFileSync(file, 'utf8');
+        for (const m of source.matchAll(/\benv:\s*\{\s*\.\.\.process\.env\b/g))
+          leaks.push(
+            `${relative(PACKAGES, file)}:${source.slice(0, m.index).split('\n').length}`
+          );
+      }
+    }
+    expect(leaks).toEqual([]);
+  });
 });

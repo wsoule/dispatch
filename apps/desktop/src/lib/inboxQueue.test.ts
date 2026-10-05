@@ -550,6 +550,31 @@ describe('whose attention', () => {
     );
   });
 
+  test('a run is the human it acts for, not who dispatched it (XH-R9)', () => {
+    const forAda = run({
+      id: 'r-for-ada',
+      taskId: 't-4',
+      dispatchedBy: 'human:wyat',
+      operator: 'human:ada',
+    });
+    const data = buildInbox(input({ runs: [forAda], me: 'human:wyat' }));
+    expect(data.total).toBe(0);
+    expect(data.teammateOwners?.get('r-for-ada')).toBe('human:ada');
+  });
+
+  test("a gate a teammate's run addressed to you is yours", () => {
+    const data = buildInbox(
+      input({
+        runs: [mine, adas],
+        me: 'human:wyat',
+        asksMe: new Set(['r-ada']),
+      })
+    );
+    expect(data.total).toBe(2);
+    const items = buildInboxItems(data, []);
+    expect(filterInboxItems(items, 'teammates')).toEqual([]);
+  });
+
   test("a run nobody dispatched by hand is everyone's, so yours", () => {
     const auto = run({ id: 'r-auto', taskId: 't-3' });
     const data = buildInbox(input({ runs: [auto], me: 'human:wyat' }));

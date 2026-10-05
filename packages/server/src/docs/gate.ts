@@ -7,6 +7,7 @@ import type { EventBus } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';
+import type { OperatorRouting } from '../messaging/operatorRouting.js';
 import { consultProjectPolicy } from '../policyEngine.js';
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
@@ -22,11 +23,12 @@ function proposer(p: DocProposal): string {
   return p.runId === null ? p.author : `run:${p.runId}`;
 }
 
-// Sends the owner a content-free gate for a proposal (title, body and diff stay
-// in docs.db); an open gate for the same proposal is reused.
+// Sends `to` (the proposing run's operator or the owner, XH-R9) a content-free
+// gate for a proposal (title, body and diff stay in docs.db); an open gate for
+// the same proposal is reused.
 export async function raiseDocGate(
   engine: DeliveryEngine,
-  ownerRef: string,
+  to: string,
   p: DocProposal
 ): Promise<string> {
   const open = engine.openBlocking().find((m) => {
@@ -41,7 +43,7 @@ export async function raiseDocGate(
   ];
   const sent = await engine.send(
     {
-      to: [ownerRef],
+      to: [to],
       kind: 'question',
       blocking: true,
       choices: ['approve', 'reject'],
@@ -150,6 +152,7 @@ export function docGatePort(
     rootDir: string;
     engine: DeliveryEngine;
     issuedTier: (handle: string) => AuthTier | null;
+    routing: Pick<OperatorRouting, 'gateFor'>;
   }
 ): DocsGatePort {
   const { engine, ownerRef } = deps;
@@ -162,7 +165,7 @@ export function docGatePort(
           'decide'
         )),
     rule: (risk) => consultProjectPolicy(deps.rootDir, 'doc', risk),
-    raiseGate: (p) => raiseDocGate(engine, ownerRef, p),
+    raiseGate: (p) => raiseDocGate(engine, deps.routing.gateFor(p.runId).to, p),
     closeGate: (gate, reason) => closeGate(engine, gate, reason),
     notice: (to, replyTo, body) => {
       // The system itself has no inbox to tell.

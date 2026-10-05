@@ -389,6 +389,98 @@ describe('the tier ladder', () => {
   });
 });
 
+// XH-R1: only the owner's app token re-issues an existing teammate's
+// credential. A re-issue hands the caller the new token and revokes the old
+// one, so a teammate allowed to do it for someone else could become them.
+// Inviting someone not yet on the roster stays open to deciders.
+describe('issuing for someone else', () => {
+  async function issued(body: object, token?: string): Promise<string> {
+    const res = await invite(body, token);
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { token: string }).token;
+  }
+
+  async function whoami(token: string) {
+    return rawFetch(`${baseUrl}/api/whoami`, { headers: headers(token) });
+  }
+
+  it('a decider cannot re-issue a peer and take over their identity', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+
+    const byHandle = await invite({ handle: 'carol', tier: 'decide' }, bob);
+    expect(byHandle.status).toBe(403);
+    expect(await byHandle.text()).not.toContain('"token"');
+    // The email path resolves to the same roster entry and is refused too.
+    expect(
+      (await invite({ email: 'carol@example.com', tier: 'decide' }, bob)).status
+    ).toBe(403);
+
+    // Carol is untouched.
+    const me = await whoami(carol);
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('carol');
+  });
+
+  it('a decider can still invite someone new, up to their own tier', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    const res = await invite(
+      { email: 'dana@example.com', tier: 'decide' },
+      bob
+    );
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { handle: string }).handle).toBe('dana');
+    expect(
+      (await invite({ email: 'eve@example.com', tier: 'operator' }, bob)).status
+    ).toBe(403);
+  });
+
+  it('a refused re-issue leaves the roster as it was', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    await issued({ email: 'carol@example.com', tier: 'decide' });
+    const before = readFileSync(join(root, '.dispatch', 'team.yml'), 'utf8');
+    expect(
+      (
+        await invite(
+          { email: 'carol@example.com', displayName: 'Not Carol' },
+          bob
+        )
+      ).status
+    ).toBe(403);
+    expect(readFileSync(join(root, '.dispatch', 'team.yml'), 'utf8')).toBe(
+      before
+    );
+  });
+
+  it('a teammate holding operator is still not the owner', async () => {
+    const linus = await issued({
+      email: 'linus@example.com',
+      tier: 'operator',
+    });
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+    expect(
+      (await invite({ handle: 'carol', tier: 'decide' }, linus)).status
+    ).toBe(403);
+    expect((await whoami(carol)).status).toBe(200);
+  });
+
+  it('a decider can re-issue their own credential', async () => {
+    const bob = await issued({ email: 'bob@example.com', tier: 'decide' });
+    const replaced = await issued({ handle: 'bob', tier: 'decide' }, bob);
+    expect((await whoami(bob)).status).toBe(401);
+    const me = await whoami(replaced);
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { handle: string }).handle).toBe('bob');
+  });
+
+  it("the owner can still re-issue anyone's", async () => {
+    const carol = await issued({ email: 'carol@example.com', tier: 'decide' });
+    const replaced = await issued({ handle: 'carol', tier: 'decide' });
+    expect((await whoami(carol)).status).toBe(401);
+    expect((await whoami(replaced)).status).toBe(200);
+  });
+});
+
 describe('browser sessions', () => {
   async function tokenFor(body: object): Promise<string> {
     const res = await invite(body);

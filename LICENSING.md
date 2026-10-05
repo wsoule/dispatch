@@ -8,12 +8,12 @@ the Elastic License 2.0, on 2026-09-23.
 
 ## The split
 
-| Code                                                                                                                       | License                                  |
-| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`, `packages/protocol`, `packages/memory`, `packages/a2a` | MIT                                      |
-| `packages/protocol-spec` (the published protocol: DMP text, registries, schemas, vectors, conformance runner)              | Apache-2.0 (its own `LICENSE`)           |
-| Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site)                                 | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
-| Team features: `packages/federation`, `packages/server/src/team/` and `packages/server/test/team/`                         | Elastic-2.0 (their own `LICENSE` files)  |
+| Code                                                                                                                                                    | License                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`, `packages/protocol` (with its `federation` wire), `packages/memory`, `packages/a2a` | MIT                                      |
+| `packages/protocol-spec` (the published protocol: DMP text, registries, schemas, vectors, conformance runner)                                           | Apache-2.0 (its own `LICENSE`)           |
+| Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site)                                                              | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
+| Team features: `packages/federation`, `packages/server/src/team/` and `packages/server/test/team/`                                                      | Elastic-2.0 (their own `LICENSE` files)  |
 
 Four tiers, one rule each:
 
@@ -37,6 +37,9 @@ Four tiers, one rule each:
   disabling or circumventing the license key, and not offering the software as a
   hosted service — the two things the FSL's "internal use" grant could not rule
   out, which is why this code is not FSL. See "The team tier, plainly" below.
+- **Private: the sealed relay.** The hosted relay that a team may switch to
+  instead of a git branch is not in this repo. It stores and forwards signed ops
+  and can read nothing that is sealed.
 - **Apache-2.0: the published protocol.** Text and tests anyone may implement,
   under Apache-2.0. It makes no patent promise to implementers; that waits for
   the Community Specification License step.
@@ -44,9 +47,10 @@ Four tiers, one rule each:
 ## The team tier, plainly
 
 - **Who counts.** A person is a Dispatch handle (git email → `team.yml`). On a
-  shared host: the operator plus everyone holding a live invite. On a synced
-  board: everyone whose changes are on the sync branch, however many machines
-  each uses.
+  shared host: the operator plus everyone holding a live invite. On a team
+  founded over board sync: every handle the signed roster admits, however many
+  machines each uses, and every handle a member's machine hosts; an admitted
+  observer (a read-only machine such as an audit server) is not counted.
 - **At the limit.** A fourth invite is refused with the reason (HTTP 402,
   `seat_limit`). If more people hold invites than there are seats — a license
   lapsed, a file edited by hand — the people invited first keep working and the
@@ -55,10 +59,13 @@ Four tiers, one rule each:
   when seats are added. Nothing is deleted either way.
 - **The key.** An Ed25519-signed `dispatch1.…` string carrying the organization,
   seats and expiry, checked on the machine against the public key in
-  `packages/federation/src/license.ts` — no phone-home. Install it in Settings →
-  License, `dispatch license set <key>`, `$DISPATCH_HOME/.dispatch/license.key`,
-  or the `DISPATCH_LICENSE` environment variable. An expired or invalid key
-  reads as the free plan with the reason; it never locks anyone out.
+  `packages/federation/src/license.ts` — no phone-home. On a team, the key is
+  shared with every teammate through the signed roster (and with the relay, once
+  a team switches to it), so each machine checks the same seats. Install it in
+  Settings → License, `dispatch license set <key>`,
+  `$DISPATCH_HOME/.dispatch/license.key`, or the `DISPATCH_LICENSE` environment
+  variable. An expired or invalid key reads as the free plan with the reason; it
+  never locks anyone out.
 - **Issuing keys.** `bun scripts/license-keygen.ts <path>` once, to make the
   signing key pair (paste the printed public key into `LICENSE_PUBLIC_KEY`);
   `bun scripts/license-issue.ts --key <path> --org … --seats … [--expires …]`

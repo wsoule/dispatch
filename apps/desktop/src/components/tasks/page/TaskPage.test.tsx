@@ -783,4 +783,22 @@ describe('keyboard', () => {
     fireEvent.keyDown(inner, { key: 's' });
     expect(opened()).toBe(false);
   });
+
+  test("shows where a task's run is live on the team and whom it waits on", async () => {
+    const getTaskPresence = () =>
+      Promise.resolve({
+        presence: { replica: 'bob-0000000b', handle: 'bob', device: 'desk' },
+        waitingOn: 'ada',
+      });
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1')],
+        body: BODY,
+        client: { getTaskPresence } as Partial<ApiClient>,
+      })
+    );
+    expect(
+      await screen.findByText("Running on bob's desk, waiting on ada")
+    ).toBeTruthy();
+  });
 });

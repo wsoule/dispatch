@@ -75,16 +75,16 @@ export function toolApprovalGateData(
   };
 }
 
-// Asks the project owner about one parked tool call.
+// Asks `to` (the run's operator or the owner, XH-R9) about one parked call.
 export async function raiseToolApproval(
   engine: DeliveryEngine,
-  owner: Address,
+  to: Address,
   request: ApprovalGateRequest
 ): Promise<Message> {
   const data = toolApprovalGateData({ runId: request.runId }, request);
   const { message } = await engine.send(
     {
-      to: [owner],
+      to: [to],
       kind: 'question',
       blocking: true,
       choices: [...TOOL_APPROVAL_CHOICES],

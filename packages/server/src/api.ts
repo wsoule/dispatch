@@ -37,7 +37,7 @@ import type {
 } from '@dispatch/core';
 import { MemoryBusyError, MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+import { gateOf, MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -4584,6 +4584,7 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
+  { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
@@ -4613,6 +4614,12 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  // An admin's pick between two machines that each claim a run first.
+  {
+    method: 'POST',
+    segments: ['team', 'runs', '*', 'resolve'],
+    tier: 'decide',
+  },
   {
     method: 'POST',
     segments: ['team', 'keys', '*', 'admit'],
@@ -4954,8 +4961,9 @@ export function rejectUnauthorized(
 /**
  * XH-R4: which decision feed items the caller may see. A deciding human sees
  * all of them; anyone else only the items they take part in: a gate whose
- * message they can read, a stalled run they are or act for, a capped fix loop
- * on a task they created.
+ * message they can read or raised for a run they act for (XH-R9: one that went
+ * to the owner), a stalled run they are or act for, a capped fix loop on a
+ * task they created.
  */
 function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
   const agent = ctx.viaAgentToken === true;
@@ -4967,10 +4975,23 @@ function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
   const reader =
     agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
   const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
+  // The human a run acts for, or null for no one or an unknown run.
+  const operatorOf = (runId: string | undefined) => {
+    const run = runId === undefined ? undefined : runs.get(runId);
+    return run === undefined ? null : runOperator(run);
+  };
   return (item) => {
     const source = item.id.slice(item.id.indexOf(':') + 1);
-    if (source.startsWith('m-'))
-      return reader !== null && ctx.messaging.engine.canRead(source, reader);
+    if (source.startsWith('m-')) {
+      if (reader === null) return false;
+      if (ctx.messaging.engine.canRead(source, reader)) return true;
+      const message = ctx.messaging.engine.getMessage(source);
+      return (
+        message !== null &&
+        gateOf(message) !== null &&
+        operatorOf(item.runId) === address
+      );
+    }
     if (item.runId !== undefined) {
       const run = runs.get(item.runId);
       return (

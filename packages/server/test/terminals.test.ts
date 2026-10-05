@@ -1,4 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  spyOn,
+} from 'bun:test';
 import {
   existsSync,
   mkdtempSync,
@@ -9,6 +18,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { HostSpawner } from '../src/terminalHost.js';
+import { hostSpawner } from '../src/terminalHost.js';
 import type {
   SpawnTerminalOptions,
   TerminalProcess,
@@ -457,9 +468,34 @@ describe('TerminalRegistry', () => {
 // tty", and everything a terminal is for follows from it not saying that.
 describe('TerminalRegistry with a real process', () => {
   let registry: TerminalRegistry;
+  // Counts pty spawns made in this process: they belong in the terminal host.
+  let ptySpawns = 0;
+  let spawnSpy: ReturnType<typeof spyOn<typeof Bun, 'spawn'>>;
+  // One terminal host for the block, as the daemon has, so a pty spawn can
+  // never block this thread.
+  let host: HostSpawner;
+
+  beforeAll(() => {
+    const original = Bun.spawn;
+    spawnSpy = spyOn(Bun, 'spawn').mockImplementation(((
+      ...args: Parameters<typeof Bun.spawn>
+    ) => {
+      const opts = (typeof args[1] === 'object' ? args[1] : args[0]) as {
+        terminal?: unknown;
+      };
+      if (opts.terminal !== undefined) ptySpawns++;
+      return original(...(args as [never]));
+    }) as typeof Bun.spawn);
+    host = hostSpawner();
+  });
+
+  afterAll(() => {
+    host.close();
+    spawnSpy.mockRestore();
+  });
 
   beforeEach(() => {
-    registry = new TerminalRegistry(root);
+    registry = new TerminalRegistry(root, { spawn: host.spawn });
   });
 
   afterEach(() => {
@@ -508,7 +544,12 @@ describe('TerminalRegistry with a real process', () => {
       cols: 100,
       rows: 30,
     });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Resize only once the child has printed its starting size.
+    for (let i = 0; i < 200; i++) {
+      if (decode(registry.read(info.id, 0)?.data ?? '').includes('30 100'))
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     registry.resize(info.id, 132, 40);
     const output = await waitForExit(info.id);
     expect(output).toContain('30 100');
@@ -527,7 +568,10 @@ describe('TerminalRegistry with a real process', () => {
 
   it('shows what the child writes to stderr when it runs without a pty', async () => {
     registry.shutdown();
-    registry = new TerminalRegistry(root, { nativePty: false });
+    registry = new TerminalRegistry(root, {
+      spawn: host.spawn,
+      nativePty: false,
+    });
     expect(
       await runToExit(['sh', '-c', 'echo to-stderr >&2; exit 1'])
     ).toContain('to-stderr');
@@ -544,5 +588,9 @@ describe('TerminalRegistry with a real process', () => {
     }
     expect(registry.get(info.id)?.state).toBe('exited');
     expect(registry.get(info.id)?.exitCode).toBe(7);
+  });
+
+  it('spawns no pty in the test process', () => {
+    expect(ptySpawns).toBe(0);
   });
 });

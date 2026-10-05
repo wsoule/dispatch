@@ -87,6 +87,8 @@ export function serviceReplica(
     licenseKey?: string;
     licensePublicKey?: string | null;
     seenOpsKept?: number;
+    maxParkedPerPublisher?: number;
+    restagePerPublisher?: number;
   } = {}
 ): ServiceReplica {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), `fed-svc-${handle}-`)));
@@ -159,6 +161,12 @@ export function serviceReplica(
     ...(opts.seenOpsKept === undefined
       ? {}
       : { seenOpsKept: opts.seenOpsKept }),
+    ...(opts.maxParkedPerPublisher === undefined
+      ? {}
+      : { maxParkedPerPublisher: opts.maxParkedPerPublisher }),
+    ...(opts.restagePerPublisher === undefined
+      ? {}
+      : { restagePerPublisher: opts.restagePerPublisher }),
   });
   return {
     dir,

@@ -1,6 +1,6 @@
 {
   "name": "@dispatch/cli",
-  "version": "0.36.2",
+  "version": "0.36.3",
   "private": true,
   "license": "MIT",
   "bin": {

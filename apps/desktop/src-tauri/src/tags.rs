@@ -7,7 +7,9 @@
 const CATEGORIES: &[(&str, &[&str])] = &[
     (
         "bugfix",
-        &["fix", "bug", "broken", "error", "crash", "fails", "failing", "issue"],
+        &[
+            "fix", "bug", "broken", "error", "crash", "fails", "failing", "issue",
+        ],
     ),
     (
         "feature",
@@ -15,13 +17,28 @@ const CATEGORIES: &[(&str, &[&str])] = &[
     ),
     (
         "refactor",
-        &["refactor", "cleanup", "clean up", "simplify", "reorganize", "restructure"],
+        &[
+            "refactor",
+            "cleanup",
+            "clean up",
+            "simplify",
+            "reorganize",
+            "restructure",
+        ],
     ),
     ("test", &["test", "spec", "coverage", "unit test"]),
     ("docs", &["document", "readme", "docs", "comment"]),
     (
         "infra",
-        &["deploy", "ci", "docker", "config", "pipeline", "migration", "infra"],
+        &[
+            "deploy",
+            "ci",
+            "docker",
+            "config",
+            "pipeline",
+            "migration",
+            "infra",
+        ],
     ),
 ];
 

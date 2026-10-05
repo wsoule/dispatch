@@ -99,6 +99,21 @@ export function runIdOf(message: Message): string | null {
   return message.from.startsWith('run:') ? message.from.slice(4) : null;
 }
 
+/** Runs with an open gate or question addressed to `me` (XH-R9): theirs to
+ *  answer, whoever the run acts for. */
+export function runsAskingMe(
+  gates: readonly Message[],
+  me: string | null
+): Set<string> {
+  const runs = new Set<string>();
+  if (me === null) return runs;
+  for (const message of gates) {
+    const runId = runIdOf(message);
+    if (runId !== null && message.to.includes(me)) runs.add(runId);
+  }
+  return runs;
+}
+
 /** A plain blocking question (no gate data) from a `run:` sender, else null. */
 export function toRunQuestion(message: Message): RunQuestion | null {
   if (!isBlockingQuestion(message) || gateOf(message) !== null) return null;
@@ -230,12 +245,15 @@ function firstLine(text: string): string {
 }
 
 /** The OS notification a new gate raises, or null: overseer gates show in the
- *  chat, and the question edge detector already notifies a run's question. */
+ *  chat, the question edge detector already notifies a run's question, and a
+ *  gate addressed to another human is theirs (XH-R9) once `me` is known. */
 export function gateNotification(
   message: Message,
-  titleOfRun: (runId: string) => string | undefined
+  titleOfRun: (runId: string) => string | undefined,
+  me: string | null = null
 ): { title: string; body: string; kind: NotificationKind } | null {
   if (!message.to.some((address) => address.startsWith('human:'))) return null;
+  if (me !== null && !message.to.includes(me)) return null;
   const kind = notificationKindForMessage(message);
   if (kind === null) return null;
   const gate = gateOf(message);

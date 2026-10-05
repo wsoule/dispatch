@@ -101,7 +101,9 @@ export interface MessagingHost {
   notifyHuman(actor: Address, message: Message): void;
   wake(target: Address, message: Message): Promise<WakeResult>;
   decide(request: PolicyRequest): PolicyRuling;
-  owner(target: Address): Address;
+  // The human to ask or tell about `target`; for a wake gate `sender` is who
+  // asked for the wake, so a host may name that sender's human instead.
+  owner(target: Address, sender?: Address): Address;
   implicitMembers(channel: string): Address[];
   // May be called again for the same answer after a crash; handlers must be idempotent.
   onAnswered(question: Message, answer: Message): Promise<void>;

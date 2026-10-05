@@ -1,5 +1,6 @@
 import {
   ActorContext,
+  DEFAULT_MESSAGING,
   describeDroppedEntry,
   FileCommentStore,
   formatMigrationReport,
@@ -110,6 +111,8 @@ import {
   openHumanDecisions,
   SYSTEM_SENDER,
 } from './messaging/gates.js';
+import { implicitEpicMembers } from './messaging/host.js';
+import { teamDeciders } from './messaging/operatorRouting.js';
 import {
   createOverseerBus,
   ensureOverseerActor,
@@ -180,7 +183,11 @@ import { SyncLedger } from './team/boardSync/ledger.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import { appendAuditToReceipts } from './team/federation/audit.js';
 import type { Federation } from './team/federation/daemon.js';
-import { buildFederation } from './team/federation/daemon.js';
+import {
+  buildFederation,
+  wireAgentsAndChannels,
+  wireMessagingFederation,
+} from './team/federation/daemon.js';
 import { rekeyIfKeysLost } from './team/federation/keys.js';
 import type { FederationContext } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
@@ -1443,6 +1450,40 @@ async function bootServer(
     registerCodexIfInstalled(orchestrator);
     registerCliExecutors(orchestrator, rootDir);
   }
+  // Federated mail (F2): homes, run presence and the engine's hooks. The
+  // presence hooks go in before messaging's own, so a run's live op is
+  // queued before held mail reaches it.
+  const messagesRef: { current: Messaging | null } = { current: null };
+  const mailFederation =
+    federation === null || syncLedger === null
+      ? null
+      : wireMessagingFederation(federation, {
+          ledger: syncLedger,
+          tasks: store,
+          build: packageJson.version,
+          device: hostname().split('.')[0] ?? 'machine',
+          knowsRun: (id) => orchestrator.getRun(id) !== null,
+          isLive: (id) => orchestrator.isRunLive(id),
+          messages: () => messagesRef.current?.store ?? null,
+          now: federationNow,
+        });
+  if (mailFederation !== null) {
+    const { presence } = mailFederation;
+    orchestrator.onRunStarted((meta) => {
+      presence.runStarted({
+        id: meta.id,
+        taskId: meta.taskId,
+        kind: runKind(meta),
+      });
+    });
+    orchestrator.onRunTerminal((meta) => {
+      presence.runEnded({
+        id: meta.id,
+        taskId: meta.taskId,
+        kind: runKind(meta),
+      });
+    });
+  }
   // Messaging opens once the orchestrator exists (it mints run tokens and
   // hears onRunStarted); its recover() waits for reconcileOnBoot() below.
   const appendPolicyActivity = policyActivityAppender({ store, cache, events });
@@ -1454,7 +1495,38 @@ async function bootServer(
     ownerRef: actorContext.humanRef,
     ledgerStore,
     appendPolicyActivity,
+    deciders: teamDeciders(team.teammates),
+    ...(mailFederation === null
+      ? {}
+      : {
+          federation: mailFederation.hooks,
+          onFederatedMessage: () => boardSync?.notifyLocalChange(),
+        }),
   });
+  messagesRef.current = messaging;
+  if (federationContext !== null && mailFederation !== null) {
+    const { presence } = mailFederation;
+    federationContext.resolveRun = (run, replica) => {
+      presence.resolve(run, replica);
+    };
+    const { homes } = mailFederation;
+    federationContext.presenceOf = (task) => presence.presenceOf(task, homes);
+  }
+  if (federation !== null && mailFederation !== null)
+    wireAgentsAndChannels(federation, {
+      homes: mailFederation.homes,
+      presence: mailFederation.presence,
+      agentWaitSec: messaging.agentWaitSec,
+      messages: messaging.store,
+      engine: messaging.engine,
+      perReplicaPerHour: remoteMailQuota(rootDir),
+      now: federationNow,
+      implicit: (channel) =>
+        implicitEpicMembers(
+          (epicId) => store.list({ parent: epicId }),
+          channel
+        ),
+    });
   // Memory opens before messaging.recover() because it registers the memory
   // gate's handler: an answer replayed with no handler is marked applied and lost.
   const unsubscribeRevokedAsks = closeAsksOfRevoked(
@@ -1516,6 +1588,7 @@ async function bootServer(
       engine: messaging.engine,
       ownerRef: actorContext.humanRef,
       issuedTier: (handle) => team.teammates.issuedTier(handle),
+      routing: messaging.routing,
       ledgerStore,
       events,
       appendPolicyActivity,
@@ -2476,3 +2549,13 @@ async function bootServer(
 
 export type { ApiContext } from './api.js';
 export { Orchestrator } from './orchestrator/orchestrator.js';
+
+// A teammate's hourly mail quota; a malformed config.yml keeps the default,
+// as messaging's own limits do.
+function remoteMailQuota(rootDir: string): number {
+  try {
+    return loadConfig(rootDir).messaging.remoteMailPerReplicaPerHour;
+  } catch {
+    return DEFAULT_MESSAGING.remoteMailPerReplicaPerHour;
+  }
+}

@@ -122,6 +122,7 @@ export function fakeHost(
     fetchRun: () => pending(),
     fetchRunDiff: () => pending(),
     fetchReviewComments: () => Promise.resolve([]),
+    getTaskPresence: () => pending(),
     ...extra,
   } as unknown as ApiClient;
   const latestRunByTaskId = new Map<string, RunMeta>();

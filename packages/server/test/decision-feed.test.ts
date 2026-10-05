@@ -897,6 +897,17 @@ describe('DecisionFeed ownership', () => {
     expect(items.map((item) => item.owner)).toEqual(['human:ada', 'human:ada']);
   });
 
+  it('stamps the human a run acts for over who dispatched it (XH-R9)', () => {
+    const forAda = runMeta('r-for-ada', {
+      state: 'awaiting-approval',
+      dispatchedBy: 'human:wyat',
+      operator: 'human:ada',
+    });
+    h.runs.push(forAda);
+    h.gates.push(approvalGate('m-a', forAda.id, 'req-1', { command: 'ls' }));
+    expect(h.feed.list().map((item) => item.owner)).toEqual(['human:ada']);
+  });
+
   it("leaves an item with no dispatcher ownerless, so everyone's", () => {
     const auto = runMeta('r-auto', { state: 'awaiting-approval' });
     h.runs.push(auto);

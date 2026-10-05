@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { answeringWith, GateHandlers } from '../../src/messaging/gates.js';
 import { DaemonMessagingHost } from '../../src/messaging/host.js';
 import type { DaemonHostDeps } from '../../src/messaging/host.js';
+import { operatorRouting } from '../../src/messaging/operatorRouting.js';
 import type { RunMeta } from '../../src/orchestrator/types.js';
 import { LINEAR_STATUSES } from './harness.js';
 
@@ -46,7 +47,8 @@ afterEach(() => {
 // Builds a host with a hand-rolled orchestrator stub; each test overrides
 // only the methods it exercises.
 function makeHost(
-  orchestratorOverrides: Partial<DaemonHostDeps['orchestrator']> = {}
+  orchestratorOverrides: Partial<DaemonHostDeps['orchestrator']> = {},
+  routing?: DaemonHostDeps['routing']
 ): { host: DaemonMessagingHost; calls: Record<string, unknown[][]> } {
   const calls: Record<string, unknown[][]> = {
     deliverToRun: [],
@@ -82,9 +84,42 @@ function makeHost(
     ownerRef: 'human:wyat',
     gates: new GateHandlers(),
     onHumanMessage: () => {},
+    ...(routing === undefined ? {} : { routing }),
   });
   return { host, calls };
 }
+
+describe('DaemonMessagingHost.owner (XH-R9)', () => {
+  // r-ana acts for ana, who decides; r-bo for bo, who cannot.
+  const routing = operatorRouting({
+    owner: 'human:wyat',
+    operatorOf: (runId) =>
+      ({ 'r-ana': 'human:ana', 'r-bo': 'human:bo' })[runId],
+    canDecide: (ref) => ref === 'human:ana',
+    hasAccess: () => true,
+  });
+
+  it("names the wake asker's operator when they can decide, else the owner", () => {
+    const { host } = makeHost({}, routing);
+    expect(host.owner('task:t-abc123', 'run:r-ana')).toBe('human:ana');
+    expect(host.owner('task:t-abc123', 'run:r-bo')).toBe('human:wyat');
+    expect(host.owner('task:t-abc123', 'agent:ana/bot')).toBe('human:wyat');
+    expect(host.owner('task:t-abc123', 'a2a:acme')).toBe('human:wyat');
+  });
+
+  it("names a run's own operator for a notice about it, whatever their tier", () => {
+    const { host } = makeHost({}, routing);
+    expect(host.owner('run:r-bo')).toBe('human:bo');
+    expect(host.owner('run:r-gone')).toBe('human:wyat');
+    expect(host.owner('human:bo')).toBe('human:wyat');
+  });
+
+  it('names the owner for everything without routing', () => {
+    const { host } = makeHost();
+    expect(host.owner('task:t-abc123', 'run:r-ana')).toBe('human:wyat');
+    expect(host.owner('run:r-ana')).toBe('human:wyat');
+  });
+});
 
 describe('DaemonMessagingHost.push', () => {
   it('marks a human sender as human: true', async () => {

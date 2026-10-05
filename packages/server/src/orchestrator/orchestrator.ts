@@ -53,6 +53,7 @@ import type { JudgmentClient } from '../judgments/client.js';
 import { mapLimit } from '../judgments/client.js';
 import { judgeRunModel } from '../judgments/modelTier.js';
 import type { RunModelChoice } from '../judgments/modelTier.js';
+import type { OperatorRouting } from '../messaging/operatorRouting.js';
 import { statusModelFor } from '../statuses.js';
 import { dirSizeBytes } from './dirSize.js';
 import {
@@ -438,6 +439,9 @@ export class Orchestrator {
   // Mints each run's messaging token at start (see setRunTokenMinter); null
   // leaves runs without one, as in fixtures that never set it.
   private mintRunToken: ((runId: string) => string) | null = null;
+  // Who a run's prompt names to ask and to grant scope (XH-R9); null names
+  // the daemon's human, as in fixtures without messaging.
+  private routing: OperatorRouting | null = null;
   // Mints every new run's id; a synced board installs a longer one at boot.
   private mintRunId: (now: string) => string = (now) => generateRunId(now);
   // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
@@ -546,6 +550,11 @@ export class Orchestrator {
   // token file (runTokenPath) and passes the executor only that path.
   setRunTokenMinter(mint: (runId: string) => string): void {
     this.mintRunToken = mint;
+  }
+
+  // Called once at boot by messaging, which knows who may decide.
+  setOperatorRouting(routing: OperatorRouting): void {
+    this.routing = routing;
   }
 
   // Installed by the A2A bridge: a gated handoff draft never runs, whoever
@@ -5495,7 +5504,9 @@ export class Orchestrator {
     const dispatchTools =
       this.executorProfile(executorName).dispatchMcp !== false;
     const orientation = this.orientationFor(task.meta.id);
-    const humanRef = this.ctx.actorContext?.humanRef ?? null;
+    const humanRef =
+      this.routing?.humanFor(runId) ?? this.ctx.actorContext?.humanRef ?? null;
+    const scopeDecider = this.routing?.gateFor(runId).to ?? null;
     const docs = this.docsSection(task.meta.id, runId, dispatchTools);
     const comments = this.commentsFor(task.meta.id);
     return (memorySection) =>
@@ -5508,7 +5519,8 @@ export class Orchestrator {
         humanRef,
         docs,
         comments,
-        a2aOrigin
+        a2aOrigin,
+        scopeDecider
       );
   }
 

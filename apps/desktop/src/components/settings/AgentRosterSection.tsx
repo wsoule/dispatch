@@ -208,8 +208,11 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
     switch (column.key) {
       case 'client':
         return (
-          <span className="font-book text-muted-foreground ml-1.5">
+          <span className="font-book text-muted-foreground ml-1.5 inline-flex items-center gap-1.5">
             {agent.client}
+            {typeof agent.remote === 'string' && (
+              <Pill>{`remote: ${agent.remote}`}</Pill>
+            )}
           </span>
         );
       case 'status': {
@@ -250,7 +253,10 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   // The row's buttons, right-aligned in a fixed-width cell so mute and revoke
   // line up down the table whether or not approve is there.
   function rosterRowActions(agent: AgentSummary): ReactElement {
-    const offered = rosterActions(agent);
+    // A teammate's agent is approved or revoked only on its own machine.
+    const remote = typeof agent.remote === 'string';
+    const base = rosterActions(agent);
+    const offered = remote ? { ...base, approve: false, revoke: false } : base;
     const disabled = !canDecide || busy.has(agent.address);
     const hint = (label: string) => (canDecide ? label : decideReason);
     return (
