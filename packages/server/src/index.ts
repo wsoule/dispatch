@@ -1517,6 +1517,7 @@ async function bootServer(
       engine: messaging.engine,
       ownerRef: actorContext.humanRef,
       issuedTier: (handle) => team.teammates.issuedTier(handle),
+      routing: messaging.routing,
       ledgerStore,
       events,
       appendPolicyActivity,
