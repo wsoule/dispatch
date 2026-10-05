@@ -131,4 +131,66 @@ describe('secret codes stay out of argv', () => {
     expect(text).toContain('RECOVERY-CODE');
     expect(text).toContain('goes out once a sync reaches the remote');
   });
+
+  it('team transport reads the relay registration token from a prompt, and never prints it', async () => {
+    await run(
+      'team',
+      'transport',
+      'relay',
+      'wss://relay.example',
+      '--yes',
+      '--registration-token'
+    );
+    expect(asked).toEqual(['Relay registration token: ']);
+    expect(posted).toEqual([
+      {
+        path: '/api/team/transport',
+        body: {
+          kind: 'relay',
+          url: 'wss://relay.example',
+          confirmed: true,
+          registrationToken: 'di1.secret-code',
+        },
+      },
+    ]);
+    expect(lines.join('\n')).not.toContain('di1.secret-code');
+  });
+
+  it('team transport takes a registration token as a value too, and asks nothing before --yes', async () => {
+    await run(
+      'team',
+      'transport',
+      'relay',
+      'wss://relay.example',
+      '--yes',
+      '--registration-token',
+      'relay-token'
+    );
+    expect(asked).toEqual([]);
+    expect(posted.at(-1)?.body).toMatchObject({
+      registrationToken: 'relay-token',
+    });
+    posted = [];
+    let failed = false;
+    try {
+      await makeProgram(ctx)
+        .exitOverride()
+        .configureOutput({ writeErr: () => {} })
+        .parseAsync(
+          [
+            'team',
+            'transport',
+            'relay',
+            'wss://relay.example',
+            '--registration-token',
+          ],
+          { from: 'user' }
+        );
+    } catch {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    expect(asked).toEqual([]);
+    expect(posted).toEqual([]);
+  });
 });

@@ -104,6 +104,8 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
   const [inviteFor, setInviteFor] = useState('');
   const [hostsDraft, setHostsDraft] = useState<Record<string, string>>({});
   const [relayUrl, setRelayUrl] = useState('');
+  // The relay's registration token, sent with the switch alone and never kept.
+  const [relayToken, setRelayToken] = useState('');
   // The relay URL whose disclosure is showing, until Switch or Cancel.
   const [disclosing, setDisclosing] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{
@@ -521,6 +523,15 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
                     onChange={(e) => setRelayUrl(e.target.value)}
                     className="h-7 w-56"
                   />
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    aria-label="Relay registration token (optional)"
+                    placeholder="Registration token (optional)"
+                    value={relayToken}
+                    onChange={(e) => setRelayToken(e.target.value)}
+                    className="h-7 w-48"
+                  />
                   <Button
                     size="sm"
                     variant="outline"
@@ -554,12 +565,15 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
                 disabled={busy}
                 onClick={() =>
                   void act(async () => {
+                    const token = relayToken.trim();
                     await api.switchTransport({
                       kind: 'relay',
                       url: disclosing,
                       confirmed: true,
+                      ...(token === '' ? {} : { registrationToken: token }),
                     });
                     setDisclosing(null);
+                    setRelayToken('');
                   })
                 }
               >

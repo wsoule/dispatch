@@ -235,24 +235,38 @@ export function describeTeamKeys(keys: TeamKeys): string[] {
 }
 
 /**
- * `dispatch team transport relay <url> [--yes] | git`: a switch to the relay
- * first prints what the relay can read, and switches only with --yes (F-D31).
+ * `dispatch team transport relay <url> [--yes] [--registration-token] | git`:
+ * a switch to the relay first prints what the relay can read, and switches
+ * only with --yes (F-D31). The daemon registers the team at the relay before
+ * it signs the switch; `registrationToken`, asked for only once --yes is
+ * given, rides that registration alone.
  */
 export async function switchTeamTransport(
   api: Pick<ApiClient, 'getTeamKeys' | 'switchTransport'>,
   kind: 'git' | 'relay',
   url: string | undefined,
   yes: boolean,
-  log: (line: string) => void
+  log: (line: string) => void,
+  registrationToken?: () => Promise<string | undefined>
 ): Promise<RosterAnswer> {
-  if (kind === 'git') return await api.switchTransport({ kind: 'git' });
+  if (kind === 'git') {
+    if (registrationToken !== undefined)
+      throw new CliError('A registration token is for a switch to the relay.');
+    return await api.switchTransport({ kind: 'git' });
+  }
   if (url === undefined || url === '')
     throw new CliError('Name the relay: dispatch team transport relay <url>');
   if (!yes) {
     log((await api.getTeamKeys()).relayDisclosure);
     throw new CliError('Run it again with --yes to switch.');
   }
-  return await api.switchTransport({ kind: 'relay', url, confirmed: true });
+  const token = await registrationToken?.();
+  return await api.switchTransport({
+    kind: 'relay',
+    url,
+    confirmed: true,
+    ...(token === undefined ? {} : { registrationToken: token }),
+  });
 }
 
 // A roster change's answer: its warning, and whether its sync still runs.
@@ -393,23 +407,43 @@ function registerFederationCommands(team: Command, ctx: CliContext): void {
   team
     .command('transport <kind> [url]')
     .description(
-      'Switch the team to a relay (relay <url> --yes) or back to git'
+      'Switch the team to a relay (relay <url> --yes) or back to git. The switch registers the team at the relay first; a relay that wants a registration token takes it with --registration-token, used for that one request and never stored'
     )
     .option('--yes', 'Switch, having read what the relay can see')
+    .option(
+      '--registration-token [token]',
+      "the relay's registration token; with no value, read from stdin or a prompt that does not echo"
+    )
     .option(tokenOption, tokenHelp)
     .action(
       async (
         kind: string,
         url: string | undefined,
-        opts: { token?: string; yes?: boolean }
+        opts: {
+          token?: string;
+          yes?: boolean;
+          registrationToken?: string | true;
+        }
       ) => {
         if (kind !== 'relay' && kind !== 'git')
           throw new CliError(`kind must be relay or git, not "${kind}"`);
+        const given = opts.registrationToken;
+        const registrationToken =
+          given === undefined
+            ? undefined
+            : given === true
+              ? () => readSecret(ctx, 'Relay registration token: ')
+              : () => Promise.resolve(given);
         const api = await client(opts, 'dispatch team transport');
         logAnswer(
           ctx,
-          await switchTeamTransport(api, kind, url, opts.yes === true, (l) =>
-            ctx.log(l)
+          await switchTeamTransport(
+            api,
+            kind,
+            url,
+            opts.yes === true,
+            (l) => ctx.log(l),
+            registrationToken
           )
         );
         ctx.log(

@@ -835,11 +835,14 @@ export interface ApiClient {
   /** An admin binds a run two machines claim first to one of them. */
   resolveRunConflict(run: string, replica: string): Promise<RosterAnswer>;
   /** Switches the team between git and a relay (operator tier); a relay
-   *  needs `confirmed: true` after its disclosure was shown. */
+   *  needs `confirmed: true` after its disclosure was shown, and
+   *  registers the team at the relay first. */
   switchTransport(body: {
     kind: 'git' | 'relay';
     url?: string;
     confirmed?: boolean;
+    /** Sent only in the relay registration the switch makes; never kept. */
+    registrationToken?: string;
   }): Promise<RosterAnswer>;
 }
 
