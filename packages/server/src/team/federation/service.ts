@@ -27,6 +27,7 @@ import { personOf } from '../boardSync/repo.js';
 import type { SyncedTaskStore } from '../boardSync/syncedStore.js';
 import type { AuditKind } from './audit.js';
 import type { LegacyWindow, V1Log } from './legacy.js';
+import { LinkOpsOffTeamLog } from './linkOps.js';
 import type { RosterService } from './roster.js';
 import type { FedStore } from './store.js';
 import { TransportOffline } from './transport.js';
@@ -216,7 +217,9 @@ export class FederationService {
   // kept in memory, so a restart tries each publisher's oldest ops first once.
   private readonly restageTried = new Map<string, number>();
 
-  constructor(private readonly opts: FederationServiceOptions) {}
+  constructor(private readonly opts: FederationServiceOptions) {
+    this.register(new LinkOpsOffTeamLog(opts));
+  }
 
   /** Starts the interval and runs a first pass. */
   start(): void {

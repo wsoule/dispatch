@@ -598,6 +598,45 @@ describe('FederationService', () => {
     ).toEqual({ n: 1 });
   });
 
+  // A2A-ruling 1: an a2a op belongs only on a link's branch; on the team
+  // log it is dropped with one rolling note and an audit row, never parked.
+  it('drops a2a ops on the team log with a rolling note and one audit row, never parking them', async () => {
+    const {
+      rs: [ada, bob],
+    } = team('ada', 'bob');
+    ada.roster.found('acme');
+    await settle(ada, bob);
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    await settle(ada, bob);
+    const linkOp = () =>
+      bob.fed.append({
+        type: 'a2a',
+        seal: (stamp) =>
+          sealPayload({
+            replica: bob.fed.replica,
+            seq: stamp.seq,
+            type: 'a2a',
+            payload: { kind: 'cancel', taskId: 't-1' },
+            recipients: new Map([[ada.fed.replica, ada.fed.keys.sealPub]]),
+          }),
+      });
+    linkOp();
+    const last = linkOp();
+    const id = bob.store.create({ title: 'after the link ops' }).meta.id;
+    await settle(bob, ada);
+    expect(title(ada, id)).toBe('after the link ops');
+    const unknown = () =>
+      ada.fed.db.query('SELECT COUNT(*) AS n FROM fed_unknown').get();
+    expect(unknown()).toEqual({ n: 0 });
+    const notes = ada.fed
+      .problems()
+      .filter((p) => p.subject === `link-op:${bob.fed.replica}`);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.message).toContain(`seq ${last.seq}`);
+    // One audit row per publisher, so a flood of them fills no table.
+    expect(auditKinds(ada).filter((k) => k === 'link-op')).toHaveLength(1);
+  });
+
   it('pauses a replica past the seats: it publishes nothing and applies nothing', async () => {
     const lk = testKeys();
     const license = licenseFor(lk.privateKey, {
