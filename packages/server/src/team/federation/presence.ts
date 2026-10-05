@@ -6,6 +6,7 @@ import { RosterError } from './roster.js';
 import type { RosterService } from './roster.js';
 import type { Collector, OpHandler, StageContext } from './service.js';
 import type { FedStore } from './store.js';
+import { dropNote, presenceBody } from './validate.js';
 
 const PRESENCE_REPLICA_EVERY_MS = 60 * 60 * 1000;
 const ENDED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -118,28 +119,43 @@ export class Presence implements Collector, OpHandler {
     for (const row of fed.db
       .query<RunRow, []>('SELECT * FROM fed_runs WHERE live = 0')
       .all())
-      if ((hlcWallMs(row.hlc) ?? 0) < cutoff)
+      if ((hlcWallMs(row.hlc) ?? 0) < cutoff) {
         fed.db.query('DELETE FROM fed_runs WHERE run = ?').run(row.run);
+        fed.db
+          .query(
+            'INSERT OR REPLACE INTO fed_run_tombs (run, replica) VALUES (?, ?)'
+          )
+          .run(row.run, row.replica);
+      }
   }
 
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped' {
-    const body = op.body as PresenceBody | undefined;
-    if (body?.kind === 'replica') {
+    // FW-R32(3): a body that is not exactly an honest one is refused.
+    const body = presenceBody(op.body);
+    if (body === null) {
+      dropNote(
+        this.deps.fed,
+        'malformed',
+        op.replica,
+        `${this.deps.roster.label(op.replica)}'s presence at seq ${op.seq} is malformed; it was dropped`
+      );
+      return 'dropped';
+    }
+    if (body.kind === 'replica') {
       this.deps.fed.db
         .query(
           'INSERT OR REPLACE INTO fed_replicas (replica, build, device, last_hlc, skew_ms) VALUES (?, ?, ?, ?, ?)'
         )
         .run(
           op.replica,
-          String(body.build),
-          String(body.device),
+          body.build,
+          body.device,
           op.hlc,
-          Number(body.wall) - ctx.now.getTime()
+          Math.round(body.wall - ctx.now.getTime())
         );
       return 'applied';
     }
-    if (body?.kind === 'resolve') return this.stageResolve(op, body, ctx);
-    if (body?.kind !== 'run' || typeof body.run !== 'string') return 'dropped';
+    if (body.kind === 'resolve') return this.stageResolve(op, body, ctx);
     return this.stageRun(op, body, ctx);
   }
 
@@ -153,7 +169,14 @@ export class Presence implements Collector, OpHandler {
     const bound = this.row(body.run);
     const claims = ctx.evidence.runs.get(body.run) ?? [p];
     let holder: string | null = null;
-    if (bound !== null && bound.replica !== p) holder = bound.replica;
+    // A pruned run id stays its runner's (FW-R32(8)).
+    const tomb = fed.db
+      .query<{ replica: string }, [string]>(
+        'SELECT replica FROM fed_run_tombs WHERE run = ?'
+      )
+      .get(body.run);
+    if (tomb !== null && tomb.replica !== p) holder = tomb.replica;
+    else if (bound !== null && bound.replica !== p) holder = bound.replica;
     else if (bound === null && this.deps.knowsRun(body.run))
       holder = fed.replica;
     if (holder !== null) {
@@ -300,7 +323,18 @@ export class Presence implements Collector, OpHandler {
   }
 
   private bindResolved(run: string, replica: string, claim: Claim): void {
-    const { fed } = this.deps;
+    const { fed, roster } = this.deps;
+    // A run of this machine's resolved to another: say so; its mail no
+    // longer goes out as the run (MailOut checks the binding).
+    const was = this.row(run)?.replica ?? null;
+    if (
+      replica !== fed.replica &&
+      (was === fed.replica || this.deps.knowsRun(run))
+    )
+      fed.problem(
+        `run-moved:${run}`,
+        `run ${run} was resolved to ${roster.label(replica)}'s machine; its messages from this machine no longer reach the team`
+      );
     fed.db
       .query(
         'INSERT OR REPLACE INTO fed_runs (run, replica, task, run_kind, live, waiting_on, hlc) VALUES (?, ?, ?, ?, ?, ?, ?)'

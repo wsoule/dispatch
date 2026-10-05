@@ -109,7 +109,11 @@ describe('mail in', () => {
     expect(
       at(1)
         .fed.problems()
-        .some((p) => p.message === 'ada cannot speak for human:bob')
+        .some(
+          (p) =>
+            p.subject === `mail-drop:${at(0).fed.replica}` &&
+            p.message.includes('ada cannot speak for human:bob')
+        )
     ).toBe(true);
     expect(kinds(at(1))).toContain('speaks-for');
   });
@@ -125,6 +129,7 @@ describe('mail in', () => {
       .fed.outbox()
       .filter((o) => o.type === 'mail')[0];
     if (original === undefined) throw new Error('no mail op');
+    await at(0).service.syncNow();
     forgeForward(at(1), original, 'human:cy', at(2));
     await at(2).settleWith(at(1));
     expect(at(2).messages.getMessage(message.id)).toBeNull();
@@ -133,8 +138,9 @@ describe('mail in', () => {
         .fed.problems()
         .some(
           (p) =>
+            p.subject === `mail-drop:${at(1).fed.replica}` &&
             p.message ===
-            `bob forwarded ${message.id} to human:cy, which is not one of its targets`
+              `bob forwarded ${message.id} to human:cy, which is not one of its targets`
         )
     ).toBe(true);
     expect(kinds(at(2))).toContain('speaks-for');
@@ -151,7 +157,11 @@ describe('mail in', () => {
     expect(
       at(1)
         .fed.problems()
-        .some((p) => p.subject === 'message:m-01refused')
+        .some(
+          (p) =>
+            p.subject === `mail-drop:${at(0).fed.replica}` &&
+            p.message.includes('m-01refused')
+        )
     ).toBe(true);
     expect(kinds(at(1))).toContain('refused-message');
     expect(at(1).stateCalls.refused).toContainEqual([
@@ -165,7 +175,7 @@ describe('mail in', () => {
   it("holds a message whose clock is far from its op's, like a far-future op", async () => {
     open = await foundedTeam('ada', 'bob');
     const skewed = authored(at(0), 'm-01skewed', 'human:ada', ['human:bob'], {
-      hlc: `${String(at(0).clock.now.getTime() - 24 * 60 * 60 * 1000)}.0001.${at(0).fed.replica}`,
+      hlc: `${String(at(0).clock.now.getTime() + 24 * 60 * 60 * 1000)}.0001.${at(0).fed.replica}`,
     });
     at(0).mailOut.publish(skewed, toBob(at(1)), [at(1).fed.replica]);
     await at(1).settleWith(at(0));
@@ -173,7 +183,9 @@ describe('mail in', () => {
     expect(
       at(1)
         .fed.problems()
-        .some((p) => p.subject.startsWith('op:') && p.message.includes('clock'))
+        .some(
+          (p) => p.subject.startsWith('op:') && p.message.includes('ahead of')
+        )
     ).toBe(true);
     const parked = at(1)
       .fed.db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM fed_parked')
@@ -235,7 +247,7 @@ describe('mail in', () => {
         .fed.problems()
         .some(
           (p) =>
-            p.subject.startsWith('op:') &&
+            p.subject.startsWith('mail-drop:') &&
             p.message.includes('dropped after 3 attempts')
         )
     ).toBe(true);

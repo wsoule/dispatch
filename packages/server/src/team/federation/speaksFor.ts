@@ -4,6 +4,7 @@ import { parseAddress, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { Address, Message } from '@dispatch/protocol';
 
 import type { Evidence } from './service.js';
+import { standsAt } from './service.js';
 import type { FedStore } from './store.js';
 
 /**
@@ -21,6 +22,8 @@ export function speaksFor(input: {
 }): boolean | null {
   const { replica, message, seq, view, fed, evidence } = input;
   const from: Address = message.from;
+  // FW-R32(2): a replica speaks for no one at an op where it did not stand.
+  if (!standsAt(view, replica, seq)) return false;
   // The engine checks a system notice is about something the two exchanged.
   if (from === SYSTEM_ADDRESS)
     return message.kind === 'notice' && message.data === undefined;
@@ -43,7 +46,8 @@ export function speaksFor(input: {
         'SELECT run FROM fed_run_conflicts WHERE run = ?'
       )
       .get(p.id);
-    if (contested !== null) return false;
+    // FW-R32(5): mail from a contested run waits for the conflict to settle.
+    if (contested !== null) return null;
     const claims = evidence.runs.get(p.id);
     if (claims === undefined) return null;
     return claims.length === 1 && claims[0] === replica;

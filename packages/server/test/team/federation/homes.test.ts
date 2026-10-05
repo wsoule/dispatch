@@ -50,20 +50,18 @@ describe('homes', () => {
     expect(at(0).homes.of('human:ops')).toEqual([]);
   });
 
-  it("homes a task on its live execute run's replica, else on its assignee's replicas", async () => {
-    await team('ada', 'bob');
+  it("homes a task on its live execute run's machine, among its assignee's, else on all of them", async () => {
+    await team('ada', 'bob', 'bob');
     const id = at(0).store.create({ title: 'homed', assignee: 'human:bob' })
       .meta.id;
     await at(1).settleWith(at(0));
-    expect(at(0).homes.of(`task:${id}`)).toEqual([at(1).fed.replica]);
-    at(0).startRun({
-      id: 'r-0000000000aa',
-      taskId: id,
-      kind: 'execute',
-    });
-    expect(at(0).homes.of(`task:${id}`)).toEqual([at(0).fed.replica]);
-    await at(1).settleWith(at(0));
-    expect(at(1).homes.of(`task:${id}`)).toEqual([at(0).fed.replica]);
+    await at(2).settleWith(at(0));
+    expect(at(0).homes.of(`task:${id}`)).toEqual(
+      [at(1).fed.replica, at(2).fed.replica].sort()
+    );
+    at(2).startRun({ id: 'r-0000000000aa', taskId: id, kind: 'execute' });
+    await at(0).settleWith(at(2));
+    expect(at(0).homes.of(`task:${id}`)).toEqual([at(2).fed.replica]);
   });
 });
 
@@ -96,13 +94,16 @@ describe('placement', () => {
   });
 
   it('names one wakeAt: the live run, else the latest replica presence', async () => {
-    await team('ada', 'bob', 'cy');
+    // Cy is bob's second machine.
+    await team('ada', 'bob', 'bob');
     const id = at(0).store.create({ title: 'shared', assignee: 'human:bob' })
       .meta.id;
     const wake = msg({ to: [`task:${id}`], wake: 'request' });
-    expect(
-      at(0).hooks.placement(direct(`task:${id}`), wake, null)
-    ).toMatchObject({ kind: 'remote', wakeAt: at(1).fed.replica });
+    const first = at(0).hooks.placement(direct(`task:${id}`), wake, null);
+    expect(first).toMatchObject({ kind: 'remote' });
+    expect([at(1).fed.replica, at(2).fed.replica]).toContain(
+      (first as { wakeAt: string }).wakeAt
+    );
     at(2).startRun({
       id: 'r-0000000000cc',
       taskId: id,

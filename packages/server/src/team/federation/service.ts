@@ -35,6 +35,7 @@ import type {
   TransportHealth,
   Watermarks,
 } from './transport.js';
+import { dropNote } from './validate.js';
 
 // When board sync runs, and what it reports. Before a team is founded a pass
 // is today's v1 pass step for step; once founded it exchanges signed ops
@@ -49,8 +50,8 @@ import type {
 export const CLOCK_GUARD_MS = MAX_CLOCK_LEAD_MS;
 /** An op this far ahead also names its machine's clock as wrong. */
 const CLOCK_PROBLEM_MS = 60 * 60 * 1000;
-/** Queued messages one publisher may have before its mail waits unread. */
-const MAX_WAITING_PER_PUBLISHER = 1000;
+/** Team messaging op types, applied only once mailReady (FW-R32(7)). */
+const F2_TYPES = new Set(['presence', 'agent', 'channel', 'mail', 'state']);
 
 /** How soon the next pass runs while an asker waits (fastUntil). */
 const FAST_PASS_MS = 10_000;
@@ -145,8 +146,6 @@ export interface V1Branch extends V1Log {
 }
 
 export interface FederationServiceOptions {
-  /** Queued messages per publisher before its mail waits (tests lower it). */
-  maxWaitingPerPublisher?: number;
   store: SyncedTaskStore;
   ledger: SyncLedger;
   v1: V1Branch;
@@ -875,7 +874,7 @@ export class FederationService {
       const ctx: StageContext = {
         view,
         now,
-        evidence: evidenceOf(verified),
+        evidence: evidenceOf(verified, view),
       };
       this.restage(ctx);
       const blocked = new Set<string>();
@@ -1010,17 +1009,12 @@ export class FederationService {
       this.applied += 1;
       return 'changed';
     }
-    // A publisher with this many messages queued waits, cursor unmoved.
-    if (
-      entry.type === 'mail' &&
-      this.inbox !== null &&
-      this.inbox.waiting(r) >=
-        (this.opts.maxWaitingPerPublisher ?? MAX_WAITING_PER_PUBLISHER)
-    )
-      return 'block';
     const handler = this.handlers.get(entry.type);
-    if (handler !== undefined) {
-      if (handler.stage(entry, ctx) === 'parked') this.park(entry, 'parked');
+    // FW-R32(7): team messaging ops wait until this machine is firmly in.
+    const waiting = F2_TYPES.has(entry.type) && !this.opts.roster.mailReady();
+    if (handler !== undefined && !waiting) {
+      if (this.stageSafely(handler, entry, ctx) === 'parked')
+        this.park(entry, 'parked');
       return 'moved';
     }
     fed.db
@@ -1029,6 +1023,26 @@ export class FederationService {
       )
       .run(r, entry.seq, JSON.stringify(entry));
     return 'moved';
+  }
+
+  // FW-R32(3): a handler that throws drops that one op with a rolling note;
+  // no op can stop a pass.
+  private stageSafely(
+    handler: OpHandler,
+    op: FederatedOp,
+    ctx: StageContext
+  ): 'applied' | 'parked' | 'dropped' {
+    try {
+      return handler.stage(op, ctx);
+    } catch (err) {
+      dropNote(
+        this.opts.fed,
+        'malformed',
+        op.replica,
+        `${this.opts.roster.label(op.replica)}'s ${op.type} op at seq ${op.seq} could not be applied and was dropped: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown error'}`
+      );
+      return 'dropped';
+    }
   }
 
   // "<handle>'s <device> runs N minutes ahead", once per message, with an
@@ -1078,11 +1092,13 @@ export class FederationService {
         .all()
         .map((row) => ({ ...row, table: 'fed_unknown' })),
     ];
+    const ready = this.opts.roster.mailReady();
     for (const row of rows) {
       const op = JSON.parse(row.op_json) as FederatedOp;
       const handler = this.handlers.get(op.type);
       if (handler === undefined) continue;
-      const parked = handler.stage(op, ctx) === 'parked';
+      if (F2_TYPES.has(op.type) && !ready) continue;
+      const parked = this.stageSafely(handler, op, ctx) === 'parked';
       if (parked && row.table === 'fed_parked') continue;
       db.query(`DELETE FROM ${row.table} WHERE replica = ? AND seq = ?`).run(
         row.replica,
@@ -1256,11 +1272,15 @@ function keyOpSignPub(e: LogEntry): string | null {
 
 // The run and agent claims a pull's verified ops make, read before any is
 // staged, so a run claimed twice in one pull binds to neither.
-function evidenceOf(verified: Map<string, Verified>): Evidence {
+function evidenceOf(
+  verified: Map<string, Verified>,
+  view: RosterView
+): Evidence {
   const evidence: Evidence = { runs: new Map(), agents: new Map() };
   for (const [replica, v] of verified)
     for (const { entry } of v.entries) {
-      if (isStub(entry)) continue;
+      // FW-R32(5): only a replica standing at its op makes a claim.
+      if (isStub(entry) || !standsAt(view, replica, entry.seq)) continue;
       const body = entry.body as Record<string, unknown> | undefined;
       if (body === undefined) continue;
       if (
@@ -1275,4 +1295,17 @@ function evidenceOf(verified: Map<string, Verified>): Evidence {
         evidence.agents.set(body['address'], replica);
     }
   return evidence;
+}
+
+/** Whether `replica` stood in the team at its op `seq`: a member that is no
+ *  observer, or a revoked one at or below its cut. */
+export function standsAt(
+  view: RosterView,
+  replica: string,
+  seq: number
+): boolean {
+  const cut = view.revoked.get(replica);
+  if (cut !== undefined) return seq <= cut.afterSeq && !cut.observer;
+  const m = view.members.get(replica);
+  return m !== undefined && !m.observer;
 }

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import type { RosterService } from './roster.js';
 import type { Collector, OpHandler, StageContext } from './service.js';
 import type { FedStore } from './store.js';
+import { agentBody, dropNote } from './validate.js';
 
 /** The token hash a replicated agent row carries: no token ever matches it. */
 const REMOTE_TOKEN_PREFIX = 'remote:';
@@ -20,8 +21,6 @@ interface FedAgentRow {
   status: AgentRecord['status'];
   hlc: string;
 }
-
-const STATUSES: readonly string[] = ['pending', 'approved', 'revoked'];
 
 // The agent roster across daemons: this machine's registrations go out as
 // `agent` ops (never a token hash), teammates' come in as rows no local token
@@ -78,8 +77,18 @@ export class AgentSync implements Collector, OpHandler {
 
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped' {
     const { fed, messages } = this.deps;
-    const body = op.body as Partial<AgentBody> | undefined;
-    const address = typeof body?.address === 'string' ? body.address : '';
+    // FW-R32(3): every field of the grammar, or a malformed note.
+    const body = agentBody(op.body);
+    if (body === null) {
+      dropNote(
+        fed,
+        'malformed',
+        op.replica,
+        `${this.deps.roster.label(op.replica)}'s agent op at seq ${op.seq} is not a valid agent; it was dropped`
+      );
+      return 'dropped';
+    }
+    const { address } = body;
     const refuse = (message: string, speaksFor = false) => {
       fed.problem(`agent:${address}`, message);
       if (speaksFor)
@@ -91,14 +100,9 @@ export class AgentSync implements Collector, OpHandler {
       return 'dropped' as const;
     };
     const operator = operatorOf(address);
-    if (
-      operator === null ||
-      typeof body?.displayName !== 'string' ||
-      typeof body.client !== 'string' ||
-      !STATUSES.includes(String(body.status))
-    )
+    if (operator === null)
       return refuse(
-        `${op.replica} sent an agent op that is not a valid agent: ${address.slice(0, 80)}`
+        `${op.replica} published ${address}, which names no operator`
       );
     if (isFederationLocalAddress(address))
       return refuse(
@@ -125,7 +129,7 @@ export class AgentSync implements Collector, OpHandler {
         op.replica,
         body.displayName,
         body.client,
-        String(body.status),
+        body.status,
         op.hlc
       );
     this.project(ctx.view.revoked);

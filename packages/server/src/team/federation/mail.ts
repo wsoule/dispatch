@@ -27,37 +27,48 @@ function withoutOrigin(message: Message): Message {
   return rest;
 }
 
-/** One target per recipient: a local delivery's homes are this replica (and
- *  a remote row's, when it has one too), a remote row's are its homes. */
+/** FW-R32(4): one target per recipient homed elsewhere, its homes without
+ *  this replica; a recipient only this replica holds never leaves. */
 function targetsOf(
   messages: MessageStore,
   me: string,
   message: Message
 ): MailTarget[] {
-  const remote = new Map(
-    messages
-      .remoteDeliveries({ messageId: message.id })
-      .map((r) => [r.recipient, r])
-  );
-  const targets = new Map<Address, MailTarget>();
-  for (const d of messages.deliveries({ messageId: message.id })) {
-    if (targets.has(d.recipient)) continue;
-    const row = remote.get(d.recipient);
-    const homes = [...new Set([me, ...(row?.homes ?? [])])].sort();
-    targets.set(d.recipient, { recipient: d.recipient, via: d.via, homes });
-  }
-  for (const [recipient, row] of remote) {
-    if (targets.has(recipient)) continue;
-    targets.set(recipient, {
-      recipient,
+  const targets: MailTarget[] = [];
+  for (const row of messages.remoteDeliveries({ messageId: message.id })) {
+    const homes = [...new Set(row.homes)].filter((h) => h !== me).sort();
+    if (homes.length === 0) continue;
+    targets.push({
+      recipient: row.recipient,
       via: row.via,
-      homes: [...row.homes].sort(),
+      homes,
       ...(row.wakeAt === null ? {} : { wakeAt: row.wakeAt }),
     });
   }
-  return [...targets.values()].sort((a, b) =>
+  return targets.sort((a, b) =>
     a.recipient < b.recipient ? -1 : a.recipient > b.recipient ? 1 : 0
   );
+}
+
+/** Recipients grouped by the targets each needs: a home gets the targets it
+ *  is a home of, a copy (the sender's devices, observers) gets them all. */
+function splitByTarget(
+  targets: readonly MailTarget[],
+  recipients: readonly string[]
+): { targets: MailTarget[]; recipients: string[] }[] {
+  const groups = new Map<
+    string,
+    { targets: MailTarget[]; recipients: string[] }
+  >();
+  for (const r of recipients) {
+    const mine = targets.filter((t) => t.homes.includes(r));
+    const chosen = mine.length > 0 ? mine : [...targets];
+    const key = chosen.map((t) => t.recipient).join('\n');
+    const g = groups.get(key) ?? { targets: chosen, recipients: [] };
+    g.recipients.push(r);
+    groups.set(key, g);
+  }
+  return [...groups.values()];
 }
 
 /** Who gets a copy: every target's homes and a human sender's other
@@ -108,7 +119,10 @@ export class MailOut implements Collector {
     const { fed, roster, messages, homes } = this.deps;
     if (!roster.mailReady()) return;
     const me = fed.replica;
-    let watermark = Number(fed.meta('mail_rowid') ?? messages.maxRowid());
+    // FW-R32(8): the watermark persists on first use.
+    if (fed.meta('mail_rowid') === null)
+      fed.setMeta('mail_rowid', String(messages.maxRowid()));
+    let watermark = Number(fed.meta('mail_rowid'));
     for (;;) {
       const batch = messages.messagesAfter(watermark, MAIL_SCAN_BATCH);
       if (batch.length === 0) break;
@@ -121,15 +135,33 @@ export class MailOut implements Collector {
           message.replyTo === null
             ? null
             : messages.getMessage(message.replyTo);
-        const local = localOnlyReason(message, replyTarget, root) !== null;
+        const local =
+          localOnlyReason(message, replyTarget, root) !== null ||
+          this.runMovedAway(message);
         const targets = targetsOf(messages, me, message);
         const recipients = local
           ? []
           : mailRecipients({ me, message, targets, homes, roster });
-        fed.atomically(() => {
-          if (recipients.length > 0) this.publish(message, targets, recipients);
-          fed.setMeta('mail_rowid', String(rowid));
-        });
+        try {
+          fed.atomically(() => {
+            if (recipients.length > 0)
+              this.publish(message, targets, recipients);
+            fed.setMeta('mail_rowid', String(rowid));
+          });
+        } catch (err) {
+          // FW-R32(4): one message that cannot be sealed never holds the rest.
+          fed.atomically(() => {
+            this.refuse(message, err);
+            fed.setMeta('mail_rowid', String(rowid));
+          });
+        }
+        if (local && this.runMovedAway(message))
+          fed.atomically(() => {
+            this.refuse(
+              message,
+              new Error('its run was resolved to another machine')
+            );
+          });
         watermark = rowid;
       }
     }
@@ -153,32 +185,69 @@ export class MailOut implements Collector {
         );
       else keys.set(r, pin.sealPub);
     }
-    const to = [...keys.keys()].sort();
-    const payload: MailPayload = { message: withoutOrigin(message), targets };
     const ops: FederatedOp[] = [];
-    for (let at = 0; at < to.length; at += MAX_SEALED_RECIPIENTS) {
-      const chunk = new Map(
-        to
-          .slice(at, at + MAX_SEALED_RECIPIENTS)
-          .map((r): [string, string] => [r, keys.get(r) ?? ''])
-      );
-      ops.push(
-        fed.append({
-          type: 'mail',
-          seal: (stamp) => {
-            const { to: sealedTo, sealed } = sealPayload({
-              replica: fed.replica,
-              seq: stamp.seq,
-              type: 'mail',
-              payload: payload as never,
-              recipients: chunk,
-            });
-            return { to: sealedTo, sealed };
-          },
-        })
-      );
+    for (const group of splitByTarget(targets, [...keys.keys()].sort())) {
+      const payload: MailPayload = {
+        message: withoutOrigin(message),
+        targets: group.targets,
+      };
+      for (
+        let at = 0;
+        at < group.recipients.length;
+        at += MAX_SEALED_RECIPIENTS
+      ) {
+        const chunk = new Map(
+          group.recipients
+            .slice(at, at + MAX_SEALED_RECIPIENTS)
+            .map((r): [string, string] => [r, keys.get(r) ?? ''])
+        );
+        ops.push(
+          fed.append({
+            type: 'mail',
+            seal: (stamp) => {
+              const { to: sealedTo, sealed } = sealPayload({
+                replica: fed.replica,
+                seq: stamp.seq,
+                type: 'mail',
+                payload: payload as never,
+                recipients: chunk,
+              });
+              return { to: sealedTo, sealed };
+            },
+          })
+        );
+      }
     }
     return ops;
+  }
+
+  // A message from a run of this machine's that an admin resolved to
+  // another machine: it no longer speaks as that run (T16).
+  private runMovedAway(message: Message): boolean {
+    if (!message.from.startsWith('run:')) return false;
+    const row = this.deps.fed.db
+      .query<{ replica: string }, [string]>(
+        'SELECT replica FROM fed_runs WHERE run = ?'
+      )
+      .get(message.from.slice('run:'.length));
+    return row !== null && row.replica !== this.deps.fed.replica;
+  }
+
+  // Every remote recipient row of a message that will not go out: refused.
+  private refuse(message: Message, err: unknown): void {
+    const { fed, messages } = this.deps;
+    const at = new Date().toISOString();
+    for (const row of messages.remoteDeliveries({ messageId: message.id }))
+      messages.setRemote(
+        message.id,
+        row.recipient,
+        { state: 'refused', refusedBy: [fed.replica] },
+        at
+      );
+    fed.problem(
+      `mail-out:${message.id}`,
+      `${message.id} could not be sent to teammates: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown error'}`
+    );
   }
 
   /** A holder that is not the origin hands the original op on, its content
@@ -193,6 +262,14 @@ export class MailOut implements Collector {
     if (key === null) return null;
     const payload = openWithKey(original, key) as MailPayload | null;
     if (!(payload?.targets ?? []).some((t) => t.recipient === target))
+      return null;
+    // Only to a machine standing in the team as a home.
+    const { roster } = this.deps;
+    if (
+      !roster.isAdmitted(to) ||
+      !roster.isCovered(to) ||
+      roster.isObserver(to)
+    )
       return null;
     const pin = fed.pinned(to);
     if (pin === null) return null;

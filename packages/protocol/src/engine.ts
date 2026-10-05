@@ -1761,6 +1761,24 @@ export class DeliveryEngine {
     );
     this.emitChanged(changed);
     for (const d of moved) this.emit({ type: 'delivery', delivery: d });
+    // An answer given here that lost at the settler: its sender is told.
+    for (const id of new Set(changed)) {
+      const m = this.store.getMessage(id);
+      if (
+        m === null ||
+        m.origin !== undefined ||
+        m.from === SYSTEM_ADDRESS ||
+        this.store.settledAs(id) !== 'superseded'
+      )
+        continue;
+      void this.noticeTo(
+        m.from,
+        m,
+        `${m.id} was already answered; yours was kept as a reply.`
+      ).catch((err: unknown) =>
+        console.error('messaging superseded notice failed', err)
+      );
+    }
   }
 
   // Records a settler's outcome for a stored question and applies it: swaps in

@@ -152,6 +152,11 @@ const ACKNOWLEDGEABLE = [
   // A teammate's refused agent or channel op is a one-off note.
   'agent:',
   'channel:',
+  // FW-R32(6): one rolling note per publisher, and a message that could not go.
+  'malformed:',
+  'mail-drop:',
+  'mail-out:',
+  'run-moved:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {

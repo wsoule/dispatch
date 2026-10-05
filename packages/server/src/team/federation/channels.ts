@@ -5,6 +5,7 @@ import type { ChannelBody, FederatedOp } from '@dispatch/protocol/federation';
 import type { RosterService } from './roster.js';
 import type { Collector, OpHandler } from './service.js';
 import type { FedStore } from './store.js';
+import { channelBody, dropNote } from './validate.js';
 
 interface MemberRow {
   channel: string;
@@ -73,16 +74,18 @@ export class ChannelSync implements Collector, OpHandler {
 
   stage(op: FederatedOp): 'applied' | 'parked' | 'dropped' {
     const { fed } = this.deps;
-    const body = op.body as Partial<ChannelBody> | undefined;
-    const channel = typeof body?.channel === 'string' ? body.channel : '';
-    const member = typeof body?.member === 'string' ? body.member : '';
-    if (channel === '' || member === '' || typeof body?.joined !== 'boolean') {
-      fed.problem(
-        `channel:${channel}`,
-        `${op.replica} sent a channel op that is not a valid membership`
+    // FW-R32(3), M1: a channel name and member of the grammar, or nothing.
+    const body = channelBody(op.body);
+    if (body === null) {
+      dropNote(
+        fed,
+        'malformed',
+        op.replica,
+        `${this.deps.roster.label(op.replica)}'s channel op at seq ${op.seq} is not a valid membership; it was dropped`
       );
       return 'dropped';
     }
+    const { channel, member } = body;
     if (excluded(member)) {
       fed.problem(
         `channel:${channel}`,

@@ -58,12 +58,7 @@ export class Homes {
       case 'task': {
         const live = this.taskLiveRun(p.id);
         if (live !== null) return this.usable([live.replica]);
-        const assignee = this.deps.tasks.get(p.id)?.meta.assignee ?? '';
-        const ref = parsed(assignee);
-        if (ref?.kind === 'human') return this.of(assignee);
-        if (ref?.kind === 'agent' && ref.operator !== null)
-          return this.of(`human:${ref.operator}`);
-        return [];
+        return this.assigneeHomes(p.id) ?? [];
       }
       default:
         return [];
@@ -73,11 +68,27 @@ export class Homes {
   /** The task's live execute run with the earliest claim, this machine's own
    *  included (its presence writes its row too), or null. */
   taskLiveRun(taskId: string): LiveRun | null {
-    return this.deps.fed.db
-      .query<LiveRun, [string]>(
-        "SELECT run, replica, hlc FROM fed_runs WHERE task = ? AND run_kind = 'execute' AND live = 1 ORDER BY hlc, replica LIMIT 1"
-      )
-      .get(taskId);
+    // FW-R32(8): an assigned task's run counts only on its assignee's
+    // machines, so no teammate takes another's task mail by running it.
+    const allowed = this.assigneeHomes(taskId);
+    return (
+      this.deps.fed.db
+        .query<LiveRun, [string]>(
+          "SELECT run, replica, hlc FROM fed_runs WHERE task = ? AND run_kind = 'execute' AND live = 1 ORDER BY hlc, replica"
+        )
+        .all(taskId)
+        .find((r) => allowed === null || allowed.includes(r.replica)) ?? null
+    );
+  }
+
+  // The machines of a task's assignee, or null for an unassigned task.
+  private assigneeHomes(taskId: string): string[] | null {
+    const assignee = this.deps.tasks.get(taskId)?.meta.assignee ?? '';
+    const ref = parsed(assignee);
+    if (ref?.kind === 'human') return this.of(assignee);
+    if (ref?.kind === 'agent' && ref.operator !== null)
+      return this.of(`human:${ref.operator}`);
+    return null;
   }
 
   // Admitted, unrevoked, within the seats and not an observer (an observer

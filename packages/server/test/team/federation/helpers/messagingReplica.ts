@@ -138,6 +138,7 @@ export interface TeamOpts {
   admins?: readonly string[];
   remoteMailPerReplicaPerHour?: number;
   maxWaitingPerPublisher?: number;
+  stateOpsPerHour?: number;
 }
 
 // One daemon's board sync plus its messages.db, engine and the federation
@@ -148,14 +149,7 @@ export function messagingReplica(
   v1: MemoryV1 = new MemoryV1(),
   opts: TeamOpts = {}
 ): MessagingReplica {
-  const base = serviceReplica(
-    handle,
-    remote,
-    v1,
-    opts.maxWaitingPerPublisher === undefined
-      ? {}
-      : { maxWaitingPerPublisher: opts.maxWaitingPerPublisher }
-  );
+  const base = serviceReplica(handle, remote, v1);
   const db = openMessagesDb(join(base.dir, 'messages.db'));
   const messages = new SqliteMessageStore(db);
   const host = new TestMessagingHost(`human:${handle}`, base.clock);
@@ -260,6 +254,13 @@ export function messagingReplica(
     roster: base.roster,
     engine,
     perReplicaPerHour: opts.remoteMailPerReplicaPerHour ?? 600,
+    ...(opts.stateOpsPerHour === undefined
+      ? {}
+      : { stateOpsPerHour: opts.stateOpsPerHour }),
+    ...(opts.maxWaitingPerPublisher === undefined
+      ? {}
+      : { maxWaiting: opts.maxWaitingPerPublisher }),
+    homes,
     now: () => base.clock.now,
     state,
   });

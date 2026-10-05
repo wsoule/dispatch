@@ -155,6 +155,7 @@ export function wireAgentsAndChannels(
     fed,
     roster,
     engine: deps.engine,
+    homes: deps.homes,
     perReplicaPerHour: deps.perReplicaPerHour,
     now: deps.now,
     state: stateOut,

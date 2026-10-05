@@ -2,27 +2,41 @@ import type { RosterView } from '@dispatch/federation';
 import { MessagingError } from '@dispatch/protocol';
 import type { Delivery, DeliveryEngine, Message } from '@dispatch/protocol';
 import {
+  contentHash,
   fromB64u,
   hlcWallMs,
   MAX_CLOCK_LEAD_MS,
   openWithKey,
+  opHash,
   unwrapContentKey,
-  verifyEntry,
 } from '@dispatch/protocol/federation';
 import type {
   FederatedOp,
-  ForwardPayload,
   MailPayload,
   MailTarget,
   StatePayload,
 } from '@dispatch/protocol/federation';
 
+import type { Homes } from './homes.js';
 import type { RosterService } from './roster.js';
 import type { InboxDrainer, OpHandler, StageContext } from './service.js';
 import { speaksFor } from './speaksFor.js';
 import type { FedStore } from './store.js';
+import {
+  dropNote,
+  forwardPayload,
+  isReplica,
+  mailPayload,
+  statePayload,
+} from './validate.js';
 
 const INBOX_MAX_ATTEMPTS = 3;
+/** How long a verified mail op stays forwardable. */
+const MAIL_SEEN_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
+/** Queued messages one publisher may have before its mail waits parked. */
+const MAX_WAITING = 1000;
+/** State ops applied per clock hour from one teammate's machine. */
+const STATE_OPS_PER_HOUR = 600;
 const PARKED_MAX_PER_PUBLISHER = 10_000;
 
 /** What the inbox tells the state module (Task 16); no-ops until then. */
@@ -67,46 +81,63 @@ export class Inbound implements OpHandler, InboxDrainer {
       fed: FedStore;
       roster: RosterService;
       engine: DeliveryEngine;
+      homes: Homes;
       perReplicaPerHour: number;
       now: () => Date;
       state?: StateHooks;
+      /** Queued messages per publisher before its mail waits (tests lower it). */
+      maxWaiting?: number;
+      /** State ops per publisher per hour (tests lower it). */
+      stateOpsPerHour?: number;
     }
   ) {}
 
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped' {
     const { fed } = this.deps;
     const me = fed.replica;
+    // FW-R32(2): every mail op this machine verifies is remembered, so a
+    // forward can carry only an op of a publisher's real chain.
+    fed.db
+      .query(
+        'INSERT OR IGNORE INTO fed_mail_seen (replica, seq, hash, at) VALUES (?, ?, ?, ?)'
+      )
+      .run(op.replica, op.seq, opHash(op), ctx.now.toISOString());
     if (!(op.to ?? []).includes(me)) return 'dropped';
     // FW-R31(5): ops above a settled revocation's cut go; a contested one
     // keeps them parked until the fight is decided.
-    const cut = ctx.view.revoked.get(op.replica);
-    if (cut !== undefined && op.seq > cut.afterSeq)
-      return this.contested(op.replica, ctx.view) ? 'parked' : 'dropped';
+    const cut = this.cutFor(op.replica, op.seq, ctx.view);
+    if (cut !== 'stands') return cut;
+    // A publisher with this much queued waits; its other ops never do.
+    if (this.waiting(op.replica) >= (this.deps.maxWaiting ?? MAX_WAITING))
+      return 'parked';
     const subject = `op:${op.replica}:${op.seq}`;
+    const label = this.deps.roster.label(op.replica);
     const key = unwrapContentKey(op, me, fed.keys.sealPriv);
     const opened = key === null ? null : openWithKey(op, key);
     if (opened === null) {
-      fed.problem(
-        subject,
-        `mail from ${op.replica} seq ${op.seq} could not be decrypted`
+      dropNote(
+        fed,
+        'mail-drop',
+        op.replica,
+        `mail from ${label} seq ${op.seq} could not be decrypted and was dropped`
       );
       return 'dropped';
     }
-    const carried = this.carried(op, opened, subject);
-    if (carried === null) return 'dropped';
+    const carried = this.carried(op, opened, ctx);
+    if (carried === 'parked' || carried === 'dropped') return carried;
     const { inner, payload, forwardTarget } = carried;
     const { message } = payload;
-    // FW-R31(1): the message's clock is bound to its op's.
-    const msgMs = hlcWallMs(message.hlc ?? '');
+    // FW-R32(1): held only when the message is stamped well ahead of its op
+    // or of now; behind its op is a sender that published late.
+    const msgMs = hlcWallMs(message.hlc ?? '') ?? 0;
     const opMs = hlcWallMs(inner.hlc) ?? 0;
     if (
-      msgMs === null ||
-      Math.abs(msgMs - opMs) > MAX_CLOCK_LEAD_MS ||
+      msgMs - opMs > MAX_CLOCK_LEAD_MS ||
       msgMs - ctx.now.getTime() > MAX_CLOCK_LEAD_MS
     ) {
       fed.problem(
         subject,
-        `${message.id} from ${this.deps.roster.label(inner.replica)} carries a clock far from its op's, so it waits like a change from the future`
+        `${message.id} from ${this.deps.roster.label(inner.replica)} is stamped ahead of its op or of this machine's clock, so it waits like a change from the future`
       );
       return this.park(op);
     }
@@ -120,9 +151,11 @@ export class Inbound implements OpHandler, InboxDrainer {
     });
     if (speaks === null) return this.park(op);
     if (!speaks) {
-      fed.problem(
-        `message:${message.id}`,
-        `${this.deps.roster.label(inner.replica)} cannot speak for ${message.from}`
+      dropNote(
+        fed,
+        'mail-drop',
+        op.replica,
+        `${message.id} was dropped: ${this.deps.roster.label(inner.replica)} cannot speak for ${message.from}`
       );
       fed.audit('speaks-for', subject, {
         replica: inner.replica,
@@ -131,9 +164,19 @@ export class Inbound implements OpHandler, InboxDrainer {
       });
       return 'dropped';
     }
+    const targets = this.checkedTargets(payload.targets, forwardTarget);
+    if (targets === null) {
+      dropNote(
+        fed,
+        'mail-drop',
+        op.replica,
+        `${message.id} was forwarded here for ${forwardTarget ?? ''}, which this machine does not hold`
+      );
+      return 'dropped';
+    }
     const row: InboxPayload = {
       message,
-      targets: payload.targets,
+      targets,
       ...(forwardTarget === undefined ? {} : { forwardTarget }),
       origin: inner.replica,
       sealedTo: op.to ?? [],
@@ -150,13 +193,86 @@ export class Inbound implements OpHandler, InboxDrainer {
         JSON.stringify(row),
         this.deps.now().toISOString()
       );
+    // A held op that applies now: its note is over.
+    fed.clearProblem(subject);
     return 'applied';
+  }
+
+  // Where a revocation leaves an op: 'stands', or above a cut: dropped once
+  // the revocation is settled, parked while it is contested.
+  private cutFor(
+    replica: string,
+    seq: number,
+    view: RosterView
+  ): 'stands' | 'parked' | 'dropped' {
+    const cut = view.revoked.get(replica);
+    if (cut === undefined || seq <= cut.afterSeq) return 'stands';
+    return this.contested(replica, view) ? 'parked' : 'dropped';
+  }
+
+  // The origin's targets, held to this machine's roster: homes that are no
+  // usable member go, this machine stays a home only where it is one here,
+  // and a wakeAt off the homes goes. Null for a forward to a target this
+  // machine is no home of.
+  private checkedTargets(
+    targets: MailTarget[],
+    forwardTarget: string | undefined
+  ): MailTarget[] | null {
+    const { roster, fed, homes } = this.deps;
+    const me = fed.replica;
+    const usable = (r: string) =>
+      roster.isAdmitted(r) && roster.isCovered(r) && !roster.isObserver(r);
+    const out = targets.map((t) => {
+      const kept = t.homes.filter(
+        (h) => usable(h) && (h !== me || this.homeHere(t.recipient))
+      );
+      const wakeAt =
+        t.wakeAt !== undefined && kept.includes(t.wakeAt)
+          ? t.wakeAt
+          : undefined;
+      return {
+        recipient: t.recipient,
+        via: t.via,
+        homes: kept,
+        ...(wakeAt === undefined ? {} : { wakeAt }),
+      };
+    });
+    if (forwardTarget !== undefined && !this.homeHere(forwardTarget))
+      return null;
+    void homes;
+    return out;
+  }
+
+  // Whether this machine is a home of `recipient` by its own roster: a
+  // human or agent homed here, a task whose honoured live run or assignee is
+  // here, a run that runs here.
+  private homeHere(recipient: string): boolean {
+    const { fed, homes } = this.deps;
+    const me = fed.replica;
+    if (recipient.startsWith('run:')) {
+      const row = fed.db
+        .query<{ replica: string }, [string]>(
+          'SELECT replica FROM fed_runs WHERE run = ?'
+        )
+        .get(recipient.slice('run:'.length));
+      return row === null || row.replica === me;
+    }
+    if (recipient.startsWith('task:')) {
+      const live = homes.taskLiveRun(recipient.slice('task:'.length));
+      if (live?.replica === me) return true;
+    }
+    return homes.of(recipient).includes(me);
   }
 
   /** Rows by (hlc, replica, seq); each publisher stops at the first row it
    *  cannot finish this pass. */
   async drain(now: Date): Promise<void> {
     const { fed, roster } = this.deps;
+    // FW-R32(8): nothing is delivered while the roster is paused.
+    if ((roster.view()?.unknown ?? null) !== null) return;
+    fed.db
+      .query('DELETE FROM fed_mail_seen WHERE at < ?')
+      .run(new Date(now.getTime() - MAIL_SEEN_KEPT_MS).toISOString());
     const hour = now.toISOString().slice(0, 13);
     const stopped = new Set<string>();
     const rows = fed.db
@@ -198,21 +314,37 @@ export class Inbound implements OpHandler, InboxDrainer {
       stage: (op, ctx) => {
         const { fed } = this.deps;
         if (!(op.to ?? []).includes(fed.replica)) return 'dropped';
-        const cut = ctx.view.revoked.get(op.replica);
-        if (cut !== undefined && op.seq > cut.afterSeq)
-          return this.contested(op.replica, ctx.view) ? 'parked' : 'dropped';
+        const cut = this.cutFor(op.replica, op.seq, ctx.view);
+        if (cut !== 'stands') return cut;
         const key = unwrapContentKey(op, fed.replica, fed.keys.sealPriv);
-        const opened = (key === null ? null : openWithKey(op, key)) as {
-          entries?: unknown;
-        } | null;
-        if (!Array.isArray(opened?.entries)) {
-          fed.problem(
-            `op:${op.replica}:${op.seq}`,
-            `state from ${op.replica} seq ${op.seq} could not be read`
+        const payload = statePayload(
+          key === null ? null : openWithKey(op, key)
+        );
+        if (payload === null) {
+          dropNote(
+            fed,
+            'malformed',
+            op.replica,
+            `${this.deps.roster.label(op.replica)}'s state at seq ${op.seq} could not be read; it was dropped`
           );
           return 'dropped';
         }
-        applier.applyState(opened as StatePayload, op.replica, op);
+        // FW-R32 (T16): state ops count against their own hourly quota.
+        const hour = `state:${ctx.now.toISOString().slice(0, 13)}`;
+        const count =
+          fed.db
+            .query<{ count: number }, [string, string]>(
+              'SELECT count FROM fed_quota WHERE replica = ? AND hour = ?'
+            )
+            .get(op.replica, hour)?.count ?? 0;
+        if (count >= (this.deps.stateOpsPerHour ?? STATE_OPS_PER_HOUR))
+          return 'parked';
+        fed.db
+          .query(
+            'INSERT INTO fed_quota (replica, hour, count) VALUES (?, ?, 1) ON CONFLICT(replica, hour) DO UPDATE SET count = count + 1'
+          )
+          .run(op.replica, hour);
+        applier.applyState(payload, op.replica, op);
         return 'applied';
       },
     };
@@ -268,8 +400,10 @@ export class Inbound implements OpHandler, InboxDrainer {
       return true;
     } catch (err) {
       if (err instanceof MessagingError) {
-        fed.problem(
-          `message:${p.message.id}`,
+        dropNote(
+          fed,
+          'mail-drop',
+          row.replica,
           `${p.message.id} from ${this.deps.roster.label(p.origin)} was refused: ${err.message}`
         );
         fed.audit('refused-message', `message:${p.message.id}`, {
@@ -283,8 +417,10 @@ export class Inbound implements OpHandler, InboxDrainer {
       }
       const attempts = row.attempts + 1;
       if (attempts >= INBOX_MAX_ATTEMPTS) {
-        fed.problem(
-          `op:${row.replica}:${row.seq}`,
+        dropNote(
+          fed,
+          'mail-drop',
+          row.replica,
           `${p.message.id} from ${this.deps.roster.label(p.origin)} was dropped after ${INBOX_MAX_ATTEMPTS} attempts: ${err instanceof Error ? err.message : String(err)}`
         );
         done();
@@ -299,67 +435,118 @@ export class Inbound implements OpHandler, InboxDrainer {
   }
 
   // The mail an op carries: its own payload, or for a forward the original
-  // op, checked against its publisher's key, and its target among the
-  // original's targets. Null (with a problem) when either fails.
+  // op, which must be one this machine verified on its publisher's chain
+  // (FW-R32(2)), under its publisher's cut, with the target among its own.
   private carried(
     op: FederatedOp,
     opened: unknown,
-    subject: string
-  ): {
-    inner: FederatedOp;
-    payload: MailPayload;
-    forwardTarget?: string;
-  } | null {
+    ctx: StageContext
+  ):
+    | { inner: FederatedOp; payload: MailPayload; forwardTarget?: string }
+    | 'parked'
+    | 'dropped' {
     const { fed, roster } = this.deps;
-    const body = op.body as { forward?: FederatedOp } | undefined;
+    const label = roster.label(op.replica);
+    const malformed = (what: string) => {
+      dropNote(
+        fed,
+        'malformed',
+        op.replica,
+        `${label}'s mail at seq ${op.seq} ${what}; it was dropped`
+      );
+      return 'dropped' as const;
+    };
+    const body = op.body as { forward?: unknown } | undefined;
     if (body?.forward === undefined) {
       const payload = mailPayload(opened);
-      if (payload === null) {
-        fed.problem(
-          subject,
-          `mail from ${op.replica} seq ${op.seq} is not a message`
-        );
-        return null;
-      }
-      return { inner: op, payload };
+      return payload === null
+        ? malformed('is not a message')
+        : { inner: op, payload };
     }
-    const inner = body.forward;
-    const pin = fed.pinned(inner.replica);
-    const fwd = opened as Partial<ForwardPayload> | null;
-    // Its signature and content hash, against its publisher's key; its
-    // chain position is not this op's to vouch for.
-    const signed =
-      pin !== null &&
-      verifyEntry(
-        { seq: inner.seq - 1, hash: inner.prev, hlc: '0.0000.x' },
-        inner,
-        pin.signPub
-      ).ok;
-    const key = typeof fwd?.key === 'string' ? safeKey(fwd.key) : null;
-    const payload =
-      signed && key !== null ? mailPayload(openWithKey(inner, key)) : null;
-    const target = typeof fwd?.target === 'string' ? fwd.target : '';
-    if (payload === null) {
-      fed.problem(
-        subject,
-        `${roster.label(op.replica)} forwarded an op that does not open`
-      );
-      return null;
+    const fwd = forwardPayload(opened);
+    const inner = body.forward as FederatedOp;
+    if (
+      fwd === null ||
+      typeof inner !== 'object' ||
+      inner === null ||
+      !isReplica(inner.replica) ||
+      !Number.isSafeInteger(inner.seq) ||
+      inner.type !== 'mail'
+    )
+      return malformed('is not a forward');
+    const cut = this.cutFor(inner.replica, inner.seq, ctx.view);
+    if (cut !== 'stands') return cut;
+    let hash: string;
+    try {
+      hash = opHash(inner);
+      // Its content must be what its signed header names.
+      if (
+        inner.sealed === undefined ||
+        contentHash({ sealed: inner.sealed }) !== inner.bodyHash
+      )
+        return malformed('forwards an op whose content is not its own');
+    } catch {
+      return malformed('forwards an op that does not read');
     }
-    if (!payload.targets.some((t) => t.recipient === target)) {
-      fed.problem(
-        subject,
-        `${roster.label(op.replica)} forwarded ${payload.message.id} to ${target}, which is not one of its targets`
+    const seen = fed.db
+      .query<{ hash: string }, [string, number]>(
+        'SELECT hash FROM fed_mail_seen WHERE replica = ? AND seq = ?'
+      )
+      .get(inner.replica, inner.seq);
+    if (seen === null) {
+      const head = fed.cursor(inner.replica).head?.seq ?? 0;
+      if (head < inner.seq) return 'parked';
+      dropNote(
+        fed,
+        'mail-drop',
+        op.replica,
+        `${label} forwarded an op that is not on ${roster.label(inner.replica)}'s log; it was dropped`
       );
-      fed.audit('speaks-for', subject, {
+      fed.audit('speaks-for', `op:${op.replica}:${op.seq}`, {
+        replica: op.replica,
+        seq: op.seq,
+        forwarded: `${inner.replica}:${inner.seq}`,
+      });
+      return 'dropped';
+    }
+    if (seen.hash !== hash) {
+      dropNote(
+        fed,
+        'mail-drop',
+        op.replica,
+        `${label} forwarded an op that differs from ${roster.label(inner.replica)}'s at seq ${inner.seq}; it was dropped`
+      );
+      fed.audit('speaks-for', `op:${op.replica}:${op.seq}`, {
+        replica: op.replica,
+        seq: op.seq,
+        forwarded: `${inner.replica}:${inner.seq}`,
+      });
+      return 'dropped';
+    }
+    let key: Buffer;
+    try {
+      key = fromB64u(fwd.key);
+    } catch {
+      return malformed('carries a key that does not read');
+    }
+    const payload = mailPayload(openWithKey(inner, key));
+    if (payload === null) return malformed('forwards an op that does not open');
+    if (!payload.targets.some((t) => t.recipient === fwd.target)) {
+      dropNote(
+        fed,
+        'mail-drop',
+        op.replica,
+        `${label} forwarded ${payload.message.id} to ${fwd.target}, which is not one of its targets`
+      );
+      fed.audit('speaks-for', `op:${op.replica}:${op.seq}`, {
         replica: op.replica,
         seq: op.seq,
         forwarded: payload.message.id,
-        target,
+        target: fwd.target,
       });
-      return null;
+      return 'dropped';
     }
-    return { inner, payload, forwardTarget: target };
+    return { inner, payload, forwardTarget: fwd.target };
   }
 
   // A revocation is contested while its target published a removal the fold
@@ -388,34 +575,13 @@ export class Inbound implements OpHandler, InboxDrainer {
           'DELETE FROM fed_parked WHERE replica = ? AND seq = (SELECT MIN(seq) FROM fed_parked WHERE replica = ?)'
         )
         .run(op.replica, op.replica);
-      fed.problem(
-        `op:${op.replica}:parked`,
+      dropNote(
+        fed,
+        'mail-drop',
+        op.replica,
         `${this.deps.roster.label(op.replica)} has more than ${PARKED_MAX_PER_PUBLISHER} waiting messages; the oldest was dropped`
       );
     }
     return 'parked';
   }
-}
-
-// A content key as a forward carries it, or null.
-function safeKey(text: string): Buffer | null {
-  try {
-    return fromB64u(text);
-  } catch {
-    return null;
-  }
-}
-
-// A MailPayload's shape, or null.
-function mailPayload(value: unknown): MailPayload | null {
-  const p = value as Partial<MailPayload> | null;
-  const m = p?.message as Partial<Message> | undefined;
-  if (
-    m === undefined ||
-    typeof m.id !== 'string' ||
-    typeof m.from !== 'string' ||
-    !Array.isArray(p?.targets)
-  )
-    return null;
-  return p as MailPayload;
 }

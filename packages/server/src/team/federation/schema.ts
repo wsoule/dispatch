@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS fed_run_conflicts (run TEXT PRIMARY KEY, replicas_jso
 -- Claims refused because their run was bound here first, for an admin's resolution.
 CREATE TABLE IF NOT EXISTS fed_run_claims (run TEXT PRIMARY KEY, claims_json TEXT NOT NULL);
 -- State entries waiting for the next pass, by their recipients ("a,b").
+-- Every mail op verified here, so a forward carries only a real one (FW-R32(2)).
+CREATE TABLE IF NOT EXISTS fed_mail_seen (replica TEXT NOT NULL, seq INTEGER NOT NULL, hash TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (replica, seq));
+-- Pruned run ids and the replica that ran each: never claimed by another.
+CREATE TABLE IF NOT EXISTS fed_run_tombs (run TEXT PRIMARY KEY, replica TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_state_out (id INTEGER PRIMARY KEY, recipients TEXT NOT NULL, entry_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_replicas (replica TEXT PRIMARY KEY, build TEXT NOT NULL, device TEXT NOT NULL, last_hlc TEXT NOT NULL, skew_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_members (channel TEXT NOT NULL, member TEXT NOT NULL, joined INTEGER NOT NULL, hlc TEXT NOT NULL, PRIMARY KEY (channel, member));
