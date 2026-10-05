@@ -109,6 +109,7 @@ import {
   openHumanDecisions,
   SYSTEM_SENDER,
 } from './messaging/gates.js';
+import { teamDeciders } from './messaging/operatorRouting.js';
 import {
   createOverseerBus,
   ensureOverseerActor,
@@ -1453,6 +1454,7 @@ async function bootServer(
     ownerRef: actorContext.humanRef,
     ledgerStore,
     appendPolicyActivity,
+    deciders: teamDeciders(team.teammates),
   });
   // Memory opens before messaging.recover() because it registers the memory
   // gate's handler: an answer replayed with no handler is marked applied and lost.

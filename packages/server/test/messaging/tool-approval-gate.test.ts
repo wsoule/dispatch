@@ -33,6 +33,34 @@ async function liveParkingRun() {
   return { orchestrator, executor, messaging, meta, task };
 }
 
+// A teammate's parked run: `ana` operates it, deciding when `anaDecides`.
+async function teammateParkedRun(anaDecides: boolean) {
+  const { orchestrator, store } = makeOrchestrator(project.root());
+  const executor = new ParkingExecutor();
+  orchestrator.registerExecutor('parking', executor);
+  const messaging = await openRecovered(
+    project.root(),
+    orchestrator,
+    store,
+    undefined,
+    {
+      deciders: {
+        canDecide: (ref) =>
+          ref === 'human:wyat' || (anaDecides && ref === 'human:ana'),
+        hasAccess: () => true,
+      },
+    }
+  );
+  const task = store.create({ title: 'Needs a shell' });
+  const meta = await orchestrator.dispatch(task.meta.id, 'parking', {
+    operator: 'human:ana',
+  });
+  executor.park('req-1', 'Bash', { command: 'pnpm install' });
+  await waitFor(() => messaging.engine.openBlocking().length === 1);
+  const [gate] = messaging.engine.openBlocking();
+  return { orchestrator, messaging, meta, gate };
+}
+
 async function parkedRun(input: unknown = { command: 'pnpm install' }) {
   const live = await liveParkingRun();
   live.executor.park('req-1', 'Bash', input);
@@ -61,6 +89,39 @@ function openRequestIds(messaging: Messaging): (string | undefined)[] {
     .map(gateRequestId)
     .sort((a, b) => (a ?? '').localeCompare(b ?? ''));
 }
+
+describe("tool-approval gates for a teammate's run (XH-R9)", () => {
+  it('go to an operator who can decide', async () => {
+    const { orchestrator, messaging, meta, gate } =
+      await teammateParkedRun(true);
+    expect(gate.to).toEqual(['human:ana']);
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it('go to the owner when the operator cannot decide, and tell the operator', async () => {
+    const { orchestrator, messaging, meta, gate } =
+      await teammateParkedRun(false);
+    expect(gate.to).toEqual(['human:wyat']);
+    await waitFor(
+      () => messaging.store.deliveries({ recipient: 'human:ana' }).length > 0
+    );
+    const [notice] = messaging.store
+      .deliveries({ recipient: 'human:ana' })
+      .map((d) => messaging.store.getMessage(d.messageId));
+    expect(notice).toMatchObject({
+      from: 'agent:dispatch',
+      kind: 'notice',
+      refs: [
+        { type: 'run', id: meta.id },
+        { type: 'task', id: meta.taskId },
+      ],
+    });
+    expect(notice?.body).toContain('human:wyat');
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+});
 
 describe('tool-approval gates', () => {
   it('a parked tool call raises one gate to the owner and parks the run', async () => {

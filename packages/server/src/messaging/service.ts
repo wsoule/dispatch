@@ -23,6 +23,7 @@ import type {
 import {
   OrchestratorNotFoundError,
   runKind,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from '../orchestrator/types.js';
 import { statusModelFor } from '../statuses.js';
@@ -38,6 +39,8 @@ import {
 } from './gates.js';
 import type { ExternalPolicy, WakeActor } from './host.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
+import type { OperatorRouting } from './operatorRouting.js';
+import { installOperatorNotices, operatorRouting } from './operatorRouting.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 import {
@@ -92,6 +95,8 @@ export interface Messaging {
   engine: DeliveryEngine;
   store: SqliteMessageStore;
   runTokens: RunTokens;
+  // XH-R9: who a run's questions, notices and gates go to.
+  routing: OperatorRouting;
   gates: GateHandlers;
   // Lets overseer-action and overseer tool-approval answers apply; until then
   // they are logged and the answerer told.
@@ -141,6 +146,12 @@ export function openMessaging(deps: {
   appendPolicyActivity?: (taskId: string, text: string) => void;
   // How often the scope-gate sweep runs, and its clock; tests shorten both.
   scopeExpiry?: { sweepMs?: number; now?: () => number };
+  // Who may answer gates and who still holds a credential, for routing a
+  // teammate's run (XH-R9); omitted, only the owner decides.
+  deciders?: {
+    canDecide(ref: string): boolean;
+    hasAccess(ref: string): boolean;
+  };
 }): Messaging {
   const db = openMessagesDb(
     deps.dbPath ?? join(runsDir(deps.rootDir), 'messages.db')
@@ -158,6 +169,18 @@ export function openMessaging(deps: {
   // Wake messages, by task, whose wake failed while the task still had a run
   // (one winding down, say); retried when a run of that task ends.
   const blockedWakes = new Map<string, BlockedWake[]>();
+
+  const routing = operatorRouting({
+    owner: deps.ownerRef,
+    operatorOf: (runId) => {
+      const run = deps.orchestrator.list().find((r) => r.id === runId);
+      return run === undefined ? undefined : runOperator(run);
+    },
+    canDecide: (ref) =>
+      ref === deps.ownerRef || deps.deciders?.canDecide(ref) === true,
+    hasAccess: (ref) =>
+      ref === deps.ownerRef || (deps.deciders?.hasAccess(ref) ?? true),
+  });
 
   const gates = new GateHandlers();
   const host = new DaemonMessagingHost({
@@ -382,7 +405,7 @@ export function openMessaging(deps: {
   // Tool approvals: the orchestrator parks the run; this asks the owner.
   deps.orchestrator.setApprovalGate({
     raise: (request) => {
-      raiseToolApproval(engine, deps.ownerRef, request)
+      raiseToolApproval(engine, routing.gateFor(request.runId).to, request)
         .then((gate) => {
           // The run ended, or this call was settled, while the gate was being written.
           if (!deps.orchestrator.isRunLive(request.runId))
@@ -524,6 +547,7 @@ export function openMessaging(deps: {
     );
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
+  const uninstallOperatorNotices = installOperatorNotices(engine, routing);
   // Grants what policy covers before expiring, so a covered gate is never denied.
   const scopeSweep = setInterval(() => {
     void sweepScopeGates(
@@ -596,6 +620,7 @@ export function openMessaging(deps: {
     engine,
     store,
     runTokens,
+    routing,
     gates,
     bindOverseer(target) {
       overseer = target;
@@ -609,6 +634,7 @@ export function openMessaging(deps: {
       host.setExternalPolicy(null);
       clearInterval(scopeSweep);
       uninstallScopePolicy();
+      uninstallOperatorNotices();
       unsubscribeRunStarted();
       unsubscribeRunTerminal();
       blockedWakes.clear();
