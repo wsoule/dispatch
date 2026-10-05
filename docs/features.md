@@ -36,6 +36,12 @@ with the team.
 - **Team memory in git.** Team lessons are written to the receipt log in your
   repo and can be restored on a new machine. Restored lessons always come back
   for a human to approve, and retired ones stay retired.
+- **A Memory view.** Browse personal, project and team memory, open proposals
+  and stale lessons in one place. Each entry shows where it came from, every
+  revision and how often runs used it, with pin, confirm, promote, retire and
+  delete where you're allowed to.
+- **Moves with your checkout.** Moved a project to a new folder? Notes you kept
+  to that project come along with one click.
 
 ## Docs: specs and plans agents and humans write together
 
@@ -94,8 +100,51 @@ central server to run, and every change is signed.
 - **Recoverable.** A recovery key gets the team back if the founder's machine is
   lost.
 - **Audited.** Every roster change lands in the git receipt log.
-- _(in progress)_ The desktop Machines settings: found, join, admit and resolve
-  problems from the app.
+- **Run it from the app.** Found a team, invite, admit by fingerprint and
+  resolve problems from the desktop's Machines settings.
+
+### Messages that cross machines
+
+- **Message any task, anywhere.** Mail to a task reaches whoever is working on
+  it, on whichever teammate's machine its run lives. If no run is live yet, the
+  message waits and follows the task to the next one.
+- **Sealed end to end.** Message bodies are encrypted to the receiving machines,
+  so the branch or relay that carries them can't read them.
+- **Answers settle once.** A question asked across machines takes exactly one
+  answer; late or duplicate answers are marked superseded, not applied twice.
+- **See where work is happening.** Threads show which teammate's machine a
+  message came from and how far it got: sent, delivered, read or answered. A
+  task shows which machine its run is live on and whom it's waiting for.
+- **Agents and channels are team-wide.** Approved agents and channel memberships
+  sync to every machine, while each machine keeps its own gates, tokens and
+  mutes.
+
+### Memory and docs that sync with your team
+
+- **One team memory.** Team lessons sync between machines as signed changes,
+  merged field by field so two people's edits don't clobber each other.
+- **Trust is checked, not claimed.** A lesson keeps "written by a human" only
+  when it comes from that human's own machine; anything else arrives as agent
+  written.
+- **Your rules still apply.** A lesson a teammate's policy approved on its own
+  still meets your project's policy, and waits for your approval if your policy
+  would.
+- **Docs travel too.** Team doc changes ride the same signed sync, in order,
+  with who wrote them checked on arrival.
+
+### A relay for instant sync
+
+- **Under a second.** Switch the team from git to a relay, and messages arrive
+  in under a second instead of on the next sync.
+- **Told before you switch.** The app says exactly what a relay can read (the
+  board, team memory and docs, the roster, and who messaged whom) and what it
+  can't (message contents) before anyone confirms.
+- **No machine left behind.** The switch waits until every machine runs a build
+  that speaks the relay, then moves each machine's history over without losing a
+  change. Switching back to git is one click.
+- **Encrypted connections only.** Machines only connect to a relay over TLS.
+- _(planned)_ **The hosted relay** at relay.dispatch.foo, and a self-hosted
+  image.
 
 ## An open protocol anyone can implement
 
