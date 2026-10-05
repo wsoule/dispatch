@@ -278,6 +278,25 @@ describe('switching a team to the relay', () => {
     expect(res.status).toBe(200);
   });
 
+  it('forgets re-announced caps once a later presence carries none, as after a downgrade', async () => {
+    open = await foundedTeamWith({ capsFor: { bob: [] } }, 'ada', 'bob');
+    at(0).roster.closeLegacy();
+    await passes(open);
+    relay = await startFakeRelay(at(0));
+    at(1).setCaps(['relay']);
+    await passes(open);
+    // Bob goes back to a build whose caps match its key op's: none.
+    at(1).setCaps([]);
+    await passes(open);
+    const res = await at(0).teamRoute('/api/team/transport', {
+      kind: 'relay',
+      url: relay.url,
+      confirmed: true,
+    });
+    expect(res.status).toBe(409);
+    expect(String(res.body.error)).toContain('bob');
+  });
+
   it('refuses a relay URL that is not wss, and a member who is no admin', async () => {
     const r = await team('ada', 'bob');
     const plain = await at(0).teamRoute('/api/team/transport', {

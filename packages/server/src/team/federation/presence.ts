@@ -3,7 +3,12 @@ import type { DeliveryEngine, MessageStore } from '@dispatch/protocol';
 import { hlcWallMs } from '@dispatch/protocol/federation';
 import type { FederatedOp, PresenceBody } from '@dispatch/protocol/federation';
 
-import { BUILD_CAPS, readCaps, recordPresenceCaps } from './caps.js';
+import {
+  BUILD_CAPS,
+  forgetPresenceCaps,
+  readCaps,
+  recordPresenceCaps,
+} from './caps.js';
 import type { Homes } from './homes.js';
 import { RosterError } from './roster.js';
 import type { RosterService } from './roster.js';
@@ -111,8 +116,10 @@ export class Presence implements Collector, OpHandler {
     const caps = [...(this.deps.caps?.() ?? BUILD_CAPS)];
     const keyed = this.ownKeyCaps();
     const announceCaps = JSON.stringify(caps) !== JSON.stringify(keyed);
-    const capsChanged =
-      announceCaps && JSON.stringify(caps) !== this.lastCapsSent;
+    // Back to the key op's caps after re-announcing others: say so at once.
+    const capsChanged = announceCaps
+      ? JSON.stringify(caps) !== this.lastCapsSent
+      : this.lastCapsSent !== null;
     if (
       capsChanged ||
       this.lastReplicaAt === null ||
@@ -125,7 +132,7 @@ export class Presence implements Collector, OpHandler {
         wall: now.getTime(),
         ...(announceCaps ? { caps } : {}),
       };
-      if (announceCaps) this.lastCapsSent = JSON.stringify(caps);
+      this.lastCapsSent = announceCaps ? JSON.stringify(caps) : null;
       fed.append({ type: 'presence', body });
       this.lastReplicaAt = now.getTime();
     }
@@ -171,8 +178,10 @@ export class Presence implements Collector, OpHandler {
       return 'dropped';
     }
     if (body.kind === 'replica') {
+      // A presence without caps means the key op's stand again (a downgrade).
       if ('caps' in body)
         recordPresenceCaps(this.deps.fed, op.replica, body.caps, op.hlc);
+      else forgetPresenceCaps(this.deps.fed, op.replica, op.hlc);
       this.deps.fed.db
         .query(
           'INSERT OR REPLACE INTO fed_replicas (replica, build, device, last_hlc, skew_ms) VALUES (?, ?, ?, ?, ?)'
