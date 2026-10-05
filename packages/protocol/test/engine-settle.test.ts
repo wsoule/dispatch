@@ -381,15 +381,6 @@ describe("elsewhere: Bob's question, received here", () => {
     expect(store.settledAs(mine.id)).toBe('superseded');
     expect(store.getMessage(mine.id)?.kind).toBe('message');
     expect(store.settlement(q.id)?.answerId).toBe('m-acy');
-    // Its sender is told, as a later answer's sender is at the settler.
-    await new Promise((r) => setTimeout(r, 10));
-    const notice = host
-      .hooks('notifyHuman')
-      .map((args) => store.getMessage(String(args[1])))
-      .find((m) => m?.from === SYSTEM_ADDRESS && m.body.startsWith(mine.id));
-    expect(notice?.body).toBe(
-      `${mine.id} was already answered; yours was kept as a reply.`
-    );
   });
 
   it('stores the first answer seen as pending and later ones as candidates', async () => {

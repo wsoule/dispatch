@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -11,7 +12,13 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../../../src/index.js';
 import { startServer } from '../../../../src/index.js';
-import { boardSyncDir } from '../../../../src/orchestrator/paths.js';
+import { boardSyncDir, runsDir } from '../../../../src/orchestrator/paths.js';
+import type {
+  Executor,
+  ExecutorEvents,
+  ExecutorRun,
+  ExecutorStartOptions,
+} from '../../../../src/orchestrator/types.js';
 import type { TeamKeys } from '../../../../src/team/federation/teamKeys.js';
 import { runGitSync } from '../../../orchestrator/helpers.js';
 import { rawFetch } from '../../../testAuth.js';
@@ -24,7 +31,38 @@ export interface TeammateOpts {
   federationNow?: () => number;
   federationDebounceMs?: number;
   gitName?: string;
+  /** Extra .dispatch/config.yml lines. */
+  config?: string;
 }
+
+// The runs a daemon started, and what each run was sent or notified: an
+// executor that stays running until stopped and records its traffic.
+class RecordingExecutor implements Executor {
+  readonly started: string[] = [];
+  readonly sent: string[] = [];
+  readonly notified: string[] = [];
+  readonly tokens = new Map<string, string>();
+
+  start(opts: ExecutorStartOptions, _events: ExecutorEvents): ExecutorRun {
+    const runId = opts.runId ?? '';
+    this.started.push(runId);
+    if (opts.runTokenFile !== undefined)
+      this.tokens.set(runId, readFileSync(opts.runTokenFile, 'utf8').trim());
+    return {
+      interrupt: () => Promise.resolve(),
+      requestStop: () => {},
+      send: (message) => {
+        this.sent.push(message);
+      },
+      approve: () => {},
+      notify: (text) => {
+        this.notified.push(text);
+      },
+    };
+  }
+}
+
+type SendBody = Record<string, unknown>;
 
 type Reply = { status: number; body: Record<string, unknown> | null };
 
@@ -46,6 +84,32 @@ export interface TeammateDaemon {
     init?: { method?: string; body?: string }
   ): Promise<Reply>;
   keys(): Promise<TeamKeys>;
+  /** The runs it started and their traffic. */
+  executor: RecordingExecutor;
+  /** Starts an execute run on a task; its id and messaging token. */
+  startRun(taskId: string): Promise<{ runId: string; token: string }>;
+  /** POST /api/messages, as the app token or `token`; throws on a non-2xx. */
+  send(
+    input: SendBody,
+    token?: string
+  ): Promise<{ id: string; thread: string }>;
+  trySend(input: SendBody, token?: string): Promise<Reply>;
+  reply(
+    id: string,
+    input: SendBody,
+    token?: string
+  ): Promise<{ id: string; thread: string }>;
+  tryReply(id: string, input: SendBody, token?: string): Promise<Reply>;
+  /** The ids of the open decisions this daemon's human holds. */
+  openDecisions(): Promise<string[]>;
+  answerOf(id: string): Promise<{
+    answer: { id: string; body: string } | null;
+    settlement?: string;
+  }>;
+  /** Registers agent:<handle>/<name> and approves it with the app token. */
+  registerAgent(name: string): Promise<{ address: string; token: string }>;
+  /** Read-only, messages.db. */
+  messagesDb<T>(sql: string, params?: (string | number)[]): T[];
   replica(): Promise<string>;
   found(): Promise<{
     teamId: string;
@@ -89,13 +153,17 @@ export function daemons(): {
 
   const boot = async (
     root: string,
-    opts: TeammateOpts
+    opts: TeammateOpts,
+    executor: RecordingExecutor
   ): Promise<ServerHandle> => {
     const handle = await startServer({
       rootDir: root,
       port: 0,
       webDistDir: null,
       storeBackend: 'sqlite',
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('claude', executor);
+      },
       ...(opts.federationNow === undefined
         ? {}
         : { federationNow: opts.federationNow }),
@@ -121,11 +189,12 @@ export function daemons(): {
     // A long interval: every pass is asked for explicitly.
     writeFileSync(
       join(root, '.dispatch', 'config.yml'),
-      `sync:\n  enabled: true\n  repo: ${remote}\n  intervalSec: 3600\n`
+      `sync:\n  enabled: true\n  repo: ${remote}\n  intervalSec: 3600\n${opts.config ?? ''}`
     );
     runGitSync(root, ['add', '-A']);
     runGitSync(root, ['commit', '-q', '-m', 'init']);
-    let server = await boot(root, opts);
+    const executor = new RecordingExecutor();
+    let server = await boot(root, opts, executor);
     const syncDir = boardSyncDir(root);
     const call = async (
       path: string,
@@ -210,6 +279,81 @@ export function daemons(): {
           db.close();
         }
       },
+      executor,
+      startRun: async (taskId) => {
+        const r = await call(`/api/tasks/${taskId}/runs`, {
+          method: 'POST',
+          body: JSON.stringify({ executor: 'claude' }),
+        });
+        const runId = (r.body as { id?: string } | null)?.id;
+        if (runId === undefined)
+          throw new Error(`startRun: ${r.status} ${JSON.stringify(r.body)}`);
+        for (let i = 0; i < 200 && !executor.tokens.has(runId); i++)
+          await Bun.sleep(10);
+        return { runId, token: executor.tokens.get(runId) ?? '' };
+      },
+      trySend: (input, token) =>
+        call('/api/messages', {
+          method: 'POST',
+          body: JSON.stringify(input),
+          ...(token === undefined ? {} : { token }),
+        }),
+      send: async (input, token) => {
+        const r = await self.trySend(input, token);
+        if (r.status >= 300)
+          throw new Error(`send: ${r.status} ${JSON.stringify(r.body)}`);
+        const m = (r.body as { message: { id: string; thread: string } })
+          .message;
+        return { id: m.id, thread: m.thread };
+      },
+      tryReply: (id, input, token) =>
+        call(`/api/messages/${id}/reply`, {
+          method: 'POST',
+          body: JSON.stringify(input),
+          ...(token === undefined ? {} : { token }),
+        }),
+      reply: async (id, input, token) => {
+        const r = await self.tryReply(id, input, token);
+        if (r.status >= 300)
+          throw new Error(`reply: ${r.status} ${JSON.stringify(r.body)}`);
+        const m = (r.body as { message: { id: string; thread: string } })
+          .message;
+        return { id: m.id, thread: m.thread };
+      },
+      openDecisions: async () =>
+        (
+          (
+            (await call('/api/decisions/open')).body as {
+              items?: { id: string }[];
+            } | null
+          )?.items ?? []
+        ).map((m) => m.id),
+      answerOf: async (id) =>
+        (await call(`/api/messages/${id}/answer`)).body as {
+          answer: { id: string; body: string } | null;
+          settlement?: string;
+        },
+      registerAgent: async (agentName) => {
+        const r = await call('/api/agents/register', {
+          method: 'POST',
+          body: JSON.stringify({ name: agentName, client: 'codex' }),
+        });
+        const reg = r.body as { address: string; token: string };
+        await call(`/api/agents/${encodeURIComponent(reg.address)}/approve`, {
+          method: 'POST',
+        });
+        return reg;
+      },
+      messagesDb: <T>(sql: string, params: (string | number)[] = []): T[] => {
+        const db = new Database(join(runsDir(root), 'messages.db'), {
+          readonly: true,
+        });
+        try {
+          return db.query<T, (string | number)[]>(sql).all(...params);
+        } finally {
+          db.close();
+        }
+      },
       partition: (offline) => {
         runGitSync(join(syncDir, 'repo'), [
           'remote',
@@ -224,7 +368,7 @@ export function daemons(): {
       },
       restart: async () => {
         await self.stop();
-        server = await boot(root, opts);
+        server = await boot(root, opts, executor);
       },
     };
     return self;
