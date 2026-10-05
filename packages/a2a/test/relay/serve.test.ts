@@ -212,3 +212,104 @@ describe('startRelay', () => {
     expect((await fetch(`${r.url}/t/${a.tp}/a2a/v1/tasks/x`)).status).toBe(503);
   });
 });
+
+describe('the relay’s handshake and isolation (batch 5 review)', () => {
+  it('refuses an auth signed for another connection’s nonce, and one that comes too late', async () => {
+    const a = newKey();
+    const r = await startRelay({
+      host: '127.0.0.1',
+      port: 0,
+      publicUrl: null,
+      tls: null,
+      publicBind: false,
+      trustForwardedFor: false,
+      tenantsFile: tenantsFile(`${a.tp}\n`),
+      log: (line) => lines.push(line),
+      authTimeoutMs: 300,
+    });
+    stops.push(r.stop);
+    const dialled = `${r.url.replace(/^http/, 'ws')}/v1/tenants`;
+    const open = () => {
+      const ws = new WebSocket(dialled);
+      const got: RelayToDaemon[] = [];
+      const closed = new Promise<void>((res) => (ws.onclose = () => res()));
+      const challenge = new Promise<string>((res) => {
+        ws.onmessage = (e) => {
+          const f = JSON.parse(String(e.data)) as RelayToDaemon;
+          got.push(f);
+          if (f.t === 'challenge') res(f.nonce);
+        };
+      });
+      stops.push(() => {
+        ws.close();
+        return Promise.resolve();
+      });
+      return { ws, got, closed, challenge };
+    };
+    // A second connection's auth answers the first one's nonce: refused.
+    const first = open();
+    const second = open();
+    const firstNonce = await first.challenge;
+    await second.challenge;
+    second.ws.send(
+      JSON.stringify(
+        answerChallenge({
+          relayUrl: dialled,
+          nonce: firstNonce,
+          privateKey: a.privateKey,
+          jwk: a.jwk,
+        })
+      )
+    );
+    await second.closed;
+    expect(second.got.some((f) => f.t === 'refused')).toBe(true);
+    // An auth after the timeout: the connection is already closed.
+    const late = open();
+    await late.challenge;
+    await late.closed;
+    expect(late.got.some((f) => f.t === 'ready')).toBe(false);
+  });
+
+  it('feeds a connection’s results only to its own tenant: B cannot answer A’s call', async () => {
+    const a = newKey();
+    const b = newKey();
+    const r = await relay(tenantsFile(`${a.tp}\n${b.tp}\n`));
+    let aCall: string | null = null;
+    // A never answers its calls; B answers A's call id instead.
+    const ta = tenant(r.url, a, () => ({ status: 0, body: null }));
+    ta.ws.onmessage = ((orig) => (e: MessageEvent) => {
+      const f = JSON.parse(String(e.data)) as RelayToDaemon;
+      if (f.t === 'call') {
+        aCall = f.id;
+        return;
+      }
+      orig?.call(ta.ws, e);
+    })(ta.ws.onmessage);
+    await ta.settled;
+    const tb = tenant(r.url, b);
+    await tb.settled;
+    const pending = fetch(`${r.url}/t/${a.tp}/a2a/v1/tasks/x`, {
+      headers: { authorization: 'Bearer t', 'a2a-version': '1.0' },
+      signal: AbortSignal.timeout(1500),
+    }).then(
+      (res) => res.status,
+      () => 'no answer'
+    );
+    await new Promise((res) => setTimeout(res, 300));
+    expect(aCall).not.toBeNull();
+    tb.ws.send(
+      JSON.stringify({
+        t: 'result',
+        id: aCall,
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ok: true,
+          caller: { address: 'agent:x/a2a.y', name: 'a2a.y' },
+        }),
+      })
+    );
+    expect(await pending).toBe('no answer');
+    expect(lines.join('\n')).toContain('answered a call it does not own');
+  });
+});

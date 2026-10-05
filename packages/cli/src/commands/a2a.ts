@@ -1,4 +1,4 @@
-import { startStandalone } from '@dispatch/a2a';
+import { startRelay, startStandalone } from '@dispatch/a2a';
 import type { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -12,6 +12,8 @@ import type {
 import { createA2AApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
+import type { RelayCommandOptions } from './a2aRelay.js';
+import { resolveRelay } from './a2aRelay.js';
 import type { ServeCommandOptions } from './a2aServe.js';
 import { resolveServe, stopSignal } from './a2aServe.js';
 import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
@@ -93,7 +95,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
   const a2a = program
     .command('a2a')
     .description(
-      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, pairing and keys, and standalone hosts (hosts, serve)'
+      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, pairing and keys, standalone hosts (hosts, serve), and the relay'
     );
 
   const withAgentToken = async (): Promise<A2AApiClient> => {
@@ -641,6 +643,43 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
       );
       await stopSignal();
       await standalone.stop();
+    });
+
+  a2a
+    .command('relay')
+    .description(
+      'Run an A2A relay: one public host for many daemons, each dialling in as a tenant at <public-url>/t/<thumbprint>'
+    )
+    .option('--port <n>', 'the port to listen on')
+    .option('--host <addr>', '127.0.0.1 (default) or a wildcard with --public')
+    .option(
+      '--public',
+      'allow binding every network interface (needs TLS and --public-url)'
+    )
+    .option('--public-url <url>', 'the relay origin clients and tenants use')
+    .option('--tls-cert <file>', 'serve over HTTPS (PEM)')
+    .option('--tls-key <file>', 'the private key for --tls-cert')
+    .option(
+      '--tenants-file <file>',
+      'a 0600 file of admitted card-key thumbprints, one per line, an optional name after each'
+    )
+    .option(
+      '--trust-forwarded-for',
+      'behind a tunnel on loopback: key per-IP limits on X-Forwarded-For'
+    )
+    .action(async (o: RelayCommandOptions) => {
+      let relay;
+      try {
+        relay = await startRelay(resolveRelay(o));
+      } catch (err) {
+        if (err instanceof CliError) throw err;
+        throw new CliError(err instanceof Error ? err.message : String(err));
+      }
+      ctx.log(
+        `A2A relay listening at ${relay.url}; tenants dial ${relay.url.replace(/^http/, 'ws')}/v1/tenants. Ctrl-C or SIGTERM stops it.`
+      );
+      await stopSignal();
+      await relay.stop();
     });
 
   const hosts = a2a

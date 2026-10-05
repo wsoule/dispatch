@@ -36,6 +36,8 @@ export interface RelayOptions {
   tenantsFile: string;
   limits?: TenantLimits;
   log?: (line: string) => void;
+  // How long a dialled connection has to answer its challenge (10 s).
+  authTimeoutMs?: number;
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
@@ -148,8 +150,14 @@ export async function startRelay(
     const nonce = randomBytes(24).toString('base64url');
     const dialled = `${base.replace(/^http/, 'ws')}${TENANTS_PATH}`;
     let tenant: Tenant | null = null;
-    const timer = setTimeout(() => conn.close(1008), AUTH_TIMEOUT_MS);
+    // The nonce is this connection's alone and good once, until the timer:
+    // an auth for any other nonce, or a late one, is refused.
+    const timer = setTimeout(
+      () => conn.close(1008),
+      o.authTimeoutMs ?? AUTH_TIMEOUT_MS
+    );
     timer.unref();
+    conn.send(JSON.stringify({ t: 'challenge', nonce }));
     conn.onClose = () => {
       clearTimeout(timer);
       conns.delete(conn);

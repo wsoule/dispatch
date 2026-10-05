@@ -265,3 +265,5 @@ export type { DaemonToRelay, RelayToDaemon } from './relay/frames.js';
 export { DEFAULT_TENANT_LIMITS, TenantLimiter } from './relay/limits.js';
 export type { TenantLimits } from './relay/limits.js';
 export { TenantRouter } from './relay/router.js';
+export { readTenants, startRelay } from './relay/serve.js';
+export type { RelayOptions } from './relay/serve.js';
