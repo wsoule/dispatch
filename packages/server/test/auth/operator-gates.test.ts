@@ -88,6 +88,36 @@ describe("a teammate's run (XH-R9)", () => {
     });
   }
 
+  it('names the teammate as its human in the prompt', async () => {
+    const w = world();
+    const ana = await invite(w, 'ana@example.com', 'decide');
+    await liveRun(w, ana.token);
+    const prompt = w.executor.started.at(-1)?.prompt ?? '';
+    expect(prompt).toContain(`(to: ["human:${ana.handle}"], kind: "question"`);
+    expect(prompt).not.toContain(OWNER);
+  });
+
+  it('names a request-tier teammate as its human, and the owner for scope', async () => {
+    const w = world();
+    const bo = await invite(w, 'bo@example.com', 'request');
+    await liveRun(w, bo.token);
+    const prompt = w.executor.started.at(-1)?.prompt ?? '';
+    expect(prompt).toContain(`(to: ["human:${bo.handle}"], kind: "question"`);
+    expect(prompt).toContain(`msg_send(to: ["${OWNER}"], kind: "question"`);
+  });
+
+  it("names the owner in the prompt of the owner's run and of a run for no one", async () => {
+    const w = world();
+    await liveRun(w, w.app);
+    expect(w.executor.started.at(-1)?.prompt).toContain(
+      `(to: ["${OWNER}"], kind: "question"`
+    );
+    await liveRun(w, w.agent);
+    expect(w.executor.started.at(-1)?.prompt).toContain(
+      `(to: ["${OWNER}"], kind: "question"`
+    );
+  });
+
   it("keeps the owner's own run's gates with the owner, telling no one", async () => {
     const w = world();
     const run = await liveRun(w, w.app);

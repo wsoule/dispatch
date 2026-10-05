@@ -159,7 +159,6 @@ export function openMessaging(deps: {
   const store = new SqliteMessageStore(db);
 
   const runTokens = createRunTokens(randomBytes(32));
-  deps.orchestrator.setRunTokenMinter(runTokens.mint);
 
   // Whether any run of the task is still going, winding down included.
   const hasActiveRun = (taskId: string) =>
@@ -181,6 +180,9 @@ export function openMessaging(deps: {
     hasAccess: (ref) =>
       ref === deps.ownerRef || (deps.deciders?.hasAccess(ref) ?? true),
   });
+
+  deps.orchestrator.setRunTokenMinter(runTokens.mint);
+  deps.orchestrator.setOperatorRouting(routing);
 
   const gates = new GateHandlers();
   const host = new DaemonMessagingHost({
