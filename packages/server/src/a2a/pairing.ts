@@ -85,7 +85,8 @@ export function pairedFetch(
 }
 
 // This project's card key; pairing cannot happen without one.
-function ourKey(d: PairingDeps) {
+/** This project's card key for pairing; throws when card signing is off. */
+export function ourKey(d: PairingDeps) {
   const signer = d.signer?.() ?? null;
   if (signer === null)
     throw new MessagingError(
@@ -96,7 +97,8 @@ function ourKey(d: PairingDeps) {
   return { ...key, jwk: signer.publicJwk() };
 }
 
-function ourName(d: PairingDeps): string {
+/** The name this side shows the other in a pairing. */
+export function ourName(d: PairingDeps): string {
   return (d.policy().name ?? basename(d.rootDir)).slice(0, 100);
 }
 
@@ -267,7 +269,14 @@ export function writeLinkPairedRecords(
 
 export function offerPairing(
   d: PairingDeps,
-  i: { alias: string; ourCard: string; ttlMin?: number; caller: Caller }
+  i: {
+    alias: string;
+    ourCard: string;
+    ttlMin?: number;
+    caller: Caller;
+    // A teammate link's transport in place of the card URL (T55).
+    reach?: Reach;
+  }
 ): { id: string; code: string; fingerprint: string; expiresAt: string } {
   checkAlias(d, i.alias, i.caller.ref);
   const key = ourKey(d);
@@ -275,7 +284,7 @@ export function offerPairing(
     TTL_MIN.max,
     Math.max(TTL_MIN.min, Math.round(i.ttlMin ?? TTL_MIN.default))
   );
-  const reach: Reach = { kind: 'url', card: i.ourCard };
+  const reach: Reach = i.reach ?? { kind: 'url', card: i.ourCard };
   const { code, secretHash } = newPairingCode({
     jwk: key.jwk,
     reach,
@@ -314,6 +323,15 @@ const refusedCode = () =>
   );
 
 /** Accepts a code: checks the offerer's card and key, proves ours, writes both rows. */
+/** Throws unless `ref` may name `alias`: free, and not its own name. */
+export function checkPairingAlias(
+  d: PairingDeps,
+  alias: string,
+  ref: Address
+): void {
+  checkAlias(d, alias, ref);
+}
+
 export async function acceptPairing(
   d: PairingDeps,
   i: { code: string; alias: string; ourCard: string; caller: Caller }

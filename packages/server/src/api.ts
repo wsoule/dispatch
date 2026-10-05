@@ -4686,6 +4686,7 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['a2a', 'pairings'], tier: 'decide' },
   { method: 'POST', segments: ['a2a', 'pairings', 'accept'], tier: 'decide' },
   { method: 'DELETE', segments: ['a2a', 'pairings', '*'], tier: 'decide' },
+  { method: 'GET', segments: ['a2a', 'links'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what

@@ -78,6 +78,8 @@ export interface LinkServiceDeps {
   now: () => Date;
   git?: AsyncGitRunner;
   readBytes?: number;
+  /** More for the key op's body: the accepter's pairing proof (T55). */
+  keyBody?: Record<string, JsonValue>;
 }
 
 export type PublishResult = 'published' | 'waiting' | 'refused' | 'oversize';
@@ -239,7 +241,10 @@ export class LinkService {
       this.ensured = true;
     }
     if (this.store.ownHead() === null)
-      this.append({ type: 'key', body: { link: this.deps.link.id } });
+      this.append({
+        type: 'key',
+        body: { ...this.deps.keyBody, link: this.deps.link.id },
+      });
     let entries: LogEntry[];
     try {
       await this.transport.publish(this.takeFresh());

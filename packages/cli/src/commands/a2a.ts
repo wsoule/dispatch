@@ -492,22 +492,38 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
     )
     .requiredOption('--alias <alias>', 'what the other side is called here')
     .option('--ttl <minutes>', 'how long the code stays good, 5 to 60')
+    .option(
+      '--link <remote>',
+      'pair over a teammate link on this git remote, with no listener on either side'
+    )
     .option('--token <token>', TOKEN_HELP)
-    .action(async (o: { alias: string; ttl?: string; token?: string }) => {
-      const client = await withAppToken(o.token, 'dispatch a2a pair offer');
-      const ttlMin = o.ttl === undefined ? undefined : Number(o.ttl);
-      if (ttlMin !== undefined && !Number.isInteger(ttlMin))
-        throw new CliError('--ttl takes whole minutes, 5 to 60');
-      const offered = await client.createPairing({
-        alias: o.alias,
-        ...(ttlMin === undefined ? {} : { ttlMin }),
-      });
-      ctx.log(`code: ${offered.code}`);
-      ctx.log(
-        `This code is shown once and is good until ${offered.expiresAt}. Give it to the other side over a channel you trust; they run dispatch a2a pair accept.`
-      );
-      ctx.log(`This agent's fingerprint: ${offered.fingerprint}`);
-    });
+    .action(
+      async (o: {
+        alias: string;
+        ttl?: string;
+        link?: string;
+        token?: string;
+      }) => {
+        const client = await withAppToken(o.token, 'dispatch a2a pair offer');
+        const ttlMin = o.ttl === undefined ? undefined : Number(o.ttl);
+        if (ttlMin !== undefined && !Number.isInteger(ttlMin))
+          throw new CliError('--ttl takes whole minutes, 5 to 60');
+        const offered = await client.createPairing({
+          alias: o.alias,
+          ...(ttlMin === undefined ? {} : { ttlMin }),
+          ...(o.link === undefined ? {} : { link: { remote: o.link } }),
+        });
+        ctx.log(`code: ${offered.code}`);
+        ctx.log(
+          `This code is shown once and is good until ${offered.expiresAt}. Give it to the other side over a channel you trust; they run dispatch a2a pair accept.`
+        );
+        if (o.link !== undefined)
+          ctx.log(
+            `Over a teammate link on ${o.link}: the pairing completes here once this daemon reads their proof on the link branch.`
+          );
+        ctx.log(`This agent's fingerprint: ${offered.fingerprint}`);
+      }
+    );
 
   pair
     .command('accept')

@@ -400,6 +400,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
             `a2a:${a} unpaired: the other side removed this pairing over the link. Its records are kept, disabled.`
         ),
       keyChange: (id, statement) => keyService.receiveOverLink(id, statement),
+      pairing: () => ({
+        ...peerService.deps,
+        notices: peerService.notices,
+        emit: peerService.emit,
+      }),
       changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
       ...(deps.linkIntervalMs === undefined
         ? {}

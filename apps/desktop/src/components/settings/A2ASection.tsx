@@ -119,7 +119,8 @@ function useA2AQuery<T>(
     | 'tasks'
     | 'peers'
     | 'keys'
-    | 'pairings',
+    | 'pairings'
+    | 'links',
   fetch: (api: ApiClient) => Promise<T>,
   enabled = true
 ): UseQueryResult<T> {
@@ -160,6 +161,7 @@ export function A2ASection({ data }: A2ASectionProps) {
         canOperate={myTier === 'operator'}
       />
       <PairingGroup client={client} canDecide={canDecide} />
+      <LinksGroup client={client} canDecide={canDecide} />
       <KeysGroup client={client} canOperate={myTier === 'operator'} />
     </>
   );
@@ -1310,6 +1312,7 @@ function PairingGroup({
 }) {
   const queryClient = useQueryClient();
   const [alias, setAlias] = useState('');
+  const [linkRemote, setLinkRemote] = useState('');
   const [offered, setOffered] = useState<{
     code: string;
     fingerprint: string;
@@ -1339,8 +1342,14 @@ function PairingGroup({
     setPending(true);
     setError(null);
     try {
-      setOffered(await client.createA2APairing({ alias: name }));
+      const remote = linkRemote.trim();
+      setOffered(
+        await client.createA2APairing(
+          remote === '' ? { alias: name } : { alias: name, link: { remote } }
+        )
+      );
       setAlias('');
+      setLinkRemote('');
       await refresh();
     } catch (err) {
       setError(isInsufficientTier(err) ? DECIDE_HINT : errorText(err));
@@ -1421,6 +1430,21 @@ function PairingGroup({
                 Pair with…
               </Button>
             </form>
+            <label
+              htmlFor="a2a-pair-link"
+              className="text-foreground mt-2 text-[13px] font-medium"
+            >
+              Over a link (git remote)
+            </label>
+            <Input
+              id="a2a-pair-link"
+              value={linkRemote}
+              placeholder="Optional: a remote you both can push to"
+              spellCheck={false}
+              autoComplete="off"
+              className="font-mono text-[12px]"
+              onChange={(e) => setLinkRemote(e.target.value)}
+            />
           </SettingsRow>
           <SettingsRow title="Pairing code" htmlFor="a2a-pair-code" stacked>
             <form
@@ -1521,6 +1545,72 @@ function PairingGroup({
           <FieldProblem message={error} />
         </>
       )}
+    </SettingsGroup>
+  );
+}
+
+/** Teammate links (T55): each link's health beside team transport health,
+ *  and offers still waiting for the other side's proof on the branch. */
+function LinksGroup({
+  client,
+  canDecide,
+}: {
+  client: Api;
+  canDecide: boolean;
+}) {
+  const links = useA2AQuery(
+    client,
+    'links',
+    (api) => api.a2aLinks(),
+    canDecide
+  );
+  const data = links.data;
+  if (!canDecide || data === undefined) return null;
+  if (data.links.length === 0 && data.offers.length === 0) return null;
+  return (
+    <SettingsGroup
+      title="Links"
+      requires="none"
+      hint="Paired agents reached over a shared git branch, with no listener on either side. Messages wait on the branch while the other side is away."
+      keywords="a2a link teammate branch git health"
+    >
+      {data.links.map((l) => (
+        <SettingsRow
+          key={l.alias}
+          title={<span className="font-mono">a2a:{l.alias}</span>}
+          subtitle={
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate font-mono">{l.remote}</span>
+              <span>
+                {l.ready ? 'Ready' : 'Not reached yet'}
+                {l.lastExchangeAt === null
+                  ? ''
+                  : ` · last exchange ${formatShortDate(l.lastExchangeAt)}`}
+                {` · ${l.waiting} waiting, ${l.unpublished} unpublished`}
+              </span>
+              {l.lastError !== null && <span>{l.lastError}</span>}
+              {l.problems.map((p) => (
+                <span key={p.subject}>{p.message}</span>
+              ))}
+            </span>
+          }
+        />
+      ))}
+      {data.offers.map((o) => (
+        <SettingsRow
+          key={o.pairedId}
+          title={<span className="font-mono">a2a:{o.alias}</span>}
+          subtitle={
+            <span className="flex min-w-0 flex-col">
+              <span>Waiting for their proof on the link</span>
+              <span className="truncate font-mono">{o.remote}</span>
+              {o.problems.map((p) => (
+                <span key={p}>{p}</span>
+              ))}
+            </span>
+          }
+        />
+      ))}
     </SettingsGroup>
   );
 }

@@ -16,7 +16,9 @@ import { runsDir } from '../orchestrator/paths.js';
 import { LinkPeerClient } from '../team/links/client.js';
 import { LinkHub } from '../team/links/hub.js';
 import { authenticateSignedAgent } from './auth.js';
+import { checkLinkProof } from './linkPairing.js';
 import type { OutboundClient } from './outbound.js';
+import type { PairingDeps } from './pairing.js';
 
 export interface LinkWiringDeps {
   rootDir: string;
@@ -27,6 +29,8 @@ export interface LinkWiringDeps {
   unpaired: (pairedId: string) => void;
   keyChange: (pairedId: string, statement: unknown) => void;
   changed: () => void;
+  // What link pairing needs to complete an offer (T55).
+  pairing: () => PairingDeps | null;
   now?: () => Date;
   intervalMs?: number;
 }
@@ -94,6 +98,20 @@ export class LinkWiring {
       },
       now,
       changed: this.d.changed,
+      offerState: (id) => {
+        const row = this.d.store.pairing(id);
+        if (row === null) return null;
+        return row.state === 'offered' &&
+          Date.parse(row.expiresAt) > now().getTime()
+          ? 'offered'
+          : 'closed';
+      },
+      offerProof: (id, proof) => {
+        const d = this.d.pairing();
+        return d === null
+          ? { ok: false, why: 'the A2A bridge is unavailable' }
+          : checkLinkProof(d, id, proof);
+      },
       ...(this.d.intervalMs === undefined
         ? {}
         : { intervalMs: this.d.intervalMs }),

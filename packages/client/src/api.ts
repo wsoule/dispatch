@@ -1433,6 +1433,40 @@ export interface A2APairingSummary {
   sas: string | null;
 }
 
+// GET /api/a2a/links (T55): each teammate link's health, and offers waiting
+// for the other side's proof. Mirrors LinkHub.health and offers.
+export interface A2ALinkHealth {
+  alias: string;
+  remote: string;
+  branch: string;
+  ready: boolean;
+  waiting: number;
+  lastExchangeAt: string | null;
+  lastError: string | null;
+  unpublished: number;
+  problems: {
+    subject: string;
+    message: string;
+    at: string;
+    dismissible: boolean;
+  }[];
+}
+
+export interface A2ALinkOffer {
+  pairedId: string;
+  alias: string;
+  remote: string;
+  branch: string;
+  createdAt: string;
+  problems: string[];
+}
+
+export interface A2ALinksStatus {
+  enabled: boolean;
+  links: A2ALinkHealth[];
+  offers: A2ALinkOffer[];
+}
+
 // GET /api/a2a/keys: this project's card key and a rotation in its overlap.
 export interface A2AKeys {
   current: { fingerprint: string; thumbprint?: string };
@@ -3978,8 +4012,13 @@ export interface ApiClient {
   removeA2APeer(alias: string): Promise<void>;
   /** Operator tier: lets standalone hosts reach /api/a2a/port, or closes it. */
   setA2AStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
-  /** Decide tier: a pairing code for the other side, shown once. */
-  createA2APairing(input: { alias: string; ttlMin?: number }): Promise<{
+  /** Decide tier: a pairing code for the other side, shown once; `link`
+   *  pairs over a teammate link on that git remote. */
+  createA2APairing(input: {
+    alias: string;
+    ttlMin?: number;
+    link?: { remote: string };
+  }): Promise<{
     id: string;
     code: string;
     fingerprint: string;
@@ -3991,6 +4030,8 @@ export interface ApiClient {
     alias: string;
   }): Promise<{ alias: string; sas: string; fingerprint: string }>;
   a2aPairings(): Promise<{ pairings: A2APairingSummary[] }>;
+  /** Decide tier: teammate links' health and open link offers. */
+  a2aLinks(): Promise<A2ALinksStatus>;
   cancelA2APairing(id: string): Promise<void>;
   /** Decide tier: moves a bearer peer to signed requests once its owner agrees. */
   upgradeA2APeer(
@@ -5106,6 +5147,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody(input),
       }),
     a2aPairings: () => request(target, '/api/a2a/pairings'),
+    a2aLinks: () => request(target, '/api/a2a/links'),
     cancelA2APairing: async (id) => {
       await send(target, `/api/a2a/pairings/${encodeURIComponent(id)}`, {
         method: 'DELETE',

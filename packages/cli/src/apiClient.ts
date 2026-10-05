@@ -1403,7 +1403,11 @@ export interface A2AApiClient {
   ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
   removeHost(id: string): Promise<void>;
   setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
-  createPairing(input: { alias: string; ttlMin?: number }): Promise<{
+  createPairing(input: {
+    alias: string;
+    ttlMin?: number;
+    link?: { remote: string };
+  }): Promise<{
     id: string;
     code: string;
     fingerprint: string;

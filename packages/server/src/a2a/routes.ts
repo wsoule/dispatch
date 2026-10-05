@@ -3,6 +3,7 @@ import {
   cardJson,
   clientNameFor,
   decideState,
+  decodePairingCode,
   isClientAddress,
   PeerHttpError,
   TERMINAL_STATES,
@@ -29,6 +30,7 @@ import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
 import { hostPublicUrl, isHostName, mintHost } from './hosts.js';
+import { acceptLinkPairing, offerLinkPairing } from './linkPairing.js';
 import { acceptPairing, offerPairing, pairingSummaries } from './pairing.js';
 import type { PeerAddInput, PeerChange } from './peers.js';
 import {
@@ -601,6 +603,33 @@ async function rotateKeys(req: Request, ctx: ApiContext): Promise<Response> {
   return jsonResponse(rotation);
 }
 
+// A link offer (`link: { remote }`) or the acceptance of a link code; null
+// for the card-URL flow.
+function linkRequest(
+  body: Record<string, unknown>,
+  rest: string[]
+):
+  | { kind: 'offer'; remote: string }
+  | { kind: 'accept'; code: string }
+  | 'invalid'
+  | null {
+  if (rest.length === 0 && body.link !== undefined) {
+    const remote = (body.link as { remote?: unknown } | null)?.remote;
+    return typeof remote === 'string' && remote !== ''
+      ? { kind: 'offer', remote }
+      : 'invalid';
+  }
+  if (rest[0] !== 'accept' || typeof body.code !== 'string') return null;
+  try {
+    const code = decodePairingCode(body.code, new Date());
+    return code.reach.kind === 'link'
+      ? { kind: 'accept', code: body.code }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 // `/api/a2a/pairings[/accept | /:id]` (P5): offer a code, accept one, list
 // or cancel; tiers are in ELEVATED_ROUTES, private card URLs need the operator.
 async function pairingRoute(
@@ -639,6 +668,31 @@ async function pairingRoute(
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as Record<string, unknown>;
+  if (typeof body.alias !== 'string')
+    return invalid('alias', 'alias is required');
+  if (body.ttlMin !== undefined && typeof body.ttlMin !== 'number')
+    return invalid('ttlMin', 'ttlMin must be a number of minutes');
+  // T55: a pairing reached over a teammate link needs no listener.
+  const link = linkRequest(body, rest);
+  if (link === 'invalid')
+    return invalid('link.remote', 'link.remote must be a git remote');
+  if (link !== null) {
+    const result =
+      link.kind === 'offer'
+        ? offerLinkPairing(d, b.a2a.links, {
+            alias: body.alias,
+            remote: link.remote,
+            ...(typeof body.ttlMin === 'number' ? { ttlMin: body.ttlMin } : {}),
+            caller,
+          })
+        : acceptLinkPairing(d, b.a2a.links, {
+            code: link.code,
+            alias: body.alias,
+            caller,
+          });
+    changed(ctx);
+    return jsonResponse(result, link.kind === 'offer' ? 201 : 200);
+  }
   // This side's card URL: the open listener's, or one given (a host or relay).
   const ourCard =
     typeof body.cardUrl === 'string' ? body.cardUrl : ourCardUrl(b.a2a);
@@ -647,10 +701,6 @@ async function pairingRoute(
       409,
       'open the A2A listener first, or pass cardUrl: the other side needs to reach this agent'
     );
-  if (typeof body.alias !== 'string')
-    return invalid('alias', 'alias is required');
-  if (body.ttlMin !== undefined && typeof body.ttlMin !== 'number')
-    return invalid('ttlMin', 'ttlMin must be a number of minutes');
   try {
     if (rest.length === 0) {
       const offered = offerPairing(d, {
@@ -704,6 +754,17 @@ export async function handleA2ARoute(
     return rotateKeys(req, ctx);
   if (segments[0] === 'relay' && segments.length === 1)
     return relayRoute(req, ctx, method);
+  // T55: each link's health, and offers waiting for the other side's proof.
+  if (segments[0] === 'links' && segments.length === 1 && method === 'GET') {
+    const b = bridge(ctx);
+    if (!b.ok) return b.response;
+    const hub = b.a2a.links;
+    return jsonResponse({
+      enabled: hub !== null,
+      links: hub?.health() ?? [],
+      offers: hub?.offers() ?? [],
+    });
+  }
   if (segments[0] === 'keys' && segments.length === 1 && method === 'GET') {
     const b = bridge(ctx);
     if (!b.ok) return b.response;

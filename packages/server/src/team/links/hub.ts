@@ -1,10 +1,15 @@
 import { ENVELOPE_URI, WORK_URI } from '@dispatch/a2a';
 import type { LinkPayload } from '@dispatch/a2a';
+import type { JsonValue } from '@dispatch/protocol';
+import { isStub } from '@dispatch/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AsyncGitRunner } from '../../sync/worktree.js';
+import { defaultAsyncGitRunner } from '../../sync/worktree.js';
+import { SyncRepo } from '../boardSync/repo.js';
+import { signedEntry } from '../federation/git.js';
 import { linkReplicaId, LinkService } from './service.js';
 import type { LinkKeys, PublishResult } from './service.js';
 import type { LinkProblem } from './store.js';
@@ -52,6 +57,23 @@ export interface LinkHubDeps {
   git?: AsyncGitRunner;
   intervalMs?: number;
   changed?: () => void;
+  /** An offer's pairing state ('offered' while it may complete). */
+  offerState?: (pairedId: string) => string | null;
+  /** Checks a proof read on an offer's branch (linkPairing.checkLinkProof). */
+  offerProof?: (pairedId: string, proof: unknown) => OfferProof;
+}
+
+type OfferProof =
+  | { ok: true; signPub: string; sealPub: string; complete: () => boolean }
+  | { ok: false; why: string };
+
+export interface LinkOffer {
+  pairedId: string;
+  alias: string;
+  remote: string;
+  branch: string;
+  createdAt: string;
+  problems: string[];
 }
 
 const LINK_BASE = 'http://link.invalid/a2a/v1';
@@ -85,6 +107,7 @@ export class LinkHub {
   private readonly watches = new Map<string, () => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly listeners = new Set<(alias: string) => void>();
+  private readonly offerProblems = new Map<string, string[]>();
   private running: Promise<void> | null = null;
   private again = false;
   private stopped = false;
@@ -103,6 +126,8 @@ export class LinkHub {
       CREATE TABLE IF NOT EXISTS sent (alias TEXT NOT NULL, message_id TEXT NOT NULL, task_id TEXT NOT NULL, PRIMARY KEY (alias, message_id));
       CREATE TABLE IF NOT EXISTS remote_tasks (alias TEXT NOT NULL, task_id TEXT NOT NULL, json TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (alias, task_id));
       CREATE TABLE IF NOT EXISTS served (alias TEXT NOT NULL, task_id TEXT NOT NULL, for_id TEXT NOT NULL, PRIMARY KEY (alias, task_id));
+      CREATE TABLE IF NOT EXISTS key_bodies (alias TEXT PRIMARY KEY, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS offers (paired_id TEXT PRIMARY KEY, alias TEXT NOT NULL, remote TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
     for (const row of this.links()) this.open(row);
   }
@@ -137,8 +162,17 @@ export class LinkHub {
     return this.links().find((l) => l.alias === alias) ?? null;
   }
 
-  /** Records a link and starts serving it. */
-  add(row: LinkRow): void {
+  /** This side's link keys, for a pairing's binding. */
+  ourKeys(): LinkKeys {
+    return this.deps.keys;
+  }
+
+  /** Records a link and starts serving it; `keyBody` joins its key op. */
+  add(row: LinkRow, keyBody?: Record<string, JsonValue>): void {
+    if (keyBody !== undefined)
+      this.db
+        .query('INSERT OR REPLACE INTO key_bodies (alias, json) VALUES (?, ?)')
+        .run(row.alias, JSON.stringify(keyBody));
     this.db
       .query(
         'INSERT INTO links (alias, paired_id, remote, branch, sign_pub, seal_pub, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -165,12 +199,28 @@ export class LinkHub {
         stop();
         this.watches.delete(key);
       }
-    for (const table of ['links', 'sent', 'remote_tasks', 'served'])
+    for (const table of [
+      'links',
+      'sent',
+      'remote_tasks',
+      'served',
+      'key_bodies',
+    ])
       this.db.query(`DELETE FROM ${table} WHERE alias = ?`).run(alias);
   }
 
   private open(row: LinkRow): void {
+    const keyBody = this.db
+      .query<{ json: string }, [string]>(
+        'SELECT json FROM key_bodies WHERE alias = ?'
+      )
+      .get(row.alias);
     const service = new LinkService({
+      ...(keyBody === null
+        ? {}
+        : {
+            keyBody: JSON.parse(keyBody.json) as Record<string, JsonValue>,
+          }),
       dir: join(this.deps.dir, row.pairedId),
       link: { id: row.pairedId, remote: row.remote, branch: row.branch },
       keys: this.deps.keys,
@@ -239,6 +289,7 @@ export class LinkHub {
   }
 
   private async passAll(): Promise<void> {
+    await this.scanOffers();
     for (const [alias, s] of [...this.services]) {
       if (this.stopped) return;
       try {
@@ -248,6 +299,123 @@ export class LinkHub {
       }
     }
     this.deps.changed?.();
+  }
+
+  // ---- offers waiting for the accepter's proof on their branch (T55) ----
+
+  /** Watches an offer's branch for the accepter's key op and its proof. */
+  watchOffer(o: {
+    pairedId: string;
+    alias: string;
+    remote: string;
+    branch: string;
+  }): void {
+    this.db
+      .query(
+        'INSERT OR REPLACE INTO offers (paired_id, alias, remote, branch, created_at) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(
+        o.pairedId,
+        o.alias,
+        o.remote,
+        o.branch,
+        this.deps.now().toISOString()
+      );
+    this.kick();
+  }
+
+  offers(): LinkOffer[] {
+    return this.db
+      .query<
+        {
+          paired_id: string;
+          alias: string;
+          remote: string;
+          branch: string;
+          created_at: string;
+        },
+        []
+      >('SELECT * FROM offers ORDER BY created_at')
+      .all()
+      .map((r) => ({
+        pairedId: r.paired_id,
+        alias: r.alias,
+        remote: r.remote,
+        branch: r.branch,
+        createdAt: r.created_at,
+        problems: this.offerProblems.get(r.paired_id) ?? [],
+      }));
+  }
+
+  private dropOffer(pairedId: string): void {
+    this.db.query('DELETE FROM offers WHERE paired_id = ?').run(pairedId);
+    this.offerProblems.delete(pairedId);
+  }
+
+  // Reads each open offer's branch for key ops carrying a proof. A proof that
+  // checks out and an op its bound key signed for this link complete it;
+  // anything else is ignored with a note.
+  private async scanOffers(): Promise<void> {
+    for (const o of this.offers()) {
+      if (this.stopped) return;
+      const state = this.deps.offerState?.(o.pairedId) ?? 'gone';
+      if (state !== 'offered') {
+        this.dropOffer(o.pairedId);
+        continue;
+      }
+      const repo = new SyncRepo(
+        join(this.deps.dir, 'offers', o.pairedId),
+        o.remote,
+        o.branch,
+        'offer-00000000',
+        this.deps.git ?? defaultAsyncGitRunner
+      );
+      try {
+        await repo.ensure();
+        const res = await repo.exchange();
+        if (res.offline !== undefined) continue;
+      } catch (err) {
+        console.error(`a2a: reading link offer ${o.pairedId} failed`, err);
+        continue;
+      }
+      const notes: string[] = [];
+      for (const e of repo.scanFull(null)) {
+        if (e.type !== 'key' || isStub(e)) continue;
+        // After isStub, `e` is a full op.
+        const body = e.body as Record<string, unknown> | undefined;
+        if (body?.['link'] !== o.pairedId || body['proof'] === undefined)
+          continue;
+        const check = this.deps.offerProof?.(o.pairedId, body['proof']) ?? null;
+        if (check === null || !check.ok) {
+          notes.push(check?.why ?? 'a proof nobody here can check');
+          continue;
+        }
+        if (
+          e.replica !== linkReplicaId(check.signPub, o.pairedId) ||
+          !signedEntry(e, check.signPub)
+        ) {
+          notes.push('a proof in an op its link key did not sign');
+          continue;
+        }
+        if (check.complete()) {
+          this.dropOffer(o.pairedId);
+          this.add({
+            alias: o.alias,
+            pairedId: o.pairedId,
+            remote: o.remote,
+            branch: o.branch,
+            signPub: check.signPub,
+            sealPub: check.sealPub,
+            createdAt: this.deps.now().toISOString(),
+          });
+        }
+        break;
+      }
+      if (notes.length > 0)
+        this.offerProblems.set(o.pairedId, [
+          `${notes.length} key op${notes.length === 1 ? '' : 's'} on the link branch offered a pairing proof that did not check out (${notes[0]}); ignored`,
+        ]);
+    }
   }
 
   publish(alias: string, payload: LinkPayload): PublishResult {

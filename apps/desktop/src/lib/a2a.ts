@@ -32,6 +32,7 @@ export function a2aQueryKey(
     | 'peers'
     | 'keys'
     | 'pairings'
+    | 'links'
 ): readonly unknown[] {
   return ['dispatch-a2a', baseUrl, what];
 }

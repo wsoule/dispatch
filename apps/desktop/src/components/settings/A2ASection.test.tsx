@@ -1,5 +1,6 @@
 import type {
   A2AClientSummary,
+  A2ALinksStatus,
   A2AListenerSettings,
   A2AListenerStatus,
   A2APairingSummary,
@@ -118,6 +119,7 @@ function mount(
     tasks?: A2ATaskSummary[];
     peers?: A2APeerSummary[] | Error;
     pairings?: A2APairingSummary[];
+    links?: A2ALinksStatus;
   } = {}
 ) {
   const status = over.status ?? CLOSED;
@@ -187,6 +189,9 @@ function mount(
     ),
     a2aPairings: mock(() => Promise.resolve({ pairings: over.pairings ?? [] })),
     cancelA2APairing: mock((_id: string) => Promise.resolve()),
+    a2aLinks: mock(() =>
+      Promise.resolve(over.links ?? { enabled: true, links: [], offers: [] })
+    ),
     upgradeA2APeer: mock((_alias: string, _fp: string) =>
       Promise.resolve({
         state: 'pending',
@@ -686,6 +691,66 @@ test('Enter a code takes it in a password field, cleared on submit, and shows th
   expect(screen.getByText(/<b>T1H2<\/b>-R3K4/)).toBeTruthy();
   expect(document.querySelector('i')).toBeNull();
   expect(document.body.textContent).not.toContain(PAIR_CODE);
+});
+
+test('Pair with… over a link sends the remote, and needs no listener (T55)', async () => {
+  const client = mount('decide');
+  fireEvent.change(await screen.findByLabelText('Pair as'), {
+    target: { value: 'bob' },
+  });
+  fireEvent.change(screen.getByLabelText('Over a link (git remote)'), {
+    target: { value: 'git@github.com:acme/links.git' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Pair with…' }));
+  await waitFor(() =>
+    expect(client.createA2APairing).toHaveBeenCalledWith({
+      alias: 'bob',
+      link: { remote: 'git@github.com:acme/links.git' },
+    })
+  );
+});
+
+test('Links shows each link’s health and an offer’s problem, as text (T55)', async () => {
+  mount('decide', {
+    links: {
+      enabled: true,
+      links: [
+        {
+          alias: 'bob',
+          remote: 'git@github.com:acme/links.git',
+          branch: 'dispatch-a2a-0123456789abcdef',
+          ready: true,
+          waiting: 2,
+          lastExchangeAt: '2026-10-05T00:00:00.000Z',
+          lastError: null,
+          unpublished: 1,
+          problems: [
+            {
+              subject: 'link-rival:x',
+              message: '<b>1 key op</b> on the link branch is not this link’s',
+              at: '2026-10-05T00:00:00.000Z',
+              dismissible: true,
+            },
+          ],
+        },
+      ],
+      offers: [
+        {
+          pairedId: 'AAAAAAAAAAAAAAAAAAAAAA',
+          alias: 'carl',
+          remote: '/srv/links.git',
+          branch: 'dispatch-a2a-fedcba9876543210',
+          createdAt: '2026-10-05T00:00:00.000Z',
+          problems: ['1 key op offered a proof that did not check out'],
+        },
+      ],
+    },
+  });
+  expect(await screen.findByText('a2a:bob')).toBeTruthy();
+  expect(screen.getByText(/2 waiting, 1 unpublished/)).toBeTruthy();
+  expect(screen.getByText(/<b>1 key op<\/b>/)).toBeTruthy();
+  expect(document.querySelector('b')).toBeNull();
+  expect(screen.getByText(/did not check out/)).toBeTruthy();
 });
 
 test('below decide there is no pairing form', async () => {

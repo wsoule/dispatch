@@ -132,5 +132,5 @@ export function useLinkDaemons() {
     return id;
   }
 
-  return { daemon, linkPair, home: () => home };
+  return { daemon, linkPair, home: () => home, remote: () => remote };
 }

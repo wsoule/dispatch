@@ -738,6 +738,25 @@ describe('dispatch a2a pair', () => {
     expect(out).toContain('A9B8-C7D6-J5K4-N3P2-S1T0-W9X8');
   });
 
+  it('offers a pairing over a teammate link with --link (T55)', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run(
+      'a2a',
+      'pair',
+      'offer',
+      '--alias',
+      'bob',
+      '--link',
+      'git@github.com:acme/links.git'
+    );
+    expect(a2aCalls()[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/a2a/pairings',
+      body: { alias: 'bob', link: { remote: 'git@github.com:acme/links.git' } },
+    });
+    expect(lines.join('\n')).toContain('link');
+  });
+
   it('accepts a code read only from stdin, and prints the SAS to compare', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     ctx.readStdin = () => Promise.resolve(`${CODE}\n`);
