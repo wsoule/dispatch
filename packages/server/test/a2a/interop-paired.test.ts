@@ -54,7 +54,7 @@ it('a plain SDK client asks on its bearer while the daemon holds a pairing', asy
     { ...peers.deps, notices: peers.notices, emit: peers.emit },
     {
       alias: 'teammate',
-      pairedId: 'PAIRINGIDPAIRINGID0001',
+      pairedId: 'AAAAAAAAAAAAAAAAAAAAAA',
       name: 'teammate',
       peer: { thumbprint: ecThumbprint(jwk) ?? '', jwk },
       creator: 'human:owner',
