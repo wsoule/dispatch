@@ -1,12 +1,12 @@
-import type { TaskFacts, TaskRow } from '@dispatch/a2a';
+import type { TaskFacts, TaskRow } from '@dispatch-foo/a2a';
 import {
   decideState,
   gateInScope,
   projectionKey,
   statusAt,
-} from '@dispatch/a2a';
-import type { EngineEvent, Message } from '@dispatch/protocol';
-import { hasGateData } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import type { EngineEvent, Message } from '@dispatch-foo/protocol';
+import { hasGateData } from '@dispatch-foo/protocol';
 
 import type { EventBus } from '../events.js';
 import { gatherFacts } from './facts.js';

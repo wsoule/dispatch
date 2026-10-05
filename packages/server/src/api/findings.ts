@@ -1,9 +1,9 @@
-import { describeValue } from '@dispatch/core';
+import { describeValue } from '@dispatch-foo/core';
 import type {
   FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { classifyLedgerEntry } from '../memory/ledgerImport.js';

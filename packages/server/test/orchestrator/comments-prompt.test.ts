@@ -1,4 +1,4 @@
-import { FileCommentStore, TaskStore } from '@dispatch/core';
+import { FileCommentStore, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

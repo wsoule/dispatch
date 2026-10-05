@@ -1,4 +1,4 @@
-import type { ScoredTask } from '@dispatch/core';
+import type { ScoredTask } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

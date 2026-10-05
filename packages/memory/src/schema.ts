@@ -1,5 +1,5 @@
-import { dbVersion, openSqliteDb, queryOne } from '@dispatch/core';
-import type { SqliteDatabase } from '@dispatch/core';
+import { dbVersion, openSqliteDb, queryOne } from '@dispatch-foo/core';
+import type { SqliteDatabase } from '@dispatch-foo/core';
 import { chmodSync, existsSync } from 'node:fs';
 
 import { MemoryError } from './errors.js';

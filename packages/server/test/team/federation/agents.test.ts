@@ -1,4 +1,4 @@
-import type { AgentRecord } from '@dispatch/protocol';
+import type { AgentRecord } from '@dispatch-foo/protocol';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import type { ApiContext } from '../../../src/api.js';

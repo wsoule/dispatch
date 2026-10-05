@@ -1,5 +1,5 @@
+import type { TaskComment } from '@dispatch-foo/core/browser';
 import type { ApiClient, LedgerEntry } from '@dispatch/client';
-import type { TaskComment } from '@dispatch/core/browser';
 import {
   act,
   fireEvent,

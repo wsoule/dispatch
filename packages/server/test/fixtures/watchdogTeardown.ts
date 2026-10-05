@@ -1,4 +1,4 @@
-import { dispatchDbPath, TaskStore } from '@dispatch/core';
+import { dispatchDbPath, TaskStore } from '@dispatch-foo/core';
 // Subprocess half of watchdog-teardown.test.ts. The watchdog's stall lines
 // are written by a worker thread straight to stderr, which no in-process spy
 // can see — so the test runs this script and reads the real stderr.

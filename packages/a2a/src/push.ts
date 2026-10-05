@@ -1,5 +1,5 @@
-import type { JsonValue } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 import { utf8Bytes } from './ext.js';
 import type { GuardOptions } from './peer/guard.js';

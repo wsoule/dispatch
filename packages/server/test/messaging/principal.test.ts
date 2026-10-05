@@ -1,5 +1,5 @@
-import { TaskStore } from '@dispatch/core';
-import type { AgentRecord } from '@dispatch/protocol';
+import { TaskStore } from '@dispatch-foo/core';
+import type { AgentRecord } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';

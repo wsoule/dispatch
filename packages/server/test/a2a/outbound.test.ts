@@ -1,4 +1,4 @@
-import { credentialsPath, writePeerCredential } from '@dispatch/core';
+import { credentialsPath, writePeerCredential } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
 

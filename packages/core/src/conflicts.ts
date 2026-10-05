@@ -1,5 +1,5 @@
 // This module must stay free of node:* imports — it is exported from both
-// the Node entry and the browser-safe '@dispatch/core/browser' subpath.
+// the Node entry and the browser-safe '@dispatch-foo/core/browser' subpath.
 
 // A `dir/**` entry matches any path under `dir/`; anything else is an exact
 // path. This is deliberately not a general glob matcher — see tasksConflict.

@@ -1,5 +1,5 @@
 // This module must stay free of node:* imports — it is exported as the
-// browser-safe '@dispatch/core/graph' subpath consumed by the desktop webview.
+// browser-safe '@dispatch-foo/core/graph' subpath consumed by the desktop webview.
 import { isContainer, parentIdsOf } from './kinds.js';
 import {
   DEFAULT_STATUS_MODEL,

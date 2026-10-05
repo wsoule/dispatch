@@ -436,3 +436,61 @@ test("a personal doc's owner gets its status buttons below decide tier", async (
   expect(screen.getByRole('button', { name: 'Accept' })).toBeDefined();
   expect(screen.getByRole('button', { name: 'Archive' })).toBeDefined();
 });
+
+test('offers Share to Linear to a decider on a live team doc not yet in Linear, and shows a refusal', async () => {
+  const shareDocToLinear = mock((_ref: string) =>
+    Promise.reject(
+      new Error(
+        'link the doc to a task synced with a Linear project or issue first'
+      )
+    )
+  );
+  renderPage({
+    client: { shareDocToLinear } as unknown as Partial<ApiClient>,
+  });
+  await screen.findByLabelText('Editing auth');
+  fireEvent.click(screen.getByRole('button', { name: 'Share to Linear' }));
+  expect((await screen.findByRole('alert')).textContent).toContain(
+    'synced with a Linear project'
+  );
+  expect(shareDocToLinear).toHaveBeenCalledWith('doc-1');
+  cleanup();
+
+  const shared = mock((_ref: string) =>
+    Promise.resolve({ documentId: 'lin-9' })
+  );
+  renderPage({ client: { shareDocToLinear: shared } as Partial<ApiClient> });
+  await screen.findByLabelText('Editing auth');
+  fireEvent.click(screen.getByRole('button', { name: 'Share to Linear' }));
+  expect((await screen.findByRole('status')).textContent).toContain(
+    'Shared to Linear as document lin-9'
+  );
+  cleanup();
+
+  for (const opts of [
+    { canDecide: false },
+    { doc: doc({ scope: 'personal' }) },
+    { doc: doc({ origin: 'linear:lin-1' }) },
+    { doc: doc({ status: 'archived' }) },
+  ]) {
+    renderPage(opts);
+    await screen.findByText('Auth refactor');
+    expect(
+      screen.queryByRole('button', { name: 'Share to Linear' })
+    ).toBeNull();
+    cleanup();
+  }
+});
+
+test("shows a doc's Linear sync problem or hold as the daemon words it", async () => {
+  const problem =
+    "Linear sync problem: a Linear edit by lin-wyat at 2026-09-26T10:00:00.000Z was overwritten; see Linear's version history";
+  renderPage({ doc: doc({ problem }) });
+  expect((await screen.findByText(/was overwritten/)).textContent).toBe(
+    problem
+  );
+  cleanup();
+  const held = 'Linear sync held: the doc is conflicted; resolve it first';
+  renderPage({ doc: doc({ problem: held }) });
+  expect((await screen.findByText(/Linear sync held/)).textContent).toBe(held);
+});

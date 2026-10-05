@@ -1,5 +1,8 @@
-import { openDispatchDb, SqliteTaskStore } from '@dispatch/core';
-import { hlcWallMs, MAX_CLOCK_LEAD_MS } from '@dispatch/protocol/federation';
+import { openDispatchDb, SqliteTaskStore } from '@dispatch-foo/core';
+import {
+  hlcWallMs,
+  MAX_CLOCK_LEAD_MS,
+} from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

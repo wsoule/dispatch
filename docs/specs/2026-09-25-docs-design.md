@@ -1762,14 +1762,34 @@ fetched 2026-09-26).
   `origin: 'linear:<documentId>'`, slug from its title, linked `context` to the
   task its parent maps to (containers are tasks after parity P1); a cycle, team
   or release parent maps to no task, and the doc is unlinked.
-- **Merge.** `linear_docs` keeps the last synced revision as the base. An
-  incoming change is merged against the local head with the same diff3, authored
-  by the Linear user mapped through the people registry, else `agent:dispatch`
-  (tainted either way: Linear authorship is not a Dispatch human's). Clean is a
-  revision (cause `sync`); a conflict is a conflicted head; a result over the
-  limits is a conflicted head in the oversize form. A change to an **accepted**
-  doc is a `doc` proposal (`origin: 'linear:<documentId>'`), since Linear's
-  editors are not decide-tier Dispatch humans.
+- **Merge.** `linear_docs` keeps the last synced revision and, beside it,
+  Linear's own text at that sync (normalized: no BOM, LF line ends; cut to the
+  body cap) with the hash of the whole normalized text. That text is the merge
+  base, so a conflicted head's markers never become one. Every comparison with
+  Linear normalizes both sides first. A Linear document over the body cap is
+  created cut, with a note that the rest is only in Linear, and is never pushed
+  back. Literal conflict markers arriving from Linear make the doc conflicted.
+  An incoming change is merged against the local head with the same diff3,
+  authored by the Linear user mapped through the people registry, else
+  `agent:dispatch` (tainted either way: Linear authorship is not a Dispatch
+  human's). Clean is a revision (cause `sync`); a conflict is a conflicted head;
+  a result over the limits is a conflicted head in the oversize form. A change
+  to an **accepted** doc is a `doc` proposal (`origin: 'linear:<documentId>'`),
+  since Linear's editors are not decide-tier Dispatch humans.
+- **What may push.** A Linear-origin head pushes only when it is not conflicted,
+  Linear's text was not cut, no Linear edit waits as an open proposal, and it
+  carries no agent text a human has not reviewed. That is a walk from the head
+  back through every parent, stopping at reviewed revisions: an agent's revision
+  found on the way holds the push; Linear's text and humans' edits do not, since
+  Linear's own text going back to Linear leaks nothing. So a human's edit after
+  a pull pushes without a review, and an agent's edit stays held through any
+  later Linear merge or human edit until a human reviews it. A walk that cannot
+  finish falls back to the doc's review flag. A held doc shows "Linear sync
+  held: `<reason>`" on the doc page and as an Inbox item until the hold is
+  released; saves, reviews, merges and pushes refresh it. When a decider rejects
+  a Linear edit's proposal, Linear still holds that edit and the accepted head
+  differs from it, so the next push restores ours over Linear's edit (Linear's
+  version history keeps theirs).
 - **Push.** `documentUpdate(id, input)` replaces `content`, and
   `DocumentUpdateInput` has no base version or `updatedAt` precondition, so a
   push cannot be conditional and a check-then-write can overwrite a Linear edit.
@@ -1797,8 +1817,31 @@ fetched 2026-09-26).
 - **Only docs that came from Linear push back.** "Share to Linear" (a
   decide-tier human, on a doc linked to a task mapped to a Linear project or
   issue) calls `documentCreate` with that `projectId` or `issueId` and makes the
-  doc Linear-origin. Team docs do not leak to Linear by default.
+  doc Linear-origin. Team docs do not leak to Linear by default. Like publish,
+  it refuses a draft carrying unreviewed agent text; the container comes only
+  from the doc's manual task links; and a per-doc claim makes concurrent shares
+  create one Linear document (the claim is freed when Linear refuses, and lapses
+  at three times the 60 s Linear request timeout). It is
+  `dispatch docs share-linear <ref>` and a Share to Linear button on the doc
+  page; both show the route's refusals. A push that overwrote a Linear edit
+  stores a sync problem, shown on the doc page and as an Inbox item ("Linear
+  sync problem in `<title>`") until a human saves or reviews.
+- **Webhooks.** The P2 webhook subscribes to `Document` too; a delivered create
+  or update folds that one document at once (a removal leaves the Dispatch doc
+  alone), and a registration from before `Document` joined is replaced on the
+  next pass.
 - Echo suppression and the rate-limit pause are P2's own.
+- **Known limits.**
+  - The integration's Linear user is the API key's own user, which is also the
+    local human. An edit that user makes in Linear's editor between the push's
+    read and its write is overwritten without a sync problem: the history entry
+    names only the integration's user.
+  - The pull is scoped to the linked teams: documents under a team's projects or
+    issues, or on the team itself. A document whose only parent is an
+    initiative, cycle or release outside those is never pulled.
+  - Linear may normalize pushed markdown (whitespace, list markers). The re-read
+    after a push then differs from what was sent and folds in as a clean merge
+    or a no-op; this has not been checked against Linear's real output.
 
 ## Transport
 

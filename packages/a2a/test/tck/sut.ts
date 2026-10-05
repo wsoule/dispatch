@@ -1,4 +1,4 @@
-import { DEFAULT_A2A } from '@dispatch/core';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
 
 import { handleA2A } from '../../src/server/handle.js';
 import { IpLimiter } from '../../src/server/limits.js';

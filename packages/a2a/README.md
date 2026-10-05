@@ -1,4 +1,4 @@
-# @dispatch/a2a
+# @dispatch-foo/a2a
 
 The A2A 1.0 bridge for Dispatch, under the MIT license. It holds everything that
 decides how a Dispatch project looks to an A2A client:
@@ -18,6 +18,13 @@ own artifacts, because clients read the first artifact as the result.
 
 It uses `@a2a-js/sdk` 1.2.0 for the wire types, ProtoJSON, SSE framing and the
 client, never for its server. The package never imports server code.
+
+```bash
+npm install @dispatch-foo/a2a
+```
+
+It runs on Node 22.13 or later, and needs `@dispatch-foo/protocol` and
+`@dispatch-foo/core`, which install with it.
 
 ## MUST deviations
 

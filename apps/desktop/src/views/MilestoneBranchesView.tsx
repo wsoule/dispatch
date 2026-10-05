@@ -1,5 +1,5 @@
-import type { TaskListItem } from '@dispatch/core/browser';
-import { isContainerKind, statusModelOf } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { isContainerKind, statusModelOf } from '@dispatch-foo/core/browser';
 import { GitBranch, SearchX } from 'lucide-react';
 import type { FocusEvent, KeyboardEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

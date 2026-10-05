@@ -1,4 +1,4 @@
-import { crockford32 } from '@dispatch/protocol/federation';
+import { crockford32 } from '@dispatch-foo/protocol/federation';
 import { createHash } from 'node:crypto';
 
 type JWK = Record<string, unknown>;

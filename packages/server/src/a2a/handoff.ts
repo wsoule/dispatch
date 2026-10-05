@@ -4,18 +4,18 @@ import type {
   OpenResult,
   TaskLink,
   TaskRow,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   handoffSupported,
   parseWorkExt,
   shapeDraft,
   unwrapExternalData,
   wrapExternalData,
-} from '@dispatch/a2a';
-import type { TaskDoc } from '@dispatch/core';
-import { untrustedInline } from '@dispatch/core';
-import type { Address, Message } from '@dispatch/protocol';
-import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { untrustedInline } from '@dispatch-foo/core';
+import type { Address, Message } from '@dispatch-foo/protocol';
+import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import type { BridgeDeps } from './port.js';

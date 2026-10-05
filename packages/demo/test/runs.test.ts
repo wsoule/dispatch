@@ -1,5 +1,5 @@
-import { DEFAULT_FIX_LOOP, loadConfig } from '@dispatch/core';
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
+import { DEFAULT_FIX_LOOP, loadConfig } from '@dispatch-foo/core';
+import type { CommandEvidence, MutationEvidence } from '@dispatch-foo/core';
 import { expect, test } from 'bun:test';
 import {
   existsSync,

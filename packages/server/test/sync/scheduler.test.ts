@@ -1,4 +1,4 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   chmodSync,

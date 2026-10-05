@@ -1,4 +1,4 @@
-import { absoluteGitLocation } from '@dispatch/core';
+import { absoluteGitLocation } from '@dispatch-foo/core';
 
 import type { AsyncGitRunner } from './sync/worktree.js';
 

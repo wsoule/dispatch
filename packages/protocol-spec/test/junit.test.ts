@@ -39,7 +39,7 @@ const report: Report = {
     result('core.a.na', 'MUST', 'not-applicable', ['none left']),
   ],
   declaredDeviations: [],
-  runner: '@dispatch/protocol-spec@1.0.0-draft.1',
+  runner: '@dispatch-foo/protocol-spec@1.0.0-draft.1',
   date: '2026-09-26T00:00:00.000Z',
 };
 

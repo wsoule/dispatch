@@ -1,7 +1,7 @@
+import type { NotificationKind } from '@dispatch-foo/core/browser';
+import { notificationKindForMessage } from '@dispatch-foo/core/browser';
+import { GATE_TYPES, gateTypeOf } from '@dispatch-foo/protocol/browser';
 import type { GateData, Message } from '@dispatch/client';
-import type { NotificationKind } from '@dispatch/core/browser';
-import { notificationKindForMessage } from '@dispatch/core/browser';
-import { GATE_TYPES, gateTypeOf } from '@dispatch/protocol/browser';
 
 /** A plain blocking question a run's agent asked a human, as its card shows it. */
 export interface RunQuestion {
@@ -50,7 +50,7 @@ export function gateOf(message: Message): GateData | null {
 }
 
 /** A daemon marker (a close, a breaker pause); the same data from anyone else
- *  is ordinary. Mirrors @dispatch/protocol's isSystemMarker. */
+ *  is ordinary. Mirrors @dispatch-foo/protocol's isSystemMarker. */
 export function isSystemMarker(
   message: Pick<Message, 'from' | 'data'>,
   type: 'x-closed' | 'x-breaker'

@@ -1,4 +1,4 @@
-import type { PeerClient, PeerRow, TaskJson } from '@dispatch/a2a';
+import type { PeerClient, PeerRow, TaskJson } from '@dispatch-foo/a2a';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 
 import { OutboundWorker } from '../../src/a2a/outbound.js';

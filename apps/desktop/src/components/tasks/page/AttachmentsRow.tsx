@@ -1,5 +1,5 @@
+import type { TaskAttachment } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
-import type { TaskAttachment } from '@dispatch/core/browser';
 import { useQuery } from '@tanstack/react-query';
 import { Paperclip, X } from 'lucide-react';
 import type { RefObject } from 'react';

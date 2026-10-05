@@ -10,11 +10,11 @@ import type {
   OpenInput,
   OpenResult,
   TaskFacts,
-} from '@dispatch/a2a';
-import { handleA2A, IpLimiter } from '@dispatch/a2a';
-import { DEFAULT_A2A } from '@dispatch/core';
-import type { Message } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import { handleA2A, IpLimiter } from '@dispatch-foo/a2a';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
+import type { Message } from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 const CALLER: Caller = {
   address: 'agent:peer/a2a.dispatch',

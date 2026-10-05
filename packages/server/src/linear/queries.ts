@@ -165,12 +165,20 @@ export const USERS_QUERY = `query Users($ids: [ID!]!, $after: String) {
 
 // One cheap request answering "did anything change since the cursor?", so an
 // idle poll costs a handful of points instead of a full issue page.
-export const PROBE_QUERY = `query Probe($teamId: ID!, $since: DateTimeOrDuration!) {
+// Documents under the team's projects or issues, or on the team itself.
+const TEAM_DOCUMENTS_PROBE = `or: [
+    { project: { accessibleTeams: { some: { id: { eq: $teamId } } } } }
+    { issue: { team: { id: { eq: $teamId } } } }
+    { team: { id: { eq: $teamId } } }
+  ]`;
+
+export const PROBE_QUERY = `query Probe($teamId: ID!, $since: DateTimeOrDuration!, $documentsSince: DateTimeOrDuration!) {
   issues(first: 1, includeArchived: true, filter: { team: { id: { eq: $teamId } }, updatedAt: { gt: $since } }) { nodes { id } }
   comments(first: 1, includeArchived: true, filter: { issue: { team: { id: { eq: $teamId } } }, updatedAt: { gt: $since } }) { nodes { id } }
   projects(first: 1, includeArchived: true, filter: { accessibleTeams: { some: { id: { eq: $teamId } } }, updatedAt: { gt: $since } }) { nodes { id } }
   projectMilestones(first: 1, includeArchived: true, filter: { updatedAt: { gt: $since } }) { nodes { id } }
   initiatives(first: 1, includeArchived: true, filter: { updatedAt: { gt: $since } }) { nodes { id } }
+  documents(first: 1, filter: { updatedAt: { gt: $documentsSince }, ${TEAM_DOCUMENTS_PROBE} }) { nodes { id } }
 }`;
 
 export const ISSUES_QUERY = `query IssuesUpdatedSince($teamId: ID!, $since: DateTimeOrDuration, $after: String) {
@@ -406,4 +414,61 @@ export const WEBHOOK_CREATE = `mutation WebhookCreate($input: WebhookCreateInput
 
 export const WEBHOOK_DELETE = `mutation WebhookDelete($id: String!) {
   webhookDelete(id: $id) { success }
+}`;
+
+export const DOCUMENT_PAGE = 50;
+
+// `content` is markdown; `contentState` is internal Yjs state and never read.
+const DOCUMENT_FIELDS = `
+  id
+  title
+  content
+  updatedAt
+  updatedBy { id }
+  documentContentId
+  issue { id }
+  project { id }
+  initiative { id }
+  cycle { id }
+  release { id }
+  team { id }
+`;
+
+export const DOCUMENTS_QUERY = `query Documents($teamId: ID!, $since: DateTimeOrDuration, $after: String) {
+  documents(
+    filter: { updatedAt: { gt: $since }, ${TEAM_DOCUMENTS_PROBE} }
+    first: ${DOCUMENT_PAGE}
+    after: $after
+  ) {
+    nodes { ${DOCUMENT_FIELDS} }
+    ${PAGE_INFO}
+  }
+}`;
+
+export const DOCUMENTS_QUERY_ALL = `query DocumentsAll($teamId: ID!, $after: String) {
+  documents(
+    filter: { ${TEAM_DOCUMENTS_PROBE} }
+    first: ${DOCUMENT_PAGE}
+    after: $after
+  ) {
+    nodes { ${DOCUMENT_FIELDS} }
+    ${PAGE_INFO}
+  }
+}`;
+
+export const DOCUMENT_QUERY = `query Document($id: String!) {
+  document(id: $id) { ${DOCUMENT_FIELDS} }
+}`;
+
+export const DOCUMENT_UPDATE = `mutation DocumentUpdate($id: String!, $input: DocumentUpdateInput!) {
+  documentUpdate(id: $id, input: $input) { success document { ${DOCUMENT_FIELDS} } }
+}`;
+
+export const DOCUMENT_CREATE = `mutation DocumentCreate($input: DocumentCreateInput!) {
+  documentCreate(input: $input) { success document { ${DOCUMENT_FIELDS} } }
+}`;
+
+// Takes the document's `documentContentId`, not its id.
+export const DOCUMENT_HISTORY = `query DocumentContentHistory($id: String!) {
+  documentContentHistory(id: $id) { success history { contentDataSnapshotAt actorIds } }
 }`;

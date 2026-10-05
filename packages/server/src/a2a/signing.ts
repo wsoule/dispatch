@@ -1,16 +1,16 @@
-import type { CardInputs, CardSignatureJson, Jwks } from '@dispatch/a2a';
+import type { CardInputs, CardSignatureJson, Jwks } from '@dispatch-foo/a2a';
 import {
   JWKS_PATH,
   signCard,
   unsignedCardEtag,
   unsignedCardJson,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   promoteA2ASigningKey,
   readA2ANextSigningKey,
   readA2ASigningKey,
   writeA2ASigningKey,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   createHash,
   createPrivateKey,

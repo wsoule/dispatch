@@ -1,7 +1,7 @@
-import type { DocProposal, PolicyRuling } from '@dispatch/core';
-import { describePolicyAuthorization } from '@dispatch/core';
-import type { DeliveryEngine, Message, Ref } from '@dispatch/protocol';
-import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import type { DocProposal, PolicyRuling } from '@dispatch-foo/core';
+import { describePolicyAuthorization } from '@dispatch-foo/core';
+import type { DeliveryEngine, Message, Ref } from '@dispatch-foo/protocol';
+import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 
 import type { EventBus } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';

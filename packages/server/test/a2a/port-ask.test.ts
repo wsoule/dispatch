@@ -1,6 +1,6 @@
-import type { OpenInput } from '@dispatch/a2a';
-import { decideState } from '@dispatch/a2a';
-import { MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import type { OpenInput } from '@dispatch-foo/a2a';
+import { decideState } from '@dispatch-foo/a2a';
+import { MessagingError, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { reconcileA2A } from '../../src/a2a/reconcile.js';

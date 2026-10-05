@@ -1,4 +1,4 @@
-import { untrustedBlock, untrustedInline } from '@dispatch/core';
+import { untrustedBlock, untrustedInline } from '@dispatch-foo/core';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import YAML from 'yaml';

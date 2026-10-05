@@ -1,7 +1,7 @@
-import { speaksForHandle } from '@dispatch/federation';
-import type { RosterView } from '@dispatch/federation';
-import type { Address, JsonValue } from '@dispatch/protocol';
-import type { DocBody, FederatedOp } from '@dispatch/protocol/federation';
+import { speaksForHandle } from '@dispatch-foo/federation';
+import type { RosterView } from '@dispatch-foo/federation';
+import type { Address, JsonValue } from '@dispatch-foo/protocol';
+import type { DocBody, FederatedOp } from '@dispatch-foo/protocol/federation';
 
 import type { RosterService } from './roster.js';
 import type {
@@ -93,7 +93,10 @@ export class DocSync implements Collector, OpHandler {
 
   /** A doc op on this replica's chain. */
   publish(body: DocBody): FederatedOp {
-    return this.deps.fed.append({ type: 'doc', body });
+    return this.deps.fed.append({
+      type: 'doc',
+      body: body as unknown as JsonValue,
+    });
   }
 
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped' {

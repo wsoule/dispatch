@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 import { PORT_CLIENT_HEADER } from '../http/wire.js';
 

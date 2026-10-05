@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import type {
   Address,
   Delivery,
@@ -6,13 +6,16 @@ import type {
   Message,
   MessageStore,
   StateEntry,
-} from '@dispatch/protocol';
-import { MAX_STATE_ENTRIES, sealPayload } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol';
+import {
+  MAX_STATE_ENTRIES,
+  sealPayload,
+} from '@dispatch-foo/protocol/federation';
 import type {
   FederatedOp,
   MailTarget,
   StatePayload,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 import type { Homes } from './homes.js';
 import { UNVERIFIABLE } from './inbound.js';

@@ -121,9 +121,9 @@ describe('events mirror dispatchd', () => {
   });
 });
 
-// The client's GateData is hand-copied from @dispatch/protocol, which this
+// The client's GateData is hand-copied from @dispatch-foo/protocol, which this
 // package does not import, so the protocol source is read as text too.
-describe('gate payloads mirror @dispatch/protocol', () => {
+describe('gate payloads mirror @dispatch-foo/protocol', () => {
   it('GateData has one variant per protocol GATE_TYPES entry', () => {
     const constants = readFileSync(
       join(import.meta.dir, '..', '..', 'protocol', 'src', 'constants.ts'),
@@ -321,7 +321,7 @@ describe('A2A types mirror dispatchd', () => {
       'utf8'
     );
 
-  it("A2ATaskSummary declares the fields of @dispatch/a2a's TaskRow", () => {
+  it("A2ATaskSummary declares the fields of @dispatch-foo/a2a's TaskRow", () => {
     const theirs = fieldsOf(storeSource(), 'TaskRow');
     expect(theirs).not.toBeNull();
     expect(fieldsOf(clientSource(), 'A2ATaskSummary')).toEqual(theirs);
@@ -329,7 +329,7 @@ describe('A2A types mirror dispatchd', () => {
 
   // GET /api/a2a/clients spreads each clients row (its key fields too) and
   // adds its agent's status.
-  it("A2AClientSummary declares @dispatch/a2a's ClientRow plus the status", () => {
+  it("A2AClientSummary declares @dispatch-foo/a2a's ClientRow plus the status", () => {
     const theirs = fieldsOf(storeSource(), 'ClientRow');
     const keys = fieldsOf(storeSource(), 'KeyFields');
     expect(theirs).not.toBeNull();

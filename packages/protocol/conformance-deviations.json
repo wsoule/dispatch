@@ -1,6 +1,0 @@
-[
-  {
-    "section": "9.3",
-    "summary": "GET /api/decisions shows any request-tier credential a one-line summary of each open gate addressed to a human, and POST /api/deliveries/:id/read answers a foreign delivery with 403 but an absent one with 404"
-  }
-]

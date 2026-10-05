@@ -1,3 +1,10 @@
+import type {
+  DocStatus,
+  LinkRel,
+  LinkTarget,
+  RevisionCause,
+} from '@dispatch-foo/core';
+
 import type { Address } from '../address.js';
 import type { JsonValue, Message } from '../envelope.js';
 import type { DeliveryVia } from '../store.js';
@@ -256,9 +263,34 @@ export interface MemoryBody {
   by?: string; // who made the change: the latest local revision's author
 }
 
-// A JSON object whose fields the docs design owns: doc id, put | remove, `by`,
-// an optional revision and optional `meta` fields.
-export type DocBody = { [key: string]: JsonValue };
+// A team doc change (docs design "Team sync"): a revision, meta fields
+// (last writer wins per field; aliases a union), a review, or a removal.
+export interface DocBody {
+  doc: string; // doc-<ulid>
+  kind: 'put' | 'remove';
+  by: Address; // who made this change
+  revision?: {
+    id: string;
+    parents: string[];
+    title: string;
+    body: string;
+    hash: string;
+    author: Address;
+    cause: RevisionCause;
+    summary: string;
+    createdAt: string;
+    approval?: { by: Address; policy?: { rung: number } };
+    task?: string; // a proposal's source task, for local policy
+  };
+  meta?: {
+    slug?: string; // the claimed slug in the team namespace
+    aliases?: string[]; // retired slugs; a grow-only set
+    title?: string;
+    status?: DocStatus;
+    links?: { target: LinkTarget; rel: LinkRel }[];
+  };
+  review?: { rev: string }; // `by` reviewed that revision
+}
 
 export function isStub(e: LogEntry): e is OpStub {
   return 'pruned' in e && e.pruned === true;

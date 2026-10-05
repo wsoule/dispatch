@@ -1,4 +1,4 @@
-import { migrateLegacyMilestones } from '@dispatch/core';
+import { migrateLegacyMilestones } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { statusModelFor } from '../statuses.js';

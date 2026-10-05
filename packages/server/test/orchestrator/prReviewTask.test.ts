@@ -1,4 +1,4 @@
-import { tasksConflict } from '@dispatch/core';
+import { tasksConflict } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import type { RepoPr } from '../../src/orchestrator/pr.js';

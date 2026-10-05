@@ -1,4 +1,4 @@
-import { DEFAULT_A2A } from '@dispatch/core';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
 import { afterAll, beforeAll, expect, it } from 'bun:test';
 
 import { HttpBridgePort } from '../../src/http/port.js';

@@ -9,9 +9,12 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import { DISPATCH_MCP_TOOLS, DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
-import { childEnv } from '@dispatch/core';
-import type { CartoBinary } from '@dispatch/core/carto';
+import {
+  DISPATCH_MCP_TOOLS,
+  DISPATCH_MESSAGING_TOOLS,
+} from '@dispatch-foo/core';
+import { childEnv } from '@dispatch-foo/core';
+import type { CartoBinary } from '@dispatch-foo/core/carto';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { floorCheckForToolInput } from '../../floor.js';

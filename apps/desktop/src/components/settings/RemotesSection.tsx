@@ -2,7 +2,7 @@ import type {
   ConfigPatch,
   DispatchConfig,
   RemoteConfig,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 

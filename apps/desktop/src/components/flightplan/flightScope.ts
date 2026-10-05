@@ -1,5 +1,5 @@
-import type { TaskListItem } from '@dispatch/core/browser';
-import { canonicalKind, isContainerKind } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { canonicalKind, isContainerKind } from '@dispatch-foo/core/browser';
 
 // Which tasks a container's Flight Plan draws, and in which bands. A milestone or parent
 // issue plans its direct children — the ones its fan-out session dispatches. A project or

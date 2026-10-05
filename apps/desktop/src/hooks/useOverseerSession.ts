@@ -1,9 +1,9 @@
+import type { EffortLevel } from '@dispatch-foo/core/browser';
 import {
   type ApiClient,
   ApiError,
   type OverseerRecord,
 } from '@dispatch/client';
-import type { EffortLevel } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useState } from 'react';

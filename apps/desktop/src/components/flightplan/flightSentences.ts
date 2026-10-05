@@ -1,12 +1,12 @@
-import type { EpicProgressChild, RunMeta } from '@dispatch/client';
-import type { StatusModel } from '@dispatch/core/browser';
+import type { StatusModel } from '@dispatch-foo/core/browser';
 import {
   hasStatusRole,
   isBacklogStatus,
   isCanceledStatus,
   isStartedStatus,
   statusLabel,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { EpicProgressChild, RunMeta } from '@dispatch/client';
 
 import type { FlightNode } from './flightPlan';
 

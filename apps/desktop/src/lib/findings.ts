@@ -1,4 +1,4 @@
-import type { Finding, FindingSeverity } from '@dispatch/core/browser';
+import type { Finding, FindingSeverity } from '@dispatch-foo/core/browser';
 
 // Rendering order for the findings panel — most severe first, so a critical
 // finding is never scrolled past a page of minor ones.

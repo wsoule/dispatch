@@ -4,9 +4,9 @@
 // pre-select) and `parent` (the epic to file it under). Kept here, DOM- and React-free, so
 // the "what actually gets saved" rules are testable without mounting the view.
 
+import type { CreateInput } from '@dispatch-foo/core/browser';
 import type { TaskDraft } from '@dispatch/client';
 import { taskDraftToCreateInput } from '@dispatch/client';
-import type { CreateInput } from '@dispatch/core/browser';
 
 export interface EditableTaskDraft extends TaskDraft {
   /** Tracker status the task will be created in — seeded from the board column whose "+"

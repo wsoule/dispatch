@@ -1,5 +1,5 @@
-import type { TaskListItem } from '@dispatch/core/browser';
-import { parentIdsOf } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { parentIdsOf } from '@dispatch-foo/core/browser';
 import { expect, test } from 'bun:test';
 
 import { ancestorsOf, parentCandidates } from './taskHierarchy';

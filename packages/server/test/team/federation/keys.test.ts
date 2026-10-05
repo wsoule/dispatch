@@ -1,4 +1,4 @@
-import { publicOfPrivate } from '@dispatch/protocol/federation';
+import { publicOfPrivate } from '@dispatch-foo/protocol/federation';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,

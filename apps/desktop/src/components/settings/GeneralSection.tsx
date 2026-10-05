@@ -1,4 +1,4 @@
-import type { ConfigPatch, DispatchConfig } from '@dispatch/core/browser';
+import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
 
 import { PullRequestsGroup, StatusesGroup } from './ProjectGroups';
 

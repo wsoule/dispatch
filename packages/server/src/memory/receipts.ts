@@ -1,4 +1,5 @@
-import { MEMORY_RECEIPT_FILE_BYTES } from '@dispatch/core';
+import { MEMORY_RECEIPT_FILE_BYTES } from '@dispatch-foo/core';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import {
   MEMORY_ID_PATTERN,
   MEMORY_LIMITS,
@@ -7,7 +8,6 @@ import {
   renderReceiptFile,
 } from '@dispatch/memory';
 import type { MemoryEngine, MemoryStore, Principal } from '@dispatch/memory';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import {
   existsSync,
   lstatSync,

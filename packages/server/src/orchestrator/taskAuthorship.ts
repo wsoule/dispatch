@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core';
-import { removeSection } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { removeSection } from '@dispatch-foo/core';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';

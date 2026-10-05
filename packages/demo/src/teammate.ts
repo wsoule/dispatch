@@ -1,4 +1,4 @@
-import { parseTaskFile } from '@dispatch/core';
+import { parseTaskFile } from '@dispatch-foo/core';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

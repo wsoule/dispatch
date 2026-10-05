@@ -1,6 +1,9 @@
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import {
+  isCanceledStatus,
+  isCompletedStatus,
+} from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { isCanceledStatus, isCompletedStatus } from '@dispatch/core/browser';
 
 import { activeStatusModel } from './statusModel';
 import { executeRuns } from './taskPageMode';

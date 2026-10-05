@@ -1,4 +1,4 @@
-import { runConformance } from '@dispatch/protocol-spec';
+import { runConformance } from '@dispatch-foo/protocol-spec';
 import { expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';

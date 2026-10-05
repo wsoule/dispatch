@@ -1,5 +1,5 @@
-import { FileCommentStore, TaskStore } from '@dispatch/core';
-import type { LinearComment, LinearIssue } from '@dispatch/core';
+import { FileCommentStore, TaskStore } from '@dispatch-foo/core';
+import type { LinearComment, LinearIssue } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

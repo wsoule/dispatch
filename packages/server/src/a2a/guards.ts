@@ -1,17 +1,17 @@
-import type { A2AStore, HandoffStatuses } from '@dispatch/a2a';
-import { isClientAddress } from '@dispatch/a2a';
+import type { A2AStore, HandoffStatuses } from '@dispatch-foo/a2a';
+import { isClientAddress } from '@dispatch-foo/a2a';
 import type {
   TaskDoc,
   TaskRisk,
   TaskStorePort,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   Address,
   DeliveryEngine,
   SqliteMessageStore,
-} from '@dispatch/protocol';
-import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 
 import type { EventBus } from '../events.js';
 import { SYSTEM_SENDER } from '../messaging/gates.js';

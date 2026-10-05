@@ -1,4 +1,4 @@
-import type { TaskKind } from '@dispatch/core/browser';
+import type { TaskKind } from '@dispatch-foo/core/browser';
 import { createContext, useContext } from 'react';
 
 import type {

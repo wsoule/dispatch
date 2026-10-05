@@ -3,8 +3,8 @@ import type {
   Assignee,
   Priority,
   TaskKind,
-} from '@dispatch/core/browser';
-import { parseActorRef } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { parseActorRef } from '@dispatch-foo/core/browser';
 
 // Mirrors the `tone` prop `Pill` accepts (see components/ui/Pill.tsx) —
 // duplicated here rather than imported since Pill doesn't export its prop

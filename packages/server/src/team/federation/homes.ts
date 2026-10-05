@@ -2,8 +2,8 @@ import {
   isFederationLocalAddress,
   parseAddress,
   SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
-import type { Address, ParsedAddress } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import type { Address, ParsedAddress } from '@dispatch-foo/protocol';
 
 import type { RosterService } from './roster.js';
 import type { FedStore } from './store.js';

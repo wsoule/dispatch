@@ -1,10 +1,10 @@
-import type { A2APolicy, BridgePort } from '@dispatch/a2a';
+import type { A2APolicy, BridgePort } from '@dispatch-foo/a2a';
 import {
   errorResponse,
   handleA2A,
   IpLimiter,
   KEY_STATEMENT_PATH,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 
 import type { ResolvedListener } from './settings.js';
 import { listenerClientIp } from './settings.js';

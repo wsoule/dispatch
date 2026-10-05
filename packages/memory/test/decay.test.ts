@@ -1,4 +1,4 @@
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
   mkdtempSync,

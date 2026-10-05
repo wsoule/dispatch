@@ -3,7 +3,7 @@ import type {
   HandoffStatuses,
   PeerStatus,
   TaskRow,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
@@ -11,15 +11,15 @@ import {
   openA2ADb,
   SqliteA2AStore,
   TERMINAL_STATES,
-} from '@dispatch/a2a';
-import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
+} from '@dispatch-foo/a2a';
+import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch-foo/core';
 import {
   credentialsPath,
   credentialsUnreadable,
   DEFAULT_A2A,
   loadConfig,
   statusModelOf,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';

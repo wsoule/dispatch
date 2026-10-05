@@ -1,4 +1,4 @@
-import { mergeTaskFile } from '@dispatch/core';
+import { mergeTaskFile } from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { readFileSync, writeFileSync } from 'node:fs';
 

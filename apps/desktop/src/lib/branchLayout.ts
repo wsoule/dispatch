@@ -1,5 +1,5 @@
-import type { StatusModel } from '@dispatch/core/browser';
-import { isDoneStatus } from '@dispatch/core/browser';
+import type { StatusModel } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 
 import type { DagTask } from './dagLayout';
 

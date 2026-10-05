@@ -39,7 +39,7 @@ import {
   taskMilestoneValues,
   taskProjectValues,
   untrustedIssueFields,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CreateInput,
   DispatchConfig,
@@ -55,7 +55,7 @@ import type {
   TaskKind,
   TaskStorePort,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type { TaskChangeBatch } from './batch.js';
 import type { LinearClient, LinearFailure, LinearResult } from './client.js';

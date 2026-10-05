@@ -415,6 +415,12 @@ export function DocPage({
     !archived &&
     (doc.status === 'accepted' || !doc.unreviewed);
   const published = doc.published;
+  // Only a decider sends a live team doc to Linear, and only once.
+  const shareable =
+    canDecide &&
+    doc.scope === 'team' &&
+    !archived &&
+    !(doc.origin ?? '').startsWith('linear:');
   const togglePanel = (to: 'history' | 'merge'): void =>
     setPanel((p) => (p === to ? 'editor' : to));
   return (
@@ -521,6 +527,23 @@ export function DocPage({
             Publish to repo
           </Button>
         )}
+        {shareable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              act(async () => {
+                await flush();
+                const out = await client.shareDocToLinear(refId);
+                setPublishNote(
+                  `Shared to Linear as document ${out.documentId}`
+                );
+              })
+            }
+          >
+            Share to Linear
+          </Button>
+        )}
         {decides &&
           docStatusActions(doc).map(({ label, status }) => (
             <Button
@@ -600,6 +623,11 @@ export function DocPage({
       {published !== null && published.rev !== doc.head.id && (
         <p className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-muted-foreground)]">
           {`published rev ${published.n ?? '-'} to ${published.path}; head is rev ${doc.head.n}`}
+        </p>
+      )}
+      {doc.problem !== undefined && (
+        <p className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-destructive)]">
+          {doc.problem}
         </p>
       )}
       {publishNote !== null && (

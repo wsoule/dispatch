@@ -1,4 +1,4 @@
-import { compareHlc, parseOpHlc } from '@dispatch/protocol/federation';
+import { compareHlc, parseOpHlc } from '@dispatch-foo/protocol/federation';
 
 import type { FedStore } from './store.js';
 

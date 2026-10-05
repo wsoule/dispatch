@@ -1,4 +1,4 @@
-import { ASSET_NAME } from '@dispatch/core';
+import { ASSET_NAME } from '@dispatch-foo/core';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,

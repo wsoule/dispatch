@@ -7,8 +7,8 @@ import type {
   TaskDoc,
   TaskStorePort,
   UpdatePatch,
-} from '@dispatch/core';
-import { MAX_CLOCK_LEAD_MS } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/core';
+import { MAX_CLOCK_LEAD_MS } from '@dispatch-foo/protocol/federation';
 
 import type { TaskOpSigner } from '../federation/taskOps.js';
 import { oversizedField, TaskTooLargeError } from '../federation/taskOps.js';

@@ -1,6 +1,6 @@
-import type { TaskStorePort } from '@dispatch/core';
-import { TaskStore } from '@dispatch/core';
-import type { Sender } from '@dispatch/protocol';
+import type { TaskStorePort } from '@dispatch-foo/core';
+import { TaskStore } from '@dispatch-foo/core';
+import type { Sender } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -1,5 +1,5 @@
 // Pure data shapes, no node:* imports, so this is safe for the desktop
-// webview via the '@dispatch/core/browser' entry point.
+// webview via the '@dispatch-foo/core/browser' entry point.
 
 // One command an implementer actually ran, recorded instead of narrated in
 // a prose report — a reviewer can compare this against the diff directly.

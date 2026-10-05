@@ -10,7 +10,7 @@ import type {
   TaskComment,
   TaskDoc,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import { CliError } from './context.js';
 
@@ -98,7 +98,7 @@ export interface NormalizedEntry {
   // Set on entries a sub-agent made rather than the run's own agent.
   parentToolUseId?: string;
   // `kind: 'agent'` only: one lifecycle event of a spawned sub-agent —
-  // mirrors SubagentEvent in @dispatch/core.
+  // mirrors SubagentEvent in @dispatch-foo/core.
   agent?: {
     id: string;
     phase: 'started' | 'progress' | 'finished';

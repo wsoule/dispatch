@@ -1,7 +1,7 @@
 import { GetTaskRequest, SendMessageRequest } from '@a2a-js/sdk';
 import { ClientFactory, RestTransportFactory } from '@a2a-js/sdk/client';
 import { TaskNotFoundError } from '@a2a-js/sdk/errors';
-import { DEFAULT_A2A } from '@dispatch/core';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
 import { afterAll, beforeAll, expect, it } from 'bun:test';
 
 import { handleA2A } from '../src/server/handle.js';

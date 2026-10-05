@@ -1,4 +1,4 @@
-import { MEMORY_RECEIPT_FILE_BYTES } from '@dispatch/core';
+import { MEMORY_RECEIPT_FILE_BYTES } from '@dispatch-foo/core';
 import {
   createMemoryIds,
   newMemoryEntry,

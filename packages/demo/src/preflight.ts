@@ -1,5 +1,5 @@
-import { credentialsPath, normalizeProjectPath } from '@dispatch/core';
-import type { CredentialsFile } from '@dispatch/core';
+import { credentialsPath, normalizeProjectPath } from '@dispatch-foo/core';
+import type { CredentialsFile } from '@dispatch-foo/core';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';

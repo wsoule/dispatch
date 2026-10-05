@@ -1,6 +1,6 @@
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import { isCompletedStatus } from '@dispatch-foo/core/browser';
 import type { EpicProgress, EpicSession } from '@dispatch/client';
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { isCompletedStatus } from '@dispatch/core/browser';
 import {
   ChevronsUp,
   GitMerge,

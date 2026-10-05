@@ -4,12 +4,12 @@ import type {
   TaskFacts,
   TaskLink,
   TaskRow,
-} from '@dispatch/a2a';
-import { GATE_SENTENCES, gateInScope, scopeOf } from '@dispatch/a2a';
-import type { HandoffStatuses } from '@dispatch/a2a';
-import { canonicalStatus } from '@dispatch/core';
-import type { Delivery, Message } from '@dispatch/protocol';
-import { gateOf } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import { GATE_SENTENCES, gateInScope, scopeOf } from '@dispatch-foo/a2a';
+import type { HandoffStatuses } from '@dispatch-foo/a2a';
+import { canonicalStatus } from '@dispatch-foo/core';
+import type { Delivery, Message } from '@dispatch-foo/protocol';
+import { gateOf } from '@dispatch-foo/protocol';
 
 import { workFacts } from './artifacts.js';
 import { linkOf } from './handoff.js';

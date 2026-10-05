@@ -1,4 +1,4 @@
-import { untrustedInline } from '@dispatch/core';
+import { untrustedInline } from '@dispatch-foo/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
@@ -37,7 +37,7 @@ const refShape = {
 };
 
 // Every messaging response is relayed close to verbatim — no value in
-// re-declaring @dispatch/protocol's shapes field by field here.
+// re-declaring @dispatch-foo/protocol's shapes field by field here.
 const record = z.record(z.string(), z.unknown());
 
 // Renders a messaging route's {error, field?} body as one line, so an agent

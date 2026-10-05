@@ -1,4 +1,4 @@
-import { isStub } from '@dispatch/protocol/federation';
+import { isStub } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { RELAY_DISCLOSURE } from '../../../src/team/federation/relay.js';

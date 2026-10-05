@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 import { noul, score } from '@typesafe-ai/sdk';
 import type { EntryType, NoulResponse, ScoreResponse } from '@typesafe-ai/sdk';
 import { createHash } from 'node:crypto';

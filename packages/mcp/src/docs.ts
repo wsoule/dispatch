@@ -4,8 +4,8 @@ import type {
   DocRead,
   DocSaveResult,
   DocSummary,
-} from '@dispatch/core';
-import { untrustedInline, untrustedVerbatim } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import { untrustedInline, untrustedVerbatim } from '@dispatch-foo/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';

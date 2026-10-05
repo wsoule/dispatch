@@ -1,4 +1,4 @@
-import type { CommandEvidence, Finding, LedgerEntry } from '@dispatch/core';
+import type { CommandEvidence, Finding, LedgerEntry } from '@dispatch-foo/core';
 
 import type { DiffFile, NormalizedEntry, RunMeta } from './apiClient.js';
 

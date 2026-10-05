@@ -1,11 +1,11 @@
-import type { QueueWeights, ScoredTask } from '@dispatch/core';
+import type { QueueWeights, ScoredTask } from '@dispatch-foo/core';
 import {
   loadConfig,
   QUEUE_FACTORS,
   queueWeights,
   rankTasks,
-} from '@dispatch/core';
-import type { QueueFactorInfo } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { QueueFactorInfo } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { ReadinessStore } from '../judgments/readiness.js';

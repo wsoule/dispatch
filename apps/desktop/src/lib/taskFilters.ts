@@ -1,5 +1,5 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { RunState } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 
 import { formatShortDate } from './taskDates';
 import { assigneeLabel, priorityLabel, statusLabel } from './taskDisplay';

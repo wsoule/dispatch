@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {

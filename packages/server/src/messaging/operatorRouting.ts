@@ -1,5 +1,10 @@
-import type { Address, DeliveryEngine, Message, Ref } from '@dispatch/protocol';
-import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import type {
+  Address,
+  DeliveryEngine,
+  Message,
+  Ref,
+} from '@dispatch-foo/protocol';
+import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';

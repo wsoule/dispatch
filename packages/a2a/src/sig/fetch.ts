@@ -1,4 +1,4 @@
-import { MAX_CLOCK_LEAD_MS } from '@dispatch/protocol/federation';
+import { MAX_CLOCK_LEAD_MS } from '@dispatch-foo/protocol/federation';
 import type { KeyObject } from 'node:crypto';
 
 import { PeerHttpError } from '../peer/http.js';

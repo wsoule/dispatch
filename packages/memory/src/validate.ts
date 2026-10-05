@@ -1,6 +1,6 @@
-import { TASK_ID_PATTERN } from '@dispatch/core';
-import { LINE_BREAK, REF_TYPES } from '@dispatch/protocol';
-import type { Ref } from '@dispatch/protocol';
+import { TASK_ID_PATTERN } from '@dispatch-foo/core';
+import { LINE_BREAK, REF_TYPES } from '@dispatch-foo/protocol';
+import type { Ref } from '@dispatch-foo/protocol';
 
 import { MemoryError } from './errors.js';
 import { MEMORY_LIMITS, utf8Bytes } from './limits.js';

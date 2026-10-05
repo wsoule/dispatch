@@ -3,7 +3,7 @@ import type {
   Priority,
   TaskCycle,
   TaskListItem,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import {
   CalendarDays,
   Check,

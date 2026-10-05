@@ -1,4 +1,4 @@
-import type { EscalationStep } from '@dispatch/core/browser';
+import type { EscalationStep } from '@dispatch-foo/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

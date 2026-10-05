@@ -1,5 +1,5 @@
-import { DEFAULT_FIX_LOOP, TaskStore, updateConfig } from '@dispatch/core';
-import type { Finding, TaskDoc } from '@dispatch/core';
+import { DEFAULT_FIX_LOOP, TaskStore, updateConfig } from '@dispatch-foo/core';
+import type { Finding, TaskDoc } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   appendFileSync,

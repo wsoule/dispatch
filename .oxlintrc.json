@@ -86,12 +86,12 @@
           {
             "paths": [
               {
-                "name": "@dispatch/core",
-                "message": "The webview must import @dispatch/core/browser — the root entry reaches node:crypto and node:fs."
+                "name": "@dispatch-foo/core",
+                "message": "The webview must import @dispatch-foo/core/browser — the root entry reaches node:crypto and node:fs."
               },
               {
-                "name": "@dispatch/protocol",
-                "message": "The webview must import @dispatch/protocol/browser: the root entry reaches node:sqlite through the engine and store."
+                "name": "@dispatch-foo/protocol",
+                "message": "The webview must import @dispatch-foo/protocol/browser: the root entry reaches node:sqlite through the engine and store."
               }
             ]
           }

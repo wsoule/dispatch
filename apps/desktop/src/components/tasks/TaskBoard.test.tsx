@@ -1,11 +1,11 @@
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { PRIORITY_ORDER } from '@dispatch-foo/core/browser';
 import type {
   EpicProgress,
   EpicProgressChild,
   EpicSession,
   ReadinessReading,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
-import { PRIORITY_ORDER } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { Profiler, type ReactNode, useState } from 'react';

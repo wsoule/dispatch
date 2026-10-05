@@ -6,8 +6,8 @@ import {
   startStandalone,
   verifyRequest,
   verifyResponse,
-} from '@dispatch/a2a';
-import { TaskStore } from '@dispatch/core';
+} from '@dispatch-foo/a2a';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';

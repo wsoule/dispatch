@@ -1,17 +1,17 @@
-import { generateFindingId, scanFindingsJsonl } from '@dispatch/core';
+import { generateFindingId, scanFindingsJsonl } from '@dispatch-foo/core';
 import type {
   AddFindingInput,
   Finding,
   FindingListFilter,
   FindingUpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 // Review findings raised against a task, one JSON line per write in
 // `.dispatch/findings.jsonl`. An update is a fresh line, not a rewrite.
 
-// Re-exported, not re-declared: `@dispatch/core` owns these shapes (they sit
+// Re-exported, not re-declared: `@dispatch-foo/core` owns these shapes (they sit
 // beside the `Finding` they produce, so the database-backed store can take
 // the same inputs), and a second copy here is one that can drift from the
 // backend on the other side of the port below.
@@ -19,13 +19,13 @@ export type {
   AddFindingInput,
   FindingListFilter,
   FindingUpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 /**
  * The findings surface every backend answers, so the daemon can hold either
  * the JSONL store below or core's `SqliteFindingStore` without any handler
  * knowing which. Structural, not `implements`: `SqliteFindingStore` lives in
- * `@dispatch/core` and cannot import this file, and its extra optional `now`
+ * `@dispatch-foo/core` and cannot import this file, and its extra optional `now`
  * parameters are compatible with these signatures anyway.
  */
 export interface FindingStorePort {
@@ -61,7 +61,7 @@ export class FindingStore implements FindingStorePort {
   // Compacts the append-only file, keyed by id + createdAt because update()
   // re-appends both — so two records that minted one id both survive.
   //
-  // The compaction itself lives in `@dispatch/core`'s scanFindingsJsonl, not
+  // The compaction itself lives in `@dispatch-foo/core`'s scanFindingsJsonl, not
   // here: the one-time import of this file into the database has to serve
   // exactly the set this store serves, and two copies of the rule would drift
   // apart silently. What stays here is the reporting — which lines this

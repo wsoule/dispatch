@@ -1,4 +1,4 @@
-import type { EffortLevel } from '@dispatch/core/browser';
+import type { EffortLevel } from '@dispatch-foo/core/browser';
 import type { ReactNode } from 'react';
 import { createContext, useContext } from 'react';
 

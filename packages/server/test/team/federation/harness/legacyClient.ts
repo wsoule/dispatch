@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core';
-import { newTaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { newTaskDoc } from '@dispatch-foo/core';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

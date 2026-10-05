@@ -1,7 +1,7 @@
+import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
+import { DEFAULT_MEMORY } from '@dispatch-foo/core/browser';
 import type { ApiClient, MemoryIngestProblem } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
-import type { ConfigPatch, DispatchConfig } from '@dispatch/core/browser';
-import { DEFAULT_MEMORY } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 

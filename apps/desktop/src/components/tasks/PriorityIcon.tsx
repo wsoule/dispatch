@@ -1,4 +1,4 @@
-import type { Priority } from '@dispatch/core/browser';
+import type { Priority } from '@dispatch-foo/core/browser';
 
 import { priorityLabel } from '../../lib/taskDisplay';
 import { cn } from '@/lib/utils';

@@ -1,9 +1,9 @@
-import type { StatusModel, StatusType } from '@dispatch/core/browser';
+import type { StatusModel, StatusType } from '@dispatch-foo/core/browser';
 import {
   statusColor as configuredStatusColor,
   hasStatusDefinition,
   statusType,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 
 import { activeStatusModel, useActiveStatusModel } from '@/lib/statusModel';
 import { cn } from '@/lib/utils';

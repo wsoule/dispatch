@@ -1,5 +1,5 @@
-import { queryAll } from '@dispatch/core';
-import type { SqliteDatabase } from '@dispatch/core';
+import { queryAll } from '@dispatch-foo/core';
+import type { SqliteDatabase } from '@dispatch-foo/core';
 import type {
   Hello,
   Json,
@@ -10,7 +10,7 @@ import type {
   RunnableVector,
   Step,
   StepResult,
-} from '@dispatch/protocol-spec';
+} from '@dispatch-foo/protocol-spec';
 
 import { parseAddress, SYSTEM_ADDRESS } from '../address.js';
 import { GATE_TYPES } from '../constants.js';

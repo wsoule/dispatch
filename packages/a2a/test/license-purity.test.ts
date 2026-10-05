@@ -24,7 +24,7 @@ function tsFilesUnder(dir: string): string[] {
   return files;
 }
 
-describe('license purity (@dispatch/a2a is MIT)', () => {
+describe('license purity (@dispatch-foo/a2a is MIT)', () => {
   it('no src module imports the daemon or the SDK server', () => {
     const offenders: string[] = [];
     for (const file of tsFilesUnder(SRC)) {

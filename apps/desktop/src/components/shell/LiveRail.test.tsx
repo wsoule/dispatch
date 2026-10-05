@@ -1,10 +1,10 @@
+import type { TaskDoc } from '@dispatch-foo/core/browser';
 import type {
   EpicProgress,
   OverseerAction,
   OverseerRecord,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

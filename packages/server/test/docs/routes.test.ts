@@ -1,4 +1,4 @@
-import { openSqliteDb } from '@dispatch/core';
+import { openSqliteDb } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,
@@ -773,5 +773,22 @@ describe('image routes', () => {
       (await fetch(`${base}/docs/img/assets/${'b'.repeat(64)}.png`)).status
     ).toBe(404);
     expect((await fetch(`${base}/docs/other/assets/${name}`)).status).toBe(404);
+  });
+
+  it('answers sync repair with 409 while team sync is not on, and 403 below decide tier', async () => {
+    const res = await post('/docs/health/sync-repair', {});
+    expect(res.status).toBe(409);
+    expect((await json<{ error: string }>(res)).error).toContain(
+      'team sync is not on'
+    );
+    const teammate = await fetch(`${base}/docs/health/sync-repair`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${await teammateToken()}`,
+      },
+      body: '{}',
+    });
+    expect(teammate.status).toBe(403);
   });
 });

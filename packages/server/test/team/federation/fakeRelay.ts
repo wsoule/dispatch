@@ -1,10 +1,10 @@
-import { foldRoster, verifyLog } from '@dispatch/federation';
+import { foldRoster, verifyLog } from '@dispatch-foo/federation';
 import type {
   KeyInfo,
   PinnedKey,
   RosterOpRef,
   RosterView,
-} from '@dispatch/federation';
+} from '@dispatch-foo/federation';
 import {
   compareHlc,
   fingerprint,
@@ -13,13 +13,13 @@ import {
   parseOpHlc,
   stubOf,
   verifyText,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   FederatedOp,
   KeyBody,
   LogEntry,
   RosterBody,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type { ServerWebSocket } from 'bun';
 
 import { relayAuthText } from '../../../src/team/federation/relay.js';
@@ -27,7 +27,7 @@ import type { RelayFrame } from '../../../src/team/federation/relay.js';
 
 // The in-repo fake relay (Task 22): the frame contract of
 // docs/specs/2026-10-05-sealed-relay-contract.md over Bun.serve, with
-// @dispatch/federation's verifyLog and foldRoster. Tests only.
+// @dispatch-foo/federation's verifyLog and foldRoster. Tests only.
 
 /** The contract's limits; tests lower them. */
 export interface RelayLimits {

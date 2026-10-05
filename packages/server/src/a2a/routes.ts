@@ -1,4 +1,4 @@
-import type { A2AStore, ClientRow, TaskRow } from '@dispatch/a2a';
+import type { A2AStore, ClientRow, TaskRow } from '@dispatch-foo/a2a';
 import {
   cardJson,
   clientNameFor,
@@ -7,8 +7,8 @@ import {
   isClientAddress,
   PeerHttpError,
   TERMINAL_STATES,
-} from '@dispatch/a2a';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { randomBytes } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';

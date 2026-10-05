@@ -1,4 +1,4 @@
-import { handleA2A, IpLimiter, loadOrCreateLinkKeys } from '@dispatch/a2a';
+import { handleA2A, IpLimiter, loadOrCreateLinkKeys } from '@dispatch-foo/a2a';
 import type {
   A2APolicy,
   A2AStore,
@@ -7,8 +7,8 @@ import type {
   Caller,
   LinkPayload,
   PeerRow,
-} from '@dispatch/a2a';
-import type { AgentRecord } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import type { AgentRecord } from '@dispatch-foo/protocol';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 

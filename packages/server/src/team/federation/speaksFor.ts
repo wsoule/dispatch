@@ -1,7 +1,7 @@
-import { speaksForHandle } from '@dispatch/federation';
-import type { RosterView } from '@dispatch/federation';
-import { parseAddress, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import type { Address, Message } from '@dispatch/protocol';
+import { speaksForHandle } from '@dispatch-foo/federation';
+import type { RosterView } from '@dispatch-foo/federation';
+import { parseAddress, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
+import type { Address, Message } from '@dispatch-foo/protocol';
 
 import type { Evidence } from './service.js';
 import { standsAt } from './service.js';

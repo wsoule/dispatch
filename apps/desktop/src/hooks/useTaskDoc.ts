@@ -1,5 +1,5 @@
+import type { TaskDoc, TaskListItem } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
-import type { TaskDoc, TaskListItem } from '@dispatch/core/browser';
 import { useQuery } from '@tanstack/react-query';
 
 /** The task list's query key. `taskDocKey` nests under it, so invalidating

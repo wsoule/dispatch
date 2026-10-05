@@ -1,5 +1,5 @@
-import type { Person } from '@dispatch/core/browser';
-import { canonicalAssignee } from '@dispatch/core/browser';
+import type { Person } from '@dispatch-foo/core/browser';
+import { canonicalAssignee } from '@dispatch-foo/core/browser';
 import { createContext, useContext, useMemo } from 'react';
 
 /** The project's people and who this window is — provided once by App, read by every

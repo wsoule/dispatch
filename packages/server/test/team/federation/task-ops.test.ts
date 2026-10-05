@@ -1,6 +1,6 @@
-import { openDispatchDb, SqliteTaskStore } from '@dispatch/core';
-import { verifyLog } from '@dispatch/federation';
-import { MAX_OP_BYTES } from '@dispatch/protocol/federation';
+import { openDispatchDb, SqliteTaskStore } from '@dispatch-foo/core';
+import { verifyLog } from '@dispatch-foo/federation';
+import { MAX_OP_BYTES } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { SyncedTaskStore } from '../../../src/team/boardSync/syncedStore.js';

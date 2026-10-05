@@ -4,7 +4,7 @@ import type {
   GateData,
   JsonValue,
   Message,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 
 import { floorCheckForToolInput } from '../floor.js';
 import { untrustedInline } from '../orchestrator/prompt.js';

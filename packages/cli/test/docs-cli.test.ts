@@ -1,5 +1,5 @@
-import type { DocRevisionInfo } from '@dispatch/core';
-import { parseDocFile, renderDocFile } from '@dispatch/core';
+import type { DocRevisionInfo } from '@dispatch-foo/core';
+import { parseDocFile, renderDocFile } from '@dispatch-foo/core';
 import {
   afterAll,
   afterEach,
@@ -714,6 +714,7 @@ describe('dispatch docs handles', () => {
   let home: string;
   let lines: string[];
   let published: unknown[];
+  let shared: string[];
   let server: ReturnType<typeof Bun.serve>;
   const savedHome = process.env.DISPATCH_HOME;
   const run = (...argv: string[]) => {
@@ -729,6 +730,7 @@ describe('dispatch docs handles', () => {
     await run('init');
     lines = [];
     published = [];
+    shared = [];
     server = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
@@ -777,6 +779,22 @@ describe('dispatch docs handles', () => {
               { status: 201 }
             );
           });
+        if (pathname === '/api/docs/notes/share-linear') {
+          shared.push(pathname);
+          return Response.json({ documentId: 'doc-9' }, { status: 201 });
+        }
+        if (pathname === '/api/docs/loose/share-linear') {
+          shared.push(pathname);
+          return Response.json(
+            {
+              error:
+                'link the doc to a task synced with a Linear project or issue first',
+              code: 'invalid',
+              field: 'links',
+            },
+            { status: 400 }
+          );
+        }
         if (pathname === '/api/docs/notes')
           return Response.json({
             doc: { ...team, lastPublishPath: 'docs/notes.md' },
@@ -871,6 +889,22 @@ describe('dispatch docs handles', () => {
     expect(lines).toEqual([
       'publishing notes to docs/specs/notes.md: task t-pub-1, run r-9',
       'publishing notes to docs/notes.md: task t-pub-1 (not dispatched)',
+    ]);
+  });
+
+  it('shares a team doc to Linear, refusing a personal one before asking the daemon', async () => {
+    const token = ['--token', 'app-token'];
+    await run('docs', 'share-linear', 'notes', ...token);
+    expect(lines).toEqual(['notes shared to Linear as document doc-9']);
+    await expect(
+      run('docs', 'share-linear', '~notes', ...token)
+    ).rejects.toThrow('personal docs never go to Linear');
+    await expect(
+      run('docs', 'share-linear', 'loose', ...token)
+    ).rejects.toThrow('link the doc to a task synced with a Linear project');
+    expect(shared).toEqual([
+      '/api/docs/notes/share-linear',
+      '/api/docs/loose/share-linear',
     ]);
   });
 });

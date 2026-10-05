@@ -7,8 +7,8 @@ import {
   TaskStore,
   upsertRegisteredProject,
   writeProjectBackend,
-} from '@dispatch/core';
-import { cartoInit, discoverCarto } from '@dispatch/core/carto';
+} from '@dispatch-foo/core';
+import { cartoInit, discoverCarto } from '@dispatch-foo/core/carto';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';

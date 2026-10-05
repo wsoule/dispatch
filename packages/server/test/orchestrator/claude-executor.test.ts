@@ -3,7 +3,10 @@ import type {
   Options,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { DISPATCH_MCP_TOOLS, DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
+import {
+  DISPATCH_MCP_TOOLS,
+  DISPATCH_MESSAGING_TOOLS,
+} from '@dispatch-foo/core';
 import { describe, expect, it, spyOn, test } from 'bun:test';
 import {
   chmodSync,

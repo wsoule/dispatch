@@ -1,5 +1,5 @@
-import type { JsonValue } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 import type { GuardOptions } from './guard.js';
 import { AddressRefusedError } from './guard.js';

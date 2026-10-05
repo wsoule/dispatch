@@ -12,7 +12,7 @@ import {
   serializeTaskFile,
   statusModelOf,
   TaskStore,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CreateInput,
   GitReader,
@@ -21,7 +21,7 @@ import type {
   TaskDoc,
   TaskKind,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -105,7 +105,7 @@ function isInitialized(rootDir: string): boolean {
  * markdown, with no way to say otherwise. Existence is not ownership.
  *
  * The marker is written when a project moves to the database — by the daemon
- * at boot, or by `dispatch migrate`. `@dispatch/core`'s storage.ts owns the
+ * at boot, or by `dispatch migrate`. `@dispatch-foo/core`'s storage.ts owns the
  * format; a mangled marker reads there as null, which degrades this project to
  * its pre-marker behaviour rather than failing every task command.
  */

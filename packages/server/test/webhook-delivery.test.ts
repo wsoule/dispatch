@@ -1,5 +1,5 @@
-import type { NotificationsConfig } from '@dispatch/core';
-import { DEFAULT_NOTIFICATIONS } from '@dispatch/core';
+import type { NotificationsConfig } from '@dispatch-foo/core';
+import { DEFAULT_NOTIFICATIONS } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import type { DecisionItem } from '../src/decisionFeed.js';

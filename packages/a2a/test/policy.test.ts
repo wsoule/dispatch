@@ -1,4 +1,4 @@
-import type { Delivery } from '@dispatch/protocol';
+import type { Delivery } from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import {

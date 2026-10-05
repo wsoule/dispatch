@@ -1,4 +1,9 @@
-import type { MemoryConfig } from '@dispatch/core';
+import type { MemoryConfig } from '@dispatch-foo/core';
+import {
+  isDecidingAuthor,
+  MessagingError,
+  SYSTEM_ADDRESS,
+} from '@dispatch-foo/protocol';
 import { decayStore, MEMORY_SCOPES } from '@dispatch/memory';
 import type {
   DecayResult,
@@ -8,11 +13,6 @@ import type {
   MemoryScope,
   MemoryStore,
 } from '@dispatch/memory';
-import {
-  isDecidingAuthor,
-  MessagingError,
-  SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
 
 import { SYSTEM_SENDER } from '../messaging/gates.js';
 import type { Messaging } from '../messaging/service.js';

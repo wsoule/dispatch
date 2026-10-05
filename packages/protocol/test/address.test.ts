@@ -1,4 +1,4 @@
-import { handleFromEmail, MAX_HANDLE_BYTES } from '@dispatch/core';
+import { handleFromEmail, MAX_HANDLE_BYTES } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import {

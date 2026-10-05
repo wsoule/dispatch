@@ -3,12 +3,12 @@ import {
   notificationKindForMessage,
   untrustedInline,
   untrustedVerbatim,
-} from '@dispatch/core';
-import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch-foo/core';
+import type { Message } from '@dispatch-foo/protocol';
+import { gateOf } from '@dispatch-foo/protocol';
 import { MEMORY_KINDS } from '@dispatch/memory';
 import type { MemoryKind, SharedScope } from '@dispatch/memory';
-import type { Message } from '@dispatch/protocol';
-import { gateOf } from '@dispatch/protocol';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 

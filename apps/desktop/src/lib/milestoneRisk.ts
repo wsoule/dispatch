@@ -1,5 +1,5 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 
 import { deriveFeedState, isInFlightState, isUrgentState } from './feedState';
 

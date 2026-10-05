@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskDoc } from '@dispatch-foo/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 

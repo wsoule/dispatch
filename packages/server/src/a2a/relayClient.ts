@@ -1,11 +1,11 @@
-import type { HostRow, RelayToDaemon } from '@dispatch/a2a';
+import type { HostRow, RelayToDaemon } from '@dispatch-foo/a2a';
 import {
   answerChallenge,
   ecThumbprint,
   isEventStream,
   MAX_FRAME_BODY,
   parseFrame,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 
 import type { RelaySettings } from './settings.js';
 import { DEFAULT_RELAY } from './settings.js';

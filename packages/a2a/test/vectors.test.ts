@@ -3,7 +3,7 @@ import {
   loadRegistry,
   loadVectors,
   prepareVector,
-} from '@dispatch/protocol-spec';
+} from '@dispatch-foo/protocol-spec';
 import { describe, expect, it } from 'bun:test';
 
 import { A2A_HELLO, runA2AVector } from '../src/conformance/adapter.js';

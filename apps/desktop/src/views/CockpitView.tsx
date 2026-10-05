@@ -1,9 +1,9 @@
-import type { Person, TaskListItem } from '@dispatch/core/browser';
+import type { Person, TaskListItem } from '@dispatch-foo/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
   isUnstartedStatus,
   statusModelOf,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import { Users, Workflow } from 'lucide-react';
 import {
   type KeyboardEvent,

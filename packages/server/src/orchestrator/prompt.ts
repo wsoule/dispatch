@@ -4,8 +4,8 @@ import {
   untrustedBlock,
   untrustedFenced,
   untrustedInline,
-} from '@dispatch/core';
-import type { TaskComment, TaskDoc } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { TaskComment, TaskDoc } from '@dispatch-foo/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -317,4 +317,32 @@ export function renderFreshSessionNotice(
     sections.push(renderSurveySection(previous.survey));
   }
   return sections.join('\n\n');
+}
+
+// The task's own spec, one index line, and how to read it in full.
+export function specSection(
+  specLine: string | null | undefined
+): string | null {
+  if (specLine === null || specLine === undefined) return null;
+  const handle = /^- spec · (\S+) ·/.exec(specLine)?.[1] ?? '';
+  return [
+    "## The task's spec",
+    specLine,
+    `Judge the work against it: doc_read("${handle}") reads it.`,
+  ].join('\n');
+}
+
+// A review or verify prompt's spec line; null with no reader, or when reading
+// it fails, so a docs outage never blocks the run.
+export function specLineOf(
+  read: ((taskId: string) => string | null) | undefined,
+  taskId: string
+): string | null {
+  if (read === undefined) return null;
+  try {
+    return read(taskId);
+  } catch (err) {
+    console.error(`dispatchd: reading ${taskId}'s spec line failed`, err);
+    return null;
+  }
 }

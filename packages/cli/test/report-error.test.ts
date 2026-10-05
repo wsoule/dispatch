@@ -1,4 +1,4 @@
-import { ConfigError } from '@dispatch/core';
+import { ConfigError } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import { CliError } from '../src/context.js';

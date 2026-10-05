@@ -6,13 +6,13 @@ import type {
   LinkTarget,
   LinkTargetType,
   ProposalState,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   DOC_STATUSES,
   DOCS_LIMITS,
   LINK_RELS,
   LINK_TARGET_TYPES,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { humanOperator, requestActor } from '../api/caller.js';
@@ -452,6 +452,18 @@ export async function handleDocsRoute(
     if (head === 'proposals' && rest.length === 2 && method === 'GET') {
       return jsonResponse(docs.proposal(actor, decode(rest[1], 'rev')));
     }
+    // Under the reserved `health` word, so no doc slug can shadow it.
+    if (
+      head === 'health' &&
+      rest.length === 2 &&
+      rest[1] === 'sync-repair' &&
+      method === 'POST'
+    ) {
+      return await write(async () => {
+        const ref = optStr((await body()).ref, 'ref');
+        return jsonResponse(docs.syncRepair(actor, ref));
+      });
+    }
     const ref = decode(head, 'doc');
     if (rest.length === 1) {
       if (method === 'GET') {
@@ -589,6 +601,12 @@ export async function handleDocsRoute(
           if (bytes instanceof Response) return bytes;
           return jsonResponse(docs.putAsset(actor, ref, bytes), 201);
         }
+        case 'share-linear':
+          return await write(async () => {
+            await body();
+            const documentId = await ctx.linearSync.shareDocument(actor, ref);
+            return jsonResponse({ documentId }, 201);
+          });
         case 'promote':
           return await write(async () => {
             await body();

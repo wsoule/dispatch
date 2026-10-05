@@ -3,7 +3,7 @@ import type {
   RunStep,
   SubagentEvent,
   SubagentSummary,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type { RunUsage } from './usage.js';
 
@@ -41,7 +41,7 @@ export interface NormalizedEntry {
   // top-level activity.
   parentToolUseId?: string;
   // `kind: 'agent'` only: one lifecycle event of a sub-agent this run's agent
-  // spawned (see @dispatch/core's subagents module for the fold). The entry
+  // spawned (see @dispatch-foo/core's subagents module for the fold). The entry
   // also keeps the spawning tool call's `toolName`/`toolInput` on the started
   // event, so the transcript can show what the sub-agent was asked to do.
   agent?: SubagentEvent;

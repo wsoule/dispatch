@@ -1,5 +1,5 @@
-import { openSqliteDb, updateConfig } from '@dispatch/core';
-import { openMessagesDb, SqliteMessageStore } from '@dispatch/protocol';
+import { openSqliteDb, updateConfig } from '@dispatch-foo/core';
+import { openMessagesDb, SqliteMessageStore } from '@dispatch-foo/protocol';
 import { afterAll, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

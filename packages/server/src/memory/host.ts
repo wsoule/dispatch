@@ -2,8 +2,8 @@ import {
   describePolicyAuthorization,
   parseTeam,
   untrustedInline,
-} from '@dispatch/core';
-import type { PolicyRuling, TaskDoc, TaskStorePort } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { PolicyRuling, TaskDoc, TaskStorePort } from '@dispatch-foo/core';
 import { isA2AAgent } from '@dispatch/memory';
 import type {
   IndexContext,

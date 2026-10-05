@@ -1,5 +1,5 @@
+import type { CreateInput, Priority } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
-import type { CreateInput, Priority } from '@dispatch/core/browser';
 import { Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 

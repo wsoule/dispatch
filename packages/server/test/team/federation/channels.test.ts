@@ -12,7 +12,7 @@ afterEach(() => {
 });
 const at = (i: number): MessagingReplica => open[i];
 const fp = async (r: MessagingReplica) => {
-  const { fingerprint } = await import('@dispatch/protocol/federation');
+  const { fingerprint } = await import('@dispatch-foo/protocol/federation');
   return fingerprint(r.fed.keys.signPub, r.fed.keys.sealPub);
 };
 

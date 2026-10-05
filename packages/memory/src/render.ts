@@ -1,4 +1,4 @@
-import { untrustedBlock, untrustedInline } from '@dispatch/core';
+import { untrustedBlock, untrustedInline } from '@dispatch-foo/core';
 
 import { cutUtf8, utf8Bytes } from './limits.js';
 import { KIND_CLASS } from './rank.js';

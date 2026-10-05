@@ -1,4 +1,4 @@
-import { hasA2AProvenance } from '@dispatch/a2a';
+import { hasA2AProvenance } from '@dispatch-foo/a2a';
 import type {
   DocProposal,
   DocScope,
@@ -6,14 +6,14 @@ import type {
   PolicyRuling,
   TaskRisk,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   isCanceledStatus,
   isCompletedStatus,
   TaskParseError,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { MessageStore } from '@dispatch-foo/protocol';
 import type { MemoryStore, MemoryStores, Operator } from '@dispatch/memory';
-import type { MessageStore } from '@dispatch/protocol';
 
 import { spawnGitSync } from '../blockingGit.js';
 import type { EventBus } from '../events.js';
@@ -190,6 +190,8 @@ export class DaemonDocsHost implements DocsHost {
       store: TaskStorePort;
       events: Pick<EventBus, 'broadcast'>;
       debounceMs?: number;
+      // The daemon's clock; tests inject one shared with federation.
+      now?: () => Date;
       // The project checkout publishes validate against and read git in.
       rootDir?: string;
       // Brings the daemon's task cache up to date after a task is created here.
@@ -594,6 +596,6 @@ export class DaemonDocsHost implements DocsHost {
   }
 
   now(): Date {
-    return new Date();
+    return this.deps.now?.() ?? new Date();
   }
 }

@@ -2,7 +2,7 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 
 language: 'typescript'
 layer: 'library'
-tags: ['tsdown']
+tags: ['tsdown', 'publishable']
 
 tasks:
   # The tests read the kit's files and App. C (no build hashes them) and run
@@ -20,19 +20,17 @@ tasks:
 
   # The published runner against the built reference adapter under Node
   # (node:sqlite), which `bun test` never exercises; it claims Core and Dispatch
-  # with the deviations Dispatch declares from requirements the kit cannot test.
+  # and declares no deviation.
   conformance:
     command:
       'node ../protocol-spec/dist/bin.js --adapter "node
       dist/conformance-adapter.js" --claim core --claim dispatch-profile
-      --deviations conformance-deviations.json --report
-      dist/dmp-conformance.json --junit dist/dmp-conformance.xml'
+      --report dist/dmp-conformance.json --junit dist/dmp-conformance.xml'
     deps:
       - 'build'
       - 'protocol-spec:build'
     inputs:
       - 'src/**/*'
-      - 'conformance-deviations.json'
       - '/packages/protocol-spec/vectors/**/*'
       - '/packages/protocol-spec/registries/**/*'
       - '/packages/protocol-spec/src/**/*'

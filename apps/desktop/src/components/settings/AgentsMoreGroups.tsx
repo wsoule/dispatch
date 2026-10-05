@@ -1,4 +1,4 @@
-import type { ConfigPatch, DispatchConfig } from '@dispatch/core/browser';
+import type { ConfigPatch, DispatchConfig } from '@dispatch-foo/core/browser';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 

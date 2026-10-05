@@ -1,5 +1,5 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { ApiClient, Message } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';

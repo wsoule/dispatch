@@ -1,11 +1,11 @@
-import type { ApiClient, RunMeta } from '@dispatch/client';
 import type {
   TaskComment,
   TaskDoc,
   TaskListItem,
   UpdatePatch,
-} from '@dispatch/core/browser';
-import { defaultTaskFields } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { defaultTaskFields } from '@dispatch-foo/core/browser';
+import type { ApiClient, RunMeta } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useState } from 'react';

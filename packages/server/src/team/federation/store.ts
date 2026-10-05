@@ -1,5 +1,5 @@
-import type { LogCursor, PinnedKey } from '@dispatch/federation';
-import type { JsonValue } from '@dispatch/protocol';
+import type { LogCursor, PinnedKey } from '@dispatch-foo/federation';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import type {
   ChainHead,
   FederatedOp,
@@ -7,7 +7,7 @@ import type {
   OpType,
   ReplicaKeys,
   Sealed,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import {
   buildOp,
   canonicalize,
@@ -15,7 +15,7 @@ import {
   opHash,
   stubOf,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type { Database } from 'bun:sqlite';
 
 import type { SyncLedger } from '../boardSync/ledger.js';

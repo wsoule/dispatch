@@ -1,5 +1,4 @@
-import type { EpicProgress, EpicProgressChild } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
   fanoutCoverers,
@@ -9,7 +8,8 @@ import {
   isUnstartedStatus,
   statusModelOf,
   usesIntegrationBranch,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { EpicProgress, EpicProgressChild } from '@dispatch/client';
 import { Waypoints } from 'lucide-react';
 import {
   type ReactNode,

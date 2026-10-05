@@ -62,14 +62,14 @@ describe('collectWorkspaces', () => {
       name: '@dispatch/server',
       description: 'The daemon',
     });
-    writeJson('packages/core/package.json', { name: '@dispatch/core' });
+    writeJson('packages/core/package.json', { name: '@dispatch-foo/core' });
     writeJson('apps/desktop/package.json', {
       name: '@dispatch/desktop',
       description: 'Tauri app',
     });
 
     expect(collectWorkspaces(rootDir)).toEqual([
-      { dir: 'packages/core', name: '@dispatch/core', description: null },
+      { dir: 'packages/core', name: '@dispatch-foo/core', description: null },
       {
         dir: 'packages/server',
         name: '@dispatch/server',
@@ -85,9 +85,9 @@ describe('collectWorkspaces', () => {
 
   it('accepts the plain-array workspaces form too', () => {
     writeJson('package.json', { workspaces: ['packages/*'] });
-    writeJson('packages/core/package.json', { name: '@dispatch/core' });
+    writeJson('packages/core/package.json', { name: '@dispatch-foo/core' });
     expect(collectWorkspaces(rootDir).map((w) => w.name)).toEqual([
-      '@dispatch/core',
+      '@dispatch-foo/core',
     ]);
   });
 

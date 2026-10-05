@@ -1,5 +1,5 @@
-import { TaskStore } from '@dispatch/core';
-import type { JsonValue, Message } from '@dispatch/protocol';
+import { TaskStore } from '@dispatch-foo/core';
+import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

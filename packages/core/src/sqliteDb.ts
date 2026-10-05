@@ -71,7 +71,7 @@ export function sqliteDriver(): SqliteDriver {
 /**
  * The driver is loaded on first use, not at module load.
  *
- * It has to be. This module is reachable from `@dispatch/core`'s barrel, which
+ * It has to be. This module is reachable from `@dispatch-foo/core`'s barrel, which
  * `@dispatch/cli` imports for every command — and `node:sqlite` only became
  * available unflagged in Node 22.13. On 22.0 through 22.12 a top-level
  * `import ... from 'node:sqlite'` throws ERR_UNKNOWN_BUILTIN_MODULE while the
@@ -420,7 +420,7 @@ export function attachDispatchDb(dbPath: string): SqliteDatabase | null {
 
 /**
  * Opens (creating if needed) a SQLite file with Dispatch's pragmas and no
- * schema, for packages that own their own tables (e.g. @dispatch/protocol).
+ * schema, for packages that own their own tables (e.g. @dispatch-foo/protocol).
  */
 /** How long a statement waits on a locked database before SQLITE_BUSY. */
 const SQLITE_BUSY_TIMEOUT_MS = 100;

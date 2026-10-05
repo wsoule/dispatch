@@ -1,4 +1,4 @@
-import type { Message } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 import { expect, it } from 'bun:test';
 
 import { peerOutboundMessage } from '../../src/peer/message.js';

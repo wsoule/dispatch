@@ -1,5 +1,5 @@
 import { Message as A2AMessage } from '@a2a-js/sdk';
-import type { Message } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import { decodeInbound, encodeMessage, outputTextType } from '../src/codec.js';

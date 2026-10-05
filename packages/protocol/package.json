@@ -1,11 +1,22 @@
 {
-  "name": "@dispatch/protocol",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@dispatch-foo/protocol",
+  "version": "0.2.0",
+  "description": "Reference engine for the Dispatch Messaging Protocol: addresses, envelopes, gates, delivery and a SQLite store.",
+  "homepage": "https://dispatch.foo/protocol/",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wsoule/dispatch.git",
+    "directory": "packages/protocol"
+  },
   "bin": {
     "dmp-reference-adapter": "./dist/conformance-adapter.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -25,18 +36,25 @@
       "import": "./dist/federation/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsdown --clean",
     "test": "bun test",
-    "tsc": "tsgo --noEmit --pretty"
+    "tsc": "tsgo --noEmit --pretty",
+    "prepublishOnly": "moon run protocol:prepublish"
   },
   "dependencies": {
-    "@dispatch/core": "workspace:*"
+    "@dispatch-foo/core": "workspace:*"
   },
   "devDependencies": {
-    "@dispatch/protocol-spec": "workspace:*",
+    "@dispatch-foo/protocol-spec": "workspace:*",
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

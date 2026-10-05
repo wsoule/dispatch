@@ -1,7 +1,7 @@
 import { GetTaskRequest, SendMessageRequest, Task } from '@a2a-js/sdk';
 import { ClientFactory, RestTransportFactory } from '@a2a-js/sdk/client';
-import { ecThumbprint } from '@dispatch/a2a';
-import { TaskStore } from '@dispatch/core';
+import { ecThumbprint } from '@dispatch-foo/a2a';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';

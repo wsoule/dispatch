@@ -1,5 +1,5 @@
-import { fingerprint, stubOf } from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+import { fingerprint, stubOf } from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,

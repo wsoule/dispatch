@@ -1,4 +1,4 @@
-import { gateOf } from '@dispatch/protocol';
+import { gateOf } from '@dispatch-foo/protocol';
 import { afterEach, expect, it } from 'bun:test';
 
 import { tokenHash } from '../../src/a2a/auth.js';

@@ -1,5 +1,5 @@
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
-import { foldSubagents, summarizeSubagents } from '@dispatch/core';
+import type { CommandEvidence, MutationEvidence } from '@dispatch-foo/core';
+import { foldSubagents, summarizeSubagents } from '@dispatch-foo/core';
 import {
   appendFileSync,
   closeSync,

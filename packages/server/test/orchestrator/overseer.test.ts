@@ -1,5 +1,5 @@
-import { TaskStore, updateConfig } from '@dispatch/core';
-import type { JsonValue, Message, Sender } from '@dispatch/protocol';
+import { TaskStore, updateConfig } from '@dispatch-foo/core';
+import type { JsonValue, Message, Sender } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

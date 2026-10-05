@@ -1,5 +1,5 @@
-import { signText } from '@dispatch/protocol/federation';
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+import { signText } from '@dispatch-foo/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 
 import { RELAY_DISCLOSURE } from './teamKeys.js';
 import { TransportOffline } from './transport.js';

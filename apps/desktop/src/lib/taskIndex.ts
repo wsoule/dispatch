@@ -1,4 +1,4 @@
-import type { TaskCycle, TaskListItem } from '@dispatch/core/browser';
+import type { TaskCycle, TaskListItem } from '@dispatch-foo/core/browser';
 
 /** Lookups over one version of the task list that every open task page shares. */
 export interface TaskIndex {

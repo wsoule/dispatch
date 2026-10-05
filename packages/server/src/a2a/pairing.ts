@@ -15,7 +15,7 @@ import {
   signResponseFor,
   unpairNotice,
   verifyCardSignature,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import type {
   AuthResult,
   KeyPin,
@@ -23,9 +23,9 @@ import type {
   PeerRow,
   Reach,
   RequestParts,
-} from '@dispatch/a2a';
-import type { Address } from '@dispatch/protocol';
-import { MessagingError, PEER_ALIAS_PATTERN } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import type { Address } from '@dispatch-foo/protocol';
+import { MessagingError, PEER_ALIAS_PATTERN } from '@dispatch-foo/protocol';
 import { createPublicKey, randomBytes } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import { basename } from 'node:path';

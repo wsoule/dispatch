@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core/browser';
-import { statusModelOf } from '@dispatch/core/browser';
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { groupTasks, nestRows, sortTasks, visibleRowIds } from './listGrouping';

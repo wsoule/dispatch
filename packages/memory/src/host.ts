@@ -1,4 +1,4 @@
-import type { PolicyRuling } from '@dispatch/core';
+import type { PolicyRuling } from '@dispatch-foo/core';
 
 import type { MemoryStore } from './store.js';
 import type {

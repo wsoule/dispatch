@@ -4,7 +4,7 @@ import {
   registerMergeDriverGitConfig,
   registerTeamMergeDriverGitConfig,
   writeGitAttributes,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 

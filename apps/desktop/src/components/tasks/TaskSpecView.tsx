@@ -1,5 +1,5 @@
-import type { Priority, TaskRisk } from '@dispatch/core/browser';
-import { statusLabel } from '@dispatch/core/browser';
+import type { Priority, TaskRisk } from '@dispatch-foo/core/browser';
+import { statusLabel } from '@dispatch-foo/core/browser';
 import { Circle, Plus, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useState } from 'react';

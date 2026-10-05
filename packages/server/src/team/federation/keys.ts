@@ -1,8 +1,8 @@
-import type { ReplicaKeys } from '@dispatch/protocol/federation';
+import type { ReplicaKeys } from '@dispatch-foo/protocol/federation';
 import {
   generateReplicaKeys,
   publicOfPrivate,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import { Database } from 'bun:sqlite';
 import {
   chmodSync,

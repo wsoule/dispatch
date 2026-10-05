@@ -1,6 +1,6 @@
-import { checkLinkPayload, sealableLinkPayload } from '@dispatch/a2a';
-import type { LinkPayload } from '@dispatch/a2a';
-import type { JsonValue } from '@dispatch/protocol';
+import { checkLinkPayload, sealableLinkPayload } from '@dispatch-foo/a2a';
+import type { LinkPayload } from '@dispatch-foo/a2a';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import {
   aheadOfClock,
   buildOp,
@@ -17,12 +17,12 @@ import {
   verifyEntry,
   verifyText,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   ChainHead,
   FederatedOp,
   LogEntry,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';

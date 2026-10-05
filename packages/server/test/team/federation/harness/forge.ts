@@ -1,4 +1,4 @@
-import type { JsonValue, Message } from '@dispatch/protocol';
+import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import {
   buildOp,
   generateReplicaKeys,
@@ -6,8 +6,8 @@ import {
   sealPayload,
   stubOf,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 

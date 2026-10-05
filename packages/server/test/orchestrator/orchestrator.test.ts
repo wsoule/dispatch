@@ -1,4 +1,4 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   appendFileSync,
@@ -2319,7 +2319,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.permissionMode).toBe('plan');
   });
 
-  // No turn cap by default (see DEFAULT_ORCHESTRATOR in @dispatch/core's
+  // No turn cap by default (see DEFAULT_ORCHESTRATOR in @dispatch-foo/core's
   // config.ts): a turn ceiling is a runaway backstop, not a work budget, and a
   // low one truncates healthy runs mid-task — `maxBudgetUsd` is the real guard.
   // Asserting `undefined` rather than a number is the point: the cap has to

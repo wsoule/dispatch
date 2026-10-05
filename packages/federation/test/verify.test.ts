@@ -1,4 +1,4 @@
-import type { JsonValue } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import {
   buildOp,
   fingerprint,
@@ -7,8 +7,8 @@ import {
   sha256Hex,
   stubOf,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
 import { printable, verifyLog } from '../src/verify.js';

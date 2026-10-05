@@ -1,6 +1,6 @@
-import type { Message } from '@dispatch/protocol';
-import { sealPayload } from '@dispatch/protocol/federation';
-import type { MailTarget } from '@dispatch/protocol/federation';
+import type { Message } from '@dispatch-foo/protocol';
+import { sealPayload } from '@dispatch-foo/protocol/federation';
+import type { MailTarget } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { foundedTeam, foundedTeamWith } from './helpers/messagingReplica.js';
@@ -79,7 +79,7 @@ describe('N1: held task mail survives a late handoff (FW-R33(1))', () => {
       (e) => e.type === 'mail'
     );
     if (op === undefined) throw new Error('no mail op');
-    const { stubOf } = await import('@dispatch/protocol/federation');
+    const { stubOf } = await import('@dispatch-foo/protocol/federation');
     ada.remote.tamper(ada.fed.replica, op.seq, (e) => stubOf(e as never));
     await cy.settleWith(ada);
     bob.presence.runEnded({

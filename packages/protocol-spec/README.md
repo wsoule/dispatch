@@ -4,10 +4,10 @@ DMP is the protocol Dispatch hosts use to carry messages between agents and
 humans: addresses, the message envelope, gates that ask a deciding principal to
 approve something, delivery to persistent mailboxes, channels, and a binding
 onto A2A. This package holds the specification text under `spec/`, one file per
-top-level section, and will also hold its conformance kit: the registries, JSON
-Schemas, test vectors and the `dmp-conformance` runner. The text and the kit are
-licensed under Apache-2.0 (see `LICENSE`) so anyone may implement the protocol;
-the reference implementation in `@dispatch-foo/protocol` stays MIT.
+top-level section, and its conformance kit: the registries, JSON Schemas, test
+vectors and the `dmp-conformance` runner. The text and the kit are licensed
+under Apache-2.0 (see `LICENSE`) so anyone may implement the protocol; the
+reference implementation in `@dispatch-foo/protocol` stays MIT.
 
 ## The conformance kit
 
@@ -15,9 +15,11 @@ The kit is the vectors under `vectors/`, the registries under `registries/`, and
 the `dmp-conformance` runner, which judges an implementation through an adapter
 you write. It runs on Node 22.13 or later with no runtime dependencies.
 
-**Install.** The package is not on npm yet. In this repository, build it with
-`moonx protocol-spec:build` and run `node packages/protocol-spec/dist/bin.js`;
-once published, the same command is the package's `dmp-conformance` bin.
+**Install.** `npm install @dispatch-foo/protocol-spec`, then run the
+`dmp-conformance` bin (`npx dmp-conformance`). The vectors, schemas and
+registries are exported too (`@dispatch-foo/protocol-spec/vectors/…`,
+`/schemas/…` and `/registries.json`). In this repository, build it with
+`moonx protocol-spec:build` and run `node packages/protocol-spec/dist/bin.js`.
 
 **The adapter contract.** The runner starts your command and speaks JSON lines
 over its stdin and stdout, one JSON object per line; whatever the adapter writes

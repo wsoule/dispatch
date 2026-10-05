@@ -247,9 +247,11 @@ tasks:
   # Unit tests for the root scripts that guard CI and publishing. The root
   # project excludes the inherited `test` task, so nothing else runs them.
   test-scripts:
-    command: 'bun test scripts/check-ci-targets.test.ts'
+    command:
+      'bun test scripts/check-ci-targets.test.ts scripts/publish-package.test.ts'
     inputs:
       - 'scripts/check-ci-targets*.ts'
+      - 'scripts/publish-package*.ts'
     options:
       runInCI: 'always'
 

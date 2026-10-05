@@ -1,5 +1,5 @@
-import { isSystemMarker } from '@dispatch/protocol';
-import type { Address, JsonValue, Message } from '@dispatch/protocol';
+import { isSystemMarker } from '@dispatch-foo/protocol';
+import type { Address, JsonValue, Message } from '@dispatch-foo/protocol';
 import { createHash } from 'node:crypto';
 
 import { answerArtifact, workArtifacts } from './artifacts.js';

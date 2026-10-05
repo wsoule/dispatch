@@ -18,7 +18,7 @@ import {
   syncLinearLabels,
   syncLinearPeople,
   updateConfig,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   DispatchConfig,
   LabelColorPush,
@@ -32,7 +32,7 @@ import type {
   TaskDoc,
   TaskMeta,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import { rosterMembers } from '../api/people.js';
 import type { LinearSyncState } from './state.js';

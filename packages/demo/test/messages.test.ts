@@ -2,8 +2,8 @@ import {
   createUlidFactory,
   openMessagesDb,
   SqliteMessageStore,
-} from '@dispatch/protocol';
-import type { Message } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

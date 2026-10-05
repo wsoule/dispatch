@@ -1,8 +1,8 @@
-import { ENVELOPE_URI, pinPublicUrl, WORK_URI } from '@dispatch/a2a';
-import type { LookupAll } from '@dispatch/a2a';
-import type { LinkPayload } from '@dispatch/a2a';
-import type { JsonValue } from '@dispatch/protocol';
-import { isStub } from '@dispatch/protocol/federation';
+import { ENVELOPE_URI, pinPublicUrl, WORK_URI } from '@dispatch-foo/a2a';
+import type { LookupAll } from '@dispatch-foo/a2a';
+import type { LinkPayload } from '@dispatch-foo/a2a';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { isStub } from '@dispatch-foo/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { lookup } from 'node:dns/promises';
 import { chmodSync, mkdirSync } from 'node:fs';

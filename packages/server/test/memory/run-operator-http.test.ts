@@ -1,4 +1,4 @@
-import { gateOf } from '@dispatch/protocol';
+import { gateOf } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,

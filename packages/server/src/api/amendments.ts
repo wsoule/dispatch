@@ -1,5 +1,5 @@
-import { untrustedInline } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import { untrustedInline } from '@dispatch-foo/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 import { cutUtf8, MEMORY_LIMITS } from '@dispatch/memory';
 import type { SaveInput, SaveResult } from '@dispatch/memory';
 

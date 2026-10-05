@@ -1,5 +1,5 @@
+import type { TaskDoc } from '@dispatch-foo/core/browser';
 import type { Message } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
 import { useState } from 'react';
 
 import { DECIDE_TIER_EXPLANATION } from '../../lib/daemonAuth';

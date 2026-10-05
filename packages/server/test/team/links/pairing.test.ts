@@ -1,4 +1,4 @@
-import { decodePairingCode, encodePairingCode } from '@dispatch/a2a';
+import { decodePairingCode, encodePairingCode } from '@dispatch-foo/a2a';
 import { describe, expect, it, setDefaultTimeout } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 

@@ -1,4 +1,4 @@
-import { aheadOfClock, OpClock } from '@dispatch/protocol/federation';
+import { aheadOfClock, OpClock } from '@dispatch-foo/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';

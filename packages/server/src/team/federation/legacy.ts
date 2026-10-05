@@ -1,14 +1,14 @@
-import type { RosterView } from '@dispatch/federation';
+import type { RosterView } from '@dispatch-foo/federation';
 import {
   canonicalize,
   compareHlc,
   parseOpHlc,
   sha256Hex,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   FederatedOp,
   LegacyAttestation,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 import type { BoardOp } from '../boardSync/engine.js';
 import type { SyncLedger } from '../boardSync/ledger.js';

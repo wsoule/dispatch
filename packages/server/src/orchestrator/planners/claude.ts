@@ -1,7 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
-import { loadConfig } from '@dispatch/core';
-import type { EffortLevel } from '@dispatch/core';
+import { loadConfig } from '@dispatch-foo/core';
+import type { EffortLevel } from '@dispatch-foo/core';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import { floorGuard } from '../floorHook.js';

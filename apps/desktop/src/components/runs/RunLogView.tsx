@@ -1,5 +1,5 @@
+import { foldSubagents } from '@dispatch-foo/core/browser';
 import type { NormalizedEntry, RunMeta } from '@dispatch/client';
-import { foldSubagents } from '@dispatch/core/browser';
 import {
   Info,
   Mail,

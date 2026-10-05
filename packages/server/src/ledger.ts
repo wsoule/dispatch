@@ -1,9 +1,9 @@
-import { generateLedgerId, scanLedgerJsonl } from '@dispatch/core';
+import { generateLedgerId, scanLedgerJsonl } from '@dispatch-foo/core';
 import type {
   AddLedgerInput,
   LedgerEntry,
   LedgerListFilter,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -25,7 +25,7 @@ export const DEP_MAP_DEGRADED_TITLE = 'dependency map degraded';
 
 // Re-exported rather than re-declared, same as findings.ts — core owns these
 // shapes so both backends take identical inputs.
-export type { AddLedgerInput, LedgerListFilter } from '@dispatch/core';
+export type { AddLedgerInput, LedgerListFilter } from '@dispatch-foo/core';
 
 /**
  * The ledger surface every backend answers — same seam as `FindingStorePort`
@@ -69,7 +69,7 @@ export class LedgerStore implements LedgerStorePort {
   // Same compaction contract as FindingStore.read(), and for the same reason
   // the same shared implementation: keyed by id + createdAt, so a duplicated
   // line collapses but two entries sharing one id both survive. See the note
-  // on FindingStore.read() about why the rule lives in `@dispatch/core`.
+  // on FindingStore.read() about why the rule lives in `@dispatch-foo/core`.
   private read(): LedgerEntry[] {
     if (!existsSync(this.file)) return [];
     const scan = scanLedgerJsonl(readFileSync(this.file, 'utf8'));

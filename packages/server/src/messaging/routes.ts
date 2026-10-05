@@ -1,6 +1,6 @@
-import { isClientAddress, isReservedName } from '@dispatch/a2a';
-import { canonicalKind } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import { isClientAddress, isReservedName } from '@dispatch-foo/a2a';
+import { canonicalKind } from '@dispatch-foo/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 import type {
   AgentRecord,
   Delivery,
@@ -12,13 +12,13 @@ import type {
   Ref,
   Sender,
   SendInput,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import {
   DELIVERY_STATES,
   gateOf,
   parseAddress,
   SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import { randomBytes } from 'node:crypto';
 
 import { tokenHash } from '../a2a/auth.js';
@@ -141,7 +141,7 @@ interface RawSendBody {
 }
 
 // Narrows an unknown JSON body into a well-typed SendInput (shape only —
-// deep validation happens in @dispatch/protocol's validateSendInput).
+// deep validation happens in @dispatch-foo/protocol's validateSendInput).
 function parseSendInput(
   raw: unknown
 ): { ok: true; value: SendInput } | { ok: false; response: Response } {
@@ -743,11 +743,16 @@ export function getMailbox(ctx: ApiContext, url: URL): Response {
 }
 
 // POST /api/deliveries/:id/read — only the delivery's own recipient (or its
-// task's run, or a deciding human) may mark it read.
+// task's run, or a deciding human) may mark it read. A caller that may not read
+// its message gets the absent id's 404, so the delivery's existence is not disclosed.
 export function markDeliveryRead(ctx: ApiContext, id: string): Response {
   const principal = requirePrincipal(ctx);
   const delivery = ctx.messaging.store.getDelivery(id);
-  if (delivery === null) return errorResponse(404, `no delivery ${id}`);
+  if (
+    delivery === null ||
+    !ctx.messaging.engine.canRead(delivery.messageId, senderOf(principal))
+  )
+    return errorResponse(404, `no delivery ${id}`);
   if (!canActAs(ctx, principal, delivery.recipient)) {
     return errorResponse(403, `cannot mark ${id} read`);
   }

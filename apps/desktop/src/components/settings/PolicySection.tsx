@@ -1,11 +1,10 @@
-import type { ApiClient } from '@dispatch/client';
 import type {
   DispatchConfig,
   LedgerEntry,
   PolicyConfig,
   PolicyGate,
   PolicyGateMode,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import {
   consultPolicy,
   MAX_POLICY_RUNG,
@@ -13,7 +12,8 @@ import {
   POLICY_GATES,
   POLICY_RUNGS,
   projectPolicy,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { ApiClient } from '@dispatch/client';
 import { Lock } from 'lucide-react';
 import { useEffect, useState } from 'react';
 

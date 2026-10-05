@@ -1,7 +1,7 @@
-import type { PolicyRuling, TaskRisk } from '@dispatch/core';
-import { describePolicyAuthorization } from '@dispatch/core';
-import type { DeliveryEngine, Message } from '@dispatch/protocol';
-import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import type { PolicyRuling, TaskRisk } from '@dispatch-foo/core';
+import { describePolicyAuthorization } from '@dispatch-foo/core';
+import type { DeliveryEngine, Message } from '@dispatch-foo/protocol';
+import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { isAbsolute, posix, relative } from 'node:path';
 
 import { scopeRequestEscapesRepo } from '../floor.js';

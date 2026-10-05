@@ -5,7 +5,7 @@ import {
   MEMORY_RECEIPT_FILE_BYTES,
   openProjectStores,
   readProjectBackend,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import {
   existsSync,

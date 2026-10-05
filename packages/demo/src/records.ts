@@ -1,5 +1,5 @@
-import { formatActorRef } from '@dispatch/core';
-import type { Finding, LedgerEntry } from '@dispatch/core';
+import { formatActorRef } from '@dispatch-foo/core';
+import type { Finding, LedgerEntry } from '@dispatch-foo/core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 

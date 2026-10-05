@@ -1,10 +1,10 @@
-import type { EpicProgressChild } from '@dispatch/client';
 import {
   DEFAULT_STATUS_MODEL,
   fanoutScope,
   isUnstartedStatus,
   statusModelOf,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { EpicProgressChild } from '@dispatch/client';
 import {
   type KeyboardEvent,
   useCallback,

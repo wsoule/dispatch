@@ -1,6 +1,6 @@
-import { MessagingError } from '@dispatch/protocol';
-import type { JsonValue } from '@dispatch/protocol';
-import { canonicalize } from '@dispatch/protocol/federation';
+import { MessagingError } from '@dispatch-foo/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { canonicalize } from '@dispatch-foo/protocol/federation';
 import {
   createHash,
   createHmac,

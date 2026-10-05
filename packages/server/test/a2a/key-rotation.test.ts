@@ -3,8 +3,8 @@ import {
   makeKeyChange,
   publicJwkOf,
   signedFetch,
-} from '@dispatch/a2a';
-import { readA2ANextSigningKey, writeA2ASigningKey } from '@dispatch/core';
+} from '@dispatch-foo/a2a';
+import { readA2ANextSigningKey, writeA2ASigningKey } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 

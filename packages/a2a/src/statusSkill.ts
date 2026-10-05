@@ -1,4 +1,4 @@
-import type { JsonValue } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 
 // One of the caller's handoffs, as the status skill reports it.
 export interface StatusEntry {
