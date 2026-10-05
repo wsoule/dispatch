@@ -514,7 +514,7 @@ export function inboxItemText(item: InboxItem): {
       if (!item.doc.conflicted && item.doc.problem !== undefined)
         return {
           id: item.doc.handle,
-          title: `Linear sync problem in ${item.doc.title}`,
+          title: `${item.doc.problem.startsWith('Linear sync held') ? 'Linear sync held' : 'Linear sync problem'} in ${item.doc.title}`,
           subtitle: item.doc.problem,
         };
       return {

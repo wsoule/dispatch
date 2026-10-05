@@ -616,10 +616,14 @@ function rejected(what: string): LinearFailure {
   return { ok: false, kind: 'graphql', error: `linear rejected the ${what}` };
 }
 
+/** How long one Linear request may take, body included, before it fails. */
+export const LINEAR_REQUEST_TIMEOUT_MS = 60_000;
+
 export interface HttpLinearClientOptions {
   /** Overridden in tests; production uses global fetch. */
   fetchImpl?: typeof fetch;
   url?: string;
+  timeoutMs?: number;
 }
 
 /** Hand-written GraphQL client for Linear. Every method resolves to a discriminated result
@@ -627,6 +631,7 @@ export interface HttpLinearClientOptions {
 export class HttpLinearClient implements LinearClient {
   private readonly fetchImpl: typeof fetch;
   private readonly url: string;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly apiKey: string,
@@ -634,6 +639,7 @@ export class HttpLinearClient implements LinearClient {
   ) {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.url = options.url ?? LINEAR_API_URL;
+    this.timeoutMs = options.timeoutMs ?? LINEAR_REQUEST_TIMEOUT_MS;
   }
 
   // Strips the key out of anything that would be surfaced to a caller or a log, so an
@@ -649,8 +655,11 @@ export class HttpLinearClient implements LinearClient {
     variables: Record<string, unknown> = {}
   ): Promise<LinearResult<T>> {
     let res: Response;
+    // One signal bounds the request and the body read alike.
+    const signal = AbortSignal.timeout(this.timeoutMs);
     try {
       res = await this.fetchImpl(this.url, {
+        signal,
         method: 'POST',
         headers: {
           // A personal API key goes bare — `Bearer` is for OAuth tokens only.
@@ -673,6 +682,12 @@ export class HttpLinearClient implements LinearClient {
     } catch {
       body = null;
     }
+    if (signal.aborted)
+      return {
+        ok: false,
+        kind: 'network',
+        error: `linear request timed out after ${this.timeoutMs} ms`,
+      };
     const errors = body?.errors ?? [];
 
     if (errors.length > 0 || !res.ok) {

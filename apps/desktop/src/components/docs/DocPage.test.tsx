@@ -371,14 +371,15 @@ test('offers Share to Linear to a decider on a live team doc not yet in Linear, 
   }
 });
 
-test("shows a doc's Linear sync problem", async () => {
-  renderPage({
-    doc: doc({
-      problem:
-        "a Linear edit by lin-wyat at 2026-09-26T10:00:00.000Z was overwritten; see Linear's version history",
-    }),
-  });
-  expect(
-    (await screen.findByText(/was overwritten; see Linear/)).textContent
-  ).toContain('lin-wyat');
+test("shows a doc's Linear sync problem or hold as the daemon words it", async () => {
+  const problem =
+    "Linear sync problem: a Linear edit by lin-wyat at 2026-09-26T10:00:00.000Z was overwritten; see Linear's version history";
+  renderPage({ doc: doc({ problem }) });
+  expect((await screen.findByText(/was overwritten/)).textContent).toBe(
+    problem
+  );
+  cleanup();
+  const held = 'Linear sync held: the doc is conflicted; resolve it first';
+  renderPage({ doc: doc({ problem: held }) });
+  expect((await screen.findByText(/Linear sync held/)).textContent).toBe(held);
 });

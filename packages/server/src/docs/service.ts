@@ -45,6 +45,7 @@ import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 
+import { LINEAR_REQUEST_TIMEOUT_MS } from '../linear/client.js';
 import type { Principal } from '../messaging/principal.js';
 import {
   assetFilePath,
@@ -407,13 +408,18 @@ function hasConflictMarkers(body: string): boolean {
 }
 
 const problemKey = (docId: string): string => `problem:${docId}`;
+const heldKey = (docId: string): string => `held:${docId}`;
 const shareClaimKey = (docId: string): string => `linear-share:${docId}`;
-const SHARE_CLAIM_MS = 10 * 60_000;
+// A share is one Linear call; its claim outlives that call's timeout threefold.
+const SHARE_CLAIM_MS = 3 * LINEAR_REQUEST_TIMEOUT_MS;
 
 // A doc's stored sync problem as DocRecord carries it, or nothing.
+// A sync problem (a Linear edit a push overwrote) leads; a hold note follows.
 function problemOf(store: SqliteDocStore, docId: string): { problem?: string } {
   const problem = store.meta(problemKey(docId));
-  return problem === null ? {} : { problem };
+  if (problem !== null) return { problem: `Linear sync problem: ${problem}` };
+  const held = store.meta(heldKey(docId));
+  return held === null ? {} : { problem: `Linear sync held: ${held}` };
 }
 
 export class DocsService {
@@ -2177,6 +2183,7 @@ export class DocsService {
       this.store().putDoc(doc);
       // A human's review settles a sync problem too.
       this.store().deleteMeta(problemKey(doc.id));
+      this.refreshLinearHold(doc.id);
       this.outbox.push({
         doc: doc.id,
         scope: doc.scope,
@@ -2425,9 +2432,11 @@ export class DocsService {
       );
       return 'unchanged';
     }
-    if (this.gated(doc))
-      return this.linearPropose(doc, state, text, author, origin, incoming);
-    return this.linearMerge(doc, state, text, author, incoming.updatedAt);
+    const out = this.gated(doc)
+      ? this.linearPropose(doc, state, text, author, origin, incoming)
+      : this.linearMerge(doc, state, text, author, incoming.updatedAt);
+    this.refreshLinearHold(doc.id);
+    return out;
   }
 
   // A Linear title as a doc title: one line within the limit.
@@ -2616,39 +2625,64 @@ export class DocsService {
     if (state === null || doc === null || doc.scope !== 'team') return null;
     if (doc.origin !== `linear:${state.documentId}`) return null;
     this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    const { held } = this.linearPending(doc, state);
     return {
       state: { ...state, remoteHash: this.linearRemoteHash(state) },
       head: this.headOf(doc),
-      held: this.linearHold(doc, state),
+      held: held !== null,
     };
   }
 
-  // Why a Linear-origin head may not be pushed: it is conflicted (markers never
-  // go to Linear), Linear's text was cut to fit (a push would drop the rest),
-  // a Linear edit waits as an open proposal, or it carries agent text no human
-  // has reviewed since the last sync.
-  private linearHold(doc: DocRow, state: LinearDocRow): boolean {
+  // Why a Linear-origin head may not be pushed, or null: markers never go to
+  // Linear, a cut copy would drop the rest of Linear's text, a Linear edit may
+  // wait as a proposal, and unreviewed text (the review flag decides) waits for
+  // a human's review.
+  private linearHoldReason(doc: DocRow, state: LinearDocRow): string | null {
     const store = this.store();
-    if (doc.status === 'archived' || doc.conflicted) return true;
+    if (doc.status === 'archived') return 'the doc is archived';
+    if (doc.conflicted) return 'the doc is conflicted; resolve it first';
     const remote = this.linearRemote(state);
-    if (linearText(remote).hash !== this.linearRemoteHash(state)) return true;
+    if (linearText(remote).hash !== this.linearRemoteHash(state))
+      return "Linear's version is over the size limit, so ours would drop the rest";
     const origin = `linear:${state.documentId}`;
     if (
       store
         .proposalRows({ doc: doc.id, states: ['open'] })
         .some((p) => p.origin === origin)
     )
-      return true;
-    if (!doc.unreviewed) return false;
-    // Walks the head's first parents back to the last synced revision.
-    let id: string | undefined = doc.headId;
-    for (let i = 0; i < 1000 && id !== undefined && id !== state.baseRev; i++) {
-      const rev = store.revisionMeta(id);
-      if (rev === null) break;
-      if (!rev.author.startsWith('human:') && rev.via !== 'linear') return true;
-      id = rev.parents[0];
-    }
-    return false;
+      return 'a Linear edit waits as a proposal for a decider';
+    if (doc.unreviewed)
+      return 'it carries text no human has reviewed; mark it reviewed to push';
+    return null;
+  }
+
+  // Whether a Linear-origin doc has local changes and what holds them, kept in
+  // a `held:` note the doc and the Inbox show until the hold is released.
+  private linearPending(
+    doc: DocRow,
+    state: LinearDocRow
+  ): { pending: boolean; held: string | null } {
+    const store = this.store();
+    const head = store.revision(doc.headId);
+    const pending =
+      head !== null &&
+      linearText(head.body).hash !== this.linearRemoteHash(state);
+    const held = pending ? this.linearHoldReason(doc, state) : null;
+    if (store.meta(heldKey(doc.id)) !== held)
+      this.write(() => {
+        if (held === null) store.deleteMeta(heldKey(doc.id));
+        else store.setMeta(heldKey(doc.id), held);
+      });
+    return { pending, held };
+  }
+
+  // Refreshes the hold note of a doc that syncs with Linear; others are untouched.
+  private refreshLinearHold(docId: string): void {
+    const store = this.store();
+    const state = store.linearDoc(docId);
+    const doc = store.doc(docId);
+    if (state === null || doc === null) return;
+    this.linearPending(doc, state);
   }
 
   // Linear-origin team docs with local changes ready to push; none while docs are down.
@@ -2659,11 +2693,8 @@ export class DocsService {
       const doc = store.doc(state.docId);
       if (doc === null || doc.scope !== 'team') return [];
       if (doc.origin !== `linear:${state.documentId}`) return [];
-      const head = store.revision(doc.headId);
-      if (head === null) return [];
-      if (linearText(head.body).hash === this.linearRemoteHash(state))
-        return [];
-      return this.linearHold(doc, state) ? [] : [doc.id];
+      const { pending, held } = this.linearPending(doc, state);
+      return pending && held === null ? [doc.id] : [];
     });
   }
 
@@ -2687,6 +2718,7 @@ export class DocsService {
         remoteHash: text.hash,
       })
     );
+    this.refreshLinearHold(docId);
   }
 
   // A sync problem a human must see; it lists the doc as conflicted until a

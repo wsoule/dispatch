@@ -269,7 +269,7 @@ describe('inbox items', () => {
 
   test('titles a doc with a Linear sync problem as one, and keeps markers first', () => {
     const problem =
-      "a Linear edit by lin-wyat at 2026-09-26T10:00:00.000Z was overwritten; see Linear's version history";
+      "Linear sync problem: a Linear edit by lin-wyat at 2026-09-26T10:00:00.000Z was overwritten; see Linear's version history";
     const doc = {
       id: 'doc-2',
       handle: 'spec',
@@ -294,6 +294,29 @@ describe('inbox items', () => {
       []
     );
     expect(inboxItemText(marked).title).toBe('Conflict markers in Spec');
+  });
+
+  test('titles a held Linear push as held, with its reason', () => {
+    const held =
+      'Linear sync held: it carries text no human has reviewed; mark it reviewed to push';
+    const doc = {
+      id: 'doc-3',
+      handle: 'plan',
+      title: 'Plan',
+      scope: 'team',
+      conflicted: false,
+      problem: held,
+      updatedAt: '2026-09-26T10:00:00.000Z',
+    } as unknown as DocSummary;
+    const [item] = buildInboxItems(
+      buildInbox(input({ conflictedDocs: [doc] })),
+      []
+    );
+    expect(inboxItemText(item)).toEqual({
+      id: 'plan',
+      title: 'Linear sync held in Plan',
+      subtitle: held,
+    });
   });
 
   const reviewRow = () => ({

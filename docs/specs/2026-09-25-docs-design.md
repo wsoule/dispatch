@@ -1777,10 +1777,15 @@ fetched 2026-09-26).
   to an **accepted** doc is a `doc` proposal (`origin: 'linear:<documentId>'`),
   since Linear's editors are not decide-tier Dispatch humans.
 - **What may push.** A Linear-origin head pushes only when it is not conflicted,
-  Linear's text was not cut, no Linear edit waits as an open proposal, and it
-  carries no agent text unreviewed since the last sync: an agent's edit waits
-  until a human marks the doc reviewed. A human's resolution of a conflict
-  pushes on the next pass.
+  Linear's text was not cut, no Linear edit waits as an open proposal, and the
+  doc is reviewed. The review flag decides, whatever merged since: Linear's own
+  text arrives unreviewed, so after a pull even a human's edit (or a resolution
+  of a conflict) waits for Mark reviewed, and an agent's edit stays held through
+  any later Linear merge. A held doc shows "Linear sync held: <reason>" on the
+  doc page and as an Inbox item until the hold is released. When a decider
+  rejects a Linear edit's proposal, Linear still holds that edit and the
+  accepted head differs from it, so the next push restores ours over Linear's
+  edit (Linear's version history keeps theirs).
 - **Push.** `documentUpdate(id, input)` replaces `content`, and
   `DocumentUpdateInput` has no base version or `updatedAt` precondition, so a
   push cannot be conditional and a check-then-write can overwrite a Linear edit.
@@ -1811,7 +1816,8 @@ fetched 2026-09-26).
   doc Linear-origin. Team docs do not leak to Linear by default. Like publish,
   it refuses a draft carrying unreviewed agent text; the container comes only
   from the doc's manual task links; and a per-doc claim makes concurrent shares
-  create one Linear document (the claim is freed when Linear refuses). It is
+  create one Linear document (the claim is freed when Linear refuses, and lapses
+  at three times the 60 s Linear request timeout). It is
   `dispatch docs share-linear <ref>` and a Share to Linear button on the doc
   page; both show the route's refusals. A push that overwrote a Linear edit
   stores a sync problem, shown on the doc page and as an Inbox item ("Linear

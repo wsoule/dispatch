@@ -552,7 +552,7 @@ export function DocPage({
       )}
       {doc.problem !== undefined && (
         <p className="border-b border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-destructive)]">
-          {`Linear sync: ${doc.problem}`}
+          {doc.problem}
         </p>
       )}
       {publishNote !== null && (

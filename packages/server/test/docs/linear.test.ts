@@ -275,6 +275,8 @@ describe('push', () => {
     const id = service.read(as(OWNER), 'spec').doc.id;
     service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'local' }] });
     service.seal(as(OWNER), 'spec');
+    // Linear's text arrived unreviewed; a review lets the head go out.
+    service.markReviewed(as(OWNER), 'spec');
     expect(await adapter.push(id)).toBe('pushed');
     expect(linear.writes.at(-1)?.content).toBe('v1\nlocal\n');
     edit('lin-a', 'v1\nlocal\nlinear\n');
@@ -288,6 +290,7 @@ describe('push', () => {
     const id = service.read(as(OWNER), 'spec').doc.id;
     service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'mine' }] });
     service.seal(as(OWNER), 'spec');
+    service.markReviewed(as(OWNER), 'spec');
     linear.afterUpdate = () => {
       linear.afterUpdate = null;
       const d = linear.docs.get('lin-a') as LinearDocument;
@@ -298,6 +301,7 @@ describe('push', () => {
 
     service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'again' }] });
     service.seal(as(OWNER), 'spec');
+    service.markReviewed(as(OWNER), 'spec');
     linear.beforeUpdate = () => {
       linear.beforeUpdate = null;
       linear.history.set('lin-a', [
@@ -330,7 +334,9 @@ describe('recordProblem', () => {
     service.recordProblem(id, 'a Linear edit was overwritten');
     const flagged = () =>
       service.list(as(OWNER), { conflicted: true }).docs.map((d) => d.problem);
-    expect(flagged()).toEqual(['a Linear edit was overwritten']);
+    expect(flagged()).toEqual([
+      'Linear sync problem: a Linear edit was overwritten',
+    ]);
     service.edit(as(AGENT), 'spec', { ops: [{ op: 'append', text: 'agent' }] });
     expect(flagged()).toHaveLength(1);
     const read = service.read(as(OWNER), 'spec');
@@ -393,6 +399,7 @@ describe('review fixes', () => {
       body: 'a\nboth\nc\n',
     });
     service.seal(as(OWNER), 'spec');
+    service.markReviewed(as(OWNER), 'spec');
     expect(await adapter.push(read.doc.id)).toBe('pushed');
     expect(linear.writes.at(-1)?.content).toBe('a\nboth\nc\n');
     expect(service.linearOutstanding()).toEqual([]);
@@ -404,6 +411,7 @@ describe('review fixes', () => {
     const id = service.read(as(OWNER), 'spec').doc.id;
     service.edit(as(OWNER), 'spec', { ops: [{ op: 'append', text: 'v3' }] });
     service.seal(as(OWNER), 'spec');
+    service.markReviewed(as(OWNER), 'spec');
     expect(await adapter.push(id)).toBe('pushed');
     expect(linear.writes.at(-1)?.content).toBe('v1\nv2\nv3\n');
   });
@@ -501,5 +509,39 @@ describe('review fixes', () => {
     );
     linear.documentCreate = create;
     expect(await adapter.share(as(DECIDER), 'design')).toMatch(/^lin-/);
+  });
+});
+
+describe('verify fixes', () => {
+  it('holds agent text through a later clean Linear merge until a review (M3c)', async () => {
+    linear.docs.set('lin-a', doc('lin-a', { content: 'v1\nv2\n' }));
+    await adapter.pull(null);
+    const id = service.read(as(OWNER), 'spec').doc.id;
+    service.markReviewed(as(OWNER), 'spec');
+    service.edit(as(AGENT), 'spec', {
+      ops: [{ op: 'append', text: 'AGENT TEXT' }],
+    });
+    service.seal(as(AGENT), 'spec');
+    edit('lin-a', 'V1\nv2\n');
+    expect((await adapter.pull(null)).merged).toBe(1);
+    expect(service.read(as(OWNER), 'spec').text).toBe('V1\nv2\nAGENT TEXT\n');
+    expect(service.linearOutstanding()).toEqual([]);
+    expect(await adapter.push(id)).toBe('held');
+    expect(linear.writes).toEqual([]);
+    // The hold shows on the doc and in the conflicted list the Inbox reads.
+    const listed = () =>
+      service
+        .list(as(OWNER), { conflicted: true })
+        .docs.find((d) => d.id === id);
+    expect(listed()?.problem).toMatch(/^Linear sync held: /);
+    expect(service.read(as(OWNER), 'spec').doc.problem).toMatch(
+      /^Linear sync held: /
+    );
+    // A review releases it, and the hold note goes with it.
+    service.markReviewed(as(OWNER), 'spec');
+    expect(listed()).toBeUndefined();
+    expect(service.linearOutstanding()).toEqual([id]);
+    expect(await adapter.push(id)).toBe('pushed');
+    expect(linear.writes.at(-1)?.content).toBe('V1\nv2\nAGENT TEXT\n');
   });
 });

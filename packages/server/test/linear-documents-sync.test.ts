@@ -129,6 +129,8 @@ describe('LinearSync documents', () => {
     const owner = service.actorFor(OWNER);
     service.edit(owner, 'plan', { ops: [{ op: 'append', text: 'local' }] });
     service.seal(owner, 'plan');
+    // Linear's text arrives unreviewed; nothing pushes before a review.
+    service.markReviewed(owner, 'plan');
     writeConfig('pull');
     await makeSync().syncOnce();
     expect(fake.documentWrites).toEqual([]);
@@ -170,6 +172,7 @@ describe('LinearSync documents', () => {
 
     const owner = service.actorFor(OWNER);
     service.edit(owner, 'plan', { ops: [{ op: 'append', text: 'local' }] });
+    service.markReviewed(owner, 'plan');
     await sync.pollOnce();
     expect(fake.documentWrites.at(-1)?.content).toBe('v2\nlocal\n');
   });

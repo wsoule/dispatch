@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 
-import { HttpLinearClient } from '../src/linear/client.js';
+import {
+  HttpLinearClient,
+  LINEAR_REQUEST_TIMEOUT_MS,
+} from '../src/linear/client.js';
 
 const KEY = 'lin_api_TESTKEY';
 
@@ -721,5 +724,26 @@ describe('HttpLinearClient documents', () => {
       { contentDataSnapshotAt: '2026-09-26T10:01:00.000Z', actorIds: ['u-2'] },
     ]);
     expect(sent[3].variables).toEqual({ id: 'dc-1' });
+  });
+});
+
+describe('HttpLinearClient timeout', () => {
+  it('gives up on a request Linear never answers, as a network failure', async () => {
+    const hung = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () =>
+          reject(new Error('aborted'))
+        );
+      })) as unknown as typeof fetch;
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: hung,
+      timeoutMs: 20,
+    });
+    const result = await client.viewer();
+    expect(result).toMatchObject({ ok: false, kind: 'network' });
+  });
+
+  it('defaults to a timeout well under the share claim', () => {
+    expect(LINEAR_REQUEST_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
   });
 });

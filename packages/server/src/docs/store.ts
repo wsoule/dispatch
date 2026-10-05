@@ -620,10 +620,10 @@ export class SqliteDocStore {
     ];
     const params: SqlValue[] = [...filter.ns, ...filter.statuses];
     if (filter.unreviewed === true) where.push('unreviewed = 1');
-    // A doc with a sync problem needs a human as a conflicted one does.
+    // A doc with a sync problem or a held push needs a human as a conflicted one does.
     if (filter.conflicted === true)
       where.push(
-        "(conflicted = 1 OR id IN (SELECT substr(key, 9) FROM meta WHERE key LIKE 'problem:%'))"
+        "(conflicted = 1 OR id IN (SELECT substr(key, 9) FROM meta WHERE key LIKE 'problem:%') OR id IN (SELECT substr(key, 6) FROM meta WHERE key LIKE 'held:%'))"
       );
     if (filter.ids !== undefined) {
       if (filter.ids.length === 0) return { rows: [], total: 0 };
