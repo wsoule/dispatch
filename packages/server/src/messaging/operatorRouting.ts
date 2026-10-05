@@ -90,8 +90,9 @@ export function gateRunOf(
   return question.refs.find((r) => r.type === 'run')?.id ?? null;
 }
 
-// Tells the operator of a run whose gate went to someone else (XH-R9); keyed
-// by the gate, so a replay never repeats it. Returns the unsubscribe.
+// Tells the operator of a run whose gate went to someone else (XH-R9), a tick
+// later so a gate policy answers at once tells no one; keyed by the gate, so
+// a replay never repeats it. Returns the unsubscribe.
 export function installOperatorNotices(
   engine: DeliveryEngine,
   routing: OperatorRouting
@@ -111,19 +112,23 @@ export function installOperatorNotices(
     if (!refs.some((r) => r.type === 'run'))
       refs.unshift({ type: 'run', id: runId });
     const first = question.body.split('\n', 1)[0];
-    void engine
-      .send(
-        {
-          to: [tell],
-          kind: 'notice',
-          body: `Your run ${runId} is waiting on ${question.to.join(', ')} to decide: ${first}`,
-          refs,
-          idempotencyKey: `operator-notice:${question.id}`,
-        },
-        SYSTEM_SENDER
-      )
-      .catch((err: unknown) =>
-        console.error('messaging: operator notice failed', err)
-      );
+    const tellLater = () => {
+      if (engine.answerOf(question.id) !== null) return;
+      void engine
+        .send(
+          {
+            to: [tell],
+            kind: 'notice',
+            body: `Your run ${runId} is waiting on ${question.to.join(', ')} to decide: ${first}`,
+            refs,
+            idempotencyKey: `operator-notice:${question.id}`,
+          },
+          SYSTEM_SENDER
+        )
+        .catch((err: unknown) =>
+          console.error('messaging: operator notice failed', err)
+        );
+    };
+    setTimeout(tellLater, 0);
   });
 }
