@@ -1,4 +1,4 @@
-import type { AgentRecord } from '@dispatch/protocol';
+import type { AgentRecord } from '@dispatch-foo/protocol';
 
 // Every internal agent's token hash starts with this; no sha256 hex digest
 // does, so no presented token can match one.

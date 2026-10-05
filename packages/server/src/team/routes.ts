@@ -1,4 +1,4 @@
-import type { DroppedEntry, TeamMember } from '@dispatch/core';
+import type { DroppedEntry, TeamMember } from '@dispatch-foo/core';
 import {
   describeDroppedEntry,
   DISPATCH_DIR,
@@ -6,7 +6,7 @@ import {
   serializeTeam,
   TeamParseError,
   upsertMember,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 

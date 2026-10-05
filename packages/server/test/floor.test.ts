@@ -1,4 +1,4 @@
-import type { FloorCheck } from '@dispatch/core';
+import type { FloorCheck } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import {
@@ -54,7 +54,7 @@ describe('floorCheckForCommand', () => {
       'yarn npm publish',
       'bun publish',
       'npx lerna publish',
-      'npm unpublish @dispatch/core@1.0.0',
+      'npm unpublish @dispatch-foo/core@1.0.0',
       'cargo publish',
       'git push --tags',
       'git push origin --follow-tags',

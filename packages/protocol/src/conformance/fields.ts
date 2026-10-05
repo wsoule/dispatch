@@ -1,4 +1,4 @@
-import type { Json, JsonObject } from '@dispatch/protocol-spec';
+import type { Json, JsonObject } from '@dispatch-foo/protocol-spec';
 
 // A vector field the adapter cannot read. It is thrown as a plain error, so
 // the vector fails as an adapter error rather than being skipped.

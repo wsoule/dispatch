@@ -1,4 +1,4 @@
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 
 import { TransportOffline } from '../../../../src/team/federation/transport.js';
 import type {

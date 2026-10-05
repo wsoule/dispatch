@@ -1,8 +1,8 @@
 // The Claude models a run can be dispatched with. localStorage here holds only
 // a per-device override of the project's `.dispatch/config.yml` default.
 
-import { EFFORT_LEVELS, isEffortLevel } from '@dispatch/core/browser';
-import type { EffortLevel } from '@dispatch/core/browser';
+import { EFFORT_LEVELS, isEffortLevel } from '@dispatch-foo/core/browser';
+import type { EffortLevel } from '@dispatch-foo/core/browser';
 
 export interface ModelOption {
   /** SDK model id passed straight through to the Agent SDK's `query({ options: { model } })`. */

@@ -1,4 +1,4 @@
-import type { TaskDoc, TaskStorePort } from '@dispatch/core';
+import type { TaskDoc, TaskStorePort } from '@dispatch-foo/core';
 
 import type { TaskCache } from '../cache.js';
 

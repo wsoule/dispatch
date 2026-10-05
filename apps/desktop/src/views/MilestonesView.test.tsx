@@ -1,3 +1,5 @@
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import type {
   EpicProgress,
   EpicProgressChild,
@@ -5,8 +7,6 @@ import type {
   FixLoopState,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
-import { statusModelOf } from '@dispatch/core/browser';
 import {
   act,
   cleanup,

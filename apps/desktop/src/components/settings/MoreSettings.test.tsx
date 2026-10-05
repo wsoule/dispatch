@@ -1,5 +1,5 @@
+import type { ConfigPatch } from '@dispatch-foo/core/browser';
 import type { ReceiptsStatus } from '@dispatch/client';
-import type { ConfigPatch } from '@dispatch/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

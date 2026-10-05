@@ -1,3 +1,5 @@
+import type { TaskListItem, TaskMeta } from '@dispatch-foo/core/browser';
+import { canonicalStatus } from '@dispatch-foo/core/browser';
 // Pure helpers the Threads surfaces share: merging the rail's sources, labels,
 // what a row offers, how a reply is addressed, and where a ref leads.
 import type {
@@ -8,8 +10,6 @@ import type {
   Message,
   Ref,
 } from '@dispatch/client';
-import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
-import { canonicalStatus } from '@dispatch/core/browser';
 
 import { peerAddresses } from './a2a';
 import type { MessageAccess } from './daemonAuth';

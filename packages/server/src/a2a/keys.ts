@@ -10,15 +10,15 @@ import {
   peerFetch,
   publicJwkOf,
   signResponseFor,
-} from '@dispatch/a2a';
-import type { PeerRow, RequestParts } from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
+import type { PeerRow, RequestParts } from '@dispatch-foo/a2a';
 import {
   readA2AKeyStatement,
   readA2ANextSigningKey,
   replaceA2ASigningKeys,
   writeA2ANextSigningKey,
-} from '@dispatch/core';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/core';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 import type { UnpairDeps, Unpairer } from './pairing.js';
 import { pairedFetch } from './pairing.js';

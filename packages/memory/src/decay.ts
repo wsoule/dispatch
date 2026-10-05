@@ -1,4 +1,4 @@
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 
 import type { MemoryStore } from './store.js';
 import { MEMORY_SCOPES } from './types.js';

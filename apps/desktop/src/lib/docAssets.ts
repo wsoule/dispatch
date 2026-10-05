@@ -1,4 +1,4 @@
-import { ASSET_NAME } from '@dispatch/core/browser';
+import { ASSET_NAME } from '@dispatch-foo/core/browser';
 import { defaultUrlTransform } from 'react-markdown';
 
 // react-markdown empties any URL whose protocol it does not know; the docs

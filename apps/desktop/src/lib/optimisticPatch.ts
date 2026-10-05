@@ -1,4 +1,4 @@
-import type { TaskMeta, UpdatePatch } from '@dispatch/core/browser';
+import type { TaskMeta, UpdatePatch } from '@dispatch-foo/core/browser';
 
 // The patch keys that are frontmatter, which the list cache can show before the daemon
 // answers. Body sections and activity lines live in the body, which the list never holds.

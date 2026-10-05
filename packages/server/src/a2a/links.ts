@@ -1,4 +1,4 @@
-import { handleA2A, IpLimiter, loadOrCreateLinkKeys } from '@dispatch/a2a';
+import { handleA2A, IpLimiter, loadOrCreateLinkKeys } from '@dispatch-foo/a2a';
 import type {
   A2APolicy,
   A2AStore,
@@ -7,8 +7,10 @@ import type {
   Caller,
   LinkPayload,
   PeerRow,
-} from '@dispatch/a2a';
-import type { AgentRecord } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import { readA2ALinkKeys } from '@dispatch-foo/core';
+import type { A2ALinkKeys } from '@dispatch-foo/core';
+import type { AgentRecord } from '@dispatch-foo/protocol';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -85,11 +87,31 @@ export class LinkWiring {
     return this.hub;
   }
 
-  /** Loads the link keys and starts the hub; links stay off without them. */
-  async start(): Promise<void> {
+  /**
+   * At boot: starts the hub only when this project already has link keys.
+   * Keys are made only when a link is offered or accepted (ensure()), so a
+   * project that never links keeps none in its credentials slot.
+   */
+  start(): void {
     if (this.hub !== null) return;
+    const read = readA2ALinkKeys(this.d.rootDir);
+    if (read.status === 'ok') this.open(read.keys);
+    else if (read.status === 'malformed')
+      console.warn(
+        'a2a: the stored teammate-link keys are malformed; links stay off until the slot is fixed'
+      );
+  }
+
+  /** The hub, making this project's link keys first if it has none. */
+  async ensure(): Promise<LinkHub | null> {
+    if (this.hub !== null) return this.hub;
     const keys = await loadOrCreateLinkKeys(this.d.rootDir);
-    if (keys === null) return;
+    if (keys === null || this.hub !== null) return this.hub;
+    this.open(keys);
+    return this.hub;
+  }
+
+  private open(keys: A2ALinkKeys): void {
     const now = this.d.now ?? (() => new Date());
     this.hub = new LinkHub({
       dir: join(runsDir(this.d.rootDir), 'a2a-links'),

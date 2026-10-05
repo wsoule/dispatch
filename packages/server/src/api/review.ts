@@ -1,4 +1,4 @@
-import { describeValue } from '@dispatch/core';
+import { describeValue } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import type { ReviewScope } from '../orchestrator/review.js';

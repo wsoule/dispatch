@@ -1,5 +1,5 @@
-import type { TaskDoc, TaskMeta } from '@dispatch/core';
-import { newTaskDoc } from '@dispatch/core';
+import type { TaskDoc, TaskMeta } from '@dispatch-foo/core';
+import { newTaskDoc } from '@dispatch-foo/core';
 
 // The merge half of board sync: what a change to a task looks like on the
 // wire, and how a replica folds someone else's changes into its own board.

@@ -10,7 +10,7 @@ import {
 } from '@a2a-js/sdk';
 import type { Client } from '@a2a-js/sdk/client';
 import { VersionNotSupportedError } from '@a2a-js/sdk/errors';
-import type { JsonValue } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import type { KeyObject } from 'node:crypto';
 
 import { signedFetch } from '../sig/fetch.js';

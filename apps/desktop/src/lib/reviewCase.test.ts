@@ -1,4 +1,7 @@
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core/browser';
+import type {
+  CommandEvidence,
+  MutationEvidence,
+} from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { caseWarnings, isDeadGuard, summarizeCase } from './reviewCase';

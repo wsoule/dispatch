@@ -1,10 +1,10 @@
+import type { TaskListItem, UpdatePatch } from '@dispatch-foo/core/browser';
 import type {
   MergeQueueEntryState,
   ReadinessReading,
   RunMeta,
   RunState,
 } from '@dispatch/client';
-import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,

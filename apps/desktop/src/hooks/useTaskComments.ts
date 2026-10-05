@@ -1,6 +1,6 @@
+import type { TaskComment } from '@dispatch-foo/core/browser';
+import { commentThreadIds } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
-import type { TaskComment } from '@dispatch/core/browser';
-import { commentThreadIds } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 

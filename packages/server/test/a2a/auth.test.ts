@@ -1,5 +1,5 @@
-import type { AuthResult } from '@dispatch/a2a';
-import type { AgentRecord } from '@dispatch/protocol';
+import type { AuthResult } from '@dispatch-foo/a2a';
+import type { AgentRecord } from '@dispatch-foo/protocol';
 import { expect, it } from 'bun:test';
 
 import {

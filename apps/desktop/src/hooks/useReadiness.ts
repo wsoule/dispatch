@@ -1,9 +1,9 @@
+import type { TaskDoc, TaskMeta } from '@dispatch-foo/core/browser';
 import type {
   ApiClient,
   ReadinessReading,
   ReadyTaskRef,
 } from '@dispatch/client';
-import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 

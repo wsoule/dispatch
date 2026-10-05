@@ -1,11 +1,11 @@
-import type { ExecutorsResponse } from '@dispatch/client';
 import type {
   ConfigPatch,
   DispatchConfig,
   EffortConfig,
   ModelConfig,
-} from '@dispatch/core/browser';
-import { EFFORT_ROLES, MODEL_ROLES } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { EFFORT_ROLES, MODEL_ROLES } from '@dispatch-foo/core/browser';
+import type { ExecutorsResponse } from '@dispatch/client';
 
 import {
   DEFAULT_EFFORT_ID,

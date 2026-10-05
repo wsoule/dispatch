@@ -1,4 +1,4 @@
-import { openSqliteDb, queryOne, readDocsConfig } from '@dispatch/core';
+import { openSqliteDb, queryOne, readDocsConfig } from '@dispatch-foo/core';
 import { chmodSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 

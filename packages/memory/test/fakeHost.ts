@@ -1,5 +1,5 @@
-import { DEFAULT_MEMORY } from '@dispatch/core';
-import type { PolicyRuling } from '@dispatch/core';
+import { DEFAULT_MEMORY } from '@dispatch-foo/core';
+import type { PolicyRuling } from '@dispatch-foo/core';
 
 import { MemoryEngine } from '../src/engine.js';
 import { MemoryError } from '../src/errors.js';

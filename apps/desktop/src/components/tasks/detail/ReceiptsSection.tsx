@@ -1,4 +1,4 @@
-import type { LedgerEntry } from '@dispatch/core/browser';
+import type { LedgerEntry } from '@dispatch-foo/core/browser';
 
 import { PolicyReceiptBadge } from '../../ledger/PolicyReceiptBadge';
 import { MainSection } from './MainSection';

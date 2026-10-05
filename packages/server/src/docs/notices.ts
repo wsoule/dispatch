@@ -1,4 +1,4 @@
-import { untrustedInline } from '@dispatch/core';
+import { untrustedInline } from '@dispatch-foo/core';
 
 import type { DocChange, DocsHost } from './host.js';
 import type { DocNoticeFacts, DocsService } from './service.js';

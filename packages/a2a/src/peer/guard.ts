@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 

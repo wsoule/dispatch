@@ -11,7 +11,7 @@ const AT_LOAD =
 const RELAY_AT_LOAD =
   /^\s*import\s(?!type\b)[^;]*from\s+['"]((node:)?net|ws)['"]/m;
 
-// dispatchd loads @dispatch/a2a at boot. Under Bun 1.3.14 a native-pty
+// dispatchd loads @dispatch-foo/a2a at boot. Under Bun 1.3.14 a native-pty
 // Bun.spawn can deadlock with a child that exits before it returns, and the
 // heavier the boot the likelier that is (POST /api/terminals hung in
 // terminals-api.test.ts). These modules load on first use instead.

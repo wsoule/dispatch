@@ -1,7 +1,7 @@
 import {
   MAX_CONCURRENCY_HARD_CAP,
   type TaskListItem,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import { Zap } from 'lucide-react';
 import { type ChangeEvent, useId, useMemo, useState } from 'react';
 

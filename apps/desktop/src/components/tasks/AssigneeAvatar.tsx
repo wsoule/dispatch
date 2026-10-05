@@ -1,4 +1,4 @@
-import type { Assignee } from '@dispatch/core/browser';
+import type { Assignee } from '@dispatch-foo/core/browser';
 import { useState } from 'react';
 
 import { colorForProject } from '../../lib/projectColor';

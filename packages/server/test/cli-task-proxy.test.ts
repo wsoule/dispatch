@@ -2,7 +2,7 @@ import {
   registerMergeDriverGitConfig,
   registerTeamMergeDriverGitConfig,
   writeGitAttributes,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,

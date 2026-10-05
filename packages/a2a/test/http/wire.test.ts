@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { expect, it, spyOn } from 'bun:test';
 
 import { A2AError } from '../../src/errors.js';

@@ -1,4 +1,4 @@
-import { DEFAULT_A2A } from '@dispatch/core';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import type { AuthResult, BridgePort, Caller } from '../src/port.js';

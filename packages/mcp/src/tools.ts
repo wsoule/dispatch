@@ -13,8 +13,8 @@ import {
   TASK_RISKS,
   TaskParseError,
   TaskStore,
-} from '@dispatch/core';
-import type { ListSafeError, TaskComment, TaskDoc } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { ListSafeError, TaskComment, TaskDoc } from '@dispatch-foo/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { basename } from 'node:path';
 import { z } from 'zod';

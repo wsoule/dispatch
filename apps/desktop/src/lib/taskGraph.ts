@@ -1,5 +1,5 @@
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { isDoneStatus } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 
 import { activeStatusModel } from './statusModel';
 

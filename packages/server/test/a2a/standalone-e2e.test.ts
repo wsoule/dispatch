@@ -1,7 +1,7 @@
 import { GetTaskRequest, SendMessageRequest, Task } from '@a2a-js/sdk';
 import { ClientFactory, RestTransportFactory } from '@a2a-js/sdk/client';
-import { startStandalone } from '@dispatch/a2a';
-import { TaskStore } from '@dispatch/core';
+import { startStandalone } from '@dispatch-foo/a2a';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

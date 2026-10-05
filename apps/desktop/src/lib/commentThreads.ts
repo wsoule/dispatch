@@ -1,4 +1,4 @@
-import type { TaskComment } from '@dispatch/core/browser';
+import type { TaskComment } from '@dispatch-foo/core/browser';
 
 /** A top-level comment with every reply beneath it, oldest first. */
 export interface CommentThread {

@@ -1,6 +1,6 @@
-import { isClientAddress } from '@dispatch/a2a';
-import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import type { DeliveryEngine, Message } from '@dispatch/protocol';
+import { isClientAddress } from '@dispatch-foo/a2a';
+import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
+import type { DeliveryEngine, Message } from '@dispatch-foo/protocol';
 
 import type { ApiContext } from '../api.js';
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';

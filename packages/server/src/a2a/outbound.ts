@@ -6,7 +6,7 @@ import type {
   PeerLink,
   PeerRow,
   TaskJson,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   guardPublicUrl,
   mapPeerEvent,
@@ -20,21 +20,24 @@ import {
   TERMINAL_STATES,
   TRACK_LIMIT_MS,
   UnresolvedHostError,
-} from '@dispatch/a2a';
-import type { A2AConfig } from '@dispatch/core';
-import { CredentialsUnreadableError, untrustedFenced } from '@dispatch/core';
+} from '@dispatch-foo/a2a';
+import type { A2AConfig } from '@dispatch-foo/core';
+import {
+  CredentialsUnreadableError,
+  untrustedFenced,
+} from '@dispatch-foo/core';
 import type {
   Delivery,
   DeliveryEngine,
   JsonValue,
   Message,
   SqliteMessageStore,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import {
   isPeerAddress,
   MessagingError,
   SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 
 import type { PeerService } from './peers.js';
 import {
@@ -156,7 +159,7 @@ const UNVERIFIED_WINDOW_MS = 3_600_000;
 // The outbound worker (spec:1444-1531): relays held a2a: deliveries one at a
 // time per peer, at most `concurrency` peers at once, then follows each peer
 // task and records what the peer says. What to record and when to retry come
-// from @dispatch/a2a; this class only does I/O, timers and bookkeeping.
+// from @dispatch-foo/a2a; this class only does I/O, timers and bookkeeping.
 export class OutboundWorker {
   // When each signature peer's run of unverifiable replies began; any
   // verified reply clears it.

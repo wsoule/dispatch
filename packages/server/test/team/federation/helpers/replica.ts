@@ -1,5 +1,5 @@
-import { verifyLog } from '@dispatch/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+import { verifyLog } from '@dispatch-foo/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

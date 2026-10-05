@@ -1,5 +1,5 @@
+import type { EscalationStep } from '@dispatch-foo/core/browser';
 import type { FixLoopState } from '@dispatch/client';
-import type { EscalationStep } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {

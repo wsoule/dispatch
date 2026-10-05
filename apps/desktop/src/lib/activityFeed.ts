@@ -1,4 +1,4 @@
-import { parseActorRef } from '@dispatch/core/browser';
+import { parseActorRef } from '@dispatch-foo/core/browser';
 
 // A task's `## Activity` section as a feed. Every line is `- <text>` (core's appendActivity),
 // where the orchestrator prefixes its own lines with an ISO timestamp (`dispatched (…)`,

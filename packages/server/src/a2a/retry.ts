@@ -1,4 +1,4 @@
-import type { A2AStore, PendingNotice } from '@dispatch/a2a';
+import type { A2AStore, PendingNotice } from '@dispatch-foo/a2a';
 
 /** Retry delays for notices a paired peer must hear: 30 s up to 24 h, then give up. */
 const NOTICE_BACKOFF_MS = [

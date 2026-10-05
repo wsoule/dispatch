@@ -1,4 +1,4 @@
-import type { JsonValue, Message, SendInput } from '@dispatch/protocol';
+import type { JsonValue, Message, SendInput } from '@dispatch-foo/protocol';
 import { createHash } from 'node:crypto';
 
 import {

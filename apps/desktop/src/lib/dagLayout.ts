@@ -1,4 +1,4 @@
-import type { TaskListItem } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 
 /**
  * The minimal node shape the layout needs — deliberately not `TaskDoc`, so anything with

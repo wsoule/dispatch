@@ -1,8 +1,8 @@
-import { hlcWallMs, TAG, verifyText } from '@dispatch/protocol/federation';
+import { hlcWallMs, TAG, verifyText } from '@dispatch-foo/protocol/federation';
 import type {
   LegacyAttestation,
   RosterBody,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 import { FREE_SEATS, readLicenseKey } from './license.js';
 import type { LicenseState } from './license.js';

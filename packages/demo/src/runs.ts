@@ -1,6 +1,6 @@
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
-import { renderForAgent } from '@dispatch/protocol';
-import type { Message } from '@dispatch/protocol';
+import type { CommandEvidence, MutationEvidence } from '@dispatch-foo/core';
+import { renderForAgent } from '@dispatch-foo/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 import {
   existsSync,
   mkdirSync,

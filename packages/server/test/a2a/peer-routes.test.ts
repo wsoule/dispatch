@@ -1,4 +1,4 @@
-import { credentialsPath, TaskStore } from '@dispatch/core';
+import { credentialsPath, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import {
   mkdtempSync,

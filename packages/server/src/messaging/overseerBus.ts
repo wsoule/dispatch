@@ -5,8 +5,8 @@ import type {
   Message,
   Sender,
   SqliteMessageStore,
-} from '@dispatch/protocol';
-import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import { gateOf, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { randomBytes } from 'node:crypto';
 
 import type { OverseerToolContext } from '../orchestrator/overseerTools.js';

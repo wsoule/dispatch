@@ -1,4 +1,5 @@
-import { decodePairingCode, encodePairingCode } from '@dispatch/a2a';
+import { decodePairingCode, encodePairingCode } from '@dispatch-foo/a2a';
+import { readA2ALinkKeys } from '@dispatch-foo/core';
 import { describe, expect, it, setDefaultTimeout } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 
@@ -36,6 +37,15 @@ const settleAll = async (...ds: LinkDaemon[]) => {
 };
 
 describe('pairing over a link (T55)', () => {
+  it('makes link keys only when a link is offered, never at daemon start', async () => {
+    const ada = await daemon('link-ada-');
+    expect(readA2ALinkKeys(ada.root).status).toBe('absent');
+    expect(ada.handle.a2a.links).toBeNull();
+    await offer(ada);
+    expect(readA2ALinkKeys(ada.root).status).toBe('ok');
+    expect(ada.handle.a2a.links).not.toBeNull();
+  });
+
   it('completes over a link branch with the same proof checks, and the link carries A2A', async () => {
     const ada = await daemon('link-ada-');
     const bob = await daemon('link-bob-');

@@ -20,7 +20,7 @@ import type {
   StatusEntry,
   TaskFacts,
   TaskRow,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   A2AError,
   checkInboundRecipients,
@@ -36,7 +36,7 @@ import {
   signResponseFor,
   statusReply,
   TERMINAL_STATES,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import type {
   A2AConfig,
   A2ASkill,
@@ -45,15 +45,15 @@ import type {
   TaskDoc,
   TaskStorePort,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   Address,
   DeliveryEngine,
   Message,
   SendInput,
   SqliteMessageStore,
-} from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { basename } from 'node:path';
 
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';

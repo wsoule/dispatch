@@ -1,4 +1,4 @@
-import type { JsonValue, Message } from '@dispatch/protocol';
+import type { JsonValue, Message } from '@dispatch-foo/protocol';
 
 import { utf8Bytes } from '../ext.js';
 import { ENVELOPE_URI, WORK_URI } from '../uris.js';

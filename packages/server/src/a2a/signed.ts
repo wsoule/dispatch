@@ -1,12 +1,12 @@
-import { verifyRequest } from '@dispatch/a2a';
+import { verifyRequest } from '@dispatch-foo/a2a';
 import type {
   A2AStore,
   AuthResult,
   Caller,
   ReceivedRequest,
-} from '@dispatch/a2a';
-import type { AgentRecord } from '@dispatch/protocol';
-import { MAX_CLOCK_LEAD_MS } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/a2a';
+import type { AgentRecord } from '@dispatch-foo/protocol';
+import { MAX_CLOCK_LEAD_MS } from '@dispatch-foo/protocol/federation';
 import { createPublicKey } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 

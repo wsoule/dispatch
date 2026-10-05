@@ -1,4 +1,4 @@
-import type { PolicyRuling } from '@dispatch/core';
+import type { PolicyRuling } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DocConflictError, DocsError } from '../../src/docs/errors.js';

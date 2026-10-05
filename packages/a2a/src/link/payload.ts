@@ -1,6 +1,6 @@
 import { Message, SendMessageRequest, StreamResponse } from '@a2a-js/sdk';
-import type { JsonValue } from '@dispatch/protocol';
-import { canonicalize, MAX_OP_BYTES } from '@dispatch/protocol/federation';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { canonicalize, MAX_OP_BYTES } from '@dispatch-foo/protocol/federation';
 
 import type { MessageJson, StreamResponseJson } from '../wire.js';
 

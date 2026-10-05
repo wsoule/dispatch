@@ -2,8 +2,8 @@ import {
   FREE_SEATS,
   LICENSE_PUBLIC_KEY,
   readLicenseKey,
-} from '@dispatch/federation';
-import type { LicenseState } from '@dispatch/federation';
+} from '@dispatch-foo/federation';
+import type { LicenseState } from '@dispatch-foo/federation';
 import {
   chmodSync,
   existsSync,
@@ -20,7 +20,7 @@ import { dirname } from 'node:path';
 // Dispatch is free for up to FREE_SEATS people with every feature. More than
 // that needs a license key: a small signed document naming the organization,
 // how many seats it paid for, and until when. The key is checked on this
-// machine, against the public key in @dispatch/federation — nothing phones
+// machine, against the public key in @dispatch-foo/federation — nothing phones
 // home, which is the same promise the rest of Dispatch makes about leaving the
 // machine.
 //
@@ -28,10 +28,14 @@ import { dirname } from 'node:path';
 // locks anyone out: it reads as the free tier, with the reason attached so
 // Settings → License can say what is wrong.
 
-// The key check and the public key live in @dispatch/federation, shared with
+// The key check and the public key live in @dispatch-foo/federation, shared with
 // the relay; these re-exports keep scripts and tests importing from here.
-export { FREE_SEATS, readLicenseKey, signLicense } from '@dispatch/federation';
-export type { License, LicenseState } from '@dispatch/federation';
+export {
+  FREE_SEATS,
+  readLicenseKey,
+  signLicense,
+} from '@dispatch-foo/federation';
+export type { License, LicenseState } from '@dispatch-foo/federation';
 
 interface LicenseOptions {
   /** Where an installed key is kept (orchestrator/paths.ts licenseKeyPath). */

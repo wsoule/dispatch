@@ -1,5 +1,5 @@
-import { getSection } from '@dispatch/core';
-import type { CreateInput, TaskDoc } from '@dispatch/core';
+import { getSection } from '@dispatch-foo/core';
+import type { CreateInput, TaskDoc } from '@dispatch-foo/core';
 
 /**
  * Fanning one piece of work out across several agents at once.

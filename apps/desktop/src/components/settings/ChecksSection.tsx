@@ -2,7 +2,7 @@ import type {
   ConfigPatch,
   DispatchConfig,
   VerifyConfig,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import { useEffect, useState } from 'react';
 
 import { EscalationEditor } from './EscalationEditor';

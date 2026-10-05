@@ -4,13 +4,13 @@ import {
   isValidParentKind,
   loadConfig,
   parseTaskFile,
-} from '@dispatch/core';
-import type { DispatchConfig, TaskDoc } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { DispatchConfig, TaskDoc } from '@dispatch-foo/core';
 import {
   checkCartoHealth,
   discoverCarto,
   redirectCartoOutput,
-} from '@dispatch/core/carto';
+} from '@dispatch-foo/core/carto';
 import type { Command } from 'commander';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

@@ -1,8 +1,8 @@
-import { speaksForHandle } from '@dispatch/federation';
-import { isFederationLocalAddress, parseAddress } from '@dispatch/protocol';
-import type { AgentRecord, MessageStore } from '@dispatch/protocol';
-import { canonicalize, hlcWallMs } from '@dispatch/protocol/federation';
-import type { AgentBody, FederatedOp } from '@dispatch/protocol/federation';
+import { speaksForHandle } from '@dispatch-foo/federation';
+import { isFederationLocalAddress, parseAddress } from '@dispatch-foo/protocol';
+import type { AgentRecord, MessageStore } from '@dispatch-foo/protocol';
+import { canonicalize, hlcWallMs } from '@dispatch-foo/protocol/federation';
+import type { AgentBody, FederatedOp } from '@dispatch-foo/protocol/federation';
 import { createHash } from 'node:crypto';
 
 import type { RosterService } from './roster.js';

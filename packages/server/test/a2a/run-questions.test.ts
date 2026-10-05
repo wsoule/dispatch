@@ -1,6 +1,6 @@
-import type { ProjectionView } from '@dispatch/a2a';
-import { decideState, project, taskEventStream } from '@dispatch/a2a';
-import { gateOf } from '@dispatch/protocol';
+import type { ProjectionView } from '@dispatch-foo/a2a';
+import { decideState, project, taskEventStream } from '@dispatch-foo/a2a';
+import { gateOf } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 
 import {

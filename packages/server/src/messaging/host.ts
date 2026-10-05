@@ -1,10 +1,10 @@
-import { isContainerKind, isDoneStatus } from '@dispatch/core';
+import { isContainerKind, isDoneStatus } from '@dispatch-foo/core';
 import type {
   PolicyRuling as CorePolicyRuling,
   StatusModel,
   TaskDoc,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   Address,
   ExternalAdmission,
@@ -17,7 +17,7 @@ import type {
   PolicyRuling,
   Sender,
   WakeResult,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { actingOperator, runOperator } from '../orchestrator/types.js';

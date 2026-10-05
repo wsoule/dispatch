@@ -1,5 +1,5 @@
-import { untrustedBlock, untrustedInline } from '@dispatch/core';
-import { LINE_BREAK } from '@dispatch/protocol';
+import { untrustedBlock, untrustedInline } from '@dispatch-foo/core';
+import { LINE_BREAK } from '@dispatch-foo/protocol';
 import { createHash } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
 

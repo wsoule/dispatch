@@ -1,5 +1,5 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { BranchEntry, RunMeta, RunState } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 import { ChevronRight, GitBranch, GitMerge } from 'lucide-react';
 import { memo, type ReactNode, useCallback, useMemo, useState } from 'react';
 

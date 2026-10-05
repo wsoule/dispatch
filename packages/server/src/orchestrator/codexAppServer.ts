@@ -1,4 +1,4 @@
-import { childEnv } from '@dispatch/core';
+import { childEnv } from '@dispatch-foo/core';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';

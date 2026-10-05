@@ -3,7 +3,7 @@ import {
   docSlug,
   docTitleProblem,
   jsonEscapedBytes,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import { cutUtf8, fencedLines, splitLines, utf8Bytes } from './sections.js';
 

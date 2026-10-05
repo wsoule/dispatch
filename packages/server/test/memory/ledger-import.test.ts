@@ -1,5 +1,8 @@
-import { describeFloorHold, describePolicyAuthorization } from '@dispatch/core';
-import type { LedgerEntry } from '@dispatch/core';
+import {
+  describeFloorHold,
+  describePolicyAuthorization,
+} from '@dispatch-foo/core';
+import type { LedgerEntry } from '@dispatch-foo/core';
 import {
   createMemoryIds,
   openMemoryDb,

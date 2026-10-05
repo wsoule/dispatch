@@ -1,4 +1,4 @@
-import { renderDocFile } from '@dispatch/core';
+import { renderDocFile } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 

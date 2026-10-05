@@ -1,4 +1,4 @@
-import { canonicalize } from '@dispatch/protocol/federation';
+import { canonicalize } from '@dispatch-foo/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 

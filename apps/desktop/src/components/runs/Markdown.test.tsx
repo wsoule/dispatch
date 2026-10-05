@@ -1,4 +1,4 @@
-import { untrustedFenced } from '@dispatch/core/browser';
+import { untrustedFenced } from '@dispatch-foo/core/browser';
 import { render } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { useEffect } from 'react';

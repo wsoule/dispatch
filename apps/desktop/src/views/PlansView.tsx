@@ -1,3 +1,4 @@
+import type { Priority } from '@dispatch-foo/core/browser';
 import type {
   ConfirmResult,
   PlannedTask,
@@ -5,7 +6,6 @@ import type {
   PlanState,
   ProposalAction,
 } from '@dispatch/client';
-import type { Priority } from '@dispatch/core/browser';
 import {
   Check,
   CircleAlert,

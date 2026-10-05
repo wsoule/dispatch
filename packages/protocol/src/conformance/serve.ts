@@ -2,7 +2,7 @@ import type {
   Hello,
   Observation,
   RunnableVector,
-} from '@dispatch/protocol-spec';
+} from '@dispatch-foo/protocol-spec';
 
 import { UnsupportedOp } from './errors.js';
 

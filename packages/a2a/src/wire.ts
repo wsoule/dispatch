@@ -1,4 +1,4 @@
-import type { JsonValue } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 
 import type { WireTaskState } from './states.js';
 

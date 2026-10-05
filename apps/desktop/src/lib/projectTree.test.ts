@@ -1,5 +1,5 @@
-import type { TaskDoc, TaskListItem } from '@dispatch/core/browser';
-import { statusModelOf } from '@dispatch/core/browser';
+import type { TaskDoc, TaskListItem } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import {

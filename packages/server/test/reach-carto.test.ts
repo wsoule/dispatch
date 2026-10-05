@@ -1,4 +1,4 @@
-import type { CartoBlastRadius } from '@dispatch/core/carto';
+import type { CartoBlastRadius } from '@dispatch-foo/core/carto';
 import { expect, test } from 'bun:test';
 
 import {

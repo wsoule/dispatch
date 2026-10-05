@@ -1,4 +1,4 @@
-import { openDispatchDb, SqliteTaskStore } from '@dispatch/core';
+import { openDispatchDb, SqliteTaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

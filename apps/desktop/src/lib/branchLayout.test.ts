@@ -1,4 +1,4 @@
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import { type BranchLayout, branchLayout as layoutWith } from './branchLayout';

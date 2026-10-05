@@ -1,13 +1,13 @@
-import type { LinkPayload } from '@dispatch/a2a';
-import type { JsonValue } from '@dispatch/protocol';
+import type { LinkPayload } from '@dispatch-foo/a2a';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import {
   buildOp,
   generateReplicaKeys,
   opHash,
   sealPayload,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

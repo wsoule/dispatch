@@ -1,4 +1,4 @@
-import type { DispatchConfig } from '@dispatch/core/browser';
+import type { DispatchConfig } from '@dispatch-foo/core/browser';
 import {
   DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
@@ -8,7 +8,7 @@ import {
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 

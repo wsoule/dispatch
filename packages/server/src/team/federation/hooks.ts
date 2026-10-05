@@ -1,4 +1,4 @@
-import { localOnlyReason, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { localOnlyReason, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import type {
   Address,
   DeliveryVia,
@@ -6,7 +6,7 @@ import type {
   Message,
   MessageStore,
   Placement,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 
 import type { SyncLedger } from '../boardSync/ledger.js';
 import type { Homes } from './homes.js';

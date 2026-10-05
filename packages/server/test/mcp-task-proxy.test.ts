@@ -1,4 +1,4 @@
-import { initProjectStores, TaskStore } from '@dispatch/core';
+import { initProjectStores, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

@@ -1,6 +1,6 @@
-import type { Message } from '@dispatch/protocol';
-import { sealPayload } from '@dispatch/protocol/federation';
-import type { MailTarget } from '@dispatch/protocol/federation';
+import type { Message } from '@dispatch-foo/protocol';
+import { sealPayload } from '@dispatch-foo/protocol/federation';
+import type { MailTarget } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { forgeInner, forward } from './helpers/forgeMail.js';

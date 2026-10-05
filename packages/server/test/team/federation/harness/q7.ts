@@ -1,12 +1,12 @@
-import { localOnlyReason } from '@dispatch/protocol';
-import type { Message } from '@dispatch/protocol';
+import { localOnlyReason } from '@dispatch-foo/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 import {
   fromB64u,
   isStub,
   openPayload,
   openWithKey,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 import {
   mkdtempSync,
   readdirSync,

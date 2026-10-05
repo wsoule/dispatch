@@ -1,5 +1,5 @@
 // The DMP reference adapter, for the conformance kit and for bindings that
-// extend it with their own ops (`@dispatch/protocol/conformance`).
+// extend it with their own ops (`@dispatch-foo/protocol/conformance`).
 export { REFERENCE_HELLO, runVector } from './adapter.js';
 export type { AdapterOptions, OpContext, OpHandler } from './adapter.js';
 export { UnsupportedOp } from './errors.js';

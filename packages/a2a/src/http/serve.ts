@@ -1,5 +1,5 @@
-import type { A2AConfig } from '@dispatch/core';
-import { DEFAULT_A2A } from '@dispatch/core';
+import type { A2AConfig } from '@dispatch-foo/core';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 

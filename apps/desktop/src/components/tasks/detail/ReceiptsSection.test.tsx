@@ -1,4 +1,4 @@
-import type { LedgerEntry } from '@dispatch/core/browser';
+import type { LedgerEntry } from '@dispatch-foo/core/browser';
 import { render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

@@ -1,6 +1,6 @@
-import type { AddLedgerInput, LedgerEntry, TaskRisk } from '@dispatch/core';
-import type { JsonValue, Message } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+import type { AddLedgerInput, LedgerEntry, TaskRisk } from '@dispatch-foo/core';
+import type { JsonValue, Message } from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

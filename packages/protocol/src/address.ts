@@ -1,4 +1,8 @@
-import { ActorRefError, parseActorRef, TASK_ID_PATTERN } from '@dispatch/core';
+import {
+  ActorRefError,
+  parseActorRef,
+  TASK_ID_PATTERN,
+} from '@dispatch-foo/core';
 
 import {
   MAX_ADDRESS_BYTES,

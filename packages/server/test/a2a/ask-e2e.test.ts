@@ -5,7 +5,7 @@ import {
   Task,
 } from '@a2a-js/sdk';
 import { ClientFactory, RestTransportFactory } from '@a2a-js/sdk/client';
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

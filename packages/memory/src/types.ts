@@ -1,4 +1,4 @@
-import type { Address, Ref } from '@dispatch/protocol';
+import type { Address, Ref } from '@dispatch-foo/protocol';
 
 export const MEMORY_KINDS = [
   'preference',

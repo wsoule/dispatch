@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 import { EXTENSION_URIS } from './uris.js';
 import type { ExtensionUri } from './uris.js';

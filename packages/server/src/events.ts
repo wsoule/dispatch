@@ -1,4 +1,4 @@
-import type { Message } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
 
 import type { LinearProgress, LinearSyncSummary } from './linear/sync.js';
 import type { EpicPauseReason } from './orchestrator/epic.js';

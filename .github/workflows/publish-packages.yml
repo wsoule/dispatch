@@ -1,0 +1,108 @@
+name: Publish packages
+
+# Tags core@*, protocol@*, a2a@*, protocol-spec@*, federation@* stage one
+# package for the owner's 2FA approval (npm stage approve). A manual run is a
+# dry run only: no environment, no id-token, never stages. The desktop's v*
+# tags never match.
+on:
+  push:
+    tags:
+      - 'core@*'
+      - 'protocol@*'
+      - 'a2a@*'
+      - 'protocol-spec@*'
+      - 'federation@*'
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Package to dry-run'
+        required: true
+        type: choice
+        options: [core, protocol, a2a, protocol-spec, federation]
+
+env:
+  NO_COLOR: 1
+
+jobs:
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up moon and caches
+        uses: ./.github/actions/setup
+      - name: The pipeline's own tests
+        run: bun test scripts/publish-package.test.ts
+      - name: Resolve the package
+        id: pkg
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run:
+          bun scripts/publish-package.ts resolve "$PACKAGE" >> "$GITHUB_OUTPUT"
+      - name: Prepublish guard, tests and conformance
+        env:
+          PROJECT: ${{ steps.pkg.outputs.project }}
+        run: |
+          moon run "$PROJECT:prepublish" "$PROJECT:test"
+          if [ "$PROJECT" = protocol ] || [ "$PROJECT" = a2a ]; then moon run "$PROJECT:conformance"; fi
+      - name: Pack workspace dependencies locally
+        env:
+          DIR: ${{ steps.pkg.outputs.dir }}
+        run:
+          bun scripts/publish-package.ts check-deps "$DIR" --local
+          "$RUNNER_TEMP/deps"
+      - name: Pack, check and strip scripts
+        env:
+          DIR: ${{ steps.pkg.outputs.dir }}
+        run: bun scripts/publish-package.ts pack "$DIR" "$RUNNER_TEMP/package"
+      - name: Smoke under Node
+        run:
+          bun scripts/publish-package.ts smoke "$RUNNER_TEMP/package"
+          "$RUNNER_TEMP/deps"
+
+  stage:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up moon and caches
+        uses: ./.github/actions/setup
+      - name: The pipeline's own tests
+        run: bun test scripts/publish-package.test.ts
+      - name: Resolve the package from the tag
+        id: pkg
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bun scripts/publish-package.ts resolve "$TAG" >> "$GITHUB_OUTPUT"
+      - name: Prepublish guard, tests and conformance
+        env:
+          PROJECT: ${{ steps.pkg.outputs.project }}
+        run: |
+          moon run "$PROJECT:prepublish" "$PROJECT:test"
+          if [ "$PROJECT" = protocol ] || [ "$PROJECT" = a2a ]; then moon run "$PROJECT:conformance"; fi
+      - name: Workspace dependencies are public
+        env:
+          DIR: ${{ steps.pkg.outputs.dir }}
+        run: bun scripts/publish-package.ts check-deps "$DIR" --public
+      - name: Pack, check and strip scripts
+        env:
+          DIR: ${{ steps.pkg.outputs.dir }}
+        run: bun scripts/publish-package.ts pack "$DIR" "$RUNNER_TEMP/package"
+      - name: Smoke under Node
+        run: bun scripts/publish-package.ts smoke "$RUNNER_TEMP/package"
+      # Node 24.11.0 bundles npm 11.6.1; staging needs npm >= 11.15.0.
+      - name: npm with staged publishing
+        run: npm install -g npm@11.15.0
+      - name: Stage with provenance
+        working-directory: ${{ runner.temp }}/package
+        env:
+          DIST_TAG: ${{ steps.pkg.outputs.distTag }}
+        run: npm stage publish --provenance --access public --tag "$DIST_TAG"

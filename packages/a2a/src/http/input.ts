@@ -1,5 +1,5 @@
-import { MessagingError } from '@dispatch/protocol';
-import type { JsonValue } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 
 import { parseEnvelopeExt, parseWorkExt, utf8Bytes } from '../ext.js';
 import type { ContinueInput, OpenInput, OpenKind } from '../port.js';

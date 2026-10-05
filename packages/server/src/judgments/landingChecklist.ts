@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core';
-import { getSection } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { getSection } from '@dispatch-foo/core';
 import { noul } from '@typesafe-ai/sdk';
 import type { EntryType, NoulQuestion, NoulResponse } from '@typesafe-ai/sdk';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';

@@ -1,5 +1,9 @@
-import { ActorContext, TaskStore, writeGitAttributes } from '@dispatch/core';
-import type { GitReader } from '@dispatch/core';
+import {
+  ActorContext,
+  TaskStore,
+  writeGitAttributes,
+} from '@dispatch-foo/core';
+import type { GitReader } from '@dispatch-foo/core';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';

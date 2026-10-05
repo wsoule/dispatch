@@ -1,5 +1,5 @@
-import { HANDLE, printable } from '@dispatch/federation';
-import { fingerprint } from '@dispatch/protocol/federation';
+import { HANDLE, printable } from '@dispatch-foo/federation';
+import { fingerprint } from '@dispatch-foo/protocol/federation';
 import { basename } from 'node:path';
 
 import type { ApiContext } from '../../api.js';

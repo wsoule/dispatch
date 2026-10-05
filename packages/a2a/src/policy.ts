@@ -3,8 +3,13 @@ import {
   hasGateData,
   isPeerAddress,
   MessagingError,
-} from '@dispatch/protocol';
-import type { Address, Delivery, JsonValue, Message } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import type {
+  Address,
+  Delivery,
+  JsonValue,
+  Message,
+} from '@dispatch-foo/protocol';
 
 export const CLIENT_NAME_PREFIX = 'a2a.';
 const CLIENT_ADDRESS = /^agent:[^/]+\/a2a\./;

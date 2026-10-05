@@ -1,4 +1,4 @@
-import type { LogEntry } from '@dispatch/protocol/federation';
+import type { LogEntry } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { runGitSync } from '../../orchestrator/helpers.js';

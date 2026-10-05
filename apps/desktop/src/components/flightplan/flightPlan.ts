@@ -1,5 +1,4 @@
-import type { RunMeta } from '@dispatch/client';
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import {
   fanoutHolder,
   fanoutScope,
@@ -8,7 +7,8 @@ import {
   isContainerKind,
   isDoneStatus,
   isUnstartedStatus,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { RunMeta } from '@dispatch/client';
 
 import { dagTaskFromDoc, dagWaves } from '../../lib/dagLayout';
 import { isTerminalRunState } from '../../lib/runState';

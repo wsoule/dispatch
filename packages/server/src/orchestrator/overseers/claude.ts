@@ -10,7 +10,7 @@ import type {
   Query,
   SdkMcpToolDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
-import { childEnv } from '@dispatch/core';
+import { childEnv } from '@dispatch-foo/core';
 import type { z } from 'zod';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';

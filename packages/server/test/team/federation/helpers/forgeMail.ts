@@ -1,6 +1,9 @@
-import type { Message } from '@dispatch/protocol';
-import { b64u, buildOp, sealPayload } from '@dispatch/protocol/federation';
-import type { FederatedOp, MailTarget } from '@dispatch/protocol/federation';
+import type { Message } from '@dispatch-foo/protocol';
+import { b64u, buildOp, sealPayload } from '@dispatch-foo/protocol/federation';
+import type {
+  FederatedOp,
+  MailTarget,
+} from '@dispatch-foo/protocol/federation';
 
 import type { MessagingReplica } from './messagingReplica.js';
 

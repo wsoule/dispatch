@@ -1,7 +1,7 @@
+import { gateOf } from '@dispatch-foo/protocol';
+import type { DeliveryEngine, Message } from '@dispatch-foo/protocol';
 import { newMemoryEntry } from '@dispatch/memory';
 import type { MemoryProposal } from '@dispatch/memory';
-import { gateOf } from '@dispatch/protocol';
-import type { DeliveryEngine, Message } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
 

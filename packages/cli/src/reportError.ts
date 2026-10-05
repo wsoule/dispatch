@@ -1,4 +1,4 @@
-import { TaskParseError } from '@dispatch/core';
+import { TaskParseError } from '@dispatch-foo/core';
 
 import { CliError } from './context.js';
 

@@ -1,3 +1,4 @@
+import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
 import type {
   GateStatus,
   LandingGate,
@@ -6,7 +7,6 @@ import type {
   MergeQueueEntry,
   RepoPr,
 } from '@dispatch/client';
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {

@@ -1,6 +1,6 @@
 import { AgentCard, generateAgentCardSignature } from '@a2a-js/sdk';
-import type { A2ASkill } from '@dispatch/core';
-import type { JsonValue } from '@dispatch/protocol';
+import type { A2ASkill } from '@dispatch-foo/core';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import { FlattenedSign, flattenedVerify, importJWK } from 'jose';
 import type { JWK } from 'jose';
 import { createHash } from 'node:crypto';

@@ -4,7 +4,7 @@ import {
   generateReplicaKeys,
   opHash,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import type { BoardOp } from '../../../src/team/boardSync/engine.js';

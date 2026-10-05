@@ -1,5 +1,5 @@
-import type { MessagingErrorCode } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+import type { MessagingErrorCode } from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 import { A2AError } from '../errors.js';
 import type { A2AReason } from '../errors.js';

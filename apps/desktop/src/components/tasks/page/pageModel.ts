@@ -1,10 +1,10 @@
-import type { RunMeta } from '@dispatch/client';
 import type {
   EffortLevel,
   StatusModel,
   TaskListItem,
   UpdatePatch,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { RunMeta } from '@dispatch/client';
 
 import type { ActivityEntry } from '../../../lib/activityFeed';
 import type { DispatchReadiness } from '../../../lib/dispatchReadiness';

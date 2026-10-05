@@ -2,8 +2,8 @@ import type {
   StatusModel,
   TaskListItem,
   UpdatePatch,
-} from '@dispatch/core/browser';
-import { isSatisfiedForDispatchStatus } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { isSatisfiedForDispatchStatus } from '@dispatch-foo/core/browser';
 import { Plus, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 

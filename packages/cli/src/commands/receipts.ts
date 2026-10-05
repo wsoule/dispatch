@@ -8,7 +8,7 @@ import {
   MEMORY_RECEIPT_FILE_BYTES,
   restoreReceipts,
   writeProjectBackend,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import {

@@ -1,5 +1,9 @@
-import { ActorContext, initProjectStores, loadConfig } from '@dispatch/core';
-import type { ProjectStores } from '@dispatch/core';
+import {
+  ActorContext,
+  initProjectStores,
+  loadConfig,
+} from '@dispatch-foo/core';
+import type { ProjectStores } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,

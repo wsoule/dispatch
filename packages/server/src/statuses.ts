@@ -2,8 +2,8 @@ import {
   DEFAULT_STATUS_MODEL,
   loadConfig,
   statusModelOf,
-} from '@dispatch/core';
-import type { StatusModel } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { StatusModel } from '@dispatch-foo/core';
 
 /**
  * The project's status model (types and lifecycle roles), read fresh so a

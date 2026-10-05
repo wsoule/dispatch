@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { isIP } from 'node:net';
 
 import type { GuardOptions } from './guard.js';

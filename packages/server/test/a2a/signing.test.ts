@@ -1,10 +1,10 @@
-import { cardJson, verifyCardSignature } from '@dispatch/a2a';
+import { cardJson, verifyCardSignature } from '@dispatch-foo/a2a';
 import {
   credentialsPath,
   normalizeProjectPath,
   writeA2ANextSigningKey,
   writeA2ASigningKey,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';

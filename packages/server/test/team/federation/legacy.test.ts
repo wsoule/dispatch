@@ -1,5 +1,5 @@
-import { verifyLog } from '@dispatch/federation';
-import { fingerprint } from '@dispatch/protocol/federation';
+import { verifyLog } from '@dispatch-foo/federation';
+import { fingerprint } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import type { BoardOp } from '../../../src/team/boardSync/engine.js';

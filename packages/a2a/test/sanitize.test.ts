@@ -1,4 +1,4 @@
-import { gateOf, isSystemMarker } from '@dispatch/protocol';
+import { gateOf, isSystemMarker } from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import { utf8Bytes } from '../src/ext.js';

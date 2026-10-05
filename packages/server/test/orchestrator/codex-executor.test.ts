@@ -1,4 +1,4 @@
-import { DISPATCH_MCP_TOOLS } from '@dispatch/core';
+import { DISPATCH_MCP_TOOLS } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

@@ -1,6 +1,13 @@
-import { isFederationLocalAddress } from '@dispatch/protocol';
-import type { Address, DeliveryEngine, MessageStore } from '@dispatch/protocol';
-import type { ChannelBody, FederatedOp } from '@dispatch/protocol/federation';
+import { isFederationLocalAddress } from '@dispatch-foo/protocol';
+import type {
+  Address,
+  DeliveryEngine,
+  MessageStore,
+} from '@dispatch-foo/protocol';
+import type {
+  ChannelBody,
+  FederatedOp,
+} from '@dispatch-foo/protocol/federation';
 
 import type { RosterService } from './roster.js';
 import type { Collector, OpHandler } from './service.js';

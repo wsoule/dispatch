@@ -3,7 +3,7 @@ import {
   DISPATCH_MESSAGING_TOOLS,
   FileCommentStore,
   TaskStore,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';

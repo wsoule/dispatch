@@ -14,14 +14,14 @@ import {
   TaskParseError,
   TaskStore,
   usesIntegrationBranch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CommentStorePort,
   EffortLevel,
   StatusModel,
   SubagentStatus,
   TaskComment,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   ActorContext,
   CommandEvidence,
@@ -30,7 +30,7 @@ import type {
   TaskDoc,
   TaskStorePort,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -428,7 +428,7 @@ export class Orchestrator {
   // or (via markRunMergedViaPr) a merged PR — i.e. whenever a task might
   // have just moved to `done`. A run reaching a terminal state (finished/
   // failed/cancelled) only ever leaves its task at `in-review`
-  // (handleFinish); readyTasks() in @dispatch/core gates on a blocker being
+  // (handleFinish); readyTasks() in @dispatch-foo/core gates on a blocker being
   // `done`/`cancelled`, so the epic engine needs this *second* seam — not
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.

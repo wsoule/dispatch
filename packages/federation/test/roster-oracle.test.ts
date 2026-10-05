@@ -1,4 +1,4 @@
-import { ed25519FromSeed } from '@dispatch/protocol/federation';
+import { ed25519FromSeed } from '@dispatch-foo/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
 import { foldRoster } from '../src/roster.js';

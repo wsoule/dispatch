@@ -1,5 +1,5 @@
-import type { DocProposal } from '@dispatch/core';
-import type { DeliveryEngine, Message } from '@dispatch/protocol';
+import type { DocProposal } from '@dispatch-foo/core';
+import type { DeliveryEngine, Message } from '@dispatch-foo/protocol';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { docGateHandler, raiseDocGate } from '../../src/docs/gate.js';

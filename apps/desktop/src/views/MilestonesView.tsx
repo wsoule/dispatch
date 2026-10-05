@@ -1,6 +1,6 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
 import type { EpicProgressChild } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
-import { isCompletedStatus, isDoneStatus } from '@dispatch/core/browser';
 import { Target } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

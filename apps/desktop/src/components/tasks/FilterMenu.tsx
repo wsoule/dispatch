@@ -1,5 +1,9 @@
+import type {
+  Assignee,
+  Priority,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
 import { ApiError, type RunState } from '@dispatch/client';
-import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
 import {
   Activity,
   Calendar,

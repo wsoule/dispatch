@@ -2,8 +2,8 @@ import {
   ATTACHMENT_MAX_BYTES,
   dispatchDbPath,
   TaskStore,
-} from '@dispatch/core';
-import type { TaskStoreBackend } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { TaskStoreBackend } from '@dispatch-foo/core';
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';

@@ -1,5 +1,5 @@
-import type { DocOp } from '@dispatch/core';
-import { DOCS_LIMITS, docTitleProblem } from '@dispatch/core';
+import type { DocOp } from '@dispatch-foo/core';
+import { DOCS_LIMITS, docTitleProblem } from '@dispatch-foo/core';
 
 import { DocsError } from './errors.js';
 import {

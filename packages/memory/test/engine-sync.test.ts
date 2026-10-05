@@ -1,4 +1,4 @@
-import { DEFAULT_MEMORY } from '@dispatch/core';
+import { DEFAULT_MEMORY } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import { MemoryEngine, syncedEntryId, syncOrigin } from '../src/engine.js';

@@ -11,7 +11,7 @@ import {
 } from '../../src/team/license.js';
 import { licenseFor, testKeys } from './licenseKeys.js';
 
-// The key check itself is tested in @dispatch/federation; here, the manager
+// The key check itself is tested in @dispatch-foo/federation; here, the manager
 // that installs and reads keys, and the sentence a person sees at the limit.
 
 const NOW = new Date('2026-09-23T12:00:00Z');

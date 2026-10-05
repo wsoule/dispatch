@@ -1,4 +1,4 @@
-import type { JsonValue, Message } from '@dispatch/protocol';
+import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import type { DecisionItem, DecisionPolicy } from '../src/decisionFeed.js';

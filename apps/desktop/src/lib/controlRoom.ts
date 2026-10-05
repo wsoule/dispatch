@@ -1,10 +1,10 @@
+import type { Priority, TaskListItem } from '@dispatch-foo/core/browser';
 import type {
   FixLoopState,
   MergeQueueSnapshot,
   RunKind,
   RunMeta,
 } from '@dispatch/client';
-import type { Priority, TaskListItem } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
 import { deriveFeedState, FEED_STATE_ORDER } from './feedState';

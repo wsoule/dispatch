@@ -1,4 +1,4 @@
-import { isDoneStatus } from '@dispatch/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 import { Waypoints } from 'lucide-react';
 import { useRef, useState } from 'react';
 

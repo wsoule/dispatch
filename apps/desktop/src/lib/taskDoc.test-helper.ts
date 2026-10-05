@@ -1,6 +1,6 @@
 // A full TaskDoc for tests that care about a few of its fields.
-import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
-import { defaultTaskFields } from '@dispatch/core/browser';
+import type { TaskDoc, TaskMeta } from '@dispatch-foo/core/browser';
+import { defaultTaskFields } from '@dispatch-foo/core/browser';
 
 export function taskDoc(
   meta: Pick<TaskMeta, 'id' | 'title'> & Partial<TaskMeta>,

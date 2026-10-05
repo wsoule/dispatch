@@ -6,8 +6,8 @@ import {
   ServerCallContext,
 } from '@a2a-js/sdk/server';
 import type { AgentExecutor } from '@a2a-js/sdk/server';
-import { DEFAULT_A2A } from '@dispatch/core';
-import type { Message } from '@dispatch/protocol';
+import { DEFAULT_A2A } from '@dispatch-foo/core';
+import type { Message } from '@dispatch-foo/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { checkPeerCard, fetchPeerCard } from '../../src/peer/card.js';

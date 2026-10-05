@@ -1,5 +1,6 @@
-import { memoryReadView, readMemoryConfig } from '@dispatch/core';
-import type { MemoryConfigWarning, TaskStorePort } from '@dispatch/core';
+import { memoryReadView, readMemoryConfig } from '@dispatch-foo/core';
+import type { MemoryConfigWarning, TaskStorePort } from '@dispatch-foo/core';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import {
   createMemoryIds,
   MemoryEngine,
@@ -14,7 +15,6 @@ import type {
   Operator,
   Principal,
 } from '@dispatch/memory';
-import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { existsSync, unwatchFile, watchFile } from 'node:fs';
 import { join } from 'node:path';
 

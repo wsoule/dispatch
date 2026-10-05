@@ -1,5 +1,5 @@
-import type { TaskListItem } from '@dispatch/core/browser';
-import { isContainerKind } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { isContainerKind } from '@dispatch-foo/core/browser';
 import { Ellipsis, Layers, Star } from 'lucide-react';
 import {
   useCallback,

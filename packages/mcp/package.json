@@ -21,7 +21,7 @@
     "prepublishOnly": "moon run mcp:prepublish"
   },
   "dependencies": {
-    "@dispatch/core": "workspace:*",
+    "@dispatch-foo/core": "workspace:*",
     "@modelcontextprotocol/sdk": "catalog:",
     "zod": "catalog:"
   },

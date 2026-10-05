@@ -5,16 +5,16 @@ import type {
   PolicyRuling,
   TaskRisk,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   consultPolicy,
   describeFloorHold,
   describePolicyAuthorization,
   loadConfig,
   projectPolicy,
-} from '@dispatch/core';
-import type { JsonValue } from '@dispatch/protocol';
-import { gateOf, MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/core';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { gateOf, MessagingError } from '@dispatch-foo/protocol';
 
 import type { TaskCache } from './cache.js';
 import type { DecisionPolicy } from './decisionFeed.js';

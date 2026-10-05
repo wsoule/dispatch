@@ -1,6 +1,6 @@
-import { printable } from '@dispatch/federation';
-import type { PinnedKey, RosterView } from '@dispatch/federation';
-import { hlcWallMs } from '@dispatch/protocol/federation';
+import { printable } from '@dispatch-foo/federation';
+import type { PinnedKey, RosterView } from '@dispatch-foo/federation';
+import { hlcWallMs } from '@dispatch-foo/protocol/federation';
 
 import type { TransportHealth } from './transport.js';
 

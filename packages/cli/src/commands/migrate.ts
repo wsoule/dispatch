@@ -16,12 +16,12 @@ import {
   statusModelOf,
   totalImported,
   writeProjectBackend,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   MigrationReport,
   MilestoneMigrationReport,
   ProjectStores,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -33,7 +33,7 @@ import { findRunningDaemon } from './daemon.js';
 import { databaseBacked, requireStore } from './task.js';
 
 // `dispatch migrate` — the one-time move of a project's markdown-and-JSONL
-// state into the daemon's database. The import itself lives in @dispatch/core
+// state into the daemon's database. The import itself lives in @dispatch-foo/core
 // (migrate.ts); this file is the terminal around it: choosing what to open,
 // refusing to run when it would be unsafe, and recording the project's new
 // backend once the import has actually committed.

@@ -4,7 +4,7 @@ import type {
   LinkTarget,
   PolicyRuling,
   TaskRisk,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type { Operator } from '@dispatch/memory';
 
 import type {

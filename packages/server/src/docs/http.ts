@@ -1,4 +1,4 @@
-import { DOCS_LIMITS } from '@dispatch/core';
+import { DOCS_LIMITS } from '@dispatch-foo/core';
 
 import { errorResponse, requireJsonContentType } from '../api/http.js';
 

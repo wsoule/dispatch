@@ -1,4 +1,4 @@
-import { checkMergeDriverSetup, readRegistry } from '@dispatch/core';
+import { checkMergeDriverSetup, readRegistry } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {

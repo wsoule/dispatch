@@ -3,7 +3,7 @@ import type {
   HandoffStatuses,
   PeerStatus,
   TaskRow,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
@@ -11,15 +11,15 @@ import {
   openA2ADb,
   SqliteA2AStore,
   TERMINAL_STATES,
-} from '@dispatch/a2a';
-import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
+} from '@dispatch-foo/a2a';
+import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch-foo/core';
 import {
   credentialsPath,
   credentialsUnreadable,
   DEFAULT_A2A,
   loadConfig,
   statusModelOf,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -123,6 +123,9 @@ export interface A2ABridge {
   readonly outbound: OutboundWorker | null;
   // Teammate links (T54); null until the link keys load, or when a2a.db is down.
   readonly links: LinkHub | null;
+  // The links hub, making this project's link keys on first use (an offer
+  // or an accept); null when a2a.db is down or the keys cannot be stored.
+  ensureLinks(): Promise<LinkHub | null>;
   // Whether standalone hosts may use /api/a2a/port/* (the settings file).
   standalone(): boolean;
   // Changes only that flag in the settings file; the listener is untouched.
@@ -641,6 +644,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     get links() {
       return links?.links ?? null;
     },
+    ensureLinks: () => links?.ensure() ?? Promise.resolve(null),
     leases,
     watches,
     signedSessions,
@@ -695,7 +699,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
           console.error(`dispatchd: ${settingsError}`);
         settings = applyOverrides(read.settings, deps.overrides);
         try {
-          await links?.start();
+          links?.start();
         } catch (err) {
           console.error('dispatchd: teammate links did not start', err);
         }

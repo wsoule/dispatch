@@ -1,5 +1,5 @@
-import { MessagingError } from '@dispatch/protocol';
-import type { JsonValue } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 
 import { ENVELOPE_URI, WORK_URI } from './uris.js';
 

@@ -8,8 +8,13 @@ import type {
   RevisionCause,
   SqliteDatabase,
   SqlValue,
-} from '@dispatch/core';
-import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import {
+  dbVersion,
+  openSqliteDb,
+  queryAll,
+  queryOne,
+} from '@dispatch-foo/core';
 import { statSync } from 'node:fs';
 
 // docs.db: every table of every stage, created at once so no later stage needs
@@ -122,6 +127,8 @@ const LATER_COLUMNS: readonly { table: string; column: string; ddl: string }[] =
       ddl: 'dispatch_operator TEXT',
     },
     { table: 'assets', column: 'checked_at', ddl: 'checked_at TEXT' },
+    { table: 'linear_docs', column: 'remote_body', ddl: 'remote_body TEXT' },
+    { table: 'linear_docs', column: 'remote_hash', ddl: 'remote_hash TEXT' },
   ];
 
 function addMissingColumns(db: SqliteDatabase): void {
@@ -195,6 +202,37 @@ export interface DocRow {
   updatedAt: string;
   indexedHash: string | null;
 }
+
+// A doc's link to the Linear document it syncs with (v2).
+export interface LinearDocRow {
+  docId: string;
+  documentId: string;
+  // The last revision synced with Linear (a conflicted head after a conflict).
+  baseRev: string;
+  remoteUpdatedAt: string;
+  // Linear's own text when last synced, normalized and cut to the body cap,
+  // and the hash of the whole normalized text; null on rows from before both.
+  remoteBody: string | null;
+  remoteHash: string | null;
+}
+
+interface RawLinearDoc {
+  doc_id: string;
+  document_id: string;
+  base_rev: string;
+  remote_updated_at: string;
+  remote_body: string | null;
+  remote_hash: string | null;
+}
+
+const toLinearDoc = (r: RawLinearDoc): LinearDocRow => ({
+  docId: r.doc_id,
+  documentId: r.document_id,
+  baseRev: r.base_rev,
+  remoteUpdatedAt: r.remote_updated_at,
+  remoteBody: r.remote_body,
+  remoteHash: r.remote_hash,
+});
 
 // One image stored for a doc; its file is docs-assets/<doc>/<name>.
 export interface AssetRow {
@@ -589,7 +627,11 @@ export class SqliteDocStore {
     ];
     const params: SqlValue[] = [...filter.ns, ...filter.statuses];
     if (filter.unreviewed === true) where.push('unreviewed = 1');
-    if (filter.conflicted === true) where.push('conflicted = 1');
+    // A doc with a sync problem or a held push needs a human as a conflicted one does.
+    if (filter.conflicted === true)
+      where.push(
+        "(conflicted = 1 OR id IN (SELECT substr(key, 9) FROM meta WHERE key LIKE 'problem:%') OR id IN (SELECT substr(key, 15) FROM meta WHERE key LIKE 'sync-problems:%') OR id IN (SELECT substr(key, 6) FROM meta WHERE key LIKE 'held:%'))"
+      );
     if (filter.unlinked === true)
       where.push(
         "NOT EXISTS (SELECT 1 FROM links l WHERE l.doc_id = docs.id AND l.target_type = 'task')"
@@ -946,11 +988,199 @@ export class SqliteDocStore {
     origin: string | null;
     deletedBy: string;
     at: string;
+    hlc?: string | null;
   }): void {
     this.run(
-      'INSERT OR REPLACE INTO tombstones (doc_id, ns, slug, origin, deleted_by, at) VALUES (?, ?, ?, ?, ?, ?)',
-      [t.docId, t.ns, t.slug, t.origin, t.deletedBy, t.at]
+      'INSERT OR REPLACE INTO tombstones (doc_id, ns, slug, origin, deleted_by, at, hlc) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [t.docId, t.ns, t.slug, t.origin, t.deletedBy, t.at, t.hlc ?? null]
     );
+  }
+
+  // ---- team sync (v2) ------------------------------------------------------
+
+  // A tombstone with who removed it and its op clock (null until published).
+  tombstoneFull(docId: string): {
+    docId: string;
+    ns: string;
+    deletedBy: string;
+    at: string;
+    hlc: string | null;
+  } | null {
+    const r = this.one<{
+      doc_id: string;
+      ns: string;
+      deleted_by: string;
+      at: string;
+      hlc: string | null;
+    }>(
+      'SELECT doc_id, ns, deleted_by, at, hlc FROM tombstones WHERE doc_id = ?',
+      [docId]
+    );
+    return r === undefined
+      ? null
+      : {
+          docId: r.doc_id,
+          ns: r.ns,
+          deletedBy: r.deleted_by,
+          at: r.at,
+          hlc: r.hlc,
+        };
+  }
+
+  setTombstoneHlc(docId: string, hlc: string): void {
+    this.run('UPDATE tombstones SET hlc = ? WHERE doc_id = ?', [hlc, docId]);
+  }
+
+  deleteTombstone(docId: string): void {
+    this.run('DELETE FROM tombstones WHERE doc_id = ?', [docId]);
+  }
+
+  // Every revision of a doc, proposals and held ones included.
+  revisionsOfDoc(docId: string): RevisionMeta[] {
+    return this.all<RawRevision>(
+      `SELECT ${REVISION_COLUMNS} FROM revisions WHERE doc_id = ? ORDER BY rowid`,
+      [docId]
+    ).map(toMeta);
+  }
+
+  provisionalRevisions(): RevisionMeta[] {
+    return this.all<RawRevision>(
+      `SELECT ${REVISION_COLUMNS} FROM revisions WHERE provisional = 1 ORDER BY doc_id, n`
+    ).map(toMeta);
+  }
+
+  // Rewrites a revision row in place (a provisional one confirmed or adopted).
+  replaceRevision(r: RevisionRow): void {
+    this.run(
+      `UPDATE revisions SET parents_json = ?, restored_parents_json = ?, title = ?, body = ?, hash = ?,
+        bytes = ?, author = ?, cause = ?, summary = ?, approval_json = ?, unreviewed = ?, provisional = ?,
+        via = ?, created_at = ? WHERE id = ?`,
+      [
+        JSON.stringify(r.parents),
+        r.restoredParents === null ? null : JSON.stringify(r.restoredParents),
+        r.title,
+        r.body,
+        r.hash,
+        r.bytes,
+        r.author,
+        r.cause,
+        r.summary,
+        r.approval === null ? null : JSON.stringify(r.approval),
+        bit(r.unreviewed),
+        bit(r.provisional),
+        r.via,
+        r.createdAt,
+        r.id,
+      ]
+    );
+  }
+
+  // A team doc's sealed, numbered, confirmed revisions not yet marked
+  // published, in history order.
+  unpublishedTeamRevisions(docId: string): RevisionMeta[] {
+    return this.all<RawRevision>(
+      `SELECT ${REVISION_COLUMNS.split(', ')
+        .map((c) => `r.${c}`)
+        .join(', ')} FROM revisions r JOIN docs d ON d.id = r.doc_id
+       LEFT JOIN meta m ON m.key = 'sync:pub:' || r.id
+       WHERE r.doc_id = ? AND d.ns = 'team' AND r.n IS NOT NULL AND r.sealed = 1 AND r.provisional = 0 AND m.key IS NULL
+       ORDER BY r.n`,
+      [docId]
+    ).map(toMeta);
+  }
+
+  reviewsOf(docId: string): { rev: string; by: string }[] {
+    return this.all<{ rev_id: string; by: string }>(
+      'SELECT rev_id, by FROM reviews WHERE doc_id = ? ORDER BY at, rev_id, by',
+      [docId]
+    ).map((r) => ({ rev: r.rev_id, by: r.by }));
+  }
+
+  aliasesOf(docId: string): string[] {
+    return this.all<{ slug: string }>(
+      'SELECT slug FROM slug_aliases WHERE doc_id = ? ORDER BY slug',
+      [docId]
+    ).map((r) => r.slug);
+  }
+
+  // Every team doc's claimed slug and retired slugs, for handles.
+  teamClaims(): { id: string; slug: string; aliases: string[] }[] {
+    return this.all<{ id: string; slug: string }>(
+      "SELECT id, slug FROM docs WHERE ns = 'team' ORDER BY id"
+    ).map((r) => ({ ...r, aliases: this.aliasesOf(r.id) }));
+  }
+
+  setHandle(docId: string, handle: string): void {
+    this.run('UPDATE docs SET handle = ? WHERE id = ?', [handle, docId]);
+  }
+
+  // Per-field op clocks of a doc's synced meta, and the newest revision op's.
+  metaClocks(docId: string): Record<string, string> {
+    const raw = this.one<{ meta_hlc_json: string | null }>(
+      'SELECT meta_hlc_json FROM docs WHERE id = ?',
+      [docId]
+    )?.meta_hlc_json;
+    return raw == null ? {} : (JSON.parse(raw) as Record<string, string>);
+  }
+
+  setMetaClocks(docId: string, clocks: Record<string, string>): void {
+    this.run('UPDATE docs SET meta_hlc_json = ? WHERE id = ?', [
+      JSON.stringify(clocks),
+      docId,
+    ]);
+  }
+
+  addSyncMissing(row: {
+    revId: string;
+    docId: string;
+    replica: string;
+    seq: number;
+    droppedAt: string;
+  }): void {
+    this.run(
+      'INSERT OR IGNORE INTO sync_missing (rev_id, doc_id, replica, seq, dropped_at) VALUES (?, ?, ?, ?, ?)',
+      [row.revId, row.docId, row.replica, row.seq, row.droppedAt]
+    );
+  }
+
+  // Dropped revisions this replica may re-read, one doc's or all, by replica and seq.
+  syncMissing(filter: { docId?: string; revId?: string } = {}): {
+    revId: string;
+    docId: string;
+    replica: string;
+    seq: number;
+    droppedAt: string;
+  }[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (filter.docId !== undefined) {
+      where.push('doc_id = ?');
+      params.push(filter.docId);
+    }
+    if (filter.revId !== undefined) {
+      where.push('rev_id = ?');
+      params.push(filter.revId);
+    }
+    const clause = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`;
+    return this.all<{
+      rev_id: string;
+      doc_id: string;
+      replica: string;
+      seq: number;
+      dropped_at: string;
+    }>(`SELECT * FROM sync_missing${clause} ORDER BY replica, seq`, params).map(
+      (r) => ({
+        revId: r.rev_id,
+        docId: r.doc_id,
+        replica: r.replica,
+        seq: r.seq,
+        droppedAt: r.dropped_at,
+      })
+    );
+  }
+
+  deleteSyncMissing(revId: string): void {
+    this.run('DELETE FROM sync_missing WHERE rev_id = ?', [revId]);
   }
 
   tombstone(
@@ -1415,6 +1645,60 @@ export class SqliteDocStore {
     return (
       this.one<{ value: string }>('SELECT value FROM meta WHERE key = ?', [key])
         ?.value ?? null
+    );
+  }
+
+  // Meta keys under a prefix, for flags kept per doc.
+  metaKeys(prefix: string): string[] {
+    return this.all<{ key: string }>(
+      "SELECT key FROM meta WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+      [`${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`]
+    ).map((r) => r.key);
+  }
+
+  deleteMeta(key: string): void {
+    this.run('DELETE FROM meta WHERE key = ?', [key]);
+  }
+
+  // The Linear document a doc syncs with: its id, the last synced revision
+  // and the Linear `updatedAt` that revision matched.
+  linearDoc(docId: string): LinearDocRow | null {
+    const r = this.one<RawLinearDoc>(
+      'SELECT * FROM linear_docs WHERE doc_id = ?',
+      [docId]
+    );
+    return r === undefined ? null : toLinearDoc(r);
+  }
+
+  linearDocByDocument(documentId: string): LinearDocRow | null {
+    const r = this.one<RawLinearDoc>(
+      'SELECT * FROM linear_docs WHERE document_id = ?',
+      [documentId]
+    );
+    return r === undefined ? null : toLinearDoc(r);
+  }
+
+  linearDocs(): LinearDocRow[] {
+    return this.all<RawLinearDoc>(
+      'SELECT * FROM linear_docs ORDER BY doc_id'
+    ).map(toLinearDoc);
+  }
+
+  setRevisionConflicted(id: string): void {
+    this.run('UPDATE revisions SET conflicted = 1 WHERE id = ?', [id]);
+  }
+
+  putLinearDoc(row: LinearDocRow): void {
+    this.run(
+      'INSERT OR REPLACE INTO linear_docs (doc_id, document_id, base_rev, remote_updated_at, remote_body, remote_hash) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        row.docId,
+        row.documentId,
+        row.baseRev,
+        row.remoteUpdatedAt,
+        row.remoteBody,
+        row.remoteHash,
+      ]
     );
   }
 

@@ -4,8 +4,8 @@ import {
   opHash,
   sealPayload,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
-import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
+import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   appendFileSync,

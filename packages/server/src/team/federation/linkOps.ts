@@ -1,4 +1,4 @@
-import type { FederatedOp } from '@dispatch/protocol/federation';
+import type { FederatedOp } from '@dispatch-foo/protocol/federation';
 
 import type { RosterService } from './roster.js';
 import type { OpHandler } from './service.js';

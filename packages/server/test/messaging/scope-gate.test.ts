@@ -1,4 +1,4 @@
-import type { Message, Sender } from '@dispatch/protocol';
+import type { Message, Sender } from '@dispatch-foo/protocol';
 import { describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

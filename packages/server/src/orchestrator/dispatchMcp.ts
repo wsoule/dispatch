@@ -1,7 +1,7 @@
-import type { CartoMode } from '@dispatch/core';
-import { loadConfig } from '@dispatch/core';
-import type { CartoBinary } from '@dispatch/core/carto';
-import { discoverCarto, supportsMcpServe } from '@dispatch/core/carto';
+import type { CartoMode } from '@dispatch-foo/core';
+import { loadConfig } from '@dispatch-foo/core';
+import type { CartoBinary } from '@dispatch-foo/core/carto';
+import { discoverCarto, supportsMcpServe } from '@dispatch-foo/core/carto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 

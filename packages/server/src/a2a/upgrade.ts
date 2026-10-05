@@ -14,17 +14,17 @@ import {
   upgradeClientBinding,
   verifyCardSignature,
   verifyRequest,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import type {
   KeyPin,
   PairingRow,
   PeerRow,
   ReceivedRequest,
   RequestParts,
-} from '@dispatch/a2a';
-import { clearPeerCredential, readPeerCredential } from '@dispatch/core';
-import type { Address, Message } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+} from '@dispatch-foo/a2a';
+import { clearPeerCredential, readPeerCredential } from '@dispatch-foo/core';
+import type { Address, Message } from '@dispatch-foo/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { createPublicKey, randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 

@@ -1,5 +1,5 @@
-import type { StandaloneOptions } from '@dispatch/a2a';
-import { checkStandalone } from '@dispatch/a2a';
+import type { StandaloneOptions } from '@dispatch-foo/a2a';
+import { checkStandalone } from '@dispatch-foo/a2a';
 import { lstatSync, readFileSync } from 'node:fs';
 
 import { type CliContext, CliError } from '../context.js';

@@ -1,8 +1,8 @@
-import { ENVELOPE_URI, pinPublicUrl, WORK_URI } from '@dispatch/a2a';
-import type { LookupAll } from '@dispatch/a2a';
-import type { LinkPayload } from '@dispatch/a2a';
-import type { JsonValue } from '@dispatch/protocol';
-import { isStub } from '@dispatch/protocol/federation';
+import { ENVELOPE_URI, pinPublicUrl, WORK_URI } from '@dispatch-foo/a2a';
+import type { LookupAll } from '@dispatch-foo/a2a';
+import type { LinkPayload } from '@dispatch-foo/a2a';
+import type { JsonValue } from '@dispatch-foo/protocol';
+import { isStub } from '@dispatch-foo/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { lookup } from 'node:dns/promises';
 import { chmodSync, mkdirSync } from 'node:fs';
@@ -367,9 +367,16 @@ export class LinkHub {
   }
 
   /** One pass over every link, awaited (tests and the e2e use it). */
+  // Waits out the pass in flight, then for one full pass begun after the
+  // call: the timer's, if it started one meanwhile, else its own. Bounded,
+  // however often the timer kicks.
   async settle(): Promise<void> {
-    while (this.running !== null) await this.running;
+    if (this.running !== null) await this.running;
     if (this.stopped) return;
+    if (this.running !== null) {
+      await this.running;
+      return;
+    }
     this.running = this.passAll().finally(() => {
       this.running = null;
     });

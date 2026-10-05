@@ -1,4 +1,4 @@
-import { DOCS_LIMITS, parseDocFile, renderDocFile } from '@dispatch/core';
+import { DOCS_LIMITS, parseDocFile, renderDocFile } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {

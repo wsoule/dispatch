@@ -1,4 +1,4 @@
-import type { TaskStorePort } from '@dispatch/core';
+import type { TaskStorePort } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import { lineageStore } from '../../src/api/a2aRunScope.js';

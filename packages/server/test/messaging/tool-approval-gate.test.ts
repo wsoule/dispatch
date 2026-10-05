@@ -1,6 +1,10 @@
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
-import type { Message } from '@dispatch/protocol';
-import { gateOf, openMessagesDb, SqliteMessageStore } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
+import {
+  gateOf,
+  openMessagesDb,
+  SqliteMessageStore,
+} from '@dispatch-foo/protocol';
 import { describe, expect, it, spyOn } from 'bun:test';
 import { join } from 'node:path';
 

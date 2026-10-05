@@ -1,4 +1,4 @@
-import type { FloorCheck } from '@dispatch/core';
+import type { FloorCheck } from '@dispatch-foo/core';
 import { isAbsolute, normalize } from 'node:path/posix';
 
 import { matchesDeclaredWrites } from './orchestrator/review.js';

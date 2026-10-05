@@ -5,8 +5,8 @@ import {
   isCompletedStatus,
   isDoneStatus,
   isUnstartedStatus,
-} from '@dispatch/core';
-import type { StatusModel, TaskListItem } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core';
 
 import type { FixLoopState } from './fixLoop.js';
 import type { RunMeta } from './types.js';

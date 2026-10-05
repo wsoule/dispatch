@@ -1,5 +1,5 @@
-import { queryAll } from '@dispatch/core';
-import type { SqliteDatabase } from '@dispatch/core';
+import { queryAll } from '@dispatch-foo/core';
+import type { SqliteDatabase } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

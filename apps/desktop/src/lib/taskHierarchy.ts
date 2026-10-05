@@ -1,5 +1,5 @@
-import type { TaskListItem } from '@dispatch/core/browser';
-import { isContainerKind, isValidParentKind } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { isContainerKind, isValidParentKind } from '@dispatch-foo/core/browser';
 
 /**
  * The containers above a task, outermost first (`Initiative › Project › Milestone ›

@@ -1,4 +1,4 @@
-import type { SubagentEvent, SubagentStatus } from '@dispatch/core';
+import type { SubagentEvent, SubagentStatus } from '@dispatch-foo/core';
 
 import type { NormalizedEntry } from '../types.js';
 

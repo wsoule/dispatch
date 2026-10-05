@@ -15,6 +15,7 @@ export const WEBHOOK_RESOURCE_TYPES = [
   'IssueLabel',
   'Project',
   'Cycle',
+  'Document',
 ];
 
 const WEBHOOK_PATH = '/api/linear/webhook';

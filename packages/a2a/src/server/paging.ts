@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 
 // An opaque base64url of (status_at, id), the store's cursor.
 export function encodePageToken(cursor: {

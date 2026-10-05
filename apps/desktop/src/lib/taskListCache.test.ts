@@ -1,5 +1,5 @@
-import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
+import type { TaskListItem, TaskMeta } from '@dispatch-foo/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {

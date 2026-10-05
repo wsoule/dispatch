@@ -14,7 +14,7 @@ RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 COPY . .
 RUN pnpm install --frozen-lockfile
 # Only what this image serves, rather than every workspace package: the demo
-# server hands out apps/desktop's vite bundle, and reaches @dispatch/core,
+# server hands out apps/desktop's vite bundle, and reaches @dispatch-foo/core,
 # @dispatch/mcp and @dispatch/server through @dispatch/sandbox. The `...`
 # suffix means "and everything it depends on". Notably this skips apps/site,
 # whose astro build pulls sharp's native musl binaries for a marketing page no

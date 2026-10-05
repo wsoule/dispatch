@@ -1,13 +1,16 @@
-import type { A2ALinkKeys } from '@dispatch/core';
-import { CredentialsUnreadableError, ensureA2ALinkKeys } from '@dispatch/core';
-import type { JsonValue } from '@dispatch/protocol';
+import type { A2ALinkKeys } from '@dispatch-foo/core';
+import {
+  CredentialsUnreadableError,
+  ensureA2ALinkKeys,
+} from '@dispatch-foo/core';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import {
   canonicalize,
   canSealTo,
   generateReplicaKeys,
   signText,
   verifyText,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import { createPublicKey, sign, verify } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 

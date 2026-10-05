@@ -1,4 +1,4 @@
-import { createUlidFactory } from '@dispatch/protocol';
+import { createUlidFactory } from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import { memoryContentHash, normalizeTitle } from '../src/contentHash.js';

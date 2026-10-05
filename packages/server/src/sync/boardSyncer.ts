@@ -1,5 +1,5 @@
-import type { ActorContext } from '@dispatch/core';
-import { isOutstanding, parseTaskFile, TaskStore } from '@dispatch/core';
+import type { ActorContext } from '@dispatch-foo/core';
+import { isOutstanding, parseTaskFile, TaskStore } from '@dispatch-foo/core';
 import {
   copyFileSync,
   existsSync,

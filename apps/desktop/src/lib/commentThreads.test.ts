@@ -1,4 +1,4 @@
-import type { TaskComment } from '@dispatch/core/browser';
+import type { TaskComment } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {

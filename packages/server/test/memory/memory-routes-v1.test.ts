@@ -1,5 +1,5 @@
+import { gateOf } from '@dispatch-foo/protocol';
 import { createMemoryIds, insertFresh, newMemoryEntry } from '@dispatch/memory';
-import { gateOf } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

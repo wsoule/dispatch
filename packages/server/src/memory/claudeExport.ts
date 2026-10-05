@@ -1,5 +1,6 @@
-import { untrustedInline } from '@dispatch/core';
-import type { MemoryConfig } from '@dispatch/core';
+import { untrustedInline } from '@dispatch-foo/core';
+import type { MemoryConfig } from '@dispatch-foo/core';
+import { createUlidFactory } from '@dispatch-foo/protocol';
 import {
   createMemoryIds,
   cutUtf8,
@@ -25,7 +26,6 @@ import type {
   SaveResult,
   ScannedFile,
 } from '@dispatch/memory';
-import { createUlidFactory } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,

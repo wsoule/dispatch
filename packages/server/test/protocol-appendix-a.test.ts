@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterAll, beforeAll, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

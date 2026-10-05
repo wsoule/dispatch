@@ -1,18 +1,18 @@
-import { localOnlyReason } from '@dispatch/protocol';
-import type { Address, Message, MessageStore } from '@dispatch/protocol';
+import { localOnlyReason } from '@dispatch-foo/protocol';
+import type { Address, Message, MessageStore } from '@dispatch-foo/protocol';
 import {
   b64u,
   MAX_SEALED_RECIPIENTS,
   openWithKey,
   sealPayload,
   unwrapContentKey,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   FederatedOp,
   ForwardPayload,
   MailPayload,
   MailTarget,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 
 import type { Homes } from './homes.js';
 import type { RosterService } from './roster.js';

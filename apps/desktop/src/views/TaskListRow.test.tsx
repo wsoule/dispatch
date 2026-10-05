@@ -1,4 +1,4 @@
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type { TaskDoc, UpdatePatch } from '@dispatch-foo/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { useState } from 'react';

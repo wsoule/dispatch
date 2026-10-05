@@ -1,7 +1,7 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { computeStack } from '@dispatch-foo/core/graph';
+import type { TaskStack } from '@dispatch-foo/core/graph';
 import type { RunMeta } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
-import { computeStack } from '@dispatch/core/graph';
-import type { TaskStack } from '@dispatch/core/graph';
 import { GitPullRequest } from 'lucide-react';
 
 import { RunStatePill } from '../runs/RunStatePill';

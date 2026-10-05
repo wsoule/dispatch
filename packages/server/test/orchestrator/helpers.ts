@@ -1,11 +1,11 @@
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import type {
   Amendment,
   CreateInput,
   TaskDoc,
   UpdatePatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import {
   mkdtempSync,
   readFileSync,

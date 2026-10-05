@@ -1,4 +1,4 @@
-import type { EffortLevel } from '@dispatch/core';
+import type { EffortLevel } from '@dispatch-foo/core';
 import type { z } from 'zod';
 
 import type { OverseerAction } from './overseerTools.js';

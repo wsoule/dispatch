@@ -1,4 +1,4 @@
-import { untrustedInline } from '@dispatch/core';
+import { untrustedInline } from '@dispatch-foo/core';
 import { reaches, sharedScopesFor } from '@dispatch/memory';
 import type {
   MemoryEngine,

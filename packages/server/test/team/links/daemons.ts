@@ -1,5 +1,5 @@
-import { ecThumbprint, loadOrCreateLinkKeys } from '@dispatch/a2a';
-import { TaskStore } from '@dispatch/core';
+import { ecThumbprint, loadOrCreateLinkKeys } from '@dispatch-foo/a2a';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -91,7 +91,7 @@ export function useLinkDaemons() {
       if (link === null) throw new Error('no link keys');
       const peers = x.handle.a2a.peers;
       const store = x.handle.a2a.store;
-      const hub = x.handle.a2a.links;
+      const hub = await x.handle.a2a.ensureLinks();
       if (peers === null || store === null || hub === null)
         throw new Error('the bridge is down');
       writeLinkPairedRecords(

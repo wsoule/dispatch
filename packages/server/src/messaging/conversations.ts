@@ -5,8 +5,8 @@ import type {
   Message,
   Sender,
   SqliteMessageStore,
-} from '@dispatch/protocol';
-import { localOnlyReason, parseAddress } from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
+import { localOnlyReason, parseAddress } from '@dispatch-foo/protocol';
 
 import type { ApiContext } from '../api.js';
 import { errorResponse, jsonResponse, parseCountParam } from '../api/http.js';

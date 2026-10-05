@@ -2,8 +2,8 @@ import type {
   ConfigPatch,
   DispatchConfig,
   VerifyStep,
-} from '@dispatch/core/browser';
-import { statusLabel } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { statusLabel } from '@dispatch-foo/core/browser';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 

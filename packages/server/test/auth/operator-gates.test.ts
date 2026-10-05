@@ -1,5 +1,5 @@
-import type { Message } from '@dispatch/protocol';
-import { gateOf } from '@dispatch/protocol';
+import type { Message } from '@dispatch-foo/protocol';
+import { gateOf } from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 
 import type { World } from './world.js';

@@ -1,4 +1,4 @@
-import { generateReplicaKeys } from '@dispatch/protocol/federation';
+import { generateReplicaKeys } from '@dispatch-foo/protocol/federation';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';

@@ -1,9 +1,9 @@
-import type { StatusModel, TaskDoc } from '@dispatch/core/browser';
+import type { StatusModel, TaskDoc } from '@dispatch-foo/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
   defaultTaskFields,
   statusModelOf,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'bun:test';
 

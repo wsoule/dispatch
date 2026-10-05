@@ -253,7 +253,7 @@ export function serializeInbox(items: InboxItem[]): string {
   return lines.join('\n');
 }
 
-// Same shape as the roster handle regex (@dispatch/core's actor.ts), checked
+// Same shape as the roster handle regex (@dispatch-foo/core's actor.ts), checked
 // again here because a handle becomes a filename below and must not be able
 // to contain a path separator or a `..` segment.
 const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;

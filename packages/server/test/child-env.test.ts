@@ -1,4 +1,4 @@
-import { childEnv } from '@dispatch/core';
+import { childEnv } from '@dispatch-foo/core';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

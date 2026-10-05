@@ -1,15 +1,15 @@
 import type {
+  StatusModel,
+  TaskListItem,
+  UpdatePatch,
+} from '@dispatch-foo/core/browser';
+import type {
   EpicProgress,
   MergeQueueEntryState,
   ReadinessReading,
   RunMeta,
   RunState,
 } from '@dispatch/client';
-import type {
-  StatusModel,
-  TaskListItem,
-  UpdatePatch,
-} from '@dispatch/core/browser';
 import {
   DndContext,
   type DragEndEvent,

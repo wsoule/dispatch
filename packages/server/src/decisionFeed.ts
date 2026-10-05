@@ -1,7 +1,7 @@
-import type { FloorCheck, NotificationKind } from '@dispatch/core';
-import { notificationKindForMessage } from '@dispatch/core';
-import type { GateData, Message } from '@dispatch/protocol';
-import { gateOf } from '@dispatch/protocol';
+import type { FloorCheck, NotificationKind } from '@dispatch-foo/core';
+import { notificationKindForMessage } from '@dispatch-foo/core';
+import type { GateData, Message } from '@dispatch-foo/protocol';
+import { gateOf } from '@dispatch-foo/protocol';
 
 import type { EventBus, ServerEvent } from './events.js';
 import {

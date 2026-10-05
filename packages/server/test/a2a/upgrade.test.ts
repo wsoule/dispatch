@@ -6,8 +6,8 @@ import {
   SIG_EXTENSION_URI,
   signedFetch,
   upgradeClientBinding,
-} from '@dispatch/a2a';
-import { readPeerCredential } from '@dispatch/core';
+} from '@dispatch-foo/a2a';
+import { readPeerCredential } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 import {
   createPrivateKey,

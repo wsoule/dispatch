@@ -1,4 +1,4 @@
-import type { Finding } from '@dispatch/core/browser';
+import type { Finding } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {

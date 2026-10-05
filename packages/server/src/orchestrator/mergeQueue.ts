@@ -3,7 +3,7 @@ import {
   isDone,
   loadConfig,
   type TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
@@ -483,7 +483,7 @@ export class MergeQueue {
   // atomic, so a crash mid-write can leave truncated/garbage JSON on disk,
   // and dispatchd must still start cleanly in that case (mirrors
   // Orchestrator.diff()'s snapshot-read convention and readRegistry() in
-  // @dispatch/core).
+  // @dispatch-foo/core).
   private loadPersistedFile(): MergeQueueSnapshot {
     const path = mergeQueuePath(this.ctx.rootDir);
     if (!existsSync(path)) return { entries: [], history: [] };

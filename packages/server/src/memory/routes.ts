@@ -1,3 +1,4 @@
+import type { Ref } from '@dispatch-foo/protocol';
 import {
   kindFromClaudeType,
   MEMORY_KINDS,
@@ -24,7 +25,6 @@ import type {
   SaveResult,
   SqliteMemoryStore,
 } from '@dispatch/memory';
-import type { Ref } from '@dispatch/protocol';
 import { basename } from 'node:path';
 
 import type { ApiContext } from '../api.js';

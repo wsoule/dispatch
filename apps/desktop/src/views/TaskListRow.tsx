@@ -1,10 +1,10 @@
+import type { TaskListItem, UpdatePatch } from '@dispatch-foo/core/browser';
 import type {
   EpicProgressChild,
   FixLoopState,
   MergeQueueEntryState,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import { Milestone, Play } from 'lucide-react';
 import { type KeyboardEvent, memo } from 'react';
 

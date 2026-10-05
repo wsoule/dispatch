@@ -1,4 +1,4 @@
-import { taskIdFromFilename } from '@dispatch/core';
+import { taskIdFromFilename } from '@dispatch-foo/core';
 import type { FSWatcher, Stats } from 'node:fs';
 import { existsSync, mkdirSync, readdirSync, statSync, watch } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';

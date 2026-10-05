@@ -1,4 +1,4 @@
-import { TaskStore, updateConfig } from '@dispatch/core';
+import { TaskStore, updateConfig } from '@dispatch-foo/core';
 import {
   createMemoryIds,
   insertFresh,

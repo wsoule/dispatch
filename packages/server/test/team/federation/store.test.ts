@@ -6,7 +6,7 @@ import {
   parseOpHlc,
   sealPayload,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {

@@ -1,4 +1,4 @@
-import { childEnv } from '@dispatch/core';
+import { childEnv } from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import type { ChildProcess } from 'node:child_process';
 import { spawn, spawnSync } from 'node:child_process';

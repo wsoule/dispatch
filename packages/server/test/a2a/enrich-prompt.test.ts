@@ -1,5 +1,5 @@
-import { defaultTaskFields } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch-foo/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 import { expect, it } from 'bun:test';
 
 import { buildTaskEnrichPrompt } from '../../src/api.js';

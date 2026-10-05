@@ -1,3 +1,5 @@
+import { gateOf, isSystemMarker, SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
+import type { DeliveryEngine, Message, Ref } from '@dispatch-foo/protocol';
 import type {
   GateAnswer,
   MemoryEngine,
@@ -6,8 +8,6 @@ import type {
   MemoryStore,
 } from '@dispatch/memory';
 import { isRestoredOrigin } from '@dispatch/memory';
-import { gateOf, isSystemMarker, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import type { DeliveryEngine, Message, Ref } from '@dispatch/protocol';
 
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';

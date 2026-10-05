@@ -1,4 +1,4 @@
-import { childEnv } from '@dispatch/core';
+import { childEnv } from '@dispatch-foo/core';
 
 import type {
   ApprovalDecision,

@@ -4,14 +4,14 @@ import {
   CONTAINER_KINDS,
   readyTasks,
   taskIdFromFilename,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   ListSafeError,
   StatusModel,
   TaskDoc,
   TaskListItem,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { Database } from 'bun:sqlite';
 
 // Loose query shape (plain strings, not core's TaskKind/Priority unions) since

@@ -1,17 +1,17 @@
-import type { MessagingConfig, TaskStorePort } from '@dispatch/core';
-import { DEFAULT_MESSAGING, loadConfig } from '@dispatch/core';
+import type { MessagingConfig, TaskStorePort } from '@dispatch-foo/core';
+import { DEFAULT_MESSAGING, loadConfig } from '@dispatch-foo/core';
 import type {
   FederationHooks,
   Message,
   MessageStore,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import {
   DeliveryEngine,
   gateOf,
   openMessagesDb,
   SqliteMessageStore,
   SYSTEM_ADDRESS,
-} from '@dispatch/protocol';
+} from '@dispatch-foo/protocol';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 

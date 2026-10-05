@@ -1,4 +1,4 @@
-import type { JsonValue } from '@dispatch/protocol';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 

@@ -4,7 +4,7 @@ import {
   makeProof,
   signedFetch,
   startStandalone,
-} from '@dispatch/a2a';
+} from '@dispatch-foo/a2a';
 import { describe, expect, it } from 'bun:test';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 

@@ -1,6 +1,6 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { canonicalKind, isContainerKind } from '@dispatch-foo/core/browser';
 import type { EpicProgress } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
-import { canonicalKind, isContainerKind } from '@dispatch/core/browser';
 
 import { type FlightScope, flightScope } from '../flightplan/flightScope';
 

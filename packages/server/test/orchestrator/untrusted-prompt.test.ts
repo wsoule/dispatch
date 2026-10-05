@@ -1,10 +1,10 @@
-import { appendAmendment, defaultTaskFields } from '@dispatch/core';
+import { appendAmendment, defaultTaskFields } from '@dispatch-foo/core';
 import type {
   CommandEvidence,
   Finding,
   MutationEvidence,
   TaskDoc,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { createMemoryIds, newMemoryEntry, renderIndex } from '@dispatch/memory';
 import { describe, expect, it } from 'bun:test';
 

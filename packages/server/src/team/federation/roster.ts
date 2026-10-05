@@ -7,9 +7,9 @@ import {
   printable,
   readLicenseKey,
   speaksForHandle,
-} from '@dispatch/federation';
-import type { KeyInfo, PinnedKey, RosterView } from '@dispatch/federation';
-import type { JsonValue } from '@dispatch/protocol';
+} from '@dispatch-foo/federation';
+import type { KeyInfo, PinnedKey, RosterView } from '@dispatch-foo/federation';
+import type { JsonValue } from '@dispatch-foo/protocol';
 import {
   b64u,
   crockford32,
@@ -23,13 +23,13 @@ import {
   signText,
   TAG,
   ZERO_HASH,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import type {
   FederatedOp,
   KeyBody,
   LegacyAttestation,
   RosterBody,
-} from '@dispatch/protocol/federation';
+} from '@dispatch-foo/protocol/federation';
 import { randomBytes } from 'node:crypto';
 
 import { seatLimitMessage } from '../license.js';

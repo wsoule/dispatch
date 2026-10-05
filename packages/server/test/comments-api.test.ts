@@ -1,5 +1,5 @@
-import { TaskStore } from '@dispatch/core';
-import type { ActorContext, TaskComment, TaskDoc } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
+import type { ActorContext, TaskComment, TaskDoc } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

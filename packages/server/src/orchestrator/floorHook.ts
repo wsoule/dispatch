@@ -3,7 +3,7 @@ import type {
   HookJSONOutput,
   Options,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { FloorCheck } from '@dispatch/core';
+import type { FloorCheck } from '@dispatch-foo/core';
 
 import { floorCheckForToolInput } from '../floor.js';
 

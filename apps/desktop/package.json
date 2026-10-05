@@ -17,8 +17,8 @@
     "e2e:update": "playwright test --update-snapshots"
   },
   "dependencies": {
+    "@dispatch-foo/protocol": "workspace:*",
     "@dispatch/client": "workspace:*",
-    "@dispatch/protocol": "workspace:*",
     "@dispatch/tokens": "workspace:*",
     "@dnd-kit/core": "catalog:",
     "@dnd-kit/utilities": "catalog:",
@@ -42,7 +42,7 @@
     "sonner": "catalog:"
   },
   "devDependencies": {
-    "@dispatch/core": "workspace:*",
+    "@dispatch-foo/core": "workspace:*",
     "@happy-dom/global-registrator": "catalog:",
     "@playwright/test": "catalog:",
     "@tailwindcss/vite": "catalog:",

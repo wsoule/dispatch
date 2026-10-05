@@ -1,4 +1,4 @@
-import type { DocConflict } from '@dispatch/core';
+import type { DocConflict } from '@dispatch-foo/core';
 
 // The one error every docs layer throws; `code` maps to an HTTP status the way
 // MessagingError's does, and `field` names the input an agent should fix.

@@ -1,4 +1,4 @@
-import { MessagingError } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch-foo/protocol';
 import { describe, expect, it } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';

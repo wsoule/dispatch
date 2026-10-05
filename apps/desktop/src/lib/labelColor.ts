@@ -1,5 +1,5 @@
-import { labelColorIndex } from '@dispatch/core/browser';
-import type { LabelDefinition } from '@dispatch/core/browser';
+import { labelColorIndex } from '@dispatch-foo/core/browser';
+import type { LabelDefinition } from '@dispatch-foo/core/browser';
 
 import { colorForLabel as hashedColorForLabel } from '@/ui/ai/list-format';
 

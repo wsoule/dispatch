@@ -1,4 +1,4 @@
-import type { RemoteConfig } from '@dispatch/core';
+import type { RemoteConfig } from '@dispatch-foo/core';
 import { describe, expect, it } from 'bun:test';
 
 import {
