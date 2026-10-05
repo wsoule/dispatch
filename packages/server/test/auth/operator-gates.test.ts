@@ -192,6 +192,26 @@ describe('a scope gate addressed to someone who cannot decide (XH-R9)', () => {
     await waitFor(() => noticesTo(w, `human:${bo.handle}`).length > 0);
   });
 
+  it('goes only to a deciding operator, whichever decider the run named, and tells the others', async () => {
+    const w = world();
+    const ana = await invite(w, 'ana@example.com', 'decide');
+    const dee = await invite(w, 'dee@example.com', 'decide');
+    const run = await liveRun(w, ana.token);
+    const gate = await askScopeOf(w, run.runToken, [
+      `human:${dee.handle}`,
+      OWNER,
+    ]);
+    expect(gate.to).toEqual([`human:${ana.handle}`]);
+    await waitFor(
+      () =>
+        noticesTo(w, `human:${dee.handle}`).length > 0 &&
+        noticesTo(w, OWNER).length > 0
+    );
+    expect(noticesTo(w, `human:${dee.handle}`)[0]?.body).toContain(
+      `human:${ana.handle}`
+    );
+  });
+
   it('goes to an operator who can decide when the run asked a request-tier teammate', async () => {
     const w = world();
     const ana = await invite(w, 'ana@example.com', 'decide');
@@ -201,15 +221,11 @@ describe('a scope gate addressed to someone who cannot decide (XH-R9)', () => {
     expect(gate.to).toEqual([`human:${ana.handle}`]);
   });
 
-  it('keeps a decider it was addressed to, and other recipients', async () => {
+  it("goes to the owner for the owner's run, whoever the run named", async () => {
     const w = world();
     const ana = await invite(w, 'ana@example.com', 'decide');
-    const bo = await invite(w, 'bo@example.com', 'request');
     const run = await liveRun(w, w.app);
-    const gate = await askScopeOf(w, run.runToken, [
-      `human:${ana.handle}`,
-      `human:${bo.handle}`,
-    ]);
-    expect(gate.to).toEqual([`human:${ana.handle}`, OWNER]);
+    const gate = await askScopeOf(w, run.runToken, [`human:${ana.handle}`]);
+    expect(gate.to).toEqual([OWNER]);
   });
 });

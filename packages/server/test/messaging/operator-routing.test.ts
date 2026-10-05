@@ -57,19 +57,23 @@ describe('operatorRouting (XH-R9)', () => {
     expect(routing.gateFor(null)).toEqual({ to: OWNER, tell: null });
   });
 
-  it('re-addresses a scope gate from humans who cannot decide to the gate route', () => {
+  it('sends a scope gate only along the gate route, telling the other humans it named', () => {
     const routing = routingFor({ r1: 'human:ana', r2: 'human:bo' }, [
       'human:ana',
+      'human:dee',
     ]);
-    expect(routing.scopeTo('r1', ['human:bo'])).toEqual(['human:ana']);
-    expect(routing.scopeTo('r2', ['human:bo'])).toEqual([OWNER]);
-    expect(
-      routing.scopeTo('r2', ['human:ana', 'human:bo', 'human:cy', OWNER])
-    ).toEqual(['human:ana', OWNER]);
-    expect(routing.scopeTo('r1', ['task:t-1', 'human:ana'])).toEqual([
-      'task:t-1',
-      'human:ana',
-    ]);
+    expect(routing.scopeTo('r1', ['human:dee', OWNER])).toEqual({
+      to: ['human:ana'],
+      told: ['human:dee', OWNER],
+    });
+    expect(routing.scopeTo('r2', ['human:bo'])).toEqual({
+      to: [OWNER],
+      told: [],
+    });
+    expect(routing.scopeTo('r1', ['task:t-1', 'human:ana'])).toEqual({
+      to: ['human:ana'],
+      told: [],
+    });
   });
 
   it('tells no one about a revoked operator', () => {

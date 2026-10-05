@@ -105,8 +105,10 @@ call the floor holds. Vectors:
 
 **`scope`.** A session asks its human, or the owner when its human may not
 decide ([§C.2](appendix-c-dispatch-profile.md#sC.2)), to let it write outside
-its declared paths. Dispatch sends a scope gate addressed to a human who may not
-decide to that session's human or the owner, as C.2 routes its gates, instead.
+its declared paths. Whatever recipients the session names, Dispatch sends its
+scope gate only where C.2 routes its gates (its human when they may decide, else
+the owner), so a session never picks who decides; any other human it named gets
+a notice saying where the request went.
 Only a session raises it, and its shape is fixed ([§5.3](05-gates.md#s5.3)):
 kind `question`, `blocking` true, `choices` exactly `grant` then `deny`, and
 data `{ "type": "scope", "paths", "reason" }`, with a non-empty list of

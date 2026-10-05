@@ -17,9 +17,13 @@ interface GateRoute {
 export interface OperatorRouting {
   humanFor(runId: string | null): Address;
   gateFor(runId: string | null): GateRoute;
-  // A run's scope gate recipients with every human who cannot decide replaced
-  // by the gate's route, so the gate never waits on someone who cannot answer.
-  scopeTo(runId: string, to: readonly Address[]): Address[];
+  // Where a run's scope gate goes: only its gate route, whoever the run named,
+  // so a run cannot pick its decider. `told` are the other humans it named,
+  // who get a notice instead (the operator's own notice comes separately).
+  scopeTo(
+    runId: string,
+    to: readonly Address[]
+  ): { to: Address[]; told: Address[] };
 }
 
 export interface OperatorRoutingDeps {
@@ -47,16 +51,15 @@ export function operatorRouting(deps: OperatorRoutingDeps): OperatorRouting {
       ? { to: operator, tell: null }
       : { to: deps.owner, tell: operator };
   };
-  const decides = (ref: Address) => ref === deps.owner || deps.canDecide(ref);
   return {
     humanFor: (runId) => operatorFor(runId) ?? deps.owner,
     gateFor,
     scopeTo: (runId, to) => {
-      const route = gateFor(runId).to;
-      const out = to.map((ref) =>
-        ref.startsWith('human:') && !decides(ref) ? route : ref
+      const { to: route, tell } = gateFor(runId);
+      const told = to.filter(
+        (ref) => ref.startsWith('human:') && ref !== route && ref !== tell
       );
-      return [...new Set(out)];
+      return { to: [route], told: [...new Set(told)] };
     },
   };
 }

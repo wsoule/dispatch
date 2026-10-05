@@ -11,8 +11,8 @@ vector ids (see §14.2).
   session acts for: that human is asked and told about the session, and gets its
   `tool-approval`, `scope`, `memory`, `doc` and `wake` gates when they may
   decide, else the project's owner does and that human gets a notice (App. C.2,
-  C.3, C.7, C.8). A `scope` gate a session addresses to a human who may not
-  decide is re-addressed the same way. The scripted host still names one owner
+  C.3, C.7, C.8). A session's `scope` gate goes only where C.2 routes it,
+  whoever the session names; other named humans get a notice. The scripted host still names one owner
   for every target, so these vectors are unchanged. Vectors:
   `core.wake.ask-raises-a-wake-gate-to-the-owner`,
   `core.guardrails.breaker-tells-the-owner-once-per-window`.
