@@ -2,6 +2,7 @@ import { cardJson, verifyCardSignature } from '@dispatch/a2a';
 import {
   credentialsPath,
   normalizeProjectPath,
+  writeA2ANextSigningKey,
   writeA2ASigningKey,
 } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -9,7 +10,12 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import { CardSigner, loadOrCreateSigningKey } from '../../src/a2a/signing.js';
+import {
+  CardSigner,
+  KEY_OVERLAP_MS,
+  loadOrCreateSigningKey,
+  loadSigningKeys,
+} from '../../src/a2a/signing.js';
 import { useTempProject } from '../messaging/harness.js';
 import { bridgeFixture } from './fixture.js';
 
@@ -142,5 +148,77 @@ describe('the daemon card', () => {
     const inputs = await f.port.card();
     expect(inputs.signatures).toBeUndefined();
     expect(inputs.jwks).toBeUndefined();
+  });
+});
+
+describe('a rotation’s overlap', () => {
+  const p256 = () =>
+    generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({
+      format: 'jwk',
+    }) as Record<string, string>;
+  const AT = new Date('2026-10-01T00:00:00Z');
+
+  it('signs the card with both keys, serves both, and signs requests with the new key', async () => {
+    const k1 = loadOrCreateSigningKey(project.root());
+    writeA2ANextSigningKey(
+      project.root(),
+      { jwk: p256(), at: AT.toISOString() },
+      '{}'
+    );
+    const keys = loadSigningKeys(project.root(), new Date(AT.getTime() + 1000));
+    expect(keys.current.kid).toBe(k1.kid);
+    const k2 = keys.next!.key;
+    const signer = new CardSigner(keys);
+    expect(signer.requestKey().keyid).toBe(k2.kid);
+    expect(signer.oldKey()?.keyid).toBe(k1.kid);
+    expect(
+      signer
+        .jwks()
+        .keys.map((k) => k.kid)
+        .sort()
+    ).toEqual([k1.kid, k2.kid].sort());
+    const f = await bridgeFixture(project.root());
+    try {
+      f.deps.signer = () => signer;
+      const inputs = await f.port.card();
+      const served = JSON.parse(JSON.stringify(cardJson(inputs))) as Record<
+        string,
+        unknown
+      >;
+      for (const only of [k1, k2])
+        await expect(
+          verifyCardSignature(served, (kid) =>
+            kid === only.kid
+              ? Promise.resolve(only.publicJwk as never)
+              : Promise.reject(new Error('no'))
+          )
+        ).resolves.toBe(true);
+    } finally {
+      f.close();
+    }
+  });
+
+  it('promotes the new key once the overlap is over, and the old key is gone', () => {
+    const k1 = loadOrCreateSigningKey(project.root());
+    writeA2ANextSigningKey(
+      project.root(),
+      { jwk: p256(), at: AT.toISOString() },
+      '{}'
+    );
+    const during = loadSigningKeys(
+      project.root(),
+      new Date(AT.getTime() + KEY_OVERLAP_MS - 1)
+    );
+    expect(during.next).not.toBeNull();
+    const after = loadSigningKeys(
+      project.root(),
+      new Date(AT.getTime() + KEY_OVERLAP_MS)
+    );
+    expect(after.next).toBeNull();
+    expect(after.current.kid).toBe(during.next!.key.kid);
+    expect(readFileSync(credentialsPath(), 'utf8')).not.toContain(
+      k1.privateJwk.d
+    );
+    expect(KEY_OVERLAP_MS).toBe(7 * 24 * 3600 * 1000);
   });
 });

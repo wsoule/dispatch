@@ -61,6 +61,7 @@ import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
+import type { KeyService } from './keys.js';
 import { completePairing } from './pairing.js';
 import type { Unpairer } from './pairing.js';
 import type { PeerService } from './peers.js';
@@ -119,6 +120,8 @@ export interface BridgeDeps {
   peers?: () => PeerService | null;
   // Unpairing's notices and their retries, once a2a.db is open.
   unpairer?: () => Unpairer | null;
+  // Rotations and peers' key statements, once a2a.db is open.
+  keys?: () => KeyService | null;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
@@ -389,6 +392,11 @@ export class DaemonBridgePort implements BridgePort {
     });
   }
 
+  // This project's last key-change or revocation statement, public.
+  keyStatement(): Promise<string | null> {
+    return Promise.resolve(this.deps.keys?.()?.statement() ?? null);
+  }
+
   // The listener's extension routes: a pairing proof or an unpair notice.
   async extension(route: ExtensionRoute, req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -423,6 +431,15 @@ export class DaemonBridgePort implements BridgePort {
     const d = { ...peers.deps, notices: peers.notices, emit: peers.emit };
     if (route === 'pair')
       return completePairing(d, r.body ?? new Uint8Array(), parts);
+    if (route === 'key-change') {
+      const keys = this.deps.keys?.() ?? null;
+      if (keys === null) return new Response('not found', { status: 404 });
+      return keys.receive(
+        await this.authenticateSignedAt(r, publicUrl),
+        r.body,
+        parts
+      );
+    }
     if (unpairer === null) return new Response('not found', { status: 404 });
     return unpairer.receive(
       await this.authenticateSignedAt(r, publicUrl),

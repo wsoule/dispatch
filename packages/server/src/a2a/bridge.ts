@@ -41,6 +41,7 @@ import {
   ProposalGuard,
 } from './guards.js';
 import { handleProposal } from './handoff.js';
+import { KeyService } from './keys.js';
 import { A2ALineage } from './lineage.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
 import type { OutboundWorker } from './outbound.js';
@@ -61,7 +62,7 @@ import {
   resolveListener,
   writeListenerSettings,
 } from './settings.js';
-import { CardSigner, loadOrCreateSigningKey } from './signing.js';
+import { CardSigner, KEY_OVERLAP_MS, loadSigningKeys } from './signing.js';
 import { BridgeWatch } from './watch.js';
 
 interface ListenerStatus {
@@ -89,6 +90,7 @@ export interface A2ABridge {
   // Outbound peers; null when a2a.db is down.
   readonly peers: PeerService | null;
   readonly unpairer: Unpairer | null;
+  readonly keys: KeyService | null;
   // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
   readonly outbound: OutboundWorker | null;
   // Whether standalone hosts may use /api/a2a/port/* (the settings file).
@@ -230,6 +232,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let listener: A2AListener | null = null;
   let peers: PeerService | null = null;
   let unpairer: Unpairer | null = null;
+  let keys: KeyService | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
   const leases = new PortLeases();
@@ -275,7 +278,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       signer: () => {
         if (signer !== undefined) return signer;
         try {
-          signer = new CardSigner(loadOrCreateSigningKey(rootDir));
+          signer = new CardSigner(loadSigningKeys(rootDir));
         } catch (err) {
           // The message names the problem, never the key.
           signerError = err instanceof Error ? err.message : 'unknown error';
@@ -323,11 +326,28 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         : { backoffMs: deps.unpairBackoffMs }),
     });
     bridgeDeps.unpairer = () => unpairer;
+    const keyService = new KeyService({
+      ...peerService.deps,
+      notices: peerService.notices,
+      emit: peerService.emit,
+      revokeClient: (address) => bridge.clientRevoked(address),
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      unpairer,
+      resetSigner: () => {
+        signer = undefined;
+      },
+    });
+    bridgeDeps.keys = () => keyService;
+    keys = keyService;
     messaging.setExternalPolicy(
       bridgeExternalPolicy(bridgeDeps, peerService.notices)
     );
-    // The 24 h card refresh, checked hourly.
+    // The 24 h card refresh, checked hourly; a rotation whose overlap is
+    // over is finished by reloading the keys.
     refreshTimer = setInterval(() => {
+      const began = signer?.rotationAt() ?? null;
+      if (began !== null && Date.now() - Date.parse(began) >= KEY_OVERLAP_MS)
+        signer = undefined;
       void refreshDuePeers(peerService.deps, peerService.notices).then(
         (n) => {
           if (n > 0) deps.events.broadcast({ type: 'a2a.changed' });
@@ -365,6 +385,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         ...(deps.unverifiedLimit === undefined
           ? {}
           : { unverifiedLimit: deps.unverifiedLimit }),
+        keyUnknown: (alias) => keyService.keyUnknown(alias),
       });
     } catch (err) {
       console.error('dispatchd: the A2A outbound worker did not start', err);
@@ -454,6 +475,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   const bridge: A2ABridge = {
     get unpairer() {
       return unpairer;
+    },
+    get keys() {
+      return keys;
     },
     get port() {
       return port;

@@ -204,7 +204,7 @@ export interface PushConfigPort {
   delete(caller: Caller, taskId: string, id: string): Promise<void>;
 }
 
-export type ExtensionRoute = 'pair' | 'unpair';
+export type ExtensionRoute = 'pair' | 'unpair' | 'key-change';
 
 export interface BridgePort {
   authenticate(bearer: string): Promise<AuthResult>;
@@ -219,6 +219,9 @@ export interface BridgePort {
   // POST <base>/dispatch/<route>: a pairing proof or a signed unpair notice
   // (P5); absent, 404.
   extension?(route: ExtensionRoute, req: Request): Promise<Response>;
+  // The last key-change or revocation statement, served at
+  // KEY_STATEMENT_PATH; null (404) when there is none.
+  keyStatement?(): Promise<string | null>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
   card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;

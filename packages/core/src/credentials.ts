@@ -25,6 +25,12 @@ export interface PeerCredential {
   header?: string;
 }
 
+/** A rotation's new card-signing key, and when the rotation began. */
+export interface NextSigningKey {
+  jwk: Record<string, string>;
+  at: string;
+}
+
 /** One project's secrets, one key per integration. */
 export interface ProjectCredentials {
   linear?: { apiKey: string };
@@ -34,6 +40,10 @@ export interface ProjectCredentials {
   a2a?: {
     peers?: Record<string, PeerCredential>;
     signingKey?: Record<string, string>;
+    /** A rotation's new key, signing beside the old one through the overlap. */
+    nextSigningKey?: NextSigningKey;
+    /** The last key-change or revocation statement, public, served to peers. */
+    keyStatement?: string;
   };
 }
 
@@ -430,6 +440,90 @@ export function writeA2ASigningKey(
       a2a: { ...entry.a2a, signingKey: { ...jwk } },
     });
   });
+}
+
+export type NextSigningKeyRead =
+  | { status: 'absent' }
+  | { status: 'ok'; next: NextSigningKey }
+  | { status: 'malformed' }
+  | { status: 'unreadable' };
+
+function stringRecord(raw: unknown): Record<string, string> | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
+    return null;
+  const entries = Object.entries(raw as Record<string, unknown>);
+  if (entries.length === 0 || entries.some(([, v]) => typeof v !== 'string'))
+    return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+/** The rotation's next key, when one is in its overlap. */
+export function readA2ANextSigningKey(rootDir: string): NextSigningKeyRead {
+  const loaded = loadCredentials();
+  if (loaded.kind === 'unreadable') return { status: 'unreadable' };
+  if (loaded.kind === 'absent') return { status: 'absent' };
+  const raw: unknown =
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.nextSigningKey;
+  if (raw === undefined) return { status: 'absent' };
+  const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const jwk = stringRecord(r.jwk);
+  if (jwk === null || typeof r.at !== 'string') return { status: 'malformed' };
+  return { status: 'ok', next: { jwk, at: r.at } };
+}
+
+/**
+ * Starts a rotation: the next key and the statement announcing it, written
+ * together under the lock. False, writing nothing, when a next key is there.
+ */
+export function writeA2ANextSigningKey(
+  rootDir: string,
+  next: NextSigningKey,
+  statement: string
+): boolean {
+  const key = normalizeProjectPath(rootDir);
+  let wrote = false;
+  updateCredentials((file) => {
+    const entry = file.projects?.[key] ?? {};
+    if (entry.a2a?.nextSigningKey !== undefined) return null;
+    wrote = true;
+    return withProjectEntry(file, key, {
+      ...entry,
+      a2a: {
+        ...entry.a2a,
+        nextSigningKey: { jwk: { ...next.jwk }, at: next.at },
+        keyStatement: statement,
+      },
+    });
+  });
+  return wrote;
+}
+
+/** Ends a rotation: next becomes the signing key and the old key is gone. */
+export function promoteA2ASigningKey(rootDir: string): boolean {
+  const key = normalizeProjectPath(rootDir);
+  let promoted = false;
+  updateCredentials((file) => {
+    const entry = file.projects?.[key] ?? {};
+    const next = entry.a2a?.nextSigningKey;
+    if (next === undefined) return null;
+    promoted = true;
+    const a2a = { ...entry.a2a, signingKey: { ...next.jwk } };
+    delete a2a.nextSigningKey;
+    return withProjectEntry(file, key, { ...entry, a2a });
+  });
+  return promoted;
+}
+
+/** The last key-change or revocation statement this project published. */
+export function readA2AKeyStatement(rootDir: string): string | null {
+  const loaded = loadCredentials();
+  if (loaded.kind !== 'ok') return null;
+  const raw: unknown =
+    loaded.file.projects?.[normalizeProjectPath(rootDir)]?.a2a?.keyStatement;
+  return typeof raw === 'string' ? raw : null;
 }
 
 /** Where a resolved key came from — in precedence order — or `null` when there is none. */

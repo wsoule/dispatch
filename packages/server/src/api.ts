@@ -4693,6 +4693,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     tier: 'operator',
   },
   { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Rotating the card key changes what every paired peer trusts.
+  { method: 'POST', segments: ['a2a', 'keys', 'rotate'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
   // whose account, and which workspace, the board is sent to — the same call

@@ -211,6 +211,15 @@ export class HttpBridgePort implements BridgePort {
     };
   }
 
+  async keyStatement(): Promise<string | null> {
+    const out = await this.call<{ statement: string | null }>(
+      'GET',
+      '/key-statement',
+      null
+    );
+    return out.statement;
+  }
+
   async card(): Promise<CardInputs> {
     const query = new URLSearchParams({ publicUrl: this.o.publicUrl });
     const inputs = await this.call<CardInputs>(

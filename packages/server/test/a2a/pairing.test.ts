@@ -4,106 +4,23 @@ import {
   signedFetch,
   startStandalone,
 } from '@dispatch/a2a';
-import { TaskStore } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 import { CardSigner, loadOrCreateSigningKey } from '../../src/a2a/signing.js';
-import type { ServerHandle } from '../../src/index.js';
-import { startServer } from '../../src/index.js';
 import { waitFor } from '../messaging/harness.js';
-import { initGitRepo } from '../orchestrator/helpers.js';
 import { rawFetch } from '../testAuth.js';
+import {
+  agentStatus,
+  clientOf,
+  noticesOf,
+  ownerOf,
+  pairingState,
+  useDaemons,
+} from './pairHarness.js';
 import { freePort } from './seed.js';
 
-interface Daemon {
-  handle: ServerHandle;
-  root: string;
-  api: string;
-  listener: string;
-  // An /api call as the owner (the operator tier).
-  call(
-    path: string,
-    init?: { method?: string; body?: unknown; token?: string }
-  ): Promise<Response>;
-}
-
-let home: string;
-let daemons: Daemon[] = [];
-const stopped = new Set<Daemon>();
-const originalHome = process.env.DISPATCH_HOME;
-
-// A daemon on its own scratch root with its A2A listener open on loopback.
-async function daemon(
-  prefix: string,
-  options: { unpairBackoffMs?: number[] } = {}
-): Promise<Daemon> {
-  const root = initGitRepo(prefix);
-  TaskStore.init(root);
-  const handle = await startServer({
-    rootDir: root,
-    port: 0,
-    writeDaemonFile: false,
-    webDistDir: null,
-    ...(options.unpairBackoffMs === undefined
-      ? {}
-      : { a2aUnpairBackoffMs: options.unpairBackoffMs }),
-  });
-  const api = `http://127.0.0.1:${handle.port}`;
-  const call: Daemon['call'] = (path, init = {}) =>
-    rawFetch(`${api}${path}`, {
-      method: init.method ?? (init.body === undefined ? 'GET' : 'POST'),
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${init.token ?? handle.tokens.appToken}`,
-      },
-      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-    });
-  const port = await freePort();
-  const put = await call('/api/a2a/listener', {
-    method: 'PUT',
-    body: { enabled: true, host: '127.0.0.1', port },
-  });
-  expect(put.status).toBe(200);
-  const d = { handle, root, api, listener: `http://127.0.0.1:${port}`, call };
-  daemons.push(d);
-  return d;
-}
-
-beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'a2a-pairing-home-')));
-  process.env.DISPATCH_HOME = home;
-  daemons = [];
-});
-afterEach(async () => {
-  for (const d of daemons) {
-    if (!stopped.has(d)) await d.handle.stop();
-    rmSync(d.root, { recursive: true, force: true });
-  }
-  if (originalHome === undefined) delete process.env.DISPATCH_HOME;
-  else process.env.DISPATCH_HOME = originalHome;
-  rmSync(home, { recursive: true, force: true });
-});
-
-async function offer(a: Daemon, alias = 'bob') {
-  const res = await a.call('/api/a2a/pairings', { body: { alias } });
-  expect(res.status).toBe(201);
-  return (await res.json()) as {
-    id: string;
-    code: string;
-    fingerprint: string;
-    expiresAt: string;
-  };
-}
-
-const accept = (b: Daemon, code: string, alias = 'alice', token?: string) =>
-  b.call('/api/a2a/pairings/accept', {
-    body: { code, alias },
-    ...(token === undefined ? {} : { token }),
-  });
+const { daemon, offer, accept, stop, paired } = useDaemons();
 
 describe('pairing two daemons with one code', () => {
   it('pins both sides’ keys on signature peers and clients, and an ask round-trips signed', async () => {
@@ -370,34 +287,6 @@ describe('pairing two daemons with one code', () => {
   });
 });
 
-const ownerOf = async (d: Daemon) =>
-  ((await (await d.call('/api/whoami')).json()) as { ref: string }).ref;
-const noticesOf = async (d: Daemon) => {
-  const owner = await ownerOf(d);
-  return () =>
-    d.handle.messaging.engine
-      .inbox(owner)
-      .filter(({ message }) => message.kind === 'notice')
-      .map(({ message }) => message.body);
-};
-
-// Pairs A (offering, alias bob) with B (accepting, alias alice).
-async function paired(a: Daemon, b: Daemon, token?: string): Promise<void> {
-  const res = await a.call('/api/a2a/pairings', {
-    body: { alias: 'bob' },
-    ...(token === undefined ? {} : { token }),
-  });
-  expect(res.status).toBe(201);
-  const { code } = (await res.json()) as { code: string };
-  expect((await accept(b, code)).status).toBe(200);
-}
-
-const clientOf = (d: Daemon, name: string) =>
-  d.handle.a2a.store!.clients().find((c) => c.name === name)!;
-const agentStatus = (d: Daemon, name: string) =>
-  d.handle.messaging.store.getAgent(clientOf(d, name).address)?.status;
-const pairingState = (d: Daemon) => d.handle.a2a.store!.pairings()[0]?.state;
-
 describe('unpairing', () => {
   it('removing the peer on one side disables the other side’s records and tells its owner', async () => {
     const a = await daemon('a2a-pair-a-');
@@ -537,8 +426,7 @@ describe('unpairing', () => {
     const a = await daemon('a2a-pair-a-', { unpairBackoffMs: [300, 300] });
     const b = await daemon('a2a-pair-b-');
     await paired(a, b);
-    await b.handle.stop();
-    stopped.add(b);
+    await stop(b);
     const owner = await ownerOf(a);
     const { message } = await a.handle.messaging.engine.send(
       { to: ['a2a:bob'], kind: 'message', body: 'Are you there?' },

@@ -493,6 +493,31 @@ async function hostRoute(
   return null;
 }
 
+// POST /api/a2a/keys/rotate { compromised? }: operator tier (ELEVATED_ROUTES).
+async function rotateKeys(req: Request, ctx: ApiContext): Promise<Response> {
+  if (ctx.viaAgentToken === true)
+    return jsonResponse(
+      {
+        error: 'an agent cannot rotate keys; a human does',
+        code: 'auth_agent_token',
+      },
+      403
+    );
+  const b = bridge(ctx);
+  if (!b.ok) return b.response;
+  const keys = b.a2a.keys;
+  if (keys === null) return errorResponse(503, 'the A2A bridge is unavailable');
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const compromised = (parsed.value as { compromised?: unknown } | null)
+    ?.compromised;
+  if (compromised !== undefined && typeof compromised !== 'boolean')
+    return invalid('compromised', 'compromised must be true or false');
+  const rotation = await keys.rotate(compromised === true);
+  changed(ctx);
+  return jsonResponse(rotation);
+}
+
 // `/api/a2a/pairings[/accept | /:id]` (P5): offer a code, accept one, list
 // or cancel; tiers are in ELEVATED_ROUTES, private card URLs need the operator.
 async function pairingRoute(
@@ -597,6 +622,8 @@ export async function handleA2ARoute(
     return handlePortRoute(req, ctx, segments.slice(1), method);
   if (segments[0] === 'pairings')
     return pairingRoute(req, ctx, segments.slice(1), method);
+  if (segments[0] === 'keys' && segments[1] === 'rotate' && method === 'POST')
+    return rotateKeys(req, ctx);
   if (
     segments[0] === 'hosts' ||
     (segments[0] === 'listener' && segments[1] === 'standalone')

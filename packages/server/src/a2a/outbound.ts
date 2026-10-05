@@ -76,6 +76,9 @@ export interface OutboundDeps {
   concurrency?: number;
   // Consecutive unverifiable replies before auth-failed (UNVERIFIED_LIMIT).
   unverifiedLimit?: number;
+  // A reply signed by a key the peer's pin does not know: a rotation the
+  // push missed, looked up at the peer's well-known statement.
+  keyUnknown?: (alias: string) => void;
 }
 
 // The next stream event as 'tick', or 'done' when the stream ends or fails.
@@ -156,6 +159,8 @@ export class OutboundWorker {
   // which the peer is auth-failed and the count starts over.
   private unverifiedRunEnds(alias: string, err: unknown): boolean {
     if (!unverifiable(err)) return false;
+    if ((err as PeerHttpError).reason === 'sig_key_unknown')
+      this.deps.keyUnknown?.(alias);
     const n = (this.unverified.get(alias) ?? 0) + 1;
     if (n < (this.deps.unverifiedLimit ?? UNVERIFIED_LIMIT)) {
       this.unverified.set(alias, n);
@@ -257,6 +262,16 @@ export class OutboundWorker {
         ? this.deps.store.outboundIn(['open'])
         : this.deps.store.outboundOf(alias, ['open']);
     for (const row of open) this.track(row);
+  }
+
+  // The peer's pinned key moved: its queued rows retry at once rather than
+  // wait out the backoff an unverifiable reply set.
+  retryNow(alias: string): void {
+    if (this.stopped) return;
+    for (const row of this.deps.store.outboundOf(alias, ['queued']))
+      if (row.nextAttemptAt !== null)
+        this.deps.store.putOutbound({ ...row, nextAttemptAt: null });
+    this.kick(alias);
   }
 
   trackerCount(alias?: string): number {
@@ -1010,6 +1025,7 @@ export function startOutbound(
     concurrency?: number;
     changed?: () => void;
     unverifiedLimit?: number;
+    keyUnknown?: (alias: string) => void;
   } = {}
 ): { worker: OutboundWorker; stop: () => void } {
   const d = peers.deps;
@@ -1057,6 +1073,7 @@ export function startOutbound(
   const offPeers = peers.onChange((alias, what) => {
     if (what === 'removed' || what === 'disabled' || what === 'unpaired')
       worker.peerGone(alias, what);
+    else if (what === 'rekeyed') worker.retryNow(alias);
     else worker.kick(alias);
   });
   return {

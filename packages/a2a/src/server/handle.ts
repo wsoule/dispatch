@@ -72,7 +72,9 @@ interface Op {
 
 const MAX_BODY_BYTES = 256 * 1024;
 // <base>/dispatch/<route>, the Dispatch extension routes.
-const EXTENSION = /^\/dispatch\/(pair|unpair)$/;
+const EXTENSION = /^\/dispatch\/(pair|unpair|key-change)$/;
+/** Where a peer that missed a rotation's push finds the statement. */
+export const KEY_STATEMENT_PATH = '/.well-known/dispatch-a2a-key-change.json';
 const CARD_PATH = '/.well-known/agent-card.json';
 const QUERY_CREDENTIALS = [
   'token',
@@ -807,6 +809,27 @@ async function serveAuthenticated(
   }
 }
 
+// The public statement of this agent's last key change or revocation.
+async function serveKeyStatement(
+  req: Request,
+  port: BridgePort,
+  options: HandleOptions
+): Promise<Response> {
+  if (req.method !== 'GET' && req.method !== 'HEAD')
+    return new Response(null, { status: 405 });
+  const wait = options.limiter.allowCard(options.clientIp);
+  if (wait !== null) return rateLimited(wait);
+  const statement = (await port.keyStatement?.()) ?? null;
+  if (statement === null) return new Response('not found', { status: 404 });
+  return new Response(req.method === 'HEAD' ? null : statement, {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=300',
+    },
+  });
+}
+
 // The HTTP+JSON binding of A2A 1.0 over a BridgePort: version, then auth,
 // then the port's per-client admission, then the operation.
 export async function handleA2A(
@@ -818,6 +841,8 @@ export async function handleA2A(
   try {
     if (url.pathname === CARD_PATH) return await serveCard(req, port, options);
     if (url.pathname === JWKS_PATH) return await serveJwks(req, port, options);
+    if (url.pathname === KEY_STATEMENT_PATH)
+      return await serveKeyStatement(req, port, options);
     if (!url.pathname.startsWith(`${options.basePath}/`))
       return new Response('not found', { status: 404 });
     if (req.method === 'OPTIONS') return new Response(null, { status: 405 });

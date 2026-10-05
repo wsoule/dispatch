@@ -89,6 +89,8 @@ export type PeerChange =
   | 'removed'
   // Disabled because the other side unpaired: closes as a removal does.
   | 'unpaired'
+  // The pinned key moved: mail waiting out an unverifiable reply goes now.
+  | 'rekeyed'
   | 'refreshed';
 
 export interface PeerService {

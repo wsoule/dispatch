@@ -21,10 +21,14 @@ import {
   credentialsUnreadable,
   CredentialsUnreadableError,
   isStaleLock,
+  promoteA2ASigningKey,
+  readA2AKeyStatement,
+  readA2ANextSigningKey,
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,
   takeOverStaleLock,
+  writeA2ANextSigningKey,
   writeA2ASigningKey,
   writePeerCredential,
   writeProjectCredential,
@@ -153,6 +157,52 @@ describe('the A2A card-signing key', () => {
   });
 });
 
+describe('the next card-signing key (rotation)', () => {
+  const K1 = { kty: 'EC', crv: 'P-256', x: 'x1', y: 'y1', d: 'd1' };
+  const K2 = { kty: 'EC', crv: 'P-256', x: 'x2', y: 'y2', d: 'd2' };
+  const AT = '2026-10-01T00:00:00.000Z';
+
+  it('writes the next slot and its statement only when no next key is there', () => {
+    writeA2ASigningKey(ROOT, K1);
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'absent' });
+    expect(writeA2ANextSigningKey(ROOT, { jwk: K2, at: AT }, '{"s":1}')).toBe(
+      true
+    );
+    expect(readA2ANextSigningKey(ROOT)).toEqual({
+      status: 'ok',
+      next: { jwk: K2, at: AT },
+    });
+    expect(readA2AKeyStatement(ROOT)).toBe('{"s":1}');
+    expect(writeA2ANextSigningKey(ROOT, { jwk: K1, at: AT }, '{"s":2}')).toBe(
+      false
+    );
+    expect(readA2ANextSigningKey(ROOT)).toEqual({
+      status: 'ok',
+      next: { jwk: K2, at: AT },
+    });
+    expect(readA2AKeyStatement(ROOT)).toBe('{"s":1}');
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: K1 });
+  });
+
+  it('promotes next to current and clears next under one lock, keeping the statement', () => {
+    writeA2ASigningKey(ROOT, K1);
+    writeA2ANextSigningKey(ROOT, { jwk: K2, at: AT }, '{"s":1}');
+    expect(promoteA2ASigningKey(ROOT)).toBe(true);
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: K2 });
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'absent' });
+    expect(readA2AKeyStatement(ROOT)).toBe('{"s":1}');
+    expect(promoteA2ASigningKey(ROOT)).toBe(false);
+    expect(readA2ASigningKey(ROOT)).toEqual({ status: 'ok', jwk: K2 });
+  });
+
+  it('tells a malformed next slot apart from an absent one', () => {
+    writeRaw({ a2a: { nextSigningKey: { jwk: K2 } } });
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'malformed' });
+    writeRaw({ a2a: { nextSigningKey: { jwk: 'x', at: AT } } });
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'malformed' });
+  });
+});
+
 describe('a credentials file that cannot be parsed', () => {
   const BROKEN = '{"projects": {"/work/x": {"linear": {"apiKey": "k"},}}}\n';
 
@@ -170,9 +220,13 @@ describe('a credentials file that cannot be parsed', () => {
       // A clear cannot tell whether the secret is still in there.
       () => clearProjectCredential(ROOT, 'linear'),
       () => clearPeerCredential(ROOT, 'acme'),
+      () =>
+        writeA2ANextSigningKey(ROOT, { jwk: { kty: 'EC' }, at: 'now' }, '{}'),
+      () => promoteA2ASigningKey(ROOT),
     ];
     for (const write of writers)
       expect(write).toThrow(CredentialsUnreadableError);
+    expect(readA2ANextSigningKey(ROOT)).toEqual({ status: 'unreadable' });
     expect(readFileSync(credentialsPath(), 'utf8')).toBe(BROKEN);
     expect(existsSync(`${credentialsPath()}.lock`)).toBe(false);
   });

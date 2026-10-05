@@ -1,5 +1,10 @@
 import type { A2APolicy, BridgePort } from '@dispatch/a2a';
-import { errorResponse, handleA2A, IpLimiter } from '@dispatch/a2a';
+import {
+  errorResponse,
+  handleA2A,
+  IpLimiter,
+  KEY_STATEMENT_PATH,
+} from '@dispatch/a2a';
 
 import type { ResolvedListener } from './settings.js';
 import { clientIpFor } from './settings.js';
@@ -74,6 +79,7 @@ export class A2AListener {
     if (
       pathname !== CARD_PATH &&
       pathname !== JWKS_PATH &&
+      pathname !== KEY_STATEMENT_PATH &&
       !pathname.startsWith(`${BASE_PATH}/`)
     ) {
       this.access(clientIp, req.method, pathname, 404, started);

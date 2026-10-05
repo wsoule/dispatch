@@ -5,7 +5,7 @@ import type { AddressInfo, Socket } from 'node:net';
 
 import { JWKS_PATH } from '../card.js';
 import { isLoopbackHost } from '../peer/http.js';
-import { handleA2A } from '../server/handle.js';
+import { handleA2A, KEY_STATEMENT_PATH } from '../server/handle.js';
 import { IpLimiter } from '../server/limits.js';
 import { HttpBridgePort } from './port.js';
 
@@ -201,6 +201,7 @@ export async function startStandalone(
       if (
         path !== CARD_PATH &&
         path !== JWKS_PATH &&
+        path !== KEY_STATEMENT_PATH &&
         !path.startsWith('/a2a/v1/')
       ) {
         res.writeHead(404).end('not found');

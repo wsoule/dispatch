@@ -27,6 +27,7 @@ import type {
 import type { Address } from '@dispatch/protocol';
 import { MessagingError, PEER_ALIAS_PATTERN } from '@dispatch/protocol';
 import { createPublicKey, randomBytes } from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 import { basename } from 'node:path';
 
 import type { AuthTier } from '../tiers.js';
@@ -55,14 +56,14 @@ const UNPAIR_PATH = '/dispatch/unpair';
 
 const now = (d: PairingDeps): Date => d.now?.() ?? new Date();
 
-// A fetch that signs with our card key and accepts only replies signed by
-// `peerJwk`, under the guard at the peer's recorded tier.
-function pairedFetch(
+// A fetch that signs with our card key (or `key`) and accepts only replies
+// signed by `peerJwk`, under the guard at the peer's recorded tier.
+export function pairedFetch(
   d: PairingDeps,
   peer: Pick<PeerRow, 'addedTier'>,
-  peerJwk: Record<string, string>
+  peerJwk: Record<string, string>,
+  key: { keyid: string; privateKey: KeyObject } = ourKey(d)
 ): typeof fetch {
-  const key = ourKey(d);
   const guard = peerGuard(d, peer);
   return signedFetch(
     peerFetch({
@@ -572,7 +573,12 @@ export class Unpairer {
     const client = this.d.store.getClient(signer.address);
     const known =
       auth?.ok === true && notice !== null && client?.pairedId === notice.id;
-    if (known) this.received(notice.id);
+    if (known)
+      this.drop(
+        notice.id,
+        (alias) =>
+          `a2a:${alias} unpaired: the other side removed this pairing. Its records are kept, disabled.`
+      );
     return signResponseFor(
       known
         ? Response.json({ unpaired: true })
@@ -583,16 +589,19 @@ export class Unpairer {
     );
   }
 
-  // The other side unpaired: disable our records and tell the owner.
-  private received(id: string): void {
+  /**
+   * Ends pairing `id` with no notice to the other side (it unpaired, revoked
+   * its key, or ours was compromised): the records are kept, disabled, and
+   * the owner is told why.
+   */
+  drop(id: string, notice: (alias: string) => string): string | null {
     this.d.store.setPairingState(id, 'unpaired');
+    clearTimeout(this.timers.get(id));
+    this.timers.delete(id);
     const peer = this.disable(id, 'unpaired');
-    const alias = peer?.alias ?? id;
-    this.d.notices.send(
-      alias,
-      'unpaired',
-      `a2a:${alias} unpaired: the other side removed this pairing. Its records are kept, disabled.`
-    );
+    const alias = peer?.alias ?? null;
+    if (alias !== null) this.d.notices.send(alias, 'unpaired', notice(alias));
     this.d.changed();
+    return alias;
   }
 }

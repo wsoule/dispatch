@@ -161,7 +161,7 @@ export type {
   PushConfigJson,
   PushResult,
 } from './push.js';
-export { handleA2A, matchRoute } from './server/handle.js';
+export { handleA2A, KEY_STATEMENT_PATH, matchRoute } from './server/handle.js';
 export type { HandleOptions, Route } from './server/handle.js';
 export { IpLimiter } from './server/limits.js';
 export { decodePageToken, encodePageToken } from './server/paging.js';
@@ -192,11 +192,17 @@ export { contentDigest, digestMatches } from './sig/digest.js';
 export { isEventStream, signedFetch } from './sig/fetch.js';
 export { signResponseFor } from './sig/respond.js';
 export {
+  checkKeyChange,
+  checkRevocation,
+  makeKeyChange,
+  makeRevocation,
   parseUnpairNotice,
-  UNPAIR_TAG,
   unpairNotice,
 } from './sig/statements.js';
-export type { UnpairNotice } from './sig/statements.js';
+export type {
+  KeyChangeStatement,
+  RevocationStatement,
+} from './sig/statements.js';
 export {
   SIG_EXTENSION_URI,
   SIG_TAG,

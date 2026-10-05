@@ -526,10 +526,14 @@ export async function handlePortRoute(
     method === 'POST'
   )
     return authenticateForwarded(req, bridge, host);
+  if (rest[0] === 'key-statement' && rest.length === 1 && method === 'GET')
+    return jsonResponse({
+      statement: (await bridge.port?.keyStatement()) ?? null,
+    });
   if (
     rest[0] === 'dispatch' &&
     rest.length === 2 &&
-    (rest[1] === 'pair' || rest[1] === 'unpair') &&
+    (rest[1] === 'pair' || rest[1] === 'unpair' || rest[1] === 'key-change') &&
     method === 'POST'
   )
     return extensionForwarded(req, bridge, host, rest[1]);
