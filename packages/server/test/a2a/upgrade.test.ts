@@ -505,3 +505,62 @@ describe('batch 4 review N4: approvals are idempotent, and a refused pin changes
     );
   }, 30_000);
 });
+
+describe('batch 5 review R1, R6', () => {
+  it('R1: with more than one bearer client that could be the peer, `client` is required', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    await bearerPair(a, b);
+    await client(a, 'carol');
+    const res = await a.call('/api/a2a/peers/bob/upgrade', {
+      body: { confirmFingerprint: fingerprintOf(b) },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain('client');
+    expect(b.handle.a2a.store!.pairings()).toEqual([]);
+  });
+
+  it('R6: a client keeps at most one open upgrade request', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    const { onB } = await bearerPair(a, b);
+    const ask = () => {
+      const { privateKey, publicKey } = generateKeyPairSync('ec', {
+        namedCurve: 'P-256',
+      });
+      const jwk = publicJwkOf(
+        publicKey.export({ format: 'jwk' }) as Record<string, string>
+      );
+      return rawFetch(`${b.listener}/a2a/v1/dispatch/upgrade`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'a2a-version': '1.0',
+          authorization: `Bearer ${onB}`,
+        },
+        body: JSON.stringify({
+          type: 'request',
+          proof: makeUpgradeProof({
+            reach: {
+              kind: 'url',
+              card: 'https://x.example.com/.well-known/agent-card.json',
+            },
+            name: 'X',
+            privateKey,
+            jwk,
+            now: new Date(),
+            audience: new URL(b.listener).origin,
+            client: upgradeClientBinding(onB),
+          }),
+        }),
+      });
+    };
+    expect((await ask()).status).toBe(202);
+    expect((await ask()).status).toBe(409);
+    expect(
+      b.handle.a2a
+        .store!.pairings()
+        .filter((p) => p.role === 'upgrade-in' && p.state === 'offered')
+    ).toHaveLength(1);
+  });
+});

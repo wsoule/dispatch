@@ -326,6 +326,20 @@ export function resolveListener(
 
 // The IP per-IP limits key on. The right-most X-Forwarded-For entry is the
 // one the tunnel appended, trusted only on a loopback listener.
+/**
+ * The listener's client address: X-Forwarded-For counts only when the
+ * listener is bound to loopback (a tunnel on this machine), as for the
+ * standalone host; on a network bind anyone could send that header.
+ */
+export function listenerClientIp(
+  req: Request,
+  peer: string | null,
+  listener: Pick<ResolvedListener, 'host' | 'trustForwardedFor'>
+): string | null {
+  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(listener.host);
+  return clientIpFor(req, peer, listener.trustForwardedFor && loopback);
+}
+
 export function clientIpFor(
   req: Request,
   peer: string | null,

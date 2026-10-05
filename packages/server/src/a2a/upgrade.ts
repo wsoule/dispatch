@@ -133,6 +133,24 @@ export class Upgrades {
     if (peer === null)
       throw new MessagingError('not-found', `no A2A peer ${i.alias}`);
     const client = i.client === undefined ? null : this.clientNamed(i.client);
+    // Unnamed, the approval may come over any approved, unpinned bearer
+    // client: with more than one, which is the peer must be said (review R1).
+    if (client === null) {
+      const candidates = this.d.store.clients().filter((c) => {
+        const agent = this.d.messages.getAgent(c.address);
+        return (
+          c.auth !== 'signature' &&
+          c.keyThumbprint == null &&
+          agent?.status === 'approved'
+        );
+      });
+      if (candidates.length > 1)
+        throw new MessagingError(
+          'invalid',
+          `more than one A2A client could be a2a:${i.alias}; pass client: the one it reaches this agent as (${candidates.map((c) => c.name).join(', ')})`,
+          'client'
+        );
+    }
     if (peer.auth === 'signature')
       throw new MessagingError(
         'conflict',
@@ -415,6 +433,22 @@ export class Upgrades {
   ): Promise<Response> {
     const client = this.d.store.getClient(address);
     if (client === null) return notFound();
+    // One open request per client, so no client fills the owner's inbox.
+    if (
+      this.d.store
+        .pairings()
+        .some(
+          (p) =>
+            p.role === 'upgrade-in' &&
+            p.state === 'offered' &&
+            p.createdBy === address &&
+            Date.parse(p.expiresAt) > nowOf(this.d).getTime()
+        )
+    )
+      return Response.json(
+        { error: 'an upgrade request from this client is already waiting' },
+        { status: 409 }
+      );
     const checked = checkUpgradeProof(rawProof, nowOf(this.d), expect);
     if (!checked.ok)
       return Response.json({ error: checked.reason }, { status: 400 });

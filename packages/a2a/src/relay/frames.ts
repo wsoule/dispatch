@@ -35,9 +35,9 @@ export type DaemonToRelay =
   | { t: 'end'; id: string }
   | { t: 'pong' };
 
-/** A call's or result's body, or a chunk, at most 256 KiB. */
+/** A call's or result's body, or a chunk, at most 256 KiB of UTF-8. */
 export const MAX_FRAME_BODY = 256 * 1024;
-const MAX_FRAME_CHARS = 2 * MAX_FRAME_BODY;
+const MAX_FRAME_BYTES = 2 * MAX_FRAME_BODY;
 
 // The headers a call carries: the port contract's, never the host token
 // (the connection is the host's identity) or anything else a client sent.
@@ -71,11 +71,15 @@ const bad = (why: string): never => {
   throw new MessagingError('invalid', `relay frame: ${why}`, 'frame');
 };
 
+// A string field of at most `max` UTF-8 bytes.
 function str(r: Record<string, unknown>, key: string, max = 4096): string {
   const v = r[key];
-  if (typeof v !== 'string' || v.length > max) return bad(`${key}`);
+  if (typeof v !== 'string' || Buffer.byteLength(v, 'utf8') > max)
+    return bad(`${key}`);
   return v;
 }
+
+const NONCE = /^[A-Za-z0-9_-]{22,64}$/;
 
 function id(r: Record<string, unknown>): string {
   const v = str(r, 'id');
@@ -118,7 +122,7 @@ export function parseFrame(
   raw: string,
   side: 'daemon' | 'relay'
 ): RelayToDaemon | DaemonToRelay {
-  if (raw.length > MAX_FRAME_CHARS) bad('too large');
+  if (Buffer.byteLength(raw, 'utf8') > MAX_FRAME_BYTES) bad('too large');
   let v: unknown;
   try {
     v = JSON.parse(raw);
@@ -130,8 +134,11 @@ export function parseFrame(
   const r = v as Record<string, unknown>;
   if (side === 'daemon') {
     switch (r.t) {
-      case 'challenge':
-        return { t: 'challenge', nonce: str(r, 'nonce', 128) };
+      case 'challenge': {
+        const nonce = str(r, 'nonce', 64);
+        if (!NONCE.test(nonce)) bad('nonce');
+        return { t: 'challenge', nonce };
+      }
       case 'ready':
         return { t: 'ready' };
       case 'refused':

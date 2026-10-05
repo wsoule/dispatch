@@ -14,6 +14,7 @@ import {
   applyOverrides,
   clientIpFor,
   DEFAULT_LISTENER,
+  listenerClientIp,
   listenerSettingsPath,
   parseListenerFlags,
   readListenerSettings,
@@ -275,5 +276,31 @@ describe('clientIpFor', () => {
       '127.0.0.1'
     );
     expect(clientIpFor(req(), '127.0.0.1', true)).toBe('127.0.0.1');
+  });
+});
+
+describe('batch 5 review R3: the listener trusts X-Forwarded-For only on loopback', () => {
+  const req = new Request('http://x/', {
+    headers: { 'x-forwarded-for': '192.0.2.1' },
+  });
+  it('honours it behind a loopback-bound tunnel, never on a network bind', () => {
+    expect(
+      listenerClientIp(req, '127.0.0.1', {
+        host: '127.0.0.1',
+        trustForwardedFor: true,
+      })
+    ).toBe('192.0.2.1');
+    expect(
+      listenerClientIp(req, '203.0.113.5', {
+        host: '0.0.0.0',
+        trustForwardedFor: true,
+      })
+    ).toBe('203.0.113.5');
+    expect(
+      listenerClientIp(req, '127.0.0.1', {
+        host: '127.0.0.1',
+        trustForwardedFor: false,
+      })
+    ).toBe('127.0.0.1');
   });
 });

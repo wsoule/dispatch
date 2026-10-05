@@ -59,7 +59,8 @@ export class TenantChannel {
       this.o.tenant,
       stream ? 'stream' : 'call'
     );
-    if (!admitted.ok || (body !== null && body.length > MAX_FRAME_BODY))
+    const bodyBytes = body === null ? 0 : Buffer.byteLength(body, 'utf8');
+    if (!admitted.ok || bodyBytes > MAX_FRAME_BODY)
       return Promise.resolve(
         Response.json(
           {
@@ -77,7 +78,7 @@ export class TenantChannel {
           }
         )
       );
-    if (body !== null && !this.o.limiter.bytes(this.o.tenant, body.length)) {
+    if (body !== null && !this.o.limiter.bytes(this.o.tenant, bodyBytes)) {
       admitted.done();
       return Promise.resolve(new Response('limited', { status: 429 }));
     }
@@ -162,7 +163,12 @@ export class TenantChannel {
     }
     if (p.controller === null) return false;
     if (frame.t === 'chunk') {
-      if (!this.o.limiter.bytes(this.o.tenant, frame.data.length)) {
+      if (
+        !this.o.limiter.bytes(
+          this.o.tenant,
+          Buffer.byteLength(frame.data, 'utf8')
+        )
+      ) {
         p.controller.error(new Error('over the relay byte limit'));
         this.finish(frame.id);
         this.o.send({ t: 'cancel', id: frame.id });

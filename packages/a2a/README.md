@@ -133,19 +133,22 @@ The listener binds loopback. To let agents on other machines reach it, put a
 tunnel in front of it and give the card the tunnel's URL. Commands below were
 checked against Tailscale's and Cloudflare's docs in October 2026.
 
-Whatever terminates TLS in front of the listener (Tailscale's Funnel edge,
-Cloudflare, a relay) can read bearer traffic: a plain A2A client's token and
-every body. Pair Dispatch peers (`dispatch a2a pair offer`) so their requests
-and replies are signed; the edge can still read and drop them, but cannot forge
-or alter them unnoticed.
+Whatever terminates TLS in front of the listener (Cloudflare, a relay) can read
+bearer traffic: a plain A2A client's token and every body. Tailscale Funnel is
+not one of them: Funnel's TLS ends on your machine. Pair Dispatch peers
+(`dispatch a2a pair offer`) so their requests and replies are signed; an edge
+can still read and drop them, but cannot forge or alter them unnoticed.
 
 `--trust-forwarded-for` keys the per-IP limits on the right-most
-`X-Forwarded-For` value. Set trustForwardedFor only when the proxy in front
-appends the connecting address to that header; otherwise a client chooses its
-own address and steps around the per-IP lockout. Left off, every client of a
-loopback tunnel shares one budget, which is safe. To check a proxy, send a
-request with `X-Forwarded-For: 192.0.2.1` through it: the listener's access log
-should show your real address, not `192.0.2.1`.
+`X-Forwarded-For` value. The listener honours X-Forwarded-For only when it is
+bound to loopback (a tunnel on this machine), as `dispatch a2a serve` does; on a
+network bind the flag is ignored, since anyone could send that header. Set
+trustForwardedFor only when the proxy in front appends the connecting address to
+that header; otherwise a client chooses its own address and steps around the
+per-IP lockout. Left off, every client of a loopback tunnel shares one budget,
+which is safe. To check a proxy, send a request with
+`X-Forwarded-For: 192.0.2.1` through it: the listener's access log should show
+your real address, not `192.0.2.1`.
 
 `a2a.requireSignedDispatchPeers: true` in config.yml refuses bearer tokens from
 any client whose requests once named Dispatch's signature extension, so a

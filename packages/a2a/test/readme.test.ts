@@ -10,6 +10,17 @@ describe('README: reaching your agent', () => {
     expect(README).toMatch(/tailnet\s+peer[^.]*operator\s+tier/i);
   });
 
+  it('does not list Funnel among the edges that terminate TLS (its TLS ends on your machine)', () => {
+    expect(README).not.toMatch(/Funnel edge/i);
+    expect(README).toMatch(/Funnel[^.]*TLS\s+ends\s+on\s+your\s+machine/i);
+  });
+
+  it('says the listener honours X-Forwarded-For only when bound to loopback', () => {
+    expect(README).toMatch(
+      /X-Forwarded-For[^.]*only\s+when[^.]*bound\s+to\s+loopback/i
+    );
+  });
+
   it('warns that an edge terminating TLS can read bearer traffic', () => {
     expect(README).toMatch(/can\s+read\s+bearer\s+traffic/i);
   });

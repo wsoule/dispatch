@@ -139,3 +139,31 @@ describe('the tenant challenge', () => {
     ).toMatchObject({ ok: false });
   });
 });
+
+describe('batch 5 review R4, R5', () => {
+  it('R4: counts UTF-8 bytes, not UTF-16 chars, against the body cap', () => {
+    // 'é' is one UTF-16 unit and two UTF-8 bytes.
+    const half = 'é'.repeat(MAX_FRAME_BODY / 2);
+    expect(() => parseFrame(call({ body: half }), 'daemon')).not.toThrow();
+    expect(() => parseFrame(call({ body: `${half}é` }), 'daemon')).toThrow(
+      MessagingError
+    );
+  });
+
+  it('R5: a challenge nonce is base64url, 22 to 64 characters', () => {
+    const challenge = (nonce: string) =>
+      JSON.stringify({ t: 'challenge', nonce });
+    expect(parseFrame(challenge('a'.repeat(22)), 'daemon')).toMatchObject({
+      t: 'challenge',
+    });
+    for (const bad of [
+      'a'.repeat(21),
+      'a'.repeat(65),
+      'a'.repeat(21) + '+',
+      '',
+    ])
+      expect(() => parseFrame(challenge(bad), 'daemon')).toThrow(
+        MessagingError
+      );
+  });
+});
