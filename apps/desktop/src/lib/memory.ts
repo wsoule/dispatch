@@ -265,7 +265,7 @@ export function entryProvenance(entry: MemoryEntryView): string {
   return parts.join(' · ');
 }
 
-/** What the Memory view may offer on an entry. */
+/** What Settings › Memory's lessons may offer on an entry. */
 export interface EntryActions {
   pin: boolean;
   retire: boolean;
@@ -311,7 +311,7 @@ export function entryActions(
   };
 }
 
-/** The Memory view's entry tabs: each scope's live entries, and Stale. */
+/** The lessons browser's entry tabs: each scope's live entries, and Stale. */
 export interface MemoryTabs {
   personal: MemoryEntryView[];
   project: MemoryEntryView[];

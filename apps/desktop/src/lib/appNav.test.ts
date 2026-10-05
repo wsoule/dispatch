@@ -42,17 +42,6 @@ describe('navReducer', () => {
     expect(next.activeRunId).toBeNull();
   });
 
-  test('Memory is a project view that back returns from', () => {
-    const memory = navReducer(initialNavState, {
-      type: 'setProjectView',
-      view: 'memory',
-    });
-    expect(memory.projectView).toBe('memory');
-    expect(navReducer(memory, { type: 'back' }).projectView).toBe(
-      initialNavState.projectView
-    );
-  });
-
   test('Docs is a project view that back returns from', () => {
     const docs = navReducer(initialNavState, {
       type: 'setProjectView',

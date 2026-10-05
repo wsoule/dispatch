@@ -124,7 +124,6 @@ import { ImpactView } from './views/ImpactView';
 import { InboxView } from './views/InboxView';
 import { LandingTableView } from './views/LandingTableView';
 import { LiveView } from './views/LiveView';
-import { MemoryView } from './views/MemoryView';
 import type { FocusEpicRequest } from './views/MilestonesView';
 import { OverseerView } from './views/OverseerView';
 import { OverviewView } from './views/OverviewView';
@@ -1563,9 +1562,6 @@ function App() {
                                       }
                                       onOpenRef={openRef}
                                     />
-                                  )}
-                                  {navState.projectView === 'memory' && (
-                                    <MemoryView data={data} />
                                   )}
                                   {navState.projectView === 'terminals' && (
                                     <TerminalsView data={data} />

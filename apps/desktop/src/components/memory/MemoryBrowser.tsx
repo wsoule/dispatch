@@ -2,13 +2,11 @@ import type { MemoryProposalView } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { MemoryEntryPanel } from '../components/memory/MemoryEntryPanel';
-import { MemoryList } from '../components/memory/MemoryList';
-import { RehomePanel } from '../components/memory/RehomePanel';
-import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import type { MemoryTabs } from '../lib/memory';
-import { memoryQueryKey, memoryTabs } from '../lib/memory';
+import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import type { MemoryTabs } from '../../lib/memory';
+import { memoryQueryKey, memoryTabs } from '../../lib/memory';
+import { MemoryEntryPanel } from './MemoryEntryPanel';
+import { MemoryList } from './MemoryList';
 
 type Tab = keyof MemoryTabs | 'proposals';
 
@@ -21,12 +19,16 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 /**
- * What runs remember (memory Task 29): Personal, Project and Team entries,
- * open Proposals, and Stale ones, with an entry's provenance, history and
- * actions beside the list. Team includes entries replicated from teammates'
- * machines. Personal also offers re-homing a moved checkout's entries.
+ * Settings › Memory's lessons (memory Task 29): Personal, Project and Team
+ * entries, open Proposals, and Stale ones, with an entry's provenance,
+ * history and actions under the list. Team includes entries replicated from
+ * teammates' machines.
  */
-export function MemoryView({ data }: { data: DispatchProjectData }) {
+export function MemoryBrowser({
+  data,
+}: {
+  data: Pick<DispatchProjectData, 'client' | 'port' | 'messageAccess' | 'me'>;
+}) {
   const { client, port, messageAccess, me } = data;
   const [tab, setTab] = useState<Tab>('personal');
   const [selected, setSelected] = useState<string | null>(null);
@@ -47,17 +49,10 @@ export function MemoryView({ data }: { data: DispatchProjectData }) {
     },
     enabled: ready && tab === 'proposals',
   });
-  if (client === null)
-    return (
-      <DaemonUnavailable
-        starting={data.portLoading}
-        errorDetail={data.portErrorDetail}
-        onRetry={data.retryEnsureDispatchd}
-      />
-    );
+  if (client === null) return null;
   if (!messageAccess.canMessage)
     return (
-      <p className="p-4 text-xs text-[var(--color-muted-foreground)]">
+      <p className="text-muted-foreground p-3 text-[12px]">
         {messageAccess.explanation ?? 'Memory needs a teammate or app token.'}
       </p>
     );
@@ -66,8 +61,8 @@ export function MemoryView({ data }: { data: DispatchProjectData }) {
   const open = shown.find((e) => e.id === selected) ?? null;
   const viewer = { canDecide: messageAccess.canDecide, me: me ?? '' };
   return (
-    <div className="flex h-full min-h-0">
-      <div className="flex w-[360px] min-w-0 flex-col border-r">
+    <div data-testid="memory-browser" className="flex min-w-0 flex-col">
+      <div className="flex min-w-0 flex-col">
         <div role="tablist" aria-label="Memory" className="flex gap-1 p-2">
           {TABS.map((t) => (
             <button
@@ -87,12 +82,7 @@ export function MemoryView({ data }: { data: DispatchProjectData }) {
             </button>
           ))}
         </div>
-        {tab === 'personal' && (
-          <div className="px-2 pb-2">
-            <RehomePanel client={client} port={port} />
-          </div>
-        )}
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="max-h-80 overflow-auto">
           {entries.error !== null && (
             <p role="alert" className="text-red p-4 text-[13px]">
               {entries.error.message}
@@ -109,7 +99,7 @@ export function MemoryView({ data }: { data: DispatchProjectData }) {
           )}
         </div>
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 border-t">
         {open !== null && (
           <MemoryEntryPanel
             key={open.id}
@@ -124,7 +114,7 @@ export function MemoryView({ data }: { data: DispatchProjectData }) {
   );
 }
 
-// Open proposals; each is decided through its memory gate in Threads.
+// Open proposals; each is decided through its memory gate.
 function ProposalList({
   proposals,
 }: {
@@ -144,7 +134,7 @@ function ProposalList({
             {p.content?.title ?? `Retire ${p.target ?? ''}`}
           </span>
           <span className="text-muted-foreground text-[12px]">
-            {`${p.action} to ${p.scope} · by ${p.author} · decide it in Threads`}
+            {`${p.action} to ${p.scope} · by ${p.author} · decide it in Needs you`}
           </span>
         </li>
       ))}

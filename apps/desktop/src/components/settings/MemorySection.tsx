@@ -13,6 +13,8 @@ import {
   memoryQueryRootKey,
   memorySettingsModel,
 } from '../../lib/memory';
+import { MemoryBrowser } from '../memory/MemoryBrowser';
+import { RehomePanel } from '../memory/RehomePanel';
 import { ChoiceSetting, NumberSetting } from './fields';
 import { SettingsSearchable } from './search';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
@@ -36,6 +38,8 @@ type MemoryClient = Pick<
   | 'acceptIngestProblem'
   | 'startMemoryLink'
   | 'completeMemoryLink'
+  | 'memoryProjectKeys'
+  | 'rehomeMemory'
 >;
 
 // One button's action at a time: `pending` names the running one, `error` the
@@ -74,9 +78,10 @@ function ActionError({ error }: { error: string | null }) {
   );
 }
 
-/** Settings → Memory: the store's health and warnings, the ledger import's
- *  parity report, the owner's Claude-notes import, Claude files a scan
- *  skipped, the caller's identity and links, and memory's run settings. */
+/** Settings → Memory: the store's health and warnings, the lessons runs read,
+ *  re-homing a moved checkout's entries, the ledger import's parity report,
+ *  the owner's Claude-notes import, Claude files a scan skipped, the caller's
+ *  identity and links, and memory's run settings. */
 export function MemorySection({ data, config, onSave }: MemorySectionProps) {
   const { client, port } = data;
   const enabled = client !== null;
@@ -100,6 +105,21 @@ export function MemorySection({ data, config, onSave }: MemorySectionProps) {
         error={health.error?.message ?? null}
         connected={enabled}
       />
+      {client !== null && (
+        <SettingsGroup
+          title="Lessons"
+          hint="What runs remember, by scope, with proposals waiting on a decision and stale entries."
+          keywords="memory entries lessons personal project team proposals stale"
+          requires="none"
+        >
+          <SettingsSearchable text="memory entries lessons proposals stale">
+            <PanelRow className="block p-0">
+              <MemoryBrowser data={data} />
+            </PanelRow>
+          </SettingsSearchable>
+        </SettingsGroup>
+      )}
+      {client !== null && <RehomeGroup client={client} port={port} />}
       {model !== null && model.status === 'ok' && (
         <ParityGroup parityText={model.parityText} />
       )}
@@ -307,6 +327,36 @@ function ClaudeImportGroup({
         </>
       )}
       <ActionError error={action.error} />
+    </SettingsGroup>
+  );
+}
+
+// Personal entries narrowed to a checkout that moved; shown only when some are.
+function RehomeGroup({
+  client,
+  port,
+}: {
+  client: MemoryClient;
+  port: number | undefined;
+}) {
+  const keys = useQuery({
+    queryKey: memoryQueryKey(port, 'rehome'),
+    queryFn: () => client.memoryProjectKeys(),
+    retry: false,
+  });
+  if ((keys.data?.others ?? []).length === 0) return null;
+  return (
+    <SettingsGroup
+      title="Moved checkouts"
+      hint="Your personal entries narrowed to another checkout of this project reach no run here until you move them."
+      keywords="rehome re-home moved checkout project key"
+      requires="none"
+    >
+      <SettingsSearchable text="move entries to this project">
+        <PanelRow className="block py-2">
+          <RehomePanel client={client} port={port} />
+        </PanelRow>
+      </SettingsSearchable>
     </SettingsGroup>
   );
 }

@@ -3,9 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
-import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { entry, proposal } from '../lib/memory.test-helper';
-import { MemoryView } from './MemoryView';
+import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { entry, proposal } from '../../lib/memory.test-helper';
+import { MemoryBrowser } from './MemoryBrowser';
 
 function mount() {
   const listMemory = mock((_q?: unknown) =>
@@ -48,7 +48,7 @@ function mount() {
   } as unknown as DispatchProjectData;
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <MemoryView data={data} />
+      <MemoryBrowser data={data} />
     </QueryClientProvider>
   );
   return { listMemory, listMemoryProposals };
@@ -81,7 +81,7 @@ test('lists open proposals under Proposals', async () => {
   expect(listMemoryProposals).toHaveBeenCalledWith('open');
 });
 
-test('opens an entry beside the list', async () => {
+test('opens an entry under the list', async () => {
   mount();
   fireEvent.click(await screen.findByText('terse comments'));
   expect(

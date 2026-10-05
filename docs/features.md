@@ -36,12 +36,12 @@ with the team.
 - **Team memory in git.** Team lessons are written to the receipt log in your
   repo and can be restored on a new machine. Restored lessons always come back
   for a human to approve, and retired ones stay retired.
-- **A Memory view.** Browse personal, project and team memory, open proposals
-  and stale lessons in one place. Each entry shows where it came from, every
-  revision and how often runs used it, with pin, confirm, promote, retire and
-  delete where you're allowed to.
-- **Moves with your checkout.** Moved a project to a new folder? Notes you kept
-  to that project come along with one click.
+- **Lessons in Settings → Memory.** Browse personal, project and team memory,
+  open proposals and stale lessons in one place. Each entry shows where it came
+  from, every revision and how often runs used it, with pin, confirm, promote,
+  retire and delete where you're allowed to.
+- **Moves with your checkout.** Moved a project to a new folder? Settings →
+  Memory offers to bring the notes you kept to that project along, in one click.
 
 ## Docs: specs and plans agents and humans write together
 
