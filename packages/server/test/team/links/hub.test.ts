@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, it, setDefaultTimeout } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -219,5 +220,21 @@ describe('T55 review M5 and M6', () => {
     s.clock.ms += 2 * 86_400_000;
     await hub.settle();
     expect(hub.snapshot('ada', 't-9')).toBeNull();
+  });
+});
+
+describe('hub.db from an earlier build', () => {
+  it('adds the done column to an older remote_tasks table and keeps working', async () => {
+    s = scratch();
+    const dir = join(s.dir, 'hub-old');
+    mkdirSync(dir, { recursive: true });
+    const old = new Database(join(dir, 'hub.db'), { create: true });
+    old.exec(
+      'CREATE TABLE remote_tasks (alias TEXT NOT NULL, task_id TEXT NOT NULL, json TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (alias, task_id))'
+    );
+    old.close();
+    const { hub } = hubOf({ dir });
+    await hub.settle();
+    expect(hub.health()).toEqual([]);
   });
 });

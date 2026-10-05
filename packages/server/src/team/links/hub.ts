@@ -165,6 +165,15 @@ export class LinkHub {
       CREATE TABLE IF NOT EXISTS notes (alias TEXT NOT NULL, subject TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (alias, subject));
       CREATE TABLE IF NOT EXISTS offers (paired_id TEXT PRIMARY KEY, alias TEXT NOT NULL, remote TEXT NOT NULL, branch TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
+    // A hub.db from before M6 lacks remote_tasks.done.
+    const columns = this.db
+      .query<{ name: string }, []>('PRAGMA table_info(remote_tasks)')
+      .all()
+      .map((c) => c.name);
+    if (!columns.includes('done'))
+      this.db.exec(
+        'ALTER TABLE remote_tasks ADD COLUMN done INTEGER NOT NULL DEFAULT 0'
+      );
     for (const row of this.links()) this.open(row);
   }
 
@@ -318,13 +327,18 @@ export class LinkHub {
       this.again = true;
       return;
     }
-    this.running = this.passAll().finally(() => {
-      this.running = null;
-      if (this.again && !this.stopped) {
-        this.again = false;
-        this.kick();
-      }
-    });
+    // A failed pass is logged, never an unhandled rejection in the daemon.
+    this.running = this.passAll()
+      .catch((err: unknown) =>
+        console.error(`a2a: link pass failed: ${redactRemotes(String(err))}`)
+      )
+      .finally(() => {
+        this.running = null;
+        if (this.again && !this.stopped) {
+          this.again = false;
+          this.kick();
+        }
+      });
   }
 
   /** One pass over every link, awaited (tests and the e2e use it). */
