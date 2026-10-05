@@ -137,7 +137,13 @@ describe('pairing over a link (T55)', () => {
 describe('T55 review M1-M4', () => {
   it('refuses a helper-form remote at the offer', async () => {
     const ada = await daemon('link-ada-');
-    for (const remote of ['ext::sh -c touch% /tmp/pwned', '--upload-pack=x'])
+    for (const remote of [
+      'ext::sh -c touch% /tmp/pwned',
+      '--upload-pack=x',
+      // P1: WHATWG and git disagree on this host.
+      'http://127.0.0.2\\@127.0.0.1:9/x',
+      'https://public.example\\@10.0.0.5/x',
+    ])
       expect(
         (
           await call(ada, '/api/a2a/pairings', {

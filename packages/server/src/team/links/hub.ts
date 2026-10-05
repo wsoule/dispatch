@@ -1,16 +1,24 @@
-import { ENVELOPE_URI, WORK_URI } from '@dispatch/a2a';
+import { ENVELOPE_URI, pinPublicUrl, WORK_URI } from '@dispatch/a2a';
+import type { LookupAll } from '@dispatch/a2a';
 import type { LinkPayload } from '@dispatch/a2a';
 import type { JsonValue } from '@dispatch/protocol';
 import { isStub } from '@dispatch/protocol/federation';
 import { Database } from 'bun:sqlite';
+import { lookup } from 'node:dns/promises';
 import { chmodSync, mkdirSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { join } from 'node:path';
 
 import type { AsyncGitRunner } from '../../sync/worktree.js';
 import { defaultAsyncGitRunner } from '../../sync/worktree.js';
 import { SyncRepo } from '../boardSync/repo.js';
 import { signedEntry } from '../federation/git.js';
-import { linkGitRunner, redactRemotes } from './remote.js';
+import {
+  linkGitRunner,
+  pinFlags,
+  redactRemotes,
+  remoteHostUrl,
+} from './remote.js';
 import { LINK_READ_BYTES, linkReplicaId, LinkService } from './service.js';
 import type { LinkKeys, PublishResult } from './service.js';
 import type { LinkProblem } from './store.js';
@@ -68,8 +76,11 @@ export interface LinkHubDeps {
   offerState?: (pairedId: string) => string | null;
   /** Checks a proof read on an offer's branch (linkPairing.checkLinkProof). */
   offerProof?: (pairedId: string, proof: unknown) => OfferProof;
-  /** An accepted link the offerer never answered in time: end the pairing. */
-  pairingFailed?: (alias: string, pairedId: string) => void;
+  /** The tier a pairing was made at: a decide-tier link's host must stay
+   *  public (P1). Absent, operator. */
+  tierOf?: (pairedId: string) => 'operator' | 'decide';
+  /** Resolves a host (tests pass a fake); absent, the system resolver. */
+  lookup?: LookupAll;
   /** One link's fresh reads a pass (LINK_READ_BYTES). */
   linkReadBytes?: number;
   /** All links' fresh reads a pass (LINK_TOTAL_READ_BYTES). */
@@ -124,6 +135,10 @@ function taskOf(
   return null;
 }
 
+// Every address the system resolver gives for a host.
+const lookupAll: LookupAll = async (host) =>
+  (await lookup(host, { all: true })).map((a) => a.address);
+
 /** A provisional task id for a send whose receiver has not answered yet. */
 export function provisionalTaskId(messageId: string): string {
   return `link-${messageId}`;
@@ -141,6 +156,10 @@ export class LinkHub {
   private readonly offerProblems = new Map<string, string[]>();
   private readonly readThisPass = new Map<string, number>();
   private readonly offerRead = new Map<string, number>();
+  // This pass's address pin per link or offer (P1), read by its git runner.
+  private readonly pins = new Map<string, string[]>();
+  // N2: one clone per offer, so probe and resume state carry over.
+  private readonly offerRepos = new Map<string, SyncRepo>();
   private rotation = 0;
   private running: Promise<void> | null = null;
   private again = false;
@@ -286,7 +305,11 @@ export class LinkHub {
       deliver: (payload, from) => this.deliver(row, payload, from.replica),
       now: this.deps.now,
       // M1: only https, ssh and git, plus file for a local remote.
-      git: linkGitRunner(this.deps.git ?? defaultAsyncGitRunner, row.remote),
+      git: linkGitRunner(
+        this.deps.git ?? defaultAsyncGitRunner,
+        row.remote,
+        () => this.pins.get(row.pairedId) ?? []
+      ),
     });
     this.services.set(row.alias, service);
     for (const s of this.db
@@ -371,49 +394,119 @@ export class LinkHub {
         this.readThisPass.set(alias, 0);
         continue;
       }
+      const row = this.get(alias);
+      // P1: resolve and check the host now; git connects only to that.
+      if (
+        row === null ||
+        !(await this.pinHost(row.pairedId, row.remote, alias))
+      ) {
+        this.readThisPass.set(alias, 0);
+        continue;
+      }
+      const budget = Math.min(share, left);
+      let reached = false;
       try {
-        await s.sync({ readBytes: Math.min(share, left) });
+        await s.sync({ readBytes: budget });
         const used = s.health().readBytes;
         this.readThisPass.set(alias, used);
         left -= used;
+        // N1: a pass counts once it reached the branch and read within budget.
+        reached = s.health().lastError === null && used < budget;
       } catch (err) {
         this.readThisPass.set(alias, 0);
         console.error(
           `a2a: link a2a:${alias} pass failed: ${redactRemotes(String(err))}`
         );
       }
-      this.checkPending(alias, s);
+      this.checkPending(alias, s, reached);
     }
     this.deps.changed?.();
   }
 
-  // An accepted link is pending until the offerer's first op is read; past
-  // its deadline, the pairing fails with a note the owner sees.
-  private checkPending(alias: string, s: LinkService): void {
+  /**
+   * P1: resolves the remote's host and, for a decide-tier pairing, checks
+   * every address is public; an http(s) remote is then pinned to the checked
+   * address for this pass. False (with a note) when the pass must not run.
+   */
+  private async pinHost(
+    pairedId: string,
+    remote: string,
+    noteAlias: string | null
+  ): Promise<boolean> {
+    const subject = `link-address:${pairedId}`;
+    const hostUrl = remoteHostUrl(remote);
+    if (hostUrl === null) {
+      this.pins.set(pairedId, []);
+      return true;
+    }
+    const host = new URL(hostUrl).hostname.replace(/^\[(.*)\]$/, '$1');
+    const decide = (this.deps.tierOf?.(pairedId) ?? 'operator') === 'decide';
+    let address: string | null = null;
+    try {
+      if (decide) {
+        address = (
+          await pinPublicUrl(`https://${host}/`, {
+            field: 'link.remote',
+            ...(this.deps.lookup === undefined
+              ? {}
+              : { lookup: this.deps.lookup }),
+          })
+        ).address;
+      } else if (isIP(host) !== 0) {
+        address = host;
+      } else {
+        const found = await (this.deps.lookup ?? lookupAll)(host).catch(
+          () => [] as string[]
+        );
+        address = found[0] ?? null;
+      }
+    } catch (err) {
+      const why = `this link's host is not a public address now, so it was not contacted (${redactRemotes(err instanceof Error ? err.message : 'refused')}); a teammate with the operator tier can pair it again.`;
+      if (noteAlias === null) this.offerProblems.set(pairedId, [why]);
+      else this.note(noteAlias, subject, why);
+      return false;
+    }
+    if (noteAlias !== null) this.clearNote(noteAlias, subject);
+    this.pins.set(pairedId, address === null ? [] : pinFlags(remote, address));
+    return true;
+  }
+
+  private note(alias: string, subject: string, message: string): void {
+    this.db
+      .query(
+        'INSERT OR REPLACE INTO notes (alias, subject, message, at) VALUES (?, ?, ?, ?)'
+      )
+      .run(alias, subject, message, this.deps.now().toISOString());
+  }
+
+  private clearNote(alias: string, subject: string): void {
+    this.db
+      .query('DELETE FROM notes WHERE alias = ? AND subject = ?')
+      .run(alias, subject);
+  }
+
+  // An accepted link is pending until the offerer's first op is read. Past
+  // its deadline, on a pass that reached the branch (N1), it gets a note and
+  // stays pending, so a late start still completes it.
+  private checkPending(alias: string, s: LinkService, reached: boolean): void {
     const row = this.db
       .query<{ until: string }, [string]>(
         'SELECT until FROM pending WHERE alias = ?'
       )
       .get(alias);
     if (row === null) return;
+    const subject = `link-unanswered:${this.get(alias)?.pairedId ?? alias}`;
     if (s.peerSeen()) {
       this.db.query('DELETE FROM pending WHERE alias = ?').run(alias);
+      this.clearNote(alias, subject);
       return;
     }
-    if (this.deps.now().getTime() <= Date.parse(row.until)) return;
-    this.db.query('DELETE FROM pending WHERE alias = ?').run(alias);
-    this.db
-      .query(
-        'INSERT OR REPLACE INTO notes (alias, subject, message, at) VALUES (?, ?, ?, ?)'
-      )
-      .run(
-        alias,
-        `link-unanswered:${this.get(alias)?.pairedId ?? alias}`,
-        'the other side never started this link, so it never completed the pairing (its offer may have expired before it read the acceptance). The pairing is disabled: remove it and pair again.',
-        this.deps.now().toISOString()
-      );
-    const pairedId = this.get(alias)?.pairedId;
-    if (pairedId !== undefined) this.deps.pairingFailed?.(alias, pairedId);
+    if (!reached || this.deps.now().getTime() <= Date.parse(row.until)) return;
+    this.note(
+      alias,
+      subject,
+      'the other side has not started this link, so it may never have completed the pairing (its offer may have expired before it read the acceptance). It stays waiting; if it does not start, remove it and pair again.'
+    );
   }
 
   private notes(alias: string): LinkProblem[] {
@@ -487,6 +580,8 @@ export class LinkHub {
   private dropOffer(pairedId: string): void {
     this.db.query('DELETE FROM offers WHERE paired_id = ?').run(pairedId);
     this.offerProblems.delete(pairedId);
+    this.offerRepos.delete(pairedId);
+    this.pins.delete(pairedId);
   }
 
   // Reads each open offer's branch for key ops carrying a proof. A proof that
@@ -514,13 +609,21 @@ export class LinkHub {
         this.dropOffer(o.pairedId);
         continue;
       }
-      const repo = new SyncRepo(
-        join(this.deps.dir, 'offers', o.pairedId),
-        o.remote,
-        o.branch,
-        'offer-00000000',
-        linkGitRunner(this.deps.git ?? defaultAsyncGitRunner, o.remote)
-      );
+      if (!(await this.pinHost(o.pairedId, o.remote, null))) continue;
+      const repo =
+        this.offerRepos.get(o.pairedId) ??
+        new SyncRepo(
+          join(this.deps.dir, 'offers', o.pairedId),
+          o.remote,
+          o.branch,
+          'offer-00000000',
+          linkGitRunner(
+            this.deps.git ?? defaultAsyncGitRunner,
+            o.remote,
+            () => this.pins.get(o.pairedId) ?? []
+          )
+        );
+      this.offerRepos.set(o.pairedId, repo);
       try {
         await repo.ensure();
         const res = await repo.exchange();

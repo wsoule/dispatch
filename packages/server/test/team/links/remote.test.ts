@@ -4,6 +4,7 @@ import {
   checkLinkRemote,
   isLocalRemote,
   linkGitRunner,
+  pinFlags,
   redactRemotes,
   remoteHostUrl,
 } from '../../../src/team/links/remote.js';
@@ -69,5 +70,31 @@ describe('link remotes (T55 review M1-M3)', () => {
       redactRemotes('fatal: https://ada:swordfish@example.com/x.git not found')
     ).toBe('fatal: https://***@example.com/x.git not found');
     expect(redactRemotes('ssh://git:pw@h/x')).toBe('ssh://***@h/x');
+  });
+});
+
+describe('final review P1: git connects to the host that was checked', () => {
+  it('refuses a backslash anywhere, and a URL remote the URL parser would rewrite', () => {
+    for (const bad of [
+      'https://public.example\\@10.0.0.5/x',
+      'http://127.0.0.2\\@127.0.0.1:9/x',
+      'C:\\links\\repo.git',
+      'https://EXAMPLE.com/x.git',
+      'https://example.com/a/../b.git',
+    ])
+      expect(checkLinkRemote(bad)).toBe(false);
+    expect(checkLinkRemote('https://example.com/x.git')).toBe(true);
+  });
+
+  it('pins a checked address for curl and leaves ssh to a re-check', () => {
+    expect(pinFlags('https://links.example/x.git', '93.184.216.34')).toEqual([
+      '-c',
+      'http.curloptResolve=links.example:443:93.184.216.34',
+    ]);
+    expect(pinFlags('http://links.example:8080/x.git', '2001:db8::1')).toEqual([
+      '-c',
+      'http.curloptResolve=links.example:8080:[2001:db8::1]',
+    ]);
+    expect(pinFlags('git@links.example:x.git', '93.184.216.34')).toEqual([]);
   });
 });

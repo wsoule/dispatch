@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, setDefaultTimeout } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { defaultAsyncGitRunner } from '../../../src/sync/worktree.js';
 import { LinkHub } from '../../../src/team/links/hub.js';
 import { linkReplicaId } from '../../../src/team/links/service.js';
 import { runGitSync } from '../../orchestrator/helpers.js';
@@ -22,7 +23,6 @@ afterEach(async () => {
 const MIB = 1024 * 1024;
 
 function hubOf(over: Partial<ConstructorParameters<typeof LinkHub>[0]> = {}) {
-  const failed: string[] = [];
   const keys = linkKeys();
   const hub = new LinkHub({
     dir: join(s.dir, `hub-${hubs.length}`),
@@ -32,12 +32,11 @@ function hubOf(over: Partial<ConstructorParameters<typeof LinkHub>[0]> = {}) {
     watch: () => () => {},
     unpaired: () => {},
     keyChange: () => {},
-    pairingFailed: (alias) => failed.push(alias),
     now: s.now,
     ...over,
   });
   hubs.push(hub);
-  return { hub, failed, keys };
+  return { hub, keys };
 }
 
 // A peer branch padded with `mib` MiB of junk under the peer's own files.
@@ -127,17 +126,17 @@ describe('an accepted link waits for the offerer (one-sided pairing)', () => {
       { pendingUntil: new Date(until).toISOString() }
     );
 
-  it('fails the pairing with a visible note when no op from the offerer arrives in time', async () => {
+  it('notes, and stays pending, when no op from the offerer arrives in time', async () => {
     s = scratch();
-    const { hub, failed } = hubOf();
+    const { hub } = hubOf();
     const peer = linkKeys();
     add(hub, peer, s.clock.ms + 20 * 60_000);
     await hub.settle();
     expect(hub.health()[0]).toMatchObject({ pending: true });
-    expect(failed).toEqual([]);
     s.clock.ms += 21 * 60_000;
     await hub.settle();
-    expect(failed).toEqual(['ada']);
+    // N1: noted, and still pending (never disabled) in case it starts late.
+    expect(hub.health()[0]).toMatchObject({ pending: true });
     expect(hub.health()[0]?.problems.map((p) => p.subject)).toContain(
       'link-unanswered:L1'
     );
@@ -145,7 +144,7 @@ describe('an accepted link waits for the offerer (one-sided pairing)', () => {
 
   it('is no longer pending once the offerer’s first op is on the branch', async () => {
     s = scratch();
-    const { hub, failed } = hubOf();
+    const { hub } = hubOf();
     const peer = linkKeys();
     add(hub, peer, s.clock.ms + 20 * 60_000);
     // The offerer's link starts its chain on the same branch.
@@ -160,7 +159,6 @@ describe('an accepted link waits for the offerer (one-sided pairing)', () => {
     expect(hub.health()[0]).toMatchObject({ pending: false });
     s.clock.ms += 60 * 60_000;
     await hub.settle();
-    expect(failed).toEqual([]);
   });
 });
 
@@ -236,5 +234,114 @@ describe('hub.db from an earlier build', () => {
     const { hub } = hubOf({ dir });
     await hub.settle();
     expect(hub.health()).toEqual([]);
+  });
+});
+
+describe('final review N1: only passes that reached the branch count', () => {
+  it('does not note an unreachable link as unanswered', async () => {
+    s = scratch();
+    const { hub } = hubOf();
+    const peer = linkKeys();
+    hub.add(
+      {
+        alias: 'ada',
+        pairedId: 'L1',
+        remote: join(s.dir, 'missing.git'),
+        branch: 'dispatch-a2a-00000000000000aa',
+        signPub: peer.signPub,
+        sealPub: peer.sealPub,
+        createdAt: new Date(s.clock.ms).toISOString(),
+      },
+      undefined,
+      { pendingUntil: new Date(s.clock.ms + 60_000).toISOString() }
+    );
+    s.clock.ms += 5 * 60_000;
+    await hub.settle();
+    expect(hub.health()[0]?.problems.map((p) => p.subject)).not.toContain(
+      'link-unanswered:L1'
+    );
+  });
+});
+
+describe('final review P1: a link connects only to the address it checked', () => {
+  // Real git for local steps; fetch and push are recorded and refused, so
+  // nothing leaves the machine.
+  function recordingGit(seen: string[][]) {
+    return (
+      cwd: string,
+      args: string[],
+      env?: Record<string, string>,
+      max?: number
+    ) => {
+      if (args.includes('fetch') || args.includes('push')) {
+        seen.push(args);
+        return Promise.resolve({
+          status: 128,
+          stdout: '',
+          stderr: 'fake offline',
+        });
+      }
+      return defaultAsyncGitRunner(cwd, args, env, max);
+    };
+  }
+
+  it('pins the resolved address, and refuses a host that rebinds to a private one', async () => {
+    s = scratch();
+    const seen: string[][] = [];
+    let answer = ['93.184.216.34'];
+    const { hub } = hubOf({
+      git: recordingGit(seen),
+      lookup: () => Promise.resolve(answer),
+      tierOf: () => 'decide',
+    });
+    const peer = linkKeys();
+    hub.add({
+      alias: 'ada',
+      pairedId: 'L1',
+      remote: 'https://links.example/x.git',
+      branch: 'dispatch-a2a-00000000000000aa',
+      signPub: peer.signPub,
+      sealPub: peer.sealPub,
+      createdAt: new Date(s.clock.ms).toISOString(),
+    });
+    await hub.settle();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(
+      seen.every((a) =>
+        a.includes('http.curloptResolve=links.example:443:93.184.216.34')
+      )
+    ).toBe(true);
+    seen.length = 0;
+    answer = ['10.0.0.5'];
+    await hub.settle();
+    expect(seen).toEqual([]);
+    expect(hub.health()[0]?.problems.map((p) => p.subject)).toContain(
+      'link-address:L1'
+    );
+  });
+
+  it('re-checks an ssh host each pass and refuses it once private', async () => {
+    s = scratch();
+    const seen: string[][] = [];
+    const { hub } = hubOf({
+      git: recordingGit(seen),
+      lookup: () => Promise.resolve(['10.0.0.5']),
+      tierOf: () => 'decide',
+    });
+    const peer = linkKeys();
+    hub.add({
+      alias: 'ada',
+      pairedId: 'L1',
+      remote: 'git@links.example:acme/x.git',
+      branch: 'dispatch-a2a-00000000000000aa',
+      signPub: peer.signPub,
+      sealPub: peer.sealPub,
+      createdAt: new Date(s.clock.ms).toISOString(),
+    });
+    await hub.settle();
+    expect(seen).toEqual([]);
+    expect(hub.health()[0]?.problems.map((p) => p.subject)).toContain(
+      'link-address:L1'
+    );
   });
 });

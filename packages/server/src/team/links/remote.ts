@@ -20,13 +20,35 @@ function hasControl(v: string): boolean {
  * most 1 KiB. Both the offer and a code's reader apply it.
  */
 export function checkLinkRemote(remote: string): boolean {
-  return (
-    remote !== '' &&
-    remote.length <= MAX_REMOTE &&
-    !remote.startsWith('-') &&
-    !hasControl(remote) &&
-    !remote.includes('::')
-  );
+  if (
+    remote === '' ||
+    remote.length > MAX_REMOTE ||
+    remote.startsWith('-') ||
+    hasControl(remote) ||
+    remote.includes('::') ||
+    // P1: git and the URL parser read a backslash differently.
+    remote.includes('\\')
+  )
+    return false;
+  if (!NETWORK.test(remote)) return true;
+  // P1: what the guard checks must be what git connects to, byte for byte.
+  try {
+    return new URL(remote).href === remote;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The flags that make curl connect an http(s) remote to `address`, the one
+ * the guard just checked (P1); [] for ssh, git and local remotes.
+ */
+export function pinFlags(remote: string, address: string): string[] {
+  if (!/^https?:\/\//i.test(remote)) return [];
+  const u = new URL(remote);
+  const port = u.port !== '' ? u.port : u.protocol === 'https:' ? '443' : '80';
+  const at = address.includes(':') ? `[${address}]` : address;
+  return ['-c', `http.curloptResolve=${u.hostname}:${port}:${at}`];
 }
 
 /** Whether `remote` names something on this machine: a path or file:// URL. */
@@ -63,7 +85,9 @@ export function redactRemotes(text: string): string {
  */
 export function linkGitRunner(
   base: AsyncGitRunner,
-  remote: string
+  remote: string,
+  // This pass's address pin (P1), read at each command.
+  pin: () => string[] = () => []
 ): AsyncGitRunner {
   const flags = [
     '-c',
@@ -78,5 +102,5 @@ export function linkGitRunner(
     `protocol.file.allow=${isLocalRemote(remote) ? 'always' : 'never'}`,
   ];
   return (cwd, args, env, maxOut) =>
-    base(cwd, [...flags, ...args], env, maxOut);
+    base(cwd, [...flags, ...pin(), ...args], env, maxOut);
 }
