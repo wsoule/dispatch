@@ -1359,3 +1359,99 @@ describe('a held chain has a length', () => {
     expect(service.health(owner()).warnings.join('\n')).toContain('chain');
   });
 });
+
+describe('folds converge however passes interleave', () => {
+  // Three replicas edit one doc apart; ops arrive in seeded random order with
+  // pass ends between them, each replica publishing its merges as it goes.
+  function run(seed: number): string[] {
+    let x = seed;
+    const rand = (n: number) => {
+      x = (x * 1103515245 + 12345) % 2147483648;
+      return x % n;
+    };
+    const reps = ['rep-1', 'rep-2', 'rep-3'].map((replica) => {
+      const r = makeService();
+      const h = new DocOpHandler({
+        service: r.service,
+        policyAllows: () => false,
+      });
+      h.bindFederation({ speaksFor, rereadOps: () => {} });
+      return { ...r, h, replica, seq: 0, inbox: [] as DocBody[] };
+    });
+    const root = put(DOC, {
+      id: ID(1),
+      parents: [],
+      body: 'a\nb\nc\nd\n',
+      author: 'human:wyat',
+    });
+    for (const r of reps) r.h.apply(json(root), meta('rep-1', 1));
+    const edits = [
+      put(
+        DOC,
+        {
+          id: ID(2),
+          parents: [ID(1)],
+          body: 'A\nb\nc\nd\n',
+          author: 'human:wyat',
+        },
+        { meta: undefined }
+      ),
+      put(
+        DOC,
+        {
+          id: ID(3),
+          parents: [ID(1)],
+          body: 'a\nB\nc\nd\n',
+          author: 'human:wyat',
+        },
+        { meta: undefined }
+      ),
+      put(
+        DOC,
+        {
+          id: ID(4),
+          parents: [ID(1)],
+          body: 'a\nb\nC\nd\n',
+          author: 'human:wyat',
+        },
+        { meta: undefined }
+      ),
+    ];
+    edits.forEach((e, i) => {
+      for (const r of reps) r.inbox.push(e);
+      void i;
+    });
+    let clock = 10;
+    const deliver = (r: (typeof reps)[number], b: DocBody) =>
+      r.h.apply(json(b), meta('rep-1', ++clock, clock));
+    const passEnd = (r: (typeof reps)[number]) => {
+      r.h.passComplete();
+      const out = r.h
+        .pendingDocOps()
+        .filter((b) => b.revision?.cause === 'sync');
+      r.h.published(out);
+      for (const o of reps) if (o !== r) o.inbox.push(...out);
+    };
+    for (let step = 0; step < 40; step++) {
+      const r = reps[rand(3)];
+      if (r.inbox.length > 0 && rand(2) === 0)
+        deliver(r, r.inbox.splice(rand(r.inbox.length), 1)[0]);
+      else passEnd(r);
+    }
+    for (let round = 0; round < 20; round++)
+      for (const r of reps) {
+        for (const b of r.inbox.splice(0)) deliver(r, b);
+        passEnd(r);
+      }
+    return reps.map(
+      (r) => r.service.read(r.service.actorFor(OWNER), 'spec').doc.head.id
+    );
+  }
+
+  it('reaches one head on every replica, for every seed', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const heads = run(seed);
+      expect(new Set(heads).size).toBe(1);
+    }
+  });
+});

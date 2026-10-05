@@ -278,6 +278,14 @@ function clampTime(
   return { ...rev, createdAt: new Date(wall).toISOString() };
 }
 
+// A fold made by a replica: cause `sync`, by agent:dispatch, two parents.
+const isSyncMerge = (r: {
+  cause: string;
+  author: string;
+  parents: readonly string[];
+}): boolean =>
+  r.cause === 'sync' && r.author === SYSTEM_ADDRESS && r.parents.length === 2;
+
 /** How long one missing parent's dropped ops are not asked for again. */
 const REREAD_EVERY_MS = 10 * 60 * 1000;
 
@@ -821,10 +829,23 @@ export class DocOpHandler implements DocsPort {
     if (doc === null) return;
     const memo = new Map<string, boolean>();
     if (doc.headId !== '' && !service.syncGrounded(doc.headId, memo)) return;
-    const numbered = service.syncRevisions(docId).filter((r) => r.n !== null);
-    const children = new Set(numbered.flatMap((r) => r.parents));
-    const heads = numbered.filter(
-      (r) => r.sealed && !children.has(r.id) && service.syncGrounded(r.id, memo)
+    const all = service.syncRevisions(docId);
+    const numbered = all.filter((r) => r.n !== null);
+    // Sync merges are transparent: the heads folded are the content revisions
+    // no other content revision descends from, so the fold depends only on
+    // which changes a replica holds, never on the merges it made on the way.
+    const content = numbered.filter((r) => !isSyncMerge(r));
+    const byId = new Map(all.map((r) => [r.id, r]));
+    const below = new Set<string>();
+    const stack = content.flatMap((r) => r.parents);
+    while (stack.length > 0) {
+      const id = stack.pop() as string;
+      if (below.has(id)) continue;
+      below.add(id);
+      stack.push(...(byId.get(id)?.parents ?? []));
+    }
+    const heads = content.filter(
+      (r) => r.sealed && !below.has(r.id) && service.syncGrounded(r.id, memo)
     );
     if (heads.length === 0) return;
     let target = heads[0].id;
