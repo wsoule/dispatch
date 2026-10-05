@@ -1,6 +1,12 @@
 import type { JsonValue } from '@dispatch/protocol';
 import { canonicalize } from '@dispatch/protocol/federation';
-import { createPublicKey, randomBytes, sign, verify } from 'node:crypto';
+import {
+  createHash,
+  createPublicKey,
+  randomBytes,
+  sign,
+  verify,
+} from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 
 import { ecThumbprint, publicJwkOf } from '../sig/keys.js';
@@ -24,7 +30,18 @@ export interface UpgradeProof {
   name: string;
   jwk: Record<string, string>;
   at: string;
+  // The origin it is sent to, and the client credential it rides on: a proof
+  // replayed to another agent, or over another client's bearer, fails.
+  audience: string;
+  client: string;
   sig: string;
+}
+
+/** A proof's `client` binding of the bearer it is sent with. */
+export function upgradeClientBinding(bearer: string): string {
+  return createHash('sha256')
+    .update(`dispatch-a2a-upgrade-client\n${bearer}`)
+    .digest('base64url');
 }
 
 function proofBytes(p: Omit<UpgradeProof, 'sig'>): Buffer {
@@ -37,6 +54,8 @@ export function makeUpgradeProof(i: {
   privateKey: KeyObject;
   jwk: Record<string, string>;
   now: Date;
+  audience: string;
+  client: string;
 }): UpgradeProof {
   const unsigned = {
     v: 1 as const,
@@ -45,6 +64,8 @@ export function makeUpgradeProof(i: {
     name: i.name,
     jwk: publicJwkOf(i.jwk),
     at: i.now.toISOString(),
+    audience: i.audience,
+    client: i.client,
   };
   const sig = sign('sha256', proofBytes(unsigned), {
     key: i.privateKey,
@@ -57,8 +78,15 @@ export type UpgradeCheck =
   | { ok: true; proof: UpgradeProof; thumbprint: string }
   | { ok: false; reason: string };
 
-/** An upgrade proof signed by the key it carries, made within ten minutes. */
-export function checkUpgradeProof(raw: unknown, now: Date): UpgradeCheck {
+/**
+ * An upgrade proof signed by the key it carries, made within ten minutes,
+ * for this agent's origin and the bearer it arrived with.
+ */
+export function checkUpgradeProof(
+  raw: unknown,
+  now: Date,
+  expect: { audience: string; client: string }
+): UpgradeCheck {
   const bad = (reason: string): UpgradeCheck => ({ ok: false, reason });
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
     return bad('not an upgrade proof');
@@ -75,6 +103,8 @@ export function checkUpgradeProof(raw: unknown, now: Date): UpgradeCheck {
     reach === null
   )
     return bad('not an upgrade proof');
+  if (r.audience !== expect.audience || r.client !== expect.client)
+    return bad('the proof is for another agent or client');
   const at = Date.parse(r.at);
   if (Number.isNaN(at) || Math.abs(now.getTime() - at) > FRESH_MS)
     return bad('the proof is stale');
@@ -97,6 +127,8 @@ export function checkUpgradeProof(raw: unknown, now: Date): UpgradeCheck {
     name: r.name,
     jwk,
     at: r.at,
+    audience: expect.audience,
+    client: expect.client,
   };
   let verified = false;
   try {

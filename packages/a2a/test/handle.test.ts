@@ -1,5 +1,5 @@
 import { DEFAULT_A2A } from '@dispatch/core';
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import { handleA2A } from '../src/server/handle.js';
 import { IpLimiter } from '../src/server/limits.js';
@@ -66,6 +66,31 @@ async function reason(res: Response): Promise<string | undefined> {
   };
   return body.error?.details?.[0]?.reason;
 }
+
+describe('Dispatch extension routes (review N2)', () => {
+  it('counts every refusal (outside 2xx) toward the per-IP lockout', async () => {
+    const failed = spyOn(limiter, 'authFailed');
+    let status = 400;
+    port.extension = () => Promise.resolve(new Response('x', { status }));
+    await call('/a2a/v1/dispatch/upgrade', { body: {} });
+    await call('/a2a/v1/dispatch/pair', { body: {} });
+    expect(failed).toHaveBeenCalledTimes(2);
+    status = 200;
+    await call('/a2a/v1/dispatch/pair', { body: {} });
+    status = 202;
+    await call('/a2a/v1/dispatch/upgrade', { body: {} });
+    expect(failed).toHaveBeenCalledTimes(2);
+  });
+
+  it('is rate-limited per IP like the card', async () => {
+    spyOn(limiter, 'allowCard').mockReturnValue(7);
+    const extension = mock(() => Promise.resolve(new Response('{}')));
+    port.extension = extension;
+    const res = await call('/a2a/v1/dispatch/pair', { body: {} });
+    expect(res.status).toBe(429);
+    expect(extension).not.toHaveBeenCalled();
+  });
+});
 
 describe('the extensions a bearer client presents', () => {
   it('passes the A2A-Extensions header to authenticate', async () => {

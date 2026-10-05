@@ -154,17 +154,19 @@ export class KeyService {
       );
     const at = nowOf(this.d);
     const next = newPrivateJwk();
+    // Every earlier revocation stays served; a key change replaces the last.
+    const kept = this.servedStatements().filter(
+      (st) => isRecord(st) && typeof st.revoked === 'string'
+    );
     let statements: unknown[];
     if (compromised) {
       statements = inUse.map((k) =>
         makeRevocation({ oldJwk: k.jwk, oldKey: k.privateKey, at })
       );
-      // The well-known path serves one statement: the signing key's
-      // revocation, the one a peer that missed every push still pins.
       await replaceA2ASigningKeys(
         this.d.rootDir,
         next,
-        JSON.stringify(statements[0])
+        JSON.stringify([...kept, ...statements])
       );
     } else {
       const current = inUse[0];
@@ -180,7 +182,7 @@ export class KeyService {
         !(await writeA2ANextSigningKey(
           this.d.rootDir,
           { jwk: next, at: at.toISOString() },
-          JSON.stringify(statements[0])
+          JSON.stringify([...kept, ...statements])
         ))
       )
         throw new MessagingError('conflict', 'a rotation is already under way');
@@ -246,12 +248,25 @@ export class KeyService {
   }
 
   /**
-   * The statement served at KEY_STATEMENT_PATH, or null. It is only the
-   * last one: a peer two rotations behind cannot catch up from it, finds no
-   * statement for the key it pins, and must pair again.
+   * What KEY_STATEMENT_PATH serves, as a JSON array: every revocation this
+   * project made, and its latest key change. A peer more than one planned
+   * rotation behind finds no change from the key it pins, and must pair
+   * again; a revocation of any key it ever pinned always reaches it.
    */
   statement(): string | null {
     return readA2AKeyStatement(this.d.rootDir);
+  }
+
+  // The served statements, parsed; an old single statement reads as one.
+  private servedStatements(): unknown[] {
+    const text = this.statement();
+    if (text === null) return [];
+    try {
+      const v: unknown = JSON.parse(text);
+      return Array.isArray(v) ? v : [v];
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -411,18 +426,23 @@ export class KeyService {
         headers: {},
         fetchImpl: this.d.fetchImpl,
         timeoutMs: 30_000,
-        maxBodyBytes: 16 * 1024,
+        maxBodyBytes: 64 * 1024,
         guard: guard === undefined ? undefined : { field: 'cardUrl', ...guard },
       })(`${new URL(peer.cardUrl).origin}${KEY_STATEMENT_PATH}`);
       if (res.status === 200) raw = await res.json();
     } catch {
       // No statement to be had: told below.
     }
-    // Only a statement about the key this peer is pinned to counts.
-    const ours =
-      isRecord(raw) &&
-      (raw.old === peer.keyThumbprint || raw.revoked === peer.keyThumbprint);
-    if (ours && this.applyStatement(raw).ok) {
+    // Only statements about the key this peer is pinned to count.
+    const statements = Array.isArray(raw) ? raw : [raw];
+    let applied = false;
+    for (const st of statements) {
+      const ours =
+        isRecord(st) &&
+        (st.old === peer.keyThumbprint || st.revoked === peer.keyThumbprint);
+      if (ours && this.applyStatement(st).ok) applied = true;
+    }
+    if (applied) {
       this.lookedUp.delete(alias);
       return;
     }

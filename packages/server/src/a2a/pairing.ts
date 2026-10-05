@@ -392,6 +392,15 @@ export async function completePairing(
   const { proof, thumbprint } = checked;
   const reach = proof.reach;
   if (reach.kind !== 'url') return notFound();
+  // The creator must still stand at the offer's tier (XH-R3: a revoked or
+  // lowered teammate's offer completes nothing), checked before any fetch.
+  if (d.creatorTier !== undefined) {
+    const tier = d.creatorTier(row.createdBy);
+    if (tier === null || !tierAllows(tier, row.createdTier)) {
+      d.store.setPairingState(row.id, 'canceled');
+      return notFound();
+    }
+  }
   let peer: PeerRow;
   try {
     ({ row: peer } = await checkNewPeer(
@@ -407,15 +416,6 @@ export async function completePairing(
   if (!(await cardSignedBy(peer, thumbprint, proof.jwk)))
     return pairInvalid("the accepting side's card is not signed by its key");
   const key = ourKey(d);
-  // The creator must still stand at the offer's tier (XH-R3: a revoked or
-  // lowered teammate's offer completes nothing).
-  if (d.creatorTier !== undefined) {
-    const tier = d.creatorTier(row.createdBy);
-    if (tier === null || !tierAllows(tier, row.createdTier)) {
-      d.store.setPairingState(row.id, 'canceled');
-      return notFound();
-    }
-  }
   let completed = true;
   try {
     writePairedRecords(

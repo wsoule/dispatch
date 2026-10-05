@@ -160,6 +160,36 @@ describe('signedFetch', () => {
     }
   );
 
+  it('reads an error the inner fetch threw with an unverified status as unverifiable (review N1/N7)', async () => {
+    for (const thrown of [
+      new PeerHttpError(302, 'a redirect was not followed'),
+      new PeerHttpError(200, 'the body is over the cap'),
+      new PeerHttpError(401, 'an unsigned 401 page'),
+    ]) {
+      const box = {
+        status: 200 as number | null,
+        retryAfterSec: null,
+        network: false,
+        reason: null as string | null,
+      };
+      const f = signedFetch(
+        (() => Promise.reject(thrown)) as unknown as typeof fetch,
+        {
+          keyid: me.keyid,
+          privateKey: me.privateKey,
+          peerKey: peer.publicKey,
+          box,
+        }
+      );
+      const err = await f('https://peer.example.com/a2a/v1/tasks/x').catch(
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(PeerHttpError);
+      expect(err).toMatchObject({ status: null, reason: 'sig_missing' });
+      expect(box).toMatchObject({ status: null, network: true });
+    }
+  });
+
   it('passes a verified 401 through, so the caller can read its AUTH_* reason', async () => {
     const res = await post(startPeer('signed401'));
     expect(res.status).toBe(401);

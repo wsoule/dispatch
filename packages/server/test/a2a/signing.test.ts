@@ -175,9 +175,9 @@ describe('a rotation’s overlap', () => {
     expect(
       signer
         .jwks()
-        .keys.map((k) => k.kid)
-        .sort()
-    ).toEqual([k1.kid, k2.kid].sort());
+        .keys.map((k) => (typeof k.kid === 'string' ? k.kid : ''))
+        .sort((x, y) => x.localeCompare(y))
+    ).toEqual([k1.kid, k2.kid].sort((x, y) => x.localeCompare(y)));
     const f = await bridgeFixture(project.root());
     try {
       f.deps.signer = () => signer;

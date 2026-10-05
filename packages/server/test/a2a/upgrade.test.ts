@@ -5,10 +5,15 @@ import {
   publicJwkOf,
   SIG_EXTENSION_URI,
   signedFetch,
+  upgradeClientBinding,
 } from '@dispatch/a2a';
 import { readPeerCredential } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
-import { createPublicKey, generateKeyPairSync } from 'node:crypto';
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+} from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -261,6 +266,8 @@ describe('batch 4 review C1: an upgrade is approved only by the other side’s o
       privateKey,
       jwk,
       now: new Date(),
+      audience: new URL(b.listener).origin,
+      client: upgradeClientBinding(bearer),
     });
     const res = await rawFetch(`${b.listener}/a2a/v1/dispatch/upgrade`, {
       method: 'POST',
@@ -382,5 +389,119 @@ describe('batch 4 review C1: the approval comes from the paired client', () => {
       { address: await ownerOf(b), canDecide: true }
     );
     await waitFor(() => clientOf(a, 'a2a.bob').auth === 'signature', 15_000);
+  }, 30_000);
+});
+
+describe('batch 4 review N3: the upgrade proof is bound', () => {
+  it('refuses a proof made for another agent, or carried over another bearer', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    const { onB } = await bearerPair(a, b);
+    const other = await client(b, 'carol');
+    const { privateKey, publicKey } = generateKeyPairSync('ec', {
+      namedCurve: 'P-256',
+    });
+    const jwk = publicJwkOf(
+      publicKey.export({ format: 'jwk' }) as Record<string, string>
+    );
+    const post = (bearer: string, audience: string, boundTo: string) =>
+      rawFetch(`${b.listener}/a2a/v1/dispatch/upgrade`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'a2a-version': '1.0',
+          authorization: `Bearer ${bearer}`,
+        },
+        body: JSON.stringify({
+          type: 'request',
+          proof: makeUpgradeProof({
+            reach: {
+              kind: 'url',
+              card: 'https://x.example.com/.well-known/agent-card.json',
+            },
+            name: 'X',
+            privateKey,
+            jwk,
+            now: new Date(),
+            audience,
+            client: upgradeClientBinding(boundTo),
+          }),
+        }),
+      });
+    const origin = new URL(b.listener).origin;
+    expect((await post(onB, 'https://elsewhere.example.com', onB)).status).toBe(
+      400
+    );
+    expect((await post(other, origin, onB)).status).toBe(400);
+    expect(upgradeGate(b)).toBeUndefined();
+  });
+});
+
+describe('batch 4 review N4: approvals are idempotent, and a refused pin changes nothing', () => {
+  async function approveFlow(a: Daemon, b: Daemon) {
+    expect(
+      (
+        await a.call('/api/a2a/peers/bob/upgrade', {
+          body: { confirmFingerprint: fingerprintOf(b) },
+        })
+      ).status
+    ).toBe(202);
+    await waitFor(() => upgradeGate(b) !== undefined, 10_000);
+    const id = a.handle.a2a
+      .store!.pairings()
+      .find((p) => p.role === 'upgrade-out')!.id;
+    await b.handle.messaging.engine.reply(
+      upgradeGate(b)!.id,
+      { body: '', choice: 'approve' },
+      { address: await ownerOf(b), canDecide: true }
+    );
+    return id;
+  }
+
+  it('a repeated approval for the same id and key answers 200 again', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    await bearerPair(a, b);
+    const id = await approveFlow(a, b);
+    await waitFor(() => clientOf(b, 'a2a.alice').auth === 'signature', 15_000);
+    const bKey = loadOrCreateSigningKey(b.root);
+    const aKey = new CardSigner(loadOrCreateSigningKey(a.root)).publicJwk();
+    const signed = signedFetch(rawFetch, {
+      keyid: bKey.kid,
+      privateKey: createPrivateKey({ key: bKey.privateJwk, format: 'jwk' }),
+      peerKey: createPublicKey({ key: aKey, format: 'jwk' }),
+    });
+    const again = await signed(`${a.listener}/a2a/v1/dispatch/upgrade`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify({ type: 'approved', id }),
+    });
+    expect(again.status).toBe(200);
+  }, 30_000);
+
+  it('a pin the store refuses rolls the whole switch back', async () => {
+    const a = await daemon('a2a-up-a-');
+    const b = await daemon('a2a-up-b-');
+    await bearerPair(a, b);
+    // Another peer row on A already pins B's key.
+    const bKid = loadOrCreateSigningKey(b.root).kid;
+    const bJwk = new CardSigner(loadOrCreateSigningKey(b.root)).publicJwk();
+    const store = a.handle.a2a.store!;
+    store.putPeer({ ...store.getPeer('bob')!, alias: 'decoy' });
+    expect(
+      store.setPeerKey('decoy', {
+        thumbprint: bKid,
+        jwk: bJwk,
+        auth: 'signature',
+        pairedId: null,
+      })
+    ).toBe(true);
+    await approveFlow(a, b);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(store.getPeer('bob')?.auth ?? 'bearer').toBe('bearer');
+    expect(clientOf(a, 'a2a.bob').auth ?? 'bearer').toBe('bearer');
+    expect(store.pairings().find((p) => p.role === 'upgrade-out')?.state).toBe(
+      'offered'
+    );
   }, 30_000);
 });

@@ -11,6 +11,7 @@ import {
   publicJwkOf,
   signedFetch,
   signResponseFor,
+  upgradeClientBinding,
   verifyCardSignature,
   verifyRequest,
 } from '@dispatch/a2a';
@@ -21,7 +22,7 @@ import type {
   ReceivedRequest,
   RequestParts,
 } from '@dispatch/a2a';
-import { clearPeerCredential } from '@dispatch/core';
+import { clearPeerCredential, readPeerCredential } from '@dispatch/core';
 import type { Address, Message } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
 import { createPublicKey, randomBytes } from 'node:crypto';
@@ -162,12 +163,20 @@ export class Upgrades {
         'confirmFingerprint'
       );
     const key = this.key();
+    const credential = readPeerCredential(this.d.rootDir, i.alias);
+    if (credential === null)
+      throw new MessagingError(
+        'conflict',
+        `a2a:${i.alias} has no stored bearer to upgrade over`
+      );
     const proof = makeUpgradeProof({
       reach: { kind: 'url', card: i.ourCard },
       name: (this.d.policy().name ?? basename(this.d.rootDir)).slice(0, 100),
       privateKey: key.privateKey,
       jwk: key.jwk,
       now: nowOf(this.d),
+      audience: new URL(peer.interfaceUrl).origin,
+      client: upgradeClientBinding(credential.token),
     });
     const at = nowOf(this.d);
     this.record(
@@ -307,6 +316,14 @@ export class Upgrades {
    * not authenticate is an unsigned 404.
    */
   async receive(r: ReceivedRequest, publicUrl: string): Promise<Response> {
+    const parts: RequestParts = {
+      method: r.method,
+      targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,
+      headers: r.headers,
+    };
+    const repeat = this.repeatedApproval(r, publicUrl);
+    if (repeat !== null)
+      return signResponseFor(repeat, parts, this.key(), nowOf(this.d));
     const bearer = /^Bearer[ ]+(\S+)$/i.exec(
       (r.headers.get('authorization') ?? '').trim()
     )?.[1];
@@ -327,14 +344,12 @@ export class Upgrades {
       string,
       unknown
     >;
-    const parts: RequestParts = {
-      method: r.method,
-      targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,
-      headers: r.headers,
-    };
     let res: Response;
     if (body.type === 'request') {
-      res = await this.requested(auth.caller.address, body.proof);
+      res = await this.requested(auth.caller.address, body.proof, {
+        audience: new URL(publicUrl).origin,
+        client: upgradeClientBinding(bearer),
+      });
     } else if (body.type === 'approved' && typeof body.id === 'string') {
       res = this.approved(auth.caller.address, body.id, r, publicUrl);
     } else {
@@ -343,16 +358,64 @@ export class Upgrades {
     return signResponseFor(res, parts, this.key(), nowOf(this.d));
   }
 
+  // Whether `r` is signed by the key upgrade `row` confirmed.
+  private signedByRowKey(
+    row: PairingRow,
+    r: ReceivedRequest,
+    publicUrl: string
+  ): boolean {
+    const jwk = this.keyOf(row);
+    if (jwk === null || row.peerThumbprint === null) return false;
+    const now = nowOf(this.d);
+    return verifyRequest(r, {
+      configuredOrigin: new URL(publicUrl).origin,
+      keyFor: (kid) =>
+        kid === row.peerThumbprint
+          ? createPublicKey({ key: jwk, format: 'jwk' })
+          : null,
+      now,
+      guardMs: 300_000,
+      rememberNonce: (keyid, nonce, expiresAt) =>
+        this.d.store.rememberNonce(keyid, nonce, expiresAt, NONCE_CAP, now),
+    }).ok;
+  }
+
+  // An 'approved' this side already applied, sent again (its first reply was
+  // lost): the bearer it came over is gone, so the confirmed key's signature
+  // alone answers it, with the same 200 (review N4). Null for anything else.
+  private repeatedApproval(
+    r: ReceivedRequest,
+    publicUrl: string
+  ): Response | null {
+    let raw: unknown = null;
+    try {
+      raw = JSON.parse(new TextDecoder().decode(r.body ?? new Uint8Array()));
+    } catch {
+      return null;
+    }
+    const body = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<
+      string,
+      unknown
+    >;
+    if (body.type !== 'approved' || typeof body.id !== 'string') return null;
+    const row = this.d.store.pairing(body.id);
+    if (row?.role !== 'upgrade-out' || row.state !== 'completed') return null;
+    return this.signedByRowKey(row, r, publicUrl)
+      ? Response.json({ upgraded: true })
+      : notFound();
+  }
+
   // The other side asks: the client it is (`address`) proves a key; the
   // owner decides. The peer row for that side is the one whose stored card
   // that key signed.
   private async requested(
     address: Address,
-    rawProof: unknown
+    rawProof: unknown,
+    expect: { audience: string; client: string }
   ): Promise<Response> {
     const client = this.d.store.getClient(address);
     if (client === null) return notFound();
-    const checked = checkUpgradeProof(rawProof, nowOf(this.d));
+    const checked = checkUpgradeProof(rawProof, nowOf(this.d), expect);
     if (!checked.ok)
       return Response.json({ error: checked.reason }, { status: 400 });
     const { proof, thumbprint } = checked;
@@ -499,20 +562,8 @@ export class Upgrades {
     if (row?.role !== 'upgrade-out' || row.state !== 'offered')
       return notFound();
     const jwk = this.keyOf(row);
-    if (jwk === null || row.peerThumbprint === null) return notFound();
-    const now = nowOf(this.d);
-    const verdict = verifyRequest(r, {
-      configuredOrigin: new URL(publicUrl).origin,
-      keyFor: (kid) =>
-        kid === row.peerThumbprint
-          ? createPublicKey({ key: jwk, format: 'jwk' })
-          : null,
-      now,
-      guardMs: 300_000,
-      rememberNonce: (keyid, nonce, expiresAt) =>
-        this.d.store.rememberNonce(keyid, nonce, expiresAt, NONCE_CAP, now),
-    });
-    if (!verdict.ok) return notFound();
+    if (jwk === null || !this.signedByRowKey(row, r, publicUrl))
+      return notFound();
     // Over the bearer of the client named at start; with none named, only an
     // approved bearer client with no pin yet.
     const named = this.d.store
@@ -529,9 +580,14 @@ export class Upgrades {
           agent?.status !== 'approved'
     )
       return notFound();
-    this.d.store.deleteNotice('upgrade-client', id);
     const peer = this.d.store.getPeer(row.alias);
-    this.switchToSignatures(row, jwk, address, peer);
+    try {
+      this.switchToSignatures(row, jwk, address, peer);
+    } catch (err) {
+      if (!(err instanceof MessagingError)) throw err;
+      return Response.json({ error: err.message }, { status: 409 });
+    }
+    this.d.store.deleteNotice('upgrade-client', id);
     return Response.json({ upgraded: true });
   }
 
@@ -556,9 +612,16 @@ export class Upgrades {
           'conflict',
           'the upgrade was settled meanwhile'
         );
-      if (this.d.store.getClient(clientAddress) !== null)
-        this.d.store.setClientKey(clientAddress, pin);
-      if (peer !== null) this.d.store.setPeerKey(peer.alias, pin);
+      // A pin the store refuses (the key is pinned elsewhere) rolls it all back.
+      const refused = () =>
+        new MessagingError('conflict', 'that key is already pinned here');
+      if (
+        this.d.store.getClient(clientAddress) !== null &&
+        !this.d.store.setClientKey(clientAddress, pin)
+      )
+        throw refused();
+      if (peer !== null && !this.d.store.setPeerKey(peer.alias, pin))
+        throw refused();
       this.d.store.recordKeyEvent({
         thumbprint: pin.thumbprint,
         event: 'pinned',

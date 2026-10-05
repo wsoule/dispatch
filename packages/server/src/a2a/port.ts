@@ -335,6 +335,7 @@ export class DaemonBridgePort implements BridgePort {
 
   // A bearer client, refused under a2a.requireSignedDispatchPeers once its
   // agent has named the signature extension (remembered from `presented`).
+  // The client chooses to name it: a migration nudge, not a boundary.
   authenticate(bearer: string, presented?: string[]): Promise<AuthResult> {
     return settle(() => {
       const result = authenticateA2AClient(

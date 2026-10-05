@@ -147,6 +147,13 @@ loopback tunnel shares one budget, which is safe. To check a proxy, send a
 request with `X-Forwarded-For: 192.0.2.1` through it: the listener's access log
 should show your real address, not `192.0.2.1`.
 
+`a2a.requireSignedDispatchPeers: true` in config.yml refuses bearer tokens from
+any client whose requests once named Dispatch's signature extension, so a
+Dispatch peer that can sign stops falling back to its bearer. The client names
+the extension itself, so one that never does keeps its bearer: this setting is a
+migration nudge for well-behaved Dispatch agents, not a security boundary.
+Upgrade or pair a peer to stop its bearer for good.
+
 ### Tailscale
 
 Within your tailnet (needs MagicDNS and HTTPS certificates on the tailnet):

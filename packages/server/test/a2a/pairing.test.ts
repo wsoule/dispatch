@@ -627,3 +627,45 @@ describe('what the API shows of pairings and keys (T46)', () => {
     expect(after.next?.fingerprint).not.toBe(a2aFingerprint(kid));
   });
 });
+
+describe('batch 4 review K1 nit: the creator is checked before any fetch', () => {
+  it('a revoked creator’s offer completes nothing and fetches nothing', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const ada = a.handle.team.teammates.issue('ada', 'operator');
+    const { code } = await offer(a, 'bob', ada);
+    a.handle.team.teammates.revoke('ada');
+    let fetches = 0;
+    const card = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => {
+        fetches++;
+        return new Response('{}');
+      },
+    });
+    try {
+      const { privateKey, publicKey } = generateKeyPairSync('ec', {
+        namedCurve: 'P-256',
+      });
+      const proof = makeProof({
+        code: decodePairingCode(code, new Date()),
+        reach: {
+          kind: 'url',
+          card: `http://127.0.0.1:${card.port}/.well-known/agent-card.json`,
+        },
+        name: 'Bob',
+        privateKey,
+        jwk: publicKey.export({ format: 'jwk' }) as Record<string, string>,
+      });
+      const res = await rawFetch(`${a.listener}/a2a/v1/dispatch/pair`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+        body: JSON.stringify(proof),
+      });
+      expect(res.status).toBe(404);
+      expect(fetches).toBe(0);
+    } finally {
+      await card.stop(true);
+    }
+  });
+});

@@ -186,7 +186,11 @@ export {
   pairingStatus,
 } from './pair/code.js';
 export type { PairingCode, PairingProof } from './pair/code.js';
-export { checkUpgradeProof, makeUpgradeProof } from './pair/upgrade.js';
+export {
+  checkUpgradeProof,
+  makeUpgradeProof,
+  upgradeClientBinding,
+} from './pair/upgrade.js';
 export type { UpgradeProof } from './pair/upgrade.js';
 export type { Reach } from './pair/reach.js';
 export { a2aFingerprint, ecThumbprint, publicJwkOf, sas } from './sig/keys.js';

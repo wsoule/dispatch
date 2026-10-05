@@ -22,6 +22,10 @@ describe('README: reaching your agent', () => {
     expect(README).toMatch(/trustForwardedFor[^.]*only\s+when[^.]*appends/i);
   });
 
+  it('calls requireSignedDispatchPeers a migration nudge, not a boundary', () => {
+    expect(README).toMatch(/requireSignedDispatchPeers[^]*?migration\s+nudge/i);
+  });
+
   it('says a standalone host cannot carry a bearer-to-signature upgrade yet', () => {
     expect(README).toMatch(
       /upgrading[^.]*standalone\s+host[^.]*not\s+supported/i

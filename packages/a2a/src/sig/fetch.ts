@@ -71,14 +71,48 @@ export function signedFetch(
     });
     for (const [name, value] of Object.entries(signed))
       headers.set(name, value);
-    const res = await inner(targetUri, {
-      ...init,
-      method,
-      headers,
-      ...(body === null ? {} : { body }),
-    });
+    // An error the inner fetch threw with a status (an unfollowed redirect,
+    // an oversized body) came from a reply nobody verified: unverifiable,
+    // never a credential verdict (review N1/N7).
+    const unverified = (reason: string, message: string): PeerHttpError => {
+      if (o.box !== undefined) {
+        o.box.status = null;
+        o.box.reason = reason;
+        o.box.network = true;
+      }
+      return new PeerHttpError(null, message, null, reason);
+    };
+    let res: Response;
+    try {
+      res = await inner(targetUri, {
+        ...init,
+        method,
+        headers,
+        ...(body === null ? {} : { body }),
+      });
+    } catch (err) {
+      if (err instanceof PeerHttpError && err.status !== null)
+        throw unverified(
+          'sig_missing',
+          `the peer's reply could not be verified (${err.message})`
+        );
+      throw err;
+    }
     const stream = isEventStream(res.headers);
-    const bytes = stream ? null : new Uint8Array(await res.arrayBuffer());
+    let bytes: Uint8Array | null = null;
+    if (!stream) {
+      try {
+        bytes = new Uint8Array(await res.arrayBuffer());
+      } catch (err) {
+        // A body over the cap, cut off before it could be verified.
+        if (err instanceof PeerHttpError)
+          throw unverified(
+            'sig_missing',
+            `the peer's reply could not be verified (${err.message})`
+          );
+        throw err;
+      }
+    }
     const verdict = verifyResponse(
       { status: res.status, headers: res.headers, body: bytes },
       { method, targetUri, headers },
@@ -90,19 +124,11 @@ export function signedFetch(
     );
     // Unverifiable is never a credential verdict: a proxy's 502, a peer's
     // stale clock or a stripped header retries like a network fault.
-    if (!verdict.ok) {
-      if (o.box !== undefined) {
-        o.box.status = null;
-        o.box.reason = verdict.reason;
-        o.box.network = true;
-      }
-      throw new PeerHttpError(
-        null,
-        `the peer's reply could not be verified (${verdict.reason})`,
-        null,
-        verdict.reason
+    if (!verdict.ok)
+      throw unverified(
+        verdict.reason,
+        `the peer's reply could not be verified (${verdict.reason})`
       );
-    }
     return new Response(stream ? res.body : bytes, {
       status: res.status,
       statusText: res.statusText,

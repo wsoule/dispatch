@@ -852,18 +852,24 @@ export async function handleA2A(
     if (!url.pathname.startsWith(`${options.basePath}/`))
       return new Response('not found', { status: 404 });
     if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
-    // Dispatch extension routes: each authenticates its own body or
-    // signature, so their refusals count toward the per-IP lockout.
+    // Dispatch extension routes: each authenticates its own body,
+    // signature or bearer.
     const ext = EXTENSION.exec(url.pathname.slice(options.basePath.length));
     if (
       req.method === 'POST' &&
       url.pathname.startsWith(options.basePath) &&
       ext !== null
     ) {
+      // Rate-limited like the card; any refusal (outside 2xx: an upgrade
+      // request's 202 is a success) counts toward the lockout, since each
+      // route checks a proof, signature or bearer.
+      const wait = options.limiter.allowCard(options.clientIp);
+      if (wait !== null) return rateLimited(wait);
       if (port.extension === undefined)
         return new Response('not found', { status: 404 });
       const res = await port.extension(ext[1] as ExtensionRoute, req);
-      if (res.status === 404) options.limiter.authFailed(options.clientIp);
+      if (res.status < 200 || res.status >= 300)
+        options.limiter.authFailed(options.clientIp);
       return res;
     }
     const route = matchRoute(

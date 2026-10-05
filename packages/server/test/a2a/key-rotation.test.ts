@@ -375,3 +375,26 @@ describe('batch 3 review: K2, K3', () => {
     );
   }, 30_000);
 });
+
+describe('batch 4 review N5: the well-known path serves every revocation', () => {
+  it('lists both revocations after a compromise during an overlap, and a peer pinned to either drops', async () => {
+    const a = await daemon('a2a-keys-a-');
+    const b = await daemon('a2a-keys-b-');
+    await paired(a, b);
+    const k1 = kidOf(a.root);
+    await rotate(a);
+    const next = readA2ANextSigningKey(a.root);
+    if (next.status !== 'ok') throw new Error('no next key');
+    const k2 = ecThumbprint(publicJwkOf(next.next.jwk))!;
+    await rotate(a, true);
+    const res = await rawFetch(
+      `${a.listener}/.well-known/dispatch-a2a-key-change.json`
+    );
+    expect(res.status).toBe(200);
+    const served = (await res.json()) as { revoked?: string }[];
+    expect(Array.isArray(served)).toBe(true);
+    expect(
+      served.map((s) => s.revoked ?? '').sort((x, y) => x.localeCompare(y))
+    ).toEqual([k1, k2].sort((x, y) => x.localeCompare(y)));
+  }, 30_000);
+});
