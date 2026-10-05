@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
@@ -52,6 +53,8 @@ export interface PersistedToken {
 export interface TokenStore {
   load: () => PersistedToken[];
   save: (tokens: PersistedToken[]) => void;
+  /** What went wrong with the file, for /api/health. */
+  problems?: () => string[];
 }
 
 interface Entry {
@@ -95,42 +98,61 @@ function validExpiry(value: unknown): boolean {
 }
 
 /** A TokenStore over one JSON file, written 0600 because even hashes are
- *  nobody else's business. A missing or unreadable file loads as empty: the
- *  worst outcome is that teammates must be issued fresh tokens, never that
- *  the daemon refuses to boot. */
+ *  nobody else's business. A missing file loads as empty; an unreadable one is
+ *  moved aside to `.corrupt-<ts>` with a problem, so a save never overwrites
+ *  credentials someone may still recover. Saves go through a temp file and a
+ *  rename, so a crash leaves the old file or the new one, never half of one. */
 export function fileTokenStore(path: string): TokenStore {
+  const problems: string[] = [];
+  // Reads the file; null when it is missing, 'unreadable' when it will not parse.
+  const read = (): unknown[] | null | 'unreadable' => {
+    if (!existsSync(path)) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+      return Array.isArray(parsed) ? parsed : 'unreadable';
+    } catch {
+      return 'unreadable';
+    }
+  };
+  const moveAside = (): void => {
+    const aside = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    renameSync(path, aside);
+    const problem = `team token file ${path} was unreadable; moved to ${aside}. Issue teammates fresh tokens, or repair it and restart.`;
+    problems.push(problem);
+    console.error(`dispatchd: ${problem}`);
+  };
   return {
     load: () => {
-      if (!existsSync(path)) return [];
-      try {
-        const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-        if (!Array.isArray(parsed)) return [];
-        return parsed.filter(
-          (t): t is PersistedToken =>
-            typeof t === 'object' &&
-            t !== null &&
-            typeof (t as PersistedToken).handle === 'string' &&
-            isAuthTier((t as PersistedToken).tier) &&
-            typeof (t as PersistedToken).hash === 'string' &&
-            /^[0-9a-f]{64}$/.test((t as PersistedToken).hash) &&
-            validExpiry((t as PersistedToken).expiresAt)
-        );
-      } catch {
-        console.error(
-          `dispatchd: ignoring unreadable team token file ${path}; issue teammates fresh tokens`
-        );
+      const parsed = read();
+      if (parsed === null) return [];
+      if (parsed === 'unreadable') {
+        moveAside();
         return [];
       }
+      return parsed.filter(
+        (t): t is PersistedToken =>
+          typeof t === 'object' &&
+          t !== null &&
+          typeof (t as PersistedToken).handle === 'string' &&
+          isAuthTier((t as PersistedToken).tier) &&
+          typeof (t as PersistedToken).hash === 'string' &&
+          /^[0-9a-f]{64}$/.test((t as PersistedToken).hash) &&
+          validExpiry((t as PersistedToken).expiresAt)
+      );
     },
     save: (tokens) => {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+      if (read() === 'unreadable') moveAside();
+      const temp = `${path}.tmp-${process.pid}`;
+      writeFileSync(temp, JSON.stringify(tokens, null, 2), { mode: 0o600 });
       try {
-        chmodSync(path, 0o600);
+        chmodSync(temp, 0o600);
       } catch {
         // A filesystem without POSIX modes is not a reason to fail the write.
       }
+      renameSync(temp, path);
     },
+    problems: () => [...problems],
   };
 }
 
@@ -146,6 +168,9 @@ interface TeammateOptions {
   /** The sentence to refuse with when the seats are taken. */
   seatMessage?: (seats: number) => string;
   clock?: () => Date;
+  /** Whoever runs the daemon; a token for their handle (issued before that
+   *  was refused) authenticates no one and takes no seat. */
+  operatorHandle?: string;
 }
 
 /**
@@ -158,8 +183,10 @@ export class TeammateTokens implements CredentialSource {
   private readonly seats: () => number;
   private readonly seatMessage: (seats: number) => string;
   private readonly clock: () => Date;
+  private readonly operatorHandle: string | null;
 
   constructor(opts: TeammateOptions = {}) {
+    this.operatorHandle = opts.operatorHandle ?? null;
     this.store = opts.store ?? MEMORY_ONLY;
     this.seats = opts.seats ?? (() => Number.POSITIVE_INFINITY);
     this.seatMessage =
@@ -189,6 +216,11 @@ export class TeammateTokens implements CredentialSource {
     return e.expiresAt === null || now < Date.parse(e.expiresAt);
   }
 
+  // A live token that can authenticate: never one for the operator's handle.
+  private usable(e: Entry, now: number): boolean {
+    return e.handle !== this.operatorHandle && this.live(e, now);
+  }
+
   /**
    * The teammates the license covers right now: the earliest-invited handles
    * holding a live token, as many as fit beside the operator. Earliest first
@@ -199,7 +231,7 @@ export class TeammateTokens implements CredentialSource {
     const room = Math.max(this.seats() - 1, 0);
     const byFirstIssue = new Map<string, number>();
     for (const e of this.entries) {
-      if (!this.live(e, now)) continue;
+      if (!this.usable(e, now)) continue;
       const at = Date.parse(e.issuedAt);
       const seen = byFirstIssue.get(e.handle);
       if (seen === undefined || at < seen) byFirstIssue.set(e.handle, at);
@@ -216,7 +248,8 @@ export class TeammateTokens implements CredentialSource {
 
   lookup(digest: Buffer): TokenLookup {
     const entry = this.entries.find((e) => timingSafeEqual(digest, e.hash));
-    if (entry === undefined) return { kind: 'unknown' };
+    if (entry === undefined || entry.handle === this.operatorHandle)
+      return { kind: 'unknown' };
     const now = this.clock();
     if (!this.live(entry, now.getTime())) {
       return {
@@ -260,12 +293,17 @@ export class TeammateTokens implements CredentialSource {
   }
 
   /** How many people have access now, the operator included. */
+  /** What went wrong with the token file, for /api/health. */
+  problems(): string[] {
+    return this.store.problems?.() ?? [];
+  }
+
   peopleWithAccess(): number {
     const now = this.clock().getTime();
     return (
       1 +
       new Set(
-        this.entries.filter((e) => this.live(e, now)).map((e) => e.handle)
+        this.entries.filter((e) => this.usable(e, now)).map((e) => e.handle)
       ).size
     );
   }
@@ -289,7 +327,7 @@ export class TeammateTokens implements CredentialSource {
     const now = this.clock().getTime();
     const others = new Set(
       this.entries
-        .filter((e) => e.handle !== handle && this.live(e, now))
+        .filter((e) => e.handle !== handle && this.usable(e, now))
         .map((e) => e.handle)
     );
     const seats = this.seats();
@@ -328,7 +366,15 @@ export class TeammateTokens implements CredentialSource {
       expiresAt: e.expiresAt,
       lastUsedAt: e.lastUsedAt,
       expired: !this.live(e, now),
+      unusable: e.handle === this.operatorHandle,
     }));
+  }
+
+  /** Whether `handle` holds a live, usable token right now: what an agent,
+   *  run or socket acting for them is checked against after a revoke. */
+  hasAccess(handle: string): boolean {
+    const now = this.clock().getTime();
+    return this.entries.some((e) => e.handle === handle && this.usable(e, now));
   }
 
   /** The tier a teammate's issued token carries, or null when they hold

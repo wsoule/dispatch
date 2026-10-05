@@ -15,7 +15,9 @@ export type PolicyGate =
   | 'approval'
   | 'verify-retry'
   | 'merge'
-  | 'wake';
+  | 'wake'
+  | 'memory'
+  | 'doc';
 
 /** Runtime counterpart of PolicyGate — see the note on FINDING_SEVERITIES. */
 export const POLICY_GATES: readonly PolicyGate[] = [
@@ -24,6 +26,8 @@ export const POLICY_GATES: readonly PolicyGate[] = [
   'verify-retry',
   'merge',
   'wake',
+  'memory',
+  'doc',
 ];
 
 /**
@@ -47,7 +51,11 @@ export const POLICY_RUNGS: readonly PolicyRungDef[] = [
     name: 'auto-verify',
     label: 'Auto-review, fix and retry verification',
   },
-  { rung: 4, name: 'auto-merge', label: 'Auto-merge on green' },
+  {
+    rung: 4,
+    name: 'auto-merge',
+    label: "Auto-merge on green and accept agents' team memory and doc edits",
+  },
 ];
 
 export const MIN_POLICY_RUNG = 1;
@@ -63,6 +71,9 @@ export const MAX_POLICY_RUNG = 4;
  * - verify-retry: igniting the review→fix loop and re-running a red verify.
  * - merge: handing a green run to the merge queue.
  * - wake: rousing a sleeping agent to deliver it a message.
+ * - memory: an agent's lesson joining project or team memory.
+ * - doc: an agent's edit to an accepted team doc (every run that links the doc
+ *   reads it).
  */
 export const GATE_RUNGS: Record<PolicyGate, number> = {
   scope: 2,
@@ -70,6 +81,8 @@ export const GATE_RUNGS: Record<PolicyGate, number> = {
   'verify-retry': 3,
   wake: 3,
   merge: 4,
+  memory: 4,
+  doc: 4,
 };
 
 /**
@@ -256,15 +269,14 @@ export function describeFloorHold(check: FloorCheck): string {
 /**
  * The one-line provenance a recorded auto-decision carries in the ledger, so
  * every gate phrases its authorization identically and the receipt names the
- * exact rung that permitted it.
+ * exact rung and the gate it decided.
  */
 export function describePolicyAuthorization(
   ruling: Extract<PolicyRuling, { mode: 'auto' }>
 ): string {
-  const stop = POLICY_RUNGS.find((r) => r.rung === GATE_RUNGS[ruling.gate]);
   const source =
     ruling.authorizedBy === 'override'
       ? `a per-gate override (effective rung ${ruling.rung})`
-      : `policy rung ${ruling.rung} (${stop?.name ?? ruling.gate})`;
+      : `policy rung ${ruling.rung} (${ruling.gate} gate)`;
   return `auto-decided by ${source}`;
 }

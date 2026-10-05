@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { ApiError, createApiClient } from '../src/api';
-import type { ApiClient, GateData } from '../src/api';
+import type { ApiClient, GateData, Ref, RefType } from '../src/api';
 
 // Captures the (url, init) a stubbed `fetch` was called with. Mirrors
 // api.test.ts's helper — kept local since neither helper is exported.
@@ -86,6 +86,30 @@ describe('getMessage', () => {
       await createApiClient(BASE).getMessage('m-abc123');
       expect(stub.calls[0].url).toBe(`${BASE}/api/messages/m-abc123`);
       expect(stub.calls[0].init?.method).toBeUndefined();
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe('Ref', () => {
+  // A message received from a peer keeps a ref type this client does not
+  // register, so a branch on the type needs a default.
+  it('names the registered types and holds any other a peer sends', async () => {
+    const stub = stubFetch({
+      id: 'm-abc123',
+      refs: [
+        { type: 'task', id: 't-000001' },
+        { type: 'wiki', id: 'handbook' },
+      ],
+    });
+    try {
+      const message = await createApiClient(BASE).getMessage('m-abc123');
+      const known: RefType[] = ['task', 'run', 'file', 'commit', 'message'];
+      const kinds = message.refs.map((ref: Ref) =>
+        (known as readonly string[]).includes(ref.type) ? ref.type : 'other'
+      );
+      expect(kinds).toEqual(['task', 'other']);
     } finally {
       stub.restore();
     }
@@ -406,6 +430,38 @@ describe('openDecisions', () => {
       expect(data.type === 'agent-registration' ? data.requestedBy : null).toBe(
         'human:ada'
       );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('types a task proposal’s draft and proposer', async () => {
+    const gate: GateData = {
+      type: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      message: 'm-root',
+    };
+    const stub = stubFetch({ items: [{ id: 'm-1', data: gate }] });
+    try {
+      const { items } = await createApiClient(BASE).openDecisions();
+      const data = items[0]?.data as GateData;
+      expect(data.type === 'task-proposal' ? data.task : null).toBe('t-a1b2c3');
+      expect(data.type === 'task-proposal' ? data.proposedBy : null).toBe(
+        'agent:wyat/a2a.acme'
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('types a doc gate’s doc and proposal', async () => {
+    const gate: GateData = { type: 'doc', doc: 'doc-1', proposal: 'rev-1' };
+    const stub = stubFetch({ items: [{ id: 'm-1', data: gate }] });
+    try {
+      const { items } = await createApiClient(BASE).openDecisions();
+      const data = items[0]?.data as GateData;
+      expect(data.type === 'doc' ? data.proposal : null).toBe('rev-1');
     } finally {
       stub.restore();
     }

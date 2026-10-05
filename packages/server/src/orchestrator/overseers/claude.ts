@@ -10,6 +10,7 @@ import type {
   Query,
   SdkMcpToolDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
+import { childEnv } from '@dispatch/core';
 import type { z } from 'zod';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
@@ -209,6 +210,7 @@ export class ClaudeOverseer implements OverseerBackend {
             }
             return decision;
           };
+    const floor = floorGuard(holdForHuman);
     const options: Options = {
       cwd: this.rootDir,
       // Pre-approves the registry's own tools; everything else still reaches
@@ -250,15 +252,16 @@ export class ClaudeOverseer implements OverseerBackend {
       // skip canUseTool or let a settings PermissionRequest hook answer first
       // (see floorGuard). With no one to ask, the call is refused, as
       // canUseTool refuses it.
-      ...floorGuard(holdForHuman),
+      hooks: floor.hooks,
+      settings: floor.settings,
       // No background tasks: a sub-agent or shell that outlives the turn keeps
       // running after the query closes, when nothing can answer the floor
       // hook, and under bypassPermissions a background sub-agent's floor
       // command then ran, held or not (reproduced against the bundled CLI).
       // Sub-agents run inside the turn instead, so a held call keeps the turn
       // open until the human answers. `env` replaces the CLI's environment,
-      // hence the spread.
-      env: { ...process.env, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' },
+      // so it is the daemon's own, less its tokens.
+      env: childEnv({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' }),
       mcpServers: {
         [SERVER_NAME]: createSdkMcpServer({
           name: SERVER_NAME,
@@ -292,6 +295,8 @@ export class ClaudeOverseer implements OverseerBackend {
 
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
     // PATH `claude` -> install hint) the executor and planner use.
+    // Auto memory stays off: request-tier callers read overseer transcripts,
+    // so the owner's native Claude notes never load here.
     const sdkQuery: Query = openClaudeQuery(this.queryFn, prompt, options);
 
     try {

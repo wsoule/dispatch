@@ -68,10 +68,7 @@ fn default_rates() -> &'static Rates {
 /// Longest-prefix match over every non-`_default` key in the pricing table — handles
 /// versioned/dated suffixes on a known model family (e.g. a future
 /// `claude-opus-4-8-20260115` matches the `claude-opus-4-8` entry).
-fn longest_prefix_match<'a>(
-    table: &'a HashMap<String, Rates>,
-    model: &str,
-) -> Option<&'a Rates> {
+fn longest_prefix_match<'a>(table: &'a HashMap<String, Rates>, model: &str) -> Option<&'a Rates> {
     table
         .iter()
         .filter(|(key, _)| key.as_str() != DEFAULT_KEY && model.starts_with(key.as_str()))
@@ -215,13 +212,25 @@ mod tests {
     fn sentinel_model_is_non_billable_not_default() {
         // `<synthetic>` is a real sentinel value seen in Claude Code logs - must resolve to
         // exactly 0.0, not silently fall through to _default rates.
-        let cost = cost_usd(Some("<synthetic>"), 1_000_000, 1_000_000, 1_000_000, 1_000_000);
+        let cost = cost_usd(
+            Some("<synthetic>"),
+            1_000_000,
+            1_000_000,
+            1_000_000,
+            1_000_000,
+        );
         assert_eq!(cost, 0.0);
     }
 
     #[test]
     fn unrecognized_model_string_falls_back_to_default_rates() {
-        let cost = cost_usd(Some("some-totally-unknown-future-model"), 1_000_000, 0, 0, 0);
+        let cost = cost_usd(
+            Some("some-totally-unknown-future-model"),
+            1_000_000,
+            0,
+            0,
+            0,
+        );
         // _default input rate is 3.0 per resources/pricing.json.
         assert_eq!(cost, 3.0);
     }

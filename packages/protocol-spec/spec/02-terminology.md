@@ -78,7 +78,8 @@ or the system address. No other address decides
 **Owner.** The human a host names for a target: it is asked whether to wake the
 target, and told when agents are stopped from looping in a thread or when an
 answer to a gate is set aside. Each host chooses its owners; Dispatch names the
-project owner.
+project owner, or the human a session acts for
+([Appendix C](appendix-c-dispatch-profile.md#sC.2)).
 
 **Participant.** Of a message: its sender, or a recipient of one of its
 deliveries, where a session also counts for every address it acts for and for

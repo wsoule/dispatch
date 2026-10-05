@@ -154,19 +154,38 @@ describe('doctor', () => {
     );
   });
 
-  it('flags a parent that is not an epic', async () => {
+  it('flags a parent narrower than its child', async () => {
     await run('task', 'create', 'Sibling');
     const tasksDir = join(root, '.dispatch/tasks');
     const [sibling] = readdirSync(tasksDir).filter((f) => f.endsWith('.md'));
     const siblingId = sibling.split('-').slice(0, 2).join('-');
-    await run('task', 'create', 'Child', '--parent', siblingId);
+    await run(
+      'task',
+      'create',
+      'Child',
+      '--kind',
+      'project',
+      '--parent',
+      siblingId
+    );
     lines = [];
     await expect(run('doctor', '--json')).rejects.toThrow(/1 issue/);
     const report = JSON.parse(lines.join('\n'));
     expect(report.issues).toHaveLength(1);
     expect(report.issues[0].problem).toBe(
-      `parent is not an epic: ${siblingId}`
+      `a task cannot parent a project: ${siblingId}`
     );
+  });
+
+  it('does not flag a sub-issue under a task', async () => {
+    await run('task', 'create', 'Parent issue');
+    const tasksDir = join(root, '.dispatch/tasks');
+    const [parent] = readdirSync(tasksDir).filter((f) => f.endsWith('.md'));
+    const parentId = parent.split('-').slice(0, 2).join('-');
+    await run('task', 'create', 'Sub-issue', '--parent', parentId);
+    lines = [];
+    await run('doctor');
+    expect(lines.join('\n')).toMatch(/ok — 2 tasks/);
   });
 
   it('does not flag a parent that is an epic', async () => {

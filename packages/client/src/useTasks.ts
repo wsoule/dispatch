@@ -45,12 +45,12 @@ export function useTasks(baseUrl: string, token?: string): UseTasksResult {
         const [taskList, cfg, ready] = await Promise.all([
           client.fetchTasks(),
           client.fetchConfig(),
-          client.fetchReadyTasks(),
+          client.fetchReadyTaskIds(),
         ]);
         if (cancelled) return;
         setTasks(taskList);
         setConfig(cfg);
-        setReadyIds(new Set(ready.map((t) => t.meta.id)));
+        setReadyIds(new Set(ready.map((t) => t.id)));
         setError(null);
       } catch (err) {
         if (!cancelled) {

@@ -2,6 +2,7 @@ import type { AgentSummary, MailboxItem, Message } from '@dispatch/client';
 import { describe, expect, it } from 'bun:test';
 
 import type { MessageAccess } from './daemonAuth';
+import { taskDoc } from './taskDoc.test-helper';
 import {
   addressAction,
   hasAnswerButtons,
@@ -95,7 +96,7 @@ const scopeGate = msg('m-s', {
   data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
 });
 const lookups = threadLookups(
-  [{ meta: { id: 't-000001', title: 'Checkout' } }],
+  [taskDoc({ id: 't-000001', title: 'Checkout' })],
   [{ id: 'r-000001', taskId: 't-000001' }],
   [
     agent('agent:wyat/old', { status: 'revoked' }),
@@ -233,6 +234,140 @@ describe('rowControl', () => {
       truncated: true,
       call: { conversation: 'o-000001', requestId: 'req-1' },
     });
+  });
+
+  it('gives a decider the memory card for a memory gate, and a teammate the reason', () => {
+    const memoryGate = msg('m-mem', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data: {
+        type: 'memory',
+        proposalId: 'mp-000001',
+        action: 'add',
+        scope: 'team',
+        kind: 'hazard',
+      },
+    });
+    const decider = rowControl(memoryGate, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({ kind: 'memory', proposalId: 'mp-000001' });
+    expect(offersAnswer(decider)).toBe(true);
+    expect(
+      rowControl(memoryGate, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+  });
+
+  it("gives a decider the doc card for the system's doc gate, and a look-alike only its choices", () => {
+    const data = { type: 'doc', doc: 'doc-1', proposal: 'rev-p', runId: 'r-1' };
+    const docGate = msg('m-doc', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data,
+    });
+    const decider = rowControl(docGate, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({ kind: 'doc', doc: 'doc-1', proposal: 'rev-p' });
+    expect(offersAnswer(decider)).toBe(true);
+    expect(
+      rowControl(docGate, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+    for (const bad of [
+      { type: 'doc', doc: 7, proposal: 'rev-p' },
+      { type: 'doc', doc: 'doc-1', proposal: 7 },
+      { type: 'doc', doc: 'doc-1' },
+    ]) {
+      const malformed = { ...docGate, data: bad };
+      expect(
+        rowControl(malformed as unknown as Message, {
+          me: ME,
+          open: true,
+          access: DECIDER,
+        })
+      ).toEqual({
+        kind: 'choices',
+        choices: ['approve', 'reject'],
+        gate: true,
+      });
+    }
+    const lookAlike = { ...docGate, from: 'agent:wyat/impostor' };
+    expect(
+      rowControl(lookAlike, { me: ME, open: true, access: DECIDER })
+    ).toEqual({ kind: 'choices', choices: ['approve', 'reject'], gate: true });
+  });
+
+  it('gives everyone who sees a task proposal its card, with answers only for a decider', () => {
+    const proposal = msg('m-p', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'decline'],
+      data: {
+        type: 'task-proposal',
+        task: 't-a1b2c3',
+        proposedBy: 'agent:wyat/a2a.acme',
+        message: 'm-root',
+      },
+    });
+    const decider = rowControl(proposal, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({
+      kind: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      canDecide: true,
+    });
+    expect(offersAnswer(decider)).toBe(true);
+    const teammate = rowControl(proposal, {
+      me: ME,
+      open: true,
+      access: TEAMMATE,
+    });
+    expect(teammate).toEqual({
+      kind: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      canDecide: false,
+    });
+    expect(offersAnswer(teammate)).toBe(false);
+    expect(
+      hasAnswerButtons([proposal], {
+        me: ME,
+        openIds: new Set(['m-p']),
+        access: TEAMMATE,
+      })
+    ).toBe(false);
+    expect(
+      rowControl(proposal, { me: ME, open: false, access: DECIDER })
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('shows a system gate of an unknown type as a decision card to a decider, and read-only to a teammate', () => {
+    const unknown = msg('m-u', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data: { type: 'future-gate', ref: 'x' },
+    });
+    expect(
+      rowControl(unknown, { me: ME, open: true, access: DECIDER })
+    ).toEqual({ kind: 'choices', choices: ['approve', 'reject'], gate: true });
+    expect(
+      rowControl(unknown, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
   });
 
   it('offers nothing once answered or to someone else, and says why an agent window cannot answer', () => {
@@ -685,6 +820,11 @@ describe('replyRoute', () => {
 });
 
 describe('refs and labels', () => {
+  it('gives a ref of a type this build does not register no link', () => {
+    // A peer's newer version may send one; it stays a plain chip.
+    expect(refAction({ type: 'wiki', id: 'handbook' }, lookups)).toBeNull();
+  });
+
   it('routes each ref kind, and gives a commit or an unknown run no link', () => {
     expect(refAction({ type: 'task', id: 't-000001' }, lookups)).toEqual({
       kind: 'task',
@@ -716,22 +856,42 @@ describe('refs and labels', () => {
     expect(addressAction(ME, lookups)).toBeNull();
   });
 
+  it('routes a doc ref to the doc and its section', () => {
+    const none = { taskIdOfRun: () => null };
+    expect(refAction({ type: 'doc', id: 'doc-01K', at: 'api' }, none)).toEqual({
+      kind: 'doc',
+      docId: 'doc-01K',
+      anchor: 'api',
+    });
+    expect(refAction({ type: 'doc', id: 'doc-01K' }, none)).toEqual({
+      kind: 'doc',
+      docId: 'doc-01K',
+      anchor: null,
+    });
+  });
+
   it('turns each action into the matching navigation', () => {
     const calls: unknown[][] = [];
     const open = openRefWith({
       openTask: (...args) => calls.push(['task', ...args]),
       openThread: (id) => calls.push(['thread', id]),
       openImpact: (subject) => calls.push(['impact', subject]),
+      openDoc: (docId, anchor, merge) =>
+        calls.push(['doc', docId, anchor, merge]),
     });
     open({ kind: 'task', taskId: 't-000001' });
     open({ kind: 'run', taskId: 't-000001', runId: 'r-000001' });
     open({ kind: 'file', path: 'src/a.ts' });
     open({ kind: 'message', messageId: 'm-01' });
+    open({ kind: 'doc', docId: 'doc-01K', anchor: 'api' });
+    open({ kind: 'doc', docId: 'doc-01K', anchor: null, merge: 'rev-p' });
     expect(calls).toEqual([
-      ['task', 't-000001', 'details'],
-      ['task', 't-000001', 'chat', 'r-000001'],
+      ['task', 't-000001', 'auto'],
+      ['task', 't-000001', 'run', 'r-000001'],
       ['impact', { kind: 'file', id: 'src/a.ts' }],
       ['thread', 'm-01'],
+      ['doc', 'doc-01K', 'api', undefined],
+      ['doc', 'doc-01K', null, 'rev-p'],
     ]);
   });
 
@@ -743,6 +903,8 @@ describe('refs and labels', () => {
     expect(lookups.agentStatus('agent:wyat/old')).toBe('revoked');
     expect(lookups.agentStatus('agent:wyat/quiet')).toBe('muted');
     expect(lookups.agentStatus('agent:wyat/other')).toBeNull();
+    expect(lookups.task('t-000001')?.meta.title).toBe('Checkout');
+    expect(lookups.task('t-000404')).toBeNull();
     expect(
       threadTitle(msg('m-01', { body: `${'x'.repeat(90)}\nsecond line` }))
     ).toBe(`${'x'.repeat(79)}…`);
@@ -758,9 +920,8 @@ describe('refs and labels', () => {
   });
 
   it('keys the lookups by what they read, so an event that changes no label keeps them', () => {
-    const task = (status: string) => ({
-      meta: { id: 't-000001', title: 'Checkout', status },
-    });
+    const task = (status: string, updated = '2026-09-25T10:00:00.000Z') =>
+      taskDoc({ id: 't-000001', title: 'Checkout', status, updated });
     const run = (state: string) => ({
       id: 'r-000001',
       taskId: 't-000001',
@@ -775,8 +936,20 @@ describe('refs and labels', () => {
       key
     );
     expect(
-      lookupsKey([{ meta: { id: 't-000001', title: 'Cart' } }], runs, agents)
+      lookupsKey(
+        [taskDoc({ id: 't-000001', title: 'Cart', status: 'working' })],
+        runs,
+        agents
+      )
     ).not.toBe(key);
+    // A proposal card shows its draft, so a draft's edit counts; another task's does not.
+    expect(
+      lookupsKey([task('working', '2026-09-25T11:00:00.000Z')], runs, agents)
+    ).toBe(key);
+    const draftKey = lookupsKey([task('draft')], runs, agents);
+    expect(
+      lookupsKey([task('draft', '2026-09-25T11:00:00.000Z')], runs, agents)
+    ).not.toBe(draftKey);
     expect(
       lookupsKey(
         tasks,
@@ -816,6 +989,23 @@ describe('refs and labels', () => {
       channels: ['general'],
       agents: ['agent:wyat/quiet'],
       humans: [ME, 'human:ada'],
+      peers: [],
     });
+  });
+
+  it('completes active A2A peers as a2a: addresses', () => {
+    expect(
+      knownAddresses({
+        tasks: [],
+        channels: [],
+        agents: [],
+        presence: [],
+        me: null,
+        peers: [
+          { alias: 'acme', status: 'active' },
+          { alias: 'gone', status: 'disabled' },
+        ],
+      }).peers
+    ).toEqual(['a2a:acme']);
   });
 });

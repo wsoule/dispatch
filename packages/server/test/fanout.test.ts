@@ -144,13 +144,31 @@ describe('variantTaskInput', () => {
     expect(input.description).toBe('The login form rejects valid passwords.');
   });
 
+  it('gives a sectioned body’s Description once, not the whole body under a second heading', () => {
+    const input = variantTaskInput(
+      {
+        ...sourceTask(),
+        body: '\n## Description\n\nFix login.\n\n## Acceptance Criteria\n\n- works\n',
+      },
+      { executor: 'claude' }
+    );
+    expect(input.description).toBe('Fix login.');
+  });
+
   it('copies everything that scopes or gates the work', () => {
     const input = variantTaskInput(sourceTask(), { executor: 'claude' });
     expect(input.writes).toEqual(['src/auth/**']);
     expect(input.risk).toBe('elevated');
     expect(input.selfReview).toBe(true);
-    expect(input.milestone).toBe('auth');
     expect(input.priority).toBe('high');
+  });
+
+  it('files the clone by parent, never the legacy milestone string', () => {
+    const input = variantTaskInput(sourceTask({ parent: 'e-1' }), {
+      executor: 'claude',
+    });
+    expect(input.parent).toBe('e-1');
+    expect('milestone' in input).toBe(false);
   });
 
   it('labels the clone so the group stays findable', () => {

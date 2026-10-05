@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 
+import { isRecord } from '../src/guards.js';
 import { LINE_BREAK } from '../src/lines.js';
 import { loadVectors, VECTORS_DIR } from '../src/load.js';
 import { loadRegistry, REGISTRY_NAMES } from '../src/registries.js';
@@ -48,6 +49,64 @@ describe('the kit', () => {
             id,
             ok: true,
           });
+  });
+
+  // A provisional entry has no vectors yet (§11.11), so it lists none and no
+  // vector tests a section that provisional entries alone define.
+  it('tests no provisional entry', () => {
+    const registry = loadRegistry();
+    const statuses = new Map<string, Set<string>>();
+    const listed: string[] = [];
+    for (const name of REGISTRY_NAMES)
+      for (const e of registry[name]) {
+        statuses.set(
+          e.section,
+          (statuses.get(e.section) ?? new Set()).add(e.status)
+        );
+        if (e.status === 'provisional')
+          listed.push(...e.vectors.map((id) => `${e.value}: ${id}`));
+      }
+    expect(listed).toEqual([]);
+    const provisional = (s: string) => {
+      const found = statuses.get(s);
+      return found?.size === 1 && found.has('provisional');
+    };
+    expect(
+      vectors.filter((v) => v.sections.some(provisional)).map((v) => v.id)
+    ).toEqual([]);
+  });
+
+  // A handoff exists only through work/v1 (§8.6), so while that extension is
+  // provisional no vector validates a work/v1 request or projects a handoff;
+  // once it is permanent, vectors do both.
+  it('tests handoffs exactly when work/v1 is permanent', () => {
+    const work = loadRegistry()['extension-uris'].find((e) =>
+      e.value.endsWith('/a2a/ext/work/v1')
+    );
+    const handoffs = vectors.filter((v) =>
+      v.when.some(
+        (s) =>
+          (s.op === 'a2a.validate' && s['extension'] === 'work') ||
+          (s.op === 'a2a.project' &&
+            isRecord(s['facts']) &&
+            s['facts']['skill'] === 'handoff')
+      )
+    );
+    const ops = new Set(handoffs.flatMap((v) => v.when.map((s) => s.op)));
+    expect({ status: work?.status, ops: [...ops].sort() }).toEqual(
+      work?.status === 'permanent'
+        ? { status: 'permanent', ops: ['a2a.project', 'a2a.validate'] }
+        : { status: 'provisional', ops: [] }
+    );
+  });
+
+  // §12.3: the literal system address makes a vector dispatch; core ones write $system.
+  it('writes no core vector with the literal agent:dispatch', () => {
+    const literal = vectors
+      .filter((v) => v.profile === 'core')
+      .filter((v) => JSON.stringify(v).includes('agent:dispatch'))
+      .map((v) => v.id);
+    expect(literal).toEqual([]);
   });
 
   // Raw, these three are invisible in a diff and some editors strip them.

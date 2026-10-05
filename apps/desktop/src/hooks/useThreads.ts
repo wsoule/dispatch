@@ -20,6 +20,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { a2aQueryKey } from '../lib/a2a';
 import { agentRosterKey, mutedAddresses } from '../lib/agentRoster';
 import type { ComposeState } from '../lib/composer';
 import { toSendInput } from '../lib/composer';
@@ -335,12 +336,13 @@ export interface OpenThread {
 
 // The thread holding message `id`. A rail row names its thread by the root,
 // which a teammate pulled in by a later reply may not hold; the thread itself
-// may still be theirs to read, so a refused id is tried as a thread id.
+// may still be theirs to read, so an id the daemon will not show (a 404, as for
+// an absent id) is tried as a thread id.
 async function threadOf(api: ApiClient, id: string): Promise<string> {
   try {
     return (await api.getMessage(id)).thread;
   } catch (err) {
-    if (!(err instanceof ApiError && err.status === 403)) throw err;
+    if (!(err instanceof ApiError && err.status === 404)) throw err;
     const detail = await api.getThread(id).catch(() => null);
     if (detail === null || detail.messages.length === 0) throw err;
     return id;
@@ -409,6 +411,24 @@ export function useChannels(
     staleTime: 60_000,
   });
   return channels.data?.channels ?? NO_CHANNELS;
+}
+
+const NO_PEERS: readonly { alias: string; status: string }[] = [];
+
+// The A2A peers for `@a2a:` completion, under the a2a keys so a2a.changed
+// refreshes them; none while the daemon has no A2A bridge (it answers 503).
+export function useA2APeers(
+  client: ApiClient | null,
+  enabled: boolean
+): readonly { alias: string; status: string }[] {
+  const peers = useQuery({
+    queryKey: a2aQueryKey(client?.baseUrl, 'peers'),
+    queryFn: () => ready(client).a2aPeers(),
+    enabled: client !== null && enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+  return peers.data?.peers ?? NO_PEERS;
 }
 
 /** The run-gate handlers; they assert decide and refresh the run views themselves. */

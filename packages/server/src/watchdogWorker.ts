@@ -53,7 +53,8 @@ function watch(init: WatchdogWorkerInit): ReturnType<typeof setInterval> {
   };
 
   return setInterval(() => {
-    const now = Date.now();
+    // Monotonic, matching the main thread's heartbeat stamps.
+    const now = Math.round(performance.timeOrigin + performance.now());
     const lastBeat = Number(Atomics.load(heartbeat, 0));
     const age = now - lastBeat;
     if (age > init.thresholdMs) {

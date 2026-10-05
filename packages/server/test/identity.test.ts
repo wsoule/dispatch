@@ -17,11 +17,14 @@ describe('TokenRegistry', () => {
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'operator',
+      appToken: true,
     });
+    // Flagged as the agent token: whoever presents it may be a run's agent.
     expect(reg.resolve('agent-aaa')).toEqual({
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'request',
+      agentToken: true,
     });
   });
 
@@ -61,5 +64,18 @@ describe('TokenRegistry', () => {
     // The built-in pair never reaches the source, and never loses to it.
     expect(reg.resolve('app-bbb')?.tier).toBe('operator');
     expect(asked.map((d) => d.equals(sha256('app-bbb')))).not.toContain(true);
+  });
+
+  test("a teammate token naming the operator's handle matches no one", () => {
+    const source: CredentialSource = {
+      lookup: () => ({
+        kind: 'valid',
+        identity: { handle: 'wyat', ref: 'human:wyat', tier: 'decide' },
+      }),
+      list: () => [],
+    };
+    const reg = new TokenRegistry(BUILT_IN, 'wyat', source);
+    expect(reg.lookup('stolen')).toEqual({ kind: 'unknown' });
+    expect(reg.resolve('app-bbb')?.tier).toBe('operator');
   });
 });

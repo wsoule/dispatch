@@ -1,7 +1,12 @@
 import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
-import { groupTasksByLane, groupTasksByStatus } from './boardGrouping';
+import {
+  columnSuccessor,
+  groupTasksByLane,
+  groupTasksByStatus,
+} from './boardGrouping';
 
 function makeTask(
   id: string,
@@ -27,6 +32,7 @@ function makeTask(
     risk: 'routine',
     model: null,
     exercised: false,
+    ...defaultTaskFields(),
     ...overrides,
   };
   return { meta, body: '' };
@@ -65,7 +71,10 @@ describe('groupTasksByStatus', () => {
 
 describe('groupTasksByLane', () => {
   const statuses = ['ready', 'landed'];
-  const epic = makeTask('e-1', 'ready', { kind: 'epic', title: 'Payments' });
+  const epic = makeTask('e-1', 'ready', {
+    kind: 'milestone',
+    title: 'Payments',
+  });
   const tasks = [
     epic,
     makeTask('a', 'ready', { parent: 'e-1', priority: 'high' }),
@@ -107,8 +116,34 @@ describe('groupTasksByLane', () => {
     for (const lane of [...byAssignee, ...byPriority]) {
       expect(lane.epicId).toBeNull();
       for (const column of lane.columns) {
-        expect(column.tasks.some((t) => t.meta.kind === 'epic')).toBe(false);
+        expect(column.tasks.some((t) => t.meta.kind === 'milestone')).toBe(
+          false
+        );
       }
     }
+  });
+});
+
+describe('columnSuccessor', () => {
+  const lanes = groupTasksByLane(
+    [
+      makeTask('a', 'ready'),
+      makeTask('b', 'ready'),
+      makeTask('c', 'ready'),
+      makeTask('w', 'working'),
+    ],
+    ['ready', 'working'],
+    [],
+    'none'
+  );
+
+  test('the card below takes the place, else the one above, never another column', () => {
+    expect(columnSuccessor(lanes, 'a')).toBe('b');
+    expect(columnSuccessor(lanes, 'c')).toBe('b');
+    expect(columnSuccessor(lanes, 'w')).toBeNull();
+  });
+
+  test('a card no lane holds has no successor to name', () => {
+    expect(columnSuccessor(lanes, 'gone')).toBeUndefined();
   });
 });

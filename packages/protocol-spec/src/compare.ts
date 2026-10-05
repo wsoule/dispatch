@@ -1,3 +1,4 @@
+import { LINE_BREAK } from './lines.js';
 import { checkDigest, checkRender } from './renderCheck.js';
 import { CREATING_OPS } from './types.js';
 import type {
@@ -7,6 +8,7 @@ import type {
   Json,
   JsonObject,
   Observation,
+  ObservedMessage,
   Vector,
 } from './types.js';
 
@@ -99,6 +101,31 @@ function symbolize(value: unknown, bound: Bound): string {
   return text;
 }
 
+// Equal as JSON values: lists item by item, objects member by member in any
+// order, since hosts in other languages may write members in another order.
+function sameJson(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b))
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => sameJson(item, b[i]))
+    );
+  if (
+    a === null ||
+    b === null ||
+    typeof a !== 'object' ||
+    typeof b !== 'object'
+  )
+    return a === b;
+  const left = Object.entries(a).filter(([, v]) => v !== undefined);
+  const right = new Map(Object.entries(b).filter(([, v]) => v !== undefined));
+  return (
+    left.length === right.size &&
+    left.every(([k, v]) => right.has(k) && sameJson(v, right.get(k)))
+  );
+}
+
 // Expected fields must match; fields the vector does not list are free.
 function subset(
   expected: Json | undefined,
@@ -131,7 +158,7 @@ function subset(
       );
     return;
   }
-  if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+  if (!sameJson(expected, actual)) {
     failures.push(
       `${path}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
     );
@@ -390,6 +417,24 @@ function checkChannels(
   if (failure !== null) failures.push(failure);
 }
 
+// What a message's sender wrote besides its body, plus the lines of the
+// message it replies to: text an external sender's host lines must not carry.
+function senderText(
+  message: ObservedMessage,
+  observation: Observation
+): string[] {
+  const refText = message.refs.flatMap((r) =>
+    [r['id'], r['at']].filter((v): v is string => typeof v === 'string')
+  );
+  const target = observation.messages.find((m) => m.id === message.replyTo);
+  return [
+    ...(message.choices ?? []),
+    ...(message.choice === undefined ? [] : [message.choice]),
+    ...refText,
+    ...(target === undefined ? [] : target.body.split(LINE_BREAK)),
+  ];
+}
+
 // Each `render` step not expected to fail must fit the declared forms, or the
 // digest rule for a digest, and match `then.render`'s text where it names it.
 function checkRenders(
@@ -427,7 +472,8 @@ function checkRenders(
             text,
             message.body,
             hello.render,
-            step['external'] === true
+            step['external'] === true,
+            senderText(message, observation)
           );
     for (const f of found) failures.push(`step ${n}: ${f}`);
   });

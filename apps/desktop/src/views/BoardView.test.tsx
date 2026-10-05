@@ -1,10 +1,17 @@
-import type { EpicProgress, EpicSession } from '@dispatch/client';
+import type {
+  EpicProgress,
+  EpicSession,
+  ReadinessReading,
+} from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 
-import { testConfig } from '../components/settings/fixtures.test-helper';
+import {
+  linearWorkflowConfig,
+  testConfig,
+} from '../components/settings/fixtures.test-helper';
 import {
   SavedViewsProvider,
   useSavedViewsContext,
@@ -147,6 +154,8 @@ function session(
     maxSpendUsd: 60,
     maxRuns: 20,
     startedAt: '2026-09-20T00:00:00.000Z',
+    startedBy: null,
+    scope: 'plan',
     updatedAt: '2026-09-20T00:00:00.000Z',
     active: state === 'active',
     ...overrides,
@@ -688,6 +697,101 @@ test('j walks a column in its displayed (priority) order, not data order', () =>
   expect(new Set(opened)).toEqual(new Set(['t-high']));
 });
 
+// The board's `d` (and a card's Dispatch) go through the optimistic path like the Cockpit's:
+// the card moves at once and the board stays put. A card that is not ready ignores `d`.
+test('d dispatches the focused ready card in place', () => {
+  const sent: [string, unknown][] = [];
+  const data = {
+    ...boardData(),
+    handleDispatch: (id: string, _e?: string, _m?: string, opts?: unknown) => {
+      sent.push([id, opts]);
+      return Promise.resolve();
+    },
+  } as DispatchProjectData;
+  render(view('board', { data }));
+  const anchor = cardRoot('Card one');
+
+  pressNav('j', anchor);
+  while (!focusedCardText().includes('Card one')) pressNav('j', anchor);
+  fireEvent.keyDown(anchor, { key: 'd' });
+  expect(sent).toEqual([['t-1', { optimistic: true }]]);
+
+  pressNav('j', anchor);
+  expect(focusedCardText()).not.toContain('Card one');
+  fireEvent.keyDown(anchor, { key: 'd' });
+  expect(sent).toHaveLength(1);
+});
+
+// A click on a card's Dispatch focuses the card first. The cursor used to follow the card
+// to its new column, and focusing it there scrolled the board away from where you clicked.
+test('a card’s Dispatch hands the cursor to the card that takes its place', () => {
+  function Live() {
+    const [tasks, setTasks] = useState(TASKS);
+    const data = {
+      ...boardData(tasks),
+      // The optimistic move: the card leaves Todo for Done at once.
+      handleDispatch: (id: string) => {
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.meta.id === id ? { ...t, meta: { ...t.meta, status: 'done' } } : t
+          )
+        );
+        return Promise.resolve();
+      },
+    } as DispatchProjectData;
+    return view('board', { data });
+  }
+  render(<Live />);
+  const dispatch = within(cardRoot('Card one')).getByRole('button', {
+    name: /Dispatch/,
+  });
+  act(() => dispatch.focus());
+  expect(focusedCardText()).toContain('Card one');
+  fireEvent.click(dispatch);
+  expect(focusedCardText()).toContain('Card three');
+  expect(focusedCardText()).not.toContain('Card one');
+});
+
+// Every card takes the visible column list. A dispatch moves a column's count but not the
+// columns, so a rebuilt copy of the same list used to redraw every card on the board.
+test('a card moving between shown columns redraws only that card', () => {
+  const renders = new Map<string, number>();
+  // A card reads its reading's `splitProbability` once per render, and nothing else does.
+  const counted = (id: string) =>
+    ({
+      level: 3,
+      label: 'clear',
+      confidence: 1,
+      get splitProbability() {
+        renders.set(id, (renders.get(id) ?? 0) + 1);
+        return 0;
+      },
+    }) as ReadinessReading;
+  const data = {
+    ...boardData(),
+    readinessById: new Map(
+      TASKS.filter((t) => t.meta.kind === 'task').map((t) => [
+        t.meta.id,
+        counted(t.meta.id),
+      ])
+    ),
+  } as DispatchProjectData;
+  const { rerender } = render(view('board', { data }));
+  expect(screen.queryByText('Card three')).not.toBeNull();
+  renders.clear();
+
+  // t-3 leaves todo for done; both columns were already showing.
+  const moved = TASKS.map((t) =>
+    t.meta.id === 't-3' ? { ...t, meta: { ...t.meta, status: 'done' } } : t
+  );
+  rerender(
+    view('board', {
+      data: { ...data, tasks: moved, tasksIncludingArchived: moved },
+    })
+  );
+  expect([...renders.keys()]).toEqual(['t-3']);
+});
+
 // The regression this guards: `initial` used to win over storage, so App's never-updated
 // `mode` prop put the board back on Board every time the view remounted (a trip to Git and
 // back) after the user had chosen List.
@@ -1173,6 +1277,58 @@ test('leaving the milestones layout retires the request so returning does not re
   fireEvent.click(screen.getByRole('tab', { name: 'Board' }));
   fireEvent.click(screen.getByRole('tab', { name: 'Milestones' }));
   expect(dialogTitle()).toBeNull();
+});
+
+test('epic lane headers roll up under a mirrored workflow on their first load', () => {
+  enableEpicLanes();
+  const epics = [
+    task('e-1', 'Payments epic', 'In Progress', null, 'epic'),
+    task('e-2', 'Search epic', 'In Progress', null, 'epic'),
+  ];
+  const tasks = [
+    ...epics,
+    task('t-1', 'Card one', 'QA', 'e-1'),
+    task('t-2', 'Card two', 'Done', 'e-1'),
+    task('t-3', 'Card three', 'Done', 'e-2'),
+    task('t-4', 'Card four', 'Canceled', 'e-2'),
+  ];
+  const finished: EpicProgress = {
+    ...progress('complete'),
+    epicId: 'e-2',
+    children: [
+      { ...progress(null).children[0], id: 't-3', status: 'Done' },
+      { ...progress(null).children[0], id: 't-4', status: 'Canceled' },
+    ],
+  };
+  // Config lands after the tasks. The open project's model is left unset: it is set in an
+  // effect after the render config lands in, and any later board render (a resize, a
+  // cursor move) would mask a lane still reading it, so the lanes must read config alone.
+  function App({ config }: { config: DispatchProjectData['config'] }) {
+    const data = {
+      ...boardData(tasks, { progress: [finished] }),
+      epics,
+      config,
+    } as DispatchProjectData;
+    return view('board', { data });
+  }
+  const { rerender } = render(<App config={null} />);
+  act(() => rerender(<App config={linearWorkflowConfig} />));
+
+  const lanes = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[data-slot=board-lane-header] [data-slot=group-header]'
+    )
+  );
+  expect(lanes).toHaveLength(2);
+  // Payments rolls up to its review-role status, not the built-in `ready`.
+  expect(lanes[0]?.querySelector('[aria-label="Status: QA"]')).not.toBeNull();
+  expect(lanes[0]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-progress)'
+  );
+  // Search's children are all Done or Canceled: it reads done and offers Land.
+  expect(lanes[1]?.querySelector('[aria-label="Status: Done"]')).not.toBeNull();
+  expect(lanes[1]?.style.getPropertyValue('--tint')).toBe('var(--status-done)');
+  expect(within(lanes[1]).getByRole('button', { name: 'Land' })).toBeTruthy();
 });
 
 test('a lane header’s Send agents… confirms through the options-shaped handleWorkEpic', async () => {

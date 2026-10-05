@@ -279,6 +279,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {
@@ -1723,6 +1724,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5", "13.13"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {
@@ -1863,6 +1865,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5", "13.13"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {
@@ -2001,6 +2004,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5", "13.13"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {
@@ -2440,6 +2444,393 @@
           { "ok": true },
           { "ok": false, "error": { "code": "invalid", "field": "session" } },
           { "ok": false, "error": { "code": "invalid", "field": "session" } }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.a-memory-gate-names-a-proposal",
+      "title": "A memory gate whose proposalId is not an mp- ULID is refused on data.proposalId",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-1",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "data.proposalId" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "data.proposalId" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.a-memory-gate-has-a-project-or-team-scope",
+      "title": "A memory gate's scope is project or team; personal, or none, is refused on data.scope",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "personal",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "kind": "convention"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "data.scope" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "data.scope" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.a-memory-gate-names-its-action-and-kind",
+      "title": "A memory gate's action is add, supersede or retire, and its kind a memory kind; others are refused on data.action and data.kind",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "edit",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "rumor"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "retire",
+              "scope": "team",
+              "kind": "hazard"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "data.action" }
+          },
+          { "ok": false, "error": { "code": "invalid", "field": "data.kind" } },
+          { "ok": true }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.memory-gates-have-a-fixed-shape",
+      "title": "A memory gate is a blocking question offering approve then reject; any other shape is refused on data",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["reject", "approve"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "deny"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "data" } },
+          { "ok": false, "error": { "code": "invalid", "field": "data" } },
+          { "ok": false, "error": { "code": "invalid", "field": "data" } }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.a-doc-gate-names-its-doc-and-proposal",
+      "title": "A doc gate names a doc- id and a rev- proposal; others are refused on data.doc and data.proposal, and taskId and runId are optional",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "handbook",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "data.doc" } },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "data.proposal" }
+          },
+          { "ok": true }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.doc-gates-have-a-fixed-shape",
+      "title": "A doc gate is a blocking question offering approve then reject; any other shape is refused on data",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "deny"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "data" } },
+          { "ok": false, "error": { "code": "invalid", "field": "data" } }
         ]
       }
     }

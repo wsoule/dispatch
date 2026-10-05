@@ -10,6 +10,26 @@ describe('firstLine', () => {
   });
 });
 
+describe('renderForAgent', () => {
+  it('renders a doc ref with its anchor', () => {
+    const m: Message = {
+      id: 'm-01abc',
+      thread: 'm-01abc',
+      replyTo: null,
+      from: 'run:r-000001',
+      to: ['channel:epic/e-000001'],
+      kind: 'message',
+      body: 'see the spec',
+      refs: [{ type: 'doc', id: 'doc-01K', at: 'api' }],
+      urgent: false,
+      blocking: false,
+      wake: 'none',
+      createdAt: '2026-09-23T10:00:00.000Z',
+    };
+    expect(renderForAgent(m)).toContain('refs: doc:doc-01K@api');
+  });
+});
+
 // The vectors do not cover federation, so a remote sender's forms are pinned here.
 describe('a sender on another replica', () => {
   const m: Message = {

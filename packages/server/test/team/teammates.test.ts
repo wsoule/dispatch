@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,7 +42,12 @@ function registry(
   clock?: () => Date,
   seats?: () => number
 ) {
-  const teammates = new TeammateTokens({ store, clock, seats });
+  const teammates = new TeammateTokens({
+    store,
+    clock,
+    seats,
+    operatorHandle: 'wyat',
+  });
   const reg = new TokenRegistry(BUILT_IN, 'wyat', teammates);
   return Object.assign(reg, {
     issue: teammates.issue.bind(teammates),
@@ -56,11 +67,13 @@ describe('TokenRegistry', () => {
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'operator',
+      appToken: true,
     });
     expect(reg.resolve('agent-aaa')).toEqual({
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'request',
+      agentToken: true,
     });
   });
 
@@ -368,6 +381,41 @@ describe('fileTokenStore', () => {
     expect(fileTokenStore(path).load()).toEqual([]);
   });
 
+  test('moves an unreadable file aside with a problem, and never saves over it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-tokens-'));
+    const path = join(dir, 'team-tokens.json');
+    writeFileSync(path, '{ not json');
+    const store = fileTokenStore(path);
+    expect(store.load()).toEqual([]);
+    const aside = readdirSync(dir).filter((f) => f.includes('.corrupt-'));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(dir, aside[0]), 'utf8')).toBe('{ not json');
+    expect(store.problems?.()).toEqual([expect.stringContaining(aside[0])]);
+    expect(new TeammateTokens({ store }).problems()).toHaveLength(1);
+    // A file damaged after load is moved aside too, not overwritten.
+    writeFileSync(path, '[{ broken');
+    store.save([]);
+    expect(
+      readdirSync(dir).filter((f) => f.includes('.corrupt-'))
+    ).toHaveLength(2);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual([]);
+  });
+
+  test('saves through a temp file and rename, leaving no temp behind', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-tokens-'));
+    const path = join(dir, 'team-tokens.json');
+    const store = fileTokenStore(path);
+    store.save([]);
+    // A crash before the rename leaves the old file whole: simulate by a
+    // stray temp file, which the next save replaces.
+    writeFileSync(`${path}.tmp-stale`, 'half');
+    store.save([]);
+    expect(readdirSync(dir).filter((f) => !f.includes('stale'))).toEqual([
+      'team-tokens.json',
+    ]);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
   test('drops entries that are not well-formed hashes', () => {
     const path = join(
       mkdtempSync(join(tmpdir(), 'dispatch-tokens-')),
@@ -492,5 +540,26 @@ describe('seats', () => {
       'refused',
       'refused',
     ]);
+  });
+
+  test("a pre-fix token for the operator's handle is unusable and takes no seat", () => {
+    const t = steppingClock();
+    const { store } = memoryStore();
+    const writer = new TeammateTokens({ store, clock: t.clock });
+    // Issued before the operator's handle was refused, and first in line.
+    const stale = writer.issue('wyat', 'decide');
+    t.step();
+
+    const reg = registry(store, t.clock, () => 2);
+    expect(reg.lookup(stale).kind).toBe('unknown');
+    expect(reg.peopleWithAccess()).toBe(1);
+    expect(reg.list().find((h) => !h.builtIn)).toMatchObject({
+      handle: 'wyat',
+      unusable: true,
+    });
+    const ada = reg.issue('ada', 'request');
+    expect(reg.resolve(ada)?.handle).toBe('ada');
+    expect(reg.peopleWithAccess()).toBe(2);
+    expect(reg.list().find((h) => h.handle === 'ada')?.unusable).toBe(false);
   });
 });

@@ -191,6 +191,53 @@
         ],
         "noOtherMessages": true
       }
+    },
+    {
+      "id": "core.refs.a-local-doc-ref-is-accepted",
+      "title": "A local send may ref a document by its id and a section anchor, and the ref is stored unchanged",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["4.3", "C.1"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the API section",
+            "refs": [
+              {
+                "type": "doc",
+                "id": "doc-01k6abcdefghjkmnpqrstvwxyz",
+                "at": "api"
+              },
+              { "type": "doc", "id": "doc-01k6abcdefghjkmnpqrstvwxyz" }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "messages": [
+          {
+            "id": "$s1",
+            "refs": [
+              {
+                "type": "doc",
+                "id": "doc-01k6abcdefghjkmnpqrstvwxyz",
+                "at": "api"
+              },
+              { "type": "doc", "id": "doc-01k6abcdefghjkmnpqrstvwxyz" }
+            ]
+          }
+        ],
+        "noOtherMessages": true
+      }
     }
   ]
 }

@@ -159,7 +159,9 @@ describe('ClaudeOverseer session wiring', () => {
         command: 'gh release create v2.0.0',
       })
     ).toBe('deny');
-    expect(captured?.settings).toEqual(floorGuard('deny').settings);
+    expect(captured?.settings).toMatchObject(
+      floorGuard('deny').settings as Record<string, unknown>
+    );
   });
 
   // The hook holds a floor command through the same authorizeTool gate
@@ -223,6 +225,21 @@ describe('ClaudeOverseer session wiring', () => {
     expect(captured?.permissionMode).toBeUndefined();
     expect(captured?.maxTurns).toBeUndefined();
     expect(captured?.maxBudgetUsd).toBeUndefined();
+  });
+
+  // Its transcripts are readable by request-tier callers, so it never loads
+  // the owner's native Claude notes.
+  it('keeps Claude’s auto memory off beside the floor’s settings', async () => {
+    const { toolset } = stubToolset();
+    const { captured } = await runTurn(successStream(), toolset);
+    const settings = captured?.settings as Record<string, unknown> | undefined;
+    expect(settings).toMatchObject({
+      env: { CLAUDE_CODE_SIMPLE: '0', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+      disableSkillShellExecution: true,
+      autoMemoryEnabled: false,
+    });
+    expect(settings?.autoMemoryDirectory).toBeUndefined();
+    expect(captured?.additionalDirectories).toBeUndefined();
   });
 
   it('tells the model that a mutating call only queues an action', async () => {

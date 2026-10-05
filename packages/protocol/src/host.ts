@@ -101,11 +101,16 @@ export interface MessagingHost {
   notifyHuman(actor: Address, message: Message): void;
   wake(target: Address, message: Message): Promise<WakeResult>;
   decide(request: PolicyRequest): PolicyRuling;
-  owner(target: Address): Address;
+  // The human to ask or tell about `target`; for a wake gate `sender` is who
+  // asked for the wake, so a host may name that sender's human instead.
+  owner(target: Address, sender?: Address): Address;
   implicitMembers(channel: string): Address[];
   // May be called again for the same answer after a crash; handlers must be idempotent.
   onAnswered(question: Message, answer: Message): Promise<void>;
   now(): Date;
+  // Who shares `sender`'s hourly urgent quota, itself included, so a fan-out of
+  // runs for one operator cannot multiply it. Omitted, each sender counts alone.
+  quotaGroup?(sender: Address): Address[];
   // Classifies an address as external; a host without externals omits both hooks.
   external?(address: Address): ExternalKind | null;
   // Throws MessagingError to refuse. A refused channel-expanded target is skipped.

@@ -71,6 +71,31 @@ describe('schemas agree with the vectors', () => {
     }
   });
 
+  it('every gate data an accepted send carries validates', () => {
+    const gateData = schema('gate-data');
+    const raw = JSON.parse(
+      readFileSync(new URL('gate-data.schema.json', SCHEMAS_DIR), 'utf8')
+    ) as { $defs: Record<string, unknown> };
+    const gateTypes = new Set(Object.keys(raw.$defs));
+    let checked = 0;
+    for (const v of vectors) {
+      v.when.forEach((step, i) => {
+        if (step.op !== 'send' && step.op !== 'validate') return;
+        if (v.then.steps?.[i]?.ok !== true) return;
+        const data = (step['input'] as { data?: { type?: unknown } }).data;
+        if (typeof data?.type !== 'string' || !gateTypes.has(data.type)) return;
+        checked += 1;
+        expect({
+          id: v.id,
+          step: i,
+          valid: gateData(data),
+          errors: gateData.errors ?? null,
+        }).toEqual({ id: v.id, step: i, valid: true, errors: null });
+      });
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
   it('describes every vector file', () => {
     const vectorFile = schema('vector');
     const classes = readdirSync(VECTORS_DIR).filter(

@@ -4,12 +4,18 @@
 /** The daemon's own identity: sender of gates, notices and breaker flags. */
 export const SYSTEM_ADDRESS = 'agent:dispatch';
 
+/** A human or the system: the only authors whose answers take effect. */
+export function isDecidingAuthor(address: string): boolean {
+  return address === SYSTEM_ADDRESS || address.startsWith('human:');
+}
+
 export const ADDRESS_SCHEMES = [
   'human',
   'agent',
   'task',
   'run',
   'channel',
+  'a2a',
 ] as const;
 
 export const BUILT_IN_KINDS = [
@@ -20,7 +26,14 @@ export const BUILT_IN_KINDS = [
   'notice',
 ] as const;
 
-export const REF_TYPES = ['task', 'run', 'file', 'commit', 'message'] as const;
+export const REF_TYPES = [
+  'task',
+  'run',
+  'file',
+  'commit',
+  'message',
+  'doc',
+] as const;
 
 // Every gate type this package defines a payload for; a host implements a subset.
 export const GATE_TYPES = [
@@ -29,6 +42,9 @@ export const GATE_TYPES = [
   'wake',
   'agent-registration',
   'overseer-action',
+  'memory',
+  'task-proposal',
+  'doc',
 ] as const;
 
 export const DELIVERY_STATES = [
@@ -65,7 +81,7 @@ export const GATE_RAISERS: Readonly<Record<string, GateRaiser>> = {
   scope: 'session',
   'agent-registration': 'system',
   'overseer-action': 'system',
-  memory: 'system-or-decider',
+  memory: 'system',
   'task-proposal': 'system',
   doc: 'system',
 };
@@ -94,6 +110,5 @@ export function gateTypeOf(
     return null;
   const type = (m.data as { type: string }).type;
   if (known.has(type)) return type;
-  const from = m.from ?? '';
-  return from === SYSTEM_ADDRESS || from.startsWith('human:') ? type : null;
+  return isDecidingAuthor(m.from ?? '') ? type : null;
 }

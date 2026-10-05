@@ -1,5 +1,6 @@
 import type {
   EffortLevel,
+  RunStep,
   SubagentEvent,
   SubagentSummary,
 } from '@dispatch/core';
@@ -96,6 +97,47 @@ export interface ApprovalGatePort {
   settle(runId: string, requestId: string, reason: string): void;
 }
 
+/** How a new run carries memory, decided once before it starts. */
+export interface PreparedMemory {
+  // The prompt's memory text: the `## Memory` section, the export line, or null.
+  text: string | null;
+  // The `## Memory` section a prompt-mode fallback carries in place of `text`.
+  indexSection: string | null;
+  memory: ExecutorMemoryOptions;
+}
+
+/** Chooses each run's memory mode and follows its export; installed by the memory service at boot. */
+export interface MemoryPromptPort {
+  prepare(input: {
+    runId: string;
+    taskId: string;
+    lineage: string;
+    runKind: RunKind;
+    isClaude: boolean;
+    dispatchTools: boolean;
+    // The run resumes a session, so its prompt is the continuation, not the index.
+    continues: boolean;
+  }): PreparedMemory;
+  // The agent read exported files; `lineage` names the export directory.
+  recall(
+    runId: string,
+    lineage: string,
+    paths: readonly string[],
+    via: 'read' | 'claude-recall'
+  ): void;
+  // A final scan of the run's export; the directory stays until its lineage closes.
+  runEnded(meta: RunMeta): void;
+}
+
+/** Where the `## Docs` prompt section comes from (docs/service.ts). */
+export interface DocsPromptPort {
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): string | null;
+}
+
 export interface ExecutorRun {
   interrupt(): Promise<void>;
   /**
@@ -134,6 +176,10 @@ export interface ExecutorEvents {
   // The session has its result and is winding down to onFinish; a message
   // sent from here on is never read, so delivery waits for the next run.
   onEnding?(): void;
+  // Export mode's load check changed the run's memory mode; `detail` says why.
+  onMemoryMode?(mode: MemoryMode, detail: string): void;
+  // The agent read exported memory files, by a Read call or Claude's own recall.
+  onMemoryRecall?(paths: string[], via: 'read' | 'claude-recall'): void;
   onFinish(finish: {
     state: 'finished' | 'failed';
     costUsd?: number;
@@ -182,6 +228,30 @@ export interface ExecutorStartOptions {
   // The 0600 file holding this run's messaging token. Only the path travels to
   // the dispatch MCP server, since backends put MCP env on a process's argv.
   runTokenFile?: string;
+  // How a Claude session carries memory; absent is `native`, today's behavior.
+  memory?: ExecutorMemoryOptions;
+}
+
+/** A run's memory mode, including the two outcomes of export's load check. */
+export type MemoryMode =
+  | 'export'
+  | 'native'
+  | 'prompt'
+  | 'export-fallback'
+  | 'export-unloaded';
+
+/** The memory mode a session starts in, and what export mode needs. */
+export interface ExecutorMemoryOptions {
+  mode: 'export' | 'native' | 'prompt';
+  // The absolute export directory Claude Code loads MEMORY.md from.
+  dir?: string;
+  // The oldest Claude Code version the live probe passed on.
+  probeVersion?: string;
+  // The task prompt, with the index, that a prompt-mode restart opens with. A
+  // resume needs it: its restart is a fresh session sent the run's prompt next.
+  fallbackPrompt?: string;
+  // Reaches the agent with its first tool result when nothing loaded.
+  unloadedNote?: string;
 }
 
 // What the orchestrator may assume about an executor beyond `start()`: which
@@ -201,6 +271,8 @@ export interface ExecutorProfile {
   /** False when runs never get the dispatch MCP server, so the task prompt
    * must not name its tools. Absent means they do. */
   dispatchMcp?: boolean;
+  /** True when the executor honours Claude Code's auto-memory settings. */
+  autoMemory?: boolean;
 }
 
 /** One registered executor as GET /api/executors reports it. */
@@ -312,12 +384,23 @@ export interface RunMeta {
   // The reasoning effort this run was started at; absent means the model's
   // own default. A resume keeps it, like `model`.
   effort?: EffortLevel;
-  // Serialized ActorRef of the human who pressed dispatch, e.g. `human:ada`.
-  // Absent for a run nobody dispatched by hand (an epic session's auto-fill)
-  // and for runs recorded before this field existed. It is what makes a run —
-  // and the files it claims, and the decisions it parks on — someone's on a
-  // daemon more than one person uses.
+  // Serialized ActorRef of the human the run is for, e.g. `human:ada`: who
+  // pressed dispatch, or started the fan-out that dispatched it. A resume,
+  // follow-up or review/verify run keeps its work's owner unless a person
+  // pressed for it. Absent for a run nobody owns (no human at all) and for
+  // runs recorded before this field existed. It is what makes a run — and the
+  // files it claims, and the decisions it parks on — someone's on a daemon
+  // more than one person uses.
   dispatchedBy?: string;
+  // The human whose personal memory this run reads and writes (read it through
+  // runOperator). null = no one; absent = recorded before the field.
+  operator?: string | null;
+  // The run whose Claude memory export this one shares: itself, or a
+  // continuing predecessor's (read it through runLineage).
+  memoryLineage?: string;
+  // How the run carries memory: chosen at start, then changed by export's load
+  // check. Absent for runs started with no memory service.
+  memoryMode?: MemoryMode;
   // C2: once a run has been merged or discarded, review() must refuse any
   // further review/resume calls on it — this pair of fields, once set, is
   // that one-way marker. `state` itself stays whatever terminal value it
@@ -401,12 +484,57 @@ export interface RunMeta {
   // so lists can show fan-out without reading the transcript. Absent until
   // the first sub-agent is spawned.
   subagents?: SubagentSummary;
+  // What a live run's agent is doing, in words (core's runStepFromEntry), and
+  // when it said so: kept current from its log entries as they are written,
+  // so a list read never opens a transcript. In memory only; absent before
+  // the first step and once the run is terminal.
+  lastStep?: RunStep;
 }
 
 // A run's kind, defaulted for the transcripts and registry entries written
 // before `kind` existed.
 export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
   return meta.kind ?? 'execute';
+}
+
+// The human a run acts for; null means no one. Runs from before the field
+// fall back to dispatchedBy.
+export function runOperator(
+  meta: Pick<RunMeta, 'operator' | 'dispatchedBy'>
+): string | null {
+  return meta.operator !== undefined
+    ? meta.operator
+    : (meta.dispatchedBy ?? null);
+}
+
+// Who a run started, continued or woken by `actor` acts for: a human actor,
+// the owner only on the owner's app token; no one for an agent, run or system.
+export function actingOperator(
+  actor: string,
+  ownerCredential: boolean,
+  ownerRef: string
+): string | null {
+  if (!actor.startsWith('human:')) return null;
+  return actor !== ownerRef || ownerCredential ? actor : null;
+}
+
+/** Why `sender` may not message a live run acting for another human; null
+ *  when it may (decide tier, the run's own operator, or a run for no one). */
+export function runMessageRefusal(
+  run: Pick<RunMeta, 'id' | 'taskId' | 'operator'>,
+  sender: string | null,
+  canDecide: boolean
+): string | null {
+  const operator = run.operator ?? null;
+  if (canDecide || operator === null || sender === operator) return null;
+  return `run ${run.id} acts for ${operator}: message its task (task:${run.taskId}) or ${operator} instead`;
+}
+
+// The first run of a continuing resume chain: the key of its Claude memory export.
+export function runLineage(
+  meta: Pick<RunMeta, 'id' | 'memoryLineage'>
+): string {
+  return meta.memoryLineage ?? meta.id;
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

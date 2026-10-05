@@ -1,18 +1,23 @@
 import {
+  ACCEPTED_KINDS,
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
+  CredentialsUnreadableError,
   describeValue,
   EFFORT_LEVELS,
   getSection,
+  isDoneStatus,
   isEffortLevel,
-  KINDS,
+  isValidAssignee,
   loadConfig,
   PRIORITIES,
   TaskParseError,
+  untrustedFenced,
   updateConfig,
 } from '@dispatch/core';
 import type {
+  CommentStorePort,
   ConfigPatch,
   CreateInput,
   DispatchConfig,
@@ -30,15 +35,23 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
+import { MemoryBusyError, MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
-import { createHash, randomBytes } from 'node:crypto';
+import { gateOf, MessagingError } from '@dispatch/protocol';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { isA2AClientToken } from './a2a/auth.js';
 import type { A2ABridge } from './a2a/bridge.js';
 import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
+import type { A2ARunScope } from './api/a2aRunScope.js';
+import {
+  a2aRunAllows,
+  a2aRunScope,
+  bodyTaskId,
+  lineageStore,
+} from './api/a2aRunScope.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
 import {
@@ -59,7 +72,19 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor } from './api/caller.js';
+import {
+  humanActor,
+  humanOperator,
+  requestActor,
+  runActorFor,
+} from './api/caller.js';
+import {
+  addComment,
+  addLegacyTaskNote,
+  deleteComment,
+  listComments,
+  updateComment,
+} from './api/comments.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
@@ -70,7 +95,6 @@ import {
 } from './api/files.js';
 import {
   createFinding,
-  createLedgerEntry,
   listFindings,
   listLedger,
   updateFinding,
@@ -86,14 +110,30 @@ import {
 import {
   errorResponse,
   jsonResponse,
+  jsonTextResponse,
   readJsonBody,
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import { listLabels, putLabelColor } from './api/labels.js';
+import {
+  legacyMilestoneParent,
+  withoutLegacyMilestone,
+} from './api/legacyMilestone.js';
+import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
+import { migrateMilestones } from './api/migrations.js';
+import { listPeople } from './api/people.js';
+import {
+  a2aParentRefusal,
+  decidingHuman,
+  markA2AChild,
+  proposalWriteRefusal,
+} from './api/proposalFence.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import {
   closeTerminal,
   createTerminal,
@@ -108,8 +148,14 @@ import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
 import { checkDaemonIdentity } from './daemonfile.js';
-import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
+import type {
+  DecisionDisposition,
+  DecisionFeed,
+  DecisionItem,
+} from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
+import { handleDocsRoute } from './docs/routes.js';
+import type { DocsService } from './docs/service.js';
 import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
 import {
@@ -125,7 +171,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
-import { expiredTokenMessage } from './identity.js';
+import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
@@ -147,10 +193,33 @@ import {
 } from './judgments/landingChecklist.js';
 import type { ChecklistSummary } from './judgments/landingChecklist.js';
 import { readinessFor, ReadinessStore } from './judgments/readiness.js';
+import type { ReadinessReading } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
+import {
+  acceptIngestProblemRoute,
+  completeLinkRoute,
+  deleteMemoryRoute,
+  getMemory,
+  getProposalRoute,
+  importClaudeRoute,
+  importLedgerRoute,
+  ingestProblemsRoute,
+  listMemory,
+  listProposalsRoute,
+  memoryActionRoute,
+  memoryActivityRoute,
+  memoryHealthRoute,
+  memoryIdentityRoute,
+  memoryIndexRoute,
+  memoryRecallsRoute,
+  saveMemoryRoute,
+  searchMemory,
+  startLinkRoute,
+} from './memory/routes.js';
+import type { MemoryService } from './memory/service.js';
 import type { Principal } from './messaging/principal.js';
 import { resolvePrincipal } from './messaging/principal.js';
 import {
@@ -196,10 +265,13 @@ import {
 import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import { toLandingWorktree } from './orchestrator/prWorktree.js';
 import type { ReviewRunner } from './orchestrator/review.js';
+import type { TaskAuthorship } from './orchestrator/taskAuthorship.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  runMessageRefusal,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -222,6 +294,7 @@ import {
   sessionCookie,
   sessionToken,
 } from './session.js';
+import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { FederationContext } from './team/federation/routes.js';
@@ -268,9 +341,15 @@ export interface ApiContext {
   // alongside PlanManager in index.ts against the same shared peers.
   overseerManager: OverseerManager;
   epicEngine: EpicEngine;
+  /** Who created and last wrote each task; absent in hand-built test contexts. */
+  taskAuthorship?: TaskAuthorship;
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
+  // The docs service (docs/service.ts); unavailable when docs.db did not open.
+  docs: DocsService;
+  /** The memory store and engine (memory/service.ts). */
+  memory: MemoryService;
   /** The A2A bridge; absent in hand-built test contexts. */
   a2a?: A2ABridge;
   prManager: PrManager;
@@ -282,6 +361,9 @@ export interface ApiContext {
   inboxStore: InboxStore;
   findingStore: FindingStorePort;
   ledgerStore: LedgerStorePort;
+  // Task comments on whichever backend the project uses; absent (a test
+  // context) falls back to the file store.
+  commentStore?: CommentStorePort;
   reviewRunner: ReviewRunner;
   verificationRunner: VerificationRunner;
   fixLoop: FixLoop;
@@ -387,6 +469,20 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
+  /** True when the request presented the shared agentToken: `caller` names
+   *  the owner, but no human is behind it. Set per request by handleApi. */
+  viaAgentToken?: boolean;
+  /** True when the request presented the owner's app token. Set per request
+   *  by handleApi. */
+  ownerCredential?: boolean;
+  /** The live run whose own token made this request (XH-R2). `caller` is then
+   *  the agent token's identity and `viaAgentToken` is true. */
+  viaRun?: string;
+  /** What `viaRun`'s writes are credited as (api/caller.ts runActorFor). */
+  runActor?: string;
+  /** Set when `viaRun` is A2A-origin: it reaches only the XH-R8 allowlist
+   *  (api/a2aRunScope.ts), and its task writes inherit its provenance. */
+  a2aRun?: A2ARunScope;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -464,6 +560,57 @@ function validateStringOrNullField(
   return null;
 }
 
+// The Linear-parity fields (see TaskMeta): nullable scalars, string lists,
+// and the cycle object. `creator` is create-only in spirit but harmless here.
+function validateLinearFields(value: Record<string, unknown>): string | null {
+  for (const key of [
+    'dueDate',
+    'startDate',
+    'duplicateOf',
+    'color',
+    'icon',
+  ] as const) {
+    const error = validateStringOrNullField(value[key], key);
+    if (error) return error;
+  }
+  for (const key of ['relatedTo', 'initiatives'] as const) {
+    const error = validateStringArrayField(value[key], key);
+    if (error) return error;
+  }
+  const { creator, cycle } = value;
+  for (const key of ['estimate', 'sortOrder'] as const) {
+    const n = value[key];
+    if (
+      n !== undefined &&
+      n !== null &&
+      (typeof n !== 'number' || !Number.isFinite(n))
+    ) {
+      return `invalid ${key}: expected a number or null`;
+    }
+  }
+  if (
+    creator !== undefined &&
+    creator !== null &&
+    (typeof creator !== 'string' || !isValidAssignee(creator))
+  ) {
+    return 'invalid creator: expected an actor ref or null';
+  }
+  if (cycle !== undefined && cycle !== null) {
+    const c = cycle as Record<string, unknown>;
+    if (
+      typeof cycle !== 'object' ||
+      typeof c.id !== 'string' ||
+      typeof c.number !== 'number' ||
+      typeof c.startsAt !== 'string' ||
+      typeof c.endsAt !== 'string' ||
+      (c.name !== undefined && c.name !== null && typeof c.name !== 'string')
+    ) {
+      return 'invalid cycle: expected { id, number, name, startsAt, endsAt } or null';
+    }
+  }
+  return null;
+}
+
 // Validates every field createTask/updateTask accept beyond title, entirely
 // before either one touches the store — a request that fails here writes no
 // file. `includeKind` is create-only: UpdatePatch has no `kind` field, since
@@ -475,7 +622,9 @@ function validateTaskFields(
   { includeKind, includeBody }: { includeKind: boolean; includeBody: boolean }
 ): string | null {
   if (includeKind) {
-    const kindError = validateEnumField(value.kind, KINDS, 'kind');
+    // ACCEPTED_KINDS keeps the legacy `epic` valid; the store reads it as a
+    // milestone.
+    const kindError = validateEnumField(value.kind, ACCEPTED_KINDS, 'kind');
     if (kindError) return kindError;
   }
   if (includeBody) {
@@ -513,6 +662,8 @@ function validateTaskFields(
     'assignee'
   );
   if (assigneeError) return assigneeError;
+  const parentError = validateStringOrNullField(value.parent, 'parent');
+  if (parentError) return parentError;
   const labelsError = validateStringArrayField(value.labels, 'labels');
   if (labelsError) return labelsError;
   const blockedByError = validateStringArrayField(value.blockedBy, 'blockedBy');
@@ -526,6 +677,8 @@ function validateTaskFields(
     'archivedAt'
   );
   if (archivedAtError) return archivedAtError;
+  const linearFieldsError = validateLinearFields(value);
+  if (linearFieldsError) return linearFieldsError;
   // Free-text body sections — validated as optional strings before they reach
   // setSection, which would otherwise `.trim()` a non-string and throw.
   const descriptionError = validateStringField(
@@ -552,25 +705,67 @@ function validateTaskFields(
   return null;
 }
 
+/** XH-R2: a task a run dispatches through its own token inherits that run's
+ *  A2A provenance; creates and edits inherit it through lineageStore. */
+function inheritLineage(ctx: ApiContext, taskId: string): void {
+  if (ctx.viaRun !== undefined) ctx.a2a?.inherit(ctx.viaRun, taskId);
+}
+
+// The title and field checks POST /api/tasks runs, shared with A2A handoffs.
+export function validateTaskInput(
+  rootDir: string,
+  input: Record<string, unknown>
+): string | null {
+  if (typeof input.title !== 'string' || input.title.trim() === '')
+    return 'invalid title: title is required';
+  return validateTaskFields(input, loadConfig(rootDir), {
+    includeKind: true,
+    includeBody: false,
+  });
+}
+
+// Creates a task as POST /api/tasks does: checked, a legacy `milestone`
+// resolved to a parent, stored, cached and broadcast as task.changed.
+export function createTaskChecked(
+  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'> &
+    Partial<Pick<ApiContext, 'a2a'>>,
+  input: CreateInput
+): { ok: true; doc: TaskDoc } | { ok: false; error: string } {
+  const error = validateTaskInput(ctx.rootDir, { ...input });
+  if (error !== null) return { ok: false, error };
+  const legacy = legacyMilestoneParent(
+    ctx,
+    { ...input } as Record<string, unknown>,
+    input.kind ?? 'task'
+  );
+  if (!legacy.ok) return { ok: false, error: legacy.error };
+  const doc = ctx.store.create({
+    ...withoutLegacyMilestone(input),
+    ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
+    // Omitted, a task starts in the project's ready role.
+    status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
+  });
+  markA2AChild(ctx, doc.meta.id, doc.meta.parent);
+  ctx.cache.refresh(ctx.store, [doc.meta.id]);
+  ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
+  return { ok: true, doc };
+}
+
 async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const input = parsed.value as CreateInput;
-  if (typeof input.title !== 'string' || input.title.trim() === '') {
-    return errorResponse(400, 'invalid title: title is required');
-  }
-  const config = loadConfig(ctx.rootDir);
-  const fieldsError = validateTaskFields(
-    parsed.value as Record<string, unknown>,
-    config,
-    { includeKind: true, includeBody: false }
-  );
-  if (fieldsError) return errorResponse(400, fieldsError);
-
-  const doc = ctx.store.create(input);
-  ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
-  return jsonResponse(doc, 201);
+  const refused = a2aParentRefusal(ctx, input.parent);
+  if (refused !== null) return refused;
+  // Credited to whoever made the request; a body `creator` is ignored, since
+  // imports (Linear, A2A) write through the store in-process (XH-R2).
+  const created = createTaskChecked(ctx, {
+    ...input,
+    creator: requestActor(ctx),
+  });
+  if (!created.ok) return errorResponse(400, created.error);
+  ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
+  return jsonResponse(created.doc, 201);
 }
 
 // POST /api/tasks/draft — starts a background planner turn and returns the
@@ -578,9 +773,22 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
 async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { prompt?: unknown; planner?: unknown };
+  const body = parsed.value as {
+    prompt?: unknown;
+    planner?: unknown;
+    parent?: unknown;
+  };
   if (typeof body.prompt !== 'string' || body.prompt.trim() === '') {
     return errorResponse(400, 'invalid prompt: prompt is required');
+  }
+  // The container a "+" started this draft in, checked now so a stale id
+  // fails here rather than at save.
+  const parent = body.parent ?? null;
+  if (parent !== null && typeof parent !== 'string') {
+    return errorResponse(400, 'invalid parent: expected a task id or null');
+  }
+  if (parent !== null && ctx.cache.get(parent) === null) {
+    return errorResponse(400, `invalid parent: no task ${parent}`);
   }
   const knownPlannerNames = ctx.planManager.registeredPlannerNames();
   if (
@@ -595,7 +803,7 @@ async function draftTask(req: Request, ctx: ApiContext): Promise<Response> {
   }
   const plannerName =
     typeof body.planner === 'string' ? body.planner : 'claude';
-  const draft = ctx.planManager.startDraft(body.prompt, plannerName);
+  const draft = ctx.planManager.startDraft(body.prompt, plannerName, parent);
   return jsonResponse(draft, 202);
 }
 
@@ -640,13 +848,14 @@ async function updateTask(
   ctx: ApiContext,
   id: string
 ): Promise<Response> {
-  if (ctx.store.get(id) === null) {
+  const existing = ctx.store.get(id);
+  if (existing === null) {
     return errorResponse(404, `task not found: ${id}`);
   }
 
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const patch = parsed.value as UpdatePatch;
+  const requested = parsed.value as UpdatePatch;
   const config = loadConfig(ctx.rootDir);
   const fieldsError = validateTaskFields(
     parsed.value as Record<string, unknown>,
@@ -654,56 +863,64 @@ async function updateTask(
     { includeKind: false, includeBody: true }
   );
   if (fieldsError) return errorResponse(400, fieldsError);
+  const legacy = legacyMilestoneParent(
+    ctx,
+    parsed.value as Record<string, unknown>,
+    requested.kind ?? existing.meta.kind
+  );
+  if (!legacy.ok) return errorResponse(400, legacy.error);
+  const patch: UpdatePatch = {
+    ...withoutLegacyMilestone(requested),
+    ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
+  };
+
+  // A gated A2A draft moves only through its gate; a decide-tier status
+  // change answers it.
+  if (ctx.a2a !== undefined) {
+    const caller = ctx.caller ?? {
+      tier: 'request' as const,
+      ref: humanActor(ctx),
+    };
+    const guard = await ctx.a2a.guardTaskPatch(id, patch, {
+      tier: decidingHuman(ctx) ? caller.tier : 'request',
+      ref: caller.ref,
+    });
+    if (!guard.ok) return errorResponse(guard.status, guard.error);
+  }
+
+  // Moving a task under an A2A task makes it one: a decider's call.
+  if (patch.parent !== undefined && patch.parent !== existing.meta.parent) {
+    const refused = a2aParentRefusal(ctx, patch.parent);
+    if (refused !== null) return refused;
+  }
+
+  // A publish task's elevated risk is what keeps a human on its merge, so only
+  // decide tier (never the shared agent token) may change it while it publishes.
+  if (
+    patch.risk !== undefined &&
+    patch.risk !== existing.meta.risk &&
+    ctx.docs.publishing(id) &&
+    !decidingHuman(ctx)
+  ) {
+    return errorResponse(
+      403,
+      `${id} is publishing a doc; changing its risk needs the decide tier`
+    );
+  }
 
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
   // credited to the human whose credential made the call, never whatever the
   // client sent (an untrusted body must not be able to forge attribution).
   if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
-    patch.activityActor = humanActor(ctx);
+    patch.activityActor = requestActor(ctx);
   }
 
   const doc = ctx.store.update(id, patch);
-  ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
-  return jsonResponse(doc);
-}
-
-// Credits whoever actually left the comment. `runId` is how the MCP
-// `task_comment` tool (called BY an agent from inside a run) says "this came
-// from the run I'm in" — mirrors findings.ts's ledgerAuthorFor, but unlike
-// that helper a missing/unresolvable runId here is NEVER the daemon's human:
-// this endpoint has no other caller, so an unresolvable run must still yield
-// 'none' rather than crediting whoever happens to be operating the daemon.
-function commentAuthorFor(ctx: ApiContext, runId: string | null): string {
-  if (runId === null) return 'none';
-  const run = ctx.orchestrator.getRun(runId);
-  return run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor);
-}
-
-// POST /api/tasks/:id/comment — task_comment's proxy target: an agent's
-// mid-run note appended to the task's Activity log.
-async function createTaskComment(
-  req: Request,
-  ctx: ApiContext,
-  id: string
-): Promise<Response> {
-  if (ctx.store.get(id) === null) {
-    return errorResponse(404, `task not found: ${id}`);
-  }
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown; runId?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  const runId = typeof body.runId === 'string' ? body.runId : null;
-  const doc = ctx.store.update(id, {
-    appendActivity: `${new Date().toISOString()} ${body.text}`,
-    activityActor: commentAuthorFor(ctx, runId),
-  });
-  ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  markA2AChild(ctx, id, doc.meta.parent);
+  ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
+  ctx.cache.refresh(ctx.store, [id]);
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
 }
 
@@ -751,7 +968,7 @@ async function createRun(
   const task = ctx.store.get(taskId);
   if (
     task !== null &&
-    (task.meta.status === 'landed' || task.meta.status === 'dropped')
+    isDoneStatus(task.meta.status, statusModelFor(ctx.rootDir))
   ) {
     return errorResponse(409, `cannot dispatch a ${task.meta.status} task`);
   }
@@ -768,6 +985,8 @@ async function createRun(
   if (freshField !== undefined && typeof freshField !== 'boolean') {
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
+  // Before dispatch, so a run an A2A run starts is A2A-origin from its start.
+  if (task !== null) inheritLineage(ctx, taskId);
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
   // the raw fields go through untouched; the orchestrator resolves the
   // executor's own default model for a fresh run.
@@ -778,7 +997,10 @@ async function createRun(
     fresh: freshField === true,
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
-    actor: humanActor(ctx),
+    actor: requestActor(ctx),
+    // Who the run acts for: the credential's own human (the owner only on
+    // the app token), never the shared agentToken.
+    operator: humanOperator(ctx),
   });
   return jsonResponse(meta, 201);
 }
@@ -1128,16 +1350,26 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
   // (updateConfig), so only their outer shape is checked here.
   if ('statuses' in body) {
     const { statuses } = body;
-    if (
-      !Array.isArray(statuses) ||
-      statuses.some((s) => typeof s !== 'string' || s.trim() === '')
-    ) {
+    // Entries are bare names or `{ name, type?, color? }`; core validates
+    // the type and color.
+    const nameOf = (s: unknown): string | null => {
+      const name =
+        typeof s === 'string'
+          ? s
+          : typeof s === 'object' && s !== null
+            ? (s as { name?: unknown }).name
+            : null;
+      return typeof name === 'string' && name.trim() !== ''
+        ? name.trim()
+        : null;
+    };
+    if (!Array.isArray(statuses) || statuses.some((s) => nameOf(s) === null)) {
       return errorResponse(400, 'statuses must be a list of names');
     }
     // A status some task still has cannot go: the task would sit in a
     // column the board no longer draws, and its file would fail to load
     // against the new list.
-    const kept = new Set(statuses.map((s) => canonicalStatus(s.trim())));
+    const kept = new Set(statuses.map((s) => canonicalStatus(nameOf(s) ?? '')));
     const stranded = new Map<string, number>();
     for (const task of ctx.store.list()) {
       const status = canonicalStatus(task.meta.status);
@@ -1154,7 +1386,31 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
         `cannot remove ${which}: move those tasks to another status first`
       );
     }
-    patch.statuses = statuses as string[];
+    patch.statuses = statuses as ConfigPatch['statuses'];
+  }
+  if ('people' in body) {
+    const { people } = body;
+    if (people !== null && !Array.isArray(people)) {
+      return errorResponse(400, 'people must be a list or null');
+    }
+    // Core validates every entry before writing.
+    patch.people = people as ConfigPatch['people'];
+  }
+  if ('labels' in body) {
+    const { labels } = body;
+    if (labels !== null && !Array.isArray(labels)) {
+      return errorResponse(400, 'labels must be a list or null');
+    }
+    // Core validates every entry before writing.
+    patch.labels = labels as ConfigPatch['labels'];
+  }
+  if ('statusRoles' in body) {
+    const roles = body.statusRoles;
+    if (roles !== null && (typeof roles !== 'object' || Array.isArray(roles))) {
+      return errorResponse(400, 'statusRoles must be an object or null');
+    }
+    // Core checks every role names a configured status before writing.
+    patch.statusRoles = roles as ConfigPatch['statusRoles'];
   }
   if ('verifySteps' in body) {
     const steps = body.verifySteps;
@@ -1177,6 +1433,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'receipts',
     'sync',
     'preview',
+    'memory',
   ] as const) {
     if (!(key in body)) continue;
     const field = objectField(body, key);
@@ -1244,6 +1501,14 @@ interface ReceiptsStatus {
   lastExportedAt: string | null;
   /** The last push to `receipts.remote`; absent or null when there is none. */
   lastPush?: ReceiptsPush | null;
+}
+
+// The last receipt export, as a health problem when it failed.
+function receiptsProblems(ctx: ApiContext): string[] {
+  const last = ctx.receiptsScheduler?.lastResult() ?? null;
+  return last?.state === 'failed'
+    ? [`receipt log export failed: ${last.detail}`]
+    : [];
 }
 
 // Reads the exporter's retained last result. Its own null-vs-result
@@ -1462,8 +1727,8 @@ async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
 
 // POST /api/linear/disconnect — forget this project's key. An environment or
 // machine-wide key still resolves afterwards, which `status.keySource` makes visible.
-function disconnectLinear(ctx: ApiContext): Response {
-  ctx.linearSync.disconnect();
+async function disconnectLinear(ctx: ApiContext): Promise<Response> {
+  await ctx.linearSync.disconnect();
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse(ctx.linearSync.status());
 }
@@ -1841,7 +2106,8 @@ function deleteChatMessage(
 // Sends the review back to the agent wherever the agent is. A run is
 // reviewed AFTER it finishes, so the normal case is terminal — and only
 // `{ resume: true }` re-dispatches one; without it sendMessage refuses with
-// "run is not live". A still-live run keeps the mid-run message path.
+// "run is not live". A still-live run keeps the mid-run message path. A
+// resumed run acts for the reviewer's own credential, never the shared token.
 function sendReviewToAgent(
   ctx: ApiContext,
   runId: string,
@@ -1852,7 +2118,25 @@ function sendReviewToAgent(
   return ctx.orchestrator.sendMessage(
     runId,
     message,
-    resume ? { resume: true } : {}
+    resume
+      ? {
+          resume: true,
+          actor: requestActor(ctx),
+          operator: humanOperator(ctx),
+        }
+      : {}
+  );
+}
+
+// MEM-R8(c): a request-tier reviewer may not send into a live run that acts
+// for another human; resuming a finished one acts for the reviewer instead.
+function reviewSendRefusal(ctx: ApiContext, runId: string): string | null {
+  const meta = runMetaFor(ctx, runId);
+  if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return null;
+  return runMessageRefusal(
+    meta,
+    humanOperator(ctx),
+    tierAllows(ctx.caller?.tier ?? 'request', 'decide')
   );
 }
 
@@ -2168,6 +2452,11 @@ async function submitReview(
     );
   }
 
+  if (verdict === 'request-changes') {
+    const refusal = reviewSendRefusal(ctx, runId);
+    if (refusal !== null) return errorResponse(403, refusal);
+  }
+
   // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
   // run. The other two verdicts are meaningful on their own.
   const pendingBefore = ctx.reviewComments.pendingCount(target);
@@ -2265,6 +2554,8 @@ async function sendBackRun(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { note?: unknown };
   const note = typeof body.note === 'string' ? body.note.trim() : '';
+  const refusal = reviewSendRefusal(ctx, runId);
+  if (refusal !== null) return errorResponse(403, refusal);
   const threads = formatCommentsForAgent(
     ctx.reviewComments.list(commentTargetForRun(ctx, runId))
   );
@@ -2298,7 +2589,7 @@ async function freeBranchDisk(
   if (typeof body.branch !== 'string' || body.branch === '') {
     return errorResponse(400, 'branch is required');
   }
-  return jsonResponse(ctx.orchestrator.freeWorktreeDisk(body.branch));
+  return jsonResponse(await ctx.orchestrator.freeWorktreeDisk(body.branch));
 }
 
 // DELETE /api/branches/:branch — removes a branch ref and any worktree it
@@ -2307,9 +2598,13 @@ async function freeBranchDisk(
 // `branches/` is rejoined and decoded rather than read as a single segment.
 // `?force=1` opts into deleting a branch whose commits have NOT landed on its
 // base — the one irreversible case, which the orchestrator refuses otherwise.
-function deleteBranch(ctx: ApiContext, branch: string, url: URL): Response {
+async function deleteBranch(
+  ctx: ApiContext,
+  branch: string,
+  url: URL
+): Promise<Response> {
   const force = url.searchParams.get('force') === '1';
-  ctx.orchestrator.deleteBranch(branch, { force });
+  await ctx.orchestrator.deleteBranch(branch, { force });
   return jsonResponse({ ok: true });
 }
 
@@ -2975,7 +3270,7 @@ async function dispatchPrAgentReview(
   });
   const task = ctx.store.create(buildPrReviewTask({ ...pr, body }, files));
   try {
-    ctx.cache.rebuild(ctx.store);
+    ctx.cache.refresh(ctx.store, [task.meta.id]);
     // The worktree is cut here, behind fetchPrHead: any path that cut one
     // from an already-fetched ref would slip past the fork gate entirely.
     const meta = await ctx.reviewRunner.startReview({
@@ -2988,8 +3283,9 @@ async function dispatchPrAgentReview(
       // Findings belong on the PR, not on a run: this review has no run to
       // comment on — it reads the PR's head straight out of its own worktree.
       target: { kind: 'pr', number: pr.number },
+      operator: humanOperator(ctx),
     });
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
     return meta;
   } catch (err) {
     rollbackSynthesizedTask(ctx, task.meta.id);
@@ -3023,7 +3319,7 @@ function routableDispatchError(err: unknown): Error {
 function rollbackSynthesizedTask(ctx: ApiContext, taskId: string): void {
   if (ctx.orchestrator.list().some((run) => run.taskId === taskId)) return;
   ctx.store.remove(taskId);
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [taskId]);
 }
 
 // Shared by every /api/prs/:number/comments* route below: the store never
@@ -3397,6 +3693,11 @@ async function confirmPlan(
   // promote a note whose task already exists.
   const sourceNoteId = ctx.planManager.get(planId).sourceNoteId;
   const result = ctx.planManager.confirm(planId, body.proposal);
+  // The confirm body is the human's own text, so they wrote these tasks.
+  for (const id of [result.epicId, ...result.taskIds]) {
+    const doc = id === undefined ? null : ctx.store.get(id);
+    if (doc !== null) ctx.taskAuthorship?.created(doc, humanOperator(ctx));
+  }
   if (sourceNoteId !== undefined && result.taskIds.length > 0) {
     linkNoteToTask(ctx, sourceNoteId, result.taskIds[0]);
   }
@@ -3558,7 +3859,15 @@ async function startEpic(
   if (!parsed.ok) return parsed.response;
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
-  const session = await ctx.epicEngine.start(epicId, checked.body);
+  // The caller, never the body: their teammates' tasks stay theirs. Only a
+  // human credential (the owner's only as the app token) gives the auto-fill
+  // runs someone to act for.
+  const operator = humanOperator(ctx);
+  const session = await ctx.epicEngine.start(epicId, {
+    ...checked.body,
+    startedBy: requestActor(ctx),
+    ...(operator === null ? {} : { operator }),
+  });
   return jsonResponse(session, 201);
 }
 
@@ -3570,7 +3879,7 @@ function pauseEpic(ctx: ApiContext, epicId: string): Response {
 
 // POST /api/epics/:id/resume — optionally re-ceilings the session on the way
 // back to `active`; `executor` is fixed for the session's life so it is
-// dropped here even when sent.
+// dropped here even when sent. The session now acts for whoever resumed it.
 async function resumeEpic(
   req: Request,
   ctx: ApiContext,
@@ -3585,6 +3894,7 @@ async function resumeEpic(
     concurrency,
     maxSpendUsd,
     maxRuns,
+    operator: humanOperator(ctx),
   });
   return jsonResponse(session);
 }
@@ -3762,8 +4072,8 @@ function promoteNote(ctx: ApiContext, id: string): Response {
   // Cache first, link second: the note's `note.changed` broadcast is what
   // makes the hub render "→ t-xxxxxx", and that id has to already resolve in
   // the task cache by the time a client follows it.
-  ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.cache.refresh(ctx.store, [task.meta.id]);
+  ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
   linkNoteToTask(ctx, id, task.meta.id);
   return jsonResponse(task, 201);
 }
@@ -3914,8 +4224,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
       const description = restLines.join('\n').trim();
       const reading = triage?.items[id];
       const parent =
-        reading?.epicId != null &&
-        ctx.cache.get(reading.epicId)?.meta.kind === 'epic'
+        reading?.epicId != null && ctx.cache.isContainer(reading.epicId)
           ? reading.epicId
           : null;
       const duplicateOf = reading?.duplicates.find(
@@ -3927,6 +4236,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
         ...(description === '' ? {} : { description }),
         ...(parent === null ? {} : { parent }),
       });
+      markA2AChild(ctx, task.meta.id, parent);
       links.push({ id, taskId: task.meta.id });
       results.push({
         id,
@@ -3940,8 +4250,14 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
 
   if (links.length > 0) {
     // Cache first so the ids in the response already resolve for a client that follows them.
-    ctx.cache.rebuild(ctx.store);
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.cache.refresh(
+      ctx.store,
+      links.map((link) => link.taskId)
+    );
+    ctx.events.broadcast({
+      type: 'task.changed',
+      ids: links.map((link) => link.taskId),
+    });
     ctx.inboxStore.markConverted(links);
     ctx.events.broadcast({ type: 'inbox.changed' });
   }
@@ -4018,35 +4334,57 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
   }
 }
 
+// A stored JSON object with `readiness` appended as its last key, which is
+// exactly where serializing `{ ...doc, readiness }` would put it.
+function withReadiness(
+  json: string,
+  readiness: ReadinessReading | undefined
+): string {
+  return readiness === undefined
+    ? json
+    : `${json.slice(0, -1)},"readiness":${JSON.stringify(readiness)}}`;
+}
+
 // GET /api/tasks/ready — the ready set with each task's readiness reading
 // attached (`readiness` absent when no judgment client is configured or the
 // task could not be judged). Stale tasks are judged here, on demand, so the
-// reading is as fresh as the text it describes.
-async function getReadyTasks(ctx: ApiContext): Promise<Response> {
-  const ready = ctx.cache.ready();
-  const readings = await readinessFor(
-    ctx.judgments,
-    ready,
-    new ReadinessStore(ctx.rootDir)
-  );
-  return jsonResponse(
-    ready.map((doc) => {
-      const readiness = readings[doc.meta.id];
-      return readiness === undefined ? doc : { ...doc, readiness };
-    })
-  );
+// reading is as fresh as the text it describes. `fields=meta` drops the
+// bodies and `fields=id` everything but the id, for a client that already
+// holds the task list and needs only the queue and its readings.
+async function getReadyTasks(
+  ctx: ApiContext,
+  fields: string | null
+): Promise<Response> {
+  if (fields !== null && fields !== 'meta' && fields !== 'id') {
+    return errorResponse(400, `unknown fields: ${fields}`);
+  }
+  const ids = ctx.cache.readyIds(statusModelFor(ctx.rootDir));
+  // Read before judging awaits, so the rows and readings are one snapshot.
+  const stored =
+    fields === 'id'
+      ? null
+      : ctx.cache.storedJson(ids, fields === 'meta' ? 'item' : 'json');
+  const readings =
+    ctx.judgments === null
+      ? {}
+      : await readinessFor(
+          ctx.judgments,
+          ctx.cache.getMany(ids),
+          new ReadinessStore(ctx.rootDir)
+        );
+  const items = ids.flatMap((id) => {
+    const json = stored === null ? JSON.stringify({ id }) : stored.get(id);
+    return json === undefined ? [] : [withReadiness(json, readings[id])];
+  });
+  return jsonTextResponse(`[${items.join(',')}]`);
 }
 
-// The readiness cache as `{ [taskId]: reading }`, with the hashes dropped:
-// they are the store's concern, not the client's.
+// The readiness cache as `{ [taskId]: reading }`, holding only readings still
+// judged against their task's current text, and none without a judgment
+// client: the ready route's readings, minus its judging.
 function cachedReadiness(ctx: ApiContext): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [id, entry] of Object.entries(
-    new ReadinessStore(ctx.rootDir).load()
-  )) {
-    out[id] = entry.reading;
-  }
-  return out;
+  if (ctx.judgments === null) return {};
+  return new ReadinessStore(ctx.rootDir).loadFresh((id) => ctx.cache.get(id));
 }
 
 // GET /api/inbox/clusters — the persisted result of the last clustering pass,
@@ -4070,7 +4408,8 @@ function getInboxTriage(ctx: ApiContext): Response {
  * failure mode to avoid is an agent helpfully rewriting a carefully-worded acceptance criterion
  * into something vaguer.
  */
-function buildTaskEnrichPrompt(task: TaskDoc): string {
+// An A2A task's spec (a2a) is fenced as a client's words.
+export function buildTaskEnrichPrompt(task: TaskDoc, a2a = false): string {
   // The two spec sections only — `task.body` verbatim would carry the template's empty
   // headings (so no task ever looks empty) and the agent-written Activity log.
   const existing = [
@@ -4085,7 +4424,7 @@ function buildTaskEnrichPrompt(task: TaskDoc): string {
     `Title: ${task.meta.title}`,
     existing === ''
       ? 'It currently has no description at all.'
-      : `Its current description and criteria:\n\n${existing}`,
+      : `Its current description and criteria:\n\n${a2a ? untrustedFenced('an A2A client wrote this', existing) : existing}`,
     'Read enough of this repository to ground it: which files and functions are actually ' +
       'involved, what the code does today, and what would have to change. Then propose exactly ' +
       "ONE task, and no epic, keeping this task's title and intent. " +
@@ -4107,7 +4446,7 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     return errorResponse(404, `task not found: ${id}`);
   }
   const record = ctx.planManager.startPlan(
-    buildTaskEnrichPrompt(task),
+    buildTaskEnrichPrompt(task, ctx.a2a?.taskOrigin(id) === 'a2a'),
     'claude',
     undefined,
     'enrich',
@@ -4257,6 +4596,9 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // data elsewhere, or decide whether and where the daemon pushes with the
   // owner's git credentials need the operator tier on top (operatorOnlyKeys).
   { method: 'PATCH', segments: ['config'], tier: 'decide' },
+  // The label registry lives in config.yml, so coloring a label is a settings
+  // write like any other.
+  { method: 'PUT', segments: ['labels'], tier: 'decide' },
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
@@ -4313,6 +4655,25 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     segments: ['a2a', 'tasks', '*', 'decline'],
     tier: 'decide',
   },
+  // Registering or changing a peer decides where this machine sends mail;
+  // private URLs and --allow-http/--allow-origin need the operator, checked in addPeer.
+  { method: 'POST', segments: ['a2a', 'peers'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'refresh'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'enable'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'disable'],
+    tier: 'decide',
+  },
+  { method: 'DELETE', segments: ['a2a', 'peers', '*'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
@@ -4322,6 +4683,16 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Opening the A2A listener exposes this machine on a network port and
   // points the daemon at TLS files on disk; closing it is paired.
   { method: 'PUT', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Standalone A2A hosts put this project on another machine's network
+  // (spec:1656); minting, listing and revoking them is the owner's call.
+  { method: 'GET', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'POST', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'hosts', '*'], tier: 'operator' },
+  {
+    method: 'PUT',
+    segments: ['a2a', 'listener', 'standalone'],
+    tier: 'operator',
+  },
   { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
@@ -4426,7 +4797,21 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'DELETE', segments: ['channels', '*', 'members'] },
   { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
   { method: 'GET', segments: ['decisions', 'open'] },
+  { method: 'GET', segments: ['memory'] },
+  { method: 'GET', segments: ['memory', '*'] },
+  { method: 'POST', segments: ['memory', 'import', 'ledger'] },
+  { method: 'POST', segments: ['memory', 'import', 'claude'] },
+  { method: 'POST', segments: ['memory'] },
+  { method: 'POST', segments: ['memory', 'link'] },
+  { method: 'POST', segments: ['memory', 'link', '*'] },
+  { method: 'POST', segments: ['memory', '*', '*'] },
+  { method: 'DELETE', segments: ['memory', '*'] },
+  { method: 'GET', segments: ['memory', 'proposals', '*'] },
+  { method: 'POST', segments: ['memory', 'ingest-problems', '*', 'accept'] },
 ];
+
+// Route families that authenticate by principal throughout, every method.
+const SELF_AUTHENTICATED_PREFIXES: ReadonlySet<string> = new Set(['docs']);
 
 /** Whether `/api/<segments>` is a messaging route that authenticates by
  *  principal, not tier: requiredTier skips it and handleApi resolves it. */
@@ -4434,6 +4819,9 @@ export function isSelfAuthenticated(
   segments: readonly string[],
   method: string
 ): boolean {
+  if (segments.length > 0 && SELF_AUTHENTICATED_PREFIXES.has(segments[0])) {
+    return true;
+  }
   return SELF_AUTHENTICATED_ROUTES.some(
     (route) => route.method === method && matchesRoute(route.segments, segments)
   );
@@ -4467,6 +4855,9 @@ function requiredTier(
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
   // this ladder — returning null here just opens the gate for them.
   if (isSelfAuthenticated(segments, method)) return null;
+  // A standalone host's routes accept its host token only, checked in
+  // a2a/portRoutes.ts; A2A client tokens were already refused above.
+  if (segments[0] === 'a2a' && segments[1] === 'port') return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
       return route.tier;
@@ -4567,6 +4958,67 @@ export function rejectUnauthorized(
   return null;
 }
 
+/**
+ * XH-R4: which decision feed items the caller may see. A deciding human sees
+ * all of them; anyone else only the items they take part in: a gate whose
+ * message they can read or raised for a run they act for (XH-R9: one that went
+ * to the owner), a stalled run they are or act for, a capped fix loop on a
+ * task they created.
+ */
+function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
+  const agent = ctx.viaAgentToken === true;
+  if (!agent && tierAllows(ctx.caller?.tier ?? 'request', 'decide'))
+    return () => true;
+  const address =
+    ctx.viaRun !== undefined ? `run:${ctx.viaRun}` : requestActor(ctx);
+  // The bare agent token takes part in no conversation, so it reads none.
+  const reader =
+    agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
+  const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
+  // The human a run acts for, or null for no one or an unknown run.
+  const operatorOf = (runId: string | undefined) => {
+    const run = runId === undefined ? undefined : runs.get(runId);
+    return run === undefined ? null : runOperator(run);
+  };
+  return (item) => {
+    const source = item.id.slice(item.id.indexOf(':') + 1);
+    if (source.startsWith('m-')) {
+      if (reader === null) return false;
+      if (ctx.messaging.engine.canRead(source, reader)) return true;
+      const message = ctx.messaging.engine.getMessage(source);
+      return (
+        message !== null &&
+        gateOf(message) !== null &&
+        operatorOf(item.runId) === address
+      );
+    }
+    if (item.runId !== undefined) {
+      const run = runs.get(item.runId);
+      return (
+        address === `run:${item.runId}` ||
+        (run !== undefined &&
+          (runOperator(run) === address || run.dispatchedBy === address))
+      );
+    }
+    if (item.taskId !== undefined)
+      return ctx.cache.get(item.taskId)?.meta.creator === address;
+    return false;
+  };
+}
+
+/** The run a presented token belongs to, and whether it is still live; null
+ *  when the token is a registry credential or no run's at all. */
+function runCredential(
+  ctx: ApiContext,
+  presented: string | null
+): { runId: string; live: boolean } | null {
+  if (presented === null || presented === '') return null;
+  if (ctx.tokens.registry.lookup(presented).kind !== 'unknown') return null;
+  const runId = ctx.messaging.runTokens.verify(presented);
+  if (runId === null) return null;
+  return { runId, live: ctx.orchestrator.isRunLive(runId) };
+}
+
 export async function handleApi(
   req: Request,
   daemonCtx: ApiContext
@@ -4580,6 +5032,13 @@ export async function handleApi(
 
   const untrusted = rejectUntrustedOrigin(req, daemonCtx.ownOrigins);
   if (untrusted !== null) return untrusted;
+
+  // Linear's deliveries carry no daemon token: this one exact route is
+  // admitted by path and gated on its HMAC signature instead (see
+  // api/linearWebhook.ts). Nothing else skips the token check.
+  if (isLinearWebhook(method, segments)) {
+    return await linearWebhook(req, daemonCtx);
+  }
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
 
@@ -4612,24 +5071,93 @@ export async function handleApi(
     principal = principalResult.principal;
   }
 
+  // XH-R2: a run's MCP presents the run's own token, so a write is known to
+  // come from that run. It stands where the agent token does (request tier,
+  // no human behind it) and only while the run is live.
+  const run = runCredential(daemonCtx, presented);
+  if (run !== null && !run.live) {
+    return authErrorResponse(
+      401,
+      'run token for a finished run',
+      'auth_run_token_ended'
+    );
+  }
+
   const tier = requiredTier(method, segments);
   if (tier !== null) {
-    const unauthorized = rejectUnauthorized(
-      req,
-      daemonCtx.tokens,
-      tier,
-      presented
-    );
+    const unauthorized =
+      run === null
+        ? rejectUnauthorized(req, daemonCtx.tokens, tier, presented)
+        : tierAllows('request', tier)
+          ? null
+          : authErrorResponse(
+              403,
+              wrongTierMessage(tier, 'request'),
+              'auth_insufficient_tier'
+            );
     if (unauthorized !== null) return unauthorized;
   }
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
-  const caller = daemonCtx.tokens.registry.resolve(presented);
+  const caller = daemonCtx.tokens.registry.resolve(
+    run === null ? presented : daemonCtx.tokens.agentToken
+  );
+  // The shared agentToken resolves to the owner but is never a human; a
+  // constant-time digest compare, as resolvePrincipal does.
+  const viaAgentToken =
+    run !== null ||
+    (presented !== null &&
+      timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken)));
+  const ownerCredential =
+    presented !== null &&
+    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
   let ctx: ApiContext = daemonCtx;
-  if (caller !== null) ctx = { ...ctx, caller };
+  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
+  if (run !== null) {
+    const meta = ctx.orchestrator.list().find((r) => r.id === run.runId);
+    ctx = {
+      ...ctx,
+      viaRun: run.runId,
+      runActor: runActorFor(
+        run.runId,
+        meta === undefined ? null : runOperator(meta)
+      ),
+    };
+  }
   if (principal !== undefined) ctx = { ...ctx, principal };
+  const scope = run === null ? null : a2aRunScope(ctx, run.runId);
+  if (scope !== null) {
+    const bridge = ctx.a2a;
+    ctx = {
+      ...ctx,
+      a2aRun: scope,
+      store: lineageStore(ctx.store, (taskId) =>
+        bridge?.inherit(scope.runId, taskId)
+      ),
+    };
+    const findingTask =
+      segments[0] === 'findings' && method === 'POST'
+        ? await bodyTaskId(req)
+        : null;
+    if (!a2aRunAllows(scope, method, segments, findingTask)) {
+      return authErrorResponse(
+        403,
+        'an A2A-origin run reaches only its own task and run, messaging, memory and docs',
+        'auth_a2a_run_scope'
+      );
+    }
+    // Whatever task it may still write inherits its provenance (XH-R8).
+    const written =
+      method === 'GET'
+        ? null
+        : segments[0] === 'tasks'
+          ? segments[1]
+          : findingTask;
+    if (written !== undefined && written !== null)
+      ctx.a2a?.inherit(scope.runId, written);
+  }
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
@@ -4644,7 +5172,7 @@ export async function handleApi(
         ok: true,
         version: ctx.version,
         rootDir: ctx.rootDir,
-        // Files the most recent cache rebuild couldn't parse (e.g. missing
+        // Task files the cache couldn't parse (e.g. missing
         // frontmatter, invalid kind) — empty when the task set is clean. The
         // daemon keeps serving the last-good cache regardless; this is
         // visibility, not a fatal signal (`ok` stays true). A displaced or
@@ -4654,6 +5182,10 @@ export async function handleApi(
         problems: [
           ...ctx.cache.problems(),
           ...(identity.problem === null ? [] : [identity.problem]),
+          ...receiptsProblems(ctx),
+          ...ctx.team.teammates.problems(),
+          ...ctx.memory.restoreProblems(),
+          ...(ctx.a2a?.problems() ?? []),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.
@@ -4686,7 +5218,7 @@ export async function handleApi(
         return await issueTeamToken(req, ctx);
       }
       if (segments.length === 3 && method === 'DELETE') {
-        return revokeTeamToken(ctx, segments[2]);
+        return await revokeTeamToken(ctx, segments[2]);
       }
     }
 
@@ -4793,6 +5325,25 @@ export async function handleApi(
       if (ctx.caller === undefined) {
         return errorResponse(401, 'credential resolves to no one');
       }
+      // A run's own token is that run, never the owner its caller stands in
+      // for; an A2A run names no operator at all.
+      if (ctx.viaRun !== undefined) {
+        const meta = ctx.orchestrator.list().find((r) => r.id === ctx.viaRun);
+        const operator = meta === undefined ? null : runOperator(meta);
+        return jsonResponse({
+          ref: `run:${ctx.viaRun}`,
+          ...(ctx.a2aRun === undefined
+            ? {
+                operator:
+                  operator?.startsWith('human:') === true
+                    ? operator.slice('human:'.length)
+                    : null,
+              }
+            : {}),
+          tier: 'request',
+          runToken: true,
+        });
+      }
       return jsonResponse(ctx.caller);
     }
 
@@ -4852,7 +5403,7 @@ export async function handleApi(
         return await connectLinear(req, ctx);
       }
       if (segments[1] === 'disconnect' && method === 'POST') {
-        return disconnectLinear(ctx);
+        return await disconnectLinear(ctx);
       }
       if (segments[1] === 'teams' && method === 'GET') {
         return await linearTeams(ctx);
@@ -5008,6 +5559,9 @@ export async function handleApi(
     }
 
     if (segments[0] === 'tasks') {
+      // One fence for every write to a task an open A2A proposal holds.
+      const fenced = proposalWriteRefusal(ctx, method, segments);
+      if (fenced !== null) return fenced;
       // Before any `:id` sub-route below, and matched on its own literal so
       // "fanout" is never read as a run id.
       if (
@@ -5019,14 +5573,21 @@ export async function handleApi(
         return await fanoutTask(req, ctx, segments[1]);
       }
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(
-          ctx.cache.query({
-            status: url.searchParams.get('status') ?? undefined,
-            kind: url.searchParams.get('kind') ?? undefined,
-            parent: url.searchParams.get('parent') ?? undefined,
-            includeArchived: url.searchParams.get('archived') === '1',
-          })
-        );
+        const filter = {
+          status: url.searchParams.get('status') ?? undefined,
+          kind: url.searchParams.get('kind') ?? undefined,
+          parent: url.searchParams.get('parent') ?? undefined,
+          includeArchived: url.searchParams.get('archived') === '1',
+        };
+        // `fields=meta` drops every body — the shape list views want.
+        const fields = url.searchParams.get('fields');
+        if (fields === null) {
+          return jsonTextResponse(ctx.cache.queryJson(filter));
+        }
+        if (fields === 'meta') {
+          return jsonTextResponse(ctx.cache.queryMetaJson(filter));
+        }
+        return errorResponse(400, `unknown fields: ${fields}`);
       }
       if (segments.length === 1 && method === 'POST') {
         return await createTask(req, ctx);
@@ -5090,7 +5651,7 @@ export async function handleApi(
         segments[1] === 'ready' &&
         method === 'GET'
       ) {
-        return await getReadyTasks(ctx);
+        return await getReadyTasks(ctx, url.searchParams.get('fields'));
       }
       // GET /api/tasks/readiness — the cached readings as-is, for the board,
       // which renders the whole task list rather than the ready route.
@@ -5122,7 +5683,7 @@ export async function handleApi(
         segments[2] === 'comment' &&
         method === 'POST'
       ) {
-        return await createTaskComment(req, ctx, segments[1]);
+        return await addLegacyTaskNote(req, ctx, segments[1]);
       }
       if (
         segments.length === 3 &&
@@ -5165,6 +5726,20 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await amendTask(req, ctx, segments[1]);
+      }
+      if (segments.length === 3 && segments[2] === 'comments') {
+        if (method === 'GET') return listComments(ctx, segments[1]);
+        if (method === 'POST') {
+          return await addComment(req, ctx, segments[1]);
+        }
+      }
+      if (segments.length === 4 && segments[2] === 'comments') {
+        if (method === 'PATCH') {
+          return await updateComment(req, ctx, segments[1], segments[3]);
+        }
+        if (method === 'DELETE') {
+          return deleteComment(ctx, segments[1], segments[3]);
+        }
       }
       if (segments.length === 3 && segments[2] === 'attachments') {
         if (method === 'GET') return listTaskAttachments(ctx, segments[1]);
@@ -5230,6 +5805,7 @@ export async function handleApi(
 
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {
+        ctx.orchestrator.backfillLastSteps();
         return jsonResponse(
           ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
         );
@@ -5242,6 +5818,7 @@ export async function handleApi(
         return listRunClaims(ctx);
       }
       if (segments.length === 2 && method === 'GET') {
+        ctx.orchestrator.backfillLastSteps();
         const result = ctx.orchestrator.getRun(segments[1]);
         if (result === null) {
           return errorResponse(404, `run not found: ${segments[1]}`);
@@ -5336,7 +5913,13 @@ export async function handleApi(
         segments[2] === 'resume' &&
         method === 'POST'
       ) {
-        return jsonResponse(ctx.orchestrator.resumeRun(segments[1]), 201);
+        return jsonResponse(
+          ctx.orchestrator.resumeRun(segments[1], {
+            actor: requestActor(ctx),
+            operator: humanOperator(ctx),
+          }),
+          201
+        );
       }
       if (
         segments.length === 3 &&
@@ -5540,6 +6123,70 @@ export async function handleApi(
       }
     }
 
+    // Docs routes read ctx.principal and map their own errors (docs/routes.ts).
+    if (segments[0] === 'docs') {
+      const res = await handleDocsRoute(req, ctx, segments.slice(1), url);
+      if (res !== null) return res;
+    }
+
+    // Memory routes read ctx.principal, like messaging's (memory/routes.ts).
+    if (segments[0] === 'memory') {
+      if (segments.length === 1 && method === 'GET') {
+        return listMemory(ctx, url);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await saveMemoryRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        if (segments[1] === 'search') return searchMemory(ctx, url);
+        if (segments[1] === 'health') return memoryHealthRoute(ctx);
+        if (segments[1] === 'index') return memoryIndexRoute(ctx, url);
+        if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
+        if (segments[1] === 'proposals') return listProposalsRoute(ctx, url);
+        if (segments[1] === 'activity') return memoryActivityRoute(ctx, url);
+        if (segments[1] === 'identity') return memoryIdentityRoute(ctx);
+        if (segments[1] === 'ingest-problems') return ingestProblemsRoute(ctx);
+        return getMemory(ctx, segments[1]);
+      }
+      if (segments.length === 2 && method === 'POST') {
+        if (segments[1] === 'link') return await startLinkRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        return deleteMemoryRoute(ctx, segments[1]);
+      }
+      if (segments.length === 3 && method === 'GET') {
+        if (segments[1] === 'proposals') {
+          return getProposalRoute(ctx, segments[2]);
+        }
+      }
+      if (segments.length === 3 && method === 'POST') {
+        if (segments[1] === 'import' && segments[2] === 'ledger') {
+          return importLedgerRoute(ctx, url);
+        }
+        if (segments[1] === 'import' && segments[2] === 'claude') {
+          return await importClaudeRoute(ctx, url);
+        }
+        if (segments[1] === 'link') {
+          return await completeLinkRoute(req, ctx, segments[2]);
+        }
+        const acted = await memoryActionRoute(
+          req,
+          ctx,
+          segments[1],
+          segments[2]
+        );
+        if (acted !== null) return acted;
+      }
+      if (
+        segments.length === 4 &&
+        method === 'POST' &&
+        segments[1] === 'ingest-problems' &&
+        segments[3] === 'accept'
+      ) {
+        return await acceptIngestProblemRoute(ctx, segments[2]);
+      }
+    }
+
     if (
       segments[0] === 'decisions' &&
       segments.length === 2 &&
@@ -5565,10 +6212,14 @@ export async function handleApi(
           );
         }
         return jsonResponse({
-          items: ctx.decisionFeed.list({
-            disposition: (raw ?? undefined) as DecisionDisposition | undefined,
-            includeResolved: url.searchParams.get('resolved') === '1',
-          }),
+          items: ctx.decisionFeed
+            .list({
+              disposition: (raw ?? undefined) as
+                | DecisionDisposition
+                | undefined,
+              includeResolved: url.searchParams.get('resolved') === '1',
+            })
+            .filter(decisionVisibleTo(ctx)),
         });
       }
     }
@@ -5710,7 +6361,7 @@ export async function handleApi(
 
     if (segments[0] === 'branches') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(ctx.orchestrator.listBranches());
+        return jsonResponse(await ctx.orchestrator.listBranches());
       }
       if (
         segments.length === 2 &&
@@ -5727,7 +6378,7 @@ export async function handleApi(
           .slice(1)
           .map((part) => decodeURIComponent(part))
           .join('/');
-        return deleteBranch(ctx, branch, url);
+        return await deleteBranch(ctx, branch, url);
       }
     }
 
@@ -6011,9 +6662,6 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return listLedger(ctx, url);
       }
-      if (segments.length === 1 && method === 'POST') {
-        return await createLedgerEntry(req, ctx);
-      }
     }
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
@@ -6031,6 +6679,25 @@ export async function handleApi(
     // enrich/"add detail" agents, task drafts, overseer chats), normalized for
     // the All agents page. Task runs are not repeated here: GET /api/runs
     // already lists them, and the client merges the two.
+    // POST /api/migrations/milestones — legacy milestone strings to projects.
+    if (
+      segments[0] === 'migrations' &&
+      segments[1] === 'milestones' &&
+      segments.length === 2 &&
+      method === 'POST'
+    ) {
+      return await migrateMilestones(req, ctx);
+    }
+    // GET /api/people — the people registry pickers and avatars read.
+    if (segments[0] === 'people' && segments.length === 1 && method === 'GET') {
+      return listPeople(ctx);
+    }
+    // GET /api/labels — the label registry chips take their colors from;
+    // PUT sets one label's color.
+    if (segments[0] === 'labels' && segments.length === 1) {
+      if (method === 'GET') return listLabels(ctx);
+      if (method === 'PUT') return await putLabelColor(req, ctx);
+    }
     // GET /api/executors — what this daemon can dispatch on, so no client has
     // to hard-code executor names.
     if (
@@ -6221,6 +6888,10 @@ export async function handleApi(
     if (err instanceof OrchestratorConflictError) {
       return errorResponse(409, err.message);
     }
+    // The message says which file and what to do; it never quotes the file.
+    if (err instanceof CredentialsUnreadableError) {
+      return errorResponse(409, err.message);
+    }
     if (err instanceof OrchestratorClientError) {
       return errorResponse(400, err.message);
     }
@@ -6244,6 +6915,17 @@ export async function handleApi(
       if (err.field !== undefined) body.field = err.field;
       return jsonResponse(body, status[err.code]);
     }
+    // Memory routes do the same with MemoryError, which also has `unavailable` (503).
+    if (err instanceof MemoryError) {
+      const body: { error: string; field?: string } = { error: err.message };
+      if (err.field !== undefined) body.field = err.field;
+      const res = jsonResponse(body, err.status);
+      if (err instanceof MemoryBusyError) res.headers.set('retry-after', '1');
+      return res;
+    }
+    // A busy database is 503 to retry; a write the disk refused is 507.
+    const storage = storageErrorResponse(err);
+    if (storage !== null) return storage;
     throw err;
   }
 }

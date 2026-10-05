@@ -16,6 +16,11 @@ export function syncStatusKey(port: number): [string, number] {
   return ['dispatch-sync-status', port];
 }
 
+/** React Query key for `GET /api/people` — config `people:` feeds the registry. */
+export function peopleKey(port: number): [string, number] {
+  return ['dispatch-people', port];
+}
+
 /**
  * What a `config.changed` event has to refetch. The daemon emits it both for a Settings
  * PATCH of `.dispatch/config.yml` and for Linear connect/disconnect, which writes a
@@ -23,7 +28,13 @@ export function syncStatusKey(port: number): [string, number] {
  * names neither, so all three are refetched. Sync status is included because
  * `autoCommit` — the setting the sync chip renders — lives in that same config file, so
  * flipping it in Settings must update the chip without waiting for the next `board.sync`.
+ * The people registry is built from config's `people:` too.
  */
 export function configChangedQueryKeys(port: number): [string, number][] {
-  return [dispatchConfigKey(port), linearStatusKey(port), syncStatusKey(port)];
+  return [
+    dispatchConfigKey(port),
+    linearStatusKey(port),
+    syncStatusKey(port),
+    peopleKey(port),
+  ];
 }

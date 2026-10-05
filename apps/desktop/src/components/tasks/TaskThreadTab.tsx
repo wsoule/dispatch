@@ -107,6 +107,8 @@ export function TaskThreadTab({
             onAnswer={actions.answer}
             onOpen={pane.onOpen}
             loadApprovalInput={pane.loadApprovalInput}
+            client={client}
+            port={port}
             route={replyRoute(open.messages, open.thread, null, pane.lookups)}
             onReply={actions.reply}
             onOverseerReply={noOverseerReply}

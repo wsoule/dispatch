@@ -1,6 +1,6 @@
 {
   "name": "@dispatch/protocol-spec",
-  "version": "1.0.0-draft.1",
+  "version": "1.0.0-draft.2",
   "private": true,
   "license": "Apache-2.0",
   "bin": {
@@ -16,6 +16,7 @@
   "scripts": {
     "build": "tsdown --clean",
     "registries": "bun scripts/registries.ts",
+    "snapshot": "bun scripts/snapshot.ts",
     "test": "bun test",
     "tsc": "tsgo --noEmit --pretty",
     "prepublishOnly": "moon run protocol-spec:prepublish"

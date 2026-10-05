@@ -1,11 +1,16 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { Person, TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 import { type ReactElement, useState } from 'react';
 
+import { dayFromNow } from '../../lib/taskDates';
+import { PeopleProvider } from '../people/PeopleContext';
 import {
   AssigneeControl,
+  CycleControl,
+  DueDateControl,
   EpicControl,
+  EstimateControl,
   LabelsControl,
   PriorityControl,
   StatusControl,
@@ -365,5 +370,238 @@ describe('PropertyControls', () => {
     });
     expect(screen.queryByRole('option', { name: /Create/ })).toBeNull();
     expect(labelOptions().map((o) => o.label)).toEqual(['ui']);
+  });
+});
+
+// A long list mounts rows every scroll frame, so a picker at rest is a plain button and the
+// Base UI menu only mounts on intent. These pin that the swap never costs an interaction.
+describe('pickers mount their menu on first intent', () => {
+  test('an idle control mounts no menu machinery', () => {
+    render(
+      <StatusControl value="ready" statuses={STATUSES} onChange={() => {}} />
+    );
+    const trigger = screen.getByRole('button', { name: 'Change status' });
+    // Base UI's trigger carries its own slot; the resting face does not.
+    expect(
+      document.querySelector('[data-slot=dropdown-menu-trigger]')
+    ).toBeNull();
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  test('a click on a cold control opens its menu in one go', async () => {
+    render(<PriorityControl value="none" onChange={() => {}} variant="row" />);
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change priority' }));
+    });
+    expect(screen.getByRole('menuitem', { name: /Urgent/ })).not.toBeNull();
+  });
+
+  test('a cold controlled picker asks its owner to open', () => {
+    const asked: boolean[] = [];
+    render(
+      <AssigneeControl
+        value="none"
+        onChange={() => {}}
+        open={false}
+        onOpenChange={(next) => asked.push(next)}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Change assignee' }));
+    expect(asked).toEqual([true]);
+  });
+
+  test('keyboard focus survives the swap to the real trigger', async () => {
+    render(
+      <StatusControl value="ready" statuses={STATUSES} onChange={() => {}} />
+    );
+    const cold = screen.getByRole('button', { name: 'Change status' });
+    await settle(() => {
+      cold.focus();
+    });
+    const live = screen.getByRole('button', { name: 'Change status' });
+    expect(live).not.toBe(cold);
+    expect(document.activeElement).toBe(live);
+  });
+
+  test('a cold labels picker opens on click too', async () => {
+    render(
+      <LabelsControl
+        value={[]}
+        candidates={['ui']}
+        onChange={() => {}}
+        variant="inline"
+      />
+    );
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change labels' }));
+    });
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'ui',
+    ]);
+  });
+});
+
+describe('the assignee picker lists people and agents', () => {
+  const people = [
+    { ref: 'human:maya', name: 'Maya Chen' },
+    { ref: 'human:wyat', name: 'Wyat Soule' },
+  ];
+
+  test('you first, then the team, then the agent pool and nobody', async () => {
+    const picked: string[] = [];
+    render(
+      <PeopleProvider people={people} me="human:wyat">
+        <AssigneeControl value="none" onChange={(a) => picked.push(a)} />
+      </PeopleProvider>
+    );
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change assignee' }));
+    });
+    // Each item's label, without its avatar's initials.
+    expect(
+      screen
+        .getAllByRole('menuitem')
+        .map((item) => item.querySelector('.truncate')?.textContent)
+    ).toEqual(['Wyat Soule', 'Maya Chen', 'Agent', 'Unassigned']);
+    await settle(() => {
+      fireEvent.click(screen.getByRole('menuitem', { name: /Maya Chen/ }));
+    });
+    expect(picked).toEqual(['human:maya']);
+  });
+
+  test('the legacy bare human reads as me', () => {
+    render(
+      <PeopleProvider people={people} me="human:wyat">
+        <AssigneeControl value="human" onChange={() => {}} variant="row" />
+      </PeopleProvider>
+    );
+    expect(
+      screen.getByRole('button', { name: 'Change assignee' }).textContent
+    ).toContain('Wyat Soule');
+  });
+
+  // Listed by GET /api/people while a Linear issue's assignee has no name yet.
+  const placeholder = {
+    ref: 'human:linear-user',
+    name: 'Unknown Linear user',
+    placeholder: true,
+  };
+
+  // The open menu's labels for an unassigned task.
+  async function offered(
+    listed: readonly Person[]
+  ): Promise<(string | null)[]> {
+    const view = render(
+      <PeopleProvider people={listed} me="human:wyat">
+        <AssigneeControl value="none" onChange={() => {}} />
+      </PeopleProvider>
+    );
+    await settle(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Change assignee' }));
+    });
+    const labels = screen
+      .getAllByRole('menuitem')
+      .map((item) => item.querySelector('.truncate')?.textContent ?? null);
+    view.unmount();
+    return labels;
+  }
+
+  test('never offers the unknown-Linear-user placeholder', async () => {
+    expect(await offered([...people, placeholder])).toEqual([
+      'Wyat Soule',
+      'Maya Chen',
+      'Agent',
+      'Unassigned',
+    ]);
+    // Alone it is no registry: the fixed kinds stay, yourself included.
+    expect(await offered([placeholder])).toEqual([
+      'Agent',
+      'Human',
+      'Unassigned',
+    ]);
+  });
+
+  test('a task the placeholder holds still names it', () => {
+    render(
+      <PeopleProvider people={[...people, placeholder]} me="human:wyat">
+        <AssigneeControl
+          value="human:linear-user"
+          onChange={() => {}}
+          variant="row"
+        />
+      </PeopleProvider>
+    );
+    expect(
+      screen.getByRole('button', { name: 'Change assignee' }).textContent
+    ).toContain('Unknown Linear user');
+  });
+});
+
+describe('estimate, due date and cycle', () => {
+  test('an estimate is picked from the scale', async () => {
+    const picks: (number | null)[] = [];
+    await renderOpen(
+      <EstimateControl value={null} onChange={(n) => picks.push(n)} open />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: '5 points' }))
+    );
+    expect(picks).toEqual([5]);
+  });
+
+  test('No estimate clears one', async () => {
+    const picks: (number | null)[] = [];
+    await renderOpen(
+      <EstimateControl value={5} onChange={(n) => picks.push(n)} open />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: 'No estimate' }))
+    );
+    expect(picks).toEqual([null]);
+  });
+
+  test('an off-scale estimate still lists, and reads on the row', () => {
+    render(<EstimateControl value={4} onChange={() => {}} />);
+    expect(
+      screen.getByRole('button', { name: 'Change estimate' }).textContent
+    ).toBe('4 points');
+  });
+
+  test('a cycle is picked by id and handed back whole', async () => {
+    const cycle = {
+      id: 'c-42',
+      number: 42,
+      name: null,
+      startsAt: '2026-09-17T00:00:00Z',
+      endsAt: '2026-10-01T00:00:00Z',
+    };
+    const picks: unknown[] = [];
+    await renderOpen(
+      <CycleControl
+        value={null}
+        cycles={[cycle]}
+        onChange={(c) => picks.push(c)}
+        open
+      />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Cycle 42' }))
+    );
+    expect(picks).toEqual([cycle]);
+  });
+
+  test('a due date comes from a quick pick, and clears', async () => {
+    const picks: (string | null)[] = [];
+    await renderOpen(
+      <DueDateControl value="2026-09-30" onChange={(d) => picks.push(d)} open />
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Tomorrow' }))
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Clear due date' }))
+    );
+    expect(picks).toEqual([dayFromNow(1), null]);
   });
 });

@@ -17,6 +17,9 @@
       "path": "../federation/tsconfig.json"
     },
     {
+      "path": "../memory/tsconfig.json"
+    },
+    {
       "path": "../protocol/tsconfig.json"
     }
   ]

@@ -16,6 +16,7 @@ import type {
   ExecutorPricing,
   FixLoopConfig,
   LinearConfig,
+  MemoryConfig,
   MessagingConfig,
   ModelConfig,
   NotificationKind,
@@ -37,6 +38,7 @@ import {
   DEFAULT_EXECUTOR_NAME,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
   DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
@@ -55,6 +57,11 @@ import {
   MODEL_ROLES,
   NOTIFICATION_KINDS,
 } from './configTypes.js';
+import { describeValue } from './describe.js';
+import { labelDefinitionError, labelRef } from './labels.js';
+import type { LabelDefinition } from './labels.js';
+import { personError } from './people.js';
+import type { Person } from './people.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
 import {
   DEFAULT_POLICY,
@@ -70,7 +77,14 @@ import {
   isQueueWeight,
   QUEUE_FACTOR_KEYS,
 } from './scoring.js';
-import { canonicalStatus } from './status.js';
+import {
+  canonicalStatus,
+  DEFAULT_STATUS_ROLES,
+  defaultStatusType,
+  STATUS_ROLE_KEYS,
+  STATUS_TYPES,
+} from './status.js';
+import type { StatusDefinition, StatusRoles, StatusType } from './status.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
 
@@ -173,12 +187,16 @@ function validateWebhookUrl(value: unknown, label: string): string {
   return trimmed;
 }
 
+// Kind keys a newer build wrote that this one does not know, warned about once
+// per process: config.yml is committed, and an older build must still load it.
+const warnedUnknownKinds = new Set<string>();
+
 // Validates one `kinds:` map — the shape the loader and updateConfig share.
-// An unknown kind is an error rather than ignored, so a typo cannot leave the
-// kind it meant to silence on its default.
+// The loader skips an unknown kind; a patch naming one is still refused.
 function parseNotificationKinds(
   raw: unknown,
-  label: string
+  label: string,
+  skipUnknown = false
 ): Partial<Record<NotificationKind, boolean>> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new ConfigError(`invalid ${label}: must be an object`);
@@ -186,6 +204,15 @@ function parseNotificationKinds(
   const result: Partial<Record<NotificationKind, boolean>> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!NOTIFICATION_KINDS.includes(key as NotificationKind)) {
+      if (skipUnknown) {
+        if (!warnedUnknownKinds.has(key)) {
+          warnedUnknownKinds.add(key);
+          console.warn(
+            `dispatch: .dispatch/config.yml notifications.kinds.${key} is unknown to this build (expected ${NOTIFICATION_KINDS.join('|')}); ignored`
+          );
+        }
+        continue;
+      }
       throw new ConfigError(
         `invalid ${label}: unknown kind "${key}" (expected ${NOTIFICATION_KINDS.join('|')})`
       );
@@ -200,7 +227,7 @@ function parseNotificationKinds(
 
 // Validates the optional `notifications:` block, same contract as the blocks
 // below. `kinds` merges over the defaults, so switching one kind off does not
-// switch the other four off with it.
+// switch the others off with it.
 function parseNotificationsConfig(raw: unknown): NotificationsConfig {
   if (raw === undefined) return cloneNotifications(DEFAULT_NOTIFICATIONS);
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -215,7 +242,8 @@ function parseNotificationsConfig(raw: unknown): NotificationsConfig {
       result.kinds,
       parseNotificationKinds(
         obj.kinds,
-        '.dispatch/config.yml: notifications.kinds'
+        '.dispatch/config.yml: notifications.kinds',
+        true
       )
     );
   }
@@ -265,6 +293,99 @@ function parseMessagingConfig(raw: unknown): MessagingConfig {
     result[key] = value;
   }
   return result;
+}
+
+type MemoryIntegerKey = Exclude<
+  keyof MemoryConfig,
+  'claudeAutoMemory' | 'retireAfterDays'
+>;
+
+const MEMORY_RANGES: Record<MemoryIntegerKey, readonly [number, number]> = {
+  indexTokens: [200, 4000],
+  personalWritesPerHour: [1, 500],
+  proposalsPerHour: [1, 100],
+  maxOpenProposals: [1, 500],
+  proposalTtlDays: [1, 90],
+  staleAfterDays: [7, 3650],
+};
+
+const MAX_RETIRE_AFTER_DAYS = 3650;
+
+export interface MemoryConfigWarning {
+  key: string;
+  message: string;
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value);
+}
+
+/** Parses the `memory:` block leniently: a bad value costs only that key, with
+ *  a warning naming it, and never fails the read. */
+export function parseMemoryConfig(raw: unknown): {
+  config: MemoryConfig;
+  warnings: MemoryConfigWarning[];
+} {
+  const config: MemoryConfig = { ...DEFAULT_MEMORY };
+  const warnings: MemoryConfigWarning[] = [];
+  if (raw === undefined || raw === null) return { config, warnings };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      config,
+      warnings: [
+        { key: 'memory', message: 'memory must be a mapping; using defaults' },
+      ],
+    };
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const [key, [min, max]] of Object.entries(MEMORY_RANGES) as Array<
+    [MemoryIntegerKey, readonly [number, number]]
+  >) {
+    const value = obj[key];
+    if (value === undefined) continue;
+    if (isInteger(value) && value >= min && value <= max) {
+      config[key] = value;
+    } else {
+      warnings.push({
+        key: `memory.${key}`,
+        message: `memory.${key} must be an integer from ${min} to ${max}; using ${DEFAULT_MEMORY[key]}`,
+      });
+    }
+  }
+  const retire = obj.retireAfterDays;
+  if (retire !== undefined) {
+    if (
+      isInteger(retire) &&
+      retire > config.staleAfterDays &&
+      retire <= MAX_RETIRE_AFTER_DAYS
+    ) {
+      config.retireAfterDays = retire;
+    } else {
+      warnings.push({
+        key: 'memory.retireAfterDays',
+        message: `memory.retireAfterDays must be an integer above staleAfterDays (${config.staleAfterDays}) and at most ${MAX_RETIRE_AFTER_DAYS}; using ${DEFAULT_MEMORY.retireAfterDays}`,
+      });
+    }
+  }
+  // A long staleAfterDays can pass the default retire age; retire just after.
+  if (config.retireAfterDays <= config.staleAfterDays) {
+    config.retireAfterDays = Math.min(
+      MAX_RETIRE_AFTER_DAYS,
+      config.staleAfterDays + 1
+    );
+  }
+  const mode = obj.claudeAutoMemory;
+  if (mode !== undefined) {
+    if (mode === 'export' || mode === 'off') {
+      config.claudeAutoMemory = mode;
+    } else {
+      warnings.push({
+        key: 'memory.claudeAutoMemory',
+        message: `memory.claudeAutoMemory must be export or off; using ${DEFAULT_MEMORY.claudeAutoMemory}`,
+      });
+    }
+  }
+  return { config, warnings };
 }
 
 const A2A_LIMIT_KEYS = [
@@ -339,6 +460,35 @@ function parseA2AConfig(raw: unknown): {
     }
   }
   return { config, warnings };
+}
+
+/** Reads the `memory:` block alone, per use, so a broken block elsewhere in
+ *  config.yml (or a file that does not parse) costs memory only its defaults. */
+export function readMemoryConfig(rootDir: string): {
+  config: MemoryConfig;
+  warnings: MemoryConfigWarning[];
+} {
+  const path = join(rootDir, DISPATCH_DIR, 'config.yml');
+  if (!existsSync(path)) return parseMemoryConfig(undefined);
+  let doc: unknown;
+  try {
+    doc = YAML.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    return {
+      config: { ...DEFAULT_MEMORY },
+      warnings: [
+        {
+          key: 'memory',
+          message: `config.yml does not parse (${(err as Error).message}); using defaults`,
+        },
+      ],
+    };
+  }
+  const block =
+    typeof doc === 'object' && doc !== null
+      ? (doc as Record<string, unknown>).memory
+      : undefined;
+  return parseMemoryConfig(block);
 }
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -932,6 +1082,10 @@ function parsePreviewConfig(raw: unknown): PreviewConfig {
   };
 }
 
+// Gate keys a newer build wrote that this one does not know, warned about once
+// per process: config.yml is committed, and an older build must still load it.
+const warnedUnknownGates = new Set<string>();
+
 function parsePolicyConfig(raw: unknown): PolicyConfig {
   if (raw === undefined) return { ...DEFAULT_POLICY, gates: {} };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -972,9 +1126,13 @@ function parsePolicyConfig(raw: unknown): PolicyConfig {
         );
       }
       if (!POLICY_GATES.includes(gate as PolicyGate)) {
-        throw new ConfigError(
-          `invalid .dispatch/config.yml: unknown policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
-        );
+        if (!warnedUnknownGates.has(gate)) {
+          warnedUnknownGates.add(gate);
+          console.warn(
+            `dispatch: .dispatch/config.yml policy.gates.${gate} is unknown to this build (expected ${POLICY_GATES.join('|')}); ignored`
+          );
+        }
+        continue;
       }
       if (!POLICY_GATE_MODES.includes(mode as PolicyGateMode)) {
         throw new ConfigError(
@@ -1084,6 +1242,13 @@ function parseVerifyConfig(raw: unknown): VerifyConfig | undefined {
   return result;
 }
 
+function isTeamIdList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((id) => typeof id === 'string' && id.trim() !== '')
+  );
+}
+
 // Validates the optional `linear:` block, same contract as the blocks above. `statusMap`
 // merges over the default, so remapping one status does not unmap the other five.
 function parseLinearConfig(raw: unknown): LinearConfig {
@@ -1112,6 +1277,18 @@ function parseLinearConfig(raw: unknown): LinearConfig {
       'invalid .dispatch/config.yml: linear.teamId must be a string or null'
     );
   }
+  // `teamIds` wins when present; a legacy `teamId` alone is a one-team list.
+  const { teamIds } = obj;
+  if (teamIds !== undefined && teamIds !== null && !isTeamIdList(teamIds)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.teamIds must be a list of team ids'
+    );
+  }
+  const linkedTeams = isTeamIdList(teamIds)
+    ? [...new Set(teamIds)]
+    : typeof teamId === 'string' && teamId.trim() !== ''
+      ? [teamId]
+      : [];
 
   const { intervalSec } = obj;
   if (
@@ -1133,6 +1310,16 @@ function parseLinearConfig(raw: unknown): LinearConfig {
   ) {
     throw new ConfigError(
       `invalid .dispatch/config.yml: linear.direction must be one of ${LINEAR_DIRECTIONS.join('|')}`
+    );
+  }
+
+  const { includeAcceptanceCriteria } = obj;
+  if (
+    includeAcceptanceCriteria !== undefined &&
+    typeof includeAcceptanceCriteria !== 'boolean'
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.includeAcceptanceCriteria must be a boolean'
     );
   }
 
@@ -1160,10 +1347,13 @@ function parseLinearConfig(raw: unknown): LinearConfig {
 
   return {
     enabled: enabled ?? defaults.enabled,
-    teamId: teamId ?? defaults.teamId,
+    teamId: linkedTeams[0] ?? null,
+    teamIds: linkedTeams,
     statusMap: mergedStatusMap,
     intervalSec: intervalSec ?? defaults.intervalSec,
     direction: (direction as LinearConfig['direction']) ?? defaults.direction,
+    includeAcceptanceCriteria:
+      includeAcceptanceCriteria ?? defaults.includeAcceptanceCriteria,
   };
 }
 
@@ -1356,6 +1546,173 @@ function parseQueueConfig(raw: unknown): QueueConfig {
   }
 }
 
+/**
+ * Validates `statuses:`, whose entries are bare names or `{ name, type?,
+ * color? }`. Old files list pre-rename names; canonicalize and dedupe.
+ * `statusDefinitions` is only set when some entry is typed or colored, so an
+ * untyped list reads exactly as it always has.
+ */
+function parseStatuses(raw: unknown): {
+  statuses: string[];
+  statusDefinitions?: StatusDefinition[];
+} {
+  if (raw === undefined) return { statuses: [...DEFAULTS.statuses] };
+  const invalid = new ConfigError(
+    'invalid .dispatch/config.yml: statuses must be a list of names or { name, type, color } entries'
+  );
+  if (!Array.isArray(raw)) throw invalid;
+  const definitions = new Map<string, StatusDefinition>();
+  let typed = false;
+  for (const entry of raw as unknown[]) {
+    if (typeof entry === 'string') {
+      const name = canonicalStatus(entry);
+      if (!definitions.has(name)) {
+        definitions.set(name, {
+          name,
+          type: defaultStatusType(name),
+          color: null,
+        });
+      }
+      continue;
+    }
+    if (typeof entry !== 'object' || entry === null) throw invalid;
+    const { name, type, color } = entry as Record<string, unknown>;
+    if (typeof name !== 'string' || name.trim() === '') throw invalid;
+    if (
+      type !== undefined &&
+      !(STATUS_TYPES as readonly unknown[]).includes(type)
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: status ${name} has type ${describeValue(type)} (expected ${STATUS_TYPES.join('|')})`
+      );
+    }
+    if (color !== undefined && color !== null && typeof color !== 'string') {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: status ${name} color must be a string`
+      );
+    }
+    typed = true;
+    const canonical = canonicalStatus(name.trim());
+    if (definitions.has(canonical)) continue;
+    definitions.set(canonical, {
+      name: canonical,
+      type: (type as StatusType | undefined) ?? defaultStatusType(canonical),
+      color: color ?? null,
+    });
+  }
+  const statusDefinitions = [...definitions.values()];
+  return {
+    statuses: statusDefinitions.map((d) => d.name),
+    ...(typed ? { statusDefinitions } : {}),
+  };
+}
+
+/**
+ * Validates `statusRoles:`. Keys merge over the defaults; every configured
+ * role must name a configured status (`landing` may be null).
+ */
+function parseStatusRoles(
+  raw: unknown,
+  statuses: string[]
+): StatusRoles | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: statusRoles must be a map'
+    );
+  }
+  const roles: StatusRoles = { ...DEFAULT_STATUS_ROLES };
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(STATUS_ROLE_KEYS as readonly string[]).includes(key)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown statusRoles key ${key} (expected ${STATUS_ROLE_KEYS.join('|')})`
+      );
+    }
+    if (key === 'landing' && value === null) {
+      roles.landing = null;
+      continue;
+    }
+    if (
+      typeof value !== 'string' ||
+      !statuses.includes(canonicalStatus(value))
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: statusRoles.${key} must name a configured status`
+      );
+    }
+    roles[key as Exclude<keyof StatusRoles, 'landing'>] =
+      canonicalStatus(value);
+  }
+  return roles;
+}
+
+/** Validates `people:`, a list of { ref, name, email?, avatarUrl?, external? }. */
+function parsePeople(raw: unknown): Person[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: people must be a list'
+    );
+  }
+  const seen = new Set<string>();
+  return (raw as unknown[]).map((entry, index) => {
+    const error = personError(entry);
+    if (error !== null) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: people[${index}]: ${error}`
+      );
+    }
+    const p = entry as Person;
+    if (seen.has(p.ref)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: people lists ${p.ref} twice`
+      );
+    }
+    seen.add(p.ref);
+    return {
+      ref: p.ref,
+      name: p.name.trim(),
+      email: p.email ?? null,
+      avatarUrl: p.avatarUrl ?? null,
+      external: p.external ?? null,
+    };
+  });
+}
+
+/** Validates `labels:`, a list of { name, color, group?, external? }. */
+function parseLabels(raw: unknown): LabelDefinition[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: labels must be a list'
+    );
+  }
+  const seen = new Set<string>();
+  return (raw as unknown[]).map((entry, index) => {
+    const error = labelDefinitionError(entry);
+    if (error !== null) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: labels[${index}]: ${error}`
+      );
+    }
+    const l = entry as LabelDefinition;
+    const label: LabelDefinition = {
+      name: l.name.trim(),
+      color: l.color ?? null,
+      group: l.group ?? null,
+      external: l.external ?? null,
+    };
+    const key = labelRef(label).toLowerCase();
+    if (seen.has(key)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: labels lists ${labelRef(label)} twice`
+      );
+    }
+    seen.add(key);
+    return label;
+  });
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -1376,6 +1733,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       repoDigest: { ...DEFAULTS.repoDigest },
       notifications: cloneNotifications(DEFAULTS.notifications),
       messaging: { ...DEFAULTS.messaging },
+      memory: { ...DEFAULT_MEMORY },
       receipts: { ...DEFAULT_RECEIPTS },
       sync: { ...DEFAULT_SYNC },
       policy: { ...DEFAULT_POLICY, gates: {} },
@@ -1425,15 +1783,13 @@ function parseConfig(parsed: unknown): DispatchConfig {
       }
     }
   }
-  if (
-    raw.statuses !== undefined &&
-    (!Array.isArray(raw.statuses) ||
-      raw.statuses.some((s) => typeof s !== 'string'))
-  ) {
-    throw new ConfigError(
-      'invalid .dispatch/config.yml: statuses must be an array of strings'
-    );
-  }
+  const people = parsePeople((parsed as { people?: unknown } | null)?.people);
+  const labels = parseLabels((parsed as { labels?: unknown } | null)?.labels);
+  const statusBlock = parseStatuses(raw.statuses);
+  const statusRoles = parseStatusRoles(
+    (parsed as { statusRoles?: unknown } | null)?.statusRoles,
+    statusBlock.statuses
+  );
   if (raw.autoCommit !== undefined && typeof raw.autoCommit !== 'boolean') {
     throw new ConfigError(
       'invalid .dispatch/config.yml: autoCommit must be a boolean'
@@ -1457,11 +1813,10 @@ function parseConfig(parsed: unknown): DispatchConfig {
   }
   const a2a = parseA2AConfig(raw.a2a);
   return {
-    // Old config files list the pre-rename names; canonicalize (and dedupe,
-    // in case a file lists both an old name and its successor) on load.
-    statuses: [
-      ...new Set((raw.statuses ?? DEFAULTS.statuses).map(canonicalStatus)),
-    ],
+    ...statusBlock,
+    ...(statusRoles === undefined ? {} : { statusRoles }),
+    ...(people === undefined ? {} : { people }),
+    ...(labels === undefined ? {} : { labels }),
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,
@@ -1477,6 +1832,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     notifications: parseNotificationsConfig(raw.notifications),
     messaging: parseMessagingConfig(raw.messaging),
+    memory: parseMemoryConfig(raw.memory).config,
     receipts: parseReceiptsConfig(raw.receipts),
     sync: parseSyncConfig(raw.sync),
     policy: parsePolicyConfig(raw.policy),
@@ -1530,11 +1886,27 @@ function applyLinearPatch(
     }
     doc.setIn(['linear', 'enabled'], patch.enabled);
   }
+  // Either key writes both: `teamIds` in full, and `teamId` as its first
+  // entry, which is all a build predating several teams reads.
+  let teams: string[] | undefined;
   if (patch.teamId !== undefined) {
     if (patch.teamId !== null && typeof patch.teamId !== 'string') {
       throw new ConfigError('invalid linear.teamId: must be a string or null');
     }
-    doc.setIn(['linear', 'teamId'], patch.teamId);
+    teams =
+      patch.teamId === null || patch.teamId.trim() === '' ? [] : [patch.teamId];
+  }
+  if (patch.teamIds !== undefined) {
+    if (!isTeamIdList(patch.teamIds)) {
+      throw new ConfigError(
+        'invalid linear.teamIds: must be a list of team ids'
+      );
+    }
+    teams = [...new Set(patch.teamIds)];
+  }
+  if (teams !== undefined) {
+    doc.setIn(['linear', 'teamIds'], teams);
+    doc.setIn(['linear', 'teamId'], teams[0] ?? null);
   }
   if (patch.intervalSec !== undefined) {
     if (!Number.isFinite(patch.intervalSec) || patch.intervalSec < 30) {
@@ -1549,6 +1921,17 @@ function applyLinearPatch(
       );
     }
     doc.setIn(['linear', 'direction'], patch.direction);
+  }
+  if (patch.includeAcceptanceCriteria !== undefined) {
+    if (typeof patch.includeAcceptanceCriteria !== 'boolean') {
+      throw new ConfigError(
+        'invalid linear.includeAcceptanceCriteria: must be a boolean'
+      );
+    }
+    doc.setIn(
+      ['linear', 'includeAcceptanceCriteria'],
+      patch.includeAcceptanceCriteria
+    );
   }
   if (patch.statusMap !== undefined) {
     if (
@@ -1621,8 +2004,51 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
   if (patch.statuses !== undefined) {
     doc.set(
       'statuses',
-      patch.statuses.map((status) => status.trim())
+      patch.statuses.map((status) =>
+        typeof status === 'string'
+          ? status.trim()
+          : {
+              name: status.name.trim(),
+              ...(status.type === undefined ? {} : { type: status.type }),
+              ...(status.color == null ? {} : { color: status.color }),
+            }
+      )
     );
+  }
+  if (patch.people !== undefined) {
+    if (patch.people === null || patch.people.length === 0) {
+      doc.delete('people');
+    } else {
+      doc.set(
+        'people',
+        patch.people.map((p) => ({
+          ref: p.ref,
+          name: p.name,
+          ...(p.email == null ? {} : { email: p.email }),
+          ...(p.avatarUrl == null ? {} : { avatarUrl: p.avatarUrl }),
+          ...(p.external == null ? {} : { external: p.external }),
+        }))
+      );
+    }
+  }
+  if (patch.labels !== undefined) {
+    if (patch.labels === null || patch.labels.length === 0) {
+      doc.delete('labels');
+    } else {
+      doc.set(
+        'labels',
+        patch.labels.map((l) => ({
+          name: l.name,
+          ...(l.color == null ? {} : { color: l.color }),
+          ...(l.group == null ? {} : { group: l.group }),
+          ...(l.external == null ? {} : { external: l.external }),
+        }))
+      );
+    }
+  }
+  if (patch.statusRoles !== undefined) {
+    if (patch.statusRoles === null) doc.delete('statusRoles');
+    else doc.set('statusRoles', { ...patch.statusRoles });
   }
   if (patch.verifySteps !== undefined) {
     if (patch.verifySteps === null || patch.verifySteps.length === 0) {
@@ -1648,6 +2074,7 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
     ['receipts', patch.receipts],
     ['sync', patch.sync],
     ['preview', patch.preview],
+    ['memory', patch.memory],
   ] as const;
   for (const [block, fields] of blocks) {
     if (fields === undefined) continue;
@@ -1911,6 +2338,18 @@ export function updateConfig(
   }
 
   applyBlockPatches(doc, patch);
+  // The loader is lenient about memory keys, so a patch is checked strictly here.
+  if (patch.memory !== undefined) {
+    const block = doc.getIn(['memory']);
+    const { warnings } = parseMemoryConfig(
+      YAML.isMap(block) ? block.toJSON() : block
+    );
+    if (warnings.length > 0) {
+      throw new ConfigError(
+        `invalid memory settings: ${warnings.map((w) => w.message).join('; ')}`
+      );
+    }
+  }
 
   // The whole patched document, checked by the same parser loadConfig uses
   // before anything is written: a value it would refuse — from any key, not

@@ -8,7 +8,9 @@ import type {
 } from '@dispatch/protocol';
 
 import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
+import type { PushConfigInput, PushConfigJson } from './push.js';
 import type { TaskStateName } from './states.js';
+import type { HandoffPhase } from './statuses.js';
 import type { ArtifactJson } from './wire.js';
 
 // The one seam between the A2A handler and a host: the host gathers facts and
@@ -17,6 +19,9 @@ import type { ArtifactJson } from './wire.js';
 export interface Caller {
   address: Address;
   name: string;
+  // The client's own bearer, which a standalone host forwards to the daemon;
+  // opaque to handleA2A.
+  credential?: string;
 }
 
 export type AuthResult =
@@ -83,8 +88,16 @@ export interface TaskFacts {
   answer: Message | null;
   openQuestions: Message[];
   openGates: OpenGateFact[];
+  // `status` is the project's name for it; `phase` is what the host's status
+  // model says it means, which is all the projection reads.
   task:
-    | { id: string; title: string; status: string; approved: boolean }
+    | {
+        id: string;
+        title: string;
+        status: string;
+        phase: HandoffPhase;
+        approved: boolean;
+      }
     | 'deleted'
     | null;
   dropped: 'client' | 'other' | null;
@@ -118,6 +131,26 @@ export type Admission =
   | { ok: true; release?: () => void }
   | { ok: false; retryAfterSec: number };
 
+/** A JWS over the card (a2a.proto v1.0.1 AgentCardSignature). */
+export interface CardSignatureJson {
+  protected: string;
+  signature: string;
+  header?: Record<string, JsonValue>;
+}
+
+/** Public keys only, served at JWKS_PATH; never part of the card. */
+export interface Jwks {
+  keys: Record<string, JsonValue>[];
+}
+
+/** Who a card is built for. Only a trusted host (T36) sets these, never a
+ *  request's Host or X-Forwarded-* headers. */
+export interface CardRequest {
+  publicUrl?: string;
+  // A standalone host: push delivery is the daemon's, so it is off there.
+  standalone?: boolean;
+}
+
 export interface CardInputs {
   name: string;
   description: string | null;
@@ -126,14 +159,41 @@ export interface CardInputs {
   skills: A2ASkill[];
   blockingWaitSec: number;
   pushNotifications: boolean;
+  signatures?: CardSignatureJson[];
+  jwks?: Jwks;
 }
 
 export type A2APolicy = A2AConfig;
 
+/** A host's push configs; every method answers only for the caller's own tasks. */
+export interface PushConfigPort {
+  // A config's URL and the caps, checked before a send carrying it inline
+  // goes out, so a refused config sends nothing. `taskId` is null for a new task.
+  check(
+    caller: Caller,
+    input: PushConfigInput,
+    taskId: string | null
+  ): Promise<void>;
+  // A2AError TASK_NOT_FOUND; MessagingError limited, or invalid on 'url'.
+  create(
+    caller: Caller,
+    taskId: string,
+    input: PushConfigInput
+  ): Promise<PushConfigJson>;
+  get(
+    caller: Caller,
+    taskId: string,
+    id: string
+  ): Promise<PushConfigJson | null>;
+  list(caller: Caller, taskId: string): Promise<PushConfigJson[]>;
+  // Idempotent: deleting an unknown id succeeds.
+  delete(caller: Caller, taskId: string, id: string): Promise<void>;
+}
+
 export interface BridgePort {
   authenticate(bearer: string): Promise<AuthResult>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
-  card(): Promise<CardInputs>;
+  card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;
   continue(caller: Caller, input: ContinueInput): Promise<ContinueResult>;
   // null when the task is absent or not the caller's.
@@ -142,4 +202,6 @@ export interface BridgePort {
   // Throws A2AError('TASK_NOT_CANCELABLE', …) when the task cannot be canceled.
   cancel(caller: Caller, taskId: string): Promise<void>;
   watch(caller: Caller, taskId: string, onChange: () => void): () => void;
+  // Absent: push routes answer PUSH_NOTIFICATION_NOT_SUPPORTED.
+  readonly pushConfigs?: PushConfigPort;
 }

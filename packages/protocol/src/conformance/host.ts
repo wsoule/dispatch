@@ -6,9 +6,13 @@ import type {
 } from '@dispatch/protocol-spec';
 
 import type { Address } from '../address.js';
+import type { Sender } from '../engine.js';
 import { gateOf } from '../envelope.js';
 import type { Message } from '../envelope.js';
 import type {
+  ExternalAdmission,
+  ExternalKind,
+  ExternalTarget,
   MessagingHost,
   PolicyRequest,
   PolicyRuling,
@@ -215,6 +219,24 @@ export class ConformanceHost implements MessagingHost {
   }
   now(): Date {
     return new Date(this.world.clockMs);
+  }
+  // An address `given.external` names is outside the host, as a client or a peer.
+  external(address: Address): ExternalKind | null {
+    return this.world.external.get(address) ?? null;
+  }
+  // Every external recipient is admitted; the call is recorded for `calls`.
+  admitExternal(
+    target: ExternalTarget,
+    _sender: Sender,
+    _replyTarget: Message | null,
+    message: Message
+  ): ExternalAdmission {
+    this.calls.push({
+      hook: 'admitExternal',
+      recipient: target.recipient,
+      message: message.id,
+    });
+    return 'deliver';
   }
 
   // A push or notify to a session the vector lists in `failPush` rejects.

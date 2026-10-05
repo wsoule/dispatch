@@ -1,5 +1,5 @@
 import type { Message as A2AMessage } from '@a2a-js/sdk';
-import { gateOf, isSystemMarker, MessagingError } from '@dispatch/protocol';
+import { isSystemMarker, MessagingError } from '@dispatch/protocol';
 import type { Address, JsonValue, Message, Ref } from '@dispatch/protocol';
 
 import { A2AError } from './errors.js';
@@ -10,6 +10,7 @@ import {
   utf8Bytes,
 } from './ext.js';
 import type { EnvelopeExtV1, WorkRequestV1 } from './ext.js';
+import { isGateTraffic } from './policy.js';
 import type { ContinueInput, OpenInput, OpenKind } from './port.js';
 import { sanitizeExternal, unwrapExternalData } from './sanitize.js';
 import { ENVELOPE_URI, WORK_URI } from './uris.js';
@@ -40,12 +41,31 @@ export interface MessageView {
   textMediaType: TextMediaType;
   extensions: ReadonlySet<ExtensionUri>;
   clientIds: Readonly<Record<string, string>>;
+  // Resolves a replyTo, so an answer to a gate keeps its data home.
+  lookup: (id: string) => Message | null;
   taskId?: string;
 }
 
 const TEXT_TYPES = new Set(['', 'text/plain', 'text/markdown']);
-const MAX_URL_PARTS = 20;
+export const MAX_URL_PARTS = 20;
 const MAX_URL_BYTES = 2048;
+
+/** A text part's media type Dispatch reads as text: none, plain or markdown. */
+export function isTextMediaType(mediaType: string): boolean {
+  return TEXT_TYPES.has(mediaType);
+}
+
+// A url part Dispatch may render as a link: http(s) only, at most 2048 bytes,
+// so a `javascript:` or `data:` href never reaches markdown.
+export function isLinkUrl(url: string): boolean {
+  if (utf8Bytes(url) > MAX_URL_BYTES) return false;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
 const MAX_MESSAGE_ID_BYTES = 200;
 const LINE_BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
 
@@ -54,7 +74,7 @@ function invalid(field: string, why: string): never {
 }
 
 // A url part as one markdown link line; Dispatch never fetches it.
-function linkLine(filename: string, url: string): string {
+export function linkLine(filename: string, url: string): string {
   const label = (filename === '' ? url : filename)
     .replace(/[[\]\r\n]/g, ' ')
     .trim();
@@ -109,6 +129,8 @@ export function decodeMessage(message: A2AMessage): DecodedMessage {
           invalid('message.parts', `at most ${MAX_URL_PARTS} url parts`);
         if (utf8Bytes(content.value) > MAX_URL_BYTES)
           invalid(`message.parts[${i}].url`, `at most ${MAX_URL_BYTES} bytes`);
+        if (!isLinkUrl(content.value))
+          invalid(`message.parts[${i}].url`, 'only http and https urls');
         links.push(linkLine(part.filename, content.value));
         break;
     }
@@ -192,13 +214,13 @@ export function decodeInbound(message: A2AMessage): Inbound {
 }
 
 // One Dispatch message as the client sees it: its own sends come back under
-// its messageId and data; gate and system-marker data never leave.
+// its messageId and data; data on gate traffic or a system marker never leaves.
 export function encodeMessage(m: Message, view: MessageView): MessageJson {
   const own = m.from === view.client;
   const parts: PartJson[] = [{ text: m.body, mediaType: view.textMediaType }];
   if (
     m.data !== undefined &&
-    gateOf(m) === null &&
+    !isGateTraffic(m, view.lookup) &&
     !isSystemMarker(m, 'x-closed') &&
     !isSystemMarker(m, 'x-breaker')
   ) {

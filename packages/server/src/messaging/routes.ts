@@ -1,4 +1,5 @@
 import { isClientAddress, isReservedName } from '@dispatch/a2a';
+import { canonicalKind } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
@@ -9,6 +10,7 @@ import type {
   Message,
   MessageKind,
   Ref,
+  Sender,
   SendInput,
 } from '@dispatch/protocol';
 import {
@@ -29,7 +31,15 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
-import { openHumanDecisions } from './gates.js';
+import { speaksForRevoked } from '../api/revoke.js';
+import { runMessageRefusal } from '../orchestrator/types.js';
+import {
+  answeringWith,
+  closeGate,
+  openHumanDecisions,
+  registrationKey,
+  SYSTEM_SENDER,
+} from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
@@ -83,17 +93,9 @@ function canActAs(
   );
 }
 
-// Whether `principal` may read `message`: it or its task sent or received it
-// (canActAs already lets a deciding human act for any address).
-function isParticipant(
-  ctx: ApiContext,
-  principal: Principal,
-  message: Message
-): boolean {
-  if (canActAs(ctx, principal, message.from)) return true;
-  return ctx.messaging.store
-    .deliveries({ messageId: message.id })
-    .some((d) => canActAs(ctx, principal, d.recipient));
+// The engine's view of a principal, for its read rule and every send.
+function senderOf(principal: Principal): Sender {
+  return { address: principal.address, canDecide: principal.canDecide };
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -315,6 +317,105 @@ function parseReplyInput(raw: unknown):
   return { ok: true, value };
 }
 
+// MEM-R8(c): a request-tier human may not message a live run that acts for
+// another human; the task or that human is the way in.
+function liveRunRefusal(
+  ctx: ApiContext,
+  principal: Principal,
+  to: readonly string[]
+): string | null {
+  if (principal.kind !== 'human') return null;
+  for (const address of to) {
+    if (!address.startsWith('run:')) continue;
+    const runId = address.slice('run:'.length);
+    if (!ctx.orchestrator.isRunLive(runId)) continue;
+    const meta = ctx.orchestrator.list().find((r) => r.id === runId);
+    const refusal =
+      meta === undefined
+        ? null
+        : runMessageRefusal(meta, principal.address, principal.canDecide);
+    if (refusal !== null) return refusal;
+  }
+  return null;
+}
+
+// XH-R2: no run may message an A2A-origin run, directly, through its task or
+// by replying into its thread; what one run reads must not reach a client.
+function a2aRunRefusal(
+  ctx: ApiContext,
+  principal: Principal,
+  addresses: readonly string[]
+): string | null {
+  if (principal.kind !== 'run') return null;
+  const self = principal.address.slice('run:'.length);
+  const ownTask = ctx.orchestrator.taskIdOfRun(self);
+  for (const address of addresses) {
+    let taskId: string | null = null;
+    if (address.startsWith('run:')) {
+      const runId = address.slice('run:'.length);
+      if (runId !== self) taskId = ctx.orchestrator.taskIdOfRun(runId);
+    } else if (address.startsWith('task:')) {
+      taskId = address.slice('task:'.length);
+    }
+    if (
+      taskId !== null &&
+      taskId !== ownTask &&
+      ctx.orchestrator.isA2ATask(taskId)
+    )
+      return `${address} came in over A2A; another run may not message it`;
+  }
+  return null;
+}
+
+// XH-R3: whether the principal's teammate lost access after handleApi
+// resolved it; the cascade and closeAsksOfRevoked cover what lands anyway.
+function revokedSince(ctx: ApiContext, principal: Principal): boolean {
+  return speaksForRevoked(
+    principal.address,
+    ctx.actorContext.member.handle,
+    (handle) => ctx.team.teammates.hasAccess(handle)
+  );
+}
+
+// XH-R9: a run's scope gate goes only to its gate route (its operator when
+// they can decide, else the owner), so a run cannot pick its decider; the
+// other humans it named are returned to be told. Any other send as it came.
+function scopeReaddressed(
+  ctx: ApiContext,
+  principal: Principal,
+  input: SendInput
+): { input: SendInput; told: string[] } {
+  if (principal.kind !== 'run' || gateOf(input)?.type !== 'scope')
+    return { input, told: [] };
+  const runId = principal.address.slice('run:'.length);
+  const { to, told } = ctx.messaging.routing.scopeTo(runId, input.to);
+  return { input: { ...input, to }, told };
+}
+
+// Tells each human a run named on its scope gate who the gate went to instead.
+async function tellScopeNamed(
+  ctx: ApiContext,
+  gate: Message,
+  told: string[]
+): Promise<void> {
+  for (const ref of told) {
+    try {
+      await ctx.messaging.engine.send(
+        {
+          to: [ref],
+          kind: 'notice',
+          body: `${gate.from} asked you about its scope; the request went to ${gate.to.join(', ')}, who decides for that run.`,
+          refs: [{ type: 'message', id: gate.id }],
+          idempotencyKey: `scope-named:${gate.id}:${ref}`,
+        },
+        SYSTEM_SENDER
+      );
+    } catch (err) {
+      console.error('messaging: scope notice failed', err);
+    }
+  }
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -326,26 +427,41 @@ export async function sendMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
+  // The body may arrive after a revoke this credential's check predates.
+  if (revokedSince(ctx, principal))
+    return jsonResponse(
+      { error: "this credential's access was revoked", code: 'auth_revoked' },
+      401
+    );
+  const refusal =
+    liveRunRefusal(ctx, principal, parsedInput.value.to) ??
+    a2aRunRefusal(ctx, principal, parsedInput.value.to);
+  if (refusal !== null) return errorResponse(403, refusal);
 
+  const { input, told } = scopeReaddressed(ctx, principal, parsedInput.value);
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
   // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
-  const result = await ctx.messaging.engine.send(
-    idemKey === null
-      ? parsedInput.value
-      : { ...parsedInput.value, idempotencyKey: idemKey },
-    { address: principal.address, canDecide: principal.canDecide }
+  const result = await answeringWith(principal.ownerCredential === true, () =>
+    ctx.messaging.engine.send(
+      idemKey === null ? input : { ...input, idempotencyKey: idemKey },
+      senderOf(principal)
+    )
   );
+  if (result.replayed !== true) await tellScopeNamed(ctx, result.message, told);
   return jsonResponse(result, result.replayed === true ? 200 : 201);
 }
 
-// GET /api/messages/:id
+// GET /api/messages/:id — a message the caller may not read answers exactly
+// as an absent id does, so its existence is not disclosed.
 export function getMessageById(ctx: ApiContext, id: string): Response {
   const principal = requirePrincipal(ctx);
   const message = ctx.messaging.engine.getMessage(id);
-  if (message === null) return errorResponse(404, `no message ${id}`);
-  if (!isParticipant(ctx, principal, message)) {
-    return errorResponse(403, `cannot read message ${id}`);
+  if (
+    message === null ||
+    !ctx.messaging.engine.canRead(id, senderOf(principal))
+  ) {
+    return errorResponse(404, `no message ${id}`);
   }
   return jsonResponse(message);
 }
@@ -362,10 +478,26 @@ export async function replyToMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseReplyInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
-  const result = await ctx.messaging.engine.reply(id, parsedInput.value, {
-    address: principal.address,
-    canDecide: principal.canDecide,
-  });
+  const target = ctx.messaging.engine.getMessage(id);
+  const refusal =
+    target === null || !ctx.messaging.engine.canRead(id, senderOf(principal))
+      ? null
+      : a2aRunRefusal(ctx, principal, [target.from, ...target.to]);
+  if (refusal !== null) return errorResponse(403, refusal);
+  const result = await answeringWith(principal.ownerCredential === true, () =>
+    ctx.messaging.engine.reply(id, parsedInput.value, senderOf(principal))
+  );
+  // Only a reply that approves the registration can record an owner approval.
+  const gate = target === null ? null : gateOf(target);
+  if (
+    gate?.type === 'agent-registration' &&
+    result.message.kind === 'answer' &&
+    result.message.choice === 'approve'
+  )
+    ctx.memory.host.agentDecided(
+      gate.agent,
+      principal.ownerCredential === true
+    );
   return jsonResponse(result, 201);
 }
 
@@ -383,13 +515,11 @@ export function waitForAnswer(
 ): Promise<Response> {
   const principal = requirePrincipal(ctx);
   const question = ctx.messaging.engine.getMessage(id);
-  if (question === null) {
+  if (
+    question === null ||
+    !ctx.messaging.engine.canRead(id, senderOf(principal))
+  ) {
     return Promise.resolve(errorResponse(404, `no message ${id}`));
-  }
-  if (!isParticipant(ctx, principal, question)) {
-    return Promise.resolve(
-      errorResponse(403, `cannot read the answer to ${id}`)
-    );
   }
   const wait = url.searchParams.get('wait') === '1';
   if (wait && !canActAs(ctx, principal, question.from)) {
@@ -444,18 +574,14 @@ export function waitForAnswer(
   });
 }
 
-// GET /api/threads/:id — for a participant of any message in the thread, or a
-// deciding human, who can read any thread, even an empty or unknown one.
+// GET /api/threads/:id — for a deciding human or a participant of any message
+// in it; anyone else, and every caller of an empty thread, gets the absent-id 404.
 export function getThreadById(ctx: ApiContext, threadId: string): Response {
   const principal = requirePrincipal(ctx);
-  const thread = ctx.messaging.engine.thread(threadId);
-  const decidingHuman = principal.kind === 'human' && principal.canDecide;
-  if (
-    !decidingHuman &&
-    !thread.messages.some((m) => isParticipant(ctx, principal, m))
-  ) {
-    return errorResponse(403, `cannot read thread ${threadId}`);
+  if (!ctx.messaging.engine.canReadThread(threadId, senderOf(principal))) {
+    return errorResponse(404, `no message ${threadId}`);
   }
+  const thread = ctx.messaging.engine.thread(threadId);
   const fed = ctx.federation;
   if (fed === null) return jsonResponse(thread);
   // Federated rows: who sent from which machine, remote recipients' states,
@@ -642,7 +768,10 @@ export function listChannels(ctx: ApiContext): Response {
   const childrenByParent = new Map<string, TaskDoc[]>();
   const epicIds: string[] = [];
   for (const task of ctx.store.list()) {
-    if (task.meta.kind === 'epic') epicIds.push(task.meta.id);
+    // A milestone is what an epic became; its channel keeps the `epic/` name.
+    if (canonicalKind(task.meta.kind) === 'milestone') {
+      epicIds.push(task.meta.id);
+    }
     if (task.meta.parent !== null) {
       const siblings = childrenByParent.get(task.meta.parent);
       if (siblings === undefined)
@@ -699,6 +828,13 @@ export async function joinChannel(
       : selfActingAddress(ctx, principal);
   if (!canActAs(ctx, principal, member)) {
     return errorResponse(403, `cannot add ${member} to a channel`);
+  }
+  // A peer member sends every future channel message off the machine; only a registered one.
+  if (
+    member.startsWith('a2a:') &&
+    (ctx.a2a?.peerStatus(member.slice('a2a:'.length)) ?? null) === null
+  ) {
+    return errorResponse(404, `no A2A peer ${member}`);
   }
   ctx.messaging.engine.join(name, member);
   return new Response(null, { status: 204 });
@@ -806,7 +942,11 @@ export async function registerAgent(
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { name?: unknown; client?: unknown };
+  const body = parsed.value as {
+    name?: unknown;
+    client?: unknown;
+    rekey?: unknown;
+  };
   const displayName = registrationField(body.name, 'name');
   if (!displayName.ok) return errorResponse(400, displayName.error);
   const client = registrationField(body.client, 'client');
@@ -826,6 +966,12 @@ export async function registerAgent(
   }
   const requester = humanActor(ctx);
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
+  if (body.rekey !== undefined && typeof body.rekey !== 'boolean')
+    return errorResponse(400, 'invalid rekey: expected a boolean');
+  if (body.rekey === true) {
+    const refused = rekeyAgent(ctx, address);
+    if (refused !== null) return refused;
+  }
   const reg = await registerAgentRow(ctx, {
     name,
     displayName: displayName.value,
@@ -841,6 +987,35 @@ export async function registerAgent(
   );
 }
 
+// Retires `address`'s row so the same name can register again: an agent on
+// the owner's machine (the daemon file's token, or the app token) whose cached
+// token was lost. Null when it may go ahead; the refusal otherwise.
+function rekeyAgent(ctx: ApiContext, address: string): Response | null {
+  if (ctx.viaAgentToken !== true && ctx.ownerCredential !== true)
+    return errorResponse(
+      403,
+      "only an agent on the owner's machine may re-key its name"
+    );
+  const existing = ctx.messaging.store.getAgent(address);
+  if (existing === null || existing.status === 'revoked') return null;
+  if (isInternalAgent(existing))
+    return errorResponse(
+      409,
+      `${address} is Dispatch's own agent; register under another name`
+    );
+  ctx.messaging.store.putAgent({ ...existing, status: 'revoked' });
+  // Cards raised for the old key would decide nothing now: close them.
+  for (;;) {
+    const card = openRegistrationGateFor(ctx, address);
+    if (card === null || !closeGate(ctx.messaging.engine, card.id, 're-keyed'))
+      break;
+  }
+  return null;
+}
+
+// How many registrations one namespace (agent:<handle>/) may have pending.
+const MAX_PENDING_REGISTRATIONS = 10;
+
 // A registration already checked for its name: the agent row, its token and
 // the owner gate that approves it.
 export interface AgentRegistration {
@@ -851,6 +1026,8 @@ export interface AgentRegistration {
   gateBody: string;
   // Refuse a name that was ever registered, revoked rows included.
   refuseAnyExisting: boolean;
+  // A deciding caller approves it in the same request, so no gate waits.
+  approvedAtOnce?: boolean;
 }
 
 // Writes a pending agent:<requester's handle>/<name> row with a fresh token and
@@ -873,6 +1050,17 @@ export async function registerAgentRow(
       ),
     };
   }
+  // Revoking cannot free a name that refuses any existing row, so that mode
+  // answers every existing row with the one "choose a new name" 409.
+  if (existing !== null && reg.refuseAnyExisting) {
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} was registered before; choose a new name`
+      ),
+    };
+  }
   if (
     existing !== null &&
     (existing.status === 'approved' || existing.status === 'pending')
@@ -885,12 +1073,21 @@ export async function registerAgentRow(
       ),
     };
   }
-  if (existing !== null && reg.refuseAnyExisting) {
+
+  // M4: each namespace may hold only so many registrations awaiting the
+  // owner, so a token cannot flood Needs you with approval gates.
+  const namespace = address.slice(0, address.indexOf('/') + 1);
+  const pending = ctx.messaging.store
+    .agents()
+    .filter(
+      (a) => a.status === 'pending' && a.address.startsWith(namespace)
+    ).length;
+  if (reg.approvedAtOnce !== true && pending >= MAX_PENDING_REGISTRATIONS) {
     return {
       ok: false,
       response: errorResponse(
-        409,
-        `${address} was registered before; choose a new name`
+        429,
+        `${pending} registrations under ${namespace}* already await approval; ask a human to approve or deny them first`
       ),
     };
   }
@@ -921,13 +1118,14 @@ export async function registerAgentRow(
           agent: address,
           client: reg.client,
           requestedBy: reg.requester,
+          key: registrationKey(record.tokenHash),
         } satisfies GateData,
       },
       { address: SYSTEM_ADDRESS, canDecide: true }
     );
   } catch (err) {
-    // Without its gate nobody can approve the row, so revoke it: a retry can
-    // then re-register instead of hitting the 409 above forever.
+    // Without its gate nobody can approve the row, so revoke it. An ordinary
+    // agent can then re-register; with refuseAnyExisting the name stays spent.
     ctx.messaging.store.putAgent({ ...record, status: 'revoked' });
     return {
       ok: false,
@@ -987,6 +1185,17 @@ async function decideAgent(
       409,
       `${address} is registered on ${registeringHandle(ctx, address)}'s machine; approve or revoke it there`
     );
+  // Revoking an A2A client is final: its tasks were failed and its push
+  // configs deleted, so approving it again is refused; add a new client.
+  if (
+    choice === 'approve' &&
+    agent.status === 'revoked' &&
+    isClientAddress(address)
+  )
+    return errorResponse(
+      409,
+      `${address} was revoked, which is final; add a new A2A client instead`
+    );
   const gate = openRegistrationGateFor(ctx, address);
   if (gate !== null) {
     await ctx.messaging.engine.reply(
@@ -1001,6 +1210,7 @@ async function decideAgent(
       approvedBy: directStatus === 'approved' ? humanActor(ctx) : null,
     });
   }
+  ctx.memory.host.agentDecided(address, ctx.ownerCredential === true);
   const updated = ctx.messaging.store.getAgent(address) ?? agent;
   return jsonResponse(stripTokenHash(updated));
 }

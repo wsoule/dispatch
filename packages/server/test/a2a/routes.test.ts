@@ -1,6 +1,7 @@
 import { decideState } from '@dispatch/a2a';
 import { openSqliteDb, TaskStore } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { MessagingError } from '@dispatch/protocol';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,7 +12,7 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { runsDir } from '../../src/orchestrator/paths.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
-import { useTestAuth } from '../testAuth.js';
+import { rawFetch, useTestAuth } from '../testAuth.js';
 import { approvedClient, freePort, useSeedBase } from './seed.js';
 
 let home: string;
@@ -74,6 +75,32 @@ async function addClient(name: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('/api/a2a/clients', () => {
+  it('refuses the shared agent token: only a human adds a client', async () => {
+    const res = await rawFetch(`${base}/api/a2a/clients`, {
+      method: 'POST',
+      headers: {
+        ...json,
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ name: 'minted' }),
+    });
+    expect(res.status).toBe(403);
+    expect(handle.a2a.store!.clients()).toEqual([]);
+  });
+
+  it('caps the clients waiting for approval', async () => {
+    const add = (name: string) =>
+      fetch(`${base}/api/a2a/clients`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({ name }),
+      });
+    for (let i = 0; i < 10; i++) expect((await add(`p${i}`)).status).toBe(201);
+    expect((await add('one-more')).status).toBe(429);
+    // An approved client does not count against the cap.
+    expect((await approvedClient('approved')).token).toBeTruthy();
+  });
+
   beforeEach(boot);
 
   it('adds a client, shows the token once, and --approve answers the registration gate', async () => {
@@ -126,6 +153,16 @@ describe('/api/a2a/clients', () => {
     });
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as { field: string }).field).toBe('to[0]');
+  });
+
+  it('refuses an approve that is not a boolean, and adds nothing', async () => {
+    const { res, body } = await addClient('quoted', { approve: 'true' });
+    expect(res.status).toBe(400);
+    expect((body as unknown as { field: string }).field).toBe('approve');
+    const clients = (await (await fetch(`${base}/api/a2a/clients`)).json()) as {
+      clients: unknown[];
+    };
+    expect(clients.clients).toEqual([]);
   });
 
   it('names the field when the name is missing or has no valid characters', async () => {
@@ -251,6 +288,8 @@ describe('/api/a2a/listener', () => {
       url: null,
       error: null,
       legacyClients: [],
+      settings: DEFAULT_LISTENER,
+      teamTls: null,
     });
   });
 
@@ -343,7 +382,7 @@ describe('/api/a2a/card', () => {
       skills: { id: string }[];
     };
     expect(card.supportedInterfaces[0].protocolBinding).toBe('HTTP+JSON');
-    expect(card.skills.map((s) => s.id)).toEqual(['ask']);
+    expect(card.skills.map((s) => s.id)).toEqual(['ask', 'handoff', 'status']);
   });
 });
 
@@ -452,6 +491,163 @@ describe('decline and revocation', () => {
     expect(row).not.toBeNull();
     expect(decideState(gatherFacts(port.deps, row!)).state).toBe('FAILED');
     expect(handle.a2a.store!.getTask(two.taskId)?.state).toBe('FAILED');
+  });
+
+  it('keeps a revoked client revoked: approving it again is a conflict', async () => {
+    const { caller } = await approvedClient('acme');
+    const at = (verb: string) =>
+      fetch(
+        `${base}/api/agents/${encodeURIComponent(caller.address)}/${verb}`,
+        { method: 'POST' }
+      );
+    expect((await at('revoke')).status).toBe(200);
+    expect((await at('approve')).status).toBe(409);
+    expect(handle.messaging.store.getAgent(caller.address)?.status).toBe(
+      'revoked'
+    );
+  });
+
+  it('closes a revoked client’s open task-proposal gates', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-h1',
+      contextId: null,
+      kind: 'handoff',
+      to: null,
+      replyTo: null,
+      body: 'Please add limits.',
+      refs: [],
+      work: { skill: 'handoff', title: 'Rate-limit uploads' },
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const gate = handle.a2a.store!.getTask(opened.taskId)!.gate!;
+    const isOpen = () =>
+      handle.messaging.engine.openBlocking().some((m) => m.id === gate);
+    expect(isOpen()).toBe(true);
+    await fetch(
+      `${base}/api/agents/${encodeURIComponent(caller.address)}/revoke`,
+      { method: 'POST' }
+    );
+    expect(isOpen()).toBe(false);
+  });
+
+  it('deletes a revoked client’s push configs, secrets included', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-1',
+      contextId: null,
+      kind: 'ask',
+      to: null,
+      replyTo: null,
+      body: 'q1',
+      refs: [],
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const store = handle.a2a.store!;
+    store.putPushConfig({
+      id: 'hook',
+      taskId: opened.taskId,
+      client: caller.address,
+      url: 'https://hooks.example.com/a2a',
+      token: 'tok',
+      authScheme: 'Bearer',
+      authCredentials: 'cred',
+      failures: 0,
+      disabledAt: null,
+      createdAt: new Date().toISOString(),
+    });
+    await fetch(
+      `${base}/api/agents/${encodeURIComponent(caller.address)}/revoke`,
+      { method: 'POST' }
+    );
+    expect(store.getPushConfig(opened.taskId, 'hook')).toBeNull();
+  });
+
+  it('records a decline before closing the question', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-1',
+      contextId: null,
+      kind: 'ask',
+      to: null,
+      replyTo: null,
+      body: 'q1',
+      refs: [],
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const engine = port.deps.engine;
+    const close = engine.close.bind(engine);
+    let atClose: string | null | undefined;
+    const spy = spyOn(engine, 'close').mockImplementation((qid, reason) => {
+      atClose = handle.a2a.store!.getTask(opened.taskId)?.declinedAt;
+      return close(qid, reason);
+    });
+    try {
+      const res = await fetch(
+        `${base}/api/a2a/tasks/${opened.taskId}/decline`,
+        { method: 'POST', headers: json, body: '{}' }
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(atClose).toEqual(expect.any(String));
+  });
+
+  it('takes the decline back when an answer wins the race to close', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-1',
+      contextId: null,
+      kind: 'ask',
+      to: null,
+      replyTo: null,
+      body: 'q1',
+      refs: [],
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const spy = spyOn(port.deps.engine, 'close').mockImplementation(() => {
+      throw new MessagingError('conflict', 'already answered');
+    });
+    try {
+      const res = await fetch(
+        `${base}/api/a2a/tasks/${opened.taskId}/decline`,
+        { method: 'POST', headers: json, body: '{}' }
+      );
+      expect(res.status).toBe(409);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(handle.a2a.store!.getTask(opened.taskId)?.declinedAt).toBeNull();
+  });
+
+  it('refuses to decline a handoff, which its proposal gate answers', async () => {
+    const { caller } = await approvedClient('acme');
+    const opened = await handle.a2a.port!.open(caller, {
+      clientMessageId: 'c-h1',
+      contextId: null,
+      kind: 'handoff',
+      to: null,
+      replyTo: null,
+      body: 'Please add limits.',
+      refs: [],
+      work: { skill: 'handoff', title: 'Rate-limit uploads' },
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const res = await fetch(`${base}/api/a2a/tasks/${opened.taskId}/decline`, {
+      method: 'POST',
+      headers: json,
+      body: '{}',
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      'proposal gate'
+    );
+    expect(handle.a2a.store!.getTask(opened.taskId)?.declinedAt).toBeNull();
   });
 
   it('refuses to decline a finished ask, an unknown one, and below the decide tier', async () => {

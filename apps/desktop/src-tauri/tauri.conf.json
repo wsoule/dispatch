@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Dispatch",
-  "version": "0.35.2",
+  "version": "0.36.3",
   "identifier": "dev.dispatch.app",
   "build": {
     "frontendDist": "../dist",
@@ -25,7 +25,10 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "img-src": "'self' blob: data: asset: http://asset.localhost http://127.0.0.1:* http://localhost:* https://public.linear.app"
+      },
+      "dangerousDisableAssetCspModification": ["script-src", "style-src"]
     }
   },
   "bundle": {

@@ -6,6 +6,7 @@ import {
 } from '@dispatch/protocol-spec';
 import type { Vector } from '@dispatch/protocol-spec';
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
 
 import {
   REFERENCE_HELLO,
@@ -313,6 +314,51 @@ describe('runVector', () => {
     expect(await check(v)).toEqual([]);
   });
 
+  it('classifies given.external addresses and records each admission', async () => {
+    const client = 'agent:wyat/a2a.acme';
+    const v: Vector = {
+      ...held,
+      id: 'core.external.the-host-classifies-and-admits',
+      given: {
+        owner: 'human:wyat',
+        agents: [{ address: client, status: 'approved' }],
+        external: { [client]: 'client' },
+      },
+      when: [
+        {
+          op: 'send',
+          as: HUMAN,
+          input: { to: [client], kind: 'message', body: 'Shipped.' },
+        },
+        {
+          op: 'send',
+          as: { address: '$system', canDecide: true },
+          input: {
+            to: [client],
+            kind: 'question',
+            blocking: true,
+            choices: ['approve', 'deny'],
+            body: 'Wake?',
+            data: { type: 'wake', target: 'task:t-4a8cce', message: '$s1' },
+          },
+        },
+      ],
+      then: {
+        steps: [
+          { ok: true, result: { message: '$s1' } },
+          { ok: false, error: { code: 'forbidden', field: 'data' } },
+        ],
+        deliveries: [{ message: '$s1', recipient: client, state: 'held' }],
+        calls: [
+          { hook: 'admitExternal', recipient: client, message: '$s1' },
+          { hook: 'published', message: '$s1' },
+        ],
+        noOtherMessages: true,
+      },
+    };
+    expect(await check(v)).toEqual([]);
+  });
+
   it('reports a world change it does not know as unsupported', async () => {
     await expect(
       runVector({ ...held, when: [{ op: 'world', change: { teleport: 1 } }] })
@@ -388,5 +434,22 @@ describe('REFERENCE_HELLO', () => {
       '📬 question from agent:wyat/peer (external): hello (m-01abd)'
     );
     expect(checkDigest(text, m.body, REFERENCE_HELLO.render)).toEqual([]);
+  });
+});
+
+describe('App. C.6', () => {
+  it('prints the render forms the reference declares', () => {
+    const appendix = readFileSync(
+      new URL(
+        '../../protocol-spec/spec/appendix-c-dispatch-profile.md',
+        import.meta.url
+      ),
+      'utf8'
+    );
+    const block = /\*\*Declared forms\.\*\*[\s\S]*?```json\n([\s\S]*?)```/.exec(
+      appendix
+    )?.[1];
+    expect(block).toBeDefined();
+    expect(JSON.parse(block ?? 'null')).toEqual(REFERENCE_HELLO.render);
   });
 });

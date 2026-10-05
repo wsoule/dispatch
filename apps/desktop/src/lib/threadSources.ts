@@ -8,9 +8,12 @@ import type {
   Message,
   Ref,
 } from '@dispatch/client';
+import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
+import { canonicalStatus } from '@dispatch/core/browser';
 
+import { peerAddresses } from './a2a';
 import type { MessageAccess } from './daemonAuth';
-import { gateOf } from './gates';
+import { gateOf, taskProposalOf } from './gates';
 import type { KnownAddresses } from './threads';
 import { addressLabel } from './threads';
 
@@ -46,6 +49,9 @@ export function mergeThreadSources(
 /** What labels and refs need to know about the board, from data the view already has. */
 export interface ThreadLookups {
   taskTitle: (taskId: string) => string | null;
+  /** A board task's metadata, for the proposal card (which fetches the body).
+   *  The lookups re-key on a draft's edits only, since a proposal waits on a draft. */
+  task: (taskId: string) => TaskListItem | null;
   taskIdOfRun: (runId: string) => string | null;
   agentStatus: (address: string) => 'revoked' | 'muted' | null;
   /** Whether an address is the daemon's own overseer (the Assistant). */
@@ -53,11 +59,11 @@ export interface ThreadLookups {
 }
 
 export function threadLookups(
-  tasks: readonly { meta: { id: string; title: string } }[],
+  tasks: readonly TaskListItem[],
   runs: readonly { id: string; taskId: string }[],
   agents: readonly AgentSummary[]
 ): ThreadLookups {
-  const titles = new Map(tasks.map((t) => [t.meta.id, t.meta.title]));
+  const docs = new Map(tasks.map((t) => [t.meta.id, t]));
   const taskOfRun = new Map(runs.map((r) => [r.id, r.taskId]));
   const status = new Map<string, 'revoked' | 'muted'>();
   for (const agent of agents) {
@@ -69,7 +75,8 @@ export function threadLookups(
     (a) => a.approvedBy === SYSTEM && OVERSEER.test(a.address)
   )?.address;
   return {
-    taskTitle: (id) => titles.get(id) ?? null,
+    taskTitle: (id) => docs.get(id)?.meta.title ?? null,
+    task: (id) => docs.get(id) ?? null,
     taskIdOfRun: (id) => taskOfRun.get(id) ?? null,
     agentStatus: (address) => status.get(address) ?? null,
     // Until the roster loads, any overseer-named agent reads as the Assistant.
@@ -79,14 +86,20 @@ export function threadLookups(
 }
 
 /** Changes only when something `threadLookups` reads does: a task's title, a
- *  run's task, an agent's status, mute or approver. */
+ *  draft's edit, a run's task, an agent's status, mute or approver. */
 export function lookupsKey(
-  tasks: readonly { meta: { id: string; title: string } }[],
+  tasks: readonly {
+    meta: Pick<TaskMeta, 'id' | 'title' | 'status' | 'updated'>;
+  }[],
   runs: readonly { id: string; taskId: string }[],
   agents: readonly AgentSummary[]
 ): string {
+  const drafts = tasks.filter(
+    (t) => canonicalStatus(t.meta.status) === 'draft'
+  );
   return JSON.stringify([
     tasks.map((t) => [t.meta.id, t.meta.title]),
+    drafts.map((t) => [t.meta.id, t.meta.updated]),
     runs.map((r) => [r.id, r.taskId]),
     agents.map((a) => [a.address, a.status, a.muted, a.approvedBy]),
   ]);
@@ -136,6 +149,7 @@ export function knownAddresses(input: {
   agents: readonly AgentSummary[];
   presence: readonly { ref: string }[];
   me: string | null;
+  peers?: readonly { alias: string; status: string }[];
 }): KnownAddresses {
   const humans = new Set<string>(input.me === null ? [] : [input.me]);
   for (const person of input.presence) humans.add(person.ref);
@@ -146,6 +160,7 @@ export function knownAddresses(input: {
       .filter((a) => a.status === 'approved')
       .map((a) => a.address),
     humans: [...humans],
+    peers: peerAddresses(input.peers ?? []),
   };
 }
 
@@ -166,6 +181,17 @@ export type RowControl =
       call: ParkedCall | null;
     }
   | { kind: 'scope'; paths: string[]; reason: string }
+  /** A memory gate; its card reads the proposal, which the message never carries. */
+  | { kind: 'memory'; proposalId: string }
+  /** A doc gate; its card reads the proposal through the docs API. */
+  | { kind: 'doc'; doc: string; proposal: string }
+  /** An A2A client's handoff; its card shows the draft to every viewer. */
+  | {
+      kind: 'task-proposal';
+      task: string;
+      proposedBy: string;
+      canDecide: boolean;
+    }
   | { kind: 'choices'; choices: string[]; gate: boolean };
 
 // The run or Assistant conversation a tool-approval gate's call is parked on.
@@ -189,6 +215,16 @@ export function rowControl(
   if (!ctx.open) return { kind: 'none' };
   const gate = gateOf(message);
   if (gate !== null) {
+    // The draft is readable below the decide tier; only its answers are not.
+    const proposal = taskProposalOf(message);
+    if (proposal !== null) {
+      return {
+        kind: 'task-proposal',
+        task: proposal.task,
+        proposedBy: proposal.proposedBy,
+        canDecide: ctx.access.canDecide,
+      };
+    }
     if (!ctx.access.canDecide) {
       return {
         kind: 'read-only',
@@ -208,6 +244,18 @@ export function rowControl(
     if (gate.type === 'scope') {
       return { kind: 'scope', paths: gate.paths, reason: gate.reason };
     }
+    if (gate.type === 'memory') {
+      return { kind: 'memory', proposalId: gate.proposalId };
+    }
+    // Only the system raises doc gates; a look-alike or malformed one gets plain choices.
+    if (
+      gate.type === 'doc' &&
+      message.from === SYSTEM &&
+      typeof gate.doc === 'string' &&
+      typeof gate.proposal === 'string'
+    ) {
+      return { kind: 'doc', doc: gate.doc, proposal: gate.proposal };
+    }
     return { kind: 'choices', choices: message.choices ?? [], gate: true };
   }
   if (!message.to.includes(ctx.me)) return { kind: 'none' };
@@ -221,14 +269,29 @@ export function rowControl(
 /** A row control that draws something to answer with. */
 type AnswerControl = Extract<
   RowControl,
-  { kind: 'tool-approval' | 'scope' | 'choices' }
+  {
+    kind:
+      | 'tool-approval'
+      | 'scope'
+      | 'memory'
+      | 'doc'
+      | 'task-proposal'
+      | 'choices';
+  }
 >;
 
-/** Whether a row's control draws a gate card or at least one choice button:
- *  the one rule `MessageRow` renders by and the reply box's footer reads. */
+/** Whether a row's control gives this viewer a gate card or at least one
+ *  choice button to answer with: the rule `MessageRow` renders answers by
+ *  and the reply box's footer reads. */
 export function offersAnswer(control: RowControl): control is AnswerControl {
   if (control.kind === 'choices') return control.choices.length > 0;
-  return control.kind === 'tool-approval' || control.kind === 'scope';
+  if (control.kind === 'task-proposal') return control.canDecide;
+  return (
+    control.kind === 'tool-approval' ||
+    control.kind === 'scope' ||
+    control.kind === 'memory' ||
+    control.kind === 'doc'
+  );
 }
 
 /** Whether some open message in a thread gives this viewer buttons (or a
@@ -380,9 +443,12 @@ export type RefAction =
   | { kind: 'task'; taskId: string }
   | { kind: 'run'; taskId: string; runId: string }
   | { kind: 'file'; path: string }
-  | { kind: 'message'; messageId: string };
+  | { kind: 'message'; messageId: string }
+  /** `merge` names a conflicting proposal whose marked merge the doc opens on. */
+  | { kind: 'doc'; docId: string; anchor: string | null; merge?: string };
 
-/** Where a ref chip leads, or null for one with no page (a commit, a run no longer listed). */
+/** Where a ref chip leads, or null for one with no page: a commit, a run no longer listed, or a
+ *  type this build does not register, which a peer's newer version may send. */
 export function refAction(
   ref: Ref,
   lookups: Pick<ThreadLookups, 'taskIdOfRun'>
@@ -398,12 +464,14 @@ export function refAction(
       return { kind: 'file', path: ref.id };
     case 'message':
       return { kind: 'message', messageId: ref.id };
+    case 'doc':
+      return { kind: 'doc', docId: ref.id, anchor: ref.at ?? null };
     default:
       return null;
   }
 }
 
-/** Where a sender's name leads: a run to its chat, a task to its page, anyone else nowhere. */
+/** Where a sender's name leads: a run to its transcript, a task to its page, anyone else nowhere. */
 export function addressAction(
   address: string,
   lookups: Pick<ThreadLookups, 'taskIdOfRun'>
@@ -422,18 +490,22 @@ export function addressAction(
 
 /** The app's navigation verbs a ref needs. */
 export interface RefNavigation {
-  openTask: (taskId: string, tab: 'details' | 'chat', runId?: string) => void;
+  openTask: (taskId: string, tab: 'auto' | 'run', runId?: string) => void;
   openThread: (messageId: string) => void;
   openImpact: (subject: { kind: 'file'; id: string }) => void;
+  /** The Docs view on one doc, scrolled to `anchor`'s section when set. */
+  openDoc: (docId: string, anchor: string | null, merge?: string) => void;
 }
 
 export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
   return (action) => {
-    if (action.kind === 'task') nav.openTask(action.taskId, 'details');
+    if (action.kind === 'task') nav.openTask(action.taskId, 'auto');
     else if (action.kind === 'run') {
-      nav.openTask(action.taskId, 'chat', action.runId);
+      nav.openTask(action.taskId, 'run', action.runId);
     } else if (action.kind === 'file') {
       nav.openImpact({ kind: 'file', id: action.path });
+    } else if (action.kind === 'doc') {
+      nav.openDoc(action.docId, action.anchor, action.merge);
     } else nav.openThread(action.messageId);
   };
 }

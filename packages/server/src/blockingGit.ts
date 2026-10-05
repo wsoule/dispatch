@@ -1,3 +1,5 @@
+import { childEnv } from '@dispatch/core';
+
 import { markBlockingSection } from './watchdog.js';
 
 export interface BlockingGitOptions {
@@ -7,7 +9,7 @@ export interface BlockingGitOptions {
    * Bun's spawnSync sends its kill signal once and then waits for the child
    * to exit, so a child that ignores SIGTERM (or is stuck in a syscall behind
    * a stalled ssh session) turns the timeout into no timeout at all — measured
-   * on bun 1.3.14, the runtime the shipped daemon is compiled with.
+   * on bun 1.3.14 and again on 1.4.2, the runtime the daemon is compiled with.
    */
   timeoutMs?: number;
 }
@@ -47,7 +49,7 @@ export function spawnGitSync(
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    ...(opts.env !== undefined ? { env: opts.env } : {}),
+    env: opts.env ?? childEnv(),
     ...(opts.timeoutMs !== undefined
       ? { timeout: opts.timeoutMs, killSignal: 'SIGKILL' as const }
       : {}),

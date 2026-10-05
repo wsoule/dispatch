@@ -1,4 +1,9 @@
-import { gateOf, MessagingError } from '@dispatch/protocol';
+import {
+  gateOf,
+  hasGateData,
+  isPeerAddress,
+  MessagingError,
+} from '@dispatch/protocol';
 import type { Address, Delivery, JsonValue, Message } from '@dispatch/protocol';
 
 export const CLIENT_NAME_PREFIX = 'a2a.';
@@ -53,6 +58,15 @@ export function isClientAddress(address: Address): boolean {
   return CLIENT_ADDRESS.test(address);
 }
 
+// A peer host writes `to` as its own name for this host (spec §8.9), which
+// this host reads as its default recipient, the owner.
+export function peerSelfAddressed(
+  to: readonly Address[],
+  owner: Address
+): Address[] {
+  return [...new Set(to.map((a) => (isPeerAddress(a) ? owner : a)))];
+}
+
 // A client may name listed humans and its approved handoffs' tasks; every
 // other address gets the same refusal, so it cannot probe who exists.
 export function checkInboundRecipients(
@@ -74,13 +88,29 @@ export function checkInboundRecipients(
   });
 }
 
-// Mail reaches a client only inside its own tasks, and never with gate data.
+// Gate data on `m` or on the message it replies to, any kind, known type or
+// not: neither goes to a client. A replyTo `get` cannot resolve counts as none.
+export function isGateTraffic(
+  m: { data?: JsonValue; replyTo: string | null },
+  get: (id: string) => { data?: JsonValue } | null
+): boolean {
+  if (hasGateData(m)) return true;
+  const target = m.replyTo === null ? null : get(m.replyTo);
+  return target !== null && hasGateData(target);
+}
+
+// Mail reaches a client only inside its own tasks, and never with gate data
+// or as an answer to a gate.
 export function checkReachClient(
   message: { data?: JsonValue },
+  replyTarget: { data?: JsonValue } | null,
   facts: ReachFacts,
   field: string
 ): void {
-  if (gateOf(message) !== null) {
+  if (
+    hasGateData(message) ||
+    (replyTarget !== null && hasGateData(replyTarget))
+  ) {
     throw new MessagingError(
       'forbidden',
       'gate data never goes to an A2A client',
@@ -131,8 +161,8 @@ function linkedTraffic(
   );
 }
 
-// A task's scope: messages related to it and visible to the client, gates
-// excluded, oldest first.
+// A task's scope: messages related to it and visible to the client, gates and
+// answers to them excluded, oldest first.
 export function scopeOf(input: ScopeInput): Message[] {
   const byId = new Map(input.candidates.map((m) => [m.id, m] as const));
   byId.set(input.root.id, input.root);
@@ -146,7 +176,7 @@ export function scopeOf(input: ScopeInput): Message[] {
       (d) => d.recipient === input.client
     );
   return [...byId.values()]
-    .filter((m) => gateOf(m) === null && related(m) && visible(m))
+    .filter((m) => !isGateTraffic(m, get) && related(m) && visible(m))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 

@@ -2,6 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { childEnv } from './childEnv.js';
+
 // Registers dispatch's merge drivers: the .gitattributes lines that route
 // task files and the team roster through them, and the local git config
 // that points git at `dispatch merge-task` / `dispatch merge-team`. Lives
@@ -55,12 +57,12 @@ export function registerMergeDriverGitConfig(cwd: string): boolean {
   const name = spawnSync(
     'git',
     ['config', 'merge.dispatch-task.name', 'Dispatch task file merge'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   const driver = spawnSync(
     'git',
     ['config', 'merge.dispatch-task.driver', 'dispatch merge-task %O %A %B'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   return name.status === 0 && driver.status === 0;
 }
@@ -70,12 +72,12 @@ export function registerTeamMergeDriverGitConfig(cwd: string): boolean {
   const name = spawnSync(
     'git',
     ['config', 'merge.dispatch-team.name', 'Dispatch team roster merge'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   const driver = spawnSync(
     'git',
     ['config', 'merge.dispatch-team.driver', 'dispatch merge-team %O %A %B'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   return name.status === 0 && driver.status === 0;
 }
@@ -84,6 +86,7 @@ function gitConfigHasDriver(cwd: string, key: string): boolean {
   const result = spawnSync('git', ['config', '--local', '--get', key], {
     cwd,
     encoding: 'utf8',
+    env: childEnv(),
   });
   return result.status === 0;
 }
@@ -124,7 +127,7 @@ export function isMergeDriverResolvable(cwd: string): boolean {
   const configured = spawnSync(
     'git',
     ['config', '--local', '--get', 'merge.dispatch-task.driver'],
-    { cwd, encoding: 'utf8' }
+    { cwd, encoding: 'utf8', env: childEnv() }
   );
   if (configured.status !== 0) return false;
   const command = configured.stdout.trim().split(/\s+/)[0];

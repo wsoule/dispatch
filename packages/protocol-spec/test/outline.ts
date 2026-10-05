@@ -212,6 +212,7 @@ export const OUTLINE: readonly {
       '# Appendix B Agent tools',
       '## B.1 Tools',
       '## B.2 Blocking waits',
+      '## B.3 Memory tools',
     ],
   },
   {

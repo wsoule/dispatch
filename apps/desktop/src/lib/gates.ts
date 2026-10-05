@@ -1,6 +1,7 @@
 import type { GateData, Message } from '@dispatch/client';
 import type { NotificationKind } from '@dispatch/core/browser';
 import { notificationKindForMessage } from '@dispatch/core/browser';
+import { GATE_TYPES, gateTypeOf } from '@dispatch/protocol/browser';
 
 /** A plain blocking question a run's agent asked a human, as its card shows it. */
 export interface RunQuestion {
@@ -31,13 +32,7 @@ export interface RunScopeRequest {
 
 type ToolApprovalGate = Extract<GateData, { type: 'tool-approval' }>;
 
-const GATE_TYPES: ReadonlySet<string> = new Set([
-  'tool-approval',
-  'scope',
-  'wake',
-  'agent-registration',
-  'overseer-action',
-]);
+const KNOWN_GATES: ReadonlySet<string> = new Set(GATE_TYPES);
 
 /** The open gates query (`GET /api/decisions/open`): what a deciding human is asked. */
 export function openGatesKey(
@@ -46,22 +41,51 @@ export function openGatesKey(
   return ['dispatch-open-gates', port] as const;
 }
 
-/** A message's gate payload, or null for a plain message or `x-` data. */
+/** The message's gate payload, or null for a plain message or `x-` data. A
+ *  gate of a type this build does not know is still a gate: a decision card. */
 export function gateOf(message: Message): GateData | null {
+  return gateTypeOf(message, KNOWN_GATES) === null
+    ? null
+    : (message.data as GateData);
+}
+
+/** A daemon marker (a close, a breaker pause); the same data from anyone else
+ *  is ordinary. Mirrors @dispatch/protocol's isSystemMarker. */
+export function isSystemMarker(
+  message: Pick<Message, 'from' | 'data'>,
+  type: 'x-closed' | 'x-breaker'
+): boolean {
   const data = message.data;
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    return null;
-  }
-  const type = (data as { type?: unknown }).type;
-  return typeof type === 'string' && GATE_TYPES.has(type)
-    ? (data as GateData)
-    : null;
+  return (
+    message.from === 'agent:dispatch' &&
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (data as { type?: unknown }).type === type
+  );
 }
 
 /** A tool-approval gate's payload, or null for any other message. */
 export function toolApprovalOf(message: Message): ToolApprovalGate | null {
   const gate = gateOf(message);
   return gate?.type === 'tool-approval' ? gate : null;
+}
+
+/** A task-proposal gate's draft, its A2A proposer and the client's root
+ *  message; null for any other message, or a look-alike not from the system. */
+export function taskProposalOf(
+  message: Message
+): { task: string; proposedBy: string; message: string } | null {
+  const gate = gateOf(message);
+  if (gate?.type !== 'task-proposal' || message.from !== 'agent:dispatch') {
+    return null;
+  }
+  const { task, proposedBy, message: root } = gate;
+  return typeof task === 'string' &&
+    typeof proposedBy === 'string' &&
+    typeof root === 'string'
+    ? { task, proposedBy, message: root }
+    : null;
 }
 
 function isBlockingQuestion(message: Message): boolean {
@@ -73,6 +97,21 @@ export function runIdOf(message: Message): string | null {
   const approvalRun = toolApprovalOf(message)?.runId;
   if (approvalRun !== undefined) return approvalRun;
   return message.from.startsWith('run:') ? message.from.slice(4) : null;
+}
+
+/** Runs with an open gate or question addressed to `me` (XH-R9): theirs to
+ *  answer, whoever the run acts for. */
+export function runsAskingMe(
+  gates: readonly Message[],
+  me: string | null
+): Set<string> {
+  const runs = new Set<string>();
+  if (me === null) return runs;
+  for (const message of gates) {
+    const runId = runIdOf(message);
+    if (runId !== null && message.to.includes(me)) runs.add(runId);
+  }
+  return runs;
 }
 
 /** A plain blocking question (no gate data) from a `run:` sender, else null. */
@@ -206,12 +245,15 @@ function firstLine(text: string): string {
 }
 
 /** The OS notification a new gate raises, or null: overseer gates show in the
- *  chat, and the question edge detector already notifies a run's question. */
+ *  chat, the question edge detector already notifies a run's question, and a
+ *  gate addressed to another human is theirs (XH-R9) once `me` is known. */
 export function gateNotification(
   message: Message,
-  titleOfRun: (runId: string) => string | undefined
+  titleOfRun: (runId: string) => string | undefined,
+  me: string | null = null
 ): { title: string; body: string; kind: NotificationKind } | null {
   if (!message.to.some((address) => address.startsWith('human:'))) return null;
+  if (me !== null && !message.to.includes(me)) return null;
   const kind = notificationKindForMessage(message);
   if (kind === null) return null;
   const gate = gateOf(message);
@@ -231,6 +273,16 @@ export function gateNotification(
   }
   if (kind === 'approval') {
     return { title: 'Approval needed', body: firstLine(message.body), kind };
+  }
+  if (kind === 'memory') {
+    return {
+      title: 'Memory proposal to review',
+      body: firstLine(message.body),
+      kind,
+    };
+  }
+  if (kind === 'doc') {
+    return { title: 'Doc edit to review', body: firstLine(message.body), kind };
   }
   if (kind === 'scope-request') {
     return {

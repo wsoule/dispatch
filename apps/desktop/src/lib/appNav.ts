@@ -1,5 +1,7 @@
 import type { ImpactSubjectKind } from '@dispatch/client';
 
+import type { TaskPageMode } from './taskPageMode';
+
 // The whole app's navigation state, modeled as one pure reducer so routing decisions (what
 // the sidebar highlights, what the main pane renders, whether the task peek/run
 // split/command palette are open) are unit-testable without mounting React. App.tsx is the
@@ -10,8 +12,14 @@ import type { ImpactSubjectKind } from '@dispatch/client';
 /** The primary views for whichever project is active. `new-task` never renders
  * — App.tsx reads it as "open the AI composer" and hands the old view back. */
 export type ProjectView =
+  /** Home: Ready for you, In flight and Needs you — where a project opens. */
+  | 'cockpit'
   | 'overview'
   | 'board'
+  /** Initiatives → projects → milestones → issues, as one tree to browse. */
+  | 'projects'
+  /** Everything in motion at once: a Flight Plan band per container with work moving. */
+  | 'live'
   /** retired — normalized to 'inbox' */
   | 'runs'
   | 'branches'
@@ -33,6 +41,8 @@ export type ProjectView =
   | 'design'
   /** Browse and edit the checkout, with previews and quick open. */
   | 'files'
+  /** Team documents beside tasks: specs, plans, runbooks, versioned and linked. */
+  | 'docs'
   /** Shells on the repo or a run's worktree, split any number of ways. */
   | 'terminals'
   | 'plans'
@@ -43,11 +53,14 @@ export type ProjectView =
   /** The blast-radius browser — `impactSubject` says which file/run/task, or
    * `null` for the picker with nothing preselected. */
   | 'impact'
-  /** One task, full-window, with Details/Chat/Thread/Diff tabs — `activeTaskId` says which. */
+  /** One task, full-window, on a mode that follows its state — `activeTaskId` says which. */
   | 'task'
   | 'new-task';
 
-export type TaskTab = 'details' | 'chat' | 'thread' | 'diff' | 'preview';
+/** Which mode the task page shows: `auto` follows the task's state (see
+ * defaultTaskPageMode); `thread` is the task's message threads; `preview` is the
+ * run's live app, full page only. */
+export type TaskTab = 'auto' | TaskPageMode | 'thread' | 'preview';
 
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
  * and what the two "open in Impact" entry points (Review case panel, Git
@@ -78,12 +91,14 @@ export type SettingsPage =
   | 'agents'
   | 'checks'
   | 'autonomy'
+  | 'memory'
   | 'previews'
   | 'notifications'
   | 'team'
   | 'connected-agents'
   | 'sync'
   | 'integrations'
+  | 'a2a'
   | 'license'
   | 'remotes'
   | 'daemon'
@@ -118,6 +133,12 @@ export interface NavState {
   /** A message id whose thread the Threads view opens (a root id opens its own
    * thread), or `null`. Not kept in history: the view keeps its own selection. */
   threadFocus: string | null;
+  /** The doc the Docs view opens and the section it scrolls to, or `null`.
+   * Not kept in history, like `threadFocus`: the view keeps its own selection. */
+  activeDocId: string | null;
+  activeDocAnchor: string | null;
+  /** A conflicting proposal whose marked merge the open doc starts on, or `null`. */
+  activeDocMerge: string | null;
   /** Task id shown in the task full-window view, or `null` when it's not the current view. */
   activeTaskId: string | null;
   /** The current tab within the task view. */
@@ -164,7 +185,7 @@ function normalizeProjectView(view: ProjectView): ProjectView {
 export const initialNavState: NavState = {
   section: 'project',
   activeProjectId: null,
-  projectView: 'overview',
+  projectView: 'cockpit',
   globalView: 'sessions',
   settingsPage: null,
   peekTaskId: null,
@@ -173,22 +194,25 @@ export const initialNavState: NavState = {
   activePrNumber: null,
   impactSubject: null,
   threadFocus: null,
+  activeDocId: null,
+  activeDocAnchor: null,
+  activeDocMerge: null,
   activeTaskId: null,
-  taskTab: 'details',
+  taskTab: 'auto',
   newTaskReturnView: 'board',
   paletteOpen: false,
   shortcutsOpen: false,
   history: [
     {
       section: 'project',
-      projectView: 'overview',
+      projectView: 'cockpit',
       globalView: 'sessions',
       activeRunId: null,
       activeDraftId: null,
       activePrNumber: null,
       impactSubject: null,
       activeTaskId: null,
-      taskTab: 'details',
+      taskTab: 'auto',
     },
   ],
   historyIndex: 0,
@@ -240,6 +264,9 @@ export type NavAction =
   /** Routes to Threads with the thread holding `messageId` open — a run chat's
    * message link, a ref chip, or a rail row. */
   | { type: 'openThread'; messageId: string | null }
+  /** Routes to Docs with one doc open, scrolled to `anchor`'s section when set —
+   * a task page's Docs row, a `doc:` ref chip, or a palette hit. */
+  | { type: 'openDoc'; docId: string; anchor: string | null; merge?: string }
   /** Routes to the task full-window view with a specific task, tab, and optional run. */
   | { type: 'openTask'; taskId: string; tab?: TaskTab; runId?: string | null }
   /** Switches the tab within the task view without adding a history entry. */
@@ -263,14 +290,14 @@ export type NavAction =
 export function navReducer(state: NavState, action: NavAction): NavState {
   switch (action.type) {
     case 'selectProject':
-      // Switching projects always lands on Board (the "heart of the app") and drops any
+      // Switching projects always lands on the Cockpit home and drops any
       // peek/run selection scoped to the previous project rather than carrying over an id
       // that belongs to a different project's task/run list.
       return {
         ...state,
         section: 'project',
         activeProjectId: action.projectId,
-        projectView: 'overview',
+        projectView: 'cockpit',
         peekTaskId: null,
         activeRunId: null,
         activeDraftId: null,
@@ -278,6 +305,9 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         impactSubject: null,
         activeTaskId: null,
         threadFocus: null,
+        activeDocId: null,
+        activeDocAnchor: null,
+        activeDocMerge: null,
       };
     case 'setProjectView': {
       const view = normalizeProjectView(action.view);
@@ -422,6 +452,31 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           taskTab: state.taskTab,
         }
       );
+    case 'openDoc':
+      // Same rule as `openThread`: entries carry no doc, so back returns to
+      // the page the doc was opened from.
+      return pushHistory(
+        {
+          ...state,
+          section: 'project',
+          projectView: 'docs',
+          activeDocId: action.docId,
+          activeDocAnchor: action.anchor,
+          activeDocMerge: action.merge ?? null,
+          peekTaskId: null,
+        },
+        {
+          section: 'project',
+          projectView: 'docs',
+          globalView: state.globalView,
+          activeRunId: state.activeRunId,
+          activeDraftId: state.activeDraftId,
+          activePrNumber: state.activePrNumber,
+          impactSubject: state.impactSubject,
+          activeTaskId: state.activeTaskId,
+          taskTab: state.taskTab,
+        }
+      );
     case 'openImpact':
       // Opening a different subject is a destination in its own right, so
       // back returns to the one you were looking at rather than skipping
@@ -477,7 +532,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         section: 'project',
         projectView: 'task',
         activeTaskId: action.taskId,
-        taskTab: action.tab ?? 'details',
+        taskTab: action.tab ?? 'auto',
         activeRunId: action.runId ?? null,
         peekTaskId: null,
       };

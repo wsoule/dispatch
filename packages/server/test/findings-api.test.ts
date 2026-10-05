@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { seedLedger } from './memory/fixtures.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
@@ -216,67 +217,20 @@ describe('PATCH /api/findings/:id', () => {
   });
 });
 
-describe('POST /api/ledger', () => {
-  it('creates an entry defaulting to project-wide and untargeted', async () => {
-    const res = await fetch(`${baseUrl}/api/ledger`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        kind: 'decision',
-        title: 'retry POSTs',
-        detail: 'up to 3 times on 5xx',
-      }),
-    });
-    expect(res.status).toBe(201);
-    const entry = await json<{ epicId: null; appliesTo: string[] }>(res);
-    expect(entry.epicId).toBeNull();
-    expect(entry.appliesTo).toEqual([]);
-  });
-
-  it('400s an invalid kind', async () => {
-    const res = await fetch(`${baseUrl}/api/ledger`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: 'bogus', title: 't', detail: 'd' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('400s a handoff, which is a message', async () => {
-    const res = await fetch(`${baseUrl}/api/ledger`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: 'handoff', title: 't', detail: 'd' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('400s a missing detail', async () => {
-    const res = await fetch(`${baseUrl}/api/ledger`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: 'hazard', title: 't' }),
-    });
-    expect(res.status).toBe(400);
-  });
-});
-
 describe('GET /api/ledger', () => {
   it('filters by epicId, and epicId= (empty) selects project-wide-only entries', async () => {
-    await fetch(`${baseUrl}/api/ledger`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: 'decision', title: 'wide', detail: 'd' }),
+    seedLedger(root, {
+      kind: 'decision',
+      title: 'wide',
+      detail: 'd',
+      authoredBy: 'human:test',
     });
-    await fetch(`${baseUrl}/api/ledger`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        kind: 'decision',
-        title: 'scoped',
-        detail: 'd',
-        epicId: 'e-111111',
-      }),
+    seedLedger(root, {
+      kind: 'decision',
+      title: 'scoped',
+      detail: 'd',
+      epicId: 'e-111111',
+      authoredBy: 'human:test',
     });
 
     const all = await json<unknown[]>(await fetch(`${baseUrl}/api/ledger`));
@@ -291,5 +245,26 @@ describe('GET /api/ledger', () => {
       await fetch(`${baseUrl}/api/ledger?epicId=`)
     );
     expect(wide.map((e) => e.title)).toEqual(['wide']);
+  });
+
+  it('narrows one epic to its receipts with class=audit', async () => {
+    seedLedger(root, {
+      kind: 'decision',
+      title: 'Merged r-1',
+      detail: 'ok — auto-decided by policy rung 4 (merge gate)',
+      epicId: 'e-111111',
+      authoredBy: 'human:test',
+    });
+    seedLedger(root, {
+      kind: 'hazard',
+      title: 'a lesson in the same epic',
+      detail: 'd',
+      epicId: 'e-111111',
+      authoredBy: 'human:test',
+    });
+    const audit = await json<{ title: string }[]>(
+      await fetch(`${baseUrl}/api/ledger?epicId=e-111111&class=audit`)
+    );
+    expect(audit.map((e) => e.title)).toEqual(['Merged r-1']);
   });
 });

@@ -11,7 +11,8 @@ import type {
   ThreadDetail,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskDoc, TaskListItem } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
@@ -34,6 +35,9 @@ void mock.module('../lib/tauri', () => ({
   ensureDispatchd: () => Promise.resolve(connectionFixture),
   restartDispatchd: () => Promise.resolve(),
   isTauri: () => '__TAURI_INTERNALS__' in window,
+  // The boot warm-up (lib/bootWarm.ts) imports these; a file run after this one sees them.
+  currentProjectRoot: () => Promise.resolve('/repo'),
+  hasDispatch: () => Promise.resolve(true),
 }));
 
 // Captured from the hook's own `connectEvents` call, so a test can play the
@@ -78,6 +82,32 @@ let epicProgressFixture: EpicProgress[] = [];
 let epicProgressFetches = 0;
 const epicStarts: [string, EpicSessionOptions | undefined][] = [];
 
+// The daemon's task list and per-task docs, for the `task.changed` tests. The
+// list rejects until a test opts in, so the others keep seeding it by hand.
+let taskListFixture: TaskListItem[] | null = null;
+let taskListFetches = 0;
+const taskDocs = new Map<string, TaskDoc>();
+// Holds the list fetch open until the test releases it.
+let taskListGate: Promise<void> | null = null;
+
+// The project config, for the tests that need its status model; rejects until set.
+let configFixture: object | null = null;
+let configFetches = 0;
+
+// The daemon's cached readiness readings (`/api/tasks/readiness`).
+let readinessFixture: Record<string, dispatchClient.ReadinessReading> = {};
+// What the judging route (`/api/tasks/ready?fields=id`) answers, and how often it was
+// asked.
+let judgedFixture: dispatchClient.ReadyTaskRef[] = [];
+let judgeCalls = 0;
+
+// Every `updateTask` the hook sent, by task id and patch.
+const taskUpdates: [string, object][] = [];
+
+// What `createRun` answers; a test swaps in a held or refused promise.
+let createRunResult: () => Promise<RunMeta> = () =>
+  Promise.reject(new Error('no runs in this test'));
+
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useOverseerSession's 404 veto instanceof-checks) has to stay real.
 // Lets a test hold the first presence fetch open, so a `hello` can land while
@@ -93,6 +123,40 @@ void mock.module('@dispatch/client', () => ({
   createApiClient: () => ({
     baseUrl: `http://127.0.0.1:${PORT}`,
     fetchRuns: () => Promise.resolve(runsFixture),
+    fetchConfig: () => {
+      configFetches += 1;
+      return configFixture === null
+        ? Promise.reject(new Error('no config in this test'))
+        : Promise.resolve(configFixture);
+    },
+    fetchReadiness: () => Promise.resolve(readinessFixture),
+    createRun: () => createRunResult(),
+    updateTask: (id: string, patch: object) => {
+      taskUpdates.push([id, patch]);
+      const doc = taskDocs.get(id);
+      return doc === undefined
+        ? Promise.reject(new Error(`no doc for ${id}`))
+        : Promise.resolve({ ...doc, meta: { ...doc.meta, ...patch } });
+    },
+    fetchReadyTaskIds: () => {
+      judgeCalls += 1;
+      return Promise.resolve(judgedFixture);
+    },
+    fetchTaskList: async () => {
+      taskListFetches += 1;
+      if (taskListGate !== null) await taskListGate;
+      if (taskListFixture === null)
+        throw new Error('no task list in this test');
+      return taskListFixture;
+    },
+    fetchTask: (id: string) => {
+      const doc = taskDocs.get(id);
+      return doc === undefined
+        ? Promise.reject(
+            new dispatchClient.ApiError(`task not found: ${id}`, 404)
+          )
+        : Promise.resolve(doc);
+    },
     fetchExecutors: () =>
       Promise.resolve({
         executors: [
@@ -205,6 +269,7 @@ const { useDispatchProject } = await import('./useDispatchProject');
 const { ATTACHED_DAEMON_MESSAGING_EXPLANATION } =
   await import('../lib/daemonAuth');
 const { agentRosterKey } = await import('../lib/agentRoster');
+const { memoryQueryKey } = await import('../lib/memory');
 const { overseerKey } = await import('./useOverseerSession');
 const { threadKey } = await import('./useThreads');
 
@@ -504,6 +569,516 @@ test('a registration or an answer invalidates the agent roster', async () => {
     });
   });
   expect(invalidated()).toBe(false);
+});
+
+function taskDoc(id: string, title: string, updated: string): TaskDoc {
+  return {
+    meta: {
+      id,
+      title,
+      status: 'ready',
+      kind: 'task',
+      parent: null,
+      milestone: null,
+      blockedBy: [],
+      labels: [],
+      priority: 'none',
+      assignee: 'none',
+      created: '2026-01-01T00:00:00.000Z',
+      updated,
+      external: null,
+      selfReview: false,
+      writes: [],
+      risk: 'routine',
+      model: null,
+      exercised: false,
+      ...defaultTaskFields(),
+    },
+    body: `${title} body`,
+  };
+}
+
+// Mounts with a one-task list loaded, counting list fetches from there.
+async function mountWithTaskList() {
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Before', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  taskDocs.clear();
+  const queryClient = await mountConnected();
+  await waitFor(() => {
+    expect(
+      queryClient.getQueryData<TaskListItem[]>(['dispatch-tasks', PORT])
+    ).toHaveLength(1);
+  });
+  taskListFetches = 0;
+  const titles = () =>
+    queryClient
+      .getQueryData<TaskListItem[]>(['dispatch-tasks', PORT])
+      ?.map((t) => t.meta.title);
+  return { queryClient, titles };
+}
+
+test('task.changed with ids patches just those tasks into the cached list', async () => {
+  const { titles } = await mountWithTaskList();
+  taskDocs.set('t-1', taskDoc('t-1', 'After', '2026-01-02T00:00:00.000Z'));
+  taskDocs.set('t-2', taskDoc('t-2', 'New', '2026-01-02T00:00:00.000Z'));
+
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-1', 't-2'] });
+  });
+  await waitFor(() => {
+    expect(titles()).toEqual(['After', 'New']);
+  });
+
+  // A named task that now 404s was deleted.
+  taskDocs.delete('t-2');
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-2'] });
+  });
+  await waitFor(() => {
+    expect(titles()).toEqual(['After']);
+  });
+  expect(taskListFetches).toBe(0);
+  taskListFixture = null;
+});
+
+// A single task's change used to refetch every ready task's body, the config and all
+// fan-out progress. The ready set now follows the patched list; a loose task moves no
+// fan-out, and config has its own event.
+test('a loose task changing refetches only that task', async () => {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Before', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  taskDocs.clear();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(sink).not.toBeNull();
+    expect([...result.current.readyIds]).toEqual(['t-1']);
+  });
+  taskListFetches = 0;
+  configFetches = 0;
+  epicProgressFetches = 0;
+  taskDocs.set('t-1', {
+    ...taskDoc('t-1', 'Started', '2026-01-02T00:00:00.000Z'),
+    meta: {
+      ...taskDoc('t-1', 'Started', '2026-01-02T00:00:00.000Z').meta,
+      status: 'working',
+    },
+  });
+
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-1'] });
+  });
+  await waitFor(() => {
+    expect(result.current.readyIds.size).toBe(0);
+  });
+  await new Promise((r) => setTimeout(r, 400));
+  expect(taskListFetches).toBe(0);
+  expect(configFetches).toBe(0);
+  expect(epicProgressFetches).toBe(0);
+  expect(
+    queryClient.getQueryCache().find({ queryKey: ['dispatch-ready-tasks'] })
+  ).toBeUndefined();
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// A pull through the Git page rewrites config.yml without a `config.changed`, and a
+// reconnect may follow a daemon restart that read a new one; the ready set is computed
+// from the cached config, so both refetch it.
+test('a git change or a reconnect refetches config', async () => {
+  const statuses = ['draft', 'ready', 'working', 'review', 'landed', 'dropped'];
+  configFixture = { statuses, notifications: { kinds: null } };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Ready one', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(sink).not.toBeNull();
+    expect([...result.current.readyIds]).toEqual(['t-1']);
+  });
+  configFetches = 0;
+  // The pulled config.yml no longer counts `ready` as waiting to start.
+  configFixture = {
+    statusDefinitions: statuses.map((name) => ({
+      name,
+      type: name === 'ready' ? 'backlog' : 'started',
+      color: null,
+    })),
+    notifications: { kinds: null },
+  };
+
+  act(() => {
+    sink?.onEvent({ type: 'git.changed' });
+  });
+  await waitFor(() => {
+    expect(result.current.readyIds.size).toBe(0);
+  });
+  expect(configFetches).toBe(1);
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  await waitFor(() => {
+    expect(configFetches).toBe(2);
+  });
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// A reading was judged against the text it describes. A draft edited and then moved to
+// ready must not bring its old reading along (a level-0 one would file it under Needs you
+// as an unclear spec until the next judge).
+test('a task edited while not ready drops its reading before it turns ready', async () => {
+  const draft = (title: string, status: string, updated: string): TaskDoc => {
+    const doc = taskDoc('t-2', title, updated);
+    return { ...doc, meta: { ...doc.meta, status } };
+  };
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Ready one', '2026-01-01T00:00:00.000Z').meta },
+    { meta: draft('Vague', 'draft', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  readinessFixture = {
+    't-2': {
+      level: 0,
+      label: 'title only',
+      confidence: 1,
+      splitProbability: 0,
+    },
+  };
+  taskDocs.clear();
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(sink).not.toBeNull();
+    expect([...result.current.readyIds]).toEqual(['t-1']);
+    expect(
+      queryClient.getQueryData(['dispatch-readiness', PORT])
+    ).toBeDefined();
+  });
+
+  taskDocs.set('t-2', draft('Clear now', 'draft', '2026-01-02T00:00:00.000Z'));
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-2'] });
+  });
+  await waitFor(() => {
+    expect(
+      result.current.tasks.find((t) => t.meta.id === 't-2')?.meta.title
+    ).toBe('Clear now');
+  });
+  taskDocs.set('t-2', draft('Clear now', 'ready', '2026-01-03T00:00:00.000Z'));
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-2'] });
+  });
+  await waitFor(() => {
+    expect(result.current.readyIds.has('t-2')).toBe(true);
+  });
+  expect(result.current.readinessById.get('t-2')).toBeUndefined();
+  taskListFixture = null;
+  configFixture = null;
+  readinessFixture = {};
+});
+
+// Mounts with a one-ready-task list and a config, returning the hook's result.
+async function mountReadyTask(onRunDispatched?: (runId: string) => void) {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Ready one', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null, onRunDispatched }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect([...result.current.readyIds]).toEqual(['t-1']);
+  });
+  return result;
+}
+
+const statusOf = (tasks: TaskListItem[]) => tasks[0]?.meta.status;
+
+test('an optimistic dispatch shows the task started before the daemon answers', async () => {
+  const followed: string[] = [];
+  const result = await mountReadyTask((runId) => followed.push(runId));
+  let answer: (run: RunMeta) => void = () => {};
+  createRunResult = () => new Promise((resolve) => (answer = resolve));
+
+  let sent: Promise<void> = Promise.resolve();
+  act(() => {
+    sent = result.current.handleDispatch('t-1', undefined, undefined, {
+      optimistic: true,
+    });
+  });
+  expect(statusOf(result.current.tasks)).toBe('working');
+  expect(result.current.readyIds.has('t-1')).toBe(false);
+
+  await act(async () => {
+    answer(runFixture('r-1', 'running'));
+    await sent;
+  });
+  expect(followed).toEqual([]);
+  taskListFixture = null;
+  configFixture = null;
+});
+
+test('a refused optimistic dispatch puts the task back and rejects', async () => {
+  const result = await mountReadyTask();
+  createRunResult = () => Promise.reject(new Error('task is blocked'));
+
+  let error: unknown = null;
+  await act(async () => {
+    await result.current
+      .handleDispatch('t-1', undefined, undefined, { optimistic: true })
+      .catch((err: unknown) => {
+        error = err;
+      });
+  });
+  expect((error as Error | null)?.message).toBe('task is blocked');
+  expect(statusOf(result.current.tasks)).toBe('ready');
+  expect(result.current.readyIds.has('t-1')).toBe(true);
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// A reconnect is likely a restarted daemon, which may have a judgment client now, so the
+// back-off an unjudged answer set must not hold the next judge for minutes.
+test('a reconnect judges readiness again after an unjudged answer', async () => {
+  judgedFixture = [{ id: 't-1' }];
+  judgeCalls = 0;
+  const result = await mountReadyTask();
+  await waitFor(
+    () => {
+      expect(judgeCalls).toBe(1);
+    },
+    { timeout: 4000 }
+  );
+  judgedFixture = [
+    {
+      id: 't-1',
+      readiness: { level: 2, label: 'ok', confidence: 1, splitProbability: 0 },
+    },
+  ];
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  await waitFor(
+    () => {
+      expect(result.current.readinessById.get('t-1')?.level).toBe(2);
+    },
+    { timeout: 4000 }
+  );
+  expect(judgeCalls).toBe(2);
+  judgedFixture = [];
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// Every list row takes the containers. A new copy on each task change (the dispatch's
+// overlay, a patch) redrew every row, though no container had changed.
+test('epics keep their identity while no container changes', async () => {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  const parent = taskDoc('t-parent', 'Parent', '2026-01-01T00:00:00.000Z');
+  const child = taskDoc('t-child', 'Child', '2026-01-01T00:00:00.000Z');
+  child.meta.parent = 't-parent';
+  const loose = taskDoc('t-1', 'Loose', '2026-01-01T00:00:00.000Z');
+  taskListFixture = [
+    { meta: parent.meta },
+    { meta: child.meta },
+    { meta: loose.meta },
+  ];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.readyIds.has('t-1')).toBe(true);
+  });
+  const epics = result.current.epics;
+  expect(epics.map((t) => t.meta.id)).toEqual(['t-parent']);
+
+  createRunResult = () => new Promise(() => {});
+  act(() => {
+    void result.current.handleDispatch('t-1', undefined, undefined, {
+      optimistic: true,
+    });
+  });
+  expect(result.current.readyIds.has('t-1')).toBe(false);
+  expect(result.current.epics).toBe(epics);
+
+  taskDocs.set('t-1', taskDoc('t-1', 'Renamed', '2026-01-02T00:00:00.000Z'));
+  act(() => {
+    sink?.onEvent({ type: 'task.changed', ids: ['t-1'] });
+  });
+  await waitFor(() => {
+    expect(
+      result.current.tasks.find((t) => t.meta.id === 't-1')?.meta.title
+    ).toBe('Renamed');
+  });
+  expect(result.current.epics).toBe(epics);
+  taskDocs.clear();
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// Every board card takes moveTaskStatus. It used to hang off the archived ids, rebuilt on
+// each task change, so a dispatch handed every card a new callback and redrew them all.
+test('moveTaskStatus keeps its identity through a dispatch', async () => {
+  const result = await mountReadyTask();
+  const move = result.current.moveTaskStatus;
+  createRunResult = () => new Promise(() => {});
+  act(() => {
+    void result.current.handleDispatch('t-1', undefined, undefined, {
+      optimistic: true,
+    });
+  });
+  expect(statusOf(result.current.tasks)).toBe('working');
+  expect(result.current.moveTaskStatus).toBe(move);
+  taskListFixture = null;
+  configFixture = null;
+});
+
+test('moveTaskStatus leaves an archived task alone', async () => {
+  configFixture = {
+    statuses: ['draft', 'ready', 'working', 'review', 'landed', 'dropped'],
+    notifications: { kinds: null },
+  };
+  const live = taskDoc('t-1', 'Live', '2026-01-01T00:00:00.000Z');
+  const shelved = taskDoc('t-2', 'Shelved', '2026-01-01T00:00:00.000Z');
+  shelved.meta.archivedAt = '2026-01-02T00:00:00.000Z';
+  taskListFixture = [{ meta: live.meta }, { meta: shelved.meta }];
+  taskDocs.set('t-1', live);
+  taskDocs.set('t-2', shelved);
+  taskUpdates.length = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.archivedTasks.map((t) => t.meta.id)).toEqual(['t-2']);
+  });
+
+  await act(async () => {
+    await result.current.moveTaskStatus('t-2', 'working');
+    await result.current.moveTaskStatus('t-1', 'review');
+  });
+  expect(taskUpdates).toEqual([['t-1', { status: 'review' }]]);
+  expect(result.current.archivedTasks[0]?.meta.status).toBe('ready');
+  taskDocs.clear();
+  taskListFixture = null;
+  configFixture = null;
+});
+
+// The list, config, identity, runs and people start as the connection resolves; the rest
+// wait for the list, so the first paint's requests and renders go first. The prefetch and
+// the hook's own query are one fetch.
+test('first-paint reads go first; the rest wait for the list', async () => {
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Only', '2026-01-01T00:00:00.000Z').meta },
+  ];
+  let release: () => void = () => {};
+  taskListGate = new Promise((resolve) => (release = resolve));
+  taskListFetches = 0;
+  presenceFetches = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(taskListFetches).toBe(1);
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  expect(presenceFetches).toBe(0);
+
+  await act(async () => {
+    release();
+    await Promise.resolve();
+  });
+  await waitFor(() => {
+    expect(result.current.tasks).toHaveLength(1);
+    expect(presenceFetches).toBe(1);
+  });
+  expect(taskListFetches).toBe(1);
+  taskListGate = null;
+  taskListFixture = null;
+});
+
+test('an unscoped task.changed burst refetches the list once', async () => {
+  const { titles } = await mountWithTaskList();
+  taskListFixture = [
+    { meta: taskDoc('t-1', 'Refetched', '2026-01-02T00:00:00.000Z').meta },
+  ];
+
+  act(() => {
+    for (let i = 0; i < 3; i++) sink?.onEvent({ type: 'task.changed' });
+  });
+  await waitFor(() => {
+    expect(titles()).toEqual(['Refetched']);
+  });
+  expect(taskListFetches).toBe(1);
+  taskListFixture = null;
+});
+
+// A personal change carries no id, so every memory query of this daemon
+// refetches, and only those.
+test('memory.changed invalidates the memory queries and nothing else', async () => {
+  const queryClient = await mountConnected();
+  queryClient.setQueryData(memoryQueryKey(PORT, 'activity'), { activity: [] });
+  queryClient.setQueryData(memoryQueryKey(PORT, 'health'), {});
+  queryClient.setQueryData(agentRosterKey(PORT), { agents: [] });
+
+  act(() => {
+    sink?.onEvent({ type: 'memory.changed', scope: 'personal' });
+  });
+
+  const invalidated = (key: readonly unknown[]) =>
+    queryClient.getQueryState(key)?.isInvalidated;
+  expect(invalidated(memoryQueryKey(PORT, 'activity'))).toBe(true);
+  expect(invalidated(memoryQueryKey(PORT, 'health'))).toBe(true);
+  expect(invalidated(agentRosterKey(PORT))).toBe(false);
 });
 
 function runFixture(id: string, state: RunMeta['state']): RunMeta {
@@ -1048,6 +1623,39 @@ test('a window on the agent token reads no gates, notifies none and sends nothin
   }
 });
 
+test('a run live on open shows the step its record carries, until run.log says more', async () => {
+  const { runSteps } = await import('../lib/runStep');
+  runsFixture = [
+    {
+      ...runFixture('r-step-live', 'running'),
+      lastStep: { text: 'Running tests', at: '2026-09-25T13:00:00.000Z' },
+    },
+    {
+      ...runFixture('r-step-done', 'finished'),
+      lastStep: { text: 'Committing', at: '2026-09-25T13:00:00.000Z' },
+    },
+    runFixture('r-step-old-daemon', 'running'),
+  ] as RunMeta[];
+  await mountConnected();
+  await waitFor(() => {
+    expect(runSteps.get('r-step-live')).toBe('Running tests');
+  });
+  expect(runSteps.get('r-step-done')).toBeNull();
+  expect(runSteps.get('r-step-old-daemon')).toBeNull();
+
+  act(() => {
+    sink?.onEvent({
+      type: 'run.log',
+      runId: 'r-step-live',
+      entry: { ts: '', kind: 'thinking' },
+    } as ServerEvent);
+  });
+  await waitFor(() => {
+    expect(runSteps.get('r-step-live')).toBe('Thinking');
+  });
+  runsFixture = [];
+});
+
 function epicProgressFixtureFor(epicId: string): EpicProgress {
   return {
     epicId,
@@ -1085,8 +1693,6 @@ async function mountWithEpics(epics: string[]) {
   return { queryClient, result: rendered.result };
 }
 
-const epicProgressAllKey = ['dispatch-epic-progress', PORT, 'all'];
-
 // A fan-out of dozens of milestones used to be a burst of dozens of progress
 // GETs on every run change; the hook now asks once for all of them.
 test('three epics are filled from a single bulk progress fetch', async () => {
@@ -1102,19 +1708,21 @@ test('three epics are filled from a single bulk progress fetch', async () => {
   epicProgressFixture = [];
 });
 
-test('epic.changed invalidates the bulk progress key', async () => {
-  const { queryClient } = await mountWithEpics(['e-1']);
-  expect(queryClient.getQueryState(epicProgressAllKey)?.isInvalidated).toBe(
-    false
-  );
+test('a burst of epic and run events refetches progress once', async () => {
+  await mountWithEpics(['e-1']);
+  epicProgressFetches = 0;
 
   act(() => {
     sink?.onEvent({ type: 'epic.changed', epicId: 'e-1' });
+    sink?.onEvent({ type: 'run.changed' });
+    sink?.onEvent({ type: 'epic.changed', epicId: 'e-1' });
   });
 
-  expect(queryClient.getQueryState(epicProgressAllKey)?.isInvalidated).toBe(
-    true
-  );
+  await waitFor(() => {
+    expect(epicProgressFetches).toBe(1);
+  });
+  await new Promise((r) => setTimeout(r, 400));
+  expect(epicProgressFetches).toBe(1);
   epicProgressFixture = [];
 });
 
@@ -1124,8 +1732,17 @@ test('epic.changed invalidates the bulk progress key', async () => {
 test('epic.paused records a durable inbox row from the event alone', async () => {
   const { queryClient, result } = await mountWithEpics(['e-1']);
   queryClient.setQueryData(
-    ['dispatch-tasks-all', PORT],
-    [{ meta: { id: 'e-1', title: 'Auth rewrite', kind: 'epic' } } as TaskDoc]
+    ['dispatch-tasks', PORT],
+    [
+      {
+        meta: {
+          id: 'e-1',
+          title: 'Auth rewrite',
+          kind: 'epic',
+          blockedBy: [],
+        },
+      } as unknown as TaskListItem,
+    ]
   );
   expect(result.current.notificationInbox.entries).toEqual([]);
 

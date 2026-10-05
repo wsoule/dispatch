@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import type { Command } from 'commander';
 import type { ChildProcess } from 'node:child_process';
 import { spawn, spawnSync } from 'node:child_process';
@@ -48,7 +49,7 @@ interface DaemonFileInfo {
   agentToken?: string;
 }
 
-function daemonHome(): string {
+export function daemonHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();
 }
@@ -201,7 +202,11 @@ function childEnvFor(launcher: DaemonLauncher): NodeJS.ProcessEnv | undefined {
 // inject a stub; real usage falls through to here).
 function defaultOpenBrowser(url: string): void {
   const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
-  const child = spawn(cmd, [url], { stdio: 'ignore', detached: true });
+  const child = spawn(cmd, [url], {
+    stdio: 'ignore',
+    detached: true,
+    env: childEnv(),
+  });
   // The daemon is already up by the time this runs — a host missing
   // `open`/`xdg-open` must not crash a bare `dispatch` invocation just
   // because it couldn't show the UI. Log and move on, same as
@@ -232,7 +237,7 @@ function defaultOpenApp(rootDir: string): void {
   const child = spawn(
     'open',
     ['-a', DESKTOP_PRODUCT_NAME, '--args', '--root', rootDir],
-    { stdio: 'ignore', detached: true }
+    { stdio: 'ignore', detached: true, env: childEnv() }
   );
   // Same rationale as defaultOpenBrowser's error handler: the daemon is
   // already up, so a spawn failure here (e.g. `open` missing on a non-macOS
@@ -252,7 +257,9 @@ function defaultOpenApp(rootDir: string): void {
 // assert on which path was taken without anything actually opening.
 export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
   if (process.platform === 'darwin') {
-    const probe = spawnSync('open', ['-Ra', DESKTOP_PRODUCT_NAME]);
+    const probe = spawnSync('open', ['-Ra', DESKTOP_PRODUCT_NAME], {
+      env: childEnv(),
+    });
     if (probe.status === 0) {
       (ctx.openApp ?? defaultOpenApp)(projectRoot(ctx.cwd));
       return;

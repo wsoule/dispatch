@@ -96,11 +96,25 @@ export async function isDaemonHealthy(port: number): Promise<boolean> {
   }
 }
 
-// The request-tier bearer header every tool call carries. A daemon file
-// written before token auth has no token to send; the daemon's own 401 then
-// names the fix, so there is nothing better to say from here.
+// The token in DISPATCH_RUN_TOKEN_FILE when this process serves a dispatched
+// run, else null. An unreadable or empty file reads as no run token.
+function runToken(): string | null {
+  const file = process.env.DISPATCH_RUN_TOKEN_FILE;
+  if (file === undefined || file === '') return null;
+  try {
+    const token = readFileSync(file, 'utf8').trim();
+    return token === '' ? null : token;
+  } catch {
+    return null;
+  }
+}
+
+// The request-tier bearer header every tool call carries: inside a run, the
+// run's own token, so the daemon knows which run wrote (XH-R2); elsewhere the
+// shared agent token. A daemon file written before token auth has no token to
+// send; the daemon's own 401 then names the fix.
 export function daemonAuth(daemon: DaemonFileInfo): Record<string, string> {
-  const token = daemon.agentToken;
+  const token = runToken() ?? daemon.agentToken;
   return token === undefined || token === ''
     ? {}
     : { authorization: `Bearer ${token}` };

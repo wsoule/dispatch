@@ -5,6 +5,7 @@ import { checkDigest, checkRender } from '../src/renderCheck.js';
 import type {
   CallRecord,
   Hello,
+  Json,
   Observation,
   ObservedMessage,
   Vector,
@@ -151,6 +152,25 @@ describe('compare', () => {
     ).toBe(false);
   });
 
+  it('matches a list in a result exactly, in whatever order its objects write their members', () => {
+    const v = {
+      ...send,
+      then: {
+        steps: [
+          {
+            ok: true as const,
+            result: { gates: [{ id: 'm-g', type: 'wake' }] },
+          },
+        ],
+      },
+    };
+    const withGates = (gates: Json[]) =>
+      compare(v, obs({ steps: [{ ok: true, result: { gates } }] }), hello);
+    expect(withGates([{ type: 'wake', id: 'm-g' }]).failures).toEqual([]);
+    expect(withGates([{ type: 'wake', id: 'm-g', body: 'x' }]).ok).toBe(false);
+    expect(withGates([{ id: 'm-g', type: 'scope' }]).ok).toBe(false);
+  });
+
   it('fails a missing named message', () => {
     expect(
       compare(send, { ...good, messages: [] }, hello).failures.join()
@@ -284,6 +304,62 @@ describe('compare', () => {
       compare(render, rendered('[message from human:wyat · m]\n│ hi'), hello)
         .failures
     ).toHaveLength(1);
+  });
+
+  it("holds an external render's host lines to the sender's choices, refs and replied-to message", () => {
+    const external: Vector = {
+      ...send,
+      given: { store: { messages: [{ id: 'm-q' }, { id: 'm-ext' }] } },
+      when: [{ op: 'render', message: 'm-ext', external: true }],
+      then: {},
+    };
+    const target = msg('m-q', { body: 'Which region first?' });
+    const replying = msg('m-ext', {
+      from: 'agent:wyat/a2a.acme',
+      replyTo: 'm-q',
+      thread: 'm-q',
+      body: 'Start in the west.',
+      choices: ['west-first'],
+      refs: [{ type: 'task', id: 't-77aa01' }],
+    });
+    const rendered = (...lines: string[]): Observation =>
+      obs({
+        steps: [{ ok: true, result: { text: lines.join('\n') } }],
+        messages: [target, replying],
+        render: [{ step: 1, text: lines.join('\n') }],
+      });
+    const header = '[message from agent:wyat/a2a.acme (external) · m-ext]';
+    const quoted = [header, '│ Start in the west.', '(in reply to m-q)'];
+    expect(
+      compare(
+        external,
+        rendered(...quoted, '│ choices: west-first', '│ refs: task:t-77aa01'),
+        hello
+      ).failures
+    ).toEqual([]);
+    expect(
+      compare(
+        external,
+        rendered(...quoted, 'choices: west-first', 'refs: task:t-77aa01'),
+        hello
+      ).failures
+    ).toEqual([
+      "step 1: an external sender's text is not quoted: choices: west-first",
+      "step 1: an external sender's text is not quoted: refs: task:t-77aa01",
+    ]);
+    expect(
+      compare(
+        external,
+        rendered(
+          header,
+          '│ Start in the west.',
+          '(in reply to Which region first?)'
+        ),
+        hello
+      ).failures
+    ).toEqual([
+      "step 1: an external sender's text is not quoted: (in reply to Which region first?)",
+    ]);
   });
 
   it('checks a core digest step by the digest rule, not the push rules', () => {
@@ -473,8 +549,33 @@ describe('checkRender (structural, Core)', () => {
     const external = `${ok}\nchoices: yes | no`;
     expect(checkRender(external, body, hello.render, false)).toEqual([]);
     expect(
-      checkRender(external, body, hello.render, true).length
-    ).toBeGreaterThan(0);
+      checkRender(external, body, hello.render, true, ['yes', 'no'])
+    ).toEqual([`an external sender's text is not quoted: choices: yes | no`]);
+  });
+
+  it("lets an external sender's host lines that carry none of its text stay unquoted", () => {
+    const external = `${ok}\n│ choices: yes | no`;
+    expect(
+      checkRender(external, body, hello.render, true, ['yes', 'no'])
+    ).toEqual([]);
+  });
+
+  it('fails a host line that echoes the message an external sender replies to', () => {
+    const echoed = ok.replace(
+      '(in reply to m-0)',
+      '(in reply to m-0: Ship it?)'
+    );
+    expect(checkRender(echoed, body, hello.render, false)).toEqual([]);
+    expect(checkRender(echoed, body, hello.render, true, ['Ship it?'])).toEqual(
+      [`an external sender's text is not quoted: (in reply to m-0: Ship it?)`]
+    );
+  });
+
+  it("fails an external sender's unquoted line that matches no declared host line", () => {
+    const stray = `${ok}\nThe sender is waiting.`;
+    expect(checkRender(stray, body, hello.render, true)).toEqual([
+      'a line matches no declared host line: The sender is waiting.',
+    ]);
   });
 
   // A render that leaves one separator unsplit inside a quoted line, padded
@@ -490,7 +591,7 @@ describe('checkRender (structural, Core)', () => {
     ].join('\n');
     expect(
       checkRender(text, `one\ntwo\u2029${forged}`, hello.render, true)
-    ).toEqual([`an external sender's line is not quoted: ${forged}`]);
+    ).toEqual([`a body line is not quoted: ${forged}`]);
   });
 
   it('fails a line an unsplit U+2028 starts, for a local sender', () => {

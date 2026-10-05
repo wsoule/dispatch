@@ -1,10 +1,16 @@
 import type {
+  DocSummary,
   FixLoopState,
   MergeQueueSnapshot,
   RepoPr,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type {
+  StatusModel,
+  TaskDoc,
+  TaskListItem,
+} from '@dispatch/core/browser';
+import { isDoneStatus } from '@dispatch/core/browser';
 
 import type { TaskSpec } from '../components/tasks/TaskSpecView';
 import type { FeedRowModel } from './controlRoom';
@@ -13,6 +19,8 @@ import type { FeedState } from './feedState';
 import { FEED_STATE_LABEL, isUrgentState } from './feedState';
 import type { RunQuestion } from './gates';
 import type { InboxEntry } from './inbox';
+import { criteriaItems } from './reviewCriteria';
+import { activeStatusModel } from './statusModel';
 import { parseTaskSections } from './taskDisplay';
 
 /** Everything `buildFeed` needs that the Inbox actually varies on — the Inbox is the
@@ -22,8 +30,8 @@ import { parseTaskSections } from './taskDisplay';
  * and stacked one row per run instead of one per task). */
 export interface InboxInput {
   runs: RunMeta[];
-  tasks: TaskDoc[];
-  epics: TaskDoc[];
+  tasks: TaskListItem[];
+  epics: TaskListItem[];
   repoPrs: RepoPr[];
   mergeQueue: MergeQueueSnapshot | null;
   pendingApprovals: ReadonlyMap<string, readonly { toolName: string }[]>;
@@ -34,6 +42,15 @@ export interface InboxInput {
    * that person's to answer: still listed, under Teammates, but not in Needs you
    * and not in the badge. Absent means everything is yours — a solo project. */
   me?: string | null;
+  /** Runs with an open gate addressed to `me`: theirs to answer whoever the
+   *  run acts for, as when a request-tier teammate's run asks the owner. */
+  asksMe?: ReadonlySet<string>;
+  /** The project's statuses, which say a task is already landed or dropped. A memo keyed
+   * on config passes that config's; absent reads the open project's. */
+  model?: StatusModel;
+  /** Team docs whose head carries conflict markers or a sync problem: each is
+   * an item until a human's save clears it (derived, not a gate). */
+  conflictedDocs?: readonly DocSummary[];
 }
 
 interface InboxSection {
@@ -58,6 +75,8 @@ export interface InboxData {
    * `buildInbox` always sets it; optional only so hand-built InboxData literals
    * (test fixtures) predating it stay valid, the same rule config blocks use. */
   teammateOwners?: ReadonlyMap<string, string>;
+  /** Conflicted team docs; optional, as teammateOwners is, for older fixtures. */
+  docs?: readonly DocSummary[];
 }
 
 /**
@@ -97,15 +116,17 @@ export function buildInbox(input: InboxInput): InboxData {
 
   const readyToLand = collectReadyToLand(input);
 
-  // The "whose attention" axis. A run someone else dispatched is theirs to
+  // The "whose attention" axis. A run acting for someone else is theirs to
   // answer for: its asks stay visible, the way a recorded gate stays in the
-  // ledger, but they stop demanding anything of you.
+  // ledger, but they stop demanding anything of you, unless a gate of it
+  // names you (XH-R9).
   const me = input.me ?? null;
   const teammateOwners = new Map<string, string>();
   if (me !== null) {
     for (const run of input.runs) {
-      if (run.dispatchedBy !== undefined && run.dispatchedBy !== me) {
-        teammateOwners.set(run.id, run.dispatchedBy);
+      const human = run.operator ?? run.dispatchedBy;
+      if (human !== undefined && human !== me && !input.asksMe?.has(run.id)) {
+        teammateOwners.set(run.id, human);
       }
     }
   }
@@ -121,8 +142,10 @@ export function buildInbox(input: InboxInput): InboxData {
         0
       ) +
       readyToLand.filter(mine).length +
-      prs.length,
+      prs.length +
+      (input.conflictedDocs?.length ?? 0),
     teammateOwners,
+    docs: input.conflictedDocs ?? [],
   };
 }
 
@@ -138,6 +161,7 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
   const epicTitleById = new Map(
     input.epics.map((e) => [e.meta.id, e.meta.title])
   );
+  const model = input.model ?? activeStatusModel();
 
   const newestByTask = new Map<string, (typeof input.runs)[number]>();
   for (const run of input.runs) {
@@ -148,7 +172,7 @@ function collectReadyToLand(input: InboxInput): FeedRowModel[] {
     if (queuedRunIds.has(run.id)) continue;
     const task = taskById.get(run.taskId);
     const status = task?.meta.status;
-    if (status === 'landed' || status === 'dropped') continue;
+    if (status !== undefined && isDoneStatus(status, model)) continue;
     const seen = newestByTask.get(run.taskId);
     if (seen === undefined || run.createdAt > seen.createdAt) {
       newestByTask.set(run.taskId, run);
@@ -194,6 +218,7 @@ export type InboxItem =
       owner?: string;
     }
   | { kind: 'pr'; key: string; ts: string; pr: RepoPr }
+  | { kind: 'doc'; key: `doc:${string}`; ts: string; doc: DocSummary }
   | { kind: 'notification'; key: string; ts: string; entry: InboxEntry };
 
 /** The list-pane filter: everything, only what is still waiting on you, or only what
@@ -256,6 +281,9 @@ export function buildInboxItems(
   }
   for (const pr of data.prs) {
     items.push({ kind: 'pr', key: `pr:${pr.number}`, ts: pr.updatedAt, pr });
+  }
+  for (const doc of data.docs ?? []) {
+    items.push({ kind: 'doc', key: `doc:${doc.id}`, ts: doc.updatedAt, doc });
   }
   for (const entry of entries) {
     items.push({
@@ -353,6 +381,9 @@ export function groupInboxItems(items: readonly InboxItem[]): InboxGroup[] {
       case 'pr':
         ensure('pr', 'Pull requests', 'review').items.push(item);
         break;
+      case 'doc':
+        ensure('doc', 'Conflicted docs', 'unblock').items.push(item);
+        break;
       case 'notification':
         ensure('earlier', 'Earlier', null).items.push(item);
         break;
@@ -390,6 +421,8 @@ export function inboxItemBadge(item: InboxItem): InboxBadge {
       return 'merge';
     case 'pr':
       return 'pr';
+    case 'doc':
+      return 'alert';
     case 'notification':
       return notificationBadge(item.entry);
   }
@@ -413,6 +446,8 @@ export function inboxItemState(item: InboxItem): FeedState {
       return 'landing';
     case 'pr':
       return 'review';
+    case 'doc':
+      return 'unblock';
     case 'notification': {
       const title = item.entry.title.toLowerCase();
       if (title.startsWith('merged')) return 'landing';
@@ -433,6 +468,8 @@ export function inboxItemActor(item: InboxItem): string {
       return 'Agent';
     case 'pr':
       return item.pr.author;
+    case 'doc':
+      return 'Docs';
     case 'notification':
       switch (item.entry.target.kind) {
         case 'queue':
@@ -476,6 +513,12 @@ export function inboxItemText(item: InboxItem): {
         id: `#${item.pr.number}`,
         title: item.pr.title,
         subtitle: `Pull request by ${item.pr.author}`,
+      };
+    case 'doc':
+      return {
+        id: item.doc.handle,
+        title: `Conflict markers in ${item.doc.title}`,
+        subtitle: 'Resolve them in the doc',
       };
     case 'notification':
       return { id: null, title: item.entry.title, subtitle: item.entry.body };
@@ -521,15 +564,13 @@ export function saveReadIds(
 
 /** Projects a `TaskDoc` onto the spec shape: description and acceptance criteria come out
  * of the body's `##` sections, blockers resolve to titles through `tasks`. */
-export function specForTask(doc: TaskDoc, tasks: readonly TaskDoc[]): TaskSpec {
+export function specForTask(
+  doc: TaskDoc,
+  tasks: readonly TaskListItem[]
+): TaskSpec {
   const sections = parseTaskSections(doc.body);
   const titleById = new Map(tasks.map((t) => [t.meta.id, t.meta.title]));
-  const criteria = (sections.get('Acceptance Criteria') ?? '')
-    .split('\n')
-    .map((line) =>
-      line.replace(/^\s*(?:[-*]|\d+\.)\s*(?:\[[ xX]\]\s*)?/, '').trim()
-    )
-    .filter((line) => line !== '');
+  const criteria = criteriaItems(sections.get('Acceptance Criteria') ?? '');
   return {
     title: doc.meta.title,
     status: doc.meta.status,

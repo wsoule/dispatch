@@ -30,7 +30,15 @@ import type { SyncLedger } from './ledger.js';
  * store directly: a change that arrived from elsewhere is not this replica's
  * to send again.
  */
+// Keeps a publishing task's risk where this replica set it (see setRiskGuard).
+interface RiskGuard {
+  publishing(taskId: string): boolean;
+  // A teammate's change tried to move a publishing task's risk.
+  riskChanged(taskId: string): void;
+}
+
 export class SyncedTaskStore implements TaskStorePort {
+  private riskGuard: RiskGuard | null = null;
   private signer: TaskOpSigner | null = null;
 
   constructor(
@@ -111,22 +119,44 @@ export class SyncedTaskStore implements TaskStorePort {
     return tasks.length;
   }
 
+  /** A publish task's elevated risk keeps a human on its merge, so a synced
+   *  change never moves it while it publishes; the attempt is reported. */
+  setRiskGuard(guard: RiskGuard | null): void {
+    this.riskGuard = guard;
+  }
+
   /** Folds a change from another replica into this board. */
-  applyRemote(op: BoardOp): ApplyResult {
-    if (this.ledger.ahead(op.hlc))
+  applyRemote(remote: BoardOp): ApplyResult {
+    if (this.ledger.ahead(remote.hlc))
       return {
         changed: false,
         doc: null,
         held: true,
-        problem: `a change from ${op.replica} (seq ${op.seq}) is stamped ${op.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ahead of this machine's clock; it waits until the clock catches up`,
+        problem: `a change from ${remote.replica} (seq ${remote.seq}) is stamped ${remote.hlc}, more than ${MAX_CLOCK_LEAD_MS / 60_000} minutes ahead of this machine's clock; it waits until the clock catches up`,
       };
-    this.ledger.observe(op.hlc);
+    this.ledger.observe(remote.hlc);
+    const op = this.withoutGuardedRisk(remote);
     const result = applyOp(op, this.inner.get(op.task), this.ledger.state);
     if (result.changed) {
       if (result.doc === null) this.inner.remove(op.task);
       else this.inner.put(result.doc);
     }
     return result;
+  }
+
+  // The op minus a risk change to a publishing task, reporting it when it differs.
+  private withoutGuardedRisk(op: BoardOp): BoardOp {
+    const guard = this.riskGuard;
+    if (
+      guard === null ||
+      op.fields === undefined ||
+      !Object.hasOwn(op.fields, 'risk') ||
+      !guard.publishing(op.task)
+    )
+      return op;
+    const { risk, ...fields } = op.fields;
+    if (risk !== this.inner.get(op.task)?.meta.risk) guard.riskChanged(op.task);
+    return { ...op, fields };
   }
 
   private capture(

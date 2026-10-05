@@ -196,6 +196,39 @@ describe('LedgerStore malformed lines', () => {
       errors.mockRestore();
     }
   });
+
+  test('listSafe() returns the readable entries and names every damaged line', () => {
+    const dir = root();
+    const { appliesTo: _dropped, ...noAppliesTo } = ledgerLine({
+      id: 'l-bad001',
+    });
+    mkdirSync(join(dir, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dispatch', 'ledger.jsonl'),
+      [
+        JSON.stringify(ledgerLine()),
+        '{"id": "l-trunc0", "kind": "hazard"',
+        JSON.stringify(noAppliesTo),
+        JSON.stringify(ledgerLine({ id: 'l-good02', epicId: 'e-111111' })),
+      ].join('\n') + '\n'
+    );
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const store = new LedgerStore(dir);
+      const all = store.listSafe();
+      expect(all.records.map((e) => e.id)).toEqual(['l-good01', 'l-good02']);
+      expect(all.errors).toHaveLength(2);
+      expect(
+        store.listSafe({ epicId: 'e-111111' }).records.map((e) => e.id)
+      ).toEqual(['l-good02']);
+      expect(new LedgerStore(root()).listSafe()).toEqual({
+        records: [],
+        errors: [],
+      });
+    } finally {
+      errors.mockRestore();
+    }
+  });
 });
 
 describe('LedgerStore id collisions', () => {

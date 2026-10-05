@@ -82,7 +82,7 @@ export function holderDates(holder: TeamTokenHolder): string {
 /** A copy button that says it worked. Clipboard access can be refused (an
  *  insecure origin, a denied permission), which it reports rather than
  *  pretending — the value is still on screen to select by hand. */
-function CopyButton({ value, label }: { value: string; label: string }) {
+export function CopyButton({ value, label }: { value: string; label: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   return (
     <Button

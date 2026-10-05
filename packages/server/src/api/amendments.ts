@@ -1,6 +1,45 @@
+import { untrustedInline } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core';
+import { cutUtf8, MEMORY_LIMITS } from '@dispatch/memory';
+import type { SaveInput, SaveResult } from '@dispatch/memory';
+
 import type { ApiContext } from '../api.js';
-import { humanActor } from './caller.js';
+import { routePrincipal } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
+
+// The team constraint an amendment carries forward: it reaches the amended
+// task's dependents, else its epic, else the whole project.
+function amendmentConstraint(
+  ctx: ApiContext,
+  task: TaskDoc,
+  body: { overrides: string; reason: string; source: string | null }
+): SaveInput {
+  const id = task.meta.id;
+  const dependents = ctx.store
+    .listSafe()
+    .docs.filter((t) => t.meta.blockedBy.includes(id))
+    .map((t) => t.meta.id)
+    .slice(0, MEMORY_LIMITS.appliesTo);
+  const detail = `${task.meta.title}: ${body.overrides} — ${body.reason}`;
+  // An index shows titles alone, so the title states the override itself.
+  const override = body.overrides.trim().split(/\r?\n/)[0] ?? '';
+  return {
+    scope: 'team',
+    kind: 'constraint',
+    title: cutUtf8(
+      untrustedInline(`Amended ${id}: ${override}`),
+      MEMORY_LIMITS.titleBytes
+    ),
+    body: cutUtf8(
+      body.source === null ? detail : `${detail} (source: ${body.source})`,
+      MEMORY_LIMITS.bodyBytes
+    ),
+    refs: [{ type: 'task', id }],
+    epic: dependents.length === 0 ? task.meta.parent : null,
+    appliesTo: dependents,
+    origin: `amendment:${id}@${new Date().toISOString()}`,
+  };
+}
 
 // POST /api/tasks/:id/amend — records a correction to a task's spec: what
 // changes, why, and (optionally) where the correction came from.
@@ -37,23 +76,25 @@ export async function amendTask(
     reason: body.reason,
     source,
   });
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [id]);
 
-  // A dependent task inherits this as a constraint, the same channel a
-  // review's findings carry forward through.
-  ctx.ledgerStore.add({
-    epicId: task.meta.parent,
-    sourceTaskId: id,
-    kind: 'constraint',
-    title: `Amendment to ${task.meta.id}: ${task.meta.title}`,
-    detail:
-      source === null
-        ? `${body.overrides} — ${body.reason}`
-        : `${body.overrides} — ${body.reason} (source: ${source})`,
-    authoredBy: humanActor(ctx),
-  });
+  // Through the memory write policy: a deciding human writes it, anyone else
+  // (the shared agentToken included) proposes it.
+  let memory: SaveResult | null = null;
+  try {
+    const content = amendmentConstraint(ctx, task, {
+      overrides: body.overrides,
+      reason: body.reason,
+      source,
+    });
+    memory = await ctx.memory
+      .requireEngine()
+      .save(routePrincipal(ctx), content);
+  } catch (err) {
+    // The amendment itself stands; only its carried-forward constraint is lost.
+    console.error(`dispatchd: amendment ${id} could not reach memory`, err);
+  }
 
-  ctx.events.broadcast({ type: 'task.changed' });
-  ctx.events.broadcast({ type: 'ledger.changed' });
-  return jsonResponse(updated);
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
+  return jsonResponse({ ...updated, memory });
 }

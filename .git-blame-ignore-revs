@@ -1,0 +1,4 @@
+# Mechanical reformats. Use with: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style(desktop): cargo fmt apps/desktop/src-tauri
+3d330a538294c488a15f9edddee53d279bc4085f

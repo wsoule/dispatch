@@ -12,6 +12,14 @@ tasks:
       cache: false
       runInCI: 'skip'
 
+  # Freezes a release under versions/<version>/ and updates the manifest:
+  # `moonx protocol-spec:snapshot -- <version>`.
+  snapshot:
+    command: 'bun scripts/snapshot.ts'
+    options:
+      cache: false
+      runInCI: 'skip'
+
   # test/bin.test.ts runs `node dist/bin.js`, so the tests need this
   # project's own build, not only its dependencies' (^:build).
   test:

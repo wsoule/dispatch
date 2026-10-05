@@ -1,13 +1,16 @@
-import type { ActorContext, ProjectStores } from '@dispatch/core';
+import type {
+  ActorContext,
+  ProjectStores,
+  ReceiptsScope,
+} from '@dispatch/core';
 import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch/core';
 
 import type { EventBus, ServerEvent } from '../events.js';
 import type { PushTarget } from '../gitTarget.js';
 import { resolvePushTarget } from '../gitTarget.js';
-import type { AsyncGitRunner, GitRunner } from '../sync/worktree.js';
-import { defaultAsyncGitRunner } from '../sync/worktree.js';
+import type { AsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';
-import type { ReceiptsResult } from './exporter.js';
+import type { ReceiptsResult, ReceiptsStep } from './exporter.js';
 import {
   receiptsEnabled,
   ReceiptsExporter,
@@ -25,10 +28,8 @@ export interface ReceiptsSchedulerDeps {
   rootDir: string;
   stores: ProjectStores;
   actor: ActorContext;
-  run: GitRunner;
-  /** For the push to `receipts.remote`: a network call, so off the event
-   *  loop, unlike the local commits `run` makes. */
-  runAsync?: AsyncGitRunner;
+  /** Every git command the log runs: its commits and its pushes. */
+  run: AsyncGitRunner;
   events: EventBus;
   /** Debounce for the export triggered by a record change. */
   debounceMs?: number;
@@ -38,6 +39,10 @@ export interface ReceiptsSchedulerDeps {
    * DEFAULT_SWEEP_MS; tests pass something large enough never to fire.
    */
   sweepMs?: number;
+  /** Pauses before retrying a failed export, one per attempt; the last repeats. */
+  retryMs?: readonly number[];
+  /** Writers of more of the log (team docs), run after the core records. */
+  steps?: readonly ReceiptsStep[];
   /** Passed to the exporter: writers of files beside the materialized ones. */
   appendices?: readonly ((dir: string) => void)[];
 }
@@ -68,114 +73,192 @@ const DEFAULT_SWEEP_MS = 300_000;
  * sweep exists at all rather than being the "recover from a network outage"
  * timer BoardSyncScheduler needs.
  */
+// Backoff between retries of a failed export.
+const DEFAULT_RETRY_MS: readonly number[] = [10_000, 30_000, 60_000];
+
 const RECEIPT_EVENTS: ReadonlySet<ServerEvent['type']> = new Set([
   'task.changed',
   'finding.changed',
   'ledger.changed',
 ]);
 
-/** Whether this event should schedule an export. */
+/** Whether this event should schedule an export; of memory, only team entries reach the log. */
 export function isReceiptEvent(event: ServerEvent): boolean {
+  if (event.type === 'memory.changed') return event.scope === 'team';
   return RECEIPT_EVENTS.has(event.type);
+}
+
+// What the next pass has to write: everything, or the tasks the events named
+// plus, when a finding or ledger entry changed, the records.
+interface PendingScope {
+  full: boolean;
+  taskIds: Set<string>;
+  records: boolean;
+}
+
+function emptyScope(): PendingScope {
+  return { full: false, taskIds: new Set(), records: false };
 }
 
 /**
  * Turns record changes into debounced commits of the receipt log, exports once
  * at boot, and sweeps periodically for the records that change silently.
  *
- * The boot export is what makes the debounce safe to abandon on shutdown. An
- * export is a full materialization of the database, not an append, so a burst
- * lost to a kill -9 is not lost history — the next boot writes exactly the
- * same files and commits them. That is why this has no flush-on-stop path:
- * there is nothing a final flush could save that the next boot would not.
+ * A change that names its tasks exports just those; anything else — the boot
+ * pass, the sweep, a `task.changed` with no ids — is a full materialization,
+ * which is what keeps the log self-healing: a burst lost to a kill -9, or a
+ * scoped pass that failed, is caught up by the next full one. That is why this
+ * has no flush-on-stop path: there is nothing a final flush could save that
+ * the next boot would not.
+ *
+ * Passes run one at a time. Changes that arrive during one are held for the
+ * next, so none is lost to a pass that had already read its scope.
  */
 export class ReceiptsScheduler {
   private readonly exporter: ReceiptsExporter;
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private readonly sweep: ReturnType<typeof setInterval>;
   private stopped = false;
+  private pending: PendingScope = emptyScope();
+  // The pass in flight (or the last one), so passes chain rather than overlap.
+  private tail: Promise<unknown> = Promise.resolve();
+  private queued = false;
   private lastResultValue: ReceiptsResult | null = null;
   private lastExportedAtIso: string | null = null;
   private pushing = false;
   private pushAgain = false;
   private lastPushValue: ReceiptsPush | null = null;
+  // The log the last pass wrote to: a scoped pass into any other would leave
+  // every task it does not name missing or stale there.
+  private lastDir: string | null = null;
+  // The pending retry after a failed export, and how many failed in a row.
+  private retry: ReturnType<typeof setTimeout> | null = null;
+  private failedInRow = 0;
 
   constructor(private readonly deps: ReceiptsSchedulerDeps) {
     this.exporter = new ReceiptsExporter(
       deps.stores,
       deps.actor,
       deps.run,
+      deps.steps,
       deps.appendices
     );
-    // Runs unconditionally; runOnce re-reads the config, so a project with
+    // Runs unconditionally; runPending re-reads the config, so a project with
     // receipts off generates no export traffic despite the timer ticking, and
     // switching it back on takes effect without a restart.
     this.sweep = setInterval(() => {
-      this.runOnce();
+      this.pending.full = true;
+      void this.enqueue();
     }, deps.sweepMs ?? DEFAULT_SWEEP_MS);
   }
 
   /**
-   * The export every boot performs before serving anything.
-   *
-   * Also the self-healing path: it reconciles a log left behind by a daemon
-   * that was killed mid-burst, and it is what creates the repository the very
-   * first time a project turns receipts on.
+   * A full export, now: the one every boot starts, and the self-healing path.
+   * It reconciles a log left behind by a daemon that was killed mid-burst, and
+   * it is what creates the repository the very first time a project turns
+   * receipts on.
    */
-  exportNow(): ReceiptsResult | null {
-    return this.runOnce();
+  exportNow(): Promise<ReceiptsResult | null> {
+    this.pending.full = true;
+    return this.enqueue();
   }
 
   /**
-   * A record changed: export shortly, coalescing a burst into one commit.
+   * A record changed: export shortly, coalescing a burst into one commit. A
+   * `task.changed` that names its tasks narrows the pass to them; with no
+   * event, or one naming nothing, the pass writes everything.
    *
    * Deliberately does NOT pre-check whether receipts are enabled. That check
    * costs a config read per event on a bus that is chatty, and it can only ever
-   * agree with the one runOnce does after the debounce — where it has to happen
-   * anyway, since the window is long enough for the config to change inside it.
+   * agree with the one runPending does after the debounce — where it has to
+   * happen anyway, since the window is long enough for the config to change
+   * inside it.
    */
-  notifyChanged(): void {
+  notifyChanged(event?: ServerEvent): void {
     if (this.stopped) return;
+    if (event?.type === 'task.changed' && event.ids !== undefined) {
+      for (const id of event.ids) this.pending.taskIds.add(id);
+    } else if (
+      event?.type === 'finding.changed' ||
+      event?.type === 'ledger.changed'
+    ) {
+      this.pending.records = true;
+    } else {
+      this.pending.full = true;
+    }
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => {
       this.debounce = null;
-      this.runOnce();
+      void this.enqueue();
     }, this.deps.debounceMs ?? DEFAULT_DEBOUNCE_MS);
   }
 
-  /**
-   * One export pass, and the only path that ever runs one.
-   *
-   * Synchronous throughout, which is why there is no in-flight/rerun
-   * bookkeeping here: this git repository has no remote, so every command is
-   * local, and a single-threaded synchronous pass cannot be re-entered by a
-   * timer that only fires between turns. BoardSyncScheduler needs that
-   * machinery because its syncOnce awaits a push.
-   */
-  private runOnce(): ReceiptsResult | null {
+  // Chains a pass behind the one in flight. At most one waits: it takes the
+  // scope as it stands when it starts, so later changes join it for free.
+  private enqueue(): Promise<ReceiptsResult | null> {
+    if (this.queued) {
+      return this.tail.then(() => this.lastResultValue);
+    }
+    this.queued = true;
+    const next = this.tail.then(() => this.runPending());
+    // A pass that threw must not wedge every pass after it.
+    this.tail = next.catch(() => null);
+    return next;
+  }
+
+  // Takes what is pending and exports it; null when there was nothing to do
+  // or receipts are off.
+  private async runPending(): Promise<ReceiptsResult | null> {
+    this.queued = false;
     if (this.stopped) return null;
+    const pending = this.pending;
+    if (!pending.full && pending.taskIds.size === 0 && !pending.records) {
+      return null;
+    }
+    this.pending = emptyScope();
     // Read fresh every pass, from a file a person edits by hand, so turning
     // receipts off takes effect on the next change rather than at restart.
     let dir: string;
     try {
       const config = loadConfig(this.deps.rootDir);
-      if (!receiptsEnabled(config)) return null;
+      if (!receiptsEnabled(config)) {
+        // What changed while off is not in the log: the next pass writes it all.
+        this.pending.full = true;
+        return null;
+      }
       dir = resolveReceiptsDir(this.deps.rootDir, config);
     } catch (err) {
       // An unparseable config.yml must not take the daemon down from a timer
       // callback. Standing down is the safe read: it stops the export, and the
-      // next pass after the file is fixed picks straight back up.
+      // next pass after the file is fixed picks straight back up, in full.
       console.error(
         `receipts: could not read config, export skipped: ${(err as Error).message}`
       );
+      this.pending.full = true;
       return null;
     }
     markBlockingSection('receipts export');
-    const result = this.exporter.exportOnce(dir);
+    const scope: ReceiptsScope =
+      pending.full || dir !== this.lastDir
+        ? {}
+        : { taskIds: [...pending.taskIds], records: pending.records };
+    const result = await this.exporter.exportOnce(
+      dir,
+      scope,
+      () => this.stopped
+    );
+    this.lastDir = dir;
+    if (this.stopped) return null;
     this.lastResultValue = result;
     this.lastExportedAtIso = new Date().toISOString();
     if (result.state === 'failed') {
       console.error(`receipts: export failed: ${result.detail}`);
+      // Whatever this pass was meant to write, the next full one writes, and
+      // it comes on a backoff rather than at the next sweep.
+      this.pending.full = true;
+      this.scheduleRetry();
+    } else {
+      this.failedInRow = 0;
     }
     this.deps.events.broadcast({ type: 'receipts.export', result });
     // A log that changed goes to its remote, if it has one. The boot pass
@@ -185,6 +268,19 @@ export class ReceiptsScheduler {
       void this.push(dir);
     }
     return result;
+  }
+
+  // Queues a full pass after a failed one: 10 s, 30 s, then every 60 s.
+  private scheduleRetry(): void {
+    if (this.stopped || this.retry !== null) return;
+    const delays = this.deps.retryMs ?? DEFAULT_RETRY_MS;
+    const delay = delays[Math.min(this.failedInRow, delays.length - 1)];
+    this.failedInRow += 1;
+    this.retry = setTimeout(() => {
+      this.retry = null;
+      void this.enqueue();
+    }, delay);
+    this.retry.unref();
   }
 
   /**
@@ -211,7 +307,7 @@ export class ReceiptsScheduler {
     if (target.remote === undefined && target.repo === undefined) return;
     this.pushing = true;
     try {
-      const git = this.deps.runAsync ?? defaultAsyncGitRunner;
+      const git = this.deps.run;
       const url = await resolvePushTarget(this.deps.rootDir, target, git);
       if (url === null) {
         this.lastPushValue = {
@@ -266,10 +362,17 @@ export class ReceiptsScheduler {
     return this.lastExportedAtIso;
   }
 
-  stop(): void {
+  /**
+   * Stops scheduling and resolves once a pass in flight has given up at its
+   * next yield, so the caller can close the database behind it.
+   */
+  async stop(): Promise<void> {
     this.stopped = true;
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = null;
     clearInterval(this.sweep);
+    if (this.retry !== null) clearTimeout(this.retry);
+    this.retry = null;
+    await this.tail;
   }
 }

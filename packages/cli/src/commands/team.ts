@@ -129,7 +129,7 @@ export function registerTeamCommands(program: Command, ctx: CliContext): void {
           ...holders.map((h) => [
             h.handle,
             h.tier,
-            h.builtIn ? 'daemon' : 'issued',
+            h.builtIn ? 'daemon' : h.unusable === true ? 'unusable' : 'issued',
             day(h.issuedAt),
             h.expired ? `expired ${day(h.expiresAt)}` : day(h.expiresAt),
             day(h.lastUsedAt),

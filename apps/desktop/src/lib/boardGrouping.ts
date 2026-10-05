@@ -1,12 +1,12 @@
-import type { Priority, TaskDoc } from '@dispatch/core/browser';
-import { PRIORITY_ORDER } from '@dispatch/core/browser';
+import type { Priority, TaskListItem } from '@dispatch/core/browser';
+import { isContainerKind, PRIORITY_ORDER } from '@dispatch/core/browser';
 
 import { assigneeLabel, assigneeRef, priorityLabel } from './taskDisplay';
 import type { TasksSubGrouping } from './tasksPrefs';
 
 export interface BoardColumnGroup {
   status: string;
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
 }
 
 /** Groups tasks into one bucket per tracker status, in the order the project's
@@ -17,10 +17,10 @@ export interface BoardColumnGroup {
  * list grows. A task whose status isn't in `statuses` is dropped from the board, matching
  * the previous filter-based behavior. */
 export function groupTasksByStatus(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   statuses: string[]
 ): BoardColumnGroup[] {
-  const buckets = new Map<string, TaskDoc[]>();
+  const buckets = new Map<string, TaskListItem[]>();
   for (const status of statuses) buckets.set(status, []);
   for (const task of tasks) {
     buckets.get(task.meta.status)?.push(task);
@@ -75,16 +75,16 @@ function countPlaced(columns: BoardColumnGroup[]): number {
 }
 
 export function groupTasksByEpicLane(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   statuses: string[],
-  epics: TaskDoc[]
+  epics: TaskListItem[]
 ): BoardLane[] {
-  const byParent = new Map<string, TaskDoc[]>();
-  const noEpic: TaskDoc[] = [];
+  const byParent = new Map<string, TaskListItem[]>();
+  const noEpic: TaskListItem[] = [];
   for (const task of tasks) {
     // An epic is a lane heading, not a card inside one — including it as its own child would
     // double-count it against its own progress.
-    if (task.meta.kind === 'epic') continue;
+    if (isContainerKind(task.meta.kind)) continue;
     const parent = task.meta.parent;
     if (parent === null) {
       noEpic.push(task);
@@ -157,7 +157,7 @@ function laneOf(
   kind: TasksSubGrouping,
   value: string | null,
   title: string,
-  bucket: TaskDoc[],
+  bucket: TaskListItem[],
   statuses: string[]
 ): BoardLane {
   const columns = groupTasksByStatus(bucket, statuses);
@@ -175,10 +175,10 @@ function laneOf(
 // One lane per assignee value — agents first, then people by handle, `Unassigned` last (the
 // list's assignee-group rank, re-derived here since `listGrouping`'s bucket helpers are private).
 function groupTasksByAssigneeLane(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   statuses: string[]
 ): BoardLane[] {
-  const buckets = new Map<string, TaskDoc[]>();
+  const buckets = new Map<string, TaskListItem[]>();
   for (const task of tasks) {
     const bucket = buckets.get(task.meta.assignee);
     if (bucket === undefined) buckets.set(task.meta.assignee, [task]);
@@ -210,10 +210,10 @@ function groupTasksByAssigneeLane(
 
 // One lane per priority in `PRIORITY_ORDER` (urgent first, none last); empty ones dropped.
 function groupTasksByPriorityLane(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   statuses: string[]
 ): BoardLane[] {
-  const buckets = new Map<Priority, TaskDoc[]>();
+  const buckets = new Map<Priority, TaskListItem[]>();
   for (const task of tasks) {
     const bucket = buckets.get(task.meta.priority);
     if (bucket === undefined) buckets.set(task.meta.priority, [task]);
@@ -244,15 +244,15 @@ function groupTasksByPriorityLane(
  * a lane the status filter emptied is dropped rather than drawn as a bare header.
  */
 export function groupTasksByLane(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   statuses: string[],
-  epics: TaskDoc[],
+  epics: TaskListItem[],
   subGrouping: TasksSubGrouping
 ): BoardLane[] {
   if (subGrouping === 'epic') {
     return groupTasksByEpicLane(tasks, statuses, epics);
   }
-  const cards = tasks.filter((t) => t.meta.kind !== 'epic');
+  const cards = tasks.filter((t) => !isContainerKind(t.meta.kind));
   if (subGrouping === 'none') {
     return [laneOf('all', 'none', null, '', cards, statuses)];
   }
@@ -320,6 +320,26 @@ export function visibleLaneTaskIds(
     }
   }
   return ids;
+}
+
+/**
+ * The card that takes `taskId`'s place when it leaves its column (a dispatch): the one
+ * below it, else the one above, else null once the column is empty. Undefined when no lane
+ * holds it.
+ */
+export function columnSuccessor(
+  lanes: readonly BoardLane[],
+  taskId: string
+): string | null | undefined {
+  for (const lane of lanes) {
+    for (const column of lane.columns) {
+      const index = column.tasks.findIndex((t) => t.meta.id === taskId);
+      if (index === -1) continue;
+      const next = column.tasks[index + 1] ?? column.tasks[index - 1];
+      return next === undefined ? null : next.meta.id;
+    }
+  }
+  return undefined;
 }
 
 /**

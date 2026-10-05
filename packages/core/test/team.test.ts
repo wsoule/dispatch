@@ -103,16 +103,37 @@ describe('parseTeam / serializeTeam', () => {
     const yaml = `members:\n  - handle: ${'b'.repeat(65)}\n    email: long@x.com\n  - handle: ok\n    email: ok@x.com\n`;
     expect(parseTeamReport(yaml)).toEqual({
       members: [expect.objectContaining({ handle: 'ok' })],
-      dropped: ['long@x.com'],
+      dropped: [{ email: 'long@x.com', problem: 'too-long' }],
     });
     expect(parseTeam(yaml).map((m) => m.handle)).toEqual(['ok']);
+  });
+
+  it('says a handle is too long only when its length is all that is wrong', () => {
+    const long = 'b'.repeat(MAX_HANDLE_BYTES + 1);
+    const yaml = [
+      'members:',
+      `  - handle: ${long}`,
+      '    email: long@x.com',
+      `  - handle: ${long.toUpperCase()}`,
+      '    email: loud@x.com',
+      '  - handle: Bad',
+      '    email: bad@x.com',
+      `  - handle: ${long}`,
+      '',
+    ].join('\n');
+    expect(parseTeamReport(yaml).dropped).toEqual([
+      { email: 'long@x.com', problem: 'too-long' },
+      { email: 'loud@x.com', problem: 'malformed' },
+      { email: 'bad@x.com', problem: 'malformed' },
+      { email: null, problem: 'malformed' },
+    ]);
   });
 });
 
 describe('describeDroppedEntry', () => {
   it('quotes the email so a hand-edited one cannot break a log line', () => {
     const email = 'a@x.com\ndispatchd: forged\u2028\u0085';
-    expect(describeDroppedEntry(email)).toBe(
+    expect(describeDroppedEntry({ email, problem: 'malformed' })).toBe(
       'the entry for "a@x.com\\ndispatchd: forged\\u2028\\u0085"'
     );
   });

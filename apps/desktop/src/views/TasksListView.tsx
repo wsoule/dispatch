@@ -1,4 +1,4 @@
-import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
+import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
 import { PRIORITY_ORDER } from '@dispatch/core/browser';
 import {
   Archive,
@@ -18,15 +18,20 @@ import {
   Waypoints,
 } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { usePeople } from '../components/people/PeopleContext';
 import { useDeepLinkActions } from '../components/shell/DeepLinkContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { AssigneeAvatar } from '../components/tasks/AssigneeAvatar';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
-import { EpicDagModal } from '../components/tasks/EpicDagModal';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import { StatusIcon } from '../components/tasks/StatusIcon';
+import {
+  VirtualRows,
+  type VirtualRowsHandle,
+} from '../components/virtual/VirtualRows';
+import { useCursorHandoff } from '../hooks/useCursorHandoff';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   COLLAPSED_GROUPS_STORAGE_KEY,
@@ -34,18 +39,22 @@ import {
   toggleCollapsedGroup,
   writeCollapsedGroups,
 } from '../lib/collapsedEpics';
+import { landingStateByTaskId } from '../lib/landingBadge';
 import {
   type GroupIcon,
   groupTasks,
   type ListGroup,
+  type ListGroupRow,
   visibleRowIds,
 } from '../lib/listGrouping';
 import { colorForEpic } from '../lib/projectColor';
+import { useStatusModelOf } from '../lib/statusModel';
 import { assigneeLabel, priorityLabel, statusLabel } from '../lib/taskDisplay';
 import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../lib/tasksPrefs';
+import { type FlatRow, flattenGroups } from '../lib/virtualRows';
 import {
   handleTaskListKeyDown,
   type OpenPicker,
@@ -75,7 +84,7 @@ interface TasksListViewProps {
   onSelectTask: (taskId: string) => void;
   /** The Tasks page's shared filters (status/priority facets), applied before grouping.
    * Omitted passes everything. */
-  taskFilter?: (doc: TaskDoc) => boolean;
+  taskFilter?: (doc: TaskListItem) => boolean;
   /** The Display popover's model — grouping, ordering, which properties a row shows. */
   display?: TasksDisplayPrefs;
   /** `f` on the list: the page header opens its filter menu. No-op until wired. */
@@ -86,6 +95,18 @@ interface TasksListViewProps {
 
 const PRIORITIES = Object.keys(PRIORITY_ORDER) as Priority[];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
+
+// Stable fallback while the config loads, so rows' `statuses` prop never churns.
+const NO_STATUSES: string[] = [];
+
+/** One virtual row: a group's 36px header or one of its 36px task rows. */
+type ListRowModel = FlatRow<ListGroup, ListGroupRow>;
+
+// Headers and rows are both 36px (`GroupHeader`, `ListRow`).
+const ROW_HEIGHT = 36;
+const rowHeight = () => ROW_HEIGHT;
+const listRowKey = (row: ListRowModel) => row.key;
+const taskRowKey = (row: ListGroupRow) => row.doc.meta.id;
 
 /** The DOM id `aria-activedescendant` points at for one row; the view prefix keeps ids
  * unique across view switches. */
@@ -114,17 +135,25 @@ export function TasksListView({
   onRequestDisplay,
 }: TasksListViewProps) {
   const shell = useShellActions();
+  const model = useStatusModelOf(data.config);
   // `null` outside App's provider (the harness, view tests): no `Copy link` row then.
   const deepLink = useDeepLinkActions();
+  const directory = usePeople();
+  // The Assignee submenu: everyone in the registry plus the agent pool and nobody, or the
+  // three fixed kinds when there is no registry.
+  const assigneeChoices = useMemo<Assignee[]>(
+    () =>
+      directory.assignable.length === 0
+        ? ASSIGNEES
+        : [...directory.assignable.map((p) => p.ref), 'agent', 'none'],
+    [directory.assignable]
+  );
   const prefs = display ?? DEFAULT_TASKS_DISPLAY;
 
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
     readCollapsedGroups(COLLAPSED_GROUPS_STORAGE_KEY)
   );
-  // Which epic's dependency graph is open, or `null`. View-local: nothing outside this list
-  // needs to know.
-  const [dagEpicId, setDagEpicId] = useState<string | null>(null);
   // Multi-select for bulk actions. Kept here rather than lifted: nothing outside this list
   // needs to know what is ticked, and it should clear when you navigate away.
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
@@ -136,9 +165,16 @@ export function TasksListView({
   // the (single, list-wide) menu trigger handles the same event.
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // The scroller as state too: the virtual track needs it once it exists (see VirtualRows).
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null);
+  const attachList = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    setListEl(node);
+  }, []);
+  const virtualRef = useRef<VirtualRowsHandle>(null);
 
   const epicById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const epic of data.epics) map.set(epic.meta.id, epic);
     return map;
   }, [data.epics]);
@@ -160,26 +196,16 @@ export function TasksListView({
     return [...set].sort();
   }, [data.tasks]);
 
-  const dagEpic = dagEpicId !== null ? (epicById.get(dagEpicId) ?? null) : null;
-  // Memoized so the array is stable while the modal is open — a fresh array every render
-  // would bust EpicDagView's own `[tasks]` memo.
-  const dagTasks = useMemo(
-    () =>
-      dagEpicId !== null
-        ? data.tasks.filter((t) => t.meta.parent === dagEpicId)
-        : [],
-    [data.tasks, dagEpicId]
-  );
-
   const groups = useMemo<ListGroup[]>(() => {
     if (data.config === null) return [];
-    const passes = (doc: TaskDoc) => taskFilter?.(doc) ?? true;
+    const passes = (doc: TaskListItem) => taskFilter?.(doc) ?? true;
     return groupTasks(data.tasks.filter(passes), prefs, {
       statuses: data.config.statuses,
       epics: data.epics,
       archivedTasks: data.showArchived
         ? data.archivedTasks.filter(passes)
         : undefined,
+      model,
     });
   }, [
     data.tasks,
@@ -189,10 +215,16 @@ export function TasksListView({
     data.archivedTasks,
     taskFilter,
     prefs,
+    model,
   ]);
 
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
+  );
+
   const docById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const g of groups)
       for (const r of g.rows) map.set(r.doc.meta.id, r.doc);
     return map;
@@ -213,6 +245,31 @@ export function TasksListView({
     [groups, collapsed]
   );
 
+  // Headers and rows as one flat, virtualized array. `none` grouping draws no header.
+  const flatRows = useMemo<ListRowModel[]>(
+    () =>
+      flattenGroups(
+        groups.map((g) => ({
+          key: g.key,
+          header: g.kind === 'none' ? null : g,
+          items: g.rows,
+        })),
+        collapsed,
+        taskRowKey
+      ),
+    [groups, collapsed]
+  );
+  const groupByKey = useMemo(
+    () => new Map(groups.map((g) => [g.key, g])),
+    [groups]
+  );
+  // The cursor's row stays mounted wherever the list scrolls: the grid's
+  // `aria-activedescendant` points at it.
+  const pinnedKeys = useMemo(
+    () => (focusedTaskId === null ? [] : [focusedTaskId]),
+    [focusedTaskId]
+  );
+
   const selectedTasks = useMemo(
     () => data.tasks.filter((t) => selectedIds.has(t.meta.id)),
     [data.tasks, selectedIds]
@@ -222,13 +279,27 @@ export function TasksListView({
     [selectedTasks, data.readyIds]
   );
 
-  function toggleSelected(id: string) {
+  const toggleSelected = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  }
+  }, []);
+  // The row's right-click: remember it for the list-wide menu and move the cursor there.
+  const openRowMenu = useCallback((id: string) => {
+    setMenuTaskId(id);
+    setFocusedTaskId(id);
+  }, []);
+  // The labels picker's vocabulary, gathered only while one is open.
+  const labelCandidates = useMemo(
+    () =>
+      picker?.kind === 'labels'
+        ? [...new Set(data.tasks.flatMap((t) => t.meta.labels))].sort()
+        : undefined,
+    [picker?.kind, data.tasks]
+  );
+  const statuses = data.config?.statuses ?? NO_STATUSES;
 
   function toggleGroup(key: string) {
     setCollapsed((prev) => {
@@ -251,19 +322,22 @@ export function TasksListView({
     }
   }, [orderedIds, focusedTaskId]);
 
+  // In place and optimistic, like the Cockpit's `d`: the row shows as started at once, and
+  // when that regroups it the cursor stays where it was.
+  const handOffCursor = useCursorHandoff(orderedIds, setFocusedTaskId);
   function dispatchOne(taskId: string) {
     if (!data.readyIds.has(taskId)) return;
-    void data.handleDispatch(taskId);
+    if (taskId === focusedTaskId) handOffCursor(taskId);
+    void data.handleDispatch(taskId, undefined, undefined, {
+      optimistic: true,
+    });
   }
 
   // Only a keyboard move scrolls — a hover that set the cursor must not shift the list under
   // the pointer (which would hand the cursor to the next row and scroll again).
   function moveCursor(id: string | null) {
     setFocusedTaskId(id);
-    if (id === null) return;
-    listRef.current
-      ?.querySelector(`[data-row-id="${id}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
+    if (id !== null) virtualRef.current?.scrollToKey(id);
   }
 
   function handleListKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -339,7 +413,7 @@ export function TasksListView({
           <ContextMenuTrigger
             render={
               <div
-                ref={listRef}
+                ref={attachList}
                 tabIndex={0}
                 role="grid"
                 aria-label="Tasks"
@@ -351,74 +425,92 @@ export function TasksListView({
               />
             }
           >
-            {groups.map((group) => {
-              const isCollapsed = collapsed.has(group.key);
-              const knownEpic =
-                group.epicId !== null && epicById.has(group.epicId);
-              return (
-                <div key={group.key} data-group-key={group.key}>
-                  {group.kind !== 'none' && (
-                    <GroupHeader
-                      tint={group.tint ?? undefined}
-                      icon={groupIcon(group.icon)}
-                      name={group.label}
-                      count={group.rows.length}
-                      collapsed={isCollapsed}
-                      onToggle={() => toggleGroup(group.key)}
-                      onAdd={
-                        group.archived
-                          ? undefined
-                          : () => shell.openCreateTask(group.preset)
-                      }
-                      addLabel={`New task in ${group.label}`}
-                      actions={
-                        knownEpic ? (
-                          <IconButton
-                            label={`View dependency graph for ${group.label}`}
-                            onClick={() => setDagEpicId(group.epicId)}
-                          >
-                            <Waypoints aria-hidden />
-                          </IconButton>
-                        ) : undefined
-                      }
-                    />
-                  )}
-                  {!isCollapsed &&
-                    group.rows.map((row) => {
-                      const id = row.doc.meta.id;
-                      return (
-                        <TaskListRow
-                          key={id}
-                          doc={row.doc}
-                          data={data}
-                          prefs={prefs}
-                          indent={row.indent}
-                          archived={group.archived}
-                          epic={
-                            row.doc.meta.parent !== null
-                              ? epicById.get(row.doc.meta.parent)
-                              : undefined
-                          }
-                          childCount={childCountByParent.get(id) ?? 0}
-                          showEpicChip={showEpicChip}
-                          picker={picker}
-                          onPickerChange={setPicker}
-                          selected={selectedIds.has(id)}
-                          focused={focusedTaskId === id}
-                          onOpen={() => onSelectTask(id)}
-                          onFocus={() => setFocusedTaskId(id)}
-                          onContextMenu={() => {
-                            setMenuTaskId(id);
-                            setFocusedTaskId(id);
-                          }}
-                          onSelectToggle={() => toggleSelected(id)}
-                          rowProps={{ domId: rowDomId(id) }}
-                        />
-                      );
-                    })}
-                </div>
-              );
-            })}
+            <VirtualRows
+              rows={flatRows}
+              rowKey={listRowKey}
+              estimateSize={rowHeight}
+              scrollElement={listEl}
+              pinnedKeys={pinnedKeys}
+              handleRef={virtualRef}
+              renderRow={(row) => {
+                if (row.kind === 'header') {
+                  const group = row.header;
+                  const knownEpic =
+                    group.epicId !== null && epicById.has(group.epicId);
+                  return (
+                    <div data-group-key={group.key}>
+                      <GroupHeader
+                        tint={group.tint ?? undefined}
+                        icon={groupIcon(group.icon)}
+                        name={group.label}
+                        count={group.rows.length}
+                        collapsed={row.collapsed}
+                        onToggle={() => toggleGroup(group.key)}
+                        onAdd={
+                          group.archived
+                            ? undefined
+                            : () => shell.openCreateTask(group.preset)
+                        }
+                        addLabel={`New task in ${group.label}`}
+                        actions={
+                          knownEpic ? (
+                            <IconButton
+                              label={`Open the flight plan for ${group.label}`}
+                              onClick={() => {
+                                if (group.epicId !== null) {
+                                  shell.openTask(group.epicId, 'plan');
+                                }
+                              }}
+                            >
+                              <Waypoints aria-hidden />
+                            </IconButton>
+                          ) : undefined
+                        }
+                      />
+                    </div>
+                  );
+                }
+                const id = row.key;
+                const listRow = row.item;
+                const archived =
+                  groupByKey.get(row.groupKey)?.archived ?? false;
+                return (
+                  <TaskListRow
+                    doc={listRow.doc}
+                    prefs={prefs}
+                    run={data.latestRunByTaskId.get(id)}
+                    live={data.liveRunStateByTaskId.has(id)}
+                    needsYou={data.attentionByTaskId.has(id)}
+                    landing={landingByTaskId.get(id)}
+                    statuses={statuses}
+                    epics={data.epics}
+                    labelCandidates={
+                      picker?.taskId === id ? labelCandidates : undefined
+                    }
+                    onUpdate={data.handleUpdate}
+                    onMoveStatus={data.moveTaskStatus}
+                    indent={listRow.indent}
+                    archived={archived}
+                    epic={
+                      listRow.doc.meta.parent !== null
+                        ? epicById.get(listRow.doc.meta.parent)
+                        : undefined
+                    }
+                    childCount={childCountByParent.get(id) ?? 0}
+                    showEpicChip={showEpicChip}
+                    picker={picker?.taskId === id ? picker : null}
+                    onPickerChange={setPicker}
+                    selected={selectedIds.has(id)}
+                    focused={focusedTaskId === id}
+                    onOpen={onSelectTask}
+                    onFocus={setFocusedTaskId}
+                    onContextMenu={openRowMenu}
+                    onSelectToggle={toggleSelected}
+                    rowProps={{ domId: rowDomId(id) }}
+                  />
+                );
+              }}
+            />
           </ContextMenuTrigger>
           {menuDoc !== undefined && (
             <ContextMenuContent className="min-w-[180px]">
@@ -473,7 +565,7 @@ export function TasksListView({
                       <ContextMenuShortcut>A</ContextMenuShortcut>
                     </ContextMenuSubTrigger>
                     <ContextMenuSubContent>
-                      {ASSIGNEES.map((assignee) => (
+                      {assigneeChoices.map((assignee) => (
                         <ContextMenuItem
                           key={assignee}
                           onClick={() =>
@@ -483,7 +575,8 @@ export function TasksListView({
                           }
                         >
                           <AssigneeAvatar assignee={assignee} size={16} />
-                          {assigneeLabel(assignee)}
+                          {directory.personFor(assignee)?.name ??
+                            assigneeLabel(assignee)}
                         </ContextMenuItem>
                       ))}
                     </ContextMenuSubContent>
@@ -626,7 +719,10 @@ export function TasksListView({
                   <ContextMenuItem
                     variant="destructive"
                     onClick={() =>
-                      void data.moveTaskStatus(menuDoc.meta.id, 'dropped')
+                      void data.moveTaskStatus(
+                        menuDoc.meta.id,
+                        model.roles.dropped
+                      )
                     }
                   >
                     <Ban />
@@ -691,13 +787,6 @@ export function TasksListView({
           }}
         />
       )}
-
-      <EpicDagModal
-        epic={dagEpic}
-        tasks={dagTasks}
-        onOpenTask={onSelectTask}
-        onClose={() => setDagEpicId(null)}
-      />
     </div>
   );
 }

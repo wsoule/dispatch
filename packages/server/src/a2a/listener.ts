@@ -1,11 +1,12 @@
 import type { A2APolicy, BridgePort } from '@dispatch/a2a';
-import { handleA2A, IpLimiter } from '@dispatch/a2a';
+import { errorResponse, handleA2A, IpLimiter } from '@dispatch/a2a';
 
 import type { ResolvedListener } from './settings.js';
 import { clientIpFor } from './settings.js';
 
 const MAX_REQUEST_BODY = 256 * 1024;
 const CARD_PATH = '/.well-known/agent-card.json';
+const JWKS_PATH = '/.well-known/jwks.json';
 const BASE_PATH = '/a2a/v1';
 
 interface ListenerDeps {
@@ -16,6 +17,22 @@ interface ListenerDeps {
   // The daemon's idle tracker, so a request in flight keeps it awake.
   track?: (fn: () => Promise<Response>) => Promise<Response>;
   log?: (line: string) => void;
+}
+
+// A loopback port nothing holds right now: the OS picks it for a moment's bind.
+export function freeLoopbackPort(): number | null {
+  try {
+    const probe = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(''),
+    });
+    const port = probe.port ?? null;
+    void probe.stop(true);
+    return port;
+  } catch {
+    return null;
+  }
 }
 
 // The A2A listener: its own Bun.serve, never one of the daemon's /api
@@ -54,7 +71,11 @@ export class A2AListener {
       srv.requestIP(req)?.address ?? null,
       listener.trustForwardedFor
     );
-    if (pathname !== CARD_PATH && !pathname.startsWith(`${BASE_PATH}/`)) {
+    if (
+      pathname !== CARD_PATH &&
+      pathname !== JWKS_PATH &&
+      !pathname.startsWith(`${BASE_PATH}/`)
+    ) {
       this.access(clientIp, req.method, pathname, 404, started);
       return new Response('not found', { status: 404 });
     }
@@ -91,13 +112,10 @@ export class A2AListener {
                 key: Bun.file(listener.tls.keyPath),
               },
             }),
-        // This port faces the internet: an escaped error is logged here and
-        // answered opaquely, never with Bun's page of stack and paths.
+        // This port faces the internet: an escaped error is logged and answered
+        // in the A2A error shape, never with Bun's page of stack and paths.
         development: false,
-        error: (err) => {
-          console.error(`dispatchd: A2A listener error: ${err.message}`);
-          return Response.json({ error: 'internal error' }, { status: 500 });
-        },
+        error: (err) => errorResponse(err),
         fetch: (req, srv) => this.serve(req, srv, listener),
       });
       this.current = listener;

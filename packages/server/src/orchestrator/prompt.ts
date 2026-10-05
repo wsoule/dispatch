@@ -5,7 +5,7 @@ import {
   untrustedFenced,
   untrustedInline,
 } from '@dispatch/core';
-import type { LedgerEntry, TaskDoc } from '@dispatch/core';
+import type { TaskComment, TaskDoc } from '@dispatch/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -15,25 +15,70 @@ import type { RunMeta, RunSurvey } from './types.js';
 // every prompt builder in this package imports them from './prompt.js'.
 export { untrustedBlock, untrustedFenced, untrustedInline };
 
-// Terse bulleted section for entries carried forward, or null (no header
-// at all) when there are none — this goes into every dispatch prompt.
-function renderLedgerSection(entries: LedgerEntry[]): string | null {
-  if (entries.length === 0) return null;
-  const lines = entries.map(
-    (e) =>
-      `- **${e.kind}**: ${untrustedInline(e.title)} — ${untrustedInline(e.detail)}`
-  );
-  return ['## Findings and decisions from earlier work', ...lines].join('\n');
+// The newest comments kept in a prompt, and the character budget they share.
+const PROMPT_COMMENT_LIMIT = 20;
+const PROMPT_COMMENT_CHARS = 8000;
+
+// A task's comment thread, oldest first, for the next run to read: the notes
+// earlier runs and teammates left with task_comment. Keeps the newest that fit
+// the budget and says how many older ones it left out. Null when there are none.
+export function renderCommentsSection(
+  comments: readonly TaskComment[],
+  // An A2A-origin task: the whole thread is fenced as external text.
+  external = false
+): string | null {
+  if (comments.length === 0) return null;
+  const kept: string[] = [];
+  let used = 0;
+  for (const c of [...comments].reverse()) {
+    if (kept.length === PROMPT_COMMENT_LIMIT) break;
+    const entry = `**${untrustedInline(c.author)}** · ${c.created}\n${untrustedBlock(c.body)}`;
+    if (kept.length > 0 && used + entry.length > PROMPT_COMMENT_CHARS) break;
+    kept.push(entry);
+    used += entry.length;
+  }
+  const omitted = comments.length - kept.length;
+  const entries = kept.reverse();
+  return [
+    '## Comments',
+    ...(omitted > 0 ? [`(${String(omitted)} earlier comments omitted.)`] : []),
+    ...(external
+      ? [untrustedFenced('comments on an A2A task', entries.join('\n\n'))]
+      : entries),
+  ].join('\n\n');
 }
 
 // Renders a task's recorded amendments after its description, with an
 // explicit line stating they take precedence over it where they conflict.
-function renderAmendmentsSection(amendmentsText: string): string {
-  return [
-    '## Amendments',
-    'These amendments override the description where they conflict.',
-    untrustedBlock(amendmentsText),
-  ].join('\n\n');
+// An A2A task's amendments are external text and claim no precedence.
+function renderAmendmentsSection(
+  amendmentsText: string,
+  external: boolean
+): string {
+  return external
+    ? [
+        '## Amendments',
+        untrustedFenced('amendments to an A2A task', amendmentsText),
+      ].join('\n\n')
+    : [
+        '## Amendments',
+        'These amendments override the description where they conflict.',
+        untrustedBlock(amendmentsText),
+      ].join('\n\n');
+}
+
+// How the prompt asks for scope: of the run's human, or of `decider` when
+// the run's human cannot grant it.
+function scopeAsk(human: string, decider: string | null): string {
+  const scope =
+    'kind: "question", blocking: true, choices: ["grant", "deny"], ' +
+    'data: { type: "scope", paths: [...], reason: "..." }) ';
+  if (decider === null || decider === human)
+    return `To edit outside your declared writes, ask first with msg_send(${scope}`;
+  return (
+    `To edit outside your declared writes, ask ${decider} first (${human} ` +
+    `cannot grant it) with msg_send(to: ["${decider}"], ${scope}`
+  );
 }
 
 // Builds the exact prompt handed to an executor for a dispatched task — its
@@ -41,15 +86,26 @@ function renderAmendmentsSection(amendmentsText: string): string {
 export function buildTaskPrompt(
   task: TaskDoc,
   parentEpic: TaskDoc | null,
-  ledgerEntries: LedgerEntry[] = [],
+  // The rendered `## Memory` section, or null when there is nothing to show.
+  memorySection: string | null = null,
   // Optional so this stays callable (and snapshot-stable) without a real
   // checkout to collect from — see collectOrientation, which is the impure half.
   orientation: RepoOrientation | null = null,
   // False for executors with no dispatch MCP server (ExecutorProfile.dispatchMcp):
   // their prompt must not send the agent after tools it does not have.
   dispatchTools = true,
-  // The address the agent asks (the project owner); null names a placeholder.
-  human: string | null = null
+  // The address the agent asks: the run's operator, or the project owner for a
+  // run acting for no one (XH-R9); null names a placeholder.
+  human: string | null = null,
+  // The rendered `## Docs` section; null when docs are off or nothing links.
+  docsSection: string | null = null,
+  // The task's comment thread, oldest first; its newest entries join the prompt.
+  comments: readonly TaskComment[] = [],
+  // An A2A-origin task (XH-R5): amendments and comments fenced, no epic.
+  a2aOrigin = false,
+  // Who decides a scope request, when not `human`: the owner, for an
+  // operator who cannot decide (XH-R9).
+  scopeDecider: string | null = null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -57,23 +113,29 @@ export function buildTaskPrompt(
   const bodyForPrompt =
     amendmentsText === '' ? task.body : removeSection(task.body, 'Amendments');
 
+  // An A2A task's spec came from a client, however a decider edited it since.
   const sections: string[] = [
     `# Task ${task.meta.id}: ${untrustedInline(task.meta.title)}`,
-    bodyForPrompt.trim(),
+    a2aOrigin
+      ? untrustedFenced('the A2A task as written', bodyForPrompt.trim())
+      : bodyForPrompt.trim(),
   ];
 
   if (amendmentsText !== '') {
-    sections.push(renderAmendmentsSection(amendmentsText));
+    sections.push(renderAmendmentsSection(amendmentsText, a2aOrigin));
   }
 
-  if (parentEpic !== null) {
+  const commentsSection = renderCommentsSection(comments, a2aOrigin);
+  if (commentsSection !== null) sections.push(commentsSection);
+
+  if (parentEpic !== null && !a2aOrigin) {
     sections.push(
       `## Parent epic: ${parentEpic.meta.id} — ${untrustedInline(parentEpic.meta.title)}\n\n${parentEpic.body.trim()}`
     );
   }
 
-  const ledgerSection = renderLedgerSection(ledgerEntries);
-  if (ledgerSection !== null) sections.push(ledgerSection);
+  if (memorySection !== null) sections.push(memorySection);
+  if (docsSection !== null) sections.push(docsSection);
 
   // The orientation section answers the questions the two instructions below
   // would otherwise send the agent off to answer for itself, so when it is
@@ -108,11 +170,11 @@ export function buildTaskPrompt(
             'and `task_comment` available now — other agents may be dispatched ' +
             'on other tasks in this tracker at the same time, so call `run_list` ' +
             'before assuming you have exclusive access to the repo, and log ' +
-            "meaningful progress with `task_comment`; this task's Activity log " +
+            "meaningful progress with `task_comment`; this task's comment thread " +
             'is the shared record other agents and humans will read.'
         : 'The dispatch MCP server is connected in this session, with ' +
             '`task_comment` available now — log meaningful progress with it; this ' +
-            "task's Activity log is the shared record other agents and humans will " +
+            "task's comment thread is the shared record other agents and humans will " +
             'read. Concurrency is already reported above, so you do not need to ' +
             'open with `run_list`.'
     );
@@ -126,10 +188,9 @@ export function buildTaskPrompt(
         'choices when the answer is one of a few options); it blocks until ' +
         'the human answers and returns their reply. Bundle everything you ' +
         'are unsure about into one question, and never ask what you can ' +
-        'settle by reading the repo. To edit outside your declared writes, ' +
-        'ask first with msg_send(kind: "question", blocking: true, ' +
-        'choices: ["grant", "deny"], data: { type: "scope", paths: [...], ' +
-        'reason: "..." }) and edit only on "grant". Messages for you arrive ' +
+        'settle by reading the repo. ' +
+        scopeAsk(askWho, scopeDecider) +
+        'and edit only on "grant". Messages for you arrive ' +
         'in this session; answer a question with `msg_reply`, and ' +
         '`inbox_read` lists anything you missed. A message to another task ' +
         'reaches its live run, or waits for its next one.'

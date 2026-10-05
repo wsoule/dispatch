@@ -1,5 +1,24 @@
 export const CORE_VERSION = '0.24.0';
 export * from './status.js';
+export * from './kinds.js';
+export * from './containerRef.js';
+export * from './comments.js';
+export * from './people.js';
+export * from './labels.js';
+export {
+  formatMilestoneMigrationReport,
+  migrateLegacyMilestones,
+} from './milestoneMigration.js';
+export type {
+  MilestoneMigrationOptions,
+  MilestoneMigrationReport,
+  MilestoneProject,
+} from './milestoneMigration.js';
+export {
+  FileCommentStore,
+  generateCommentId,
+  SqliteCommentStore,
+} from './commentStore.js';
 export * from './types.js';
 export {
   ATTACHMENT_MAX_BYTES,
@@ -8,6 +27,8 @@ export {
   sanitizeAttachmentName,
 } from './attachments.js';
 export * from './subagents.js';
+export { runStepFromEntry } from './runStep.js';
+export type { RunStep, RunStepEntry } from './runStep.js';
 export * from './preview.js';
 export { absoluteGitLocation } from './gitLocation.js';
 export {
@@ -70,7 +91,12 @@ export {
   untrustedBlock,
   untrustedFenced,
   untrustedInline,
+  untrustedVerbatim,
 } from './untrusted.js';
+export * from './docs.js';
+export { DEFAULT_DOCS, parseDocsConfig, readDocsConfig } from './docsConfig.js';
+export type { DocsConfig, DocsConfigWarning } from './docsConfig.js';
+export { memoryReadView } from './memoryRead.js';
 export {
   parseTaskFile,
   serializeTaskFile,
@@ -80,6 +106,7 @@ export {
   getSection,
   removeSection,
   setSection,
+  splitSections,
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
 export {
@@ -143,11 +170,17 @@ export {
   retireLegacySources,
 } from './retire.js';
 export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
-export { materializeReceipts, restoreReceipts } from './receipts.js';
+export {
+  materializeReceipts,
+  MEMORY_RECEIPT_FILE_BYTES,
+  receiptSteps,
+  restoreReceipts,
+} from './receipts.js';
 export type {
   ReceiptsExport,
   ReceiptsProblem,
   ReceiptsRestore,
+  ReceiptsScope,
   ReceiptsTally,
 } from './receipts.js';
 export { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
@@ -170,8 +203,10 @@ export {
   PRIORITY_ORDER,
   findDependencyCycles,
   computeStack,
+  fanoutWaitingOn,
+  releasesFanoutDependents,
 } from './graph.js';
-export type { TaskStack } from './graph.js';
+export type { FanoutBlocker, TaskStack } from './graph.js';
 export {
   AGE_HORIZON_DAYS,
   DEFAULT_QUEUE_WEIGHTS,
@@ -199,6 +234,7 @@ export {
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
   DEFAULT_MESSAGING,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_EXECUTOR_NAME,
@@ -220,7 +256,9 @@ export {
   DEFAULT_PREVIEW,
   NOTIFICATION_KINDS,
   notificationKindForMessage,
+  parseMemoryConfig,
   previewSettings,
+  readMemoryConfig,
   syncSettings,
   projectPolicy,
   queueWeights,
@@ -270,6 +308,8 @@ export type {
   ExecutorPricing,
   FixLoopConfig,
   LinearConfig,
+  MemoryConfig,
+  MemoryConfigWarning,
   MessagingConfig,
   ModelConfig,
   NotificationKind,
@@ -287,41 +327,66 @@ export type {
 } from './config.js';
 export {
   clearCredential,
+  clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
+  CredentialsUnreadableError,
+  credentialsUnreadable,
+  readA2ASigningKey,
   readCredentials,
+  readPeerCredential,
   resolveLinearApiKey,
   resolveTypesafeApiKey,
+  writeA2ASigningKey,
   writeCredential,
+  writePeerCredential,
   writeProjectCredential,
 } from './credentials.js';
 export type {
   CredentialName,
   CredentialSource,
   CredentialsFile,
+  PeerCredential,
   ProjectCredentials,
+  SigningKeyRead,
 } from './credentials.js';
+export * from './linearContainers.js';
+export * from './linearFields.js';
+export * from './linearLabels.js';
+export * from './linearMerge.js';
+export * from './linearPeople.js';
+export * from './linearStatuses.js';
 export {
   DEFAULT_STATUS_MAP,
   externalId,
-  issueFromTask,
   LINEAR_EXTERNAL_PREFIX,
+  linearExternal,
   parseExternal,
+  parseLinearExternal,
   priorityFromLinear,
   priorityToLinear,
   resolveConflict,
   resolveWorkflowState,
-  statusFromState,
-  taskCreateFromIssue,
-  taskPatchFromIssue,
 } from './linearMap.js';
 export type {
-  IssueMapContext,
+  LinearAttachment,
+  LinearEntity,
+  LinearRef,
+  LinearComment,
+  LinearInitiative,
+  LinearInitiativeInput,
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearMilestoneInput,
+  LinearProject,
+  LinearProjectInput,
+  LinearProjectMilestone,
+  LinearProjectStatus,
+  LinearRelation,
+  LinearTruncatedField,
+  LinearUser,
   LinearWorkflowState,
-  TaskMapContext,
 } from './linearMap.js';
 export { normalizeProjectPath } from './projectPath.js';
 export {
@@ -340,7 +405,7 @@ export {
   TeamParseError,
   upsertMember,
 } from './team.js';
-export type { TeamMember } from './team.js';
+export type { DroppedEntry, TeamMember } from './team.js';
 export { ActorContext } from './actorContext.js';
 export type { GitReader } from './actorContext.js';
 export {
@@ -354,3 +419,4 @@ export {
   TEAM_GITATTRIBUTES_LINE,
   writeGitAttributes,
 } from './mergeDriverSetup.js';
+export { childEnv } from './childEnv.js';

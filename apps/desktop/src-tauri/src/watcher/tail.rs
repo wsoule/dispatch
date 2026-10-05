@@ -112,7 +112,11 @@ mod tests {
         let conn = in_memory_db();
 
         let lines = read_new_lines(&conn, file.path()).unwrap();
-        assert_eq!(lines.len(), 3, "all 3 newline-terminated lines returned, malformed one included");
+        assert_eq!(
+            lines.len(),
+            3,
+            "all 3 newline-terminated lines returned, malformed one included"
+        );
 
         let expected_offset = MALFORMED_FIXTURE.len() as i64;
         let state = queries::get_ingest_state(&conn, &file.path().to_string_lossy()).unwrap();
@@ -133,7 +137,9 @@ mod tests {
 
         let state = queries::get_ingest_state(&conn, &file.path().to_string_lossy()).unwrap();
         assert!(
-            state.partial_line.starts_with(r#"{"type":"user","sessionId":"s","timestamp":"2026-01-01T00:00:01Z"#),
+            state
+                .partial_line
+                .starts_with(r#"{"type":"user","sessionId":"s","timestamp":"2026-01-01T00:00:01Z"#),
             "incomplete trailing line must be buffered as partial_line, got: {}",
             state.partial_line
         );
@@ -143,7 +149,11 @@ mod tests {
         file.append("\n");
 
         let lines = read_new_lines(&conn, file.path()).unwrap();
-        assert_eq!(lines.len(), 1, "the now-completed line is returned on the next tail");
+        assert_eq!(
+            lines.len(),
+            1,
+            "the now-completed line is returned on the next tail"
+        );
         assert!(lines[0].contains(r#""content":"b"}}"#));
 
         let state = queries::get_ingest_state(&conn, &file.path().to_string_lossy()).unwrap();
@@ -163,7 +173,10 @@ mod tests {
         assert_eq!(first.len(), 1);
 
         let second = read_new_lines(&conn, file.path()).unwrap();
-        assert!(second.is_empty(), "no new bytes since last tail - nothing should be re-delivered");
+        assert!(
+            second.is_empty(),
+            "no new bytes since last tail - nothing should be re-delivered"
+        );
 
         // Now Claude Code appends more while we were "away".
         file.append("line two also newline-terminated\n");

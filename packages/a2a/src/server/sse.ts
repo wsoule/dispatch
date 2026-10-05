@@ -29,14 +29,15 @@ export interface StreamOptions {
   bufferLimit?: number;
 }
 
-interface Snapshot {
+/** A projected task as a stream last sent it; push delivery keeps one too. */
+export interface Snapshot {
   task: TaskJson;
   state: TaskStateName;
   statusKey: string;
   artifacts: Map<string, string>;
 }
 
-function snapshot(task: TaskJson, state: TaskStateName): Snapshot {
+export function snapshotOf(task: TaskJson, state: TaskStateName): Snapshot {
   const artifacts = new Map(
     (task.artifacts ?? []).map(
       (a) =>
@@ -55,7 +56,10 @@ function snapshot(task: TaskJson, state: TaskStateName): Snapshot {
 }
 
 // The events that take a client from `last` to `next`: artifacts first, then status.
-function diff(last: Snapshot | null, next: Snapshot): StreamResponseJson[] {
+export function eventsBetween(
+  last: Snapshot | null,
+  next: Snapshot
+): StreamResponseJson[] {
   if (last === null) return [{ task: next.task }];
   const out: StreamResponseJson[] = [];
   for (const artifact of next.task.artifacts ?? []) {
@@ -86,9 +90,8 @@ function diff(last: Snapshot | null, next: Snapshot): StreamResponseJson[] {
   return out;
 }
 
-// One A2A task as an SSE stream: re-projected on watch signals, coalesced per
-// tick, closed on a terminal state (or INPUT_REQUIRED unless untilTerminal),
-// revocation, overflow or maxMs.
+// One A2A task as an SSE stream, re-projected per watch tick; it closes on a
+// final state, revocation, overflow or maxMs.
 export function taskEventStream(o: StreamOptions): Response {
   const tickMs = o.tickMs ?? 1000;
   const keepaliveMs = o.keepaliveMs ?? 15_000;
@@ -138,11 +141,12 @@ export function taskEventStream(o: StreamOptions): Response {
               if (facts === null) return close();
               const state = decideState(facts).state;
               const task = project(facts, o.view);
-              const next = snapshot(
+              const next = snapshotOf(
                 last === null ? withReask(task, o.reask ?? null, o.view) : task,
                 state
               );
-              for (const event of diff(last, next)) send(formatSSEEvent(event));
+              for (const event of eventsBetween(last, next))
+                send(formatSSEEvent(event));
               last = next;
               const interrupted =
                 state === 'INPUT_REQUIRED' && o.untilTerminal !== true;

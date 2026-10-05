@@ -176,6 +176,17 @@ const META_FIELDS = [
   'exercised',
   'derivedFrom',
   'attachments',
+  'estimate',
+  'dueDate',
+  'startDate',
+  'cycle',
+  'relatedTo',
+  'duplicateOf',
+  'initiatives',
+  'creator',
+  'color',
+  'icon',
+  'sortOrder',
 ] as const satisfies readonly (keyof TaskMeta)[];
 
 // Optional in TaskMeta: travels as null when absent, so clearing one (an
@@ -302,7 +313,7 @@ function blankMeta(id: string): TaskMeta {
   const epoch = new Date(0).toISOString();
   return newTaskDoc(
     id,
-    id.startsWith('e-') ? 'epic' : 'task',
+    id.startsWith('e-') ? 'milestone' : 'task',
     { title: '' },
     epoch
   ).meta;

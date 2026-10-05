@@ -1,11 +1,14 @@
 import type { DraftRecord } from '@dispatch/client';
 import {
+  BookText,
+  Box,
   Brain,
   CircleDot,
   Crosshair,
   FileCode2,
   GitBranch,
   GitMerge,
+  House,
   Inbox,
   Layers,
   LayoutDashboard,
@@ -21,6 +24,7 @@ import {
   SquarePen,
   TerminalSquare,
   Waypoints,
+  Workflow,
 } from 'lucide-react';
 import {
   type ReactNode,
@@ -60,6 +64,10 @@ const WORK_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   // Board, list and milestones are header view tabs inside Tasks now, not rail rows.
   { id: 'board', label: 'Tasks', icon: ListChecks },
+  // The hierarchy above the tasks: initiatives, projects, milestones.
+  { id: 'projects', label: 'Projects', icon: Box },
+  // Every container's work in flight at once, as live Flight Plan bands.
+  { id: 'live', label: 'Live', icon: Workflow },
   { id: 'plans', label: 'Plans', icon: NotebookPen },
   { id: 'brain-dump', label: 'Notes', icon: Brain },
 ];
@@ -75,6 +83,7 @@ const HOST_VIEWS: ReadonlySet<ProjectView> = new Set(['terminals', 'design']);
 const CODE_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'branches', label: 'Git', icon: GitBranch },
   { id: 'files', label: 'Files', icon: FileCode2 },
+  { id: 'docs', label: 'Docs', icon: BookText },
   { id: 'terminals', label: 'Terminals', icon: TerminalSquare },
   { id: 'design', label: 'Design', icon: Crosshair },
   // Blast radius of a file, run, or task's declared writes.
@@ -95,10 +104,10 @@ const RUN_GLOBAL_VIEWS: ViewRow<GlobalView>[] = [
   { id: 'all-agents', label: 'All agents', icon: Radar },
 ];
 
-/** Every project destination in rail order — Inbox and Threads first, then the
- * sections as they are rendered — which is also the ⌘N order: ⌘1 is the first
- * row, and so on. App indexes into this for `goto-N`. */
+/** The ⌘N order App indexes for `goto-N`: Home, Inbox, Threads, then each section's
+ * project rows as rendered. Drafts, Assistant and global rows are not ⌘N targets. */
 export const PROJECT_NAV_VIEWS: PaletteView[] = [
+  { id: 'cockpit', label: 'Home' },
   { id: 'inbox', label: 'Inbox' },
   { id: 'threads', label: 'Threads' },
   ...[...WORK_VIEWS, ...RUN_PROJECT_VIEWS, ...CODE_VIEWS].map(
@@ -306,9 +315,10 @@ interface SidebarProps {
 
 /**
  * Linear's rail on the `#08080a` frame: a top strip holding the project switcher plus
- * search and new-task icon buttons, a fixed heading-less group (Inbox, Threads, Drafts,
- * Overseer), then the collapsible `Favorites ▾` (when anything is starred), `Workspace ▾` — with the
- * saved views nested under Tasks — `Fleet ▾`, `Live agents ▾` and `Try ▾` sections. Built
+ * search and new-task icon buttons, a fixed heading-less group (Home, Inbox, Threads,
+ * Drafts, Assistant), then the collapsible `Favorites ▾` (when anything is starred),
+ * `Work ▾` — with the saved views nested under Tasks — `Runs ▾`, `Code ▾`, `Live agents ▾`
+ * and `Try ▾` sections. Built
  * on `SidebarNav` (`ui/ai/sidebar-nav.tsx`) inside the `Sidebar` shell that App's
  * `SidebarProvider` hides entirely on `[`. Settings is not a row: it lives in the
  * switcher's menu, on `G S` and behind the header's gear; the status strip's `?` is the
@@ -361,11 +371,18 @@ export function Sidebar({
     id: 'top',
     items: [
       {
+        // The Cockpit: what is ready for you, in flight, and waiting on you.
+        id: 'cockpit',
+        label: 'Home',
+        icon: <House strokeWidth={2} />,
+        disabled: !hasActiveProject,
+      },
+      {
         id: 'inbox',
         label: 'Inbox',
         icon: <Inbox strokeWidth={2} />,
         count: inboxCount > 0 ? inboxCount : undefined,
-        // The one row whose count is "needs a human" — it earns the dot, not just a number.
+        // A count that needs a human earns the dot, not just a number (as Threads, Assistant).
         state: inboxCount > 0 ? 'attention' : undefined,
         disabled: !hasActiveProject,
       },

@@ -1,3 +1,5 @@
+import { childEnv } from '@dispatch/core';
+
 import type {
   ApprovalDecision,
   Executor,
@@ -55,8 +57,8 @@ export interface FakeExecutorScript {
 // that dispatch through the orchestrator can assert on real downstream git
 // state (diff, merge, discard) exactly as the plan requires.
 function commitAll(cwd: string, message: string): void {
-  Bun.spawnSync(['git', 'add', '-A'], { cwd });
-  Bun.spawnSync(['git', 'commit', '-m', message], { cwd });
+  Bun.spawnSync(['git', 'add', '-A'], { cwd, env: childEnv() });
+  Bun.spawnSync(['git', 'commit', '-m', message], { cwd, env: childEnv() });
 }
 
 /**

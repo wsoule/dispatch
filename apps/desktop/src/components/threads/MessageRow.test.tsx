@@ -1,4 +1,5 @@
-import type { AgentSummary, Message } from '@dispatch/client';
+import type { AgentSummary, DocProposalView, Message } from '@dispatch/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
   fireEvent,
@@ -9,6 +10,8 @@ import {
 import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
+import { proposal } from '../../lib/memory.test-helper';
+import { taskDoc } from '../../lib/taskDoc.test-helper';
 import type { ParkedCall } from '../../lib/threadSources';
 import { threadLookups } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
@@ -41,8 +44,17 @@ const revoked: AgentSummary = {
   approvedBy: null,
   createdAt: '2026-09-25T10:00:00.000Z',
 };
+const DRAFT = taskDoc(
+  {
+    id: 't-a1b2c3',
+    title: 'Rate-limit uploads',
+    status: 'draft',
+    writes: ['src/upload.ts'],
+  },
+  'Cap uploads at 10 a minute per client.'
+);
 const lookups = threadLookups(
-  [{ meta: { id: 't-000002', title: 'Checkout' } }],
+  [taskDoc({ id: 't-000002', title: 'Checkout' }), DRAFT],
   [{ id: 'r-000001', taskId: 't-000002' }],
   [revoked]
 );
@@ -63,24 +75,44 @@ const CAN_DECIDE: DecideAvailability = {
   restart: null,
 };
 
+// A client with only the calls a test gives it; any other call fails the test.
+function clientWith(
+  calls: Partial<NonNullable<MessageRowProps['client']>>
+): NonNullable<MessageRowProps['client']> {
+  const missing = (name: string) => () =>
+    Promise.reject(new Error(`unexpected ${name} call`));
+  return {
+    declineA2ATask: missing('declineA2ATask'),
+    getMemoryProposal: missing('getMemoryProposal'),
+    getDocProposal: missing('getDocProposal'),
+    fetchTask: missing('fetchTask'),
+    ...calls,
+  };
+}
+
 function renderRow(message: Message, over: Partial<MessageRowProps> = {}) {
   const onAnswer = mock((_m: Message, _r: { body: string; choice?: string }) =>
     Promise.resolve()
   );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MessageRow
-      message={message}
-      me="human:wyat"
-      open
-      access={DECIDER}
-      lookups={lookups}
-      availability={CAN_DECIDE}
-      onRestartDaemon={() => Promise.resolve()}
-      onAnswer={onAnswer}
-      onOpen={() => {}}
-      loadApprovalInput={() => Promise.resolve(undefined)}
-      {...over}
-    />
+    <QueryClientProvider client={queryClient}>
+      <MessageRow
+        message={message}
+        me="human:wyat"
+        open
+        access={DECIDER}
+        lookups={lookups}
+        availability={CAN_DECIDE}
+        onRestartDaemon={() => Promise.resolve()}
+        onAnswer={onAnswer}
+        onOpen={() => {}}
+        loadApprovalInput={() => Promise.resolve(undefined)}
+        {...over}
+      />
+    </QueryClientProvider>
   );
   return onAnswer;
 }
@@ -200,6 +232,32 @@ test('badges a custom kind by its name, as the run chat does', () => {
   expect(screen.getByText('x-review')).toBeTruthy();
 });
 
+test('badges a sender from outside the machine as A2A, and a run not at all', () => {
+  for (const from of ['a2a:acme', 'agent:wyat/a2a.acme']) {
+    renderRow(msg(`m-${from}`, { from, body: 'hello' }), { open: false });
+    expect(screen.getByText('A2A')).toBeTruthy();
+    cleanup();
+  }
+  renderRow(msg('m-run', { from: 'run:r-000001', body: 'hello' }), {
+    open: false,
+  });
+  expect(screen.queryByText('A2A')).toBeNull();
+});
+
+test('renders an A2A peer’s markdown and links as plain text', () => {
+  renderRow(
+    msg('m-p', {
+      from: 'a2a:acme',
+      body: '[click](javascript:alert(1)) **bold**',
+    }),
+    { open: false }
+  );
+  expect(
+    screen.getByText('[click](javascript:alert(1)) **bold**')
+  ).toBeTruthy();
+  expect(document.querySelector('a[href^="javascript"]')).toBeNull();
+});
+
 test("keeps a revoked agent's message readable, with a Revoked pill", () => {
   renderRow(msg('m-r', { from: 'agent:wyat/old', body: 'still here' }), {
     open: false,
@@ -304,4 +362,239 @@ test('says an observer reads the thread when one is admitted and a participant i
   expect(
     screen.getByText("an observer (ops's server) reads this thread")
   ).toBeTruthy();
+});
+
+test('a doc ref chip names its whole section and opens the doc there', () => {
+  const onOpen = mock((_action: unknown) => {});
+  renderRow(
+    msg('m-d', { refs: [{ type: 'doc', id: 'doc-01K', at: 'auth-flow' }] }),
+    { onOpen, open: false }
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'doc:doc-01K#auth-flow' })
+  );
+  expect(onOpen).toHaveBeenCalledWith({
+    kind: 'doc',
+    docId: 'doc-01K',
+    anchor: 'auth-flow',
+  });
+});
+
+test('badges a close from Dispatch as Closed, and a client’s look-alike as the plain answer it is', () => {
+  const system = msg('m-c', {
+    from: 'agent:dispatch',
+    kind: 'answer',
+    replyTo: 'm-q',
+    body: 'canceled by the client',
+    data: { type: 'x-closed' },
+  });
+  renderRow(system, { open: false });
+  expect(screen.getByText('Closed')).toBeTruthy();
+  cleanup();
+  const lookalike = msg('m-f', {
+    from: 'agent:wyat/a2a.acme',
+    kind: 'answer',
+    replyTo: 'm-q',
+    body: 'closing this',
+    data: { type: 'x-closed' },
+  });
+  renderRow(lookalike, { open: false });
+  expect(screen.queryByText('Closed')).toBeNull();
+  expect(screen.getByText('Answer')).toBeTruthy();
+  expect(screen.getByText('closing this')).toBeTruthy();
+});
+
+test('badges a breaker pause from Dispatch as Breaker', () => {
+  renderRow(
+    msg('m-b', {
+      from: 'agent:dispatch',
+      kind: 'notice',
+      body: 'paused',
+      data: { type: 'x-breaker' },
+    }),
+    { open: false }
+  );
+  expect(screen.getByText('Breaker')).toBeTruthy();
+  expect(screen.queryByText('Notice')).toBeNull();
+});
+
+test('offers Decline on an open question from an A2A client, and not once it is answered', async () => {
+  const declineA2ATask = mock((_id: string, _reason?: string) =>
+    Promise.resolve({})
+  );
+  const ask = msg('m-q', {
+    from: 'agent:wyat/a2a.acme',
+    kind: 'question',
+    blocking: true,
+    body: 'Is /sessions final?',
+  });
+  renderRow(ask, { client: clientWith({ declineA2ATask }) });
+  fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Decline question' }));
+  await waitFor(() =>
+    expect(declineA2ATask).toHaveBeenCalledWith('m-q', undefined)
+  );
+  cleanup();
+  renderRow(ask, { client: clientWith({ declineA2ATask }), open: false });
+  expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+});
+
+const memoryGate = msg('m-mem', {
+  from: 'agent:dispatch',
+  kind: 'question',
+  blocking: true,
+  choices: ['approve', 'reject'],
+  body: 'run:r-9f2c01 proposes a team memory (hazard). Review it in Needs you.',
+  data: {
+    type: 'memory',
+    proposalId: 'mp-000001',
+    action: 'add',
+    scope: 'team',
+    kind: 'hazard',
+  },
+});
+
+test('shows a decider the memory proposal, and answers its gate with the choice', async () => {
+  const getMemoryProposal = mock((_id: string) =>
+    Promise.resolve({ proposal: proposal(), base: null, current: null })
+  );
+  const onAnswer = renderRow(memoryGate, {
+    client: clientWith({ getMemoryProposal }),
+  });
+  await screen.findByText('pnpm 11 ignores onlyBuiltDependencies');
+  expect(getMemoryProposal).toHaveBeenCalledWith('mp-000001');
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+  fireEvent.click(screen.getByRole('radio', { name: 'Approve' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(memoryGate, {
+      body: '',
+      choice: 'approve',
+    })
+  );
+});
+
+test("shows a decider a doc gate's proposal, answers it, and opens the doc", async () => {
+  const docGate = msg('m-doc', {
+    from: 'agent:dispatch',
+    kind: 'question',
+    blocking: true,
+    choices: ['approve', 'reject'],
+    body: 'run:r-000001 proposes an edit to an accepted doc.',
+    data: { type: 'doc', doc: 'doc-1', proposal: 'rev-p', runId: 'r-000001' },
+  });
+  const getDocProposal = mock((_rev: string) =>
+    Promise.resolve({
+      proposal: { rev: 'rev-p', author: 'run:r-000001', state: 'open' },
+      title: 'Auth spec',
+      body: 'new\n',
+      chunks: [{ equal: false, a: ['old\n'], b: ['new\n'] }],
+      mergeable: { clean: false, headN: 4 },
+    } as unknown as DocProposalView)
+  );
+  const onOpen = mock((_action: unknown) => undefined);
+  const onAnswer = renderRow(docGate, {
+    client: clientWith({ getDocProposal }),
+    onOpen,
+  });
+  await screen.findByText('Auth spec');
+  expect(getDocProposal).toHaveBeenCalledWith('rev-p');
+  fireEvent.click(screen.getByRole('button', { name: 'Open merge view' }));
+  expect(onOpen).toHaveBeenCalledWith({
+    kind: 'doc',
+    docId: 'doc-1',
+    anchor: null,
+    merge: 'rev-p',
+  });
+  fireEvent.click(screen.getByRole('radio', { name: 'Reject' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(docGate, {
+      body: 'resolved in the doc',
+      choice: 'reject',
+    })
+  );
+});
+
+test('a ref of a type this build does not register is plain text, not a link', () => {
+  renderRow(msg('m-w', { refs: [{ type: 'wiki', id: 'handbook' }] }), {
+    open: false,
+  });
+  expect(screen.getByText('wiki:handbook')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'wiki:handbook' })).toBeNull();
+});
+
+// The body the list leaves out comes from fetchTask.
+const DRAFT_CLIENT = clientWith({ fetchTask: () => Promise.resolve(DRAFT) });
+
+const taskProposal = msg('m-tp', {
+  from: 'agent:dispatch',
+  kind: 'question',
+  blocking: true,
+  choices: ['approve', 'decline'],
+  body: 'agent:wyat/a2a.acme proposes a task over A2A: "Rate-limit uploads" (t-a1b2c3). Approve to move it to Ready; nothing runs until you do.',
+  data: {
+    type: 'task-proposal',
+    task: 't-a1b2c3',
+    proposedBy: 'agent:wyat/a2a.acme',
+    message: 'm-root',
+  },
+});
+
+test('shows a decider the proposed draft from the board, and answers its gate with the choice', async () => {
+  const onOpen = mock((_action: unknown) => {});
+  const onAnswer = renderRow(taskProposal, { onOpen, client: DRAFT_CLIENT });
+  expect(await screen.findByText('src/upload.ts')).toBeTruthy();
+  expect(screen.getByText('Rate-limit uploads')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Open draft' }));
+  expect(onOpen).toHaveBeenCalledWith({ kind: 'task', taskId: 't-a1b2c3' });
+  fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(taskProposal, {
+      body: '',
+      choice: 'approve',
+    })
+  );
+});
+
+test('renders a task-proposal gate’s body as plain text, so a client title cannot load an image', () => {
+  const body =
+    'agent:wyat/a2a.acme proposes a task over A2A: "![](https://host/beacon)" (t-a1b2c3).';
+  renderRow({ ...taskProposal, body });
+  expect(document.querySelector('img')).toBeNull();
+  expect(screen.getByText(body)).toBeTruthy();
+});
+
+test('shows a viewer below the decide tier the proposed draft, with its answers disabled', async () => {
+  renderRow(taskProposal, { access: TEAMMATE, client: DRAFT_CLIENT });
+  expect(
+    await screen.findByText('Cap uploads at 10 a minute per client.')
+  ).toBeTruthy();
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Approve' }).disabled
+  ).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Decline' }).disabled
+  ).toBe(true);
+});
+
+test('renders an A2A client’s or peer’s body as plain text, so it cannot load an image or link out', () => {
+  const body =
+    'Please ![x](https://evil/p.gif) and [Approve](https://evil/login)';
+  for (const from of ['agent:wyat/a2a.acme', 'a2a:acme']) {
+    renderRow(msg('m-a2a', { from, kind: 'question', blocking: true, body }));
+    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector('a')).toBeNull();
+    expect(screen.getByText(body)).toBeTruthy();
+    cleanup();
+  }
+});
+
+test('offers no blind approve on a memory gate when the proposal cannot be read', () => {
+  renderRow(memoryGate);
+  expect(
+    screen.getByText(
+      'This window cannot read the proposal, so it cannot decide it.'
+    )
+  ).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
 });

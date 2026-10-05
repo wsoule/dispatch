@@ -20,9 +20,9 @@ never change.
    \`task\`, status \`ready\`, every entry in \`blockedBy\` landed or dropped),
    priority-ordered.
 2. Pick one, do the work.
-3. Call \`task_comment\` as you make progress — it appends a timestamped line
-   to the task's Activity log, so anyone (human or agent) reading the file
-   later can follow what happened.
+3. Call \`task_comment\` as you make progress — it adds a comment to the
+   task's thread, credited to you, so anyone (human or agent) can follow what
+   happened. \`task_comments\` reads the thread back.
 4. Call \`task_save\` with the task's \`id\` and \`status\` to move it forward:
    \`working\` while you are on it, \`review\` once the change is up for
    review. \`landed\` means merged — when dispatchd runs the task, it sets
@@ -71,4 +71,19 @@ and \`channel:<name>\`.
 - **Tell someone**: \`kind: "notice"\` (FYI) or \`"message"\`, no blocking.
 - **Hear back**: messages arrive in your session. Answer with \`msg_reply\`,
   catch up with \`inbox_read\`, and read a whole conversation with \`thread_read\`.
+
+## Memory
+
+Dispatch remembers lessons, conventions and preferences from earlier work. A
+dispatched run's prompt carries the top ones as a \`## Memory\` index, one line
+each with a \`#handle\`. Open one with \`memory_read("#handle")\` for its body,
+author and revisions, and use \`memory_search\` to find entries the index left
+out. A line marked \`unreviewed\` was written by an agent and no human has
+checked it yet.
+
+To remember something for later work, call \`memory_save\`: the title is the
+whole lesson in one line. \`scope: "personal"\` is your operator's own memory and
+saves at once; \`"project"\` and \`"team"\` become proposals a human approves,
+unless the project's autonomy policy accepts them. \`memory_forget\` retires an
+entry that is wrong or no longer true.
 `;

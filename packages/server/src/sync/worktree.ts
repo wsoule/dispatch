@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch/core';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -62,7 +63,7 @@ const GIT_TIMEOUT_MS = 30_000;
 // dependency on test code.
 export const defaultGitRunner: GitRunner = (cwd, args) => {
   const result = spawnGitSync(cwd, args, {
-    env: { ...process.env, ...NO_PROMPT_ENV },
+    env: childEnv(NO_PROMPT_ENV),
     timeoutMs: GIT_TIMEOUT_MS,
   });
   return {
@@ -100,7 +101,7 @@ export const defaultAsyncGitRunner: AsyncGitRunner = (
     ['git', ...args],
     cwd,
     GIT_TIMEOUT_MS,
-    { ...process.env, ...NO_PROMPT_ENV, ...env },
+    childEnv({ ...NO_PROMPT_ENV, ...env }),
     maxOut
   );
 
@@ -121,7 +122,7 @@ export async function spawnWithDeadline(
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    ...(env !== undefined ? { env } : {}),
+    env: env ?? childEnv(),
   });
   // The pipes are read through cancellable readers rather than awaited to
   // EOF: a killed `git` can leave an `ssh` grandchild holding both ends open,

@@ -12,6 +12,7 @@ import { LedgerStore } from '../../src/ledger.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import type { OrchestratorContext } from '../../src/orchestrator/orchestrator.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -20,6 +21,19 @@ import type {
   ExecutorStartOptions,
 } from '../../src/orchestrator/types.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
+
+// A status model shaped like a Linear team's workflow, with custom names.
+export const LINEAR_STATUSES = [
+  'statuses:',
+  '  - { name: Backlog, type: backlog }',
+  '  - { name: Todo, type: unstarted }',
+  '  - { name: In Progress, type: started }',
+  '  - { name: In Review, type: started }',
+  '  - { name: Done, type: completed }',
+  '  - { name: Canceled, type: canceled }',
+  'statusRoles: { ready: Todo, dispatched: In Progress, review: In Review, landing: null, landed: Done, dropped: Canceled }',
+  '',
+].join('\n');
 
 export const HUMAN: Sender = { address: 'human:wyat', canDecide: true };
 
@@ -72,8 +86,14 @@ export function useTempProject(): { root(): string } {
   };
 }
 
-// A bare orchestrator over `root`'s task store, with no executors registered.
-export function makeOrchestrator(root: string): {
+// A bare orchestrator over `root`'s task store, with no executors registered;
+// `extra` adds context fields such as an actorContext or an isA2ATask hook.
+export function makeOrchestrator(
+  root: string,
+  extra: Partial<
+    Omit<OrchestratorContext, 'rootDir' | 'store' | 'cache' | 'events'>
+  > = {}
+): {
   orchestrator: Orchestrator;
   store: TaskStore;
   events: EventBus;
@@ -83,6 +103,7 @@ export function makeOrchestrator(root: string): {
   cache.rebuild(store);
   const events = new EventBus();
   const orchestrator = new Orchestrator({
+    ...extra,
     rootDir: root,
     store,
     cache,
@@ -98,7 +119,10 @@ export async function openRecovered(
   orchestrator: Orchestrator,
   store: TaskStorePort,
   events: EventBus = new EventBus(),
-  extra: Pick<Parameters<typeof openMessaging>[0], 'scopeExpiry'> = {}
+  extra: Pick<
+    Parameters<typeof openMessaging>[0],
+    'scopeExpiry' | 'deciders'
+  > = {}
 ): Promise<Messaging> {
   const messaging = openMessaging({
     rootDir: root,

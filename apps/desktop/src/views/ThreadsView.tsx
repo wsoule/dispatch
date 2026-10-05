@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { DocsLinkingList } from '../components/docs/DocsLinkingList';
 import { Composer } from '../components/threads/Composer';
 import { ThreadPane } from '../components/threads/ThreadPane';
 import { ThreadRail } from '../components/threads/ThreadRail';
@@ -178,35 +179,49 @@ export function ThreadsView({
               />
             </div>
           ) : open.thread !== null && open.messages.length > 0 ? (
-            <ThreadPane
-              // A fresh reply draft per thread.
-              key={open.thread}
-              messages={open.messages}
-              focus={focus}
-              deliveries={open.deliveries}
-              remote={open.remote}
-              settlements={open.settlements}
-              observer={open.observer}
-              me={me}
-              openIds={rail.openIds}
-              access={access}
-              lookups={lookups}
-              availability={availability}
-              onRestartDaemon={onRestartDaemon}
-              onAnswer={actions.answer}
-              onOpen={onOpen}
-              loadApprovalInput={loadApprovalInput}
-              route={replyRoute(
-                open.messages,
-                open.thread,
-                overseer.thread,
-                lookups
-              )}
-              onReply={actions.reply}
-              onOverseerReply={overseer.submit}
-              overseerBusy={overseer.busy}
-              onOpenOverseer={overseer.open}
-            />
+            <div className="flex h-full min-h-0 flex-col">
+              <DocsLinkingList
+                client={client}
+                port={port}
+                target={`thread:${open.thread}`}
+                onOpenDoc={(docId) =>
+                  onOpen({ kind: 'doc', docId, anchor: null })
+                }
+              />
+              <div className="min-h-0 flex-1">
+                <ThreadPane
+                  // A fresh reply draft per thread.
+                  key={open.thread}
+                  messages={open.messages}
+                  focus={focus}
+                  deliveries={open.deliveries}
+                  remote={open.remote}
+                  settlements={open.settlements}
+                  observer={open.observer}
+                  me={me}
+                  openIds={rail.openIds}
+                  access={access}
+                  lookups={lookups}
+                  availability={availability}
+                  onRestartDaemon={onRestartDaemon}
+                  onAnswer={actions.answer}
+                  onOpen={onOpen}
+                  loadApprovalInput={loadApprovalInput}
+                  client={client}
+                  port={port}
+                  route={replyRoute(
+                    open.messages,
+                    open.thread,
+                    overseer.thread,
+                    lookups
+                  )}
+                  onReply={actions.reply}
+                  onOverseerReply={overseer.submit}
+                  overseerBusy={overseer.busy}
+                  onOpenOverseer={overseer.open}
+                />
+              </div>
+            </div>
           ) : (
             <EmptyPane
               focus={focus}

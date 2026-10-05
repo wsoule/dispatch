@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { FileCommentStore, TaskStore } from '@dispatch/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -27,13 +27,13 @@ interface ToolCallResult {
   content: { type: string; text?: string }[];
 }
 
-// Stands in for dispatchd's health check plus POST /api/tasks/:id/comment —
-// the one route task_comment proxies to when a live run + healthy daemon can
-// resolve the calling agent's identity (see api.ts's commentAuthorFor).
+// Stands in for dispatchd's health check plus POST /api/tasks/:id/comments —
+// the route task_comment proxies to so dispatchd can credit the calling
+// run's agent (see api/comments.ts's commentActor).
 class FakeDaemon {
-  // Set per-test to a real TaskDoc's `{ meta, body }` — task_comment's
-  // outputSchema validates a full TaskMeta, so a minimal stub fails schema
-  // validation rather than exercising the thing under test.
+  // Set per-test to a full comment record — task_comment's outputSchema
+  // validates one, so a minimal stub fails schema validation rather than
+  // exercising the thing under test.
   commentResult: { status: number; body: unknown };
   commentCalls: { taskId: string; body: Record<string, unknown> }[] = [];
 
@@ -51,7 +51,7 @@ class FakeDaemon {
         if (url.pathname === '/api/health') {
           return Response.json({ ok: true });
         }
-        const match = /^\/api\/tasks\/([^/]+)\/comment$/.exec(url.pathname);
+        const match = /^\/api\/tasks\/([^/]+)\/comments$/.exec(url.pathname);
         if (match !== null && req.method === 'POST') {
           this.commentCalls.push({
             taskId: match[1],
@@ -121,7 +121,17 @@ describe('task_comment (fake daemon, live run)', () => {
     process.env.DISPATCH_RUN_ID = 'r-self1';
     const store = new TaskStore(root);
     const doc = store.create({ title: 'Track me' });
-    daemon = new FakeDaemon({ status: 200, body: { meta: doc.meta } });
+    const comment = {
+      id: 'c-1',
+      taskId: doc.meta.id,
+      author: 'agent:wyat/claude',
+      body: 'made progress',
+      created: '2026-09-24T00:00:00.000Z',
+      updated: '2026-09-24T00:00:00.000Z',
+      parentId: null,
+      external: null,
+    };
+    daemon = new FakeDaemon({ status: 201, body: comment });
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
 
@@ -131,10 +141,11 @@ describe('task_comment (fake daemon, live run)', () => {
     })) as ToolCallResult;
 
     expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual({ comment });
     expect(daemon.commentCalls).toEqual([
       {
         taskId: doc.meta.id,
-        body: { text: 'made progress', runId: 'r-self1' },
+        body: { body: 'made progress', runId: 'r-self1' },
       },
     ]);
   });
@@ -157,7 +168,10 @@ describe('task_comment (unresolvable run: no daemon at all)', () => {
     })) as ToolCallResult;
 
     expect(result.isError).toBeUndefined();
-    const onDisk = store.get(doc.meta.id);
-    expect(onDisk?.body).toContain('made progress — none');
+    expect(new FileCommentStore(root).list(doc.meta.id)).toMatchObject([
+      { author: 'none', body: 'made progress' },
+    ]);
+    // The thread, not the Activity log.
+    expect(store.get(doc.meta.id)?.body).not.toContain('made progress');
   });
 });

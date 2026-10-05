@@ -122,7 +122,8 @@ fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
     })
 }
 
-const SESSION_COLUMNS: &str = "id, project_id, agent, model, started_at, ended_at, last_activity_at, status,
+const SESSION_COLUMNS: &str =
+    "id, project_id, agent, model, started_at, ended_at, last_activity_at, status,
      duration_seconds, summary, prompt_tokens, completion_tokens, cache_read_tokens,
      cache_creation_tokens, cost_usd, lines_added, lines_removed, tags, raw_log_path, title";
 
@@ -148,6 +149,9 @@ pub fn upsert_project(
 /// Upserts a session with monotonic accumulation of token deltas — safe to
 /// replay if a log file is ever re-scanned from offset 0. Returns true if a
 /// new session row was created (vs. an existing one updated).
+// Each argument maps onto one column of the row being written; a params
+// struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_session(
     conn: &Connection,
     session_id: &str,
@@ -219,6 +223,9 @@ pub fn upsert_session(
     Ok(!existed)
 }
 
+// Each argument maps onto one column of the row being written; a params
+// struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_file_changed(
     conn: &Connection,
     session_id: &str,
@@ -853,9 +860,12 @@ mod token_fold_tests {
 
     fn in_memory_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql"))
+            .unwrap();
         conn
     }
 
@@ -937,9 +947,12 @@ mod prune_tests {
 
     fn in_memory_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql"))
+            .unwrap();
         upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
         conn.execute(
             "INSERT INTO sessions (id, project_id, agent, started_at, last_activity_at, status, raw_log_path)
@@ -953,8 +966,18 @@ mod prune_tests {
     #[test]
     fn clears_content_before_the_cutoff_and_keeps_the_row() {
         let conn = in_memory_db();
-        insert_file_changed(&conn, "s1", "old.rs", "edit", 1, 1, 100, Some("was"), Some("now"))
-            .unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "old.rs",
+            "edit",
+            1,
+            1,
+            100,
+            Some("was"),
+            Some("now"),
+        )
+        .unwrap();
 
         assert_eq!(prune_file_diff_content(&conn, 200).unwrap(), 1);
 
@@ -972,8 +995,18 @@ mod prune_tests {
     #[test]
     fn leaves_content_at_or_after_the_cutoff_alone() {
         let conn = in_memory_db();
-        insert_file_changed(&conn, "s1", "new.rs", "edit", 1, 1, 300, Some("was"), Some("now"))
-            .unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "new.rs",
+            "edit",
+            1,
+            1,
+            300,
+            Some("was"),
+            Some("now"),
+        )
+        .unwrap();
 
         assert_eq!(prune_file_diff_content(&conn, 200).unwrap(), 0);
 
@@ -986,8 +1019,18 @@ mod prune_tests {
     #[test]
     fn a_second_prune_reports_nothing_left_to_clear() {
         let conn = in_memory_db();
-        insert_file_changed(&conn, "s1", "old.rs", "edit", 1, 1, 100, Some("was"), Some("now"))
-            .unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "old.rs",
+            "edit",
+            1,
+            1,
+            100,
+            Some("was"),
+            Some("now"),
+        )
+        .unwrap();
 
         prune_file_diff_content(&conn, 200).unwrap();
         assert_eq!(prune_file_diff_content(&conn, 200).unwrap(), 0);
@@ -1000,9 +1043,12 @@ mod file_diff_span_tests {
 
     fn in_memory_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql"))
+            .unwrap();
         conn
     }
 
@@ -1021,14 +1067,55 @@ mod file_diff_span_tests {
         let conn = in_memory_db();
         seed_session(&conn, "s1");
 
-        insert_file_changed(&conn, "s1", "src/main.rs", "write", 3, 0, 100, None, Some("fn main() {}")).unwrap();
-        insert_file_changed(&conn, "s1", "src/main.rs", "edit", 1, 0, 200, Some("fn main() {}"), Some("fn main() { a(); }")).unwrap();
-        insert_file_changed(&conn, "s1", "src/main.rs", "edit", 1, 0, 300, Some("fn main() { a(); }"), Some("fn main() { a(); b(); }")).unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "src/main.rs",
+            "write",
+            3,
+            0,
+            100,
+            None,
+            Some("fn main() {}"),
+        )
+        .unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "src/main.rs",
+            "edit",
+            1,
+            0,
+            200,
+            Some("fn main() {}"),
+            Some("fn main() { a(); }"),
+        )
+        .unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "src/main.rs",
+            "edit",
+            1,
+            0,
+            300,
+            Some("fn main() { a(); }"),
+            Some("fn main() { a(); b(); }"),
+        )
+        .unwrap();
 
         let span = file_diff_span(&conn, "s1", "src/main.rs").unwrap().unwrap();
 
-        assert_eq!(span.old_content.as_deref(), None, "before-text is from the earliest edit (a Write, so None)");
-        assert_eq!(span.new_content.as_deref(), Some("fn main() { a(); b(); }"), "after-text is from the most recent edit");
+        assert_eq!(
+            span.old_content.as_deref(),
+            None,
+            "before-text is from the earliest edit (a Write, so None)"
+        );
+        assert_eq!(
+            span.new_content.as_deref(),
+            Some("fn main() { a(); b(); }"),
+            "after-text is from the most recent edit"
+        );
         assert_eq!(span.latest_occurred_at, 300);
         assert_eq!(span.edit_count, 3);
     }
@@ -1037,9 +1124,22 @@ mod file_diff_span_tests {
     fn returns_none_when_the_session_never_touched_that_file() {
         let conn = in_memory_db();
         seed_session(&conn, "s1");
-        insert_file_changed(&conn, "s1", "src/main.rs", "write", 1, 0, 100, None, Some("x")).unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "src/main.rs",
+            "write",
+            1,
+            0,
+            100,
+            None,
+            Some("x"),
+        )
+        .unwrap();
 
-        assert!(file_diff_span(&conn, "s1", "src/other.rs").unwrap().is_none());
+        assert!(file_diff_span(&conn, "s1", "src/other.rs")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -1047,8 +1147,30 @@ mod file_diff_span_tests {
         let conn = in_memory_db();
         seed_session(&conn, "s1");
         seed_session(&conn, "s2");
-        insert_file_changed(&conn, "s1", "src/main.rs", "write", 1, 0, 100, None, Some("from s1")).unwrap();
-        insert_file_changed(&conn, "s2", "src/main.rs", "write", 1, 0, 200, None, Some("from s2")).unwrap();
+        insert_file_changed(
+            &conn,
+            "s1",
+            "src/main.rs",
+            "write",
+            1,
+            0,
+            100,
+            None,
+            Some("from s1"),
+        )
+        .unwrap();
+        insert_file_changed(
+            &conn,
+            "s2",
+            "src/main.rs",
+            "write",
+            1,
+            0,
+            200,
+            None,
+            Some("from s2"),
+        )
+        .unwrap();
 
         let span = file_diff_span(&conn, "s1", "src/main.rs").unwrap().unwrap();
         assert_eq!(span.new_content.as_deref(), Some("from s1"));
@@ -1062,9 +1184,12 @@ mod report_tests {
 
     fn in_memory_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql"))
+            .unwrap();
         conn
     }
 
@@ -1108,7 +1233,11 @@ mod report_tests {
         // p1 has no sessions at all inside (or outside) the window.
 
         let rows = report_by_project(&conn, 1000).unwrap();
-        assert_eq!(rows.len(), 1, "a project with zero sessions in the window must not appear");
+        assert_eq!(
+            rows.len(),
+            1,
+            "a project with zero sessions in the window must not appear"
+        );
         assert_eq!(rows[0].project_name, "busy");
         assert_eq!(rows[0].session_count, 2);
         assert_eq!(rows[0].total_cost_usd, 10.0);
@@ -1118,8 +1247,24 @@ mod report_tests {
     fn report_by_tag_credits_full_cost_to_every_tag_on_a_multi_tagged_session() {
         let conn = in_memory_db();
         upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
-        seed_session(&conn, "s1", "p1", "claude", 2000, 4.0, Some(r#"["feature","bugfix"]"#));
-        seed_session(&conn, "s2", "p1", "claude", 2000, 2.0, Some(r#"["feature"]"#));
+        seed_session(
+            &conn,
+            "s1",
+            "p1",
+            "claude",
+            2000,
+            4.0,
+            Some(r#"["feature","bugfix"]"#),
+        );
+        seed_session(
+            &conn,
+            "s2",
+            "p1",
+            "claude",
+            2000,
+            2.0,
+            Some(r#"["feature"]"#),
+        );
         seed_session(&conn, "s3", "p1", "claude", 2000, 100.0, None); // untagged, must be skipped
 
         let rows = report_by_tag(&conn, 1000).unwrap();
@@ -1135,7 +1280,15 @@ mod report_tests {
     fn report_by_tag_skips_malformed_json_instead_of_failing_the_whole_query() {
         let conn = in_memory_db();
         upsert_project(&conn, "p1", "fixture", "/fixture", 1000).unwrap();
-        seed_session(&conn, "s1", "p1", "claude", 2000, 3.0, Some("not valid json"));
+        seed_session(
+            &conn,
+            "s1",
+            "p1",
+            "claude",
+            2000,
+            3.0,
+            Some("not valid json"),
+        );
         seed_session(&conn, "s2", "p1", "claude", 2000, 1.0, Some(r#"["docs"]"#));
 
         let rows = report_by_tag(&conn, 1000).unwrap();
@@ -1175,7 +1328,11 @@ mod report_tests {
         insert("s4", None, 1.0);
 
         let rows = model_usage(&conn).unwrap();
-        assert_eq!(rows.len(), 3, "opus-5 rows collapse into one; null model is its own group");
+        assert_eq!(
+            rows.len(),
+            3,
+            "opus-5 rows collapse into one; null model is its own group"
+        );
 
         // Highest spend first: fable-5 (10) > opus-5 (6) > null (1).
         assert_eq!(rows[0].model.as_deref(), Some("claude-fable-5"));
@@ -1198,15 +1355,25 @@ mod list_query_tests {
 
     fn in_memory_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_init.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql")).unwrap();
-        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql")).unwrap();
+        conn.execute_batch(include_str!("../../migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_file_diff_content.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_session_title.sql"))
+            .unwrap();
         conn
     }
 
     /// Insert a project plus one session per id in `session_ids`.
     fn seed(conn: &Connection, project_id: &str, created_at: i64, session_ids: &[&str]) {
-        upsert_project(conn, project_id, project_id, &format!("/{project_id}"), created_at).unwrap();
+        upsert_project(
+            conn,
+            project_id,
+            project_id,
+            &format!("/{project_id}"),
+            created_at,
+        )
+        .unwrap();
         for sid in session_ids {
             conn.execute(
                 "INSERT INTO sessions (id, project_id, agent, started_at, last_activity_at, status, cost_usd, raw_log_path)

@@ -2,8 +2,12 @@ import type {
   CommandEvidence,
   CreateInput,
   Finding,
+  LabelDefinition,
   LedgerEntry,
+  MilestoneMigrationReport,
   MutationEvidence,
+  Person,
+  TaskComment,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core';
@@ -42,7 +46,8 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
-  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  /** ActorRef of the human the run is for (who dispatched it, or started its
+   *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
   model?: string;
   reviewedAt?: string;
@@ -71,6 +76,9 @@ export interface RunMeta {
     failed: number;
     stopped: number;
   };
+  // What a live run's agent is doing, in words, and when it said so; absent
+  // before its first step and once terminal — mirrors RunMeta.lastStep.
+  lastStep?: { text: string; at: string };
 }
 
 export interface NormalizedEntry {
@@ -282,7 +290,8 @@ interface EpicSessionOptions {
 // The subset of packages/server/src/events.ts's ServerEvent union that
 // `--watch` acts on — deliberately partial; any other event is ignored.
 export type ServerEvent =
-  | { type: 'task.changed' }
+  | { type: 'task.changed'; ids?: string[] }
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -433,8 +442,37 @@ export interface TaskApiClient {
   listTasks(query?: TaskListQuery): Promise<TaskDoc[]>;
   readyTasks(): Promise<TaskDoc[]>;
   getTask(id: string): Promise<TaskDoc>;
+  /** A `milestone` names a project or milestone the daemon files the task
+   * under (as `parent`); it 400s when none matches and never stores it. */
   createTask(input: CreateInput): Promise<TaskDoc>;
+  /** `milestone` moves the task the same way `createTask`'s does. */
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  /** `POST /api/migrations/milestones`: legacy milestones to projects. */
+  migrateMilestones(dryRun: boolean): Promise<MilestoneMigrationReport>;
+  /** `GET /api/people`: the people registry and the caller's own ref. */
+  listPeople(): Promise<{ me: string; people: Person[] }>;
+  /** `GET /api/labels`: the label registry (colors and external links). */
+  listLabels(): Promise<{ labels: LabelDefinition[] }>;
+  /** `PUT /api/labels`: one label's color; `null` clears it. */
+  setLabelColor(
+    name: string,
+    color: string | null
+  ): Promise<{ labels: LabelDefinition[] }>;
+  /** `GET /api/tasks/:id/comments`, oldest first. */
+  listComments(id: string): Promise<TaskComment[]>;
+  /** `POST /api/tasks/:id/comments`, credited to the caller by the server. */
+  addComment(
+    id: string,
+    input: { body: string; parentId?: string | null; runId?: string }
+  ): Promise<TaskComment>;
+  /** Author only (403 otherwise). */
+  updateComment(
+    id: string,
+    commentId: string,
+    patch: { body: string }
+  ): Promise<TaskComment>;
+  /** Author only; removes its replies too, and 409s while others replied. */
+  deleteComment(id: string, commentId: string): Promise<{ removed: string[] }>;
   /**
    * `GET /api/health`, reduced to what doctor reports: `problems` are records
    * the daemon's last cache rebuild could not read (they never appear in
@@ -497,6 +535,35 @@ export function createTaskApiClient(
         ...jsonBody(patch),
         method: 'PATCH',
       }),
+    migrateMilestones: (dryRun) =>
+      request(target, '/api/migrations/milestones', jsonBody({ dryRun })),
+    listPeople: () => request(target, '/api/people'),
+    listLabels: () => request(target, '/api/labels'),
+    setLabelColor: (name, color) =>
+      request(target, '/api/labels', {
+        ...jsonBody({ name, color }),
+        method: 'PUT',
+      }),
+    listComments: (id) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
+    addComment: (id, input) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments`,
+        jsonBody(input)
+      ),
+    updateComment: (id, commentId, patch) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { ...jsonBody(patch), method: 'PATCH' }
+      ),
+    deleteComment: (id, commentId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'DELETE' }
+      ),
   };
 }
 
@@ -680,6 +747,49 @@ export interface ApiClient {
   getLicense(): Promise<LicenseStatus>;
   /** Installs a license key (operator tier). */
   installLicense(key: string): Promise<LicenseStatus>;
+  /** Decide-tier: imports ledger lessons into memory and reports count
+   *  parity; `dryRun` reports without writing. */
+  importLedger(
+    dryRun: boolean
+  ): Promise<{ report: { outcome: string }; text: string }>;
+  /** The daemon's own human only: re-runs the import of their Claude notes;
+   *  `from` (absolute) or `none` answers an unconfirmed one. */
+  importClaude(opts: {
+    from?: string;
+    none?: boolean;
+    dryRun?: boolean;
+  }): Promise<{ report: ClaudeImportReport }>;
+  // Memory refuses the agent token, as messaging does: build the client on
+  // the app token or a teammate's token. `ref` is an id or a #handle.
+  listMemory(q: {
+    scope?: string;
+    kind?: string;
+    state?: string;
+    origin?: 'ledger' | 'claude';
+    trust?: 'agent';
+    limit?: number;
+  }): Promise<{ entries: MemoryEntry[] }>;
+  getMemory(
+    ref: string
+  ): Promise<{ entry: MemoryEntry; revisions: unknown[]; recallCount: number }>;
+  saveMemory(input: {
+    scope: string;
+    kind: string;
+    title: string;
+    body: string;
+    projectOnly?: boolean;
+  }): Promise<MemorySaveResult>;
+  retireMemory(ref: string, reason: string): Promise<MemorySaveResult>;
+  undoMemory(ref: string): Promise<MemoryEntry>;
+  confirmMemory(ref: string): Promise<MemoryEntry>;
+  pinMemory(ref: string, pinned: boolean): Promise<MemoryEntry>;
+  promoteMemory(ref: string, scope: string): Promise<MemorySaveResult>;
+  deleteMemory(ref: string): Promise<void>;
+  listMemoryProposals(state?: string): Promise<{ proposals: MemoryProposal[] }>;
+  startMemoryLink(opts: {
+    fresh?: boolean;
+  }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
+  completeMemoryLink(code: string): Promise<{ identity: string }>;
   // The signed team roster (decide tier to read, operator tier to change):
   // build the client on the app token.
   getTeamKeys(): Promise<TeamKeys>;
@@ -716,6 +826,48 @@ export interface ApiClient {
   ackProblem(subject: string): Promise<void>;
   /** An admin binds a run two machines claim first to one of them. */
   resolveRunConflict(run: string, replica: string): Promise<RosterAnswer>;
+}
+
+/** The fields of @dispatch/memory's entry view the CLI prints. */
+export interface MemoryEntry {
+  id: string;
+  handle: string;
+  kind: string;
+  scope: string;
+  state: string;
+  title: string;
+  body: string;
+  trust: string;
+  author: string;
+  rev: number;
+}
+
+/** Mirrors ClaudeImportReport in packages/server/src/memory/claudeImport.ts. */
+export interface ClaudeImportReport {
+  state: 'complete' | 'failed' | 'unconfirmed';
+  source: string | null;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  duplicates: number;
+  tombstoned: number;
+  problems: string[];
+  candidates: string[];
+}
+
+/** Mirrors SaveResult in packages/memory/src/engine.ts. */
+export type MemorySaveResult =
+  | { status: 'active' | 'retired'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+/** The fields of @dispatch/memory's proposal the CLI prints. */
+export interface MemoryProposal {
+  id: string;
+  state: string;
+  action: string;
+  scope: string;
+  target: string | null;
+  content: { kind: string; title: string } | null;
 }
 
 /** What `keys admit` sends. */
@@ -859,6 +1011,7 @@ interface TeamTokenHolder {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  unusable?: boolean;
 }
 
 // `token` is the credential every call presents: the agent token from the
@@ -1049,7 +1202,65 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         method: 'DELETE',
       });
     },
+    importLedger: (dryRun) =>
+      request(target, `/api/memory/import/ledger${dryRun ? '?dryRun=1' : ''}`, {
+        method: 'POST',
+      }),
+    importClaude: (opts) =>
+      request(
+        target,
+        `/api/memory/import/claude${memoryQuery({
+          from: opts.from,
+          none: opts.none === true ? 1 : undefined,
+          dryRun: opts.dryRun === true ? 1 : undefined,
+        })}`,
+        { method: 'POST' }
+      ),
+    listMemory: (q) => request(target, `/api/memory${memoryQuery(q)}`),
+    getMemory: (ref) => request(target, memoryPath(ref)),
+    saveMemory: (input) => request(target, '/api/memory', jsonBody(input)),
+    retireMemory: (ref, reason) =>
+      request(target, `${memoryPath(ref)}/retire`, jsonBody({ reason })),
+    undoMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/undo`, { method: 'POST' }),
+    confirmMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/confirm`, { method: 'POST' }),
+    pinMemory: (ref, pinned) =>
+      request(target, `${memoryPath(ref)}/${pinned ? 'pin' : 'unpin'}`, {
+        method: 'POST',
+      }),
+    promoteMemory: (ref, scope) =>
+      request(target, `${memoryPath(ref)}/promote`, jsonBody({ scope })),
+    deleteMemory: (ref) =>
+      request(target, memoryPath(ref), { method: 'DELETE' }),
+    listMemoryProposals: (state) =>
+      request(target, `/api/memory/proposals${memoryQuery({ state })}`),
+    startMemoryLink: (opts) =>
+      request(
+        target,
+        '/api/memory/link',
+        jsonBody(opts.fresh === true ? { fresh: true } : {})
+      ),
+    completeMemoryLink: (code) =>
+      request(target, `/api/memory/link/${encodeURIComponent(code)}`, {
+        method: 'POST',
+      }),
   };
+}
+
+// An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
+function memoryPath(ref: string): string {
+  return `/api/memory/${encodeURIComponent(ref)}`;
+}
+
+// `?k=v&…` from the defined values in order; '' when none is defined.
+function memoryQuery(
+  params: Record<string, string | number | undefined>
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params))
+    if (value !== undefined) search.set(key, String(value));
+  return search.size > 0 ? `?${search.toString()}` : '';
 }
 
 // A roster action on one replica's key.
@@ -1066,7 +1277,8 @@ interface A2AListenerSettings {
   publicUrl: string | null;
   tls: { certPath: string; keyPath: string } | null;
   trustForwardedFor: boolean;
-  standalone: boolean;
+  // Left out, the daemon keeps its current switch.
+  standalone?: boolean;
 }
 
 export interface A2AListenerStatus {
@@ -1097,6 +1309,24 @@ interface A2ATaskSummary {
   dispatchTask: string | null;
 }
 
+// An outbound peer as /api/a2a/peers shows it; never its credential.
+// Mirrors packages/server/src/a2a/peers.ts PeerSummary.
+export interface A2APeerSummary {
+  alias: string;
+  cardUrl: string;
+  interfaceUrl: string;
+  binding: 'HTTP+JSON' | 'JSONRPC';
+  status: 'active' | 'disabled' | 'auth-failed';
+  name: string;
+  description: string;
+  skills: { id: string; name: string; description: string }[];
+  streaming: boolean;
+  addedBy: string;
+  addedTier: 'decide' | 'operator';
+  fetchedAt: string;
+  createdAt: string;
+}
+
 // Separate from ApiClient so its test fakes need not grow the A2A routes.
 export interface A2AApiClient {
   listenerStatus(): Promise<A2AListenerStatus>;
@@ -1113,6 +1343,39 @@ export interface A2AApiClient {
   revokeAgent(address: string): Promise<unknown>;
   tasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
   declineTask(id: string, reason?: string): Promise<unknown>;
+  peers(): Promise<{ peers: A2APeerSummary[] }>;
+  addPeer(input: {
+    alias: string;
+    cardUrl: string;
+    token?: string;
+    apiKeyHeader?: string;
+    allowHttp?: boolean;
+    allowOrigin?: boolean;
+  }): Promise<A2APeerSummary>;
+  refreshPeer(alias: string): Promise<A2APeerSummary>;
+  setPeerEnabled(
+    alias: string,
+    enabled: boolean,
+    token?: string
+  ): Promise<A2APeerSummary>;
+  removePeer(alias: string): Promise<void>;
+  hosts(): Promise<{ standalone: boolean; hosts: A2AHostSummary[] }>;
+  addHost(
+    name: string,
+    publicUrl: string
+  ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
+  removeHost(id: string): Promise<void>;
+  setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
+}
+
+// A standalone host as /api/a2a/hosts lists it; never its token or hash.
+interface A2AHostSummary {
+  id: string;
+  name: string;
+  publicUrl: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt: string | null;
 }
 
 export function createA2AApiClient(
@@ -1153,5 +1416,33 @@ export function createA2AApiClient(
         `/api/a2a/tasks/${encodeURIComponent(id)}/decline`,
         jsonBody(reason === undefined ? {} : { reason })
       ),
+    peers: () => request(target, '/api/a2a/peers'),
+    addPeer: (input) => request(target, '/api/a2a/peers', jsonBody(input)),
+    refreshPeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}/refresh`, {
+        method: 'POST',
+      }),
+    setPeerEnabled: (alias, enabled, token) =>
+      request(
+        target,
+        `/api/a2a/peers/${encodeURIComponent(alias)}/${enabled ? 'enable' : 'disable'}`,
+        jsonBody(token === undefined ? {} : { token })
+      ),
+    removePeer: (alias) =>
+      request(target, `/api/a2a/peers/${encodeURIComponent(alias)}`, {
+        method: 'DELETE',
+      }),
+    hosts: () => request(target, '/api/a2a/hosts'),
+    addHost: (name, publicUrl) =>
+      request(target, '/api/a2a/hosts', jsonBody({ name, publicUrl })),
+    removeHost: (id) =>
+      request(target, `/api/a2a/hosts/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
+    setStandalone: (enabled) =>
+      request(target, '/api/a2a/listener/standalone', {
+        ...jsonBody({ enabled }),
+        method: 'PUT',
+      }),
   };
 }

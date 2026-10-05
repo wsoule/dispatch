@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -92,7 +93,58 @@ describe('taskFilePath id-prefix guard', () => {
   });
 });
 
+describe('file index', () => {
+  it("finds another process's added, renamed and deleted files", () => {
+    const store = TaskStore.init(root);
+    const kept = store.create({ title: 'Kept' });
+    const renamed = store.create({ title: 'Old name' });
+    const deleted = store.create({ title: 'Gone' });
+    expect(store.get(kept.meta.id)?.meta.title).toBe('Kept');
+
+    // Behind the store's back, the way a git checkout or a hand edit would.
+    const other = new TaskStore(root);
+    const added = other.create({ title: 'Added elsewhere' });
+    const oldPath = store.taskFilePath(renamed.meta.id)!;
+    writeFileSync(
+      join(store.tasksDir, `${renamed.meta.id}-new-name.md`),
+      readFileSync(oldPath, 'utf8')
+    );
+    rmSync(oldPath);
+    rmSync(store.taskFilePath(deleted.meta.id)!);
+
+    expect(store.get(added.meta.id)?.meta.title).toBe('Added elsewhere');
+    expect(store.taskFilePath(renamed.meta.id)).toBe(
+      join(store.tasksDir, `${renamed.meta.id}-new-name.md`)
+    );
+    expect(store.get(deleted.meta.id)).toBeNull();
+    expect(store.remove(deleted.meta.id)).toBe(false);
+  });
+
+  it('resolves a bare <id>.md file', () => {
+    const store = TaskStore.init(root);
+    const doc = store.create({ title: 'Bare' });
+    const path = store.taskFilePath(doc.meta.id)!;
+    writeFileSync(
+      join(store.tasksDir, `${doc.meta.id}.md`),
+      readFileSync(path, 'utf8')
+    );
+    rmSync(path);
+    expect(new TaskStore(root).get(doc.meta.id)?.meta.title).toBe('Bare');
+  });
+});
+
 describe('list', () => {
+  it('breaks a tie on created by id, in code-unit order', () => {
+    const store = TaskStore.init(root);
+    const now = '2026-07-13T01:00:00Z';
+    const ids = Array.from(
+      { length: 12 },
+      () => store.create({ title: 'Same instant' }, now).meta.id
+    );
+    const sorted = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    expect(store.list().map((t) => t.meta.id)).toEqual(sorted);
+  });
+
   it('filters by status, kind, parent and sorts by created', () => {
     const store = TaskStore.init(root);
     const epic = store.create(

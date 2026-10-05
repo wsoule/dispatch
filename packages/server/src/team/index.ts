@@ -39,7 +39,7 @@ export function syncSeats(
   };
 }
 
-export function createTeam(rootDir: string): Team {
+export function createTeam(rootDir: string, operatorHandle: string): Team {
   // The seat count is read through `team.license` on every check, not a
   // captured manager, so whichever license the team holds is the one that
   // counts. The closures run only after `team` below exists.
@@ -47,6 +47,7 @@ export function createTeam(rootDir: string): Team {
     store: fileTokenStore(teamTokensPath(rootDir)),
     seats: () => team.license.seats(),
     seatMessage: (seats) => seatLimitMessage(seats, team.license.state()),
+    operatorHandle,
   });
   const team: Team = {
     teammates,

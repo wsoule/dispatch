@@ -175,3 +175,43 @@ it('streams a chunked artifact whole, then completes', async () => {
   ]);
   expect(stateOf(events.at(-1))).toBe('TASK_STATE_COMPLETED');
 });
+
+it('delivers a push config’s events to a local webhook with its authentication', async () => {
+  const hits: { auth: string | null; body: StreamResponseJson }[] = [];
+  const hook = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    async fetch(req) {
+      hits.push({
+        auth: req.headers.get('authorization'),
+        body: (await req.json()) as StreamResponseJson,
+      });
+      return new Response(null, { status: 204 });
+    },
+  });
+  try {
+    const opened = await send('tck-input-required-push-1');
+    const id = opened.task?.id ?? '';
+    const created = await fetch(
+      `${base}/a2a/v1/tasks/${id}/pushNotificationConfigs`,
+      {
+        method: 'POST',
+        headers: HEADERS,
+        body: JSON.stringify({
+          url: `http://127.0.0.1:${hook.port}/hook`,
+          authentication: { scheme: 'Bearer', credentials: 'tck-cred' },
+        }),
+      }
+    );
+    expect(created.status).toBe(200);
+    await send('tck-complete-task-push-2', { taskId: id });
+    for (let i = 0; i < 50 && hits.length === 0; i++) await Bun.sleep(20);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].auth).toBe('Bearer tck-cred');
+    expect(JSON.stringify(hits.map((h) => h.body))).toContain(
+      'TASK_STATE_COMPLETED'
+    );
+  } finally {
+    await hook.stop(true);
+  }
+});

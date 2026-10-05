@@ -1,4 +1,11 @@
-export { answerArtifact } from './artifacts.js';
+export {
+  answerArtifact,
+  diffstatFromPatch,
+  evidenceFact,
+  MAX_ARTIFACT_BYTES,
+  prFact,
+  workArtifacts,
+} from './artifacts.js';
 export {
   BUILT_SKILLS,
   buildCard,
@@ -6,9 +13,26 @@ export {
   cardEtag,
   cardJson,
   DEFAULT_CARD_DESCRIPTION,
-  handoffSupported,
+  JWKS_PATH,
   offeredSkills,
+  signCard,
+  verifyCardSignature,
+  unsignedCardEtag,
+  unsignedCardJson,
 } from './card.js';
+export {
+  DEFAULT_HANDOFF_STATUSES,
+  handoffStatuses,
+  handoffSupported,
+  namedStatusVocabulary,
+} from './statuses.js';
+export type {
+  HandoffPhase,
+  HandoffStatuses,
+  StatusKind,
+  StatusVocabulary,
+  SupportedHandoffStatuses,
+} from './statuses.js';
 export {
   decodeInbound,
   decodeMessage,
@@ -21,6 +45,13 @@ export type {
   MessageView,
   TextMediaType,
 } from './codec.js';
+export {
+  hasA2AProvenance,
+  PROVENANCE_PREFIX,
+  provenanceLine,
+  shapeDraft,
+} from './draft.js';
+export type { HandoffRequest } from './draft.js';
 export {
   A2AError,
   a2aFieldPath,
@@ -48,6 +79,7 @@ export type {
 } from './ext.js';
 export {
   checkInboundRecipients,
+  peerSelfAddressed,
   checkReachClient,
   CLIENT_NAME_PREFIX,
   clientNameFor,
@@ -72,16 +104,32 @@ export type {
   BridgePort,
   Caller,
   CardInputs,
+  CardRequest,
+  CardSignatureJson,
   ContinueInput,
   ContinueResult,
+  Jwks,
   ListPage,
   ListQuery,
   OpenGateFact,
   OpenInput,
   OpenKind,
   OpenResult,
+  PushConfigPort,
   TaskFacts,
 } from './port.js';
+export { parsePortContinue, parsePortOpen } from './http/input.js';
+export { HttpBridgePort } from './http/port.js';
+export { checkStandalone, startStandalone } from './http/serve.js';
+export type { StandaloneCheck, StandaloneOptions } from './http/serve.js';
+export type { HttpBridgePortOptions } from './http/port.js';
+export {
+  PORT_CLIENT_HEADER,
+  portErrorFrom,
+  portErrorJson,
+} from './http/wire.js';
+export type { PortError } from './http/wire.js';
+export * from './peer/index.js';
 export {
   decideState,
   GATE_SENTENCES,
@@ -96,12 +144,27 @@ export {
   wrapExternalData,
 } from './sanitize.js';
 export type { ExternalContent, SanitizedContent } from './sanitize.js';
+export {
+  deliverPush,
+  parsePushConfig,
+  PUSH_LIMITS,
+  PUSH_TOKEN_HEADER,
+  pushConfigJson,
+  pushHeaders,
+} from './push.js';
+export type {
+  DeliverOptions,
+  PushAuth,
+  PushConfigInput,
+  PushConfigJson,
+  PushResult,
+} from './push.js';
 export { handleA2A, matchRoute } from './server/handle.js';
 export type { HandleOptions, Route } from './server/handle.js';
 export { IpLimiter } from './server/limits.js';
 export { decodePageToken, encodePageToken } from './server/paging.js';
-export { taskEventStream } from './server/sse.js';
-export type { StreamOptions } from './server/sse.js';
+export { eventsBetween, snapshotOf, taskEventStream } from './server/sse.js';
+export type { Snapshot, StreamOptions } from './server/sse.js';
 export {
   INTERRUPTED_STATES,
   stateFromWire,
@@ -110,10 +173,18 @@ export {
   wireState,
 } from './states.js';
 export type { TaskStateName, WireTaskState } from './states.js';
+export { statusReply } from './statusSkill.js';
+export type { StatusEntry } from './statusSkill.js';
 export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
 export type {
   A2AStore,
   ClientRow,
+  HostRow,
+  OutboundRow,
+  OutboundState,
+  PeerRow,
+  PeerStatus,
+  PushConfigRow,
   TaskListQuery,
   TaskPatch,
   TaskRow,

@@ -3,6 +3,7 @@ import {
   Bell,
   Bot,
   BotMessageSquare,
+  Brain,
   Cpu,
   FileDiff,
   FolderSearch,
@@ -10,6 +11,7 @@ import {
   KeyRound,
   LockIcon,
   MonitorPlay,
+  Network,
   Plug,
   RefreshCw,
   SearchIcon,
@@ -28,6 +30,7 @@ import {
   useState,
 } from 'react';
 
+import { A2ASection } from '../components/settings/A2ASection';
 import {
   accessFor,
   SettingsAccessProvider,
@@ -47,6 +50,7 @@ import { DiffsSection } from '../components/settings/DiffsSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
 import { LicenseSection } from '../components/settings/LicenseSection';
+import { MemorySection } from '../components/settings/MemorySection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
 import { PolicySection } from '../components/settings/PolicySection';
 import { PreviewsSection } from '../components/settings/PreviewsSection';
@@ -194,6 +198,22 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         )),
       },
       {
+        id: 'memory',
+        label: 'Memory',
+        icon: Brain,
+        intro:
+          'What runs remember between tasks, where it came from, and how much of it each prompt carries.',
+        savesConfig: true,
+        // The store's health renders without config, so a closed store still says why.
+        render: (ctx) => (
+          <MemorySection
+            data={ctx.data}
+            config={ctx.config}
+            onSave={ctx.save}
+          />
+        ),
+      },
+      {
         id: 'previews',
         label: 'Previews',
         icon: MonitorPlay,
@@ -293,6 +313,14 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             }}
           />
         ),
+      },
+      {
+        id: 'a2a',
+        label: 'A2A',
+        icon: Network,
+        intro: 'Let other agents ask this project questions over A2A.',
+        savesConfig: false,
+        render: (ctx) => <A2ASection data={ctx.data} />,
       },
       {
         id: 'license',

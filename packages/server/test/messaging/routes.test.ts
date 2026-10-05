@@ -595,7 +595,10 @@ describe('messaging HTTP routes', () => {
         headers: authHeaders(b.token),
       }
     );
-    expect(asStranger.status).toBe(403);
+    expect(asStranger.status).toBe(404);
+    expect((await json<{ error: string }>(asStranger)).error).toBe(
+      `no message ${sent.message.id}`
+    );
 
     const asSender = await fetch(`${baseUrl}/api/messages/${sent.message.id}`, {
       headers: authHeaders(a.token),
@@ -629,7 +632,10 @@ describe('messaging HTTP routes', () => {
         headers: authHeaders(b.token),
       }
     );
-    expect(asStranger.status).toBe(403);
+    expect(asStranger.status).toBe(404);
+    expect((await json<{ error: string }>(asStranger)).error).toBe(
+      `no message ${sent.message.thread}`
+    );
 
     const asParticipant = await fetch(
       `${baseUrl}/api/threads/${sent.message.thread}`,
@@ -678,7 +684,7 @@ describe('messaging HTTP routes', () => {
       `${baseUrl}/api/threads/${sent.message.thread}`,
       { headers: authHeaders(b.token) }
     );
-    expect(threadRes.status).toBe(403);
+    expect(threadRes.status).toBe(404);
   });
 
   it('GET /api/messages/:id/answer is for a participant of the question', async () => {
@@ -703,7 +709,10 @@ describe('messaging HTTP routes', () => {
       `${baseUrl}/api/messages/${sent.message.id}/answer`,
       { headers: authHeaders(a.token) }
     );
-    expect(asStranger.status).toBe(403);
+    expect(asStranger.status).toBe(404);
+    expect((await json<{ error: string }>(asStranger)).error).toBe(
+      `no message ${sent.message.id}`
+    );
 
     const asAsker = await fetch(
       `${baseUrl}/api/messages/${sent.message.id}/answer`,
@@ -917,23 +926,25 @@ describe('messaging HTTP routes', () => {
         ),
         `cannot remove ${taskA} from a channel`,
       ],
-      [
-        fetch(`${baseUrl}/api/messages/${sent.message.id}`, {
-          headers: authHeaders(bToken),
-        }),
-        `cannot read message ${sent.message.id}`,
-      ],
-      [
-        fetch(`${baseUrl}/api/threads/${sent.message.thread}`, {
-          headers: authHeaders(bToken),
-        }),
-        `cannot read thread ${sent.message.thread}`,
-      ],
     ];
     for (const [pending, error] of refusals) {
       const res = await pending;
       expect(res.status).toBe(403);
       expect((await json<{ error: string }>(res)).error).toBe(error);
+    }
+
+    // Reads answer as for an absent id, so B cannot tell A's mail exists.
+    for (const [path, id] of [
+      [`messages/${sent.message.id}`, sent.message.id],
+      [`threads/${sent.message.thread}`, sent.message.thread],
+    ]) {
+      const res = await fetch(`${baseUrl}/api/${path}`, {
+        headers: authHeaders(bToken),
+      });
+      expect(res.status).toBe(404);
+      expect((await json<{ error: string }>(res)).error).toBe(
+        `no message ${id}`
+      );
     }
   });
 
@@ -956,11 +967,6 @@ describe('messaging HTTP routes', () => {
       ['threads', 'listing recent threads needs a deciding human'],
       ['decisions/open', 'listing open decisions needs a deciding human'],
       [
-        `threads/${sent.message.thread}`,
-        `cannot read thread ${sent.message.thread}`,
-      ],
-      [`messages/${sent.message.id}`, `cannot read message ${sent.message.id}`],
-      [
         `mailbox?address=${encodeURIComponent(agent.address)}`,
         `cannot read the mailbox for ${agent.address}`,
       ],
@@ -975,6 +981,18 @@ describe('messaging HTTP routes', () => {
       });
       expect(res.status).toBe(403);
       expect((await json<{ error: string }>(res)).error).toBe(error);
+    }
+    for (const [path, id] of [
+      [`threads/${sent.message.thread}`, sent.message.thread],
+      [`messages/${sent.message.id}`, sent.message.id],
+    ]) {
+      const res = await fetch(`${baseUrl}/api/${path}`, {
+        headers: authHeaders(adaToken),
+      });
+      expect(res.status).toBe(404);
+      expect((await json<{ error: string }>(res)).error).toBe(
+        `no message ${id}`
+      );
     }
 
     const own = await fetch(`${baseUrl}/api/mailbox`, {
@@ -1010,6 +1028,95 @@ describe('messaging HTTP routes', () => {
     expect((await json<{ error: string }>(wait)).error).toBe(
       `only the asker can wait for the answer to ${sent.message.id}`
     );
+  });
+
+  it('closes the earlier pending card on re-key, and binds each card to its key', async () => {
+    const register = (rekey: boolean) =>
+      fetch(`${baseUrl}/api/agents/register`, {
+        method: 'POST',
+        headers: authHeaders(handle.tokens.agentToken),
+        body: JSON.stringify({ name: 'rekeyed card', client: 'codex', rekey }),
+      });
+    const first = await json<{ address: string; token: string }>(
+      await register(false)
+    );
+    type Card = { id: string; data?: { agent?: string; key?: string } };
+    const cards = async (): Promise<Card[]> =>
+      (
+        await json<{ items: Card[] }>(
+          await fetch(`${baseUrl}/api/decisions/open`)
+        )
+      ).items.filter((m) => m.data?.agent === first.address);
+    const [stale] = await cards();
+    expect(stale.data?.key).toMatch(/^[0-9a-f]{16}$/);
+    const second = await json<{ token: string }>(await register(true));
+    const open = await cards();
+    expect(open).toHaveLength(1);
+    expect(open[0].id).not.toBe(stale.id);
+    expect(open[0].data?.key).not.toBe(stale.data?.key);
+    // The stale card is closed: denying it changes nothing.
+    const staleDeny = await fetch(`${baseUrl}/api/messages/${stale.id}/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: '', choice: 'deny' }),
+    });
+    expect(staleDeny.status).toBe(409);
+    await fetch(`${baseUrl}/api/messages/${open[0].id}/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: '', choice: 'approve' }),
+    });
+    const sent = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(second.token),
+      body: JSON.stringify({ to: ['human:test'], kind: 'message', body: 'hi' }),
+    });
+    expect(sent.status).toBe(201);
+  });
+
+  it('re-keys the same name on the owner machine, retiring the old token', async () => {
+    const first = await registerAndApprove('lost cache');
+    const register = (rekey: boolean) =>
+      fetch(`${baseUrl}/api/agents/register`, {
+        method: 'POST',
+        headers: authHeaders(handle.tokens.agentToken),
+        body: JSON.stringify({ name: 'lost cache', client: 'codex', rekey }),
+      });
+    expect((await register(false)).status).toBe(409);
+    const res = await register(true);
+    expect(res.status).toBe(201);
+    const again = await json<{
+      address: string;
+      token: string;
+      status: string;
+    }>(res);
+    expect(again.address).toBe(first.address);
+    expect(again.token).not.toBe(first.token);
+    expect(again.status).toBe('pending');
+    const old = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(first.token),
+      body: JSON.stringify({ to: ['human:test'], kind: 'message', body: 'hi' }),
+    });
+    expect(old.status).toBe(401);
+    // A teammate's token cannot re-key the owner's agent.
+    const issued = await json<{ token: string }>(
+      await fetch(`${baseUrl}/api/team/tokens`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com', tier: 'request' }),
+      })
+    );
+    const teammate = await fetch(`${baseUrl}/api/agents/register`, {
+      method: 'POST',
+      headers: authHeaders(issued.token),
+      body: JSON.stringify({
+        name: 'lost cache',
+        client: 'codex',
+        rekey: true,
+      }),
+    });
+    expect(teammate.status).toBe(403);
   });
 
   it('register -> pending 403 -> approve via app token -> send works', async () => {
@@ -1792,6 +1899,7 @@ describe('messaging routes — direct unit coverage', () => {
     );
 
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -1821,6 +1929,7 @@ describe('messaging routes — direct unit coverage', () => {
   it('tells a review run it cannot join a channel, with or without a member', async () => {
     const task = store.create({ title: 'Reviewed task' });
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -1878,7 +1987,7 @@ describe('messaging routes — direct unit coverage', () => {
     expect(res.status).toBe(200);
   });
 
-  it("a run of a different task still gets forbidden from a predecessor's question", async () => {
+  it("a run of a different task gets the absent-id 404 for a predecessor's question", async () => {
     const task = store.create({ title: 'Successor task 2' });
     const run1 = await orchestrator.dispatch(task.meta.id, 'claude', {});
     const question = await messaging.engine.send(
@@ -1904,7 +2013,10 @@ describe('messaging routes — direct unit coverage', () => {
       question.message.id,
       new URL(req.url)
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+    expect((await json<{ error: string }>(res)).error).toBe(
+      `no message ${question.message.id}`
+    );
   });
 
   it('a successor run can markRead a delivery deliverHeld rebound to it, and sees it in its default mailbox', async () => {

@@ -25,11 +25,14 @@ export { GATE_TYPES };
 export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 export type MessageKind = BuiltInKind | `x-${string}`;
 
+/** A ref type the registry lists; a received ref may carry any other identifier. */
+export type RefType = (typeof REF_TYPES)[number];
+
 export interface Ref {
   /** A registered ref type, or any identifier on a ref received from a peer (§4.4). */
-  type: (typeof REF_TYPES)[number] | (string & {});
+  type: RefType | (string & {});
   id: string;
-  /** Commit sha for `file` refs. */
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
 }
 
@@ -73,6 +76,20 @@ export interface SendInput {
   idempotencyKey?: string;
 }
 
+// The kinds a memory gate may name; @dispatch/memory pins its MEMORY_KINDS to
+// this list.
+export const MEMORY_GATE_KINDS = [
+  'preference',
+  'convention',
+  'constraint',
+  'hazard',
+  'decision',
+  'fact',
+  'reference',
+] as const;
+const MEMORY_GATE_ACTIONS: readonly string[] = ['add', 'supersede', 'retire'];
+const PROPOSAL_ID = /^mp-[0-9A-HJKMNP-TV-Z]{26}$/;
+
 export type GateData =
   | {
       type: 'tool-approval';
@@ -92,12 +109,37 @@ export type GateData =
       client: string;
       // The human who asked; the agent registers under their handle.
       requestedBy?: Address;
+      // The registration this card decides (a prefix of its token hash); an
+      // answer for any other, after a re-key, changes nothing.
+      key?: string;
     }
   | {
       type: 'overseer-action';
       conversation: string;
       actionId: string;
       summary: string;
+    }
+  | {
+      type: 'memory';
+      proposalId: string; // mp-<ulid>; the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: (typeof MEMORY_GATE_KINDS)[number];
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: Address;
+      message: string;
+    }
+  | {
+      type: 'doc';
+      // A proposed edit to an accepted doc; the text stays in docs.db (system-only gate).
+      doc: string; // doc-<ulid>
+      proposal: string; // rev-<ulid>
+      taskId?: string;
+      runId?: string;
     };
 
 /** How validateSendInput judges gates, refs and a missing reply target. */
@@ -215,6 +257,8 @@ function validateGate(
       'data.type',
       `unregistered or unimplemented gate type ${type}; private payloads use an x- type`
     );
+  if (type === 'memory') validateMemoryShape(input);
+  if (type === 'doc') validateDocShape(input);
   const raiser = raiserOf(type);
   if (raiser === 'session' && !sender.startsWith('run:')) {
     throw new MessagingError(
@@ -268,6 +312,50 @@ function validateScopeShape(input: SendInput): void {
   }
 }
 
+// A memory gate names its proposal, never its content, and has one fixed
+// question shape.
+function validateMemoryShape(input: SendInput): void {
+  const gate = input.data as unknown as Extract<GateData, { type: 'memory' }>;
+  if (typeof gate.proposalId !== 'string' || !PROPOSAL_ID.test(gate.proposalId))
+    invalid('data.proposalId', 'expected a proposal id like mp-01K…');
+  if (!MEMORY_GATE_ACTIONS.includes(gate.action))
+    invalid('data.action', `expected ${MEMORY_GATE_ACTIONS.join('|')}`);
+  if (gate.scope !== 'project' && gate.scope !== 'team')
+    invalid('data.scope', 'expected project|team');
+  if (!(MEMORY_GATE_KINDS as readonly string[]).includes(gate.kind))
+    invalid('data.kind', `expected ${MEMORY_GATE_KINDS.join('|')}`);
+  if (
+    input.kind !== 'question' ||
+    input.blocking !== true ||
+    JSON.stringify(input.choices) !== '["approve","reject"]'
+  ) {
+    invalid(
+      'data',
+      'a memory gate is { kind: "question", blocking: true, choices: ["approve", "reject"], data: { type: "memory", proposalId, action, scope, kind } }'
+    );
+  }
+}
+
+// A doc gate names the doc and its proposed revision, never the text, and has
+// one fixed question shape.
+function validateDocShape(input: SendInput): void {
+  const gate = input.data as unknown as Extract<GateData, { type: 'doc' }>;
+  if (typeof gate.doc !== 'string' || !gate.doc.startsWith('doc-'))
+    invalid('data.doc', 'expected a doc- id');
+  if (typeof gate.proposal !== 'string' || !gate.proposal.startsWith('rev-'))
+    invalid('data.proposal', 'expected a rev- id');
+  if (
+    input.kind !== 'question' ||
+    input.blocking !== true ||
+    JSON.stringify(input.choices) !== '["approve","reject"]'
+  ) {
+    invalid(
+      'data',
+      'a doc gate is { kind: "question", blocking: true, choices: ["approve", "reject"], data: { type: "doc", doc, proposal } }'
+    );
+  }
+}
+
 // Rejects any envelope the engine must not store. `replyTarget` is the message
 // named by `replyTo` (null when absent or unknown); errors name the bad field.
 export function validateSendInput(
@@ -278,6 +366,23 @@ export function validateSendInput(
   options: ValidateOptions = {}
 ): void {
   const known = options.gateTypes ?? PACKAGE_GATE_TYPES;
+  // A JSON body can hold any shape: check the containers before reading them.
+  if (typeof input !== 'object' || input === null || Array.isArray(input))
+    invalid('input', 'expected an object');
+  if (input.refs !== undefined && !Array.isArray(input.refs))
+    invalid('refs', 'expected a list');
+  if (
+    input.choices !== undefined &&
+    (!Array.isArray(input.choices) ||
+      input.choices.some((c) => typeof c !== 'string'))
+  )
+    invalid('choices', 'expected a list of strings');
+  if (
+    input.replyTo !== undefined &&
+    input.replyTo !== null &&
+    typeof input.replyTo !== 'string'
+  )
+    invalid('replyTo', 'expected a message id or null');
   if (!Array.isArray(input.to) || input.to.length === 0)
     invalid('to', 'at least one recipient');
   if (input.to.length > MAX_RECIPIENTS)
@@ -285,6 +390,7 @@ export function validateSendInput(
   input.to.forEach((addr, i) => parseAddress(addr, `to[${i}]`));
 
   const kind = input.kind;
+  if (typeof kind !== 'string') invalid('kind', 'expected a string');
   if (
     !(BUILT_IN_KINDS as readonly string[]).includes(kind) &&
     !X_KIND.test(kind)
@@ -312,6 +418,8 @@ export function validateSendInput(
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
   refs.forEach((ref, i) => {
+    if (typeof ref !== 'object' || ref === null)
+      invalid(`refs[${i}]`, 'expected { type, id }');
     const registered = (REF_TYPES as readonly string[]).includes(ref.type);
     // A peer's newer ref type is kept, not refused, so a minor version can add one.
     const receivedOk = options.origin === 'received' && isIdentifier(ref.type);

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
+  "bin": {
+    "dmp-a2a-reference-adapter": "./dist/conformance-adapter.js"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -19,9 +22,11 @@
   "dependencies": {
     "@a2a-js/sdk": "catalog:",
     "@dispatch/core": "workspace:*",
-    "@dispatch/protocol": "workspace:*"
+    "@dispatch/protocol": "workspace:*",
+    "jose": "catalog:"
   },
   "devDependencies": {
+    "@dispatch/protocol-spec": "workspace:*",
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"

@@ -261,6 +261,15 @@ describe('SqliteMessageStore', () => {
       store.countFrom('run:r-000001', '2026-09-23T10:15:00.000Z', false)
     ).toBe(1);
     expect(
+      store.countFrom(
+        'run:r-000001',
+        '2026-09-23T10:15:00.000Z',
+        false,
+        undefined,
+        '2026-09-23T10:20:00.000Z'
+      )
+    ).toBe(0);
+    expect(
       store.countAgentAuthored(
         'm-01',
         '2026-09-23T09:00:00.000Z',

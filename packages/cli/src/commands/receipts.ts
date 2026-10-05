@@ -1,21 +1,34 @@
 import {
   absoluteGitLocation,
+  childEnv,
   DEFAULT_RECEIPTS_BRANCH,
+  DOCS_LIMITS,
   formatMigrationReport,
   initProjectStores,
+  MEMORY_RECEIPT_FILE_BYTES,
   restoreReceipts,
   writeProjectBackend,
 } from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { projectRoot } from '../projectRoot.js';
-import { findRunningDaemon } from './daemon.js';
+import { daemonFileKey, daemonHome, findRunningDaemon } from './daemon.js';
 
 /**
  * The location a `--from` names, absolute: one of this project's remotes when
@@ -27,9 +40,114 @@ function remoteUrl(root: string, cwd: string, from: string): string {
   const res = spawnSync('git', ['remote', 'get-url', '--', from], {
     cwd: root,
     encoding: 'utf8',
+    env: childEnv(),
   });
   if (res.status === 0) return absoluteGitLocation(root, res.stdout.trim());
   return absoluteGitLocation(cwd, from);
+}
+
+// A restore clones into `<tmp>/<prefix><pid>-<random>`, so a later one can
+// tell a killed restore's clone from a live one's.
+const CLONE_PREFIX = 'dispatch-receipts-restore-';
+
+// Whether a process with this pid is running (EPERM: it is, as someone else).
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+// Removes the temp clones of restores whose process is gone.
+function removeStaleClones(): void {
+  let names: string[];
+  try {
+    names = readdirSync(tmpdir());
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const pid = Number(/^dispatch-receipts-restore-(\d+)-/.exec(name)?.[1]);
+    if (!Number.isInteger(pid) || pid <= 0 || alive(pid)) continue;
+    rmSync(join(tmpdir(), name), { recursive: true, force: true });
+  }
+}
+
+// Why a memory file is not a receipt the daemon would take: it needs
+// terminated frontmatter whose dispatch block names a scope and a status.
+function memoryReceiptProblem(text: string): string | null {
+  const front = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(
+    text
+  );
+  if (
+    front === null ||
+    !/^\s+scope: \S/m.test(front[1]) ||
+    !/^\s+status: \S/m.test(front[1])
+  )
+    return 'not a memory receipt (frontmatter, scope or status missing)';
+  return null;
+}
+
+// `<id>.md` with an id shaped like @dispatch/memory's MEMORY_ID_PATTERN.
+const MEMORY_RECEIPT_NAME = /^mem-[0-9A-HJKMNP-TV-Z]{26}\.md$/;
+
+// Copies the clone's regular `.dispatch/<kind>/*.md` files, each within
+// `limit`, to the daemon's run-state `<kind>-restore/` (0700); a symlink is refused.
+function stageReceiptFiles(
+  clone: string,
+  root: string,
+  kind: 'docs' | 'memory',
+  limit: number,
+  name: RegExp = /\.md$/,
+  invalid: (text: string) => string | null = () => null
+): { staged: number; problems: string[] } {
+  const rel = `.dispatch/${kind}`;
+  const from = join(clone, '.dispatch', kind);
+  if (!existsSync(from)) return { staged: 0, problems: [] };
+  if (!lstatSync(from).isDirectory()) {
+    return {
+      staged: 0,
+      problems: [`${rel} is a symlink or not a directory; nothing staged`],
+    };
+  }
+  const problems: string[] = [];
+  const files = readdirSync(from)
+    .filter((f) => f.endsWith('.md'))
+    .filter((f) => {
+      if (!name.test(f)) {
+        problems.push(`${rel}/${f}: not named like a receipt file; skipped`);
+        return false;
+      }
+      const stat = lstatSync(join(from, f));
+      if (!stat.isFile()) {
+        problems.push(`${rel}/${f}: not a regular file; skipped`);
+        return false;
+      }
+      if (stat.size > limit) {
+        problems.push(`${rel}/${f}: over ${limit} bytes; skipped`);
+        return false;
+      }
+      const why = invalid(readFileSync(join(from, f), 'utf8'));
+      if (why !== null) {
+        problems.push(`${rel}/${f}: ${why}; skipped`);
+        return false;
+      }
+      return true;
+    });
+  if (files.length === 0) return { staged: 0, problems };
+  const to = join(
+    daemonHome(),
+    '.dispatch',
+    'runs',
+    daemonFileKey(root),
+    `${kind}-restore`
+  );
+  mkdirSync(to, { recursive: true, mode: 0o700 });
+  chmodSync(to, 0o700);
+  for (const file of files) copyFileSync(join(from, file), join(to, file));
+  return { staged: files.length, problems };
 }
 
 export function registerReceiptsCommands(
@@ -58,12 +176,15 @@ export function registerReceiptsCommands(
           );
         }
         const url = remoteUrl(root, ctx.cwd, opts.from);
-        const dir = mkdtempSync(join(tmpdir(), 'dispatch-receipts-restore-'));
+        removeStaleClones();
+        const dir = mkdtempSync(
+          join(tmpdir(), `${CLONE_PREFIX}${process.pid}-`)
+        );
         try {
           const cloned = spawnSync(
             'git',
             ['clone', '-q', '--depth', '1', '--branch', opts.branch, url, dir],
-            { encoding: 'utf8' }
+            { encoding: 'utf8', env: childEnv() }
           );
           if (cloned.status !== 0) {
             throw new CliError(
@@ -86,9 +207,37 @@ export function registerReceiptsCommands(
           ctx.log(
             `evidence: ${result.runs} run(s), ${result.commands} command(s), ${result.mutations} mutation(s)`
           );
+          const docs = stageReceiptFiles(
+            dir,
+            root,
+            'docs',
+            DOCS_LIMITS.receiptFileBytes
+          );
+          if (docs.staged > 0)
+            ctx.log(`staged ${docs.staged} doc(s) for the daemon to restore`);
+          for (const problem of docs.problems) ctx.log(`problem: ${problem}`);
+          // Team memory returns as proposals for a human, never as entries.
+          const memory = stageReceiptFiles(
+            dir,
+            root,
+            'memory',
+            MEMORY_RECEIPT_FILE_BYTES,
+            MEMORY_RECEIPT_NAME,
+            memoryReceiptProblem
+          );
+          if (memory.staged > 0)
+            ctx.log(
+              `staged ${memory.staged} memory entr(ies) for the daemon to propose again`
+            );
+          for (const problem of memory.problems) ctx.log(`problem: ${problem}`);
           for (const problem of result.problems) {
             ctx.log(`problem: ${problem.source}: ${problem.detail}`);
           }
+          const problems =
+            docs.problems.length +
+            memory.problems.length +
+            result.problems.length +
+            result.migration.problems.length;
           if (
             result.problems.length === 0 &&
             result.migration.problems.length === 0
@@ -100,6 +249,8 @@ export function registerReceiptsCommands(
               'Restored with the problems above; the project is not yet marked as database-backed. Fix them and run this again.'
             );
           }
+          if (problems > 0)
+            throw new CliError(`the restore reported ${problems} problem(s)`);
         } finally {
           rmSync(dir, { recursive: true, force: true });
         }

@@ -211,6 +211,12 @@ describe('checks in order', () => {
     expect(port.calls.some((c) => c.method === 'authenticate')).toBe(false);
   });
 
+  it('refuses a query token in any letter case', async () => {
+    const res = await call('/a2a/v1/tasks?Access_Token=good');
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toContain('"field":"query"');
+  });
+
   it('answers 429 with Retry-After when the port refuses the request', async () => {
     port.requestAdmission = { ok: false, retryAfterSec: 7 };
     const res = await call('/a2a/v1/tasks');
@@ -334,6 +340,27 @@ describe('errors', () => {
       'Answer with one of: us | eu'
     );
   });
+
+  it('frees the stream slot when the stream cannot start', async () => {
+    port.watchError = new Error('a2a.db is locked');
+    const subscribed = await call('/a2a/v1/tasks/m-root:subscribe');
+    const streamed = await call('/a2a/v1/message:stream', {
+      body: { message: ask().message },
+    });
+    expect([subscribed.status, streamed.status]).toEqual([500, 500]);
+    expect(port.openStreams).toBe(0);
+  });
+
+  it('answers a blocking send whose watch throws with a 500', async () => {
+    port.watchError = new Error('a2a.db is locked');
+    const res = await call('/a2a/v1/message:send', {
+      body: { message: ask().message },
+    });
+    expect(res.status).toBe(500);
+    expect(
+      ((await res.json()) as { error: { status: string } }).error.status
+    ).toBe('INTERNAL');
+  });
 });
 
 describe('ListTasks', () => {
@@ -344,6 +371,13 @@ describe('ListTasks', () => {
     expect(port.calls.find((c) => c.method === 'list')?.args[0]).toMatchObject({
       after: '2026-09-25T10:00:00.000Z',
       pageSize: 100,
+    });
+  });
+
+  it('reads pageSize=0 as the default 50', async () => {
+    await call('/a2a/v1/tasks?pageSize=0');
+    expect(port.calls.find((c) => c.method === 'list')?.args[0]).toMatchObject({
+      pageSize: 50,
     });
   });
 
@@ -422,5 +456,174 @@ describe('IpLimiter', () => {
     expect(auth.lockedFor('198.51.100.2')).toBeNull();
     now = 5_000;
     expect(auth.lockedFor('198.51.100.1')).toBeNull();
+  });
+});
+
+describe('push-notification configs (P4)', () => {
+  const path = '/a2a/v1/tasks/m-root/pushNotificationConfigs';
+  const body = {
+    url: 'https://hooks.example.com/a2a',
+    token: 'SECRET-TOKEN',
+    authentication: { scheme: 'Bearer', credentials: 'SECRET-CRED' },
+  };
+
+  it('creates, gets, lists and deletes, and deleting twice succeeds', async () => {
+    port.enablePush();
+    const created = (await (
+      await call(path, { body: { ...body, id: 'cfg-1' } })
+    ).json()) as { id: string; taskId: string; url: string };
+    expect(created).toMatchObject({
+      id: 'cfg-1',
+      taskId: 'm-root',
+      url: 'https://hooks.example.com/a2a',
+    });
+    expect(await (await call(`${path}/cfg-1`)).json()).toMatchObject({
+      id: 'cfg-1',
+      authentication: { scheme: 'Bearer' },
+    });
+    expect(await (await call(path)).json()).toEqual({
+      configs: [expect.objectContaining({ id: 'cfg-1' })],
+      nextPageToken: '',
+    });
+    for (const _ of [1, 2])
+      expect((await call(`${path}/cfg-1`, { method: 'DELETE' })).status).toBe(
+        200
+      );
+  });
+
+  it('never echoes the token or credentials back', async () => {
+    port.enablePush();
+    const texts = [
+      await (await call(path, { body: { ...body, id: 'cfg-1' } })).text(),
+      await (await call(`${path}/cfg-1`)).text(),
+      await (await call(path)).text(),
+    ];
+    for (const text of texts) {
+      expect(text).not.toContain('SECRET');
+      expect(text).toContain('cfg-1');
+    }
+  });
+
+  it('answers an unknown config and a foreign task as TASK_NOT_FOUND', async () => {
+    port.enablePush();
+    const missing = await call(`${path}/nope`);
+    expect(missing.status).toBe(404);
+    expect(await reason(missing)).toBe('TASK_NOT_FOUND');
+    const foreign = await call(path, {
+      body,
+      headers: { authorization: 'Bearer other' },
+    });
+    expect(await reason(foreign)).toBe('TASK_NOT_FOUND');
+  });
+
+  it('creates an inline config from a send, validating it before anything is sent', async () => {
+    const configs = port.enablePush();
+    await call('/a2a/v1/message:send', {
+      body: {
+        ...ask(),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: body,
+        },
+      },
+    });
+    expect([...configs.configs.values()]).toEqual([
+      expect.objectContaining({ taskId: 'm-root', url: body.url }),
+    ]);
+    const bad = await call('/a2a/v1/message:send', {
+      body: {
+        ...ask({ messageId: 'c-9' }),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: { url: 'nope' },
+        },
+      },
+    });
+    expect(bad.status).toBe(400);
+    expect(port.calls.filter((c) => c.method === 'open')).toHaveLength(1);
+  });
+
+  it('checks an inline config with the port before sending, and sends nothing when refused', async () => {
+    const configs = port.enablePush();
+    configs.refuse = 'private';
+    const res = await call('/a2a/v1/message:send', {
+      body: {
+        ...ask(),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: { url: 'https://private.example.com/a' },
+        },
+      },
+    });
+    expect(res.status).toBe(400);
+    expect(port.calls.some((c) => c.method === 'open')).toBe(false);
+  });
+
+  it('refuses push routes and an inline config when the port has no push support', async () => {
+    const res = await call('/a2a/v1/message:send', {
+      body: {
+        ...ask(),
+        configuration: {
+          returnImmediately: true,
+          taskPushNotificationConfig: body,
+        },
+      },
+    });
+    expect(await reason(res)).toBe('PUSH_NOTIFICATION_NOT_SUPPORTED');
+    expect(port.calls.some((c) => c.method === 'open')).toBe(false);
+    expect(await reason(await call(path))).toBe(
+      'PUSH_NOTIFICATION_NOT_SUPPORTED'
+    );
+  });
+});
+
+describe('the JWKS and the card URL (P4)', () => {
+  const bare = { authorization: '', 'A2A-Version': '' };
+
+  it('serves the port’s JWKS unauthenticated, and 404s without one', async () => {
+    expect(
+      (await call('/.well-known/jwks.json', { headers: bare })).status
+    ).toBe(404);
+    port.cardInputs = {
+      ...port.cardInputs,
+      jwks: { keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'k1' }] },
+    };
+    const res = await call('/.well-known/jwks.json', { headers: bare });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('public, max-age=300');
+    expect(await res.json()).toEqual({
+      keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'k1' }],
+    });
+  });
+
+  it('answers HEAD on the JWKS with its headers and no body', async () => {
+    port.cardInputs = {
+      ...port.cardInputs,
+      jwks: { keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'k1' }] },
+    };
+    const res = await call('/.well-known/jwks.json', {
+      method: 'HEAD',
+      headers: bare,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/json');
+    expect(await res.text()).toBe('');
+  });
+
+  it('never builds the card URL from Host or X-Forwarded-* headers', async () => {
+    const res = await call('/.well-known/agent-card.json', {
+      headers: {
+        ...bare,
+        host: 'evil.example.net',
+        'x-forwarded-host': 'evil.example.net',
+        'x-forwarded-proto': 'http',
+      },
+    });
+    const text = await res.text();
+    expect(text).toContain(port.cardInputs.publicUrl);
+    expect(text).not.toContain('evil.example.net');
+    expect(port.calls.filter((c) => c.method === 'card')).toEqual([
+      { method: 'card', args: [] },
+    ]);
   });
 });

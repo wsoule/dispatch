@@ -13,8 +13,16 @@ const tokens = themeAwareTokens(tokensCss);
 
 interface Props {
   title?: string;
+  description?: string;
+  // A site path: an alias page names the immutable page it shows.
+  canonical?: string;
 }
-const { title = 'Dispatch: Linear, for agents' } = Astro.props;
+const { title, description, canonical } = Astro.props;
+// A page that sets its own title or description also sets its link preview.
+const ogTitle = title ?? 'Dispatch';
+const ogDescription =
+  description ??
+  'Linear, for agents. A board, reviews, and a merge queue in your repo.';
 ---
 
 <!doctype html>
@@ -22,17 +30,19 @@ const { title = 'Dispatch: Linear, for agents' } = Astro.props;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
+    <title>{title ?? 'Dispatch: Linear, for agents'}</title>
     <meta
       name="description"
-      content="Linear, for agents. A board, reviews, and a merge queue, all markdown in your repo."
+      content={description ??
+        'Linear, for agents. A board, reviews, and a merge queue, all markdown in your repo.'}
     />
-    <meta property="og:title" content="Dispatch" />
-    <meta
-      property="og:description"
-      content="Linear, for agents. A board, reviews, and a merge queue in your repo."
-    />
-    <!-- The old site had no og:url, og:image, or canonical tag to carry forward (see Step 1). -->
+    <meta property="og:title" content={ogTitle} />
+    <meta property="og:description" content={ogDescription} />
+    {
+      canonical !== undefined && (
+        <link rel="canonical" href={`https://dispatch.foo${canonical}`} />
+      )
+    }
     <style is:inline set:html={tokens}></style>
     <!-- Applies a stored theme choice before first paint so the page never flashes the
          wrong palette. No choice stored means the OS setting applies. -->

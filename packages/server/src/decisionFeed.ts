@@ -25,9 +25,10 @@ import { runKind } from './orchestrator/types.js';
  * rather than redeclaring is what stops a kind being added here without the
  * toggles knowing about it.
  *
- * `approval`, `scope-request` and `question` are the open gates, sorted onto
- * the toggles by notificationKindForMessage; they stay separate kinds because
- * each carries a different payload and a surface renders them differently.
+ * `approval`, `scope-request`, `memory` and `question` are the open gates,
+ * sorted onto the toggles by notificationKindForMessage; they stay separate
+ * kinds because each carries a different payload and a surface renders them
+ * differently.
  */
 type DecisionKind = NotificationKind;
 
@@ -86,7 +87,8 @@ export interface DecisionItem {
    * raised as a floor hold whose check can no longer be named.
    */
   floor?: FloorCheck | 'unknown';
-  /** ActorRef of the human whose run this came from — see withOwner. Absent
+  /** ActorRef of the human whose run this came from (the one it acts for,
+   *  else its dispatcher) — see withOwner. Absent
    *  means nobody in particular, so everyone. */
   owner?: string;
   disposition: DecisionDisposition;
@@ -218,8 +220,9 @@ function withOwner<T extends { runId?: string }>(
   item: T,
   runs: Map<string, RunMeta>
 ): T & { owner?: string } {
-  const owner =
-    item.runId === undefined ? undefined : runs.get(item.runId)?.dispatchedBy;
+  const run = item.runId === undefined ? undefined : runs.get(item.runId);
+  // The human the run acts for (XH-R9), else whoever dispatched it.
+  const owner = run?.operator ?? run?.dispatchedBy;
   return owner === undefined ? item : { ...item, owner };
 }
 
@@ -440,14 +443,15 @@ export class DecisionFeed {
       const kind = notificationKindForMessage(message);
       if (kind === null) continue;
       const gate = gateOf(message);
+      // A doc gate comes from the system, so its run and task ride in its data.
       const runId =
-        gate?.type === 'tool-approval'
+        gate?.type === 'tool-approval' || gate?.type === 'doc'
           ? gate.runId
           : addressId(message.from, 'run:');
       const run = runId === undefined ? undefined : runs.get(runId);
-      const taskId =
-        run?.taskId ??
-        (gate?.type === 'wake' ? addressId(gate.target, 'task:') : undefined);
+      let taskId = run?.taskId;
+      if (gate?.type === 'wake') taskId ??= addressId(gate.target, 'task:');
+      else if (gate?.type === 'doc') taskId ??= gate.taskId;
       const taskTitle =
         run?.taskTitle ??
         (taskId === undefined ? undefined : this.taskTitle(taskId));
@@ -478,6 +482,11 @@ export class DecisionFeed {
           summary: `agent asked to edit outside its scope: ${paths}`,
           reason: oneLine(gate.reason),
           paths: gate.paths,
+        });
+      } else if (gate?.type === 'doc') {
+        items.push({
+          ...base,
+          summary: `${taskTitle ?? 'A task'}: an agent proposes an edit to an accepted doc`,
         });
       } else {
         items.push({ ...base, summary: oneLine(message.body) });

@@ -376,6 +376,29 @@ test('the transcript is a region named Run log, holding each message it shows', 
   expect(within(log).getByText('new cart')).toBeDefined();
 });
 
+// An A2A client's, an a2a: peer's or any external sender's body is plain text: no image loads.
+test('an A2A or external sender body renders as plain text, not markdown', () => {
+  const { container } = renderEntries([
+    {
+      ...delivered('human:ext', 'message', 'm-05', '![a](https://evil/a.gif)'),
+      fromLabel: 'human:ext',
+      text: '[message from human:ext (external) · message · m-05]\n│ ![a](https://evil/a.gif)',
+    },
+    delivered(
+      'a2a:peer.example',
+      'message',
+      'm-06',
+      '![b](https://evil/b.gif)'
+    ),
+    delivered('agent:wyat/a2a.acme', 'message', 'm-07', '[c](https://evil/c)'),
+  ]);
+  expect(container.querySelector('img')).toBeNull();
+  expect(container.querySelector('a[href^="https://evil"]')).toBeNull();
+  expect(screen.getByText('![a](https://evil/a.gif)')).toBeDefined();
+  expect(screen.getByText('![b](https://evil/b.gif)')).toBeDefined();
+  expect(screen.queryByText(/\[message from/)).toBeNull();
+});
+
 test('a pushed question shows its body without the agent framing, with its kind and a thread link', () => {
   const onOpen = mock((_id: string) => {});
   renderEntries(

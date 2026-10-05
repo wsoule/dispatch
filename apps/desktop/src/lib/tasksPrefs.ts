@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 import { TASKS_VIEW_TABS, type TasksViewMode } from './tasksViewMode';
 
@@ -290,7 +290,7 @@ export function hasActiveFilters(filters: TaskFilters): boolean {
 /** Whether one task passes the chip filters. Empty filter arrays pass everything; active
  * statuses/priorities each union within their group and intersect across groups. */
 export function matchesTaskFilters(
-  doc: TaskDoc,
+  doc: TaskListItem,
   filters: TaskFilters
 ): boolean {
   if (

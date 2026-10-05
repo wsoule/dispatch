@@ -34,6 +34,14 @@ const KIND_INFO: Record<NotificationKind, { label: string; hint: string }> = {
     label: 'An agent asks to edit extra files',
     hint: 'Files outside the ones its task lists.',
   },
+  memory: {
+    label: 'An agent proposes a lesson for shared memory',
+    hint: 'No run reads it until you approve it.',
+  },
+  doc: {
+    label: 'An agent proposes an edit to an accepted doc',
+    hint: 'No run reads the edit until you approve it.',
+  },
   'fix-loop-capped': {
     label: 'A fix loop gives up',
     hint: "Problems it couldn't fix in its rounds, waiting for your call.",

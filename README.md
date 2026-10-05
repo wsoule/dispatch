@@ -433,6 +433,59 @@ stopped. `--from` takes a remote's name, a URL or a path:
     dispatch receipts restore --from origin
     dispatch receipts restore --from git@github.com:acme/dispatch-audit.git
 
+## Memory
+
+Runs keep what they learn as memory: short entries, a one-line title and a body
+of up to 8 KiB, that later runs are shown. Every dispatch prompt carries a
+budgeted index of the entries that reach the task (1,000 tokens by default,
+`memory.indexTokens`), best-ranked first, and the agent reads a body only when
+it needs one. The four `memory_*` tools below are how a run reaches it:
+`memory_search` and `memory_read` look things up, `memory_save` adds an entry,
+and `memory_forget` retires one. `dispatch memory` does the same for a person;
+**Settings → Memory** shows memory's health, the ledger import and your
+identity.
+
+An entry has one of three scopes:
+
+- **Personal** belongs to one human and follows them across projects unless it
+  is saved for one project only. A run writes its operator's personal memory
+  directly, and the Inbox can undo it. Nobody else sees it. A run's operator is
+  whoever started, continued or woke it; the owner only on the app token, and no
+  one when an agent, a run or policy did. An epic's auto-fill acts for whoever
+  last started or resumed the epic, and only on tasks that person created and
+  last edited. The desktop app and a signed-in browser present the app token;
+  the CLI presents the daemon file's agent token, so a run the owner starts from
+  the CLI acts for no one unless the CLI is given the app token (`--token` or
+  `DISPATCH_APP_TOKEN`). A teammate below `decide` cannot message a live run
+  that acts for someone else; they message its task or that person instead. An
+  agent registered in your name reads your personal memory only once you approve
+  it with the app token, so one approved before that rule must be approved
+  again.
+- **Team** is the default for a code lesson: the constraints, hazards and
+  decisions every run of this project should know. The ledger's old lessons were
+  imported here; the ledger keeps the audit receipts. Replicating team memory to
+  teammates' daemons comes later (see `docs/TEAM-SERVER.md`).
+- **Project** is for facts true only on this machine ("proto shims were missing
+  here"). It never leaves the machine.
+
+An agent's write to project or team memory is a proposal, never an entry, until
+someone decides on it. It raises the `memory` gate: a card in **Threads → Needs
+you** with the proposed entry, where it would reach and who asked, to approve or
+reject. At autonomy rung 4 (`policy.rung: 4`) policy approves a routine task's
+proposal instead and records a receipt. A proposal with no task, one from an
+elevated or critical task, and one that repeats a personal entry of the author's
+operator still wait for a human.
+
+For Claude runs, `memory.claudeAutoMemory: export` (the default) points Claude
+Code's own auto memory at a directory Dispatch writes for the run, with the
+index as its `MEMORY.md`; what the agent saves there comes back as memory
+writes. `off` disables Claude Code's auto memory and keeps the index in the
+prompt. The daemon imports your existing Claude Code notes for the project into
+your personal memory once, before its first run; `dispatch memory import-claude`
+runs it again. Memory lives in `memory.db` beside the project's run state, and
+personal memory under `~/.dispatch/memory`. See
+`docs/specs/2026-09-25-memory-design.md`.
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`
@@ -451,8 +504,8 @@ binary from `@dispatch/mcp`.
 On the file backend the five `task_*` tools operate directly on
 `.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
 file changes through its watcher like any other edit); on the database backend
-they go through the daemon like everything else. The other twelve always talk to
-`dispatchd` over its local HTTP API, and return a clear error when it isn't
+they go through the daemon like everything else. The other fifteen always talk
+to `dispatchd` over its local HTTP API, and return a clear error when it isn't
 running.
 
 Tools (server name `dispatch`):
@@ -473,7 +526,10 @@ Tools (server name `dispatch`):
 | `channel_leave`   | `{ name, member? }`                                                                                          | `{ ok }`                                                |
 | `channel_list`    | `{}`                                                                                                         | `{ channels }`                                          |
 | `dispatch_note`   | `{ kind, title, body? }`                                                                                     | `{ ok, id }`                                            |
-| `record_decision` | `{ kind, title, detail, appliesTo? }`                                                                        | `{ ok, id }`                                            |
+| `memory_search`   | `{ query, scope?, kind?, includeStale?, limit? }`                                                            | `{ hits, search }`                                      |
+| `memory_read`     | `{ id }`                                                                                                     | `{ entry, body, provenance, revisions }`                |
+| `memory_save`     | `{ scope, kind, title, body, refs?, epic?, appliesTo?, supersedes?, projectOnly? }`                          | `{ status, id?, handle?, proposal?, gate? }`            |
+| `memory_forget`   | `{ id, reason }`                                                                                             | `{ status, id?, handle?, proposal?, gate? }`            |
 | `record_evidence` | `{ command, exitCode, durationMs, summary }`                                                                 | `{ ok }`                                                |
 | `record_mutation` | `{ guard, file, testsFailed }`                                                                               | `{ ok }`                                                |
 

@@ -132,20 +132,15 @@ it('carries U+2028 and U+2029 both ways under Node', () => {
 // it would crash the runner instead of failing the vector.
 it('survives an adapter that exits or closes its stdin after hello, under Node', () => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'dmp-bin-')));
-  // Bun 1.3 ignores fs.closeSync(0), so the stdin-closing mode runs on Node.
-  const adapters: [string, string][] = [
-    ['exit-after-hello', 'bun'],
-    ['close-stdin-after-hello', 'node'],
-  ];
-  const modes = adapters.map(([mode]) => mode);
-  const results = adapters.map(([mode, runtime]) => {
+  const modes = ['exit-after-hello', 'close-stdin-after-hello'];
+  const results = modes.map((mode) => {
     const report = join(dir, `${mode}.json`);
     const run = spawnSync(
       'node',
       [
         'dist/bin.js',
         '--adapter',
-        `${runtime} test/fixtures/adapters/fixture.ts ${mode}`,
+        `bun test/fixtures/adapters/fixture.ts ${mode}`,
         '--claim',
         'envelope',
         '--vectors',

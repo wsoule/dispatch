@@ -1,4 +1,7 @@
 import { defineConfig } from 'astro/config';
 
-// The old site had no og:url/canonical tag, so no `site` is configured here.
-export default defineConfig({});
+import { markdownProcessor } from './src/lib/markdown.ts';
+
+// No `site` is configured: Base.astro writes the one canonical link, for the
+// protocol alias pages, on dispatch.foo itself.
+export default defineConfig({ markdown: { processor: markdownProcessor() } });

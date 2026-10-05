@@ -1,6 +1,6 @@
 import type { Message } from '@dispatch/protocol';
 
-import type { LinearSyncSummary } from './linear/sync.js';
+import type { LinearProgress, LinearSyncSummary } from './linear/sync.js';
 import type { EpicPauseReason } from './orchestrator/epic.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
@@ -9,10 +9,10 @@ import type { SyncResult } from './sync/boardSyncer.js';
 import type { AuthTier } from './tiers.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
-// opened socket; `task.changed` tells every connected client "something
+// opened socket; `task.changed` tells every connected client "these tasks
 // changed, go refetch" — clients never receive a diff, so a duplicate event
-// is harmless (see EventBus.broadcast callers in index.ts/api.ts for why
-// duplicates can happen).
+// is harmless, though the daemon no longer echoes its own writes back through
+// the file watcher (see the watcher in index.ts).
 //
 // The `run.*` variants are the orchestrator's equivalents: `run.changed` is
 // "some run's lifecycle/registry state changed, go refetch" (same
@@ -20,7 +20,12 @@ import type { AuthTier } from './tiers.js';
 // NormalizedEntry as it's produced, keyed by runId so a client can append it
 // to the right run's log without a refetch.
 export type ServerEvent =
-  | { type: 'task.changed' }
+  // `ids`, when set, names every task the change touched, so a client can
+  // refetch just those; absent means "anything may have changed".
+  | { type: 'task.changed'; ids?: string[] }
+  // A task's comments changed: added, edited or removed (with replies).
+  // Carries the ids so a client patches its thread instead of refetching.
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -69,6 +74,8 @@ export type ServerEvent =
   // A Linear sync pass finished. Carries its own summary so the settings screen
   // can show the outcome without a follow-up fetch.
   | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // A long Linear pass (an import) moved on; carries where it got to.
+  | { type: 'linear.progress'; progress: LinearProgress }
   // The repo's git state changed via an `/api/git/*` mutation — same
   // "go refetch" contract as `run.changed`.
   | { type: 'git.changed' }
@@ -76,6 +83,13 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
+  // Memory changed. A bare refetch signal; a personal change carries no id,
+  // since every request-tier client hears it.
+  | {
+      type: 'memory.changed';
+      scope: 'personal' | 'project' | 'team';
+      id?: string;
+    }
   // A task's fix loop moved between states, or stopped needing a human.
   // `reason` says which action: `round` alone never distinguished them.
   | { type: 'fixloop.changed'; taskId: string }
@@ -143,6 +157,8 @@ export type ServerEvent =
   | { type: 'message.new'; message: Message }
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // A doc changed; a bare refetch signal, never an id for personal docs.
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
   // The A2A bridge's clients, tasks or listener changed; go refetch.
   | { type: 'a2a.changed' };
 
@@ -158,18 +174,31 @@ export interface SocketAudience {
 // pass plain mock objects instead of real sockets.
 export interface BroadcastClient {
   send(data: string): void;
+  close?(code?: number, reason?: string): void;
   readonly data?: SocketAudience;
 }
 
+/** Who a socket's credential names right now, or null once it is revoked or
+ *  expired; index.ts installs it so every event re-checks the tier (M2). */
+export type AudienceCheck = (client: BroadcastClient) => SocketAudience | null;
+
 // Fan-out hub for connected WS clients. The watcher (external file edits) and
 // the API mutation handlers (our own writes) both call `broadcast()`.
-// Sockets are closed via `Bun.serve`'s own `server.stop(true)` on shutdown
-// (see index.ts) rather than a `closeAll()` here — closing each
-// ServerWebSocket ourselves right before `server.stop(true)` hangs that call
-// forever on Bun 1.3.14, so `stop(true)` is left to own the close.
+// On shutdown `server.stop(true)` (see index.ts) closes every socket.
 export class EventBus {
   private readonly clients = new Set<BroadcastClient>();
   private readonly listeners = new Set<(event: ServerEvent) => void>();
+  private check: AudienceCheck | null = null;
+  private onDetach: ((client: BroadcastClient) => void) | null = null;
+
+  // `onDetach` hears each socket dropped for a dead credential.
+  setAudienceCheck(
+    check: AudienceCheck | null,
+    onDetach: ((client: BroadcastClient) => void) | null = null
+  ): void {
+    this.check = check;
+    this.onDetach = onDetach;
+  }
 
   add(client: BroadcastClient): void {
     this.clients.add(client);
@@ -201,8 +230,29 @@ export class EventBus {
   ): void {
     const payload = JSON.stringify(event);
     for (const client of this.clients) {
-      if (audience === undefined || audience(client.data)) client.send(payload);
+      const who = this.current(client);
+      if (who === null) continue;
+      if (audience === undefined || audience(who)) client.send(payload);
     }
     for (const listener of this.listeners) listener(event);
+  }
+
+  // Detaches every socket whose credential no longer resolves; a revoke calls
+  // it so a socket that would hear nothing further still goes.
+  revalidate(): void {
+    for (const client of this.clients) this.current(client);
+  }
+
+  // The socket's audience as its credential stands now, or null after
+  // detaching and closing (1008, policy violation) a socket whose credential
+  // is gone; its owner's next reconnect is refused.
+  private current(client: BroadcastClient): SocketAudience | undefined | null {
+    if (this.check === null || client.data === undefined) return client.data;
+    const who = this.check(client);
+    if (who !== null) return who;
+    this.clients.delete(client);
+    this.onDetach?.(client);
+    client.close?.(1008, 'credential revoked');
+    return null;
   }
 }

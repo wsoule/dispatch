@@ -1,0 +1,14 @@
+---
+import ProtocolDocument from '../../components/ProtocolDocument.astro';
+import Protocol from '../../layouts/Protocol.astro';
+import { readManifest } from '../../lib/protocolSource';
+
+// The `latest` alias: the newest release (the newest draft before 1.0.0),
+// naming its immutable URL as canonical.
+const version = readManifest().aliases['latest'];
+if (version === undefined) throw new Error('the versions manifest has no latest alias');
+---
+
+<Protocol version={version} source="spec/" canonical={`/protocol/${version}/`}>
+  <ProtocolDocument version={version} />
+</Protocol>

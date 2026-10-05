@@ -1,3 +1,4 @@
+import { SqliteCommentStore } from './commentStore.js';
 import {
   attachDispatchDb,
   dispatchDbPath,
@@ -37,6 +38,7 @@ export interface SqliteRecordStores {
   findings: SqliteFindingStore;
   ledger: SqliteLedgerStore;
   evidence: SqliteEvidenceStore;
+  comments: SqliteCommentStore;
 }
 
 export interface ProjectStores {
@@ -135,6 +137,7 @@ function sqliteStores(
       findings: new SqliteFindingStore(db),
       ledger: new SqliteLedgerStore(db),
       evidence: new SqliteEvidenceStore(db),
+      comments: new SqliteCommentStore(db),
     },
     close: () => {
       if (closed) return;

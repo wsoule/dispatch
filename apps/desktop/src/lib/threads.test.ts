@@ -625,3 +625,38 @@ describe('behaviors the thread surfaces rely on', () => {
     expect(next[0]).toBe(a);
   });
 });
+
+describe('completing a2a: peers', () => {
+  test('completes a2a: peers', () => {
+    const known = {
+      tasks: [],
+      channels: [],
+      agents: [],
+      humans: [],
+      peers: ['a2a:acme', 'a2a:beta'],
+    };
+    expect(completeAddress('@a2a:a', known)).toEqual([
+      { address: 'a2a:acme', label: 'a2a:acme' },
+    ]);
+    expect(completeAddress('@', known).map((c) => c.address)).toEqual(
+      expect.arrayContaining(['a2a:acme', 'a2a:beta'])
+    );
+  });
+
+  test('completes as before when there are no peers', () => {
+    expect(
+      completeAddress('@a2a:', {
+        tasks: [],
+        channels: [],
+        agents: [],
+        humans: [],
+      })
+    ).toEqual([]);
+  });
+
+  test('labels an a2a: address as written', () => {
+    expect(addressLabel('a2a:acme', { taskTitle: () => null })).toBe(
+      'a2a:acme'
+    );
+  });
+});

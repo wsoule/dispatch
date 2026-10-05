@@ -1,8 +1,14 @@
-import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
+import {
+  isAgentAuthored,
+  isPeerAddress,
+  parseAddress,
+  SYSTEM_ADDRESS,
+} from './address.js';
 import type { Address } from './address.js';
-import { gateTypeOf, hasGateData } from './constants.js';
+import { gateTypeOf, hasGateData, isDecidingAuthor } from './constants.js';
 import {
   checkIdempotencyKey,
+  gateOf,
   isIdentifier,
   isSystemMarker,
   validateSendInput,
@@ -46,11 +52,20 @@ import { createUlidFactory } from './ulid.js';
 export interface EngineLimits {
   urgentPerHour: number;
   agentTurnsPerThreadPerHour: number;
+  /** New threads an agent-authored sender may start among agents and
+   *  sessions (no human recipient) per hour. A host's own guardrail beyond
+   *  the spec's breaker, which counts replies only; off by default. */
+  agentThreadsPerHour: number;
+  /** Open wake gates one target may have at once; a further ask is merged
+   *  into the open gate, its message held as before. Off by default. */
+  openWakeGatesPerTarget: number;
 }
 
 export const DEFAULT_LIMITS: EngineLimits = {
   urgentPerHour: 10,
   agentTurnsPerThreadPerHour: 20,
+  agentThreadsPerHour: Number.POSITIVE_INFINITY,
+  openWakeGatesPerTarget: Number.POSITIVE_INFINITY,
 };
 
 /** Who is sending, as the host authenticated them. */
@@ -297,6 +312,7 @@ export class DeliveryEngine {
         return { ...base, runId: null, state: 'notified' };
       case 'agent':
       case 'channel':
+      case 'a2a':
         return { ...base, runId: null, state: 'held' };
       case 'task': {
         const run = this.host.liveRunFor(parsed.id);
@@ -348,6 +364,7 @@ export class DeliveryEngine {
       origin: options.origin ?? 'local',
     });
     await this.checkBreaker(replyTarget, sender);
+    this.checkNewThreads(input, replyTarget, sender);
     // The breaker await lets a duplicate commit first, so look again before the
     // answered check: a raced retry replays rather than meeting conflict.
     const raced = key === undefined ? null : this.replay(sender.address, key);
@@ -367,10 +384,13 @@ export class DeliveryEngine {
       !sender.address.startsWith('human:') &&
       sender.address !== SYSTEM_ADDRESS
     ) {
-      if (
-        this.store.countFrom(sender.address, this.hourAgoIso(), true) >=
-        this.limits.urgentPerHour
-      ) {
+      const since = this.hourAgoIso();
+      const group = this.host.quotaGroup?.(sender.address) ?? [sender.address];
+      const sent = group.reduce(
+        (n, address) => n + this.store.countFrom(address, since, true),
+        0
+      );
+      if (sent >= this.limits.urgentPerHour) {
         urgent = false;
         downgraded = true;
       }
@@ -489,7 +509,7 @@ export class DeliveryEngine {
       gateType !== null &&
       this.gateTypes.has(gateType) &&
       !isSystemMarker(message, 'x-closed') &&
-      decidingAuthor(message.from)
+      isDecidingAuthor(message.from)
     )
       await this.applyGate(question, message);
     this.emit({ type: 'message', message });
@@ -709,7 +729,7 @@ export class DeliveryEngine {
     question: Message,
     answer: Message
   ): Promise<boolean> {
-    if (!decidingAuthor(answer.from)) return false;
+    if (!isDecidingAuthor(answer.from)) return false;
     try {
       await this.host.onAnswered(question, answer);
     } catch (err) {
@@ -817,7 +837,7 @@ export class DeliveryEngine {
       const type = gateTypeOf(question, this.gateTypes);
       // Unknown to this build: leave it unapplied, so a build that knows it replays it.
       if (type === null || !this.gateTypes.has(type)) continue;
-      if (!decidingAuthor(answer.from)) {
+      if (!isDecidingAuthor(answer.from)) {
         if (await this.voidAndReopen(question, answer)) voided++;
         continue;
       }
@@ -893,6 +913,15 @@ export class DeliveryEngine {
     return this.store.getMessage(id);
   }
 
+  /** What `address` sent at or after `sinceIso`, oldest first, optionally only these kinds. */
+  messagesFrom(
+    address: Address,
+    sinceIso: string,
+    kinds?: MessageKind[]
+  ): Message[] {
+    return this.store.messagesFrom(address, sinceIso, kinds);
+  }
+
   answerOf(questionId: string): Message | null {
     return this.store.answersTo(questionId)[0] ?? null;
   }
@@ -946,6 +975,27 @@ export class DeliveryEngine {
       )
     )
       return this.store.getDelivery(d.id) ?? d;
+    this.emit({ type: 'delivery', delivery: next });
+    return next;
+  }
+
+  // The outbound worker handed a held peer delivery to the peer: held → pushed,
+  // once. Null when it is not a held peer delivery (already relayed, or gone).
+  markRelayed(deliveryId: string): Delivery | null {
+    const d = this.store.getDelivery(deliveryId);
+    if (d === null || d.state !== 'held' || !isPeerAddress(d.recipient))
+      return null;
+    const next: Delivery = { ...d, state: 'pushed', updatedAt: this.nowIso() };
+    if (
+      !this.store.setDelivery(
+        next.id,
+        next.state,
+        next.runId,
+        next.updatedAt,
+        'held'
+      )
+    )
+      return null;
     this.emit({ type: 'delivery', delivery: next });
     return next;
   }
@@ -2011,6 +2061,12 @@ export class DeliveryEngine {
           `Waking ${d.recipient} was not allowed. Your message is waiting for it.`
         );
       } else {
+        // Merged into an open gate for the same target: approving it wakes the
+        // target, and this message is already held for it.
+        if (
+          this.openWakeGates(d.recipient) >= this.limits.openWakeGatesPerTarget
+        )
+          continue;
         const label = this.remoteLabel(message);
         const who =
           label === undefined
@@ -2018,7 +2074,7 @@ export class DeliveryEngine {
             : `${message.from} (remote: ${label})`;
         await this.send(
           {
-            to: [this.host.owner(d.recipient)],
+            to: [this.host.owner(d.recipient, message.from)],
             kind: 'question',
             blocking: true,
             choices: ['approve', 'deny'],
@@ -2030,6 +2086,41 @@ export class DeliveryEngine {
         );
       }
     }
+  }
+
+  // Rejects a new agent-to-agent thread past the sender's hourly allowance,
+  // so starting fresh threads cannot sidestep the reply breaker. Only roots
+  // that name an agent, run or task and no human count: channels and A2A
+  // peers have limits of their own.
+  private checkNewThreads(
+    input: SendInput,
+    replyTarget: Message | null,
+    sender: Sender
+  ): void {
+    if (
+      replyTarget !== null ||
+      !isAgentAuthored(sender.address) ||
+      !isAgentThread(input.to)
+    )
+      return;
+    const started = this.store.countAgentThreadsFrom(
+      sender.address,
+      this.hourAgoIso()
+    );
+    if (started < this.limits.agentThreadsPerHour) return;
+    throw new MessagingError(
+      'limited',
+      `${sender.address} started ${started} new threads with other agents this hour; message a human or wait`,
+      'to'
+    );
+  }
+
+  // How many wake gates for `target` are still open.
+  private openWakeGates(target: Address): number {
+    return this.openBlocking().filter((m) => {
+      const gate = gateOf(m);
+      return gate?.type === 'wake' && gate.target === target;
+    }).length;
   }
 
   // Rejects an agent reply past the thread's hourly agent turns, flagging the owner
@@ -2087,11 +2178,6 @@ function decides(sender: Sender): boolean {
     sender.address === SYSTEM_ADDRESS ||
     (sender.canDecide && sender.address.startsWith('human:'))
   );
-}
-
-// Answers that may take effect: a deciding human's or the system's.
-function decidingAuthor(address: Address): boolean {
-  return address === SYSTEM_ADDRESS || address.startsWith('human:');
 }
 
 // The higher of a remote row's state and a home's report: any report replaces
@@ -2332,5 +2418,16 @@ function wakesEndedRuns(message: Message): boolean {
     message.wake === 'request' &&
     message.origin === undefined &&
     message.from.startsWith('human:')
+  );
+}
+
+// A root among agents: it names an agent, run or task, and no human.
+function isAgentThread(to: readonly Address[]): boolean {
+  return (
+    !to.some((a) => a.startsWith('human:')) &&
+    to.some(
+      (a) =>
+        a.startsWith('agent:') || a.startsWith('run:') || a.startsWith('task:')
+    )
   );
 }

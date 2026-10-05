@@ -1,7 +1,7 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore, updateConfig } from '@dispatch/core';
 import type { Message } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,8 +17,14 @@ import type {
 } from '../src/orchestrator/overseerBackend.js';
 import { FakeOverseer } from '../src/orchestrator/overseers/fake.js';
 import type { FakeOverseerScript } from '../src/orchestrator/overseers/fake.js';
+import { claudeMemoryDir, projectKeyOf } from '../src/orchestrator/paths.js';
 import type { ApprovalDecision } from '../src/orchestrator/types.js';
 import { json } from './json.js';
+import {
+  BEFORE_CUTOVER,
+  importAtCutover,
+  seedLedger,
+} from './memory/fixtures.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth, wsUrl } from './testAuth.js';
 
@@ -334,9 +340,12 @@ describe('overseer action gates', () => {
     return { ready, gate };
   }
 
-  async function listRuns(): Promise<{ taskId: string }[]> {
+  async function listRuns(): Promise<
+    { taskId: string; operator?: string | null }[]
+  > {
     return (await json(await fetch(`${baseUrl}/api/runs`))) as {
       taskId: string;
+      operator?: string | null;
     }[];
   }
 
@@ -354,8 +363,28 @@ describe('overseer action gates', () => {
         outcome: 'applied',
       })
     );
-    expect(await listRuns()).toHaveLength(1);
+    const runs = await listRuns();
+    expect(runs).toHaveLength(1);
+    // Confirmed with the app token, the run acts for the owner.
+    expect(runs[0].operator).toBe('human:test');
     expect(await openGates()).toEqual([]);
+  });
+
+  it("a teammate's confirm dispatches a run that acts for the teammate", async () => {
+    const { gate } = await startWithQueuedDispatch();
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const res = await fetch(`${baseUrl}/api/messages/${gate.id}/reply`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${ada}`,
+      },
+      body: JSON.stringify({ body: '', choice: 'confirm' }),
+    });
+    expect(res.status).toBe(201);
+    const runs = await listRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].operator).toBe('human:ada');
   });
 
   it('cancel records the refusal and dispatches nothing', async () => {
@@ -426,6 +455,77 @@ class GatedOverseer implements OverseerBackend {
     };
   }
 }
+
+describe('overseer memory tools', () => {
+  it('searches memory as the owner’s overseer, and ledger_entries lists only receipts', async () => {
+    const backend = new FakeOverseer({
+      ok: true,
+      calls: [
+        { tool: 'memory_search', input: { query: 'pnpm' } },
+        { tool: 'ledger_entries' },
+      ],
+    });
+    await startWithOverseer(backend);
+    seedLedger(
+      root,
+      {
+        kind: 'hazard',
+        title: 'pnpm 11 ignores onlyBuiltDependencies',
+        detail: 'use allowBuilds',
+        authoredBy: 'human:test',
+      },
+      BEFORE_CUTOVER
+    );
+    importAtCutover(handle.memory);
+
+    const { record } = await startConversation('what do we know about pnpm?');
+    await settled(record.id);
+    const [search, ledger] = backend.observations;
+    expect(search.result.isError).toBe(false);
+    expect(search.result.content).toMatchObject({
+      hits: [
+        expect.objectContaining({
+          title: 'pnpm 11 ignores onlyBuiltDependencies',
+        }),
+      ],
+    });
+    expect(ledger.result.content).toMatchObject({ entries: [], total: 0 });
+  });
+
+  // Request-tier callers read overseer transcripts, so no turn carries the
+  // owner's personal memory, even with the export on and the import complete.
+  it('writes no export for an overseer turn, whatever the Claude setting', async () => {
+    const seen: OverseerTurnOptions[] = [];
+    const backend: OverseerBackend = {
+      start: (_prompt, _toolset, options = {}) => {
+        seen.push(options);
+        return Promise.resolve({ reply: 'noted', sessionId: 's-o' });
+      },
+      sendMessage: () => Promise.resolve({ reply: 'ok' }),
+    };
+    updateConfig(root, { memory: { claudeAutoMemory: 'export' } });
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerOverseers: (overseerManager) => {
+        overseerManager.registerBackend('claude', backend);
+      },
+      memoryPreflight: () => Promise.resolve({ ok: true, version: '2.1.210' }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    handle.memory.personal
+      .personal('self')
+      .setMeta(`claude-import:${projectKeyOf(root)}`, 'complete');
+    await handle.memory.refreshPreflight();
+
+    const { record } = await startConversation('remember the queue order');
+    await settled(record.id);
+    expect(seen).toHaveLength(1);
+    expect(existsSync(claudeMemoryDir(root, `o-${record.id}`))).toBe(false);
+  });
+});
 
 describe('overseer tool-approval gates', () => {
   // Opens a conversation against the gated backend and returns the record and

@@ -1,8 +1,11 @@
+import type { LabelDefinition } from './labels.js';
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
+import type { Person } from './people.js';
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
 import { DEFAULT_POLICY } from './policy.js';
 import type { QueueWeights } from './scoring.js';
 import { DEFAULT_QUEUE_WEIGHTS } from './scoring.js';
+import type { StatusDefinition, StatusRoles } from './status.js';
 
 // The browser-safe half of the config module: shapes and defaults with no
 // filesystem access, so the desktop webview can import them.
@@ -160,8 +163,24 @@ export interface VerifyStep {
   command: string;
 }
 
+/** A `statuses:` entry as written: a bare name, or a name with a type/color. */
+export type StatusEntryInput =
+  | string
+  | { name: string; type?: StatusDefinition['type']; color?: string | null };
+
 export interface DispatchConfig {
+  /** Status names in board order (always populated). */
   statuses: string[];
+  /** Typed statuses, parallel to `statuses`. Set by loadConfig when any
+   *  entry is typed; read through `statusModelOf`, which fills defaults. */
+  statusDefinitions?: StatusDefinition[];
+  /** Which status each lifecycle event writes. Absent means the defaults;
+   *  read through `statusModelOf`. */
+  statusRoles?: StatusRoles;
+  /** The people registry beyond team.yml (see people.ts); absent when none. */
+  people?: Person[];
+  /** The label registry (see labels.ts): colors and links; absent when none. */
+  labels?: LabelDefinition[];
   autoCommit: boolean;
   verifyCommand?: string;
   /** Verify as named steps rather than one opaque command, so a failure names
@@ -187,6 +206,9 @@ export interface DispatchConfig {
   repoDigest: RepoDigestConfig;
   notifications: NotificationsConfig;
   messaging: MessagingConfig;
+  /** Optional only so hand-built fixtures stay valid; `loadConfig` always
+   *  sets it. */
+  memory?: MemoryConfig;
   /** The A2A bridge's policy; `loadConfig` always sets it, optional for hand-built fixtures. */
   a2a?: A2AConfig;
   /** One line per `a2a:` key that fell back to its default. */
@@ -339,6 +361,8 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
  *
  * - `approval`        a run is parked on a permission gate.
  * - `scope-request`   an agent asked to edit outside its declared writes.
+ * - `memory`          an agent proposes a lesson for shared memory.
+ * - `doc`             an agent proposes an edit to an accepted doc.
  * - `question`        an agent sent a blocking question (msg_send) and waits
  *                     on the answer.
  * - `fix-loop-capped` a review/fix loop exhausted its rounds and wants a ruling.
@@ -347,6 +371,8 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
 export type NotificationKind =
   | 'approval'
   | 'scope-request'
+  | 'memory'
+  | 'doc'
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
@@ -356,6 +382,7 @@ const APPROVAL_GATES: ReadonlySet<string> = new Set([
   'wake',
   'agent-registration',
   'overseer-action',
+  'task-proposal',
 ]);
 
 /** The toggle a message notifies under; null when no human is being asked. */
@@ -371,6 +398,8 @@ export function notificationKindForMessage(message: {
       ? (data as { type?: unknown }).type
       : undefined;
   if (type === 'scope') return 'scope-request';
+  if (type === 'memory') return 'memory';
+  if (type === 'doc') return 'doc';
   if (typeof type === 'string' && APPROVAL_GATES.has(type)) return 'approval';
   return 'question';
 }
@@ -380,6 +409,8 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'question',
   'approval',
   'scope-request',
+  'memory',
+  'doc',
   'fix-loop-capped',
   'run-stalled',
 ];
@@ -418,6 +449,8 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
     question: true,
     approval: true,
     'scope-request': true,
+    memory: true,
+    doc: true,
     'fix-loop-capped': true,
     'run-stalled': true,
   },
@@ -437,6 +470,29 @@ export const DEFAULT_MESSAGING: MessagingConfig = {
   agentTurnsPerThreadPerHour: 20,
   agentBlockingTimeoutSec: 600,
   remoteMailPerReplicaPerHour: 600,
+};
+
+/** Memory's prompt budget, write limits and decay clock. */
+export interface MemoryConfig {
+  indexTokens: number;
+  personalWritesPerHour: number;
+  proposalsPerHour: number;
+  maxOpenProposals: number;
+  proposalTtlDays: number;
+  staleAfterDays: number;
+  retireAfterDays: number;
+  claudeAutoMemory: 'export' | 'off';
+}
+
+export const DEFAULT_MEMORY: MemoryConfig = {
+  indexTokens: 1000,
+  personalWritesPerHour: 50,
+  proposalsPerHour: 10,
+  maxOpenProposals: 50,
+  proposalTtlDays: 14,
+  staleAfterDays: 60,
+  retireAfterDays: 180,
+  claudeAutoMemory: 'export',
 };
 
 /** The skills an A2A agent card may offer. */
@@ -477,11 +533,20 @@ export const DEFAULT_A2A: A2AConfig = {
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
 export interface LinearConfig {
   enabled: boolean;
+  /** The primary linked team: `teamIds[0]`, or null when none is linked.
+   *  Read from a legacy `teamId:` when `teamIds:` is absent. */
   teamId: string | null;
-  /** dispatch status -> Linear workflow state name (a state `type` also matches). */
+  /** Every linked team, primary first. Issues follow a move between them
+   *  and unlink only when they leave all of them. */
+  teamIds: string[];
+  /** Pre-mirroring map (status -> state name or type). Once a team is linked
+   *  the statuses ARE its workflow states; this only guides that first move. */
   statusMap: Record<string, string>;
+  /** Seconds between polls when no webhook delivers changes. */
   intervalSec: number;
   direction: 'both' | 'pull' | 'push';
+  /** Whether a task's Acceptance Criteria travels in the Linear description. */
+  includeAcceptanceCriteria: boolean;
 }
 
 export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
@@ -489,9 +554,11 @@ export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
 export const DEFAULT_LINEAR: LinearConfig = {
   enabled: false,
   teamId: null,
+  teamIds: [],
   statusMap: { ...DEFAULT_STATUS_MAP },
-  intervalSec: 300,
+  intervalSec: 30,
   direction: 'both',
+  includeAcceptanceCriteria: true,
 };
 
 /** Per-role model ids. Each role is a distinct kind of agent work, so cheap
@@ -709,7 +776,13 @@ export interface ConfigPatch {
   // patched document is then validated whole (updateConfig), so none of
   // these can write something the loader would refuse.
   /** The board's statuses, in order, replacing the list. */
-  statuses?: string[];
+  statuses?: StatusEntryInput[];
+  /** Replaces `statusRoles`; null removes it (defaults apply again). */
+  statusRoles?: StatusRoles | null;
+  /** Replaces `people`; null or empty removes it. */
+  people?: Person[] | null;
+  /** Replaces `labels`; null or empty removes it. */
+  labels?: LabelDefinition[] | null;
   /** Named verify gates, replacing the list; null or empty removes it. */
   verifySteps?: VerifyStep[] | null;
   /** Per remote name: a config sets it, null removes it. */
@@ -738,4 +811,6 @@ export interface ConfigPatch {
     readyTimeoutSec?: number | null;
     idleTimeoutSec?: number | null;
   };
+  /** A value sets the key, `null` removes it (its default applies again). */
+  memory?: { [K in keyof MemoryConfig]?: MemoryConfig[K] | null };
 }

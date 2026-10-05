@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { formatActorRef } from './actor.js';
 import { DISPATCH_DIR } from './store.js';
-import type { TeamMember } from './team.js';
+import type { DroppedEntry, TeamMember } from './team.js';
 import {
   parseTeamReport,
   serializeTeam,
@@ -79,9 +79,9 @@ export class ActorContext {
     // False when `.dispatch/team.yml` was unparseable (e.g. merge
     // conflict markers) — the caller should surface the degraded state.
     readonly rosterReadable: boolean,
-    // Emails (or `(no email)`) of roster entries skipped as malformed; while
-    // any remain, resolve() writes neither team.yml nor the known handle.
-    readonly droppedEmails: readonly string[]
+    // Roster entries skipped as malformed or too long; while any remain,
+    // resolve() writes no team.yml and records only a matched handle.
+    readonly droppedEntries: readonly DroppedEntry[]
   ) {}
 
   static resolve(rootDir: string, runGit: GitReader): ActorContext {
@@ -94,10 +94,10 @@ export class ActorContext {
     // A conflicted roster must be reported, never treated as empty — that
     // would re-register the local member alone and wipe out the team.
     let existingMembers: TeamMember[] = [];
-    let droppedEmails: string[] = [];
+    let droppedEntries: DroppedEntry[] = [];
     let rosterReadable = true;
     try {
-      ({ members: existingMembers, dropped: droppedEmails } =
+      ({ members: existingMembers, dropped: droppedEntries } =
         parseTeamReport(existing));
     } catch (err) {
       if (!(err instanceof TeamParseError)) throw err;
@@ -109,13 +109,17 @@ export class ActorContext {
     const knownHandle = readKnownHandle(rootDir);
     const result = upsertMember(existingMembers, email, name, knownHandle);
     // Rewriting a roster with skipped entries would delete those teammates.
-    if (rosterReadable && droppedEmails.length === 0 && result.changed) {
+    if (rosterReadable && droppedEntries.length === 0 && result.changed) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(file, serializeTeam(result.members));
     }
-    // A roster read in part, or not at all, gives upsertMember a partial list;
-    // its guess must not overwrite what a prior, complete boot recorded.
-    if (rosterReadable && droppedEmails.length === 0) {
+    // A handle minted from a roster read in part may belong to a skipped
+    // entry, so it must not overwrite what a complete boot recorded; one
+    // matched in the roster names a real entry and is recorded.
+    const matched = existingMembers.some(
+      (m) => m.handle === result.member.handle
+    );
+    if (rosterReadable && (droppedEntries.length === 0 || matched)) {
       writeKnownHandle(rootDir, result.member.handle);
     }
     return new ActorContext(
@@ -126,7 +130,7 @@ export class ActorContext {
         operator: null,
       }),
       rosterReadable,
-      droppedEmails
+      droppedEntries
     );
   }
 

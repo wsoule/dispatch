@@ -91,28 +91,54 @@ describe('pendingDecisionCount', () => {
 });
 
 describe('decisionTarget', () => {
-  test('gates and prompts open the run chat, pinned to the run', () => {
+  test('gates and prompts open the run transcript, pinned to the run', () => {
     for (const kind of ['approval', 'scope-request', 'question'] as const) {
       expect(decisionTarget(item({ kind }))).toEqual({
         kind: 'task',
         taskId: 't-1',
-        tab: 'chat',
+        tab: 'run',
         runId: 'r-1',
       });
     }
   });
 
-  test('a capped fix loop opens the task details tab, where the ruling happens', () => {
+  // The gate comes from the daemon, so it names no run; its card is in Threads.
+  test('a memory proposal opens its gate in Threads, where the card is', () => {
     expect(
-      decisionTarget(item({ kind: 'fix-loop-capped', runId: undefined }))
-    ).toEqual({ kind: 'task', taskId: 't-1', tab: 'details', runId: null });
+      decisionTarget(
+        item({
+          id: 'memory:m-000001',
+          kind: 'memory',
+          runId: undefined,
+          taskId: undefined,
+          taskTitle: undefined,
+        })
+      )
+    ).toEqual({ kind: 'thread', messageId: 'm-000001' });
+    expect(
+      decisionTarget(item({ id: 'memory:m-000002', kind: 'memory' }))
+    ).toEqual({ kind: 'thread', messageId: 'm-000002' });
   });
 
-  test('a stalled run opens its diff — the stranded work is the object', () => {
+  // A doc gate's run did not ask it, so its transcript holds no card either.
+  test('a doc proposal opens its gate in Threads, even when it names a run', () => {
+    expect(decisionTarget(item({ id: 'doc:m-000003', kind: 'doc' }))).toEqual({
+      kind: 'thread',
+      messageId: 'm-000003',
+    });
+  });
+
+  test('a capped fix loop opens the task review, where the ruling happens', () => {
+    expect(
+      decisionTarget(item({ kind: 'fix-loop-capped', runId: undefined }))
+    ).toEqual({ kind: 'task', taskId: 't-1', tab: 'review', runId: null });
+  });
+
+  test('a stalled run opens its review — the stranded work is the object', () => {
     expect(decisionTarget(item({ kind: 'run-stalled' }))).toEqual({
       kind: 'task',
       taskId: 't-1',
-      tab: 'diff',
+      tab: 'review',
       runId: 'r-1',
     });
   });

@@ -1,5 +1,7 @@
+import { isContainerKind, isDoneStatus } from '@dispatch/core';
 import type {
   PolicyRuling as CorePolicyRuling,
+  StatusModel,
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
@@ -18,8 +20,21 @@ import type {
 } from '@dispatch/protocol';
 
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import { actingOperator, runOperator } from '../orchestrator/types.js';
 import { consultProjectPolicy } from '../policyEngine.js';
+import { statusModelFor } from '../statuses.js';
 import type { GateHandlers } from './gates.js';
+import { answeredWithOwnerCredential } from './gates.js';
+import type { OperatorRouting } from './operatorRouting.js';
+
+const HOUR_MS = 60 * 60 * 1000;
+
+// Who caused a wake, and whether with the owner's app token: the sender of a
+// direct wake, or the human who approved a gated one.
+export interface WakeActor {
+  actor: Address;
+  ownerCredential: boolean;
+}
 
 export interface DaemonHostDeps {
   rootDir: string;
@@ -32,15 +47,18 @@ export interface DaemonHostDeps {
     | 'notifyRun'
     | 'wakeTask'
     | 'wakeRun'
+    | 'list'
   >;
   // Read-only: task parent/kind/status/risk lookups for wake policy and
   // epic channel membership.
   store: TaskStorePort;
   ownerRef: string;
+  // Who a run's notices and wake gates name (XH-R9); omitted, the owner.
+  routing?: Pick<OperatorRouting, 'humanFor' | 'gateFor'>;
   gates: GateHandlers;
   onHumanMessage: (actor: string, message: Message) => void;
   // Told when a wake could not start a run, so the caller can retry it later.
-  onWakeFailed?: (target: Address, message: Message) => void;
+  onWakeFailed?: (target: Address, message: Message, acting: WakeActor) => void;
   now?: () => Date;
   // Present when board sync federates: where mail lives, and its clock.
   federation?: FederationHooks;
@@ -67,12 +85,11 @@ export function settle<T>(call: () => T): Promise<T> {
   }
 }
 
-// Why `task` can never be woken ('an epic', 'landed', 'dropped'), or null when
-// a wake may dispatch it. Checked when a wake gate is raised and again when it runs.
-export function wakeRefusal(task: TaskDoc): string | null {
-  if (task.meta.kind === 'epic') return 'an epic';
-  if (task.meta.status === 'landed' || task.meta.status === 'dropped')
-    return task.meta.status;
+// Why `task` can never be woken ('an epic', or its done status's name under the
+// project's `model`), or null. Checked when a wake gate is raised and when it runs.
+export function wakeRefusal(task: TaskDoc, model: StatusModel): string | null {
+  if (isContainerKind(task.meta.kind)) return 'an epic';
+  if (isDoneStatus(task.meta.status, model)) return task.meta.status;
   return null;
 }
 
@@ -152,15 +169,32 @@ export class DaemonMessagingHost implements MessagingHost {
 
   // Wakes a task as its local human sender (who may continue a finished run) or
   // as the system, or continues the one run a local human names; a throw fails.
-  async wake(target: Address, message: Message): Promise<WakeResult> {
+  // The run acts for `acting` (by default the sender, on this request's token).
+  async wake(
+    target: Address,
+    message: Message,
+    acting: WakeActor = {
+      actor: message.from,
+      ownerCredential: answeredWithOwnerCredential(),
+    }
+  ): Promise<WakeResult> {
     // A remote sender's wake runs as the system and continues nothing.
     const human =
       message.origin === undefined && message.from.startsWith('human:');
+    // A remote sender's own wake acts for no one; a local approver's for them.
+    const operator =
+      message.origin !== undefined && acting.actor === message.from
+        ? null
+        : actingOperator(
+            acting.actor,
+            acting.ownerCredential,
+            this.deps.ownerRef
+          );
     if (target.startsWith('run:') && human) {
       try {
         const meta = this.deps.orchestrator.wakeRun(
           target.slice('run:'.length),
-          { actor: message.from }
+          { actor: message.from, operator }
         );
         return { ok: true, runId: meta.id };
       } catch (err) {
@@ -177,10 +211,11 @@ export class DaemonMessagingHost implements MessagingHost {
       const meta = await this.deps.orchestrator.wakeTask(taskId, {
         actor: human ? message.from : 'agent:dispatch',
         continueFinished: human,
+        operator,
       });
       return { ok: true, runId: meta.id };
     } catch (err) {
-      this.deps.onWakeFailed?.(target, message);
+      this.deps.onWakeFailed?.(target, message, acting);
       return {
         ok: false,
         reason: err instanceof Error ? err.message : String(err),
@@ -197,7 +232,11 @@ export class DaemonMessagingHost implements MessagingHost {
     if (target.startsWith('run:')) return human ? 'allow' : 'deny';
     if (!target.startsWith('task:')) return 'deny';
     const task = this.deps.store.get(target.slice('task:'.length));
-    if (task === null || wakeRefusal(task) !== null) return 'deny';
+    if (
+      task === null ||
+      wakeRefusal(task, statusModelFor(this.deps.rootDir)) !== null
+    )
+      return 'deny';
     // A local human's wake is their own call, so policy never gates it.
     if (human) return 'allow';
     const ruling: CorePolicyRuling = consultProjectPolicy(
@@ -208,8 +247,39 @@ export class DaemonMessagingHost implements MessagingHost {
     return ruling.mode === 'auto' ? 'allow' : 'ask';
   }
 
-  owner(): Address {
-    return this.deps.ownerRef;
+  // XH-R9: a wake a run asked for is gated by that run's operator when they
+  // can decide; a notice about a run (the breaker, a voided answer) tells its
+  // operator. Everything else names the owner.
+  owner(target: Address, sender?: Address): Address {
+    const routing = this.deps.routing;
+    const runOf = (address: Address | undefined) =>
+      address?.startsWith('run:') === true
+        ? address.slice('run:'.length)
+        : null;
+    if (routing === undefined) return this.deps.ownerRef;
+    if (sender !== undefined) return routing.gateFor(runOf(sender)).to;
+    return routing.humanFor(runOf(target));
+  }
+
+  // XH-R2: every run acting for the same operator (no one counting as one)
+  // shares one urgent quota, so fanning out runs cannot multiply it. Only runs
+  // live now or touched within the hour can have sent inside the window.
+  quotaGroup(sender: Address): Address[] {
+    if (!sender.startsWith('run:')) return [sender];
+    const runs = this.deps.orchestrator.list();
+    const self = runs.find((r) => `run:${r.id}` === sender);
+    if (self === undefined) return [sender];
+    const key = runOperator(self);
+    const since = this.now().getTime() - HOUR_MS;
+    const group = runs
+      .filter(
+        (r) =>
+          runOperator(r) === key &&
+          (Date.parse(r.updatedAt) >= since ||
+            this.deps.orchestrator.isRunLive(r.id))
+      )
+      .map((r) => `run:${r.id}`);
+    return group.includes(sender) ? group : [sender, ...group];
   }
 
   // Only `epic/<id>` channels have implicit members: the epic's child tasks,

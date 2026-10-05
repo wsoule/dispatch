@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { ApiClient, TaskDraft } from '../src/api';
+import type { ApiClient, ReadinessReading, TaskDraft } from '../src/api';
 import {
   createApiClient,
   httpToWs,
@@ -10,7 +10,8 @@ import {
 
 // Captures the (url, init) a stubbed `fetch` was called with, so a test can
 // inspect exactly what a client method sent without a real network call.
-function stubFetch(): {
+// Every call answers 200 with `body` as JSON.
+function stubFetch(body: unknown = {}): {
   calls: Array<{ url: string; init?: RequestInit }>;
   restore: () => void;
 } {
@@ -22,7 +23,7 @@ function stubFetch(): {
   ): Promise<Response> => {
     calls.push({ url: String(url), init });
     return Promise.resolve(
-      new Response(JSON.stringify({}), {
+      new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -62,6 +63,65 @@ describe('taskQueryString', () => {
   it('emits archived=1 only when archived is true', () => {
     expect(taskQueryString({ archived: true })).toBe('?archived=1');
     expect(taskQueryString({ archived: false })).toBe('');
+  });
+
+  it('appends fields=meta for the body-less list', () => {
+    expect(taskQueryString({}, true)).toBe('?fields=meta');
+    expect(taskQueryString({ archived: true }, true)).toBe(
+      '?archived=1&fields=meta'
+    );
+  });
+});
+
+describe('ready-queue projections', () => {
+  it('ask the ready route for body-less items or bare ids', async () => {
+    const stub = stubFetch([]);
+    try {
+      const client = createApiClient('http://example.test');
+      await client.fetchReadyTasks();
+      await client.fetchReadyTaskList();
+      await client.fetchReadyTaskIds();
+      expect(stub.calls.map((c) => c.url)).toEqual([
+        'http://example.test/api/tasks/ready',
+        'http://example.test/api/tasks/ready?fields=meta',
+        'http://example.test/api/tasks/ready?fields=id',
+      ]);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('reads ids out of whole docs from a daemon that ignores `fields`', async () => {
+    const readiness: ReadinessReading = {
+      level: 3,
+      label: 'ready',
+      confidence: 0.9,
+      splitProbability: 0.1,
+    };
+    const stub = stubFetch([
+      { meta: { id: 't-old' }, body: 'x', readiness },
+      { meta: { id: 't-unjudged' }, body: 'y' },
+    ]);
+    try {
+      const refs = await createApiClient(
+        'http://example.test'
+      ).fetchReadyTaskIds();
+      expect(refs).toEqual([{ id: 't-old', readiness }, { id: 't-unjudged' }]);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('passes the id projection through as sent', async () => {
+    const stub = stubFetch([{ id: 't-new' }]);
+    try {
+      const refs = await createApiClient(
+        'http://example.test'
+      ).fetchReadyTaskIds();
+      expect(refs).toEqual([{ id: 't-new' }]);
+    } finally {
+      stub.restore();
+    }
   });
 });
 

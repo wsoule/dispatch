@@ -1,4 +1,10 @@
-export { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
+export {
+  isAgentAuthored,
+  isPeerAddress,
+  parseAddress,
+  PEER_ALIAS_PATTERN,
+  SYSTEM_ADDRESS,
+} from './address.js';
 export type { Address, ParsedAddress } from './address.js';
 export {
   ADDRESS_SCHEMES,
@@ -9,6 +15,7 @@ export {
   GATE_TYPES,
   gateTypeOf,
   hasGateData,
+  isDecidingAuthor,
   MARKERS,
   MAX_ADDRESS_BYTES,
   MAX_SEGMENT_BYTES,
@@ -29,6 +36,7 @@ export {
   checkIdempotencyKey,
   gateOf,
   isSystemMarker,
+  MEMORY_GATE_KINDS,
   validateSendInput,
 } from './envelope.js';
 export type {
@@ -38,6 +46,7 @@ export type {
   Message,
   MessageKind,
   Ref,
+  RefType,
   SendInput,
   ValidateOptions,
 } from './envelope.js';
@@ -67,6 +76,7 @@ export {
 } from './localOnly.js';
 export type { LocalOnlyReason } from './localOnly.js';
 export { renderDigestLine, renderForAgent } from './render.js';
+export { LINE_BREAK } from './lines.js';
 export {
   MESSAGES_DB_VERSION,
   openMessagesDb,

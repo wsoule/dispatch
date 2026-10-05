@@ -10,6 +10,19 @@ import { dirname, join } from 'node:path';
 // Findings and decisions carried forward between tasks, one JSON line per
 // write in `.dispatch/ledger.jsonl`. Entries are never edited in place.
 
+// Titles of receipts Dispatch writes itself; the ledger import recognizes
+// them by these, so a rewording changes producer and reader together.
+export function scopeExtensionTitle(runId: string): string {
+  return `Scope extended for run ${runId}`;
+}
+export function undeclaredWritesTitle(count: number): string {
+  return `changed ${count} file${count === 1 ? '' : 's'} outside its declared writes`;
+}
+// Older builds named the one path instead of a count.
+export const UNDECLARED_WRITES_TITLE =
+  /^changed .+ outside its declared writes$/;
+export const DEP_MAP_DEGRADED_TITLE = 'dependency map degraded';
+
 // Re-exported rather than re-declared, same as findings.ts — core owns these
 // shapes so both backends take identical inputs.
 export type { AddLedgerInput, LedgerListFilter } from '@dispatch/core';
@@ -24,6 +37,10 @@ export type { AddLedgerInput, LedgerListFilter } from '@dispatch/core';
 export interface LedgerStorePort {
   add(input: AddLedgerInput): LedgerEntry;
   list(filter?: LedgerListFilter): LedgerEntry[];
+  listSafe(filter?: LedgerListFilter): {
+    records: LedgerEntry[];
+    errors: readonly unknown[];
+  };
   entriesFor(taskId: string, epicId: string | null): LedgerEntry[];
 }
 
@@ -120,6 +137,24 @@ export class LedgerStore implements LedgerStorePort {
   list(filter: LedgerListFilter = {}): LedgerEntry[] {
     if (filter.epicId === undefined) return this.read();
     return this.read().filter((e) => e.epicId === filter.epicId);
+  }
+
+  // Every record plus the lines that would not read, so an import can count
+  // damage instead of silently dropping it.
+  listSafe(filter: LedgerListFilter = {}): {
+    records: LedgerEntry[];
+    errors: string[];
+  } {
+    if (!existsSync(this.file)) return { records: [], errors: [] };
+    const scan = scanLedgerJsonl(readFileSync(this.file, 'utf8'));
+    const records =
+      filter.epicId === undefined
+        ? scan.records
+        : scan.records.filter((e) => e.epicId === filter.epicId);
+    return {
+      records,
+      errors: [...scan.unparseableLines, ...scan.invalidLines],
+    };
   }
 
   // What a dispatched task should see: entries aimed at it directly, plus

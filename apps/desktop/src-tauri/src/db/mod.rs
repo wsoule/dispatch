@@ -43,7 +43,9 @@ pub fn open(db_path: &Path) -> anyhow::Result<Connection> {
         M::up(include_str!("../../migrations/0003_kanban.sql")),
         M::up(include_str!("../../migrations/0004_session_title.sql")),
         M::up(include_str!("../../migrations/0005_plan.sql")),
-        M::up(include_str!("../../migrations/0006_card_pending_launch.sql")),
+        M::up(include_str!(
+            "../../migrations/0006_card_pending_launch.sql"
+        )),
         M::up(include_str!("../../migrations/0007_drop_unread_tables.sql")),
         M::up(include_str!(
             "../../migrations/0008_reset_cumulative_token_totals.sql"
@@ -184,13 +186,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    fn insert_project(
-        conn: &Connection,
-        id: &str,
-        path: &str,
-        created_at: i64,
-        last_active: i64,
-    ) {
+    fn insert_project(conn: &Connection, id: &str, path: &str, created_at: i64, last_active: i64) {
         conn.execute(
             "INSERT INTO projects (id, name, path, created_at, last_active) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -246,7 +242,8 @@ mod tests {
         insert_session(&conn, "s-c", "old-c");
         insert_project(&conn, "plain", "/tmp/plain", 1, 1);
 
-        let folded = reattribute_dispatch_worktree_projects(&conn, &[root.clone()]).unwrap();
+        let folded =
+            reattribute_dispatch_worktree_projects(&conn, std::slice::from_ref(&root)).unwrap();
         assert_eq!(folded, 2);
 
         assert_eq!(
@@ -320,7 +317,9 @@ mod tests {
         let conn = open(&dir.join("dispatch.db")).unwrap();
 
         let name: String = conn
-            .query_row("SELECT name FROM projects WHERE id = 'p1'", [], |r| r.get(0))
+            .query_row("SELECT name FROM projects WHERE id = 'p1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(name, "proj");
         std::fs::remove_dir_all(&dir).unwrap();
