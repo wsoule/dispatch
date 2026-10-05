@@ -24,9 +24,48 @@ before a team switches, and a switch needs it confirmed.
 - `POST /v1/teams` registers a team from its `found` op and its founder's `key`
   op. The team id is the first 32 hex characters of the `found` op's hash. The
   hosted relay refuses a team without a license key in its roster; a self-hosted
-  relay runs keyless for up to three people.
+  relay runs keyless for up to three people. See "Registration" below.
 - `GET /v1/teams/<teamId>` upgrades to the WebSocket below. Any other team id
   answers 404.
+
+### Registration
+
+The relay serves no team it has not registered, so a switch registers the team
+before it signs anything. `POST /api/team/transport` with `kind: 'relay'` does
+this once the URL, FW-R39 caps, legacy window, admin role and disclosure checks
+pass, and before it signs the `transport` op:
+
+- **Where.** The request goes to the relay URL's HTTP base: the same host, port
+  and path, with `wss://` read as `https://` (and `ws://` as `http://` for a
+  relay on this machine in tests), then `/v1/teams`.
+- **Body.** `{ key, found, ops }`, all from the founder's log:
+  - `key` is the founder's key op and `found` its found op;
+  - `ops` holds the founder's ops between them and on through its latest
+    `license` op, so a hosted relay sees the license. Without a license op,
+    `ops` holds only what lies between `key` and `found`.
+
+  Every entry is whole and signed, and they run unbroken from the key op, since
+  the relay verifies them as one chain. On the founder they come from its own
+  log. On another admin they come from the current transport's scan of the
+  founder's log; a machine that does not hold them yet is refused and asked to
+  pull first.
+
+- **Token.** When the relay requires one (`REGISTRATION_TOKEN`), registration
+  sends `Authorization: Bearer <token>`. The token comes from the switch's
+  `registrationToken` field
+  (`dispatch team transport relay <url> --yes --registration-token`, which reads
+  it from stdin or a prompt that does not echo when given no value, or the token
+  field beside the relay URL in the desktop's Machines settings). It is used for
+  that one request and never stored: no op, audit row, problem or log carries
+  it. Other machines never need it, because only registration does.
+- **Idempotent.** A relay that already holds the team answers 200 with its id,
+  and the switch goes on. A new team answers 201. Either way the answered team
+  id must be this team's.
+- **Failure.** If the relay is unreachable, refuses the token (401), needs a
+  license (402), rate-limits (429) or refuses the chain (400), the switch
+  answers 502 with `code: 'relay_registration_failed'` and a message naming the
+  relay and the reason. Nothing is signed, and the team stays on its current
+  transport.
 
 The hosted relay is `wss://relay.dispatch.foo`. The self-host image is one
 container with a SQLite volume.
@@ -134,7 +173,9 @@ The private relay ships when each of these passes:
 - [ ] Seats come from the roster's license, verified offline. The hosted relay
       refuses a team without a license key, and a self-hosted relay runs keyless
       for up to three people.
-- [ ] `POST /v1/teams` registers a team from its `found` and founder `key` ops.
+- [ ] `POST /v1/teams` registers a team from its `found` and founder `key` ops
+      and the founder's later `ops`, idempotently, behind an optional
+      registration token.
 - [ ] Manual F4 exit, on the relay's staging deployment with two of the owner's
       machines:
   - switch the team from git;

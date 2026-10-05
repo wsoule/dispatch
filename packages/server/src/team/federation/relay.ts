@@ -1,4 +1,4 @@
-import { signText } from '@dispatch-foo/protocol/federation';
+import { isStub, signText } from '@dispatch-foo/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 
 import { RELAY_DISCLOSURE } from './teamKeys.js';
@@ -76,6 +76,121 @@ export interface RelayDeps {
 
 /** A relay URL as it is dialed and signed: no trailing slash. */
 const normalRelayUrl = (url: string): string => url.replace(/\/+$/, '');
+
+/** The relay's HTTP base for a relay URL: the same host and path, over
+ *  https for wss (http for a ws:// relay in tests), no trailing slash. */
+export function relayHttpBase(url: string): string {
+  return normalRelayUrl(url).replace(/^ws(s?):\/\//i, 'http$1://');
+}
+
+/** What `POST /v1/teams` takes: the founder's key and found ops, and its
+ *  ops after the key op through its latest `license` op, so a hosted relay
+ *  sees the team's license. Every entry is the founder's, in one chain. */
+export interface RelayRegistration {
+  key: LogEntry;
+  found: LogEntry;
+  ops: LogEntry[];
+}
+
+const rosterAction = (e: LogEntry): string | undefined =>
+  e.type === 'roster' && !isStub(e)
+    ? (e.body as { action?: string } | undefined)?.action
+    : undefined;
+
+/**
+ * The founder chain a registration sends, from entries of the founder's log
+ * (its own log on the founder, a transport scan elsewhere): the key op, the
+ * found op at `foundSeq`, and every op between them and on through the
+ * latest license op, as long as the seqs run unbroken. Null when the key or
+ * found op, or an op between them, is missing.
+ */
+export function founderChain(
+  entries: readonly LogEntry[],
+  founder: string,
+  foundSeq: number
+): RelayRegistration | null {
+  const bySeq = new Map<number, LogEntry>();
+  for (const e of entries)
+    if (e.replica === founder && !bySeq.has(e.seq)) bySeq.set(e.seq, e);
+  const seqs = [...bySeq.keys()].sort((a, b) => a - b);
+  const key = bySeq.get(seqs[0] ?? -1);
+  const found = bySeq.get(foundSeq);
+  if (key?.type !== 'key' || found === undefined) return null;
+  if (rosterAction(found) !== 'found') return null;
+  // The chain verifies from the key op, so it may not skip a seq.
+  const run: LogEntry[] = [];
+  for (let seq = key.seq; bySeq.has(seq); seq++)
+    run.push(bySeq.get(seq) as LogEntry);
+  if ((run.at(-1)?.seq ?? 0) < foundSeq) return null;
+  const license = run.findLast((e) => rosterAction(e) === 'license');
+  const through = Math.max(foundSeq, license?.seq ?? 0);
+  const ops = run.filter(
+    (e) => e.seq > key.seq && e.seq <= through && e.seq !== foundSeq
+  );
+  return { key, found, ops };
+}
+
+/** A relay refused, or could not be asked, to register the team. */
+export class RelayRegistrationError extends Error {
+  override name = 'RelayRegistrationError';
+}
+
+// How long a registration waits for the relay's answer.
+const REGISTER_MS = 15_000;
+
+/**
+ * Registers the team at the relay with `POST /v1/teams`, before a switch
+ * signs its `transport` op: the relay serves no team it has not registered.
+ * Registering a team the relay already holds succeeds. `token` goes only
+ * into this request's Authorization header. Answers the relay's team id;
+ * throws RelayRegistrationError with a reason a person can act on.
+ */
+export async function registerAtRelay(
+  url: string,
+  registration: RelayRegistration,
+  opts: { token?: string; fetch?: typeof fetch } = {}
+): Promise<string> {
+  const endpoint = `${relayHttpBase(url)}/v1/teams`;
+  const where = normalRelayUrl(url);
+  let res: Response;
+  try {
+    res = await (opts.fetch ?? fetch)(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(opts.token === undefined
+          ? {}
+          : { authorization: `Bearer ${opts.token}` }),
+      },
+      body: JSON.stringify(registration),
+      signal: AbortSignal.timeout(REGISTER_MS),
+    });
+  } catch (err) {
+    throw new RelayRegistrationError(
+      `could not register the team at the relay ${where}: it is unreachable (${(err as Error).message})`
+    );
+  }
+  let answer: { teamId?: unknown; error?: unknown } = {};
+  try {
+    answer = (await res.json()) as typeof answer;
+  } catch {
+    // A body that is not JSON leaves only the status to report.
+  }
+  if (res.ok && typeof answer.teamId === 'string') return answer.teamId;
+  const said =
+    typeof answer.error === 'string' ? `: ${answer.error.slice(0, 200)}` : '';
+  const why =
+    res.status === 401
+      ? opts.token === undefined
+        ? 'it needs a registration token; pass the one its operator gave you'
+        : 'it refused the registration token'
+      : res.ok
+        ? 'its answer named no team'
+        : `it answered HTTP ${String(res.status)}${said}`;
+  throw new RelayRegistrationError(
+    `could not register the team at the relay ${where}: ${why}`
+  );
+}
 
 /** Ops on the relay; every call made while it is unreachable throws
  *  TransportOffline, so the outbox waits (no fallback to git). */

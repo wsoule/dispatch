@@ -1,7 +1,14 @@
 import { isStub } from '@dispatch-foo/protocol/federation';
+import type { LogEntry } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { RELAY_DISCLOSURE } from '../../../src/team/federation/relay.js';
+import {
+  founderChain,
+  registerAtRelay,
+  RELAY_DISCLOSURE,
+  relayHttpBase,
+} from '../../../src/team/federation/relay.js';
+import type { RelayRegistration } from '../../../src/team/federation/relay.js';
 import { startFakeRelay } from './fakeRelay.js';
 import type { FakeRelay } from './fakeRelay.js';
 import {
@@ -21,13 +28,28 @@ afterEach(async () => {
   relay = null;
 });
 const at = (i: number): MessagingReplica => open[i];
+// The founder's chain as POST /v1/teams takes it, from its own log.
+const registrationOf = (founder: MessagingReplica): RelayRegistration => {
+  const chain = founderChain(
+    founder.fed.ownLog(),
+    founder.fed.replica,
+    Number(founder.fed.meta('founder_seq'))
+  );
+  if (chain === null) throw new Error('the founder holds no chain');
+  return chain;
+};
+// Starts a fake relay and registers the founder's team at it over HTTP.
 const startRelay = async (
   founder: MessagingReplica,
   limits?: Parameters<typeof startFakeRelay>[1]
 ): Promise<FakeRelay> => {
   relay = await startFakeRelay(founder, limits);
+  await registerAtRelay(relay.url, registrationOf(founder));
   return relay;
 };
+// Whether the relay holds the team: it answers 404 for one it does not.
+const registered = async (r: FakeRelay): Promise<boolean> =>
+  (await fetch(`${relayHttpBase(r.url)}/v1/teams/${r.teamId}`)).status !== 404;
 const kinds = (entries: { type: string; body?: unknown }[]) =>
   entries
     .map((e) =>
@@ -36,6 +58,26 @@ const kinds = (entries: { type: string; body?: unknown }[]) =>
     .sort();
 
 describe('the relay transport against the fake relay', () => {
+  it('serves no team until it is registered over POST /v1/teams, and registers it once', async () => {
+    open = await foundedTeam('ada');
+    relay = await startFakeRelay(at(0));
+    expect(await registered(relay)).toBe(false);
+    await expect(
+      at(0).relayTransport(relay.url).pull(new Map())
+    ).rejects.toThrow();
+    expect(await registerAtRelay(relay.url, registrationOf(at(0)))).toBe(
+      relay.teamId
+    );
+    // Registering again is no error.
+    expect(await registerAtRelay(relay.url, registrationOf(at(0)))).toBe(
+      relay.teamId
+    );
+    expect(await registered(relay)).toBe(true);
+    await expect(
+      at(0).relayTransport(relay.url).pull(new Map())
+    ).resolves.toBeDefined();
+  });
+
   it('authenticates with a signature bound to the exact URL dialed', async () => {
     open = await foundedTeam('ada', 'bob');
     const r = await startRelay(at(0));
@@ -198,17 +240,28 @@ const ADA = { address: 'human:ada', canDecide: true } as const;
 const passes = async (rs: MessagingReplica[], n = 2): Promise<void> => {
   for (let i = 0; i < n; i++) for (const r of rs) await r.service.syncNow();
 };
-// Founds a team, closes its legacy window, and starts a relay for it.
-async function team(...handles: string[]): Promise<FakeRelay> {
+// Founds a team, closes its legacy window, and starts a relay for it that
+// has not registered the team: the switch does that.
+async function team(
+  handles: string[],
+  opts?: Parameters<typeof startFakeRelay>[1]
+): Promise<FakeRelay> {
   open = await foundedTeam(...handles);
   at(0).roster.closeLegacy();
   await passes(open);
-  return startRelay(at(0));
+  relay = await startFakeRelay(at(0), opts);
+  return relay;
 }
+const toRelay = (r: FakeRelay, extra: Record<string, unknown> = {}) => ({
+  kind: 'relay',
+  url: r.url,
+  confirmed: true,
+  ...extra,
+});
 
 describe('switching a team to the relay', () => {
   it('switches nothing until the disclosure is confirmed, then audits the switch', async () => {
-    const r = await team('ada', 'bob');
+    const r = await team(['ada', 'bob']);
     const first = await at(0).teamRoute('/api/team/transport', {
       kind: 'relay',
       url: r.url,
@@ -298,7 +351,7 @@ describe('switching a team to the relay', () => {
   });
 
   it('refuses a relay URL that is not wss, and a member who is no admin', async () => {
-    const r = await team('ada', 'bob');
+    const r = await team(['ada', 'bob']);
     const plain = await at(0).teamRoute('/api/team/transport', {
       kind: 'relay',
       url: 'ws://relay.example',
@@ -314,7 +367,7 @@ describe('switching a team to the relay', () => {
   });
 
   it('switches a team from git to the relay without losing an op, and delivers in under a second', async () => {
-    const r = await team('ada', 'bob');
+    const r = await team(['ada', 'bob']);
     const [ada, bob] = [at(0), at(1)];
     expect(
       (
@@ -346,7 +399,7 @@ describe('switching a team to the relay', () => {
   });
 
   it('accepts mail sealed to a machine revoked in flight, and wedges nobody', async () => {
-    const r = await team('ada', 'bob', 'cy');
+    const r = await team(['ada', 'bob', 'cy']);
     const [ada, bob, cy] = [at(0), at(1), at(2)];
     await ada.teamRoute('/api/team/transport', {
       kind: 'relay',
@@ -370,7 +423,7 @@ describe('switching a team to the relay', () => {
   });
 
   it('switches back to git by the same op', async () => {
-    const r = await team('ada', 'bob');
+    const r = await team(['ada', 'bob']);
     await at(0).teamRoute('/api/team/transport', {
       kind: 'relay',
       url: r.url,
@@ -386,6 +439,156 @@ describe('switching a team to the relay', () => {
     const id = at(0).store.create({ title: 'after the switch back' }).meta.id;
     await passes(open, 2);
     expect(at(1).store.get(id)?.meta.title).toBe('after the switch back');
+  });
+});
+
+describe('registering the team at the relay on a switch', () => {
+  it('registers the team before it signs the switch', async () => {
+    const r = await team(['ada', 'bob']);
+    expect(await registered(r)).toBe(false);
+    const res = await at(0).teamRoute('/api/team/transport', toRelay(r));
+    expect(res.status).toBe(200);
+    expect(await registered(r)).toBe(true);
+    const held = r.stored(at(0).fed.replica);
+    expect(held[0]?.type).toBe('key');
+    const foundSeq = Number(at(0).fed.meta('founder_seq'));
+    expect(held.some((e) => e.seq === foundSeq)).toBe(true);
+  });
+
+  it('switches a team the relay already holds', async () => {
+    open = await foundedTeam('ada', 'bob');
+    at(0).roster.closeLegacy();
+    await passes(open);
+    const r = await startRelay(at(0));
+    const res = await at(0).teamRoute('/api/team/transport', toRelay(r));
+    expect(res.status).toBe(200);
+    expect(at(0).roster.view()?.transport.kind).toBe('relay');
+  });
+
+  it('registers from the branch when the switching admin is not the founder', async () => {
+    const r = await team(['ada', 'bob']);
+    at(0).roster.setRole(at(1).fed.replica, 'admin');
+    await passes(open);
+    const res = await at(1).teamRoute('/api/team/transport', toRelay(r));
+    expect(res.status).toBe(200);
+    expect(await registered(r)).toBe(true);
+    expect(r.stored(at(0).fed.replica)[0]?.type).toBe('key');
+  });
+
+  it('refuses the switch and signs nothing when the relay cannot register the team', async () => {
+    const r = await team(['ada', 'bob']);
+    const head = at(0).fed.head()?.seq;
+    await r.stop();
+    relay = null;
+    const res = await at(0).teamRoute('/api/team/transport', toRelay(r));
+    expect(res.status).toBe(502);
+    expect(String(res.body.error)).toContain('could not register the team');
+    expect(at(0).fed.head()?.seq).toBe(head);
+    expect(at(0).roster.view()?.transport.kind).toBe('git');
+  });
+
+  it('sends the registration token only to the relay, never into an op', async () => {
+    const token = 'tok-3c1b7e9f-only-for-registration';
+    const r = await team(['ada', 'bob'], { registrationToken: token });
+    const head = at(0).fed.head()?.seq;
+    const without = await at(0).teamRoute('/api/team/transport', toRelay(r));
+    expect(without.status).toBe(502);
+    expect(String(without.body.error)).toContain('needs a registration token');
+    const wrong = await at(0).teamRoute(
+      '/api/team/transport',
+      toRelay(r, { registrationToken: 'not-the-token' })
+    );
+    expect(wrong.status).toBe(502);
+    expect(String(wrong.body.error)).toContain(
+      'refused the registration token'
+    );
+    expect(String(wrong.body.error)).not.toContain('not-the-token');
+    expect(at(0).fed.head()?.seq).toBe(head);
+    expect(await registered(r)).toBe(false);
+    const ok = await at(0).teamRoute(
+      '/api/team/transport',
+      toRelay(r, { registrationToken: token })
+    );
+    expect(ok.status).toBe(200);
+    expect(JSON.stringify(ok.body)).not.toContain(token);
+    await passes(open, 3);
+    expect(at(1).service.status().transport).toBe('relay');
+    for (const m of open) {
+      const kept = [
+        ...m.fed.ownLog(),
+        ...m.fed.db
+          .query<{ row: string }, []>(
+            'SELECT detail_json AS row FROM fed_audit UNION ALL SELECT message AS row FROM fed_problems UNION ALL SELECT body_json AS row FROM fed_roster'
+          )
+          .all(),
+      ];
+      expect(JSON.stringify(kept)).not.toContain(token);
+    }
+  });
+
+  it('refuses a registration token that is not a string', async () => {
+    const r = await team(['ada', 'bob']);
+    const res = await at(0).teamRoute(
+      '/api/team/transport',
+      toRelay(r, { registrationToken: 7 })
+    );
+    expect(res.status).toBe(400);
+    expect(await registered(r)).toBe(false);
+  });
+});
+
+describe('the founder chain a registration sends', () => {
+  // A stand-in log entry: founderChain reads replica, seq, type and body.
+  const entry = (
+    replica: string,
+    seq: number,
+    type: string,
+    action?: string
+  ): LogEntry =>
+    ({
+      replica,
+      seq,
+      type,
+      ...(action === undefined ? {} : { body: { action } }),
+    }) as unknown as LogEntry;
+
+  it("carries the founder's ops through its latest license op", () => {
+    const log = [
+      entry('a', 1, 'key'),
+      entry('a', 2, 'roster', 'found'),
+      entry('a', 3, 'task'),
+      entry('b', 4, 'roster', 'license'),
+      entry('a', 4, 'roster', 'license'),
+      entry('a', 5, 'task'),
+    ];
+    const chain = founderChain(log, 'a', 2);
+    expect(chain?.key.seq).toBe(1);
+    expect(chain?.found.seq).toBe(2);
+    expect(chain?.ops.map((e) => e.seq)).toEqual([3, 4]);
+  });
+
+  it('carries only the key and found ops without a license, or past a gap', () => {
+    const plain = [
+      entry('a', 1, 'key'),
+      entry('a', 2, 'roster', 'found'),
+      entry('a', 3, 'task'),
+    ];
+    expect(founderChain(plain, 'a', 2)?.ops).toEqual([]);
+    const gap = [
+      entry('a', 1, 'key'),
+      entry('a', 2, 'roster', 'found'),
+      entry('a', 4, 'roster', 'license'),
+    ];
+    expect(founderChain(gap, 'a', 2)?.ops).toEqual([]);
+    expect(founderChain([entry('a', 1, 'key')], 'a', 2)).toBeNull();
+  });
+
+  it('derives the https base from the relay URL', () => {
+    expect(relayHttpBase('wss://relay.example/')).toBe('https://relay.example');
+    expect(relayHttpBase('wss://relay.example:8443/team')).toBe(
+      'https://relay.example:8443/team'
+    );
+    expect(relayHttpBase('ws://127.0.0.1:9000')).toBe('http://127.0.0.1:9000');
   });
 });
 

@@ -47,23 +47,35 @@ describe('a team of real daemons on the relay', () => {
         ).status
       ).toBe(200);
       await quiesce(c.members);
-      const relay: FakeRelay = await startFakeRelay({
-        fed: { ownLog: () => ownLog(ada) },
-        clock: {
-          get now() {
-            return new Date(ada.clock.ms);
+      // The relay serves the team only once the switch registers it, with
+      // the token its operator handed out.
+      const token = 'daemon-registration-token';
+      const relay: FakeRelay = await startFakeRelay(
+        {
+          fed: { ownLog: () => ownLog(ada) },
+          clock: {
+            get now() {
+              return new Date(ada.clock.ms);
+            },
           },
         },
-      });
+        { registrationToken: token }
+      );
       stops.push(() => relay.stop());
-      const switched = await ada.handle.api('/api/team/transport', {
-        method: 'POST',
-        body: JSON.stringify({
-          kind: 'relay',
-          url: relay.url,
-          confirmed: true,
-        }),
-      });
+      const switchTo = (extra: Record<string, unknown>) =>
+        ada.handle.api('/api/team/transport', {
+          method: 'POST',
+          body: JSON.stringify({
+            kind: 'relay',
+            url: relay.url,
+            confirmed: true,
+            ...extra,
+          }),
+        });
+      const refused = await switchTo({});
+      expect(refused.status).toBe(502);
+      expect(await transportOf(ada)).toBe('git');
+      const switched = await switchTo({ registrationToken: token });
       expect(switched.status).toBe(200);
       await quiesce(c.members);
       for (const m of c.members) {

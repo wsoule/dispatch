@@ -497,6 +497,12 @@ export class RosterService {
     this.publish({ rv: 1, action: 'close-legacy', entries });
   }
 
+  /** Throws unless this machine is an admin of its team: a route checks it
+   *  before work that must not happen for anyone else. */
+  requireAdmin(what: string): void {
+    this.admin(what);
+  }
+
   /** Switches the team's transport: an admin's `transport` op, once the
    *  legacy window is closed (spec "Relay (F4)"). */
   setTransport(kind: 'git' | 'relay', url?: string): void {
