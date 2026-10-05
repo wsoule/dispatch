@@ -121,8 +121,9 @@ export function applyThreadEvent(
   }
 }
 
-// The open-gates query the run cards read, with the same options, so both share one cache entry.
-function useOpenGates(
+/** The open-gates query (`GET /api/decisions/open`) the run cards read, with
+ *  the same options everywhere, so every reader shares one cache entry. */
+export function useOpenGates(
   client: ApiClient | null,
   port: number | undefined,
   access: MessageAccess

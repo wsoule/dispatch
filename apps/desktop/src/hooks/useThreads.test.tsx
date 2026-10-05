@@ -23,6 +23,7 @@ import {
   threadListsKey,
   useAgentRoster,
   useChannels,
+  useOpenGates,
   useTaskThreads,
   useThread,
   useThreadActions,
@@ -624,6 +625,20 @@ function mount<T>(hook: () => T) {
 }
 
 describe('messaging queries', () => {
+  it('reads the open gates on the shared key for a decider, and not below decide', async () => {
+    const gate = msg('m-g', { blocking: true, kind: 'question' });
+    const client = {
+      openDecisions: () => Promise.resolve({ items: [gate] }),
+    } as unknown as ApiClient;
+    const { qc, result } = mount(() => useOpenGates(client, PORT, DECIDER));
+    await waitFor(() => expect(result.current.data?.items).toEqual([gate]));
+    expect(qc.getQueryData<{ items: Message[] }>(openGatesKey(PORT))).toEqual({
+      items: [gate],
+    });
+    const below = mount(() => useOpenGates(client, PORT, TEAMMATE));
+    expect(below.result.current.fetchStatus).toBe('idle');
+  });
+
   it('reads only the mailbox and roster for a teammate below decide, and finds their open question there', async () => {
     const { calls, client } = readingClient();
     const { result } = mount(() => useThreadRail(client, PORT, ME, TEAMMATE));
