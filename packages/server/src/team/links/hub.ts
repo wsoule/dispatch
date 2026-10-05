@@ -18,6 +18,7 @@ import {
   pinFlags,
   redactRemotes,
   remoteHostUrl,
+  schemeAllowed,
 } from './remote.js';
 import { LINK_READ_BYTES, linkReplicaId, LinkService } from './service.js';
 import type { LinkKeys, PublishResult } from './service.js';
@@ -308,7 +309,8 @@ export class LinkHub {
       git: linkGitRunner(
         this.deps.git ?? defaultAsyncGitRunner,
         row.remote,
-        () => this.pins.get(row.pairedId) ?? []
+        () => this.pins.get(row.pairedId) ?? [],
+        () => this.tierOf(row.pairedId)
       ),
     });
     this.services.set(row.alias, service);
@@ -434,13 +436,23 @@ export class LinkHub {
     noteAlias: string | null
   ): Promise<boolean> {
     const subject = `link-address:${pairedId}`;
+    const refuse = (why: string): false => {
+      if (noteAlias === null) this.offerProblems.set(pairedId, [why]);
+      else this.note(noteAlias, subject, why);
+      return false;
+    };
+    // P2: below the operator tier only https, whose host the pin holds.
+    if (!schemeAllowed(remote, this.tierOf(pairedId)))
+      return refuse(
+        'this link is not https, and a teammate below the operator tier may only use https links; it was not contacted. An operator can pair it again.'
+      );
     const hostUrl = remoteHostUrl(remote);
     if (hostUrl === null) {
       this.pins.set(pairedId, []);
       return true;
     }
     const host = new URL(hostUrl).hostname.replace(/^\[(.*)\]$/, '$1');
-    const decide = (this.deps.tierOf?.(pairedId) ?? 'operator') === 'decide';
+    const decide = this.tierOf(pairedId) === 'decide';
     let address: string | null = null;
     try {
       if (decide) {
@@ -461,14 +473,17 @@ export class LinkHub {
         address = found[0] ?? null;
       }
     } catch (err) {
-      const why = `this link's host is not a public address now, so it was not contacted (${redactRemotes(err instanceof Error ? err.message : 'refused')}); a teammate with the operator tier can pair it again.`;
-      if (noteAlias === null) this.offerProblems.set(pairedId, [why]);
-      else this.note(noteAlias, subject, why);
-      return false;
+      return refuse(
+        `this link's host is not a public address now, so it was not contacted (${redactRemotes(err instanceof Error ? err.message : 'refused')}); a teammate with the operator tier can pair it again.`
+      );
     }
     if (noteAlias !== null) this.clearNote(noteAlias, subject);
     this.pins.set(pairedId, address === null ? [] : pinFlags(remote, address));
     return true;
+  }
+
+  private tierOf(pairedId: string): 'operator' | 'decide' {
+    return this.deps.tierOf?.(pairedId) ?? 'operator';
   }
 
   private note(alias: string, subject: string, message: string): void {
@@ -620,7 +635,8 @@ export class LinkHub {
           linkGitRunner(
             this.deps.git ?? defaultAsyncGitRunner,
             o.remote,
-            () => this.pins.get(o.pairedId) ?? []
+            () => this.pins.get(o.pairedId) ?? [],
+            () => this.tierOf(o.pairedId)
           )
         );
       this.offerRepos.set(o.pairedId, repo);

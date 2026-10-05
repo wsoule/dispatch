@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
+import { defaultAsyncGitRunner } from '../../../src/sync/worktree.js';
 import {
   checkLinkRemote,
   isLocalRemote,
@@ -7,6 +11,7 @@ import {
   pinFlags,
   redactRemotes,
   remoteHostUrl,
+  schemeAllowed,
 } from '../../../src/team/links/remote.js';
 
 describe('link remotes (T55 review M1-M3)', () => {
@@ -96,5 +101,110 @@ describe('final review P1: git connects to the host that was checked', () => {
       'http.curloptResolve=links.example:8080:[2001:db8::1]',
     ]);
     expect(pinFlags('git@links.example:x.git', '93.184.216.34')).toEqual([]);
+  });
+});
+
+describe('final review P2: redirects, proxies and decide-tier schemes', () => {
+  it('never follows a redirect off the pinned host (a real local 302)', async () => {
+    let inner = 0;
+    const internal = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => {
+        inner += 1;
+        return new Response('# service=git-upload-pack\n');
+      },
+    });
+    const redirector = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (req) =>
+        Response.redirect(
+          `http://127.0.0.1:${internal.port}${new URL(req.url).pathname}${new URL(req.url).search}`,
+          302
+        ),
+    });
+    try {
+      const url = `http://127.0.0.1:${redirector.port}/x.git`;
+      // http is not a link protocol; this test allows it after the link flags.
+      const allowHttp = ['-c', 'protocol.http.allow=always'];
+      const dir = mkdtempSync(join(tmpdir(), 'link-302-'));
+      // Control: plain git follows the redirect.
+      await defaultAsyncGitRunner(dir, [
+        ...allowHttp,
+        '-c',
+        'http.followRedirects=true',
+        'ls-remote',
+        url,
+      ]);
+      expect(inner).toBeGreaterThan(0);
+      inner = 0;
+      const res = await linkGitRunner(defaultAsyncGitRunner, url)(dir, [
+        ...allowHttp,
+        'ls-remote',
+        url,
+      ]);
+      expect(res.status).not.toBe(0);
+      expect(inner).toBe(0);
+      rmSync(dir, { recursive: true, force: true });
+    } finally {
+      await redirector.stop(true);
+      await internal.stop(true);
+    }
+  });
+
+  it('turns proxies off for a decide-tier link and keeps them for the operator', async () => {
+    const seen: { args: string[]; env?: Record<string, string> }[] = [];
+    const base = (
+      _cwd: string,
+      args: string[],
+      env?: Record<string, string>
+    ) => {
+      seen.push({ args, ...(env === undefined ? {} : { env }) });
+      return Promise.resolve({ status: 0, stdout: '', stderr: '' });
+    };
+    const remote = 'https://links.example/x.git';
+    await linkGitRunner(
+      base,
+      remote,
+      () => [],
+      () => 'decide'
+    )('/tmp', ['fetch']);
+    await linkGitRunner(
+      base,
+      remote,
+      () => [],
+      () => 'operator'
+    )('/tmp', ['fetch']);
+    const [decide, operator] = seen;
+    expect(decide.args).toContain('http.followRedirects=false');
+    expect(decide.args).toContain('http.proxy=');
+    for (const k of ['http_proxy', 'HTTPS_PROXY', 'all_proxy', 'NO_PROXY'])
+      expect(decide.env?.[k]).toBe('');
+    expect(operator.args).toContain('http.followRedirects=false');
+    expect(operator.args).not.toContain('http.proxy=');
+    expect(operator.env?.['http_proxy']).toBeUndefined();
+  });
+
+  it('allows only https below the operator tier', () => {
+    expect(schemeAllowed('https://links.example/x.git', 'decide')).toBe(true);
+    for (const r of [
+      'git@links.example:x.git',
+      'ssh://links.example/x.git',
+      'git://links.example/x.git',
+      '/srv/links.git',
+    ])
+      expect(schemeAllowed(r, 'decide')).toBe(false);
+    expect(schemeAllowed('git@links.example:x.git', 'operator')).toBe(true);
+    expect(schemeAllowed('/srv/links.git', 'operator')).toBe(true);
+  });
+
+  it('accepts a trailing-dot host and pins it as written', () => {
+    const r = 'https://links.example./x.git';
+    expect(checkLinkRemote(r)).toBe(true);
+    expect(pinFlags(r, '93.184.216.34')).toEqual([
+      '-c',
+      'http.curloptResolve=links.example.:443:93.184.216.34',
+    ]);
   });
 });

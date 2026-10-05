@@ -19,6 +19,7 @@ import {
   checkLinkRemote,
   redactRemotes,
   remoteHostUrl,
+  schemeAllowed,
 } from '../team/links/remote.js';
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
@@ -82,6 +83,13 @@ async function mayUse(remote: string, caller: Caller): Promise<void> {
       'link.remote'
     );
   if (tierAllows(caller.tier, 'operator')) return;
+  // P2: ssh and git:// resolve hosts themselves, so only https is checked.
+  if (!schemeAllowed(remote, 'decide'))
+    throw new MessagingError(
+      'forbidden',
+      'below the operator tier a link must be an https remote: ssh and git:// resolve the host themselves (ssh through your ssh config), so their host check is only advisory',
+      'link.remote'
+    );
   const host = remoteHostUrl(remote);
   if (host === null)
     throw new MessagingError(

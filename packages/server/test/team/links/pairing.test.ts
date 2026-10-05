@@ -154,6 +154,25 @@ describe('T55 review M1-M4', () => {
       ).toBe(400);
   });
 
+  it('takes only https links below the operator tier (P2)', async () => {
+    const ada = await daemon('link-ada-');
+    const lead = ada.handle.team.teammates.issue('lead', 'decide');
+    for (const remote of [
+      'git@github.com:acme/links.git',
+      'ssh://github.com/acme/links.git',
+      'git://github.com/acme/links.git',
+    ]) {
+      const res = await call(
+        ada,
+        '/api/a2a/pairings',
+        { alias: 'bob', link: { remote } },
+        lead
+      );
+      expect(res.status).toBe(403);
+      expect(await res.text()).toContain('https');
+    }
+  });
+
   it('needs the operator tier for a network remote on a private or loopback host (AR1)', async () => {
     const ada = await daemon('link-ada-');
     const lead = ada.handle.team.teammates.issue('lead', 'decide');

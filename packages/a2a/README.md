@@ -252,6 +252,27 @@ all (256). Behind `--trust-forwarded-for` on loopback, the per-address cap keys
 on the forwarded address. Many addresses together can still fill the overall cap
 for a while; each such connection closes after 10 s without a valid auth.
 
+### Teammate links
+
+Two Dispatch projects whose owners can both push to one git remote can pair over
+a branch on it instead, with no listener and no public URL on either side:
+`dispatch a2a pair offer --alias bob --link <remote>`, and the other side
+accepts the code as usual. Messages wait on the branch while a laptop sleeps.
+
+- **Who may use which remote.** Below the operator tier a link must be an
+  `https://` remote on a public host. ssh and `git://` resolve the host
+  themselves (ssh through your ssh config: `ProxyCommand`, `HostName` aliases),
+  so a host check there would only be advisory; the operator tier may use them,
+  a private host, or a local path.
+- **Where git connects.** Before every exchange the host is resolved and, for a
+  decide-tier link, checked public; git is then pinned to that address
+  (`http.curloptResolve`) and never follows a redirect. A host that now resolves
+  privately is not contacted, with a note in Settings.
+- **Proxies.** A proxy resolves the host itself, which would undo the pin, so a
+  decide-tier link runs with no proxy (`http.proxy` empty, and `http_proxy`,
+  `https_proxy`, `all_proxy` and `no_proxy` cleared, in both cases, for its git
+  commands). An operator-tier link keeps your proxy settings.
+
 ## Standalone host
 
 Use `dispatch a2a serve` when the public A2A listener should run on another
