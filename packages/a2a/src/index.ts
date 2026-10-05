@@ -173,15 +173,21 @@ export {
   wireState,
 } from './states.js';
 export type { TaskStateName, WireTaskState } from './states.js';
+export type { Reach } from './pair/reach.js';
+export { a2aFingerprint, ecThumbprint, publicJwkOf, sas } from './sig/keys.js';
 export { statusReply } from './statusSkill.js';
 export type { StatusEntry } from './statusSkill.js';
 export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
 export type {
   A2AStore,
+  AuthMode,
   ClientRow,
   HostRow,
+  KeyEvent,
+  KeyPin,
   OutboundRow,
   OutboundState,
+  PairingRow,
   PeerRow,
   PeerStatus,
   PushConfigRow,

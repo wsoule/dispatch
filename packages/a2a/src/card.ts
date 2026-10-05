@@ -6,6 +6,7 @@ import type { JWK } from 'jose';
 import { createHash } from 'node:crypto';
 
 import type { CardInputs, CardSignatureJson } from './port.js';
+import { ecThumbprint } from './sig/keys.js';
 import { handoffSupported } from './statuses.js';
 import type { HandoffStatuses } from './statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from './uris.js';
@@ -241,15 +242,6 @@ function hasDuplicateKeys(text: string): boolean {
     }
   }
   return false;
-}
-
-// RFC 7638 thumbprint of a P-256 public key; null for any other key.
-function ecThumbprint(jwk: JWK): string | null {
-  if (jwk.kty !== 'EC' || jwk.crv !== 'P-256') return null;
-  if (typeof jwk.x !== 'string' || typeof jwk.y !== 'string') return null;
-  return createHash('sha256')
-    .update(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }))
-    .digest('base64url');
 }
 
 // Whether Dispatch's own signature (typ DISPATCH_CARD_TYP; never the SDK-form

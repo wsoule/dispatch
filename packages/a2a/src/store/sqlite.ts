@@ -4,12 +4,33 @@ import type { Address } from '@dispatch/protocol';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+import type { Reach } from '../pair/reach.js';
 import type { TaskStateName } from '../states.js';
 import { TERMINAL_STATES } from '../states.js';
 
 export const A2A_DB_VERSION = 1;
 
-export interface ClientRow {
+// How a client or peer proves itself: a bearer token (P1-P4), an RFC 9421
+// signature under a pinned card key (P5), or a teammate link.
+export type AuthMode = 'bearer' | 'signature' | 'link';
+
+// The key fields every read fills; writes set them only through setClientKey
+// and setPeerKey, so an upsert can never drop a pin.
+interface KeyFields {
+  auth?: AuthMode;
+  keyThumbprint?: string | null;
+  keyJwk?: Record<string, string> | null;
+  pairedId?: string | null;
+}
+
+export interface KeyPin {
+  thumbprint: string;
+  jwk: Record<string, string>;
+  auth: AuthMode;
+  pairedId: string | null;
+}
+
+export interface ClientRow extends KeyFields {
   address: Address;
   name: string;
   recipients: Address[];
@@ -50,7 +71,7 @@ export interface TaskListQuery {
 export type PeerStatus = 'active' | 'disabled' | 'auth-failed';
 
 // An outbound peer as registered; its credential lives in credentials.json.
-export interface PeerRow {
+export interface PeerRow extends KeyFields {
   alias: string;
   cardUrl: string;
   interfaceUrl: string;
@@ -98,6 +119,30 @@ export interface PushConfigRow {
   failures: number;
   disabledAt: string | null;
   createdAt: string;
+}
+
+// One pairing on this side: an offer this daemon made, or one it accepted.
+// Only the secret's hash is kept, and only on the offering side.
+export interface PairingRow {
+  id: string;
+  role: 'offer' | 'accept';
+  secretHash: string | null;
+  alias: string;
+  reach: Reach;
+  createdBy: Address;
+  createdTier: 'decide' | 'operator';
+  createdAt: string;
+  expiresAt: string;
+  state: 'offered' | 'completed' | 'canceled' | 'expired';
+  peerThumbprint: string | null;
+  completedAt: string | null;
+}
+
+export interface KeyEvent {
+  thumbprint: string;
+  event: string;
+  statement: string | null;
+  at: string;
 }
 
 // An operator-issued credential for one standalone host; the token is kept
@@ -203,6 +248,29 @@ export interface A2AStore {
   hostByTokenHash(hash: string): HostRow | null;
   // True when a live host was revoked.
   revokeHost(id: string, at: string): boolean;
+  setClientKey(address: Address, pin: KeyPin): void;
+  clientByThumbprint(thumbprint: string): ClientRow | null;
+  setPeerKey(alias: string, pin: KeyPin): void;
+  peerByThumbprint(thumbprint: string): PeerRow | null;
+  putPairing(row: PairingRow): void;
+  pairing(id: string): PairingRow | null;
+  // Newest first.
+  pairings(): PairingRow[];
+  // offered → completed, once; false when the row is not offered.
+  completePairing(id: string, peerThumbprint: string, at: string): boolean;
+  setPairingState(id: string, state: PairingRow['state']): void;
+  recordKeyEvent(e: KeyEvent): void;
+  // Oldest first.
+  keyEvents(thumbprint: string): KeyEvent[];
+  // Prunes expired entries, then records the nonce: 'replay' when seen,
+  // 'full' when this key already holds `cap` live nonces.
+  rememberNonce(
+    thumbprint: string,
+    nonce: string,
+    expiresAt: Date,
+    cap: number,
+    now: Date
+  ): 'fresh' | 'replay' | 'full';
   close(): void;
 }
 
@@ -250,7 +318,47 @@ CREATE TABLE IF NOT EXISTS hosts (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, public_url TEXT NOT NULL,
   created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
 );
+CREATE TABLE IF NOT EXISTS pairings (
+  id TEXT PRIMARY KEY, role TEXT NOT NULL, secret_hash TEXT, alias TEXT NOT NULL, reach_json TEXT NOT NULL,
+  created_by TEXT NOT NULL, created_tier TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+  state TEXT NOT NULL, peer_thumbprint TEXT, completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS key_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, thumbprint TEXT NOT NULL, event TEXT NOT NULL,
+  statement TEXT, at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS key_events_tp ON key_events (thumbprint, seq);
+CREATE TABLE IF NOT EXISTS seen_nonces (
+  thumbprint TEXT NOT NULL, nonce TEXT NOT NULL, expires_at TEXT NOT NULL,
+  PRIMARY KEY (thumbprint, nonce)
+);
+CREATE INDEX IF NOT EXISTS seen_nonces_exp ON seen_nonces (expires_at);
 `;
+
+// P5 key columns on two P1/P3 tables, added once (version stays 1).
+const KEY_COLUMNS: readonly [string, string][] = [
+  ['key_thumbprint', 'TEXT'],
+  ['key_jwk', 'TEXT'],
+  ['auth', "TEXT NOT NULL DEFAULT 'bearer'"],
+  ['paired_id', 'TEXT'],
+];
+
+function addKeyColumns(db: SqliteDatabase): void {
+  for (const table of ['clients', 'peers']) {
+    const have = new Set(
+      queryAll<{ name: string }>(db, `PRAGMA table_info(${table})`).map(
+        (c) => c.name
+      )
+    );
+    for (const [name, type] of KEY_COLUMNS) {
+      if (!have.has(name))
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS ${table}_key ON ${table} (key_thumbprint)`
+    );
+  }
+}
 
 // Created 0600 before SQLite opens it, so it never exists world-readable;
 // refuses a file a newer schema wrote rather than stamping it back down.
@@ -268,17 +376,84 @@ export function openA2ADb(path: string): SqliteDatabase {
     );
   }
   db.exec(DDL);
+  addKeyColumns(db);
   db.exec(`PRAGMA user_version = ${A2A_DB_VERSION}`);
   if (path !== ':memory:') chmodSync(path, 0o600);
   return db;
 }
 
-interface ClientDbRow {
+interface KeyDbFields {
+  auth: string;
+  key_thumbprint: string | null;
+  key_jwk: string | null;
+  paired_id: string | null;
+}
+
+const AUTH_MODES: readonly AuthMode[] = ['bearer', 'signature', 'link'];
+
+// An unknown auth mode reads as signature with no key, so it authenticates nothing.
+function keyFields(r: KeyDbFields): Required<KeyFields> {
+  return {
+    auth: AUTH_MODES.includes(r.auth as AuthMode)
+      ? (r.auth as AuthMode)
+      : 'signature',
+    keyThumbprint: r.key_thumbprint,
+    keyJwk:
+      r.key_jwk === null
+        ? null
+        : (JSON.parse(r.key_jwk) as Record<string, string>),
+    pairedId: r.paired_id,
+  };
+}
+
+interface ClientDbRow extends KeyDbFields {
   addr: string;
   name: string;
   recipients_json: string;
   created_by: string;
   created_at: string;
+}
+
+interface PairingDbRow {
+  id: string;
+  role: string;
+  secret_hash: string | null;
+  alias: string;
+  reach_json: string;
+  created_by: string;
+  created_tier: string;
+  created_at: string;
+  expires_at: string;
+  state: string;
+  peer_thumbprint: string | null;
+  completed_at: string | null;
+}
+
+const PAIRING_STATES: readonly PairingRow['state'][] = [
+  'offered',
+  'completed',
+  'canceled',
+  'expired',
+];
+
+// An unknown state reads as canceled, so a hand-edited row never completes.
+function toPairing(r: PairingDbRow): PairingRow {
+  return {
+    id: r.id,
+    role: r.role === 'accept' ? 'accept' : 'offer',
+    secretHash: r.secret_hash,
+    alias: r.alias,
+    reach: JSON.parse(r.reach_json) as Reach,
+    createdBy: r.created_by,
+    createdTier: r.created_tier === 'operator' ? 'operator' : 'decide',
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    state: PAIRING_STATES.includes(r.state as PairingRow['state'])
+      ? (r.state as PairingRow['state'])
+      : 'canceled',
+    peerThumbprint: r.peer_thumbprint,
+    completedAt: r.completed_at,
+  };
 }
 
 interface TaskDbRow {
@@ -295,7 +470,7 @@ interface TaskDbRow {
   created_at: string;
 }
 
-interface PeerDbRow {
+interface PeerDbRow extends KeyDbFields {
   alias: string;
   card_url: string;
   interface_url: string;
@@ -337,6 +512,7 @@ function toPeer(r: PeerDbRow): PeerRow {
     allowOrigin: r.allow_origin === 1,
     apiKeyHeader: r.api_key_header,
     createdAt: r.created_at,
+    ...keyFields(r),
   };
 }
 
@@ -450,6 +626,7 @@ function toClient(r: ClientDbRow): ClientRow {
     recipients: JSON.parse(r.recipients_json) as Address[],
     createdBy: r.created_by,
     createdAt: r.created_at,
+    ...keyFields(r),
   };
 }
 
@@ -974,6 +1151,154 @@ export class SqliteA2AStore implements A2AStore {
           .run(at, id).changes
       ) > 0
     );
+  }
+
+  setClientKey(address: Address, pin: KeyPin): void {
+    this.db
+      .prepare(
+        'UPDATE clients SET key_thumbprint = ?, key_jwk = ?, auth = ?, paired_id = ? WHERE addr = ?'
+      )
+      .run(
+        pin.thumbprint,
+        JSON.stringify(pin.jwk),
+        pin.auth,
+        pin.pairedId,
+        address
+      );
+  }
+
+  clientByThumbprint(thumbprint: string): ClientRow | null {
+    const r = queryOne<ClientDbRow>(
+      this.db,
+      'SELECT * FROM clients WHERE key_thumbprint = ? ORDER BY addr LIMIT 1',
+      [thumbprint]
+    );
+    return r === undefined ? null : toClient(r);
+  }
+
+  setPeerKey(alias: string, pin: KeyPin): void {
+    this.db
+      .prepare(
+        'UPDATE peers SET key_thumbprint = ?, key_jwk = ?, auth = ?, paired_id = ? WHERE alias = ?'
+      )
+      .run(
+        pin.thumbprint,
+        JSON.stringify(pin.jwk),
+        pin.auth,
+        pin.pairedId,
+        alias
+      );
+  }
+
+  peerByThumbprint(thumbprint: string): PeerRow | null {
+    const r = queryOne<PeerDbRow>(
+      this.db,
+      'SELECT * FROM peers WHERE key_thumbprint = ? ORDER BY alias LIMIT 1',
+      [thumbprint]
+    );
+    return r === undefined ? null : toPeer(r);
+  }
+
+  putPairing(p: PairingRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO pairings (id, role, secret_hash, alias, reach_json, created_by, created_tier, created_at, expires_at, state, peer_thumbprint, completed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        p.id,
+        p.role,
+        p.secretHash,
+        p.alias,
+        JSON.stringify(p.reach),
+        p.createdBy,
+        p.createdTier,
+        p.createdAt,
+        p.expiresAt,
+        p.state,
+        p.peerThumbprint,
+        p.completedAt
+      );
+  }
+
+  pairing(id: string): PairingRow | null {
+    const r = queryOne<PairingDbRow>(
+      this.db,
+      'SELECT * FROM pairings WHERE id = ?',
+      [id]
+    );
+    return r === undefined ? null : toPairing(r);
+  }
+
+  pairings(): PairingRow[] {
+    return queryAll<PairingDbRow>(
+      this.db,
+      'SELECT * FROM pairings ORDER BY created_at DESC, id DESC'
+    ).map(toPairing);
+  }
+
+  completePairing(id: string, peerThumbprint: string, at: string): boolean {
+    return (
+      Number(
+        this.db
+          .prepare(
+            "UPDATE pairings SET state = 'completed', peer_thumbprint = ?, completed_at = ? WHERE id = ? AND state = 'offered'"
+          )
+          .run(peerThumbprint, at, id).changes
+      ) > 0
+    );
+  }
+
+  setPairingState(id: string, state: PairingRow['state']): void {
+    this.db
+      .prepare('UPDATE pairings SET state = ? WHERE id = ?')
+      .run(state, id);
+  }
+
+  recordKeyEvent(e: KeyEvent): void {
+    this.db
+      .prepare(
+        'INSERT INTO key_events (thumbprint, event, statement, at) VALUES (?,?,?,?)'
+      )
+      .run(e.thumbprint, e.event, e.statement, e.at);
+  }
+
+  keyEvents(thumbprint: string): KeyEvent[] {
+    return queryAll<KeyEvent>(
+      this.db,
+      'SELECT thumbprint, event, statement, at FROM key_events WHERE thumbprint = ? ORDER BY seq',
+      [thumbprint]
+    );
+  }
+
+  rememberNonce(
+    thumbprint: string,
+    nonce: string,
+    expiresAt: Date,
+    cap: number,
+    now: Date
+  ): 'fresh' | 'replay' | 'full' {
+    this.db
+      .prepare('DELETE FROM seen_nonces WHERE expires_at <= ?')
+      .run(now.toISOString());
+    const seen = queryOne<{ n: number }>(
+      this.db,
+      'SELECT COUNT(*) AS n FROM seen_nonces WHERE thumbprint = ? AND nonce = ?',
+      [thumbprint, nonce]
+    );
+    if ((seen?.n ?? 0) > 0) return 'replay';
+    const held = queryOne<{ n: number }>(
+      this.db,
+      'SELECT COUNT(*) AS n FROM seen_nonces WHERE thumbprint = ?',
+      [thumbprint]
+    );
+    if ((held?.n ?? 0) >= cap) return 'full';
+    this.db
+      .prepare(
+        'INSERT INTO seen_nonces (thumbprint, nonce, expires_at) VALUES (?,?,?)'
+      )
+      .run(thumbprint, nonce, expiresAt.toISOString());
+    return 'fresh';
   }
 
   close(): void {

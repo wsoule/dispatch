@@ -442,3 +442,146 @@ describe('derived_tasks', () => {
     expect(store.derivedFrom('t-clone1')).toBe('t-source');
   });
 });
+
+describe('P5 keys and pairings', () => {
+  const JWK = { kty: 'EC', crv: 'P-256', x: 'x-1', y: 'y-1' };
+
+  it('upgrades a P4 a2a.db in place, keeping its rows and reading them as bearer', () => {
+    const path = join(dir, 'p4.db');
+    const old = openSqliteDb(path);
+    old.exec(`CREATE TABLE clients (
+      addr TEXT PRIMARY KEY, name TEXT NOT NULL, recipients_json TEXT NOT NULL,
+      created_by TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE peers (
+      alias TEXT PRIMARY KEY, card_url TEXT NOT NULL, interface_url TEXT NOT NULL, binding TEXT NOT NULL,
+      card_json TEXT NOT NULL, etag TEXT, fetched_at TEXT NOT NULL, status TEXT NOT NULL,
+      added_by TEXT NOT NULL, added_tier TEXT NOT NULL, allow_http INTEGER NOT NULL, allow_origin INTEGER NOT NULL,
+      api_key_header TEXT, created_at TEXT NOT NULL);
+    INSERT INTO clients VALUES ('${CLIENT}', 'a2a.acme', '[]', 'human:wyat', '2026-10-01T00:00:00.000Z');
+    PRAGMA user_version = 1;`);
+    old.close();
+    const upgraded = new SqliteA2AStore(openA2ADb(path));
+    try {
+      expect(upgraded.getClient(CLIENT)).toMatchObject({
+        name: 'a2a.acme',
+        auth: 'bearer',
+        keyThumbprint: null,
+        keyJwk: null,
+        pairedId: null,
+      });
+      // Opening twice must not add the columns twice.
+      upgraded.close();
+      const again = new SqliteA2AStore(openA2ADb(path));
+      expect(again.getClient(CLIENT)?.auth).toBe('bearer');
+      again.close();
+    } finally {
+      // closed above
+    }
+  });
+
+  it('pins a key on a client and a peer, finds each by thumbprint, and an upsert keeps the pin', () => {
+    store.putClient({
+      address: CLIENT,
+      name: 'a2a.acme',
+      recipients: [],
+      createdBy: 'human:wyat',
+      createdAt: '2026-10-01T00:00:00.000Z',
+    });
+    store.setClientKey(CLIENT, {
+      thumbprint: 'tp-1',
+      jwk: JWK,
+      auth: 'signature',
+      pairedId: 'p-1',
+    });
+    expect(store.clientByThumbprint('tp-1')).toMatchObject({
+      address: CLIENT,
+      auth: 'signature',
+      keyJwk: JWK,
+      pairedId: 'p-1',
+    });
+    store.putClient({ ...store.getClient(CLIENT)!, recipients: ['human:ada'] });
+    expect(store.getClient(CLIENT)?.keyThumbprint).toBe('tp-1');
+
+    store.putPeer(peer('acme'));
+    store.setPeerKey('acme', {
+      thumbprint: 'tp-2',
+      jwk: JWK,
+      auth: 'signature',
+      pairedId: 'p-1',
+    });
+    store.putPeer(peer('acme', { etag: '"v2"' }));
+    expect(store.peerByThumbprint('tp-2')).toMatchObject({
+      alias: 'acme',
+      auth: 'signature',
+      etag: '"v2"',
+    });
+    expect(store.clientByThumbprint('nope')).toBeNull();
+  });
+
+  it('completes a pairing once, and lists pairings without their secrets', () => {
+    store.putPairing({
+      id: 'p-1',
+      role: 'offer',
+      secretHash: 'h',
+      alias: 'bob',
+      reach: {
+        kind: 'url',
+        card: 'https://bob.example/.well-known/agent-card.json',
+      },
+      createdBy: 'human:wyat',
+      createdTier: 'decide',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      expiresAt: '2026-10-01T00:15:00.000Z',
+      state: 'offered',
+      peerThumbprint: null,
+      completedAt: null,
+    });
+    expect(
+      store.completePairing('p-1', 'tp-b', '2026-10-01T00:05:00.000Z')
+    ).toBe(true);
+    expect(
+      store.completePairing('p-1', 'tp-c', '2026-10-01T00:06:00.000Z')
+    ).toBe(false);
+    expect(store.pairing('p-1')).toMatchObject({
+      state: 'completed',
+      peerThumbprint: 'tp-b',
+      reach: { kind: 'url' },
+    });
+    expect(store.pairing('p-missing')).toBeNull();
+    expect(store.pairings().map((p) => p.id)).toEqual(['p-1']);
+  });
+
+  it('remembers nonces until they expire, refuses a replay, and stops at the cap', () => {
+    const at = (s: number) => new Date(Date.UTC(2026, 9, 1, 0, 0, s));
+    expect(store.rememberNonce('tp', 'n1', at(30), 2, at(0))).toBe('fresh');
+    expect(store.rememberNonce('tp', 'n1', at(30), 2, at(1))).toBe('replay');
+    expect(store.rememberNonce('tp', 'n2', at(30), 2, at(2))).toBe('fresh');
+    expect(store.rememberNonce('tp', 'n3', at(30), 2, at(3))).toBe('full');
+    // Another key has its own room.
+    expect(store.rememberNonce('tp-other', 'n1', at(30), 2, at(3))).toBe(
+      'fresh'
+    );
+    // Once expired, entries are pruned and room comes back.
+    expect(store.rememberNonce('tp', 'n3', at(90), 2, at(31))).toBe('fresh');
+  });
+
+  it('keeps key events in order for one thumbprint', () => {
+    store.recordKeyEvent({
+      thumbprint: 'tp',
+      event: 'pinned',
+      statement: null,
+      at: '2026-10-01T00:00:00.000Z',
+    });
+    store.recordKeyEvent({
+      thumbprint: 'tp',
+      event: 'rotated',
+      statement: '{"v":1}',
+      at: '2026-10-02T00:00:00.000Z',
+    });
+    expect(store.keyEvents('tp').map((e) => e.event)).toEqual([
+      'pinned',
+      'rotated',
+    ]);
+    expect(store.keyEvents('other')).toEqual([]);
+  });
+});
