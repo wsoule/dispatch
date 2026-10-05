@@ -22,6 +22,8 @@ import { Inbound } from './inbound.js';
 import { loadOrCreateKeys } from './keys.js';
 import { LegacyWindow } from './legacy.js';
 import { MailOut } from './mail.js';
+import { MemorySync } from './memory.js';
+import type { TeamMemoryPort } from './memory.js';
 import { Presence, trackWaiting } from './presence.js';
 import { RosterService } from './roster.js';
 import { FederationService } from './service.js';
@@ -99,6 +101,17 @@ export function wireMessagingFederation(
     knowsRun: deps.knowsRun,
   });
   return { homes, presence, hooks };
+}
+
+// Team memory on signed ops (F3), once memory.db is open.
+export function wireTeamMemory(
+  federation: Federation,
+  port: TeamMemoryPort
+): void {
+  const { fed, roster, service } = federation;
+  const sync = new MemorySync({ fed, roster, port });
+  service.register(sync);
+  service.addCollector(sync);
 }
 
 // The agent roster, channel memberships and outbound mail, once messaging
@@ -314,7 +327,7 @@ export function buildFederation(deps: FederationDeps): Federation {
 
 // Each replica's cursor head, and a check against its pinned key, so a pull
 // reads the segment that continues the log before any other (I2).
-function readHints(fed: FedStore, roster: RosterService): ReadHints {
+export function readHints(fed: FedStore, roster: RosterService): ReadHints {
   const heads = new Map<string, string>();
   for (const row of fed.db
     .query<{ replica: string; hash: string | null }, []>(

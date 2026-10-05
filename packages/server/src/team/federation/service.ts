@@ -58,6 +58,8 @@ const RESTAGE_PER_PASS = 2_000;
 
 /** Team messaging op types, applied only once mailReady (FW-R32(7)). */
 const F2_TYPES = new Set(['presence', 'agent', 'channel', 'mail', 'state']);
+/** Op types a handler may ask to reread; their hashes are kept (FW-R37(2)). */
+const REREAD_TYPES = new Set(['doc']);
 
 /** How soon the next pass runs while an asker waits (fastUntil). */
 const FAST_PASS_MS = 10_000;
@@ -129,6 +131,10 @@ export interface OpHandler {
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped';
   /** After each pass that ran to the end: project what the pass applied. */
   passComplete?(): void;
+  /** Its applied ops count in `applied`, as task ops do (board state). */
+  readonly countsApplied?: boolean;
+  /** Retention dropped a parked op of this type (XD1c). */
+  dropped?(op: FederatedOp, reason: 'overflow' | 'revoked'): void;
 }
 
 /** Queues ops into fed_outbox before publishing (spec "Collect"). */
@@ -215,8 +221,20 @@ export class FederationService {
   // When each waiting op was last restaged, by pass (FW-R35(3)). Known limit:
   // kept in memory, so a restart tries each publisher's oldest ops first once.
   private readonly restageTried = new Map<string, number>();
+  // Ops a handler asked to see again (XD1e), by replica. Known limit: kept in
+  // memory, so a restart forgets them and the handler asks again.
+  private readonly rereads = new Map<string, Set<number>>();
 
   constructor(private readonly opts: FederationServiceOptions) {}
+
+  /** The next pass pulls `replica` from below `seqs` and hands each of those
+   *  ops, verified again, to its handler once more. */
+  reread(replica: string, seqs: readonly number[]): void {
+    const wanted = this.rereads.get(replica) ?? new Set<number>();
+    for (const seq of seqs)
+      if (Number.isInteger(seq) && seq > 0) wanted.add(seq);
+    if (wanted.size > 0) this.rereads.set(replica, wanted);
+  }
 
   /** Starts the interval and runs a first pass. */
   start(): void {
@@ -372,13 +390,21 @@ export class FederationService {
         if (!(err instanceof TransportOffline)) throw err;
       }
       // From one below each cursor, so a rival of the head op is seen (FW-R23).
-      const entries = await transport.pull(this.watermarks(1));
+      // A reread pulls its replica again from below the asked-for seqs.
+      const marks = new Map(this.watermarks(1));
+      for (const [replica, seqs] of this.rereads)
+        marks.set(
+          replica,
+          Math.min(marks.get(replica) ?? 0, Math.max(0, Math.min(...seqs) - 2))
+        );
+      const entries = await transport.pull(marks);
       this.lastError = null;
       const v1Ops = v1.readOthers((r) => this.opts.ledger.cursor(r));
       const before = roster.view();
       const verified = this.verify(entries);
       this.afterFold(before);
       const changed = this.stage(verified, v1Ops, now);
+      this.stageRereads(entries, now);
       await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
       await transport.ack(this.watermarks());
@@ -983,6 +1009,9 @@ export class FederationService {
       });
       return 'moved';
     }
+    // FW-R37(2): the hash of an op a handler may reread is kept before it waits.
+    if (REREAD_TYPES.has(entry.type))
+      fed.rememberReread(r, entry.seq, opHash(entry));
     // FW-R32(2), FW-R33(1): every verified mail op, a pruned one too, is
     // remembered before it can wait, so a forward of it can be checked.
     if (entry.type === 'mail') fed.rememberMail(r, entry.seq, opHash(entry));
@@ -1052,7 +1081,10 @@ export class FederationService {
     ctx: StageContext
   ): 'applied' | 'parked' | 'dropped' {
     try {
-      return handler.stage(op, ctx);
+      const out = handler.stage(op, ctx);
+      if (out === 'applied' && handler.countsApplied === true)
+        this.applied += 1;
+      return out;
     } catch (err) {
       dropNote(
         this.opts.fed,
@@ -1095,6 +1127,63 @@ export class FederationService {
       );
   }
 
+  // Tells a parked op's handler that retention dropped it.
+  private droppedParked(json: string, reason: 'overflow' | 'revoked'): void {
+    const op = JSON.parse(json) as FederatedOp;
+    try {
+      this.handlers.get(op.type)?.dropped?.(op, reason);
+    } catch (err) {
+      console.error(`dispatchd: a dropped ${op.type} op's handler failed`, err);
+    }
+  }
+
+  // XD1e: the ops a handler asked for again, from this pass's pull (lowered
+  // to below them). Each stages again only when its hash matches the one
+  // kept when it was first verified (FW-R37(2)), and its signature and
+  // content check against its predecessor's clock; else it is refused.
+  private stageRereads(entries: readonly LogEntry[], now: Date): void {
+    if (this.rereads.size === 0) return;
+    const { ledger, fed, roster } = this.opts;
+    const asked = new Map(this.rereads);
+    this.rereads.clear();
+    const byHash = new Map<string, LogEntry>();
+    for (const e of entries) {
+      const h = orNull(() => opHash(e));
+      if (h !== null) byHash.set(h, e);
+    }
+    ledger.atomically(() => {
+      const view = roster.view();
+      if (view === null) return;
+      const ctx: StageContext = {
+        view,
+        now,
+        evidence: evidenceOf(new Map(), view),
+      };
+      for (const e of entries) {
+        if (asked.get(e.replica)?.has(e.seq) !== true || isStub(e)) continue;
+        const kept = fed.rereadSeen(e.replica, e.seq);
+        if (kept === null || kept !== orNull(() => opHash(e))) continue;
+        asked.get(e.replica)?.delete(e.seq);
+        const handler = this.handlers.get(e.type);
+        const pinned = fed.pinned(e.replica);
+        if (handler === undefined || pinned === null) continue;
+        const prev = byHash.get(e.prev);
+        const prevHlc =
+          prev?.replica === e.replica
+            ? prev.hlc
+            : `${'0'.repeat(13)}.0000.${e.replica}`;
+        const ok = verifyEntry(
+          { seq: e.seq - 1, hash: e.prev, hlc: prevHlc },
+          e,
+          pinned.signPub
+        );
+        if (!ok.ok) continue;
+        if (this.stageSafely(handler, e, ctx) === 'parked')
+          this.park(e, 'parked');
+      }
+    });
+  }
+
   // FW-R33(5): one publisher's waiting ops are capped; past the cap its
   // oldest goes, with a rolling note.
   private makeRoom(table: 'fed_parked' | 'fed_unknown', op: FederatedOp): void {
@@ -1107,9 +1196,16 @@ export class FederationService {
         )
         .get(op.replica, op.seq)?.n ?? 0;
     if (held < cap) return;
+    const gone = db
+      .query<{ seq: number; op_json: string }, [string, number, number]>(
+        `SELECT seq, op_json FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?`
+      )
+      .all(op.replica, op.seq, held - cap + 1);
     db.query(
       `DELETE FROM ${table} WHERE replica = ? AND seq IN (SELECT seq FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?)`
     ).run(op.replica, op.replica, op.seq, held - cap + 1);
+    if (table === 'fed_parked')
+      for (const row of gone) this.droppedParked(row.op_json, 'overflow');
     dropNote(
       this.opts.fed,
       'mail-drop',
@@ -1120,7 +1216,8 @@ export class FederationService {
 
   // Parked ops and ops of a type now registered get their handler again.
   private restage(ctx: StageContext): void {
-    const { db } = this.opts.fed;
+    const { fed } = this.opts;
+    const { db } = fed;
     // FW-R33(5), FW-R35(3): a budget per publisher and per pass; within a
     // publisher the least recently tried go first, so stuck ops cannot
     // starve the ones behind them, and publishers rotate.
@@ -1177,6 +1274,21 @@ export class FederationService {
     for (const row of rows) {
       this.restageTried.set(`${row.table}:${row.replica}:${row.seq}`, pass);
       const op = JSON.parse(row.op_json) as FederatedOp;
+      // A parked op above its publisher's settled revocation cut goes (XD1c).
+      const cut = ctx.view.revoked.get(op.replica);
+      if (
+        row.table === 'fed_parked' &&
+        cut !== undefined &&
+        op.seq > cut.afterSeq &&
+        !revocationContested(fed, op.replica, ctx.view)
+      ) {
+        db.query('DELETE FROM fed_parked WHERE replica = ? AND seq = ?').run(
+          row.replica,
+          row.seq
+        );
+        this.droppedParked(row.op_json, 'revoked');
+        continue;
+      }
       const handler = this.handlers.get(op.type);
       if (handler === undefined) continue;
       if (F2_TYPES.has(op.type) && !ready) continue;
@@ -1354,6 +1466,30 @@ function keyOpSignPub(e: LogEntry): string | null {
 
 // The run and agent claims a pull's verified ops make, read before any is
 // staged, so a run claimed twice in one pull binds to neither.
+/** Whether a revocation of `replica` is still being fought: its parked ops
+ *  wait until the fight is decided (FW-R31(5)). */
+export function revocationContested(
+  fed: FedStore,
+  replica: string,
+  view: RosterView
+): boolean {
+  return fed.db
+    .query<{ hash: string }, [string]>(
+      'SELECT hash FROM fed_roster WHERE replica = ?'
+    )
+    .all(replica)
+    .some((r) => view.resolution.has(r.hash));
+}
+
+// The value, or null when computing it throws (hostile input).
+function orNull<T>(fn: () => T): T | null {
+  try {
+    return fn();
+  } catch {
+    return null;
+  }
+}
+
 function evidenceOf(
   verified: Map<string, Verified>,
   view: RosterView

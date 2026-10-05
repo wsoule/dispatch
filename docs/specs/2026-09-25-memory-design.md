@@ -1881,41 +1881,50 @@ Two documents change with it:
 
 ## Team replication (v2, ELv2)
 
-This is decision Q11. Board sync gains a second op type beside the task op
-(`team/boardSync/engine.ts:25-45`):
+This is decision Q11, carried by federation F3
+(`packages/server/src/team/federation/memory.ts`): team entries travel as signed
+`memory` ops on each machine's federation log, not as unsigned board-sync lines.
+The op body:
 
 ```ts
-interface MemoryOp {
-  v: 1;
-  replica: string;
-  seq: number;
-  hlc: string;
+interface MemoryBody {
   memory: string; // mem-<ulid>
-  kind: 'put' | 'remove';
+  kind: 'put' | 'remove'; // F3 publishes only put; a hard delete stays local
   fields?: Record<string, unknown>; // title, body, kind, refs, epic, appliesTo, pinned,
   // status, statusReason, supersedes, supersededBy, author, createdAt,
   // decidedBy, decidedByPolicy
+  trust: 'human' | 'confirmed' | 'agent'; // what the publisher asserts
 }
 ```
 
 - **What travels.** Only `team` entries, in `active` or `retired` status, merged
-  per field by last writer wins on the hybrid clock, exactly like task fields.
+  per field by last writer wins on the hybrid clock. A publisher sends only the
+  fields that differ from what the team has merged.
 - **What never travels:**
   - proposals, which are local to the proposer's daemon. An approved result
     travels as an entry;
   - personal and project entries;
-  - `trust`, `decay`, recalls and revisions, which are local.
-- **Trust is recomputed on arrival.** Board-sync ops are unsigned, and a
-  teammate's daemon or a hand-edited sync log can assert any field. Identity
-  becomes a boundary only across the network (messaging spec :388-391), and
-  signed ops belong to #5. So an incoming entry is stored with `agent` trust,
-  unless this daemon already holds it at a higher trust. Its remote `decidedBy`
-  and `decidedByPolicy` are shown as provenance, not trusted.
-- **Local policy still applies.** An incoming entry that was approved by policy
-  elsewhere (`decidedByPolicy` set) is checked against this daemon's own
-  `memory` policy. If this daemon would block, the entry arrives as an open
-  `add` proposal with `origin: sync:<replica>`, and later ops for it update the
-  proposal until it is decided. On approval, the entry keeps its replicated id.
+  - `decay`, recalls and revisions, which are local. A revision with cause
+    `decay` or `sync` is never published.
+- **Trust travels as an assertion, and each receiver recomputes it** (federation
+  Q10). `human` is kept when the publishing machine speaks for the entry's human
+  `author`; `confirmed` when it speaks for the human `decidedBy`; anything else
+  arrives as `agent`. A change to the content (title, body, kind or refs) sets
+  trust by these rules; any other change never lowers the trust this daemon
+  holds. Speaks-for is judged once, on arrival: a roster change later leaves
+  held trust as it is.
+- **Local policy still applies** (federation FW-R37(1)). A new entry, or a
+  change to a held entry's content, status, pin, `appliesTo` or supersession,
+  applies directly only when a human the publishing machine speaks for backs it:
+  the op's `by` (who made the change) or the entry's `decidedBy`. Anything else
+  meets this daemon's own `memory` policy: it applies if policy would approve,
+  else it waits as an open sync proposal with `origin: sync:<replica>:<id>`
+  (`/2`, `/3` after a decided one): `add` for a new entry, `supersede` of the
+  held entry for a change, which approval applies in place. Later ops update an
+  open proposal until it is decided. On approval, the entry keeps its replicated
+  id. A rejected change comes back only when it changes again.
+- **Caps** (FW-R37(3)). One publisher may have 50 sync proposals open here, and
+  start 500 new team entries an hour; the rest wait, with a rolling note.
 - **Seats.** Replication pauses past the license's seats, like task ops.
 - **Receipts.** v2 also exports team entries, active and retired, as
   `.dispatch/memory/<id>.md` into the receipt log (the layout in
@@ -2164,8 +2173,8 @@ Each stage ships on its own.
   - The one-time import, which runs whatever `claudeAutoMemory` defaults to.
   - The v1 desktop surfaces.
   - `export` defaults on only after the live probe passes.
-- **v2: sharing and curation.**
-  - ELv2 board-sync `memory` ops for team scope.
+- **v2: sharing and curation, after federation F3.**
+  - ELv2 signed `memory` ops for team scope (federation F3).
   - The receipts export.
   - The desktop Memory view, with promote and confirm.
 
@@ -2176,7 +2185,7 @@ Each stage ships on its own.
      - On the files backend, `.dispatch/ledger.jsonl` travels with the repo, so
        teammates share hazards through git today.
      - From v1, new lessons live in machine-local `memory.db`.
-     - v2 replication rides board sync, the SQLite team path.
+     - v2 replication rides federation's signed ops (F3).
    - The consequence: files-backend teams stop sharing new lessons. Ledger lines
      that teammates on older builds push still arrive, but as proposals that
      wait for a human, not as active entries.

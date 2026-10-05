@@ -15,6 +15,7 @@ import { fingerprint, sealPayload } from '@dispatch/protocol/federation';
 import type { StatePayload } from '@dispatch/protocol/federation';
 import { join } from 'node:path';
 
+import { createTeamMemoryPort } from '../../../../src/memory/teamPort.js';
 import { AgentSync } from '../../../../src/team/federation/agents.js';
 import { ChannelSync } from '../../../../src/team/federation/channels.js';
 import { Homes } from '../../../../src/team/federation/homes.js';
@@ -22,13 +23,82 @@ import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js'
 import { Inbound } from '../../../../src/team/federation/inbound.js';
 import type { StateHooks } from '../../../../src/team/federation/inbound.js';
 import { MailOut } from '../../../../src/team/federation/mail.js';
+import { MemorySync } from '../../../../src/team/federation/memory.js';
+import { DocSync } from '../../../../src/team/federation/ops.js';
+import type { DocsPort } from '../../../../src/team/federation/ops.js';
 import { Presence } from '../../../../src/team/federation/presence.js';
 import { trackWaiting } from '../../../../src/team/federation/presence.js';
 import type { RunInfo } from '../../../../src/team/federation/presence.js';
 import { HeldMail, StateOut } from '../../../../src/team/federation/state.js';
+import { testEngine } from '../../../memory/fixtures.js';
+import type { TestMemoryHost } from '../../../memory/fixtures.js';
 import { MemoryRemote } from './memoryTransport.js';
 import { MemoryV1, serviceReplica } from './serviceReplica.js';
 import type { ServiceReplica } from './serviceReplica.js';
+
+// What the docs side saw and says back; implements the whole DocsPort
+// (cross-plan edit XD1). Bodies carry a test number `n`.
+export class RecordingDocsPort implements DocsPort {
+  seen: {
+    n: number;
+    replica: string;
+    seq: number;
+    forBob: boolean;
+    forAda: boolean;
+  }[] = [];
+  answer: 'applied' | 'parked' | 'dropped' = 'applied';
+  pending: { doc: string; kind: 'put'; n: number }[] = [];
+  publishedBatches: number[][] = [];
+  publishedClocks: string[][] = [];
+  /** Leaves what was published in `pending` minus the batch, as a real port does. */
+  keepUnpublished = false;
+  dropped: {
+    replica: string;
+    seq: number;
+    reason: 'overflow' | 'revoked';
+    n: number;
+  }[] = [];
+  passes = 0;
+
+  applyDocOp(
+    op: Parameters<DocsPort['applyDocOp']>[0],
+    ctx: Parameters<DocsPort['applyDocOp']>[1]
+  ): 'applied' | 'parked' | 'dropped' {
+    this.seen.push({
+      n: Number(op.body['n']),
+      replica: op.replica,
+      seq: op.seq,
+      forBob: ctx.speaksFor(op.replica, 'human:bob'),
+      forAda: ctx.speaksFor(op.replica, 'human:ada'),
+    });
+    return this.answer;
+  }
+  pendingDocOps(): { doc: string; kind: 'put'; n: number }[] {
+    return this.pending;
+  }
+  published(
+    bodies: readonly { [key: string]: unknown }[],
+    clocks: readonly string[] = []
+  ): void {
+    this.publishedBatches.push(bodies.map((b) => Number(b['n'])));
+    this.publishedClocks.push([...clocks]);
+    this.pending = this.keepUnpublished
+      ? this.pending.slice(bodies.length)
+      : [];
+  }
+  parkedDropped(
+    meta: { replica: string; seq: number; reason: 'overflow' | 'revoked' },
+    body: unknown
+  ): void {
+    this.dropped.push({
+      ...meta,
+      n: Number((body as { n?: unknown } | null)?.n),
+    });
+  }
+  passComplete(): void {
+    this.passes += 1;
+  }
+}
 
 // A MessagingHost over plain maps: live runs by task, and every push, notify
 // and wake recorded.
@@ -129,6 +199,15 @@ export interface MessagingReplica extends ServiceReplica {
   startRun(meta: RunInfo): void;
   /** `other`'s pass, then this replica's. */
   settleWith(other: MessagingReplica): Promise<void>;
+  /** A recording docs port and its DocSync, when the team asked for docs. */
+  docs?: { port: RecordingDocsPort; sync: DocSync };
+  /** Team memory over an in-memory memory.db, when the team asked for it. */
+  memory?: {
+    engine: ReturnType<typeof testEngine>['engine'];
+    host: TestMemoryHost;
+    shared: ReturnType<typeof testEngine>['shared'];
+    sync: MemorySync;
+  };
 }
 
 export interface TeamOpts {
@@ -139,6 +218,24 @@ export interface TeamOpts {
   remoteMailPerReplicaPerHour?: number;
   maxWaitingPerPublisher?: number;
   stateOpsPerHour?: number;
+  /** Each replica gets a memory engine and a registered MemorySync. */
+  withMemory?: boolean;
+  /** How many of each replica's op hashes fed_seen_ops keeps. */
+  seenOpsKept?: number;
+  /** A bare repo every replica syncs through over git instead of memory. */
+  gitRemote?: string;
+  /** Set by foundedTeamWith on the founder, which installs `license`. */
+  installLicense?: boolean;
+  /** Each replica gets a recording DocsPort and a registered DocSync. */
+  docs?: boolean;
+  /** A license: its key installed on the founder, its public key on all. */
+  license?: { key: string; publicKey: string };
+  /** Sync proposals one publisher may have open (FW-R37(3)). */
+  memoryOpenProposals?: number;
+  /** New team entries one publisher may start per hour (FW-R37(3)). */
+  memoryNewPerHour?: number;
+  /** Handles that save a team entry before the team is founded. */
+  memoryFirst?: readonly string[];
   maxParkedPerPublisher?: number;
   restagePerPublisher?: number;
 }
@@ -152,6 +249,18 @@ export function messagingReplica(
   opts: TeamOpts = {}
 ): MessagingReplica {
   const base = serviceReplica(handle, remote, v1, {
+    ...(opts.gitRemote === undefined ? {} : { gitRemote: opts.gitRemote }),
+    ...(opts.seenOpsKept === undefined
+      ? {}
+      : { seenOpsKept: opts.seenOpsKept }),
+    ...(opts.license === undefined
+      ? {}
+      : {
+          licensePublicKey: opts.license.publicKey,
+          ...(opts.installLicense === true
+            ? { licenseKey: opts.license.key }
+            : {}),
+        }),
     ...(opts.maxParkedPerPublisher === undefined
       ? {}
       : { maxParkedPerPublisher: opts.maxParkedPerPublisher }),
@@ -277,6 +386,42 @@ export function messagingReplica(
   base.service.register(inbound);
   base.service.register(inbound.stateHandler(stateOut));
   base.service.setInbox(inbound);
+  let docs: MessagingReplica['docs'];
+  if (opts.docs === true) {
+    const port = new RecordingDocsPort();
+    const sync = new DocSync({
+      fed: base.fed,
+      roster: base.roster,
+      service: base.service,
+      port,
+    });
+    base.service.register(sync);
+    base.service.addCollector(sync);
+    docs = { port, sync };
+  }
+  let memory: MessagingReplica['memory'];
+  if (opts.withMemory === true) {
+    const m = testEngine();
+    m.host.clock = () => base.clock.now;
+    const sync = new MemorySync({
+      fed: base.fed,
+      roster: base.roster,
+      port: createTeamMemoryPort({
+        engine: m.engine,
+        shared: m.shared,
+        host: m.host,
+        ...(opts.memoryOpenProposals === undefined
+          ? {}
+          : { maxOpenPerPublisher: opts.memoryOpenProposals }),
+      }),
+      ...(opts.memoryNewPerHour === undefined
+        ? {}
+        : { newPerHour: opts.memoryNewPerHour }),
+    });
+    base.service.register(sync);
+    base.service.addCollector(sync);
+    memory = { engine: m.engine, host: m.host, shared: m.shared, sync };
+  }
   const replica: MessagingReplica = {
     ...base,
     remote,
@@ -312,8 +457,11 @@ export function messagingReplica(
     },
     close: () => {
       db.close();
+      memory?.shared.close();
       base.close();
     },
+    ...(memory === undefined ? {} : { memory }),
+    ...(docs === undefined ? {} : { docs }),
   };
   return replica;
 }
@@ -340,7 +488,20 @@ export async function foundedTeamWith(
 ): Promise<MessagingReplica[]> {
   const remote = new MemoryRemote();
   const v1 = new MemoryV1();
-  const rs = handles.map((h) => messagingReplica(h, remote, v1, opts));
+  const rs = handles.map((h, i) =>
+    messagingReplica(h, remote, v1, { ...opts, installLicense: i === 0 })
+  );
+  for (const [i, r] of rs.entries())
+    if ((opts.memoryFirst ?? []).includes(handles[i] ?? ''))
+      await r.memory?.engine.save(
+        { address: `human:${handles[i]}`, canDecide: true, kind: 'human' },
+        {
+          scope: 'team',
+          kind: 'fact',
+          title: 'from before the team',
+          body: 'b',
+        }
+      );
   const [founder, ...rest] = rs;
   if (founder === undefined) return rs;
   founder.roster.found('acme');
