@@ -35,7 +35,7 @@ import {
   PEER_ALIAS_PATTERN,
   SYSTEM_ADDRESS,
 } from '@dispatch/protocol';
-import { createPublicKey } from 'node:crypto';
+import { createPublicKey, randomUUID } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 
 import type { AuthTier } from '../tiers.js';
@@ -285,17 +285,45 @@ export async function checkNewPeer(
 export function markAuthFailed(
   deps: PeerDeps,
   notices: PeerNotices,
-  alias: string
+  alias: string,
+  reason: string | null = null
 ): PeerRow | null {
   const row = deps.store.getPeer(alias);
   if (row === null) return null;
-  deps.store.setPeerStatus(alias, 'auth-failed');
+  deps.store.setPeerStatus(alias, 'auth-failed', reason);
   notices.send(
     alias,
     'auth',
     `a2a:${alias} refused Dispatch's credential. Direct messages to it fail and channels skip it until it is enabled again with a working credential, in Settings → A2A → Peers or with dispatch a2a peers enable ${alias}.`
   );
-  return { ...row, status: 'auth-failed' };
+  return { ...row, status: 'auth-failed', statusReason: reason };
+}
+
+/**
+ * Hourly: each signature peer auth-failed only for unverifiable replies is
+ * sent one signed request. A verified answer of any status but an AUTH_*
+ * refusal re-enables it; a verified AUTH_* makes the failure sticky.
+ */
+export async function probeUnverifiedPeers(peers: PeerService): Promise<void> {
+  const d = peers.deps;
+  for (const row of d.store.peers()) {
+    if (row.status !== 'auth-failed' || row.statusReason !== 'unverifiable')
+      continue;
+    try {
+      await peerClientFor(d, row).getTask(`dispatch-probe-${randomUUID()}`);
+    } catch (err) {
+      if (!(err instanceof PeerHttpError) || err.status === null) continue;
+      if (
+        (err.status === 401 || err.status === 403) &&
+        (err.reason ?? '').startsWith('AUTH_')
+      ) {
+        d.store.setPeerStatus(row.alias, 'auth-failed', null);
+        continue;
+      }
+    }
+    d.store.setPeerStatus(row.alias, 'active');
+    peers.emit(row.alias, 'enabled');
+  }
 }
 
 // Disables a peer and tells the owner once a day for this reason.

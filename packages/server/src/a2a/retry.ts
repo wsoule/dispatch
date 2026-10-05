@@ -1,48 +1,67 @@
+import type { A2AStore, PendingNotice } from '@dispatch/a2a';
+
 /** Retry delays for notices a paired peer must hear: 30 s up to 24 h, then give up. */
 const NOTICE_BACKOFF_MS = [
   30_000, 120_000, 600_000, 3_600_000, 21_600_000, 86_400_000,
 ];
 
-// One retried send per id: `send` resolves true once the peer heard it; after
-// the last backoff step `settle(false)` gives up. Timers never hold the
-// process open.
+// Retried sends of one kind of pending notice. Each notice is a row in
+// a2a.db with its attempt count, so a restart resumes where it left off:
+// `send` resolves true once the peer heard it, and after the last backoff
+// step `settle(false)` gives up. The row is gone before settle runs.
 export class NoticeRetries {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private stopped = false;
-  constructor(private readonly backoffMs: number[] = NOTICE_BACKOFF_MS) {}
+  constructor(
+    private readonly store: A2AStore,
+    private readonly kind: PendingNotice['kind'],
+    private readonly backoffMs: number[] = NOTICE_BACKOFF_MS
+  ) {}
 
-  /** The delay before retry `attempt` (1-based), or undefined past the last. */
-  delay(attempt: number): number | undefined {
-    return this.backoffMs[attempt - 1];
-  }
-
+  /** Tries notice `id` after `delayMs`; resolves with whether that first try was heard. */
   start(
     id: string,
     send: () => Promise<boolean>,
     settle: (heard: boolean) => void,
-    delayMs = 0,
-    attempt = 0
-  ): void {
-    if (this.stopped) return;
+    delayMs = 0
+  ): Promise<boolean> {
+    if (this.stopped) return Promise.resolve(false);
     this.cancel(id);
-    const t = setTimeout(() => {
-      this.timers.delete(id);
-      void (async () => {
-        let heard = false;
-        try {
-          heard = await send();
-        } catch {
-          // Unreachable or unverifiable: retried.
-        }
-        if (this.stopped) return;
-        if (heard) return settle(true);
-        const next = this.delay(attempt + 1);
-        if (next === undefined) return settle(false);
-        this.start(id, send, settle, next, attempt + 1);
-      })();
-    }, delayMs);
-    t.unref();
-    this.timers.set(id, t);
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        this.timers.delete(id);
+        void this.attempt(id, send, settle).then(resolve);
+      }, delayMs);
+      t.unref();
+      this.timers.set(id, t);
+    });
+  }
+
+  private async attempt(
+    id: string,
+    send: () => Promise<boolean>,
+    settle: (heard: boolean) => void
+  ): Promise<boolean> {
+    let heard = false;
+    try {
+      heard = await send();
+    } catch {
+      // Unreachable or unverifiable: retried.
+    }
+    if (this.stopped) return heard;
+    if (heard) {
+      this.store.deleteNotice(this.kind, id);
+      settle(true);
+      return true;
+    }
+    const next = this.backoffMs[this.store.noteAttempt(this.kind, id) - 1];
+    if (next === undefined) {
+      this.store.deleteNotice(this.kind, id);
+      settle(false);
+    } else {
+      void this.start(id, send, settle, next);
+    }
+    return false;
   }
 
   cancel(id: string): void {

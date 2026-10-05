@@ -65,7 +65,7 @@ export interface OutboundDeps {
   // peerClientFor; throws MessagingError 'token' when the credential is missing.
   clientFor: (row: PeerRow) => PeerClient;
   refreshPeer: (alias: string) => Promise<void>;
-  markAuthFailed: (alias: string) => void;
+  markAuthFailed: (alias: string, reason?: string | null) => void;
   // Re-resolves and re-checks a decide-tier peer's interface URL before a
   // send, a poll or a subscribe; throws MessagingError when refused.
   guard: (row: PeerRow) => Promise<void>;
@@ -74,8 +74,8 @@ export interface OutboundDeps {
   now?: () => Date;
   pollMs?: (polls: number) => number;
   concurrency?: number;
-  // Consecutive unverifiable replies before auth-failed (UNVERIFIED_LIMIT).
-  unverifiedLimit?: number;
+  // How long unverifiable replies run before auth-failed (UNVERIFIED_WINDOW_MS).
+  unverifiedWindowMs?: number;
   // A reply signed by a key the peer's pin does not know: a rotation the
   // push missed, looked up at the peer's well-known statement.
   keyUnknown?: (alias: string) => void;
@@ -143,31 +143,42 @@ function unverifiable(err: unknown): boolean {
   );
 }
 
-// Consecutive unverifiable replies after which a signature peer is marked
-// auth-failed: a sustained run means its key or clock no longer matches.
-const UNVERIFIED_LIMIT = 20;
+// How long a signature peer must answer only unverifiably before it is
+// auth-failed: a sustained hour means its key or clock no longer matches,
+// where a short burst (a proxy's error page) does not.
+const UNVERIFIED_WINDOW_MS = 3_600_000;
 
 // The outbound worker (spec:1444-1531): relays held a2a: deliveries one at a
 // time per peer, at most `concurrency` peers at once, then follows each peer
 // task and records what the peer says. What to record and when to retry come
 // from @dispatch/a2a; this class only does I/O, timers and bookkeeping.
 export class OutboundWorker {
-  // Consecutive unverifiable replies per signature peer, reset by any verified one.
+  // When each signature peer's run of unverifiable replies began; any
+  // verified reply clears it.
   private readonly unverified = new Map<string, number>();
 
-  // Counts an unverifiable reply; true once the run reaches the limit, after
-  // which the peer is auth-failed and the count starts over.
+  // Notes an unverifiable reply; true once the run has lasted the window,
+  // however many trackers saw it, after which the peer is auth-failed.
   private unverifiedRunEnds(alias: string, err: unknown): boolean {
     if (!unverifiable(err)) return false;
     if ((err as PeerHttpError).reason === 'sig_key_unknown')
       this.deps.keyUnknown?.(alias);
-    const n = (this.unverified.get(alias) ?? 0) + 1;
-    if (n < (this.deps.unverifiedLimit ?? UNVERIFIED_LIMIT)) {
-      this.unverified.set(alias, n);
+    const now = this.now().getTime();
+    const began = this.unverified.get(alias);
+    if (began === undefined) {
+      this.unverified.set(alias, now);
       return false;
     }
+    if (now - began < (this.deps.unverifiedWindowMs ?? UNVERIFIED_WINDOW_MS))
+      return false;
     this.unverified.delete(alias);
     return true;
+  }
+
+  // Auth-failed: 'unverifiable' when only unverifiable replies said so, which
+  // the hourly probe may undo; a verified AUTH_* refusal stays.
+  private authFailed(alias: string, err: unknown): void {
+    this.deps.markAuthFailed(alias, unverifiable(err) ? 'unverifiable' : null);
   }
 
   private signedPeer(alias: string): boolean {
@@ -540,7 +551,7 @@ export class OutboundWorker {
         lastError: reason,
         updatedAt: at,
       });
-      this.deps.markAuthFailed(row.alias);
+      this.authFailed(row.alias, err);
       return;
     }
     if (
@@ -862,7 +873,7 @@ export class OutboundWorker {
         authRefusal(err, this.signedPeer(row.alias)) ||
         this.unverifiedRunEnds(row.alias, err)
       ) {
-        this.deps.markAuthFailed(row.alias);
+        this.authFailed(row.alias, err);
         return true;
       }
       // A 404 may mean the peer moved its interface; its card says where.
@@ -1024,7 +1035,7 @@ export function startOutbound(
     pollMs?: (polls: number) => number;
     concurrency?: number;
     changed?: () => void;
-    unverifiedLimit?: number;
+    unverifiedWindowMs?: number;
     keyUnknown?: (alias: string) => void;
   } = {}
 ): { worker: OutboundWorker; stop: () => void } {
@@ -1041,8 +1052,8 @@ export function startOutbound(
       if (row.status !== 'active') peers.emit(alias, 'disabled');
       changed();
     },
-    markAuthFailed: (alias) => {
-      markAuthFailed(d, peers.notices, alias);
+    markAuthFailed: (alias, reason) => {
+      markAuthFailed(d, peers.notices, alias, reason ?? null);
       worker.peerGone(alias, 'disabled');
       changed();
     },

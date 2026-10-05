@@ -41,6 +41,9 @@ export async function revokeCascade(
       runOperatorOf(address) === human);
 
   step(`revoke ${handle}'s agents`, () => revokeAgents(ctx, prefix));
+  step(`cancel ${handle}'s pairing offers`, () =>
+    ctx.a2a?.cancelOffersBy(human)
+  );
   step(`close ${handle}'s asks and proposals`, () => {
     for (const question of ctx.messaging.engine.openBlocking()) {
       if (theirs(question.from) || theirs(proposer(ctx, question)))

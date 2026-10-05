@@ -338,6 +338,7 @@ export {
   readA2ASigningKey,
   readCredentials,
   readPeerCredential,
+  replaceA2ASigningKeys,
   resolveLinearApiKey,
   resolveTypesafeApiKey,
   writeA2ANextSigningKey,

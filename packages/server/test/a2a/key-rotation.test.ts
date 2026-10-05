@@ -195,7 +195,10 @@ describe('a key push the peer could not hear', () => {
       15_000
     );
     expect(clientOf(b, 'a2a.alice').keyThumbprint).toBe(newKid);
-    await waitFor(() => a.handle.a2a.store!.keyPushes().length === 0, 5000);
+    await waitFor(
+      () => a.handle.a2a.store!.notices('key-push').length === 0,
+      5000
+    );
   }, 30_000);
 
   it('a revocation is retried too, and honoured without the revoked key signing the request', async () => {
@@ -274,4 +277,101 @@ describe('a compromised key', () => {
     expect(a.handle.a2a.store!.getPeer('bob')?.status).toBe('disabled');
     expect(pairingState(a)).toBe('unpaired');
   });
+});
+
+describe('batch 3 review: K2, K3', () => {
+  it('K2: a compromise overrides a planned overlap, drops both keys and revokes each', async () => {
+    const a = await daemon('a2a-keys-a-');
+    const b = await daemon('a2a-keys-b-');
+    const c = await daemon('a2a-keys-c-');
+    await paired(a, b);
+    // C pairs with A as 'carol', then misses the planned push: it pins K1.
+    const offered = await a.call('/api/a2a/pairings', {
+      body: { alias: 'carol' },
+    });
+    const { code } = (await offered.json()) as { code: string };
+    expect(
+      (
+        await c.call('/api/a2a/pairings/accept', {
+          body: { code, alias: 'alice' },
+        })
+      ).status
+    ).toBe(200);
+    const k1 = kidOf(a.root);
+    const port = Number(c.listener.split(':').pop());
+    const cListener = (enabled: boolean) =>
+      c.call('/api/a2a/listener', {
+        method: 'PUT',
+        body: { enabled, host: '127.0.0.1', port },
+      });
+    expect((await cListener(false)).status).toBe(200);
+    await rotate(a);
+    const next = readA2ANextSigningKey(a.root);
+    if (next.status !== 'ok') throw new Error('no next key');
+    const k2 = ecThumbprint(publicJwkOf(next.next.jwk))!;
+    expect(b.handle.a2a.store!.getPeer('alice')?.keyThumbprint).toBe(k2);
+    expect(c.handle.a2a.store!.getPeer('alice')?.keyThumbprint).toBe(k1);
+    expect((await cListener(true)).status).toBe(200);
+    const out = await rotate(a, true);
+    expect(out.mustRepair).toEqual(['bob', 'carol']);
+    expect([k1, k2]).not.toContain(kidOf(a.root));
+    expect(readA2ANextSigningKey(a.root).status).toBe('absent');
+    // B pinned K2, C still K1: each honours the revocation of the key it pins.
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      15_000
+    );
+    await waitFor(
+      () => c.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      15_000
+    );
+  }, 30_000);
+
+  it('K3: a revocation of any key a pairing ever pinned drops it, even after a hostile key change', async () => {
+    const a = await daemon('a2a-keys-a-');
+    const b = await daemon('a2a-keys-b-');
+    await paired(a, b);
+    // An attacker holding A's K1 pushes K1 -> X to B first.
+    const k1 = loadOrCreateSigningKey(a.root);
+    const x = newPrivateJwk();
+    const hostile = await rawFetch(`${b.listener}/a2a/v1/dispatch/key-change`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify(
+        makeKeyChange({
+          oldJwk: publicJwkOf(k1.publicJwk),
+          oldKey: createPrivateKey({ key: k1.privateJwk, format: 'jwk' }),
+          newJwk: publicJwkOf(x),
+          at: new Date(),
+        })
+      ),
+    });
+    expect(hostile.status).toBe(200);
+    expect(b.handle.a2a.store!.getPeer('alice')?.keyThumbprint).toBe(
+      ecThumbprint(publicJwkOf(x))
+    );
+    // The owner revokes K1: B honours it although it now pins X.
+    const out = await rotate(a, true);
+    expect(out.mustRepair).toEqual(['bob']);
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      15_000
+    );
+    expect(pairingState(b)).toBe('unpaired');
+  }, 30_000);
+
+  it('K3: a disabled paired peer is still sent the revocation and listed to re-pair', async () => {
+    const a = await daemon('a2a-keys-a-');
+    const b = await daemon('a2a-keys-b-');
+    await paired(a, b);
+    expect(
+      (await a.call('/api/a2a/peers/bob/disable', { body: {} })).status
+    ).toBe(200);
+    const out = await rotate(a, true);
+    expect(out.mustRepair).toEqual(['bob']);
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      15_000
+    );
+  }, 30_000);
 });

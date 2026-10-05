@@ -222,6 +222,21 @@ describe('peers', () => {
     expect(store.getPeer('acme')).toBeNull();
   });
 
+  it('keeps why a peer is in its status until the status changes', () => {
+    store.putPeer(peer('acme'));
+    expect(store.getPeer('acme')?.statusReason ?? null).toBeNull();
+    store.setPeerStatus('acme', 'auth-failed', 'unverifiable');
+    expect(store.getPeer('acme')).toMatchObject({
+      status: 'auth-failed',
+      statusReason: 'unverifiable',
+    });
+    // An upsert keeps it; a status change without a reason clears it.
+    store.putPeer({ ...peer('acme'), status: 'auth-failed', etag: '"v3"' });
+    expect(store.getPeer('acme')?.statusReason).toBe('unverifiable');
+    store.setPeerStatus('acme', 'active');
+    expect(store.getPeer('acme')?.statusReason).toBeNull();
+  });
+
   it('keeps who added a peer, and at which tier, across an upsert', () => {
     store.putPeer(peer('acme', { addedTier: 'operator' }));
     store.putPeer(peer('acme', { addedBy: 'human:eve', addedTier: 'decide' }));
@@ -688,30 +703,104 @@ describe('review N5', () => {
     expect(store.pairing('p-2')?.secretHash).toBeNull();
   });
 
-  it('keeps pending key pushes per pairing until they are settled', () => {
-    expect(store.keyPushes()).toEqual([]);
-    store.putKeyPush({
-      pairedId: 'p-1',
-      statement: '{"a":1}',
+  it('keeps pending notices per kind and id, with their attempts, until settled', () => {
+    expect(store.notices('key-push')).toEqual([]);
+    store.putNotice({
+      kind: 'key-push',
+      id: 'p-1',
+      body: '["a"]',
       at: '2026-10-01T00:00:00.000Z',
     });
-    store.putKeyPush({
-      pairedId: 'p-2',
-      statement: '{"a":2}',
+    store.putNotice({
+      kind: 'key-push',
+      id: 'p-2',
+      body: '["b"]',
       at: '2026-10-01T00:00:01.000Z',
     });
-    // A later statement for the same pairing replaces the earlier one.
-    store.putKeyPush({
-      pairedId: 'p-1',
-      statement: '{"a":3}',
+    store.putNotice({
+      kind: 'unpair',
+      id: 'p-1',
+      body: '',
+      at: '2026-10-01T00:00:01.000Z',
+    });
+    expect(store.noteAttempt('key-push', 'p-1')).toBe(1);
+    expect(store.noteAttempt('key-push', 'p-1')).toBe(2);
+    // A newer body for the same notice replaces it and starts its count over.
+    store.putNotice({
+      kind: 'key-push',
+      id: 'p-2',
+      body: '["c"]',
       at: '2026-10-01T00:00:02.000Z',
     });
-    expect(store.keyPushes()).toEqual([
-      { pairedId: 'p-2', statement: '{"a":2}', at: '2026-10-01T00:00:01.000Z' },
-      { pairedId: 'p-1', statement: '{"a":3}', at: '2026-10-01T00:00:02.000Z' },
+    expect(store.notices('key-push')).toEqual([
+      {
+        kind: 'key-push',
+        id: 'p-1',
+        body: '["a"]',
+        at: '2026-10-01T00:00:00.000Z',
+        attempts: 2,
+      },
+      {
+        kind: 'key-push',
+        id: 'p-2',
+        body: '["c"]',
+        at: '2026-10-01T00:00:02.000Z',
+        attempts: 0,
+      },
     ]);
-    store.deleteKeyPush('p-2');
-    expect(store.keyPushes().map((k) => k.pairedId)).toEqual(['p-1']);
+    store.deleteNotice('key-push', 'p-2');
+    expect(store.notices('key-push').map((n) => n.id)).toEqual(['p-1']);
+    expect(store.notices('unpair').map((n) => n.id)).toEqual(['p-1']);
+    expect(store.noteAttempt('unpair', 'missing')).toBe(0);
+  });
+
+  it('finds every pairing that ever pinned a key, with that key', () => {
+    const jwk = { kty: 'EC', crv: 'P-256', x: 'x1', y: 'y1' };
+    store.recordKeyEvent({
+      thumbprint: 'tp-1',
+      event: 'pinned',
+      statement: null,
+      at: '2026-10-01T00:00:00.000Z',
+      pairedId: 'p-1',
+      jwk,
+    });
+    store.recordKeyEvent({
+      thumbprint: 'tp-2',
+      event: 'pinned',
+      statement: '{}',
+      at: '2026-10-01T00:01:00.000Z',
+      pairedId: 'p-1',
+      jwk: { ...jwk, x: 'x2' },
+    });
+    store.recordKeyEvent({
+      thumbprint: 'tp-1',
+      event: 'pinned',
+      statement: null,
+      at: '2026-10-01T00:02:00.000Z',
+      pairedId: 'p-2',
+      jwk,
+    });
+    expect(store.pairingsThatPinned('tp-1')).toEqual([
+      { pairedId: 'p-1', jwk },
+      { pairedId: 'p-2', jwk },
+    ]);
+    expect(store.pairingsThatPinned('tp-3')).toEqual([]);
+    expect(store.keyEvents('tp-2')[0]).toMatchObject({
+      pairedId: 'p-1',
+      jwk: { ...jwk, x: 'x2' },
+    });
+  });
+
+  it('rolls a transaction back when it throws, and nests', () => {
+    expect(() =>
+      store.transaction(() => {
+        store.putPairing(pairingRow('p-tx'));
+        store.transaction(() => store.setPairingState('p-tx', 'canceled'));
+        throw new Error('no');
+      })
+    ).toThrow('no');
+    expect(store.pairing('p-tx')).toBeNull();
+    expect(store.transaction(() => 7)).toBe(7);
   });
 
   it('keeps the unpair states', () => {

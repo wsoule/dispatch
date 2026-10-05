@@ -20,7 +20,7 @@ import {
 } from './pairHarness.js';
 import { freePort } from './seed.js';
 
-const { daemon, offer, accept, stop, paired } = useDaemons();
+const { daemon, offer, accept, stop, paired, restart } = useDaemons();
 
 describe('pairing two daemons with one code', () => {
   it('pins both sides’ keys on signature peers and clients, and an ask round-trips signed', async () => {
@@ -457,5 +457,128 @@ describe('unpairing', () => {
       () => aNotices().some((n) => n.includes('could not tell')),
       5000
     );
+  });
+});
+
+describe('batch 3 review: K1, M2, M4, M5', () => {
+  it('K1: revoking a teammate cancels their open offers', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    const ada = a.handle.team.teammates.issue('ada', 'operator');
+    const { code, id } = await offer(a, 'bob', ada);
+    expect(
+      (await a.call('/api/team/tokens/ada', { method: 'DELETE' })).status
+    ).toBe(200);
+    expect(a.handle.a2a.store!.pairing(id)?.state).toBe('canceled');
+    expect((await accept(b, code)).status).toBeGreaterThanOrEqual(400);
+    expect(a.handle.a2a.store!.getPeer('bob')).toBeNull();
+  });
+
+  it('K1: completion re-checks the creator, revoked without a cascade or lowered in tier', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    const ada = a.handle.team.teammates.issue('ada', 'operator');
+    const first = await offer(a, 'bob', ada);
+    // Lowered to decide: the operator-tier offer no longer stands.
+    a.handle.team.teammates.issue('ada', 'decide');
+    expect((await accept(b, first.code)).status).toBeGreaterThanOrEqual(400);
+    expect(a.handle.a2a.store!.getPeer('bob')).toBeNull();
+    // Revoked without the cascade (a race with it): refused too.
+    const again = a.handle.team.teammates.issue('ada', 'operator');
+    const second = await offer(a, 'bob2', again);
+    a.handle.team.teammates.revoke('ada');
+    expect(
+      (await accept(b, second.code, 'alice2')).status
+    ).toBeGreaterThanOrEqual(400);
+    expect(a.handle.a2a.store!.getPeer('bob2')).toBeNull();
+    expect(a.handle.a2a.store!.clients()).toEqual([]);
+  });
+
+  it('M2: refuses an alias that already has an open offer, on either side', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    await offer(a, 'bob');
+    expect(
+      (await a.call('/api/a2a/pairings', { body: { alias: 'bob' } })).status
+    ).toBe(409);
+    // B has an open offer under the alias it would accept as.
+    await offer(b, 'alice');
+    const { code } = await offer(a, 'carol');
+    expect((await accept(b, code, 'alice')).status).toBe(409);
+  });
+
+  it('M2: a peer row that appears before completion stops it, and nothing else is written', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    const { code, id } = await offer(a, 'bob');
+    // Someone adds a2a:bob on A between the offer and the proof.
+    a.handle.a2a.store!.putPeer({
+      alias: 'bob',
+      cardUrl: 'https://bob.example.com/.well-known/agent-card.json',
+      interfaceUrl: 'https://bob.example.com/a2a/v1',
+      binding: 'HTTP+JSON',
+      cardJson: '{}',
+      etag: null,
+      fetchedAt: new Date().toISOString(),
+      status: 'active',
+      addedBy: 'human:test',
+      addedTier: 'operator',
+      allowHttp: false,
+      allowOrigin: false,
+      apiKeyHeader: null,
+      createdAt: new Date().toISOString(),
+    });
+    expect((await accept(b, code)).status).toBeGreaterThanOrEqual(400);
+    expect(
+      a.handle.a2a.store!.getPeer('bob')?.keyThumbprint ?? null
+    ).toBeNull();
+    expect(a.handle.a2a.store!.clients()).toEqual([]);
+    expect(a.handle.a2a.store!.pairing(id)?.state).toBe('offered');
+  });
+
+  it('M4: an unreachable accepting card gets a fixed message, not the error', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const { code } = await offer(a, 'bob');
+    const { privateKey, publicKey } = generateKeyPairSync('ec', {
+      namedCurve: 'P-256',
+    });
+    const proof = makeProof({
+      code: decodePairingCode(code, new Date()),
+      reach: {
+        kind: 'url',
+        card: `http://127.0.0.1:${await freePort()}/.well-known/agent-card.json`,
+      },
+      name: 'Bob',
+      privateKey,
+      jwk: publicKey.export({ format: 'jwk' }) as Record<string, string>,
+    });
+    const res = await rawFetch(`${a.listener}/a2a/v1/dispatch/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify(proof),
+    });
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).toContain("the accepting side's card could not be checked");
+    expect(text).not.toMatch(/127\.0\.0\.1|connection|refused|fetch/i);
+  });
+
+  it('M5: a restart resumes an unpair at its attempt count, not from zero', async () => {
+    // One retry, a minute out: only a kept count lets it give up after a restart.
+    const a = await daemon('a2a-pair-a-', { noticeBackoffMs: [60_000] });
+    const b = await daemon('a2a-pair-b-');
+    await paired(a, b);
+    await stop(b);
+    expect(
+      (await a.call('/api/a2a/peers/bob', { method: 'DELETE' })).status
+    ).toBe(204);
+    await waitFor(
+      () => (a.handle.a2a.store!.notices('unpair')[0]?.attempts ?? 0) >= 1,
+      10_000
+    );
+    await restart(a, { noticeBackoffMs: [60_000] });
+    await waitFor(() => a.handle.a2a.store!.getPeer('bob') === null, 10_000);
+    expect(pairingState(a)).toBe('unpaired');
+    expect(a.handle.a2a.store!.notices('unpair')).toEqual([]);
   });
 });

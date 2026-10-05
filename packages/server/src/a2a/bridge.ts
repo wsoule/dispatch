@@ -48,7 +48,11 @@ import type { OutboundWorker } from './outbound.js';
 import { startOutbound } from './outbound.js';
 import { Unpairer } from './pairing.js';
 import type { PeerService } from './peers.js';
-import { createPeerService, refreshDuePeers } from './peers.js';
+import {
+  createPeerService,
+  probeUnverifiedPeers,
+  refreshDuePeers,
+} from './peers.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
 import type { WatchLimits } from './portRoutes.js';
@@ -62,7 +66,7 @@ import {
   resolveListener,
   writeListenerSettings,
 } from './settings.js';
-import { CardSigner, KEY_OVERLAP_MS, loadSigningKeys } from './signing.js';
+import { CardSigner, finishRotation, loadSigningKeys } from './signing.js';
 import { BridgeWatch } from './watch.js';
 
 interface ListenerStatus {
@@ -91,6 +95,10 @@ export interface A2ABridge {
   readonly peers: PeerService | null;
   readonly unpairer: Unpairer | null;
   readonly keys: KeyService | null;
+  // XH-R3: cancels the open pairing offers `ref` made.
+  cancelOffersBy(ref: string): void;
+  // Probes each peer auth-failed only for unverifiable replies (hourly).
+  probeUnverified(): Promise<void>;
   // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
   readonly outbound: OutboundWorker | null;
   // Whether standalone hosts may use /api/a2a/port/* (the settings file).
@@ -144,6 +152,8 @@ export interface A2ABridge {
 }
 
 interface OpenBridgeDeps {
+  // The tier a pairing offer's creator acts at now; null once revoked.
+  creatorTier?: (ref: string) => AuthTier | null;
   rootDir: string;
   messaging: Messaging;
   tasks: TaskStorePort;
@@ -163,8 +173,8 @@ interface OpenBridgeDeps {
   teamTls?: { certPath: string; keyPath: string };
   // Standalone hosts' watch-stream limits over the defaults (tests).
   watchLimits?: Partial<WatchLimits>;
-  // Unverifiable replies before a signature peer is auth-failed (tests).
-  unverifiedLimit?: number;
+  // How long unverifiable replies run before auth-failed (tests shorten it).
+  unverifiedWindowMs?: number;
   // Unpair notices' and key pushes' retry delays (tests shorten them).
   noticeBackoffMs?: number[];
   mark?: (label: string) => void;
@@ -246,6 +256,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   } else {
     const bridgeDeps: BridgeDeps = {
       rootDir,
+      ...(deps.creatorTier === undefined
+        ? {}
+        : { creatorTier: deps.creatorTier }),
       engine: messaging.engine,
       messages: messaging.store,
       store,
@@ -348,9 +361,16 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     // The 24 h card refresh, checked hourly; a rotation whose overlap is
     // over is finished by reloading the keys.
     refreshTimer = setInterval(() => {
-      const began = signer?.rotationAt() ?? null;
-      if (began !== null && Date.now() - Date.parse(began) >= KEY_OVERLAP_MS)
-        signer = undefined;
+      void finishRotation(rootDir).then(
+        (finished) => {
+          if (finished) signer = undefined;
+        },
+        (err: unknown) =>
+          console.error('dispatchd: finishing the A2A key rotation failed', err)
+      );
+      void probeUnverifiedPeers(peerService).catch((err: unknown) =>
+        console.error('dispatchd: probing unverified A2A peers failed', err)
+      );
       void refreshDuePeers(peerService.deps, peerService.notices).then(
         (n) => {
           if (n > 0) deps.events.broadcast({ type: 'a2a.changed' });
@@ -385,9 +405,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     try {
       outbound = startOutbound(peerService, {
         changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
-        ...(deps.unverifiedLimit === undefined
+        ...(deps.unverifiedWindowMs === undefined
           ? {}
-          : { unverifiedLimit: deps.unverifiedLimit }),
+          : { unverifiedWindowMs: deps.unverifiedWindowMs }),
         keyUnknown: (alias) => keyService.keyUnknown(alias),
       });
     } catch (err) {
@@ -396,6 +416,13 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     try {
       unpairer.resume();
       keyService.resume();
+      void finishRotation(rootDir).then(
+        (finished) => {
+          if (finished) signer = undefined;
+        },
+        (err: unknown) =>
+          console.error('dispatchd: finishing the A2A key rotation failed', err)
+      );
     } catch (err) {
       console.error('dispatchd: A2A unpair resume failed', err);
     }
@@ -477,6 +504,17 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   }
 
   const bridge: A2ABridge = {
+    cancelOffersBy(ref) {
+      if (store === null) return;
+      for (const p of store.pairings())
+        if (p.createdBy === ref && p.state === 'offered')
+          store.setPairingState(p.id, 'canceled');
+      deps.events.broadcast({ type: 'a2a.changed' });
+    },
+    async probeUnverified() {
+      if (peers === null) return;
+      await probeUnverifiedPeers(peers);
+    },
     get unpairer() {
       return unpairer;
     },

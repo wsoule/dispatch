@@ -112,8 +112,8 @@ export interface SigningKeys {
   next: { key: SigningKey; at: string } | null;
 }
 
-// The signing key and any rotation's next key; a rotation whose overlap is
-// over is finished here, deleting the old key.
+// The signing key and any rotation's next key. A rotation whose overlap is
+// over already signs with its new key alone; finishRotation deletes the old.
 export function loadSigningKeys(
   rootDir: string,
   now = new Date()
@@ -126,12 +126,23 @@ export function loadSigningKeys(
     throw new Error("the stored rotation's next key is malformed");
   if (read.status === 'absent') return { current, next: null };
   const key = keyOf(read.next.jwk);
-  const began = Date.parse(read.next.at);
-  if (Number.isNaN(began) || now.getTime() - began >= KEY_OVERLAP_MS) {
-    promoteA2ASigningKey(rootDir);
-    return { current: key, next: null };
-  }
+  if (overlapOver(read.next.at, now)) return { current: key, next: null };
   return { current, next: { key, at: read.next.at } };
+}
+
+function overlapOver(at: string, now: Date): boolean {
+  const began = Date.parse(at);
+  return Number.isNaN(began) || now.getTime() - began >= KEY_OVERLAP_MS;
+}
+
+/** Deletes a rotation's old key once its overlap is over; true when it did. */
+export async function finishRotation(
+  rootDir: string,
+  now = new Date()
+): Promise<boolean> {
+  const read = readA2ANextSigningKey(rootDir);
+  if (read.status !== 'ok' || !overlapOver(read.next.at, now)) return false;
+  return promoteA2ASigningKey(rootDir);
 }
 
 // Signs each distinct card once (ES256 signatures are randomized, and
@@ -147,11 +158,6 @@ export class CardSigner {
   // The key that signs now: a rotation's new key through its overlap.
   private get active(): SigningKey {
     return this.keys.next?.key ?? this.keys.current;
-  }
-
-  /** The rotation in its overlap, if any: when it began. */
-  rotationAt(): string | null {
-    return this.keys.next?.at ?? null;
   }
 
   async signaturesFor(inputs: CardInputs): Promise<CardSignatureJson[]> {
@@ -203,6 +209,19 @@ export class CardSigner {
       ...this.keyObject(this.keys.current),
       jwk: bareJwk(this.keys.current),
     };
+  }
+
+  /** Every key a peer may still pin: the signing key, and a rotation's next. */
+  keysInUse(): {
+    keyid: string;
+    privateKey: KeyObject;
+    jwk: Record<string, string>;
+  }[] {
+    const keys = [
+      this.keys.current,
+      ...(this.keys.next === null ? [] : [this.keys.next.key]),
+    ];
+    return keys.map((k) => ({ ...this.keyObject(k), jwk: bareJwk(k) }));
   }
 
   /** The signing key itself, for a rotation to replace. */

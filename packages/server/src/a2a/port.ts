@@ -57,6 +57,7 @@ import { basename } from 'node:path';
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import type { AuthTier } from '../tiers.js';
 import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
@@ -118,6 +119,8 @@ export interface BridgeDeps {
   signer?: () => CardSigner | null;
   // The peer service, once a2a.db is open; pairing writes peers through it.
   peers?: () => PeerService | null;
+  // The tier a pairing offer's creator acts at now; null once revoked.
+  creatorTier?: (ref: string) => AuthTier | null;
   // Unpairing's notices and their retries, once a2a.db is open.
   unpairer?: () => Unpairer | null;
   // Rotations and peers' key statements, once a2a.db is open.
@@ -428,7 +431,14 @@ export class DaemonBridgePort implements BridgePort {
       targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,
       headers: r.headers,
     };
-    const d = { ...peers.deps, notices: peers.notices, emit: peers.emit };
+    const d = {
+      ...peers.deps,
+      notices: peers.notices,
+      emit: peers.emit,
+      ...(this.deps.creatorTier === undefined
+        ? {}
+        : { creatorTier: this.deps.creatorTier }),
+    };
     if (route === 'pair')
       return completePairing(d, r.body ?? new Uint8Array(), parts);
     if (route === 'key-change') {

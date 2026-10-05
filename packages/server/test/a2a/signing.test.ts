@@ -12,6 +12,7 @@ import { dirname } from 'node:path';
 
 import {
   CardSigner,
+  finishRotation,
   KEY_OVERLAP_MS,
   loadOrCreateSigningKey,
   loadSigningKeys,
@@ -160,7 +161,7 @@ describe('a rotation’s overlap', () => {
 
   it('signs the card with both keys, serves both, and signs requests with the new key', async () => {
     const k1 = loadOrCreateSigningKey(project.root());
-    writeA2ANextSigningKey(
+    await writeA2ANextSigningKey(
       project.root(),
       { jwk: p256(), at: AT.toISOString() },
       '{}'
@@ -198,9 +199,9 @@ describe('a rotation’s overlap', () => {
     }
   });
 
-  it('promotes the new key once the overlap is over, and the old key is gone', () => {
+  it('promotes the new key once the overlap is over, and the old key is gone', async () => {
     const k1 = loadOrCreateSigningKey(project.root());
-    writeA2ANextSigningKey(
+    await writeA2ANextSigningKey(
       project.root(),
       { jwk: p256(), at: AT.toISOString() },
       '{}'
@@ -216,6 +217,19 @@ describe('a rotation’s overlap', () => {
     );
     expect(after.next).toBeNull();
     expect(after.current.kid).toBe(during.next!.key.kid);
+    // Within the overlap nothing is deleted; after it, finishing does.
+    expect(
+      await finishRotation(
+        project.root(),
+        new Date(AT.getTime() + KEY_OVERLAP_MS - 1)
+      )
+    ).toBe(false);
+    expect(
+      await finishRotation(
+        project.root(),
+        new Date(AT.getTime() + KEY_OVERLAP_MS)
+      )
+    ).toBe(true);
     expect(readFileSync(credentialsPath(), 'utf8')).not.toContain(
       k1.privateJwk.d
     );

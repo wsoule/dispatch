@@ -43,6 +43,9 @@ import { NoticeRetries } from './retry.js';
 export interface PairingDeps extends PeerDeps {
   notices: PeerNotices;
   emit: (alias: string, what: PeerChange) => void;
+  // The tier `ref` acts at now: the owner's, a live teammate's issued tier,
+  // or null once revoked. Absent, every creator stands (fixtures).
+  creatorTier?: (ref: Address) => AuthTier | null;
 }
 
 interface Caller {
@@ -106,6 +109,22 @@ function checkAlias(d: PairingDeps, alias: string, creator: Address): void {
     );
   if (d.store.getPeer(alias) !== null)
     throw new MessagingError('conflict', `a2a:${alias} exists`, 'alias');
+  const at = now(d).getTime();
+  if (
+    d.store
+      .pairings()
+      .some(
+        (p) =>
+          p.alias === alias &&
+          p.state === 'offered' &&
+          Date.parse(p.expiresAt) > at
+      )
+  )
+    throw new MessagingError(
+      'conflict',
+      `a pairing offer for a2a:${alias} is open; cancel it or choose another alias`,
+      'alias'
+    );
   if (d.messages.getAgent(clientAddress(creator, alias)) !== null)
     throw new MessagingError(
       'conflict',
@@ -123,38 +142,65 @@ function clientAddress(creator: Address, alias: string): Address {
 }
 
 // The peer row and an approved client for the other side, both pinned to its
-// key (OD-2: completion approves; the code was the capability).
+// key (OD-2: completion approves; the code was the capability), written in
+// one transaction after `first` (the offer's CAS) and a re-check that nothing
+// took the alias or address meanwhile: no existing row or pin is overwritten.
 function writePairedRecords(
   d: PairingDeps,
   peer: PeerRow,
   pin: KeyPin,
-  creator: Address
+  creator: Address,
+  first: () => void = () => {}
 ): void {
   const at = now(d).toISOString();
   const address = clientAddress(creator, peer.alias);
-  d.store.putPeer(peer);
-  if (!d.store.setPeerKey(peer.alias, pin))
-    throw new MessagingError('conflict', 'this key is already paired');
-  d.store.putClient({
-    address,
-    name: `a2a.${peer.alias}`,
-    recipients: [],
-    createdBy: creator,
-    createdAt: at,
+  const taken = () =>
+    new MessagingError(
+      'conflict',
+      `a2a:${peer.alias} was taken meanwhile`,
+      'alias'
+    );
+  d.store.transaction(() => {
+    first();
+    if (
+      d.store.getPeer(peer.alias) !== null ||
+      d.store.getClient(address) !== null ||
+      d.messages.getAgent(address) !== null
+    )
+      throw taken();
+    d.store.putPeer(peer);
+    if (!d.store.setPeerKey(peer.alias, pin))
+      throw new MessagingError('conflict', 'this key is already paired');
+    d.store.putClient({
+      address,
+      name: `a2a.${peer.alias}`,
+      recipients: [],
+      createdBy: creator,
+      createdAt: at,
+    });
+    if (!d.store.setClientKey(address, pin))
+      throw new MessagingError('conflict', 'this key is already paired');
+    d.store.recordKeyEvent({
+      thumbprint: pin.thumbprint,
+      event: 'pinned',
+      statement: null,
+      at,
+      pairedId: pin.pairedId,
+      jwk: pin.jwk,
+    });
+    // Last, in messages.db: if it fails, a2a.db's rows roll back with it. The
+    // token is never shown: a signature client refuses bearers anyway.
+    d.messages.putAgent({
+      address,
+      displayName: `a2a.${peer.alias}`,
+      client: 'a2a',
+      tokenHash: tokenHash(randomBytes(32).toString('hex')),
+      status: 'approved',
+      muted: false,
+      approvedBy: creator,
+      createdAt: at,
+    });
   });
-  // The token is never shown: a signature client refuses bearers anyway.
-  d.messages.putAgent({
-    address,
-    displayName: `a2a.${peer.alias}`,
-    client: 'a2a',
-    tokenHash: tokenHash(randomBytes(32).toString('hex')),
-    status: 'approved',
-    muted: false,
-    approvedBy: creator,
-    createdAt: at,
-  });
-  if (!d.store.setClientKey(address, pin))
-    throw new MessagingError('conflict', 'this key is already paired');
   d.emit(peer.alias, 'added');
 }
 
@@ -354,25 +400,44 @@ export async function completePairing(
       { tier: row.createdTier, ref: row.createdBy },
       true
     ));
-  } catch (err) {
-    return pairInvalid(
-      `the accepting side's card could not be checked: ${err instanceof Error ? err.message : 'error'}`
-    );
+  } catch {
+    // Fixed: the error would describe this side's network to the caller.
+    return pairInvalid("the accepting side's card could not be checked");
   }
   if (!(await cardSignedBy(peer, thumbprint, proof.jwk)))
     return pairInvalid("the accepting side's card is not signed by its key");
   const key = ourKey(d);
-  if (!d.store.completePairing(row.id, thumbprint, now(d).toISOString()))
-    return notFound();
+  // The creator must still stand at the offer's tier (XH-R3: a revoked or
+  // lowered teammate's offer completes nothing).
+  if (d.creatorTier !== undefined) {
+    const tier = d.creatorTier(row.createdBy);
+    if (tier === null || !tierAllows(tier, row.createdTier)) {
+      d.store.setPairingState(row.id, 'canceled');
+      return notFound();
+    }
+  }
+  let completed = true;
   try {
     writePairedRecords(
       d,
       peer,
       pairingPin({ thumbprint, jwk: proof.jwk }, row.id, 'signature'),
-      row.createdBy
+      row.createdBy,
+      () => {
+        completed = d.store.completePairing(
+          row.id,
+          thumbprint,
+          now(d).toISOString()
+        );
+        if (!completed) throw new Error('not offered');
+      }
     );
   } catch (err) {
-    return pairInvalid(err instanceof Error ? err.message : 'conflict', 409);
+    if (!completed) return notFound();
+    return pairInvalid(
+      err instanceof MessagingError ? err.message : 'conflict',
+      409
+    );
   }
   const shared = sas(ecThumbprint(key.jwk) ?? '', thumbprint, row.id);
   d.notices.send(
@@ -431,13 +496,26 @@ export class Unpairer {
   private readonly retries: NoticeRetries;
   private stopped = false;
   constructor(private readonly d: UnpairDeps) {
-    this.retries = new NoticeRetries(d.backoffMs);
+    this.retries = new NoticeRetries(d.store, 'unpair', d.backoffMs);
   }
 
-  /** Resumes the notices a restart interrupted. */
+  /** Resumes the notices a restart interrupted, at their attempt counts. */
   resume(): void {
+    const pending = new Set(this.d.store.notices('unpair').map((n) => n.id));
     for (const p of this.d.store.pairings())
-      if (p.state === 'unpairing') this.schedule(p.id);
+      if (p.state === 'unpairing') {
+        if (!pending.has(p.id)) this.record(p.id);
+        this.schedule(p.id);
+      }
+  }
+
+  private record(id: string): void {
+    this.d.store.putNotice({
+      kind: 'unpair',
+      id,
+      body: '',
+      at: now(this.d).toISOString(),
+    });
   }
 
   stop(): void {
@@ -465,6 +543,7 @@ export class Unpairer {
     const state = this.d.store.pairing(id)?.state;
     if (state === 'unpairing' || state === 'unpaired') return;
     this.d.store.setPairingState(id, 'unpairing');
+    this.record(id);
     this.disable(id);
     this.d.changed();
     this.schedule(id);
@@ -497,7 +576,7 @@ export class Unpairer {
   }
 
   private schedule(id: string): void {
-    this.retries.start(
+    void this.retries.start(
       id,
       () => this.send(id),
       (told) => this.settle(id, told)
@@ -585,6 +664,7 @@ export class Unpairer {
   drop(id: string, notice: (alias: string) => string): string | null {
     this.d.store.setPairingState(id, 'unpaired');
     this.retries.cancel(id);
+    this.d.store.deleteNotice('unpair', id);
     const peer = this.disable(id, 'unpaired');
     const alias = peer?.alias ?? null;
     if (alias !== null) this.d.notices.send(alias, 'unpaired', notice(alias));

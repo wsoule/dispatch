@@ -360,8 +360,9 @@ export interface StartServerOptions {
   a2a?: ListenerOverrides;
   // Standalone hosts' watch-stream limits; tests shorten the keepalive.
   a2aWatchLimits?: Partial<WatchLimits>;
-  // Unverifiable replies before a signature peer is auth-failed; tests lower it.
-  a2aUnverifiedLimit?: number;
+  // How long a signature peer must answer unverifiably before it is
+  // auth-failed (an hour); tests shorten it.
+  a2aUnverifiedWindowMs?: number;
   // Unpair notices' and key pushes' retry delays; tests shorten them.
   a2aNoticeBackoffMs?: number[];
 }
@@ -1632,6 +1633,16 @@ async function bootServer(
     orchestrator,
     events,
     ownerRef: actorContext.humanRef,
+    // XH-R3: who a pairing offer was made by must still stand when it completes.
+    creatorTier: (ref) => {
+      if (ref === actorContext.humanRef) return 'operator';
+      const handle = ref.startsWith('human:')
+        ? ref.slice('human:'.length)
+        : null;
+      return handle !== null && team.teammates.hasAccess(handle)
+        ? team.teammates.issuedTier(handle)
+        : null;
+    },
     version: packageJson.version,
     daemonPorts: () => [
       server.port ?? 0,
@@ -1641,9 +1652,9 @@ async function bootServer(
     ...(opts.a2aWatchLimits === undefined
       ? {}
       : { watchLimits: opts.a2aWatchLimits }),
-    ...(opts.a2aUnverifiedLimit === undefined
+    ...(opts.a2aUnverifiedWindowMs === undefined
       ? {}
-      : { unverifiedLimit: opts.a2aUnverifiedLimit }),
+      : { unverifiedWindowMs: opts.a2aUnverifiedWindowMs }),
     ...(opts.a2aNoticeBackoffMs === undefined
       ? {}
       : { noticeBackoffMs: opts.a2aNoticeBackoffMs }),

@@ -822,23 +822,25 @@ describe('review J1, N1, N2', () => {
     expect((await signFor(h2, b2)).status).toBe(403);
   });
 
-  it('J1: a run of unverifiable replies, at the configured limit, marks the peer auth-failed', async () => {
+  it('M1: unverifiable for a whole window marks the peer auth-failed; a probe brings it back unless a verified AUTH_* refusal', async () => {
     await handle.stop();
     handle = await startServer({
       rootDir: root,
       port: 0,
       writeDaemonFile: false,
       webDistDir: null,
-      a2aUnverifiedLimit: 2,
+      a2aUnverifiedWindowMs: 400,
     });
     useTestAuth(handle);
     base = `http://127.0.0.1:${handle.port}`;
     useSeedBase(base);
     const peerKey = newKey();
+    // 'proxy' answers unsigned; 'ok' signs a 404; 'revoked' signs a 401.
+    let mode: 'proxy' | 'ok' | 'revoked' = 'proxy';
     const peer = Bun.serve({
       port: 0,
       hostname: '127.0.0.1',
-      fetch: (req) => {
+      fetch: async (req) => {
         const url = new URL(req.url);
         if (url.pathname === '/.well-known/agent-card.json')
           return Response.json({
@@ -859,7 +861,42 @@ describe('review J1, N1, N2', () => {
             },
             securityRequirements: [{ schemes: { bearer: { list: [] } } }],
           });
-        return new Response('bad gateway', { status: 502 });
+        if (mode === 'proxy')
+          return new Response('bad gateway', { status: 502 });
+        const res =
+          mode === 'ok'
+            ? Response.json(
+                {
+                  error: {
+                    code: 404,
+                    status: 'NOT_FOUND',
+                    message: 'no such task',
+                  },
+                },
+                { status: 404 }
+              )
+            : Response.json(
+                {
+                  error: {
+                    code: 401,
+                    status: 'UNAUTHENTICATED',
+                    message: 'revoked',
+                    details: [
+                      {
+                        '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                        reason: 'AUTH_AGENT_REVOKED',
+                        domain: 'a2a-protocol.org',
+                      },
+                    ],
+                  },
+                },
+                { status: 401 }
+              );
+        return signResponseFor(
+          res,
+          { method: req.method, targetUri: req.url, headers: req.headers },
+          { keyid: peerKey.keyid, privateKey: peerKey.privateKey }
+        );
       },
     });
     try {
@@ -891,12 +928,31 @@ describe('review J1, N1, N2', () => {
           (handle.a2a.store!.getOutbound(one.id, 'flaky')?.attempts ?? 0) >= 1,
         10_000
       );
-      expect(handle.a2a.store!.getPeer('flaky')?.status).toBe('active');
+      // Inside the window: however many, still active.
       await sendOne('Two.');
+      await new Promise((r) => setTimeout(r, 100));
+      expect(handle.a2a.store!.getPeer('flaky')?.status).toBe('active');
+      // Past it, the next unverifiable reply fails the peer.
+      await new Promise((r) => setTimeout(r, 400));
+      await sendOne('Three.');
       await waitFor(
         () => handle.a2a.store!.getPeer('flaky')?.status === 'auth-failed',
         10_000
       );
+      // The proxy is fixed: the hourly probe sees a verified reply and re-enables.
+      mode = 'ok';
+      await handle.a2a.probeUnverified();
+      expect(handle.a2a.store!.getPeer('flaky')?.status).toBe('active');
+      // A verified AUTH_* refusal is sticky: the probe leaves it alone.
+      mode = 'revoked';
+      await sendOne('Four.');
+      await waitFor(
+        () => handle.a2a.store!.getPeer('flaky')?.status === 'auth-failed',
+        10_000
+      );
+      mode = 'ok';
+      await handle.a2a.probeUnverified();
+      expect(handle.a2a.store!.getPeer('flaky')?.status).toBe('auth-failed');
     } finally {
       await peer.stop(true);
     }
