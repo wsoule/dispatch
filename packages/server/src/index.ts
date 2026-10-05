@@ -106,6 +106,7 @@ import { docsOverflowPort } from './memory/overflow.js';
 import { memoryReceiptsStep, memoryRestoreDir } from './memory/receipts.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
+import { newestOpenRoot } from './messaging/conversations.js';
 import {
   closeOrphanedGates,
   openHumanDecisions,
@@ -1936,8 +1937,15 @@ async function bootServer(
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
       memory: overseerMemory(memory),
-      messaging: overseerToolMessaging(messaging.engine),
+      messaging: overseerToolMessaging(messaging.engine, (sender, to) =>
+        newestOpenRoot(
+          { engine: messaging.engine, store: messaging.store, orchestrator },
+          sender,
+          to
+        )
+      ),
       ownerRef: actorContext.humanRef,
+      overseer: overseerAddress,
       docs: docs.service,
     }),
     events,

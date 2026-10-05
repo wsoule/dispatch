@@ -34,6 +34,7 @@ import {
 import { speaksForRevoked } from '../api/revoke.js';
 import { runMessageRefusal } from '../orchestrator/types.js';
 import { tierAllows } from '../tiers.js';
+import { federatedRow, newestOpenRoot } from './conversations.js';
 import {
   answeringWith,
   closeGate,
@@ -138,6 +139,7 @@ interface RawSendBody {
   replyTo?: unknown;
   wake?: unknown;
   session?: unknown;
+  continueThread?: unknown;
 }
 
 // Narrows an unknown JSON body into a well-typed SendInput (shape only —
@@ -242,7 +244,8 @@ function parseSendInput(
     body: body.body,
   };
   if (body.refs !== undefined) value.refs = body.refs;
-  if (body.data !== undefined) value.data = body.data as JsonValue;
+  const data = withoutDraftedBy(body.data as JsonValue | undefined);
+  if (data !== undefined) value.data = data;
   if (body.urgent !== undefined) value.urgent = body.urgent;
   if (body.blocking !== undefined) value.blocking = body.blocking;
   if (body.choices !== undefined) value.choices = body.choices;
@@ -251,6 +254,22 @@ function parseSendInput(
   if (body.wake !== undefined) value.wake = body.wake;
   if (body.session !== undefined) value.session = body.session;
   return { ok: true, value };
+}
+
+// `data.draftedBy` is set only by the Overseer's sendAsHuman on the bus; a
+// request that names it is claiming an agent wrote its text, so drop it.
+function withoutDraftedBy(data: JsonValue | undefined): JsonValue | undefined {
+  if (
+    typeof data !== 'object' ||
+    data === null ||
+    Array.isArray(data) ||
+    !('draftedBy' in data)
+  )
+    return data;
+  const rest = Object.fromEntries(
+    Object.entries(data).filter(([key]) => key !== 'draftedBy')
+  ) as JsonValue & object;
+  return Object.keys(rest).length === 0 ? undefined : rest;
 }
 
 interface RawReplyBody {
@@ -313,7 +332,8 @@ function parseReplyInput(raw: unknown):
   } = { body: body.body };
   if (body.choice !== undefined) value.choice = body.choice;
   if (body.refs !== undefined) value.refs = body.refs;
-  if (body.data !== undefined) value.data = body.data as JsonValue;
+  const data = withoutDraftedBy(body.data as JsonValue | undefined);
+  if (data !== undefined) value.data = data;
   if (body.session !== undefined) value.session = body.session;
   return { ok: true, value };
 }
@@ -417,6 +437,31 @@ async function tellScopeNamed(
   }
 }
 
+// `continueThread: true` on a plain message to one run, task or person with
+// no replyTo: reply into the newest open root it may join (newestOpenRoot).
+function continuedInput(
+  ctx: ApiContext,
+  principal: Principal,
+  input: SendInput
+): SendInput {
+  if (
+    input.kind !== 'message' ||
+    (input.replyTo ?? null) !== null ||
+    input.to.length !== 1
+  )
+    return input;
+  const root = newestOpenRoot(
+    {
+      engine: ctx.messaging.engine,
+      store: ctx.messaging.store,
+      orchestrator: ctx.orchestrator,
+    },
+    senderOf(principal),
+    input.to[0]
+  );
+  return root === null ? input : { ...input, replyTo: root.id };
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -428,6 +473,12 @@ export async function sendMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
+  const continueThread = (parsedBody.value as RawSendBody).continueThread;
+  if (continueThread !== undefined && typeof continueThread !== 'boolean')
+    return invalidField(
+      'continueThread',
+      'invalid continueThread: expected a boolean'
+    );
   // The body may arrive after a revoke this credential's check predates.
   if (revokedSince(ctx, principal))
     return jsonResponse(
@@ -439,7 +490,13 @@ export async function sendMessage(
     a2aRunRefusal(ctx, principal, parsedInput.value.to);
   if (refusal !== null) return errorResponse(403, refusal);
 
-  const { input, told } = scopeReaddressed(ctx, principal, parsedInput.value);
+  const { input, told } = scopeReaddressed(
+    ctx,
+    principal,
+    continueThread === true
+      ? continuedInput(ctx, principal, parsedInput.value)
+      : parsedInput.value
+  );
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
   // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
@@ -588,14 +645,7 @@ export function getThreadById(ctx: ApiContext, threadId: string): Response {
   // Federated rows: who sent from which machine, remote recipients' states,
   // each question's settlement, and an admitted observer when one reads.
   const store = ctx.messaging.store;
-  const messages = thread.messages.map((m) => {
-    const settledAs = store.settledAs(m.id);
-    return {
-      ...m,
-      ...(m.origin === undefined ? {} : { remoteLabel: fed.label(m.origin) }),
-      ...(settledAs === null ? {} : { settledAs }),
-    };
-  });
+  const messages = thread.messages.map((m) => federatedRow(ctx, m));
   const remote = thread.messages.flatMap((m) =>
     store.remoteDeliveries({ messageId: m.id }).map((r) => ({
       messageId: r.messageId,
@@ -765,9 +815,13 @@ interface ChannelSummary {
   members: string[];
 }
 
-// GET /api/channels — every joined channel plus each epic's implicit
-// `epic/<id>` channel, built from one task listing grouped by parent.
-export function listChannels(ctx: ApiContext): Response {
+// GET /api/channels[?member=me] — every joined channel plus each epic's
+// implicit `epic/<id>` channel, built from one task listing grouped by parent;
+// `member=me` keeps those the caller (a run: its task) belongs to.
+export function listChannels(ctx: ApiContext, url?: URL): Response {
+  const member = url?.searchParams.get('member') ?? null;
+  if (member !== null && member !== 'me')
+    return invalidField('member', "invalid member: only 'me' is supported");
   const explicitChannels = ctx.messaging.store.channels();
   const explicitByName = new Map(explicitChannels.map((c) => [c.name, c]));
 
@@ -799,7 +853,11 @@ export function listChannels(ctx: ApiContext): Response {
     ]);
     return { name, auto: record?.auto ?? true, members: [...members] };
   });
-  return jsonResponse({ channels });
+  if (member === null) return jsonResponse({ channels });
+  const me = selfActingAddress(ctx, requirePrincipal(ctx));
+  return jsonResponse({
+    channels: channels.filter((c) => c.members.includes(me)),
+  });
 }
 
 // The address `principal` acts as by default (no explicit `member`/`addr`):

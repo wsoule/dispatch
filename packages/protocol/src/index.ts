@@ -82,6 +82,7 @@ export {
   openMessagesDb,
   SqliteMessageStore,
 } from './sqliteStore.js';
+export type { ConversationMatch, ConversationPage } from './sqliteStore.js';
 export { REMOTE_STATES } from './store.js';
 export type {
   AgentRecord,

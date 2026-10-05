@@ -314,6 +314,8 @@ export interface DocListFilter {
   unreviewed?: boolean;
   conflicted?: boolean;
   ids?: readonly string[];
+  /** No link to a task (milestones are tasks). */
+  unlinked?: boolean;
   query?: string; // a case-insensitive title substring
   limit: number;
   offset: number;
@@ -629,6 +631,10 @@ export class SqliteDocStore {
     if (filter.conflicted === true)
       where.push(
         "(conflicted = 1 OR id IN (SELECT substr(key, 9) FROM meta WHERE key LIKE 'problem:%') OR id IN (SELECT substr(key, 15) FROM meta WHERE key LIKE 'sync-problems:%') OR id IN (SELECT substr(key, 6) FROM meta WHERE key LIKE 'held:%'))"
+      );
+    if (filter.unlinked === true)
+      where.push(
+        "NOT EXISTS (SELECT 1 FROM links l WHERE l.doc_id = docs.id AND l.target_type = 'task')"
       );
     if (filter.ids !== undefined) {
       if (filter.ids.length === 0) return { rows: [], total: 0 };

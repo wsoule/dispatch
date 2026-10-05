@@ -29,6 +29,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     getAnswer: () => Promise.reject(new Error('not used')),
     replyToMessage: () => Promise.reject(new Error('not used')),
     sendMessage: () => Promise.reject(new Error('not used')),
+    getConversation: () => Promise.reject(new Error('not used')),
     getMailbox: () => Promise.reject(new Error('not used')),
     fanoutTask: () => Promise.reject(new Error('not used')),
     launchBrowser: () => Promise.reject(new Error('not used')),

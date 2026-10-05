@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 
 import type { ApiContext } from '../../src/api.js';
 import {
+  conversationScan,
+  listBusConversation,
+  newestOpenRoot,
+} from '../../src/messaging/conversations.js';
+import {
   getThreadById,
   listAgentRoster,
   waitForAnswer,
@@ -34,11 +39,13 @@ function ctxFor(
 }
 
 let messaging: Messaging;
+let orchestrator: ReturnType<typeof makeOrchestrator>['orchestrator'];
 let questionId: string;
 let thread: string;
 beforeEach(async () => {
-  const { orchestrator, store } = makeOrchestrator(project.root());
-  messaging = await openRecovered(project.root(), orchestrator, store);
+  const made = makeOrchestrator(project.root());
+  orchestrator = made.orchestrator;
+  messaging = await openRecovered(project.root(), orchestrator, made.store);
   const { message: q } = await messaging.engine.send(
     { to: ['human:wyat'], kind: 'question', blocking: true, body: 'q' },
     { address: 'agent:dispatch', canDecide: true }
@@ -128,6 +135,127 @@ describe('GET /api/threads/:id with federated rows', () => {
     >;
     expect(body['settlements']).toBeUndefined();
     expect(body['observer']).toBeUndefined();
+  });
+});
+
+describe('GET /api/conversations with federated rows', () => {
+  it('labels a stored remote message by its machine, as the thread route does', async () => {
+    messaging.store.insertMessage(
+      {
+        id: 'm-09remote-dm',
+        thread: 'm-09remote-dm',
+        replyTo: null,
+        from: 'human:bob',
+        to: ['human:wyat'],
+        kind: 'message',
+        body: 'from bob',
+        refs: [],
+        urgent: false,
+        blocking: false,
+        wake: 'none',
+        createdAt: '2026-09-26T10:02:00.000Z',
+        origin: BOB,
+      },
+      undefined,
+      { receivedAt: '2026-09-26T10:02:01.000Z' }
+    );
+    const res = listBusConversation(
+      ctxFor(messaging),
+      new URL('http://127.0.0.1/api/conversations?with=human:bob')
+    );
+    const body = (await res.json()) as {
+      messages: { id: string; remoteLabel?: string }[];
+    };
+    expect(body.messages).toEqual([
+      expect.objectContaining({ id: 'm-09remote-dm', remoteLabel: 'bob' }),
+    ]);
+  });
+});
+
+describe('a conversation page that hits the scan ceiling', () => {
+  it('hands back the oldest kept row as its cursor, never an unreadable id', async () => {
+    const saved = { ...conversationScan };
+    conversationScan.batch = 2;
+    conversationScan.ceiling = 4;
+    try {
+      // Newest first: u5 u4 r2 u3 u2 u1 r1; only r* reach human:sam.
+      const order = ['r1', 'u1', 'u2', 'u3', 'r2', 'u4', 'u5'];
+      order.forEach((name, i) => {
+        const id = `m-0${i}${name}`;
+        messaging.store.insertMessage({
+          id,
+          thread: id,
+          replyTo: null,
+          from: 'human:wyat',
+          to: ['channel:room'],
+          kind: 'message',
+          body: name,
+          refs: [],
+          urgent: false,
+          blocking: false,
+          wake: 'none',
+          createdAt: '2026-10-05T10:00:00.000Z',
+        });
+        if (name.startsWith('r'))
+          messaging.store.insertDelivery({
+            id: `d-${id}`,
+            messageId: id,
+            recipient: 'human:sam',
+            runId: null,
+            via: 'channel',
+            state: 'notified',
+            updatedAt: '2026-10-05T10:00:00.000Z',
+          });
+      });
+      const ctx = {
+        ...ctxFor(messaging),
+        federation: null,
+        principal: { address: 'human:sam', canDecide: false, kind: 'human' },
+      } as unknown as ApiContext;
+      const page = async (q: string) =>
+        (await listBusConversation(
+          ctx,
+          new URL(`http://127.0.0.1/api/conversations?about=channel:room${q}`)
+        ).json()) as {
+          messages: { body: string; id: string }[];
+          next: string | null;
+        };
+      const first = await page('&limit=5');
+      expect(first.messages.map((m) => m.body)).toEqual(['r2']);
+      expect(first.next).toBe(first.messages[0].id);
+      const second = await page(`&limit=5&before=${first.next}`);
+      expect(second.messages.map((m) => m.body)).toEqual(['r1']);
+      expect(second.next).toBeNull();
+      // A ceiling hit with nothing kept gives no cursor at all.
+      conversationScan.ceiling = 2;
+      const empty = await page('&limit=5');
+      expect(empty).toEqual({ messages: [], next: null });
+    } finally {
+      Object.assign(conversationScan, saved);
+    }
+  });
+});
+
+describe('continuing a root never joins local-only talk', () => {
+  it("skips an Overseer pair's root, so a reply can still federate", async () => {
+    const overseer = 'agent:wyat/overseer';
+    await messaging.engine.send(
+      { to: [overseer], kind: 'message', body: 'hi' },
+      { address: 'human:wyat', canDecide: true }
+    );
+    const deps = {
+      engine: messaging.engine,
+      store: messaging.store,
+      orchestrator,
+    };
+    const human = { address: 'human:wyat', canDecide: true };
+    expect(newestOpenRoot(deps, human, overseer)).toBeNull();
+    // A plain pair's root is continued.
+    const { message } = await messaging.engine.send(
+      { to: ['human:bob'], kind: 'message', body: 'plain' },
+      human
+    );
+    expect(newestOpenRoot(deps, human, 'human:bob')?.id).toBe(message.id);
   });
 });
 

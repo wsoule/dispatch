@@ -105,11 +105,13 @@ describe('docs bindings', () => {
       await c.searchDocs('two words', { limit: 3 });
       await c.docsLinking('task:t-1');
       await c.unlinkDoc('spec', 'task:t-1');
+      await c.listDocs({ unlinked: true });
       expect(s.calls.map((c2) => c2.url)).toEqual([
         `${BASE}/api/docs?taskId=t-1&includeArchived=1&limit=5`,
         `${BASE}/api/docs/search?q=two+words&limit=3`,
         `${BASE}/api/docs/links?target=task%3At-1`,
         `${BASE}/api/docs/spec/links/task/t-1`,
+        `${BASE}/api/docs?unlinked=1`,
       ]);
     } finally {
       s.restore();

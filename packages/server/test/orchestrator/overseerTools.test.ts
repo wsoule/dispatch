@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
+import { newestOpenRoot } from '../../src/messaging/conversations.js';
 import { overseerToolMessaging } from '../../src/messaging/overseerBus.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
@@ -176,6 +177,7 @@ function makeHarness(
     defaultExecutor: 'fake',
     messaging: lateMessaging.port,
     ownerRef: 'human:test',
+    overseer: 'agent:test/overseer',
     docs: opts.docs ?? null,
   };
   return {
@@ -199,7 +201,19 @@ async function withBus(h: Harness): Promise<Messaging> {
   });
   liveMessaging.push(messaging);
   await messaging.recover();
-  h.lateMessaging.bind(overseerToolMessaging(messaging.engine));
+  h.lateMessaging.bind(
+    overseerToolMessaging(messaging.engine, (sender, to) =>
+      newestOpenRoot(
+        {
+          engine: messaging.engine,
+          store: messaging.store,
+          orchestrator: h.orchestrator,
+        },
+        sender,
+        to
+      )
+    )
+  );
   return messaging;
 }
 
@@ -1043,6 +1057,29 @@ describe('applyAction performs the real effect', () => {
           e.text?.includes('check the tests') === true
       )
     ).toBe(true);
+  });
+
+  it('message_run marks the overseer as drafter and keeps one root per run', async () => {
+    const h = makeHarness();
+    const messaging = await withBus(h);
+    const { runId } = await dispatchUntil(h, 'Long one', 'slow', 'running');
+    for (const text of ['first', 'second']) {
+      const action = h.registry.callMutatingTool('message_run', {
+        runId,
+        text,
+      });
+      await h.registry.applyAction(action.id, CONFIRMED);
+    }
+    const sent = messaging.engine
+      .inbox(`run:${runId}`)
+      .map((i) => i.message)
+      .filter((m) => m.body === 'first' || m.body === 'second');
+    expect(sent.map((m) => m.data)).toEqual([
+      { draftedBy: 'agent:test/overseer' },
+      { draftedBy: 'agent:test/overseer' },
+    ]);
+    expect(sent[1].thread).toBe(sent[0].id);
+    expect(sent[1].replyTo).toBe(sent[0].id);
   });
 
   it('message_run refuses a request-tier confirmation on a run acting for another human', async () => {

@@ -144,6 +144,8 @@ export interface DocListQuery {
   conflicted?: boolean;
   query?: string;
   includeArchived?: boolean;
+  /** Team docs linked to no task or milestone; taskId and scope are ignored. */
+  unlinked?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -4542,10 +4544,12 @@ export class DocsService {
     const bare =
       q.query === undefined && q.scope === undefined && q.status === undefined;
     const taskId =
-      q.taskId ??
-      (bare && actor.kind === 'run' && actor.taskId !== null
-        ? actor.taskId
-        : undefined);
+      q.unlinked === true
+        ? undefined
+        : (q.taskId ??
+          (bare && actor.kind === 'run' && actor.taskId !== null
+            ? actor.taskId
+            : undefined));
     if (taskId !== undefined) {
       const ranked = this.taskDocs(actor, taskId, true).filter(
         (c) =>
@@ -4561,8 +4565,12 @@ export class DocsService {
       return { docs, total: ranked.length };
     }
     const page = store.listDocs({
-      ns: scoped(this.namespaces(actor), q.scope),
+      ns: scoped(
+        this.namespaces(actor),
+        q.unlinked === true ? 'team' : q.scope
+      ),
       statuses,
+      unlinked: q.unlinked,
       unreviewed: q.unreviewed,
       conflicted: q.conflicted,
       query: q.query,
