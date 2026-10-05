@@ -140,3 +140,26 @@ describe("a teammate's run (XH-R9)", () => {
     expect(noticesTo(w, OWNER)).toEqual([]);
   });
 });
+
+describe("the decision feed for a teammate's run (XH-R4, XH-R9)", () => {
+  it("shows a request-tier teammate their run's gate that went to the owner", async () => {
+    const w = world();
+    const bo = await invite(w, 'bo@example.com', 'request');
+    const other = await invite(w, 'cy@example.com', 'request');
+    const run = await liveRun(w, bo.token);
+    const sent = await call(w, run.runToken, 'POST', '/api/messages', {
+      to: [OWNER],
+      kind: 'question',
+      blocking: true,
+      choices: ['grant', 'deny'],
+      body: 'PRIVATE-SCOPE: need routes.ts',
+      data: { type: 'scope', paths: ['src/routes.ts'], reason: 'handler' },
+    });
+    expect(sent.status).toBe(201);
+    const gateId = sent.json.message.id as string;
+    const mine = await call(w, bo.token, 'GET', '/api/decisions');
+    expect(mine.text).toContain(gateId);
+    const theirs = await call(w, other.token, 'GET', '/api/decisions');
+    expect(theirs.text).not.toContain(gateId);
+  });
+});

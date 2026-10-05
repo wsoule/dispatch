@@ -37,7 +37,7 @@ import type {
 } from '@dispatch/core';
 import { MemoryBusyError, MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
-import { MessagingError } from '@dispatch/protocol';
+import { gateOf, MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -4954,8 +4954,9 @@ export function rejectUnauthorized(
 /**
  * XH-R4: which decision feed items the caller may see. A deciding human sees
  * all of them; anyone else only the items they take part in: a gate whose
- * message they can read, a stalled run they are or act for, a capped fix loop
- * on a task they created.
+ * message they can read or raised for a run they act for (XH-R9: one that went
+ * to the owner), a stalled run they are or act for, a capped fix loop on a
+ * task they created.
  */
 function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
   const agent = ctx.viaAgentToken === true;
@@ -4967,10 +4968,23 @@ function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
   const reader =
     agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
   const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
+  // The human a run acts for, or null for no one or an unknown run.
+  const operatorOf = (runId: string | undefined) => {
+    const run = runId === undefined ? undefined : runs.get(runId);
+    return run === undefined ? null : runOperator(run);
+  };
   return (item) => {
     const source = item.id.slice(item.id.indexOf(':') + 1);
-    if (source.startsWith('m-'))
-      return reader !== null && ctx.messaging.engine.canRead(source, reader);
+    if (source.startsWith('m-')) {
+      if (reader === null) return false;
+      if (ctx.messaging.engine.canRead(source, reader)) return true;
+      const message = ctx.messaging.engine.getMessage(source);
+      return (
+        message !== null &&
+        gateOf(message) !== null &&
+        operatorOf(item.runId) === address
+      );
+    }
     if (item.runId !== undefined) {
       const run = runs.get(item.runId);
       return (

@@ -87,7 +87,8 @@ export interface DecisionItem {
    * raised as a floor hold whose check can no longer be named.
    */
   floor?: FloorCheck | 'unknown';
-  /** ActorRef of the human whose run this came from — see withOwner. Absent
+  /** ActorRef of the human whose run this came from (the one it acts for,
+   *  else its dispatcher) — see withOwner. Absent
    *  means nobody in particular, so everyone. */
   owner?: string;
   disposition: DecisionDisposition;
@@ -219,8 +220,9 @@ function withOwner<T extends { runId?: string }>(
   item: T,
   runs: Map<string, RunMeta>
 ): T & { owner?: string } {
-  const owner =
-    item.runId === undefined ? undefined : runs.get(item.runId)?.dispatchedBy;
+  const run = item.runId === undefined ? undefined : runs.get(item.runId);
+  // The human the run acts for (XH-R9), else whoever dispatched it.
+  const owner = run?.operator ?? run?.dispatchedBy;
   return owner === undefined ? item : { ...item, owner };
 }
 
