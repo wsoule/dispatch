@@ -818,6 +818,18 @@ export async function handleA2A(
     if (!url.pathname.startsWith(`${options.basePath}/`))
       return new Response('not found', { status: 404 });
     if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
+    // A Dispatch extension route: unauthenticated but for the pairing proof,
+    // so its refusals count toward the per-IP lockout.
+    if (
+      req.method === 'POST' &&
+      url.pathname === `${options.basePath}/dispatch/pair`
+    ) {
+      if (port.pair === undefined)
+        return new Response('not found', { status: 404 });
+      const res = await port.pair(req);
+      if (res.status === 404) options.limiter.authFailed(options.clientIp);
+      return res;
+    }
     const route = matchRoute(
       req.method,
       url.pathname.slice(options.basePath.length)

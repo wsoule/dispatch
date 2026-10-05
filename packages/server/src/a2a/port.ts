@@ -60,6 +60,8 @@ import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
+import { completePairing } from './pairing.js';
+import type { PeerService } from './peers.js';
 import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
 import {
@@ -111,6 +113,8 @@ export interface BridgeDeps {
   lookup?: LookupAll;
   // The card signer, created on first use; null serves the card unsigned.
   signer?: () => CardSigner | null;
+  // The peer service, once a2a.db is open; pairing writes peers through it.
+  peers?: () => PeerService | null;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
@@ -379,6 +383,37 @@ export class DaemonBridgePort implements BridgePort {
       privateKey: key.privateKey,
       now: this.now(),
     });
+  }
+
+  // The listener's pairing route: the accepter's proof against an open offer.
+  async pair(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    return this.pairAt(
+      {
+        method: req.method,
+        path: url.pathname,
+        query: url.search,
+        headers: req.headers,
+        body: new Uint8Array(await req.arrayBuffer()),
+      },
+      this.deps.cardBase().publicUrl
+    );
+  }
+
+  // A pairing proof received at publicUrl (this listener's, or a host's
+  // pinned URL); the reply is signed for that URL.
+  async pairAt(r: ReceivedRequest, publicUrl: string): Promise<Response> {
+    const peers = this.deps.peers?.() ?? null;
+    if (peers === null) return new Response('not found', { status: 404 });
+    return completePairing(
+      { ...peers.deps, notices: peers.notices, emit: peers.emit },
+      r.body ?? new Uint8Array(),
+      {
+        method: r.method,
+        targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,
+        headers: r.headers,
+      }
+    );
   }
 
   // A signed caller re-checked by address and the key it proved (a

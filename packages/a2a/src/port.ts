@@ -214,6 +214,8 @@ export interface BridgePort {
   // Signs the response to a request that authenticated by signature, so the
   // peer can tell it came from this agent; required with authenticateSigned.
   signResponse?(res: Response, req: Request, caller: Caller): Promise<Response>;
+  // POST <base>/dispatch/pair: an accepter's pairing proof (P5); absent, 404.
+  pair?(req: Request): Promise<Response>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
   card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;

@@ -4667,6 +4667,12 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     tier: 'decide',
   },
   { method: 'DELETE', segments: ['a2a', 'peers', '*'], tier: 'decide' },
+  // Pairing writes a peer and an approved client in one step (P5); a private
+  // card URL on either side needs the operator, checked as for peers.
+  { method: 'GET', segments: ['a2a', 'pairings'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'pairings'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'pairings', 'accept'], tier: 'decide' },
+  { method: 'DELETE', segments: ['a2a', 'pairings', '*'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what

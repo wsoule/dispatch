@@ -351,6 +351,25 @@ async function authenticateForwarded(
   } satisfies AuthResult);
 }
 
+// POST /api/a2a/port/pair: a pairing proof a host received, completed here
+// and answered signed for the host's pinned URL, as the host relays it.
+async function pairForwarded(
+  req: Request,
+  bridge: NonNullable<ApiContext['a2a']>,
+  host: HostRow
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  const forwarded = parsed.ok ? forwardedRequest(parsed.value) : null;
+  if (forwarded === null || bridge.port === null)
+    return jsonResponse({ error: 'body: expected the forwarded request' }, 400);
+  const res = await bridge.port.pairAt(forwarded, host.publicUrl);
+  return jsonResponse({
+    status: res.status,
+    headers: Object.fromEntries(res.headers),
+    body: Buffer.from(await res.arrayBuffer()).toString('base64'),
+  });
+}
+
 const PATH = /^\/[^?#]*$/;
 const QUERY = /^(?:\?[^#]*)?$/;
 const MAX_SIGNED_BODY = 4 * 1024 * 1024;
@@ -505,6 +524,8 @@ export async function handlePortRoute(
     method === 'POST'
   )
     return authenticateForwarded(req, bridge, host);
+  if (rest[0] === 'pair' && rest.length === 1 && method === 'POST')
+    return pairForwarded(req, bridge, host);
   const clientHeader = req.headers.get(PORT_CLIENT_HEADER);
   const resolveClient = async (): Promise<AuthResult> =>
     (await clientAuth(clientHeader, bridge, host.id)).auth;

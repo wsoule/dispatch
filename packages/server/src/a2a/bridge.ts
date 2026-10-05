@@ -305,6 +305,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     watch = hub;
     stopWatch = hub.start();
     const peerService = createPeerService(bridgeDeps);
+    bridgeDeps.peers = () => peerService;
     peers = peerService;
     messaging.setExternalPolicy(
       bridgeExternalPolicy(bridgeDeps, peerService.notices)

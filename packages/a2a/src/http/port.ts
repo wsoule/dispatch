@@ -116,6 +116,29 @@ export class HttpBridgePort implements BridgePort {
     });
   }
 
+  // A pairing proof: the daemon completes it and signs the reply for this
+  // host's pinned URL; the host relays the reply as given.
+  async pair(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const body = new Uint8Array(await req.arrayBuffer());
+    let out: { status: number; headers: Record<string, string>; body: string };
+    try {
+      out = await this.call<typeof out>('POST', '/pair', null, {
+        method: req.method,
+        path: url.pathname,
+        query: url.search,
+        headers: forwardedHeaders(req.headers),
+        body: Buffer.from(body).toString('base64'),
+      });
+    } catch {
+      return new Response('unavailable', { status: 503 });
+    }
+    return new Response(Buffer.from(out.body, 'base64'), {
+      status: out.status,
+      headers: out.headers,
+    });
+  }
+
   async revalidate(caller: Caller): Promise<boolean> {
     const result = await this.call<AuthResult>('GET', '/whoami', caller);
     return result.ok && result.caller.address === caller.address;

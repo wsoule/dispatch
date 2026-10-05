@@ -44,7 +44,7 @@ const BOB_REACH = {
 
 function offer() {
   return newPairingCode({
-    thumbprint: alice.thumbprint,
+    jwk: alice.jwk,
     reach: ALICE_REACH,
     name: 'Alice’s agent',
     now: NOW,
@@ -244,6 +244,16 @@ describe('pairing records', () => {
       'completed'
     );
     expect(pairingStatus({ ...base, state: 'canceled' }, NOW)).toBe('canceled');
+  });
+});
+
+describe('the offerer key in the code', () => {
+  it('carries the offerer public key, and refuses one that does not match the thumbprint', () => {
+    const { code } = offer();
+    expect(code.jwk).toEqual(alice.jwk);
+    expect(code.thumbprint).toBe(alice.thumbprint);
+    const swapped = `dispatch-a2a-pair:${Buffer.from(JSON.stringify({ ...code, jwk: bob.jwk })).toString('base64url')}`;
+    expect(() => decodePairingCode(swapped, NOW)).toThrow(MessagingError);
   });
 });
 

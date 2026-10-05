@@ -176,6 +176,22 @@ export async function addPeer(
   input: PeerAddInput,
   caller: { tier: AuthTier; ref: Address }
 ): Promise<PeerRow> {
+  const { row, secret } = await checkNewPeer(deps, input, caller);
+  if (secret !== null) writePeerCredential(deps.rootDir, input.alias, secret);
+  deps.store.putPeer(row);
+  return row;
+}
+
+// Everything addPeer checks (alias, tier, guard, card, interface), with the
+// row it would write; nothing is stored, so pairing can verify the peer's
+// key first.
+export async function checkNewPeer(
+  deps: PeerDeps,
+  input: PeerAddInput,
+  caller: { tier: AuthTier; ref: Address },
+  // A paired peer authenticates by signature; its card's bearer scheme does not apply.
+  signature = false
+): Promise<{ row: PeerRow; secret: PeerSecret | null }> {
   if (!PEER_ALIAS_PATTERN.test(input.alias))
     throw new MessagingError(
       'invalid',
@@ -240,8 +256,8 @@ export async function addPeer(
   });
   if (guard !== undefined)
     await guardPublicUrl(checked.iface.url, { ...guard, field: 'cardUrl' });
-  const secret = secretFor(checked.auth, input.token);
-  authHeaders(checked.auth, secret);
+  const secret = signature ? null : secretFor(checked.auth, input.token);
+  if (!signature) authHeaders(checked.auth, secret);
   const at = nowOf(deps).toISOString();
   const row: PeerRow = {
     alias: input.alias,
@@ -259,9 +275,7 @@ export async function addPeer(
     apiKeyHeader: input.apiKeyHeader ?? null,
     createdAt: at,
   };
-  if (secret !== null) writePeerCredential(deps.rootDir, input.alias, secret);
-  deps.store.putPeer(row);
-  return row;
+  return { row, secret };
 }
 
 export function markAuthFailed(

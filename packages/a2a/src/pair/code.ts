@@ -25,8 +25,10 @@ export interface PairingCode {
   id: string;
   // 32 random bytes; the offering side keeps only sha256 of it.
   secret: string;
-  // The offering side's card-key thumbprint: the accepter checks the card against it.
+  // The offering side's card public key and its thumbprint: the accepter
+  // checks the card and the signed reply against them.
   thumbprint: string;
+  jwk: Record<string, string>;
   reach: Reach;
   // The offering side's display name: untrusted text on the other side.
   name: string;
@@ -121,7 +123,7 @@ function macKeyOf(secret: string): string {
  * lifetime; the same local-access limit as XH-R7.
  */
 export function newPairingCode(i: {
-  thumbprint: string;
+  jwk: Record<string, string>;
   reach: Reach;
   name: string;
   now: Date;
@@ -132,7 +134,8 @@ export function newPairingCode(i: {
     v: 1,
     id: randomBytes(16).toString('base64url'),
     secret,
-    thumbprint: i.thumbprint,
+    thumbprint: ecThumbprint(i.jwk) ?? '',
+    jwk: publicJwkOf(i.jwk),
     reach: i.reach,
     name: i.name,
     expires: new Date(i.now.getTime() + i.ttlMin * 60_000).toISOString(),
@@ -174,12 +177,21 @@ export function decodePairingCode(text: string, now: Date): PairingCode {
     Number.isNaN(expires)
   )
     return invalid('a malformed code');
+  let jwk: Record<string, string>;
+  try {
+    jwk = publicJwkOf(isRecord(raw.jwk) ? raw.jwk : {});
+  } catch {
+    return invalid('a malformed code');
+  }
+  if (ecThumbprint(jwk) !== raw.thumbprint)
+    return invalid('its key does not match its fingerprint');
   if (expires <= now.getTime()) return invalid('this code has expired');
   return {
     v: 1,
     id: raw.id,
     secret: raw.secret,
     thumbprint: raw.thumbprint,
+    jwk,
     reach,
     name: raw.name,
     expires: raw.expires as string,

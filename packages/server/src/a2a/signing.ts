@@ -118,6 +118,12 @@ export class CardSigner {
     return { keyid: this.key.kid, privateKey: this.privateKey };
   }
 
+  // The card key's public half as a bare EC JWK (no kid, alg or use).
+  publicJwk(): Record<string, string> {
+    const { kty, crv, x, y } = this.key.publicJwk;
+    return { kty, crv, x, y };
+  }
+
   /** Public keys only. */
   jwks(): Jwks {
     return { keys: [{ ...this.key.publicJwk }] };

@@ -29,6 +29,7 @@ import { tokenHash } from './auth.js';
 import type { A2ABridge } from './bridge.js';
 import { gatherFacts } from './facts.js';
 import { hostPublicUrl, isHostName, mintHost } from './hosts.js';
+import { acceptPairing, offerPairing, pairingSummaries } from './pairing.js';
 import type { PeerAddInput, PeerChange } from './peers.js';
 import {
   addPeer,
@@ -486,6 +487,96 @@ async function hostRoute(
   return null;
 }
 
+// `/api/a2a/pairings[/accept | /:id]` (P5): offer a code, accept one, list
+// or cancel; tiers are in ELEVATED_ROUTES, private card URLs need the operator.
+async function pairingRoute(
+  req: Request,
+  ctx: ApiContext,
+  rest: string[],
+  method: string
+): Promise<Response | null> {
+  // As for clients: an agent must not mint a way in for outside callers.
+  if (ctx.viaAgentToken === true)
+    return jsonResponse(
+      {
+        error: 'an agent cannot pair; a human pairs',
+        code: 'auth_agent_token',
+      },
+      403
+    );
+  const b = bridge(ctx);
+  if (!b.ok) return b.response;
+  const peers = b.a2a.peers;
+  if (peers === null)
+    return errorResponse(503, 'the A2A bridge is unavailable');
+  const d = { ...peers.deps, notices: peers.notices, emit: peers.emit };
+  const caller = { tier: ctx.caller?.tier ?? 'request', ref: humanActor(ctx) };
+  if (rest.length === 0 && method === 'GET')
+    return jsonResponse({ pairings: pairingSummaries(d) });
+  if (rest.length === 1 && method === 'DELETE') {
+    const row = b.store.pairing(decodeURIComponent(rest[0]));
+    if (row === null || row.role !== 'offer' || row.state !== 'offered')
+      return errorResponse(404, 'no open pairing offer with that id');
+    b.store.setPairingState(row.id, 'canceled');
+    changed(ctx);
+    return new Response(null, { status: 204 });
+  }
+  if (method !== 'POST' || rest.length > 1) return null;
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as Record<string, unknown>;
+  // This side's card URL: the open listener's, or one given (a host or relay).
+  const status = b.a2a.status();
+  const ourCard =
+    typeof body.cardUrl === 'string'
+      ? body.cardUrl
+      : status.listening && status.url !== null
+        ? `${status.url.replace(/\/$/, '')}/.well-known/agent-card.json`
+        : null;
+  if (ourCard === null)
+    return errorResponse(
+      409,
+      'open the A2A listener first, or pass cardUrl: the other side needs to reach this agent'
+    );
+  if (typeof body.alias !== 'string')
+    return invalid('alias', 'alias is required');
+  if (body.ttlMin !== undefined && typeof body.ttlMin !== 'number')
+    return invalid('ttlMin', 'ttlMin must be a number of minutes');
+  try {
+    if (rest.length === 0) {
+      const offered = offerPairing(d, {
+        alias: body.alias,
+        ourCard,
+        ...(typeof body.ttlMin === 'number' ? { ttlMin: body.ttlMin } : {}),
+        caller,
+      });
+      changed(ctx);
+      return jsonResponse(offered, 201);
+    }
+    if (rest[0] !== 'accept') return null;
+    if (typeof body.code !== 'string')
+      return invalid('code', 'code is required');
+    const accepted = await acceptPairing(d, {
+      code: body.code,
+      alias: body.alias,
+      ourCard,
+      caller,
+    });
+    changed(ctx);
+    return jsonResponse(accepted);
+  } catch (err) {
+    if (err instanceof PeerHttpError)
+      return jsonResponse(
+        {
+          error: `the other side's card could not be fetched: ${err.message}`,
+          field: 'code',
+        },
+        502
+      );
+    throw err;
+  }
+}
+
 // `/api/a2a/*` after the `a2a` segment; null for anything it does not serve,
 // so handleApi's 404 applies. Tiers are enforced in ELEVATED_ROUTES.
 export async function handleA2ARoute(
@@ -498,6 +589,8 @@ export async function handleA2ARoute(
     return peerRoute(req, ctx, segments.slice(1), method);
   if (segments[0] === 'port')
     return handlePortRoute(req, ctx, segments.slice(1), method);
+  if (segments[0] === 'pairings')
+    return pairingRoute(req, ctx, segments.slice(1), method);
   if (
     segments[0] === 'hosts' ||
     (segments[0] === 'listener' && segments[1] === 'standalone')
