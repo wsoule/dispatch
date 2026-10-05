@@ -7,14 +7,17 @@ import {
   makeProof,
   newPairingCode,
   pairingPin,
+  parseUnpairNotice,
   peerFetch,
   PeerHttpError,
   sas,
   signedFetch,
   signResponseFor,
+  unpairNotice,
   verifyCardSignature,
 } from '@dispatch/a2a';
 import type {
+  AuthResult,
   KeyPin,
   PairingRow,
   PeerRow,
@@ -30,7 +33,7 @@ import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
 import { tokenHash } from './auth.js';
 import type { PeerChange, PeerDeps, PeerNotices } from './peers.js';
-import { checkNewPeer, peerGuard } from './peers.js';
+import { checkNewPeer, peerGuard, removePeer } from './peers.js';
 
 // Symmetric pairing in the daemon (P5): offering a code, accepting one, and
 // completing an offer when the accepter's proof arrives on the listener.
@@ -48,8 +51,33 @@ interface Caller {
 const TTL_MIN = { min: 5, max: 60, default: 15 };
 const MAX_PROOF_BYTES = 64 * 1024;
 const PAIR_PATH = '/dispatch/pair';
+const UNPAIR_PATH = '/dispatch/unpair';
 
 const now = (d: PairingDeps): Date => d.now?.() ?? new Date();
+
+// A fetch that signs with our card key and accepts only replies signed by
+// `peerJwk`, under the guard at the peer's recorded tier.
+function pairedFetch(
+  d: PairingDeps,
+  peer: Pick<PeerRow, 'addedTier'>,
+  peerJwk: Record<string, string>
+): typeof fetch {
+  const key = ourKey(d);
+  const guard = peerGuard(d, peer);
+  return signedFetch(
+    peerFetch({
+      headers: {},
+      fetchImpl: d.fetchImpl,
+      timeoutMs: 30_000,
+      guard: guard === undefined ? undefined : { field: 'url', ...guard },
+    }),
+    {
+      keyid: key.keyid,
+      privateKey: key.privateKey,
+      peerKey: createPublicKey({ key: peerJwk, format: 'jwk' }),
+    }
+  );
+}
 
 // This project's card key; pairing cannot happen without one.
 function ourKey(d: PairingDeps) {
@@ -224,20 +252,7 @@ export async function acceptPairing(
     privateKey: key.privateKey,
     jwk: key.jwk,
   });
-  const guard = peerGuard(d, peer);
-  const fetchImpl = signedFetch(
-    peerFetch({
-      headers: {},
-      fetchImpl: d.fetchImpl,
-      timeoutMs: 30_000,
-      guard: guard === undefined ? undefined : { field: 'url', ...guard },
-    }),
-    {
-      keyid: key.keyid,
-      privateKey: key.privateKey,
-      peerKey: createPublicKey({ key: code.jwk, format: 'jwk' }),
-    }
-  );
+  const fetchImpl = pairedFetch(d, peer, code.jwk);
   let reply: { accepted?: unknown; sas?: unknown };
   try {
     const res = await fetchImpl(`${peer.interfaceUrl}${PAIR_PATH}`, {
@@ -394,4 +409,190 @@ export function pairingSummaries(d: PairingDeps): Record<string, unknown>[] {
         ? null
         : sas(ours, p.peerThumbprint, p.id),
   }));
+}
+
+/** How long to wait before each retry of an unpair notice; then it gives up. */
+export const UNPAIR_BACKOFF_MS = [
+  30_000, 120_000, 600_000, 3_600_000, 21_600_000, 86_400_000,
+];
+
+export interface UnpairDeps extends PairingDeps {
+  // Revokes a paired client the way a revoke route does (closes its asks).
+  revokeClient: (address: Address) => void;
+  changed: () => void;
+  backoffMs?: number[];
+}
+
+/**
+ * Unpairing (P5). Locally, both records of a pairing go at once: the client
+ * is revoked and the peer disabled, its mail parked. A signed notice then
+ * tells the other side, retried on the backoff; once it is heard (or given
+ * up on) the peer row is removed and its parked mail fails.
+ */
+export class Unpairer {
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private stopped = false;
+  constructor(private readonly d: UnpairDeps) {}
+
+  /** Resumes the notices a restart interrupted. */
+  resume(): void {
+    for (const p of this.d.store.pairings())
+      if (p.state === 'unpairing') this.schedule(p.id, 0, 0);
+  }
+
+  stop(): void {
+    this.stopped = true;
+    for (const t of this.timers.values()) clearTimeout(t);
+    this.timers.clear();
+  }
+
+  /** The peer row was asked to go; false when a plain removal will do. */
+  peerRemoved(alias: string): boolean {
+    const id = this.d.store.getPeer(alias)?.pairedId ?? null;
+    if (id === null || this.d.store.pairing(id)?.state === 'unpaired')
+      return false;
+    this.unpair(id);
+    return true;
+  }
+
+  /** A client was revoked; a paired one takes its pairing with it (and so
+   * does XH-R3's cascade, which revokes the creator's clients). */
+  clientRevoked(address: Address): void {
+    const id = this.d.store.getClient(address)?.pairedId ?? null;
+    if (id !== null) this.unpair(id);
+  }
+
+  private unpair(id: string): void {
+    const state = this.d.store.pairing(id)?.state;
+    if (state === 'unpairing' || state === 'unpaired') return;
+    this.d.store.setPairingState(id, 'unpairing');
+    this.disable(id);
+    this.d.changed();
+    this.schedule(id, 0, 0);
+  }
+
+  // Revokes the client and disables the peer of pairing `id`; the peer's
+  // rows stay, parked, until the unpair settles.
+  private disable(id: string, change: PeerChange = 'disabled'): PeerRow | null {
+    const client = this.d.store.clients().find((c) => c.pairedId === id);
+    const agent =
+      client === undefined ? null : this.d.messages.getAgent(client.address);
+    if (agent !== null && agent.status !== 'revoked') {
+      this.d.messages.putAgent({
+        ...agent,
+        status: 'revoked',
+        approvedBy: null,
+      });
+      this.d.revokeClient(agent.address);
+    }
+    const peer = this.peerOf(id);
+    if (peer !== null && peer.status !== 'disabled') {
+      this.d.store.setPeerStatus(peer.alias, 'disabled');
+      this.d.emit(peer.alias, change);
+    }
+    return peer;
+  }
+
+  private peerOf(id: string): PeerRow | null {
+    return this.d.store.peers().find((p) => p.pairedId === id) ?? null;
+  }
+
+  private schedule(id: string, attempt: number, delayMs: number): void {
+    if (this.stopped) return;
+    clearTimeout(this.timers.get(id));
+    const t = setTimeout(() => {
+      this.timers.delete(id);
+      void this.attempt(id, attempt);
+    }, delayMs);
+    t.unref();
+    this.timers.set(id, t);
+  }
+
+  private async attempt(id: string, attempt: number): Promise<void> {
+    const peer = this.peerOf(id);
+    if (peer === null || peer.keyJwk == null) return this.settle(id, true);
+    try {
+      const res = await pairedFetch(
+        this.d,
+        peer,
+        peer.keyJwk
+      )(`${peer.interfaceUrl}${UNPAIR_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(unpairNotice(id, now(this.d))),
+      });
+      // Signed either way: heard, or the other side no longer has it.
+      if (res.status === 200 || res.status === 404)
+        return this.settle(id, true);
+    } catch {
+      // Unreachable or unverifiable: retried.
+    }
+    const backoff = this.d.backoffMs ?? UNPAIR_BACKOFF_MS;
+    if (attempt >= backoff.length) return this.settle(id, false);
+    this.schedule(id, attempt + 1, backoff[attempt]);
+  }
+
+  private settle(id: string, told: boolean): void {
+    if (this.stopped) return;
+    this.d.store.setPairingState(id, 'unpaired');
+    const peer = this.peerOf(id);
+    if (peer !== null) {
+      removePeer(this.d, peer.alias);
+      this.d.emit(peer.alias, 'removed');
+      if (!told)
+        this.d.notices.send(
+          peer.alias,
+          'unpair-untold',
+          `a2a:${peer.alias} was unpaired here, but Dispatch could not tell the other side; they may still try to reach you.`
+        );
+    }
+    this.d.changed();
+  }
+
+  /**
+   * POST <base>/dispatch/unpair: a notice signed by a paired client's key, for
+   * that client's own pairing. A verified sender always gets a signed reply,
+   * so it can settle; anything unverified is an unsigned 404.
+   */
+  async receive(
+    auth: AuthResult | null,
+    body: Uint8Array | null,
+    request: RequestParts
+  ): Promise<Response> {
+    const signer =
+      auth === null ? undefined : auth.ok ? auth.caller : auth.verified;
+    if (signer === undefined) return new Response('not found', { status: 404 });
+    let raw: unknown = null;
+    try {
+      raw = JSON.parse(new TextDecoder().decode(body ?? new Uint8Array()));
+    } catch {
+      // Refused below.
+    }
+    const notice = parseUnpairNotice(raw);
+    const client = this.d.store.getClient(signer.address);
+    const known =
+      auth?.ok === true && notice !== null && client?.pairedId === notice.id;
+    if (known) this.received(notice.id);
+    return signResponseFor(
+      known
+        ? Response.json({ unpaired: true })
+        : new Response('not found', { status: 404 }),
+      request,
+      ourKey(this.d),
+      now(this.d)
+    );
+  }
+
+  // The other side unpaired: disable our records and tell the owner.
+  private received(id: string): void {
+    this.d.store.setPairingState(id, 'unpaired');
+    const peer = this.disable(id, 'unpaired');
+    const alias = peer?.alias ?? id;
+    this.d.notices.send(
+      alias,
+      'unpaired',
+      `a2a:${alias} unpaired: the other side removed this pairing. Its records are kept, disabled.`
+    );
+    this.d.changed();
+  }
 }

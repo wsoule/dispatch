@@ -1,11 +1,17 @@
-import { decodePairingCode, makeProof, startStandalone } from '@dispatch/a2a';
+import {
+  decodePairingCode,
+  makeProof,
+  signedFetch,
+  startStandalone,
+} from '@dispatch/a2a';
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { generateKeyPairSync } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { CardSigner, loadOrCreateSigningKey } from '../../src/a2a/signing.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { waitFor } from '../messaging/harness.js';
@@ -27,10 +33,14 @@ interface Daemon {
 
 let home: string;
 let daemons: Daemon[] = [];
+const stopped = new Set<Daemon>();
 const originalHome = process.env.DISPATCH_HOME;
 
 // A daemon on its own scratch root with its A2A listener open on loopback.
-async function daemon(prefix: string): Promise<Daemon> {
+async function daemon(
+  prefix: string,
+  options: { unpairBackoffMs?: number[] } = {}
+): Promise<Daemon> {
   const root = initGitRepo(prefix);
   TaskStore.init(root);
   const handle = await startServer({
@@ -38,6 +48,9 @@ async function daemon(prefix: string): Promise<Daemon> {
     port: 0,
     writeDaemonFile: false,
     webDistDir: null,
+    ...(options.unpairBackoffMs === undefined
+      ? {}
+      : { a2aUnpairBackoffMs: options.unpairBackoffMs }),
   });
   const api = `http://127.0.0.1:${handle.port}`;
   const call: Daemon['call'] = (path, init = {}) =>
@@ -67,7 +80,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   for (const d of daemons) {
-    await d.handle.stop();
+    if (!stopped.has(d)) await d.handle.stop();
     rmSync(d.root, { recursive: true, force: true });
   }
   if (originalHome === undefined) delete process.env.DISPATCH_HOME;
@@ -354,5 +367,207 @@ describe('pairing two daemons with one code', () => {
         })
       ).status
     ).toBe(403);
+  });
+});
+
+const ownerOf = async (d: Daemon) =>
+  ((await (await d.call('/api/whoami')).json()) as { ref: string }).ref;
+const noticesOf = async (d: Daemon) => {
+  const owner = await ownerOf(d);
+  return () =>
+    d.handle.messaging.engine
+      .inbox(owner)
+      .filter(({ message }) => message.kind === 'notice')
+      .map(({ message }) => message.body);
+};
+
+// Pairs A (offering, alias bob) with B (accepting, alias alice).
+async function paired(a: Daemon, b: Daemon, token?: string): Promise<void> {
+  const res = await a.call('/api/a2a/pairings', {
+    body: { alias: 'bob' },
+    ...(token === undefined ? {} : { token }),
+  });
+  expect(res.status).toBe(201);
+  const { code } = (await res.json()) as { code: string };
+  expect((await accept(b, code)).status).toBe(200);
+}
+
+const clientOf = (d: Daemon, name: string) =>
+  d.handle.a2a.store!.clients().find((c) => c.name === name)!;
+const agentStatus = (d: Daemon, name: string) =>
+  d.handle.messaging.store.getAgent(clientOf(d, name).address)?.status;
+const pairingState = (d: Daemon) => d.handle.a2a.store!.pairings()[0]?.state;
+
+describe('unpairing', () => {
+  it('removing the peer on one side disables the other side’s records and tells its owner', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    await paired(a, b);
+    const bNotices = await noticesOf(b);
+    expect(
+      (await a.call('/api/a2a/peers/bob', { method: 'DELETE' })).status
+    ).toBe(204);
+    // This side drops both records at once.
+    expect(agentStatus(a, 'a2a.bob')).toBe('revoked');
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      10_000
+    );
+    expect(agentStatus(b, 'a2a.alice')).toBe('revoked');
+    expect(pairingState(b)).toBe('unpaired');
+    await waitFor(
+      () => bNotices().some((n) => n.includes('a2a:alice unpaired')),
+      5000
+    );
+    // Told, so the sender settles: its peer row goes.
+    await waitFor(() => a.handle.a2a.store!.getPeer('bob') === null, 10_000);
+    expect(pairingState(a)).toBe('unpaired');
+    // B's owner can then remove the disabled record.
+    expect(
+      (await b.call('/api/a2a/peers/alice', { method: 'DELETE' })).status
+    ).toBe(204);
+    expect(b.handle.a2a.store!.getPeer('alice')).toBeNull();
+  });
+
+  it('revoking the paired client unpairs too', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    await paired(a, b);
+    const address = clientOf(a, 'a2a.bob').address;
+    expect(
+      (
+        await a.call(`/api/agents/${encodeURIComponent(address)}/revoke`, {
+          method: 'POST',
+        })
+      ).status
+    ).toBe(200);
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      10_000
+    );
+    await waitFor(() => a.handle.a2a.store!.getPeer('bob') === null, 10_000);
+  });
+
+  it('an unsigned notice, or one for an unknown pairing, is 404 and changes nothing', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    await paired(a, b);
+    const id = b.handle.a2a.store!.pairings()[0].id;
+    const unsigned = await rawFetch(`${b.listener}/a2a/v1/dispatch/unpair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify({
+        tag: 'dispatch-a2a-unpair-v1',
+        id,
+        at: new Date().toISOString(),
+      }),
+    });
+    expect(unsigned.status).toBe(404);
+    // Signed by A's real key, for a pairing B does not have.
+    const key = new CardSigner(loadOrCreateSigningKey(a.root)).requestKey();
+    const bKey = new CardSigner(loadOrCreateSigningKey(b.root)).publicJwk();
+    const send = signedFetch(rawFetch, {
+      keyid: key.keyid,
+      privateKey: key.privateKey,
+      peerKey: createPublicKey({ key: bKey, format: 'jwk' }),
+    });
+    const unknown = await send(`${b.listener}/a2a/v1/dispatch/unpair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: JSON.stringify({
+        tag: 'dispatch-a2a-unpair-v1',
+        id: 'A'.repeat(22),
+        at: new Date().toISOString(),
+      }),
+    });
+    expect(unknown.status).toBe(404);
+    expect(b.handle.a2a.store!.getPeer('alice')?.status).toBe('active');
+    expect(agentStatus(b, 'a2a.alice')).toBe('approved');
+    expect(pairingState(b)).toBe('completed');
+  });
+
+  it('an open direct question to the peer closes "a2a:<alias> unpaired"', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    await paired(a, b);
+    const owner = await ownerOf(b);
+    const { message: q } = await b.handle.messaging.engine.send(
+      {
+        to: ['a2a:alice'],
+        kind: 'question',
+        blocking: true,
+        body: 'Which colour?',
+        choices: ['blue', 'red'],
+      },
+      { address: owner, canDecide: true }
+    );
+    await waitFor(
+      () => b.handle.a2a.store!.getOutbound(q.id, 'alice')?.state === 'open',
+      15_000
+    );
+    expect(
+      (await a.call('/api/a2a/peers/bob', { method: 'DELETE' })).status
+    ).toBe(204);
+    await waitFor(
+      () => b.handle.messaging.engine.answerOf(q.id) !== null,
+      10_000
+    );
+    expect(b.handle.messaging.engine.answerOf(q.id)?.body).toBe(
+      'Closed: a2a:alice unpaired'
+    );
+  });
+
+  it('revoking the teammate who created a pairing unpairs both sides (XH-R3)', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    const ada = a.handle.team.teammates.issue('ada', 'operator');
+    await paired(a, b, ada);
+    expect(clientOf(a, 'a2a.bob').address).toBe('agent:ada/a2a.bob');
+    expect(
+      (await a.call('/api/team/tokens/ada', { method: 'DELETE' })).status
+    ).toBe(200);
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.status === 'disabled',
+      10_000
+    );
+    await waitFor(() => a.handle.a2a.store!.getPeer('bob') === null, 10_000);
+  });
+
+  it('an unpair the other side cannot hear yet parks this side’s rows until it settles', async () => {
+    const a = await daemon('a2a-pair-a-', { unpairBackoffMs: [300, 300] });
+    const b = await daemon('a2a-pair-b-');
+    await paired(a, b);
+    await b.handle.stop();
+    stopped.add(b);
+    const owner = await ownerOf(a);
+    const { message } = await a.handle.messaging.engine.send(
+      { to: ['a2a:bob'], kind: 'message', body: 'Are you there?' },
+      { address: owner, canDecide: true }
+    );
+    await waitFor(
+      () =>
+        a.handle.a2a.store!.getOutbound(message.id, 'bob')?.state === 'queued',
+      10_000
+    );
+    expect(
+      (await a.call('/api/a2a/peers/bob', { method: 'DELETE' })).status
+    ).toBe(204);
+    // In flight: the peer row and its queued mail stay, disabled.
+    expect(a.handle.a2a.store!.getPeer('bob')?.status).toBe('disabled');
+    expect(pairingState(a)).toBe('unpairing');
+    expect(a.handle.a2a.store!.getOutbound(message.id, 'bob')?.state).toBe(
+      'queued'
+    );
+    // Out of attempts: it settles, and the owner hears the other side was not told.
+    const aNotices = await noticesOf(a);
+    await waitFor(() => a.handle.a2a.store!.getPeer('bob') === null, 10_000);
+    expect(pairingState(a)).toBe('unpaired');
+    expect(a.handle.a2a.store!.getOutbound(message.id, 'bob')?.state).toBe(
+      'failed'
+    );
+    await waitFor(
+      () => aNotices().some((n) => n.includes('could not tell')),
+      5000
+    );
   });
 });

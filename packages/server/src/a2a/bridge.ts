@@ -45,6 +45,7 @@ import { A2ALineage } from './lineage.js';
 import { A2AListener, freeLoopbackPort } from './listener.js';
 import type { OutboundWorker } from './outbound.js';
 import { startOutbound } from './outbound.js';
+import { Unpairer } from './pairing.js';
 import type { PeerService } from './peers.js';
 import { createPeerService, refreshDuePeers } from './peers.js';
 import type { BridgeDeps } from './port.js';
@@ -87,6 +88,7 @@ export interface A2ABridge {
   readonly watch: BridgeWatch | null;
   // Outbound peers; null when a2a.db is down.
   readonly peers: PeerService | null;
+  readonly unpairer: Unpairer | null;
   // Relays held a2a: deliveries and follows peer tasks; null when a2a.db is down.
   readonly outbound: OutboundWorker | null;
   // Whether standalone hosts may use /api/a2a/port/* (the settings file).
@@ -161,6 +163,8 @@ interface OpenBridgeDeps {
   watchLimits?: Partial<WatchLimits>;
   // Unverifiable replies before a signature peer is auth-failed (tests).
   unverifiedLimit?: number;
+  // The unpair notice's retry delays (tests shorten them).
+  unpairBackoffMs?: number[];
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -225,6 +229,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let stopWatch: (() => void) | null = null;
   let listener: A2AListener | null = null;
   let peers: PeerService | null = null;
+  let unpairer: Unpairer | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
   const leases = new PortLeases();
@@ -307,6 +312,17 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     const peerService = createPeerService(bridgeDeps);
     bridgeDeps.peers = () => peerService;
     peers = peerService;
+    unpairer = new Unpairer({
+      ...peerService.deps,
+      notices: peerService.notices,
+      emit: peerService.emit,
+      revokeClient: (address) => bridge.clientRevoked(address),
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+      ...(deps.unpairBackoffMs === undefined
+        ? {}
+        : { backoffMs: deps.unpairBackoffMs }),
+    });
+    bridgeDeps.unpairer = () => unpairer;
     messaging.setExternalPolicy(
       bridgeExternalPolicy(bridgeDeps, peerService.notices)
     );
@@ -352,6 +368,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       });
     } catch (err) {
       console.error('dispatchd: the A2A outbound worker did not start', err);
+    }
+    try {
+      unpairer.resume();
+    } catch (err) {
+      console.error('dispatchd: A2A unpair resume failed', err);
     }
   }
   try {
@@ -430,7 +451,10 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     };
   }
 
-  return {
+  const bridge: A2ABridge = {
+    get unpairer() {
+      return unpairer;
+    },
     get port() {
       return port;
     },
@@ -538,6 +562,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     // Never throws: the revocation has already happened, and one task that
     // cannot close is logged without stopping the others.
     clientRevoked(address) {
+      try {
+        unpairer?.clientRevoked(address);
+      } catch (err) {
+        console.error(`dispatchd: could not unpair ${address}`, err);
+      }
       // First, so closing its asks below pushes nothing to its webhooks.
       try {
         store?.deletePushConfigsOf(address);
@@ -584,6 +613,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
+        unpairer?.stop();
         outbound?.stop();
         outbound = null;
         leases.closeAll();
@@ -601,4 +631,5 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         store?.close();
       }),
   };
+  return bridge;
 }

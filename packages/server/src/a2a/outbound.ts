@@ -934,12 +934,13 @@ export class OutboundWorker {
   // fail its unfinished rows, close its open direct questions and handoffs
   // and the questions it asked, and tombstone all its rows (remote ids
   // cleared), so the alias can be reused without the old peer's context.
-  peerGone(alias: string, why: 'disabled' | 'removed'): void {
+  peerGone(alias: string, why: 'disabled' | 'removed' | 'unpaired'): void {
     for (const [key, ac] of this.trackers)
       if (key.endsWith(` ${alias}`)) ac.abort();
     this.queues.delete(alias);
     if (why === 'disabled') return;
-    const reason = removedReason(alias);
+    const reason =
+      why === 'unpaired' ? `a2a:${alias} unpaired` : removedReason(alias);
     const at = this.now().toISOString();
     const unfinished = this.deps.store.outboundOf(alias, ['queued', 'open']);
     const seen = new Set(unfinished.map((r) => r.messageId));
@@ -1054,7 +1055,8 @@ export function startOutbound(
   });
   const stopWorker = worker.start();
   const offPeers = peers.onChange((alias, what) => {
-    if (what === 'removed' || what === 'disabled') worker.peerGone(alias, what);
+    if (what === 'removed' || what === 'disabled' || what === 'unpaired')
+      worker.peerGone(alias, what);
     else worker.kick(alias);
   });
   return {

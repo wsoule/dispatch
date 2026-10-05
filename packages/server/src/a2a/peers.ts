@@ -87,6 +87,8 @@ export type PeerChange =
   | 'enabled'
   | 'disabled'
   | 'removed'
+  // Disabled because the other side unpaired: closes as a removal does.
+  | 'unpaired'
   | 'refreshed';
 
 export interface PeerService {

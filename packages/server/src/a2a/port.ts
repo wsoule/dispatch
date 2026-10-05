@@ -8,6 +8,7 @@ import type {
   CardRequest,
   ContinueInput,
   ContinueResult,
+  ExtensionRoute,
   HandoffStatuses,
   ListPage,
   ListQuery,
@@ -61,6 +62,7 @@ import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { approvedTasksOf, finishCancel, openHandoff } from './handoff.js';
 import { completePairing } from './pairing.js';
+import type { Unpairer } from './pairing.js';
 import type { PeerService } from './peers.js';
 import { DaemonPushConfigs } from './push.js';
 import { reconcileHandoff, rowFor } from './reconcile.js';
@@ -115,6 +117,8 @@ export interface BridgeDeps {
   signer?: () => CardSigner | null;
   // The peer service, once a2a.db is open; pairing writes peers through it.
   peers?: () => PeerService | null;
+  // Unpairing's notices and their retries, once a2a.db is open.
+  unpairer?: () => Unpairer | null;
 }
 
 // dispatchd's BridgePort: every inbound A2A request becomes an engine send
@@ -385,10 +389,11 @@ export class DaemonBridgePort implements BridgePort {
     });
   }
 
-  // The listener's pairing route: the accepter's proof against an open offer.
-  async pair(req: Request): Promise<Response> {
+  // The listener's extension routes: a pairing proof or an unpair notice.
+  async extension(route: ExtensionRoute, req: Request): Promise<Response> {
     const url = new URL(req.url);
-    return this.pairAt(
+    return this.extensionAt(
+      route,
       {
         method: req.method,
         path: url.pathname,
@@ -400,19 +405,29 @@ export class DaemonBridgePort implements BridgePort {
     );
   }
 
-  // A pairing proof received at publicUrl (this listener's, or a host's
-  // pinned URL); the reply is signed for that URL.
-  async pairAt(r: ReceivedRequest, publicUrl: string): Promise<Response> {
+  // An extension request received at publicUrl (this listener's, or a host's
+  // pinned URL); replies are signed for that URL.
+  async extensionAt(
+    route: ExtensionRoute,
+    r: ReceivedRequest,
+    publicUrl: string
+  ): Promise<Response> {
     const peers = this.deps.peers?.() ?? null;
+    const unpairer = this.deps.unpairer?.() ?? null;
     if (peers === null) return new Response('not found', { status: 404 });
-    return completePairing(
-      { ...peers.deps, notices: peers.notices, emit: peers.emit },
-      r.body ?? new Uint8Array(),
-      {
-        method: r.method,
-        targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,
-        headers: r.headers,
-      }
+    const parts = {
+      method: r.method,
+      targetUri: `${new URL(publicUrl).origin}${r.path}${r.query}`,
+      headers: r.headers,
+    };
+    const d = { ...peers.deps, notices: peers.notices, emit: peers.emit };
+    if (route === 'pair')
+      return completePairing(d, r.body ?? new Uint8Array(), parts);
+    if (unpairer === null) return new Response('not found', { status: 404 });
+    return unpairer.receive(
+      await this.authenticateSignedAt(r, publicUrl),
+      r.body,
+      parts
     );
   }
 

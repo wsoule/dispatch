@@ -102,6 +102,7 @@ export type {
   Admission,
   AuthResult,
   BridgePort,
+  ExtensionRoute,
   Caller,
   CardInputs,
   CardRequest,
@@ -190,6 +191,12 @@ export type { RequestParts } from './sig/base.js';
 export { contentDigest, digestMatches } from './sig/digest.js';
 export { isEventStream, signedFetch } from './sig/fetch.js';
 export { signResponseFor } from './sig/respond.js';
+export {
+  parseUnpairNotice,
+  UNPAIR_TAG,
+  unpairNotice,
+} from './sig/statements.js';
+export type { UnpairNotice } from './sig/statements.js';
 export {
   SIG_EXTENSION_URI,
   SIG_TAG,

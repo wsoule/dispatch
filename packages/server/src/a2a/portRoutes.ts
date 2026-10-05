@@ -1,5 +1,6 @@
 import type {
   AuthResult,
+  ExtensionRoute,
   HostRow,
   ListQuery,
   ReceivedRequest,
@@ -351,18 +352,19 @@ async function authenticateForwarded(
   } satisfies AuthResult);
 }
 
-// POST /api/a2a/port/pair: a pairing proof a host received, completed here
-// and answered signed for the host's pinned URL, as the host relays it.
-async function pairForwarded(
+// POST /api/a2a/port/dispatch/<route>: a pairing proof or unpair notice a
+// host received, handled here and answered signed for the host's pinned URL.
+async function extensionForwarded(
   req: Request,
   bridge: NonNullable<ApiContext['a2a']>,
-  host: HostRow
+  host: HostRow,
+  route: ExtensionRoute
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   const forwarded = parsed.ok ? forwardedRequest(parsed.value) : null;
   if (forwarded === null || bridge.port === null)
     return jsonResponse({ error: 'body: expected the forwarded request' }, 400);
-  const res = await bridge.port.pairAt(forwarded, host.publicUrl);
+  const res = await bridge.port.extensionAt(route, forwarded, host.publicUrl);
   return jsonResponse({
     status: res.status,
     headers: Object.fromEntries(res.headers),
@@ -524,8 +526,13 @@ export async function handlePortRoute(
     method === 'POST'
   )
     return authenticateForwarded(req, bridge, host);
-  if (rest[0] === 'pair' && rest.length === 1 && method === 'POST')
-    return pairForwarded(req, bridge, host);
+  if (
+    rest[0] === 'dispatch' &&
+    rest.length === 2 &&
+    (rest[1] === 'pair' || rest[1] === 'unpair') &&
+    method === 'POST'
+  )
+    return extensionForwarded(req, bridge, host, rest[1]);
   const clientHeader = req.headers.get(PORT_CLIENT_HEADER);
   const resolveClient = async (): Promise<AuthResult> =>
     (await clientAuth(clientHeader, bridge, host.id)).auth;

@@ -204,6 +204,8 @@ export interface PushConfigPort {
   delete(caller: Caller, taskId: string, id: string): Promise<void>;
 }
 
+export type ExtensionRoute = 'pair' | 'unpair';
+
 export interface BridgePort {
   authenticate(bearer: string): Promise<AuthResult>;
   // A request a Dispatch peer signed (RFC 9421). null when it carries no
@@ -214,8 +216,9 @@ export interface BridgePort {
   // Signs the response to a request that authenticated by signature, so the
   // peer can tell it came from this agent; required with authenticateSigned.
   signResponse?(res: Response, req: Request, caller: Caller): Promise<Response>;
-  // POST <base>/dispatch/pair: an accepter's pairing proof (P5); absent, 404.
-  pair?(req: Request): Promise<Response>;
+  // POST <base>/dispatch/<route>: a pairing proof or a signed unpair notice
+  // (P5); absent, 404.
+  extension?(route: ExtensionRoute, req: Request): Promise<Response>;
   admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
   card(req?: CardRequest): Promise<CardInputs>;
   open(caller: Caller, input: OpenInput): Promise<OpenResult>;

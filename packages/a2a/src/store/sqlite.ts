@@ -133,7 +133,14 @@ export interface PairingRow {
   createdTier: 'decide' | 'operator';
   createdAt: string;
   expiresAt: string;
-  state: 'offered' | 'completed' | 'canceled' | 'expired';
+  // unpairing: this side unpaired and is still telling the other side.
+  state:
+    | 'offered'
+    | 'completed'
+    | 'canceled'
+    | 'expired'
+    | 'unpairing'
+    | 'unpaired';
   peerThumbprint: string | null;
   completedAt: string | null;
 }
@@ -466,6 +473,8 @@ const PAIRING_STATES: readonly PairingRow['state'][] = [
   'completed',
   'canceled',
   'expired',
+  'unpairing',
+  'unpaired',
 ];
 
 // An unknown state reads as canceled, so a hand-edited row never completes.

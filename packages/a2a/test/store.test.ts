@@ -688,6 +688,14 @@ describe('review N5', () => {
     expect(store.pairing('p-2')?.secretHash).toBeNull();
   });
 
+  it('keeps the unpair states', () => {
+    store.putPairing(pairingRow('p-3'));
+    store.setPairingState('p-3', 'unpairing');
+    expect(store.pairing('p-3')?.state).toBe('unpairing');
+    store.setPairingState('p-3', 'unpaired');
+    expect(store.pairing('p-3')?.state).toBe('unpaired');
+  });
+
   it('clears duplicate pins with a warning instead of refusing to open', () => {
     const path = join(dir, 'dup.db');
     const first = new SqliteA2AStore(openA2ADb(path));

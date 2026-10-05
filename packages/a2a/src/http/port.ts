@@ -7,6 +7,7 @@ import type {
   CardInputs,
   ContinueInput,
   ContinueResult,
+  ExtensionRoute,
   ListPage,
   ListQuery,
   OpenInput,
@@ -116,14 +117,14 @@ export class HttpBridgePort implements BridgePort {
     });
   }
 
-  // A pairing proof: the daemon completes it and signs the reply for this
-  // host's pinned URL; the host relays the reply as given.
-  async pair(req: Request): Promise<Response> {
+  // A pairing proof or unpair notice: the daemon handles it and signs the
+  // reply for this host's pinned URL; the host relays the reply as given.
+  async extension(route: ExtensionRoute, req: Request): Promise<Response> {
     const url = new URL(req.url);
     const body = new Uint8Array(await req.arrayBuffer());
     let out: { status: number; headers: Record<string, string>; body: string };
     try {
-      out = await this.call<typeof out>('POST', '/pair', null, {
+      out = await this.call<typeof out>('POST', `/dispatch/${route}`, null, {
         method: req.method,
         path: url.pathname,
         query: url.search,

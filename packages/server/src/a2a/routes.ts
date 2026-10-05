@@ -381,6 +381,12 @@ async function peerRoute(
     if (rest.length === 0) return null;
     const alias = decodeURIComponent(rest[0]);
     if (rest.length === 1 && method === 'DELETE') {
+      // A paired peer unpairs: both records here at once, the peer row
+      // itself once the other side has been told.
+      if (ctx.a2a?.unpairer?.peerRemoved(alias) === true) {
+        changed(ctx);
+        return new Response(null, { status: 204 });
+      }
       if (!removePeer(service.deps, alias))
         return errorResponse(404, `no A2A peer ${alias}`);
       changedPeer(alias, 'removed');

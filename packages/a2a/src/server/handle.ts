@@ -24,6 +24,7 @@ import type {
   A2APolicy,
   BridgePort,
   Caller,
+  ExtensionRoute,
   OpenResult,
   TaskFacts,
 } from '../port.js';
@@ -70,6 +71,8 @@ interface Op {
 }
 
 const MAX_BODY_BYTES = 256 * 1024;
+// <base>/dispatch/<route>, the Dispatch extension routes.
+const EXTENSION = /^\/dispatch\/(pair|unpair)$/;
 const CARD_PATH = '/.well-known/agent-card.json';
 const QUERY_CREDENTIALS = [
   'token',
@@ -818,15 +821,17 @@ export async function handleA2A(
     if (!url.pathname.startsWith(`${options.basePath}/`))
       return new Response('not found', { status: 404 });
     if (req.method === 'OPTIONS') return new Response(null, { status: 405 });
-    // A Dispatch extension route: unauthenticated but for the pairing proof,
-    // so its refusals count toward the per-IP lockout.
+    // Dispatch extension routes: each authenticates its own body or
+    // signature, so their refusals count toward the per-IP lockout.
+    const ext = EXTENSION.exec(url.pathname.slice(options.basePath.length));
     if (
       req.method === 'POST' &&
-      url.pathname === `${options.basePath}/dispatch/pair`
+      url.pathname.startsWith(options.basePath) &&
+      ext !== null
     ) {
-      if (port.pair === undefined)
+      if (port.extension === undefined)
         return new Response('not found', { status: 404 });
-      const res = await port.pair(req);
+      const res = await port.extension(ext[1] as ExtensionRoute, req);
       if (res.status === 404) options.limiter.authFailed(options.clientIp);
       return res;
     }
