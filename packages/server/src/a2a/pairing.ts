@@ -412,7 +412,7 @@ export function pairingSummaries(d: PairingDeps): Record<string, unknown>[] {
 }
 
 /** How long to wait before each retry of an unpair notice; then it gives up. */
-export const UNPAIR_BACKOFF_MS = [
+const UNPAIR_BACKOFF_MS = [
   30_000, 120_000, 600_000, 3_600_000, 21_600_000, 86_400_000,
 ];
 
