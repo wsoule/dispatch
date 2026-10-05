@@ -331,6 +331,7 @@ parentless
 passthroughs
 pathspec
 pathspecs
+PATHEXT
 pcss
 Persistable
 pgrep
