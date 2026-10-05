@@ -1,4 +1,5 @@
 import {
+  ensureA2ALinkKeys,
   normalizeProjectPath,
   readCredentials,
   TaskStore,
@@ -228,10 +229,28 @@ describe('POST /api/linear/disconnect', () => {
     await fetch(`${baseUrl}/api/linear/disconnect`, { method: 'POST' });
 
     expect(
-      readCredentials().projects?.[normalizeProjectPath(root)]
+      readCredentials().projects?.[normalizeProjectPath(root)]?.linear
     ).toBeUndefined();
     const status = await json(await fetch(`${baseUrl}/api/linear/status`));
     expect(status.keySource).toBeNull();
+  });
+
+  it('clears only the Linear key, never the A2A keys beside it', async () => {
+    await ensureA2ALinkKeys(root, () => ({
+      signPriv: 'sign-private',
+      signPub: 'sign-public',
+      sealPriv: 'seal-private',
+      sealPub: 'seal-public',
+    }));
+    writeProjectCredential(root, 'linear', { apiKey: 'lin_api_project_key' });
+    const before =
+      readCredentials().projects?.[normalizeProjectPath(root)]?.a2a;
+    expect(before?.linkKeys).toBeDefined();
+    await fetch(`${baseUrl}/api/linear/disconnect`, { method: 'POST' });
+
+    const after = readCredentials().projects?.[normalizeProjectPath(root)];
+    expect(after?.linear).toBeUndefined();
+    expect(after?.a2a).toEqual(before);
   });
 
   it('leaves a machine-wide key intact and reports it as the fallback', async () => {

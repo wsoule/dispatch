@@ -91,7 +91,7 @@ export function useLinkDaemons() {
       if (link === null) throw new Error('no link keys');
       const peers = x.handle.a2a.peers;
       const store = x.handle.a2a.store;
-      const hub = x.handle.a2a.links;
+      const hub = await x.handle.a2a.ensureLinks();
       if (peers === null || store === null || hub === null)
         throw new Error('the bridge is down');
       writeLinkPairedRecords(
