@@ -570,6 +570,10 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
     .action(async () => {
       const shown = await (await withAgentToken()).keys();
       ctx.log(`key: ${shown.current.fingerprint}`);
+      if (shown.current.thumbprint !== undefined)
+        ctx.log(
+          `thumbprint: ${shown.current.thumbprint} (what a relay's tenants file lists)`
+        );
       if (shown.next !== null)
         ctx.log(
           `rotating to ${shown.next.fingerprint} (since ${shown.next.since}; the old key goes ${shown.next.until})`

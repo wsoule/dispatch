@@ -222,6 +222,27 @@ fail verification. Cloudflare appends the address that connected to it to
 is not read separately. Cloudflare Access in front of the tunnel works only for
 clients that can present Access credentials, which plain A2A clients cannot.
 
+### A relay
+
+With neither Tailscale nor a tunnel, or to serve many daemons from one public
+host, run a relay that the daemons dial out to; none of them opens a port:
+
+```bash
+dispatch a2a keys show                      # on each daemon: its thumbprint
+# On the relay machine: the card-key thumbprints it admits, one per line.
+dispatch a2a relay --host 0.0.0.0 --public --port 443 \
+  --public-url https://relay.example.com \
+  --tls-cert cert.pem --tls-key key.pem --tenants-file ./tenants   # chmod 600
+```
+
+Each daemon then sets
+`PUT /api/a2a/relay {"enabled": true, "url": "https://relay.example.com"}`
+(operator) and is served at `https://relay.example.com/t/<thumbprint>`, its card
+built for that URL. The relay terminates TLS: it can read bearer traffic and
+bodies and can drop them, but cannot forge a paired peer's signed requests,
+which are checked against the tenant URL. Run it for your own daemons, never as
+a public service.
+
 ## Standalone host
 
 Use `dispatch a2a serve` when the public A2A listener should run on another

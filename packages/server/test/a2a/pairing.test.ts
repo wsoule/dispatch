@@ -611,12 +611,12 @@ describe('what the API shows of pairings and keys (T46)', () => {
       );
       expect(res.status).toBe(200);
       return (await res.json()) as {
-        current: { fingerprint: string };
+        current: { fingerprint: string; thumbprint: string };
         next: { fingerprint: string; since: string; until: string } | null;
       };
     };
     expect(await read(a.handle.tokens.agentToken)).toEqual({
-      current: { fingerprint: a2aFingerprint(kid) },
+      current: { fingerprint: a2aFingerprint(kid), thumbprint: kid },
       next: null,
     });
     expect((await a.call('/api/a2a/keys/rotate', { body: {} })).status).toBe(

@@ -1344,7 +1344,7 @@ interface A2APairingSummary {
 }
 
 interface A2AKeys {
-  current: { fingerprint: string };
+  current: { fingerprint: string; thumbprint?: string };
   next: { fingerprint: string; since: string; until: string } | null;
 }
 

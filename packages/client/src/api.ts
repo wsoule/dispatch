@@ -1435,7 +1435,7 @@ export interface A2APairingSummary {
 
 // GET /api/a2a/keys: this project's card key and a rotation in its overlap.
 export interface A2AKeys {
-  current: { fingerprint: string };
+  current: { fingerprint: string; thumbprint?: string };
   next: { fingerprint: string; since: string; until: string } | null;
 }
 

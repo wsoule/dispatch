@@ -213,7 +213,10 @@ function startFakeDaemon() {
         return new Response(null, { status: 204 });
       if (url.pathname === '/api/a2a/keys')
         return Response.json({
-          current: { fingerprint: 'C1U2-R3E4-N5T6-0000-0000-0000' },
+          current: {
+            fingerprint: 'C1U2-R3E4-N5T6-0000-0000-0000',
+            thumbprint: 'T'.repeat(43),
+          },
           next: null,
         });
       if (url.pathname === '/api/a2a/keys/rotate')
@@ -774,6 +777,8 @@ describe('dispatch a2a keys', () => {
       auth: `Bearer ${AGENT_TOKEN}`,
     });
     expect(lines.join('\n')).toContain('C1U2-R3E4-N5T6-0000-0000-0000');
+    // The thumbprint a relay's tenants file lists.
+    expect(lines.join('\n')).toContain('T'.repeat(43));
   });
 
   it('rotates only with the app token, passing --compromised', async () => {

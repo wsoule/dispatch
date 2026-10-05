@@ -56,15 +56,28 @@ import {
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
 import type { WatchLimits } from './portRoutes.js';
-import { PortLeases, PortWatches, SignedSessions } from './portRoutes.js';
+import {
+  PortLeases,
+  PortWatches,
+  servePortCall,
+  SignedSessions,
+} from './portRoutes.js';
 import { PushWorker } from './push.js';
 import { reconcileA2A } from './reconcile.js';
-import type { ListenerOverrides, ListenerSettings } from './settings.js';
+import type { RelayStatus } from './relayClient.js';
+import { RelayClient } from './relayClient.js';
+import type {
+  ListenerOverrides,
+  ListenerSettings,
+  RelaySettings,
+} from './settings.js';
 import {
   applyOverrides,
   readListenerSettings,
+  readRelaySettings,
   resolveListener,
   writeListenerSettings,
+  writeRelaySettings,
 } from './settings.js';
 import { CardSigner, finishRotation, loadSigningKeys } from './signing.js';
 import { Upgrades } from './upgrade.js';
@@ -97,6 +110,9 @@ export interface A2ABridge {
   readonly unpairer: Unpairer | null;
   readonly keys: KeyService | null;
   readonly upgrades: Upgrades | null;
+  // This daemon as a relay tenant (a2a-relay.json).
+  relayStatus(): RelayStatus;
+  setRelay(settings: RelaySettings): RelayStatus;
   // XH-R3: cancels the open pairing offers `ref` made.
   cancelOffersBy(ref: string): void;
   // Probes each peer auth-failed only for unverifiable replies (hourly).
@@ -246,6 +262,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   let unpairer: Unpairer | null = null;
   let keys: KeyService | null = null;
   let upgrades: Upgrades | null = null;
+  let relay: RelayClient | null = null;
   let stopUpgradeAnswers: (() => void) | null = null;
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let outbound: { worker: OutboundWorker; stop: () => void } | null = null;
@@ -370,6 +387,16 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     });
     bridgeDeps.upgrades = () => upgradeService;
     upgrades = upgradeService;
+    // This daemon as a relay tenant: each call frame answered as the port
+    // routes answer a standalone host pinned to the tenant URL.
+    relay = new RelayClient({
+      signer: () => bridgeDeps.signer?.() ?? null,
+      serve: (req, rest, host, stillHost) =>
+        servePortCall(req, bridge, rest, req.method, host, stillHost),
+      hostGone: (hostId) => bridge.hostRevoked(hostId),
+      ownerRef: deps.ownerRef,
+      changed: () => deps.events.broadcast({ type: 'a2a.changed' }),
+    });
     // The owner's answers to upgrade questions (plain questions: a new gate
     // type would be a protocol registry change).
     stopUpgradeAnswers = messaging.engine.subscribe((e) => {
@@ -437,6 +464,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       unpairer.resume();
       keyService.resume();
       upgradeService.resume();
+      relay?.apply(readRelaySettings(rootDir).settings);
       void finishRotation(rootDir).then(
         (finished) => {
           if (finished) signer = undefined;
@@ -544,6 +572,18 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     },
     get upgrades() {
       return upgrades;
+    },
+    relayStatus: () =>
+      relay?.status() ?? {
+        ...readRelaySettings(rootDir).settings,
+        connected: false,
+        tenantUrl: null,
+        error: 'the A2A bridge is unavailable',
+      },
+    setRelay(settings) {
+      writeRelaySettings(rootDir, settings);
+      relay?.apply(settings);
+      return bridge.relayStatus();
     },
     get port() {
       return port;
@@ -706,6 +746,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         unpairer?.stop();
         keys?.stop();
         upgrades?.stop();
+        relay?.stop();
         stopUpgradeAnswers?.();
         outbound?.stop();
         outbound = null;

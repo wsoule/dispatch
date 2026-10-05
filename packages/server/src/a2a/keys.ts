@@ -228,14 +228,17 @@ export class KeyService {
 
   /** This project's key, and a rotation's next key through its overlap. */
   show(): {
-    current: { fingerprint: string };
+    current: { fingerprint: string; thumbprint: string };
     next: { fingerprint: string; since: string; until: string } | null;
   } {
     const [current, next] = this.signer().keysInUse();
     const read = readA2ANextSigningKey(this.d.rootDir);
     const since = read.status === 'ok' ? read.next.at : null;
     return {
-      current: { fingerprint: a2aFingerprint(current.keyid) },
+      current: {
+        fingerprint: a2aFingerprint(current.keyid),
+        thumbprint: current.keyid,
+      },
       next:
         next === undefined || since === null
           ? null

@@ -493,7 +493,34 @@ export async function handlePortRoute(
       401
     );
   }
+  return servePortCall(
+    req,
+    bridge,
+    rest,
+    method,
+    host,
+    () =>
+      bridge.standalone() &&
+      authenticateHost(bridge.store, hostToken)?.id === host.id
+  );
+}
+
+/**
+ * One /api/a2a/port/* call for `host`, already authenticated: a standalone
+ * host by its token, or a relay tenant connection by the card-key challenge
+ * (relayClient.ts), whose host is pinned to the tenant URL.
+ */
+export async function servePortCall(
+  req: Request,
+  bridge: NonNullable<ApiContext['a2a']>,
+  rest: string[],
+  method: string,
+  host: HostRow,
+  // Whether the host still stands, re-checked at each watch keepalive.
+  stillHost: () => boolean
+): Promise<Response> {
   const port = bridge.port;
+  if (port === null) return notFound();
   const url = new URL(req.url);
   if (rest[0] === 'card' && rest.length === 1 && method === 'GET') {
     // The card is built for the URL pinned at minting, and no other.
@@ -635,9 +662,7 @@ export async function handlePortRoute(
       if ((await port.facts(caller, id)) === null) return taskNotFound();
       // Re-checked at each keepalive: the host, the switch, and the client.
       const allowed = async () => {
-        if (!bridge.standalone()) return false;
-        if (authenticateHost(bridge.store, hostToken)?.id !== host.id)
-          return false;
+        if (!stillHost()) return false;
         const again = await resolveClient();
         return again.ok && again.caller.address === caller.address;
       };

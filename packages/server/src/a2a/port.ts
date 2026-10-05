@@ -369,12 +369,16 @@ export class DaemonBridgePort implements BridgePort {
     return this.authenticateSignedAt(req, this.deps.cardBase().publicUrl);
   }
 
-  // A standalone host's forwarded request, verified against that host's pinned URL.
+  // A standalone host's forwarded request, verified against that host's pinned
+  // URL. A relay tenant's URL has a path (/t/<thumbprint>): its origin is what
+  // the verifier takes, and the forwarded path carries the prefix.
   authenticateSignedAt(
     req: ReceivedRequest,
-    origin: string
+    publicUrl: string
   ): Promise<AuthResult | null> {
-    return settle(() => verifySignedClient(this.deps, req, origin));
+    return settle(() =>
+      verifySignedClient(this.deps, req, new URL(publicUrl).origin)
+    );
   }
 
   revalidate(caller: Caller): Promise<boolean> {

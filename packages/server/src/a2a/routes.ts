@@ -40,6 +40,7 @@ import {
 } from './peers.js';
 import type { DaemonBridgePort } from './port.js';
 import { handlePortRoute } from './portRoutes.js';
+import { parseRelaySettings } from './settings.js';
 import { parseSettings } from './settings.js';
 
 const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -546,6 +547,35 @@ function ourCardUrl(a2a: Running['a2a']): string | null {
     : null;
 }
 
+// `/api/a2a/relay`: GET the tenant connection (request tier), PUT
+// { enabled, url } or DELETE to stop dialling (operator, ELEVATED_ROUTES).
+async function relayRoute(
+  req: Request,
+  ctx: ApiContext,
+  method: string
+): Promise<Response | null> {
+  const a2a = ctx.a2a;
+  if (a2a === undefined)
+    return errorResponse(503, 'the A2A bridge is unavailable');
+  if (method === 'GET') return jsonResponse(a2a.relayStatus());
+  if (method === 'DELETE') {
+    const now = a2a.relayStatus();
+    return jsonResponse(a2a.setRelay({ enabled: false, url: now.url }));
+  }
+  if (method !== 'PUT') return null;
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const settings = parseRelaySettings(parsed.value);
+  if (!settings.ok)
+    return invalid(
+      settings.key,
+      settings.key === 'url'
+        ? 'url is the relay origin: https, or http on loopback, with no path'
+        : `${settings.key} has the wrong type`
+    );
+  return jsonResponse(a2a.setRelay(settings.settings));
+}
+
 // POST /api/a2a/keys/rotate { compromised? }: operator tier (ELEVATED_ROUTES).
 async function rotateKeys(req: Request, ctx: ApiContext): Promise<Response> {
   if (ctx.viaAgentToken === true)
@@ -672,6 +702,8 @@ export async function handleA2ARoute(
     return pairingRoute(req, ctx, segments.slice(1), method);
   if (segments[0] === 'keys' && segments[1] === 'rotate' && method === 'POST')
     return rotateKeys(req, ctx);
+  if (segments[0] === 'relay' && segments.length === 1)
+    return relayRoute(req, ctx, method);
   if (segments[0] === 'keys' && segments.length === 1 && method === 'GET') {
     const b = bridge(ctx);
     if (!b.ok) return b.response;
