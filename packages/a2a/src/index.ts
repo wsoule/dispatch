@@ -273,3 +273,9 @@ export {
   loadOrCreateLinkKeys,
 } from './link/keys.js';
 export type { LinkKeysBinding } from './link/keys.js';
+export {
+  checkLinkPayload,
+  MAX_LINK_PAYLOAD_BYTES,
+  sealableLinkPayload,
+} from './link/payload.js';
+export type { LinkPayload } from './link/payload.js';
