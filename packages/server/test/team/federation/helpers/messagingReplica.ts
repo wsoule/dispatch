@@ -22,10 +22,12 @@ import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js'
 import { Inbound } from '../../../../src/team/federation/inbound.js';
 import type { StateHooks } from '../../../../src/team/federation/inbound.js';
 import { MailOut } from '../../../../src/team/federation/mail.js';
+import { DocSync } from '../../../../src/team/federation/ops.js';
 import { Presence } from '../../../../src/team/federation/presence.js';
 import { trackWaiting } from '../../../../src/team/federation/presence.js';
 import type { RunInfo } from '../../../../src/team/federation/presence.js';
 import { HeldMail, StateOut } from '../../../../src/team/federation/state.js';
+import { RecordingDocsPort } from './docsPort.js';
 import { MemoryRemote } from './memoryTransport.js';
 import { MemoryV1, serviceReplica } from './serviceReplica.js';
 import type { ServiceReplica } from './serviceReplica.js';
@@ -120,6 +122,9 @@ export interface MessagingReplica extends ServiceReplica {
   };
   stateOut: StateOut;
   heldMail: HeldMail;
+  /** With `docs: true`, a DocSync over a recording port. */
+  docSync: DocSync | null;
+  docsPort: RecordingDocsPort | null;
   /** An execute run starts here as the daemon starts one: presence first,
    *  then remote task mail claimed and held mail delivered. */
   startExecute(taskId: string, runId: string): Promise<void>;
@@ -141,6 +146,8 @@ export interface TeamOpts {
   stateOpsPerHour?: number;
   maxParkedPerPublisher?: number;
   restagePerPublisher?: number;
+  /** Registers a DocSync over a RecordingDocsPort. */
+  docs?: boolean;
 }
 
 // One daemon's board sync plus its messages.db, engine and the federation
@@ -277,6 +284,20 @@ export function messagingReplica(
   base.service.register(inbound);
   base.service.register(inbound.stateHandler(stateOut));
   base.service.setInbox(inbound);
+  const docsPort = opts.docs === true ? new RecordingDocsPort() : null;
+  const docSync =
+    docsPort === null
+      ? null
+      : new DocSync({
+          fed: base.fed,
+          roster: base.roster,
+          service: base.service,
+          port: docsPort,
+        });
+  if (docSync !== null) {
+    base.service.register(docSync);
+    base.service.addCollector(docSync);
+  }
   const replica: MessagingReplica = {
     ...base,
     remote,
@@ -292,6 +313,8 @@ export function messagingReplica(
     inbound,
     stateOut,
     heldMail,
+    docSync,
+    docsPort,
     stateCalls,
     startExecute: async (taskId, runId) => {
       host.startRun(taskId, runId);

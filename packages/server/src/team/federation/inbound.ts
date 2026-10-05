@@ -561,19 +561,27 @@ export class Inbound implements OpHandler, InboxDrainer {
     return { inner, payload, forwardTarget: fwd.target };
   }
 
-  // A revocation is contested while its target published a removal the fold
-  // judged: that fight can still flip it.
   private contested(replica: string, view: RosterView): boolean {
-    return this.deps.fed.db
-      .query<{ hash: string }, [string]>(
-        'SELECT hash FROM fed_roster WHERE replica = ?'
-      )
-      .all(replica)
-      .some((r) => view.resolution.has(r.hash));
+    return revocationContested(this.deps.fed, replica, view);
   }
 
   // Parks the op; the service caps what one publisher may have waiting.
   private park(_op: FederatedOp): 'parked' {
     return 'parked';
   }
+}
+
+/** A revocation is contested while its target published a removal the fold
+ *  judged: that fight can still flip it. */
+export function revocationContested(
+  fed: FedStore,
+  replica: string,
+  view: RosterView
+): boolean {
+  return fed.db
+    .query<{ hash: string }, [string]>(
+      'SELECT hash FROM fed_roster WHERE replica = ?'
+    )
+    .all(replica)
+    .some((r) => view.resolution.has(r.hash));
 }

@@ -6,6 +6,7 @@ import {
 } from '@dispatch/federation';
 import type { LogCursor, RosterView } from '@dispatch/federation';
 import {
+  contentHash,
   fingerprint as fingerprintOf,
   hlcWallMs,
   isStub,
@@ -129,6 +130,10 @@ export interface OpHandler {
   stage(op: FederatedOp, ctx: StageContext): 'applied' | 'parked' | 'dropped';
   /** After each pass that ran to the end: project what the pass applied. */
   passComplete?(): void;
+  /** Its applied ops count in `applied`, as task ops do (board state). */
+  readonly countsApplied?: boolean;
+  /** Retention dropped a parked op of this type (docs plan XD1c). */
+  dropped?(op: FederatedOp, reason: 'overflow' | 'revoked'): void;
 }
 
 /** Queues ops into fed_outbox before publishing (spec "Collect"). */
@@ -215,6 +220,8 @@ export class FederationService {
   // When each waiting op was last restaged, by pass (FW-R35(3)). Known limit:
   // kept in memory, so a restart tries each publisher's oldest ops first once.
   private readonly restageTried = new Map<string, number>();
+  // Seqs a handler asked to see again, per publisher, for the next pass.
+  private readonly rereads = new Map<string, Set<number>>();
 
   constructor(private readonly opts: FederationServiceOptions) {}
 
@@ -277,6 +284,15 @@ export class FederationService {
   addCollector(collector: Collector): void {
     this.collectors.push(collector);
     this.collectors.sort((a, b) => a.order - b.order);
+  }
+
+  /** The next pass re-reads these already-verified ops of `replica` from the
+   *  transport and stages them to their handler again (docs plan XD1e). */
+  reread(replica: string, seqs: readonly number[]): void {
+    const set = this.rereads.get(replica) ?? new Set<number>();
+    for (const seq of seqs)
+      if (Number.isSafeInteger(seq) && seq > 0) set.add(seq);
+    if (set.size > 0) this.rereads.set(replica, set);
   }
 
   setInbox(inbox: InboxDrainer): void {
@@ -378,7 +394,8 @@ export class FederationService {
       const before = roster.view();
       const verified = this.verify(entries);
       this.afterFold(before);
-      const changed = this.stage(verified, v1Ops, now);
+      const again = await this.readAgain();
+      const changed = this.stage(verified, v1Ops, now, again);
       await this.findNamedKeys();
       if (this.inbox !== null) await this.inbox.drain(now);
       await transport.ack(this.watermarks());
@@ -879,7 +896,8 @@ export class FederationService {
   private stage(
     verified: Map<string, Verified>,
     v1Ops: BoardOp[],
-    now: Date
+    now: Date,
+    again: readonly FederatedOp[] = []
   ): boolean {
     const { ledger, fed, roster } = this.opts;
     let changed = false;
@@ -892,6 +910,7 @@ export class FederationService {
         evidence: evidenceOf(verified, view),
       };
       this.restage(ctx);
+      this.stageAgain(again, ctx);
       const blocked = new Set<string>();
       // An op this build cannot read, from someone who stands, pauses applying.
       if (view.unknown !== null)
@@ -1052,7 +1071,10 @@ export class FederationService {
     ctx: StageContext
   ): 'applied' | 'parked' | 'dropped' {
     try {
-      return handler.stage(op, ctx);
+      const out = handler.stage(op, ctx);
+      if (out === 'applied' && handler.countsApplied === true)
+        this.applied += 1;
+      return out;
     } catch (err) {
       dropNote(
         this.opts.fed,
@@ -1107,6 +1129,7 @@ export class FederationService {
         )
         .get(op.replica, op.seq)?.n ?? 0;
     if (held < cap) return;
+    if (table === 'fed_parked') this.droppedForRoom(op, held - cap + 1);
     db.query(
       `DELETE FROM ${table} WHERE replica = ? AND seq IN (SELECT seq FROM ${table} WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?)`
     ).run(op.replica, op.replica, op.seq, held - cap + 1);
@@ -1116,6 +1139,96 @@ export class FederationService {
       op.replica,
       `${this.opts.roster.label(op.replica)} has more than ${cap} ops waiting here; the oldest were dropped`
     );
+  }
+
+  // The asked-for seqs of each publisher, scanned in full and kept only when
+  // they match what this machine verified there (or, past the kept hashes,
+  // carry the publisher's signature). A failed scan asks again next pass.
+  private async readAgain(): Promise<FederatedOp[]> {
+    if (this.rereads.size === 0) return [];
+    const { fed, transport } = this.opts;
+    const asked = [...this.rereads];
+    this.rereads.clear();
+    const replicas = asked.map(([r]) => r);
+    let lines: LogEntry[];
+    try {
+      lines = await transport.scan(replicas);
+    } catch (err) {
+      for (const [r, seqs] of asked) this.reread(r, [...seqs]);
+      throw err;
+    }
+    transport.forgetScans(replicas);
+    const out: FederatedOp[] = [];
+    for (const [replica, seqs] of asked) {
+      const pinned = fed.pinned(replica);
+      const head = fed.cursor(replica).head?.seq ?? 0;
+      if (pinned === null) continue;
+      for (const e of lines) {
+        if (e.replica !== replica || !seqs.has(e.seq) || e.seq > head) continue;
+        if (isStub(e)) continue;
+        let hash: string;
+        try {
+          hash = opHash(e);
+          // The content must be what the signed header names.
+          const content =
+            e.sealed !== undefined
+              ? { sealed: e.sealed }
+              : e.body === undefined
+                ? {}
+                : { body: e.body };
+          if (contentHash(content) !== e.bodyHash) continue;
+        } catch {
+          continue;
+        }
+        const seen = this.seenHash(replica, e.seq);
+        const before = {
+          seq: e.seq - 1,
+          hash: e.prev,
+          hlc: `0000000000000.0000.${replica}`,
+        };
+        if (
+          seen !== null
+            ? seen !== hash
+            : !verifyEntry(before, e, pinned.signPub).ok
+        )
+          continue;
+        seqs.delete(e.seq);
+        out.push(e);
+      }
+    }
+    return out.sort((a, b) => comparePositions(a, b));
+  }
+
+  // Re-read ops go to their handler as a parked op does, under the cut.
+  private stageAgain(ops: readonly FederatedOp[], ctx: StageContext): void {
+    for (const op of ops) {
+      const cut = ctx.view.revoked.get(op.replica);
+      if (cut !== undefined && op.seq > cut.afterSeq) continue;
+      const handler = this.handlers.get(op.type);
+      if (handler === undefined) continue;
+      if (F2_TYPES.has(op.type) && !this.opts.roster.mailReady()) continue;
+      if (this.stageSafely(handler, op, ctx) === 'parked')
+        this.park(op, 'parked');
+    }
+  }
+
+  // Tells each handler which of its parked ops the cap is about to drop.
+  private droppedForRoom(op: FederatedOp, count: number): void {
+    const rows = this.opts.fed.db
+      .query<{ op_json: string }, [string, number, number]>(
+        'SELECT op_json FROM fed_parked WHERE replica = ? AND seq != ? ORDER BY seq LIMIT ?'
+      )
+      .all(op.replica, op.seq, count);
+    for (const row of rows) {
+      const dropped = JSON.parse(row.op_json) as FederatedOp;
+      try {
+        this.handlers.get(dropped.type)?.dropped?.(dropped, 'overflow');
+      } catch (err) {
+        console.warn(
+          `dispatchd: a ${dropped.type} handler failed on a dropped op: ${(err as Error).message}`
+        );
+      }
+    }
   }
 
   // Parked ops and ops of a type now registered get their handler again.
