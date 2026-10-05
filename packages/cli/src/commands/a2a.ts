@@ -61,9 +61,7 @@ function clientNamed(clients: A2AClientSummary[], arg: string): string {
 function readAllStdin(): Promise<string> {
   if (process.stdin.isTTY === true)
     return Promise.reject(
-      new CliError(
-        '--token-stdin reads a piped credential; stdin is a terminal'
-      )
+      new CliError('this reads from a pipe; stdin is a terminal')
     );
   return Promise.resolve(readFileSync(0, 'utf8'));
 }
@@ -95,7 +93,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
   const a2a = program
     .command('a2a')
     .description(
-      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, and standalone hosts (hosts, serve)'
+      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, pairing and keys, and standalone hosts (hosts, serve)'
     );
 
   const withAgentToken = async (): Promise<A2AApiClient> => {
@@ -444,6 +442,154 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
         printPeer(ctx, await client.setPeerEnabled(alias, true, token));
       }
     );
+
+  peers
+    .command('upgrade <alias>')
+    .description(
+      'Move a bearer peer to signed requests; its owner approves the key (needs the daemon app token)'
+    )
+    .requiredOption(
+      '--fingerprint <fp>',
+      "the peer's key fingerprint, as its owner reads it to you"
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(
+      async (alias: string, o: { fingerprint: string; token?: string }) => {
+        const client = await withAppToken(
+          o.token,
+          'dispatch a2a peers upgrade'
+        );
+        const started = await client.upgradePeer(alias, o.fingerprint);
+        ctx.log(
+          `a2a:${alias} (key ${started.fingerprint}) waits for its owner to approve signed requests; once they do, both sides drop the bearer.`
+        );
+      }
+    );
+
+  const pair = a2a
+    .command('pair')
+    .description(
+      'Pair with another Dispatch agent by one code: signed requests both ways'
+    );
+
+  pair
+    .command('offer')
+    .description(
+      'Make a pairing code to give the other side (needs the daemon app token)'
+    )
+    .requiredOption('--alias <alias>', 'what the other side is called here')
+    .option('--ttl <minutes>', 'how long the code stays good, 5 to 60')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { alias: string; ttl?: string; token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a pair offer');
+      const ttlMin = o.ttl === undefined ? undefined : Number(o.ttl);
+      if (ttlMin !== undefined && !Number.isInteger(ttlMin))
+        throw new CliError('--ttl takes whole minutes, 5 to 60');
+      const offered = await client.createPairing({
+        alias: o.alias,
+        ...(ttlMin === undefined ? {} : { ttlMin }),
+      });
+      ctx.log(`code: ${offered.code}`);
+      ctx.log(
+        `This code is shown once and is good until ${offered.expiresAt}. Give it to the other side over a channel you trust; they run dispatch a2a pair accept.`
+      );
+      ctx.log(`This agent's fingerprint: ${offered.fingerprint}`);
+    });
+
+  pair
+    .command('accept')
+    .description(
+      'Accept a pairing code piped on stdin (needs the daemon app token)'
+    )
+    .requiredOption('--alias <alias>', 'what the other side is called here')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { alias: string; token?: string }) => {
+      // The app token first, so a missing one fails before stdin is read.
+      const client = await withAppToken(o.token, 'dispatch a2a pair accept');
+      const code = (await (ctx.readStdin ?? readAllStdin)()).trim();
+      if (code === '')
+        throw new CliError(
+          'pair accept reads the code from stdin: pipe it in, e.g. `pbpaste | dispatch a2a pair accept --alias …`'
+        );
+      const accepted = await client.acceptPairing({ code, alias: o.alias });
+      ctx.log(
+        `Paired with a2a:${accepted.alias} (fingerprint ${accepted.fingerprint}).`
+      );
+      ctx.log(
+        `SAS: ${accepted.sas}. Check the other side shows the same; if not, remove the peer.`
+      );
+    });
+
+  pair
+    .command('list', { isDefault: true })
+    .description('Open and recent pairings (needs the daemon app token)')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a pair list');
+      const { pairings } = await client.pairings();
+      if (pairings.length === 0)
+        ctx.log(
+          'No pairings. Start one with: dispatch a2a pair offer --alias <alias>'
+        );
+      for (const p of pairings)
+        ctx.log(
+          `${p.id} · a2a:${p.alias} · ${p.role} · ${p.state}${p.sas === null ? '' : ` · SAS ${p.sas}`}${p.fingerprint === null ? '' : ` · ${p.fingerprint}`}`
+        );
+    });
+
+  pair
+    .command('cancel <id>')
+    .description('Cancel an open offer (needs the daemon app token)')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (id: string, o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a pair cancel');
+      await client.cancelPairing(id);
+      ctx.log(`Canceled pairing offer ${id}.`);
+    });
+
+  const keys = a2a
+    .command('keys')
+    .description("This project's card key: show it, or rotate it");
+
+  keys
+    .command('show', { isDefault: true })
+    .description("The card key's fingerprint, and a rotation in its overlap")
+    .action(async () => {
+      const shown = await (await withAgentToken()).keys();
+      ctx.log(`key: ${shown.current.fingerprint}`);
+      if (shown.next !== null)
+        ctx.log(
+          `rotating to ${shown.next.fingerprint} (since ${shown.next.since}; the old key goes ${shown.next.until})`
+        );
+    });
+
+  keys
+    .command('rotate')
+    .description(
+      'Rotate the card key; paired peers re-pin (needs the daemon app token)'
+    )
+    .option(
+      '--compromised',
+      'the key leaked: revoke it, and every pairing must be made again'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { compromised?: boolean; token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a keys rotate');
+      const r = await client.rotateKey(o.compromised === true);
+      ctx.log(`New key: ${r.fingerprint}`);
+      if (r.told.length > 0)
+        ctx.log(`Told: ${r.told.map((a) => `a2a:${a}`).join(', ')}`);
+      if (r.untold.length > 0)
+        ctx.log(
+          `Not reached yet (retried): ${r.untold.map((a) => `a2a:${a}`).join(', ')}`
+        );
+      if (r.mustRepair.length > 0)
+        ctx.log(
+          `Must pair again: ${r.mustRepair.map((a) => `a2a:${a}`).join(', ')}`
+        );
+      if (r.overlapUntil !== null)
+        ctx.log(`Both keys are served until ${r.overlapUntil}.`);
+    });
 
   a2a
     .command('serve')

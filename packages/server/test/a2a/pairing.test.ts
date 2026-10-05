@@ -1,4 +1,5 @@
 import {
+  a2aFingerprint,
   decodePairingCode,
   makeProof,
   signedFetch,
@@ -580,5 +581,49 @@ describe('batch 3 review: K1, M2, M4, M5', () => {
     await waitFor(() => a.handle.a2a.store!.getPeer('bob') === null, 10_000);
     expect(pairingState(a)).toBe('unpaired');
     expect(a.handle.a2a.store!.notices('unpair')).toEqual([]);
+  });
+});
+
+describe('what the API shows of pairings and keys (T46)', () => {
+  it('peer rows say how they are reached and whose key they pin', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const b = await daemon('a2a-pair-b-');
+    await paired(a, b);
+    const { peers } = (await (await a.call('/api/a2a/peers')).json()) as {
+      peers: { alias: string; auth: string; fingerprint: string | null }[];
+    };
+    expect(peers).toEqual([
+      expect.objectContaining({
+        alias: 'bob',
+        auth: 'signature',
+        fingerprint: a2aFingerprint(loadOrCreateSigningKey(b.root).kid),
+      }),
+    ]);
+  });
+
+  it('GET /api/a2a/keys shows the key, any rotation in its overlap, on the agent token too', async () => {
+    const a = await daemon('a2a-pair-a-');
+    const kid = loadOrCreateSigningKey(a.root).kid;
+    const read = async (token?: string) => {
+      const res = await a.call(
+        '/api/a2a/keys',
+        token === undefined ? {} : { token }
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        current: { fingerprint: string };
+        next: { fingerprint: string; since: string; until: string } | null;
+      };
+    };
+    expect(await read(a.handle.tokens.agentToken)).toEqual({
+      current: { fingerprint: a2aFingerprint(kid) },
+      next: null,
+    });
+    expect((await a.call('/api/a2a/keys/rotate', { body: {} })).status).toBe(
+      200
+    );
+    const after = await read();
+    expect(after.current.fingerprint).toBe(a2aFingerprint(kid));
+    expect(after.next?.fingerprint).not.toBe(a2aFingerprint(kid));
   });
 });

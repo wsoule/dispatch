@@ -7,6 +7,7 @@ import type {
   PeerStatus,
 } from '@dispatch/a2a';
 import {
+  a2aFingerprint,
   AddressRefusedError,
   authHeaders,
   checkPeerCard,
@@ -81,6 +82,10 @@ export interface PeerSummary {
   addedTier: 'decide' | 'operator';
   fetchedAt: string;
   createdAt: string;
+  // How it is reached: a bearer, signed requests (paired), or a link.
+  auth: 'bearer' | 'signature' | 'link';
+  // The fingerprint of the key it is pinned to, once paired.
+  fingerprint: string | null;
 }
 
 export type PeerChange =
@@ -559,6 +564,9 @@ export function peerSummary(row: PeerRow): PeerSummary {
     addedTier: row.addedTier,
     fetchedAt: row.fetchedAt,
     createdAt: row.createdAt,
+    auth: row.auth ?? 'bearer',
+    fingerprint:
+      row.keyThumbprint == null ? null : a2aFingerprint(row.keyThumbprint),
   };
 }
 

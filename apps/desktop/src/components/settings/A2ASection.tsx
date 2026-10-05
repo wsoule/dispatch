@@ -12,11 +12,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Ban,
   Check,
+  KeyRound,
+  Link2,
   Pause,
   Play,
   Plus,
   RefreshCw,
   RotateCw,
+  ShieldCheck,
   Trash2,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -109,7 +112,14 @@ function errorText(err: unknown): string {
 // One A2A query, keyed under the shared `dispatch-a2a` prefix.
 function useA2AQuery<T>(
   client: Api,
-  what: 'listener' | 'card' | 'clients' | 'tasks' | 'peers',
+  what:
+    | 'listener'
+    | 'card'
+    | 'clients'
+    | 'tasks'
+    | 'peers'
+    | 'keys'
+    | 'pairings',
   fetch: (api: ApiClient) => Promise<T>,
   enabled = true
 ): UseQueryResult<T> {
@@ -149,6 +159,8 @@ export function A2ASection({ data }: A2ASectionProps) {
         canDecide={canDecide}
         canOperate={myTier === 'operator'}
       />
+      <PairingGroup client={client} canDecide={canDecide} />
+      <KeysGroup client={client} canOperate={myTier === 'operator'} />
     </>
   );
 }
@@ -794,6 +806,13 @@ function TasksGroup({
   );
 }
 
+// How a peer is reached: paired and signed, a plain bearer, or a link.
+const PEER_AUTH: Record<NonNullable<A2APeerSummary['auth']>, string> = {
+  signature: 'Signed',
+  bearer: 'Not verified',
+  link: 'Link',
+};
+
 const PEER_STATUS: Record<A2APeerSummary['status'], string> = {
   active: 'Active',
   disabled: 'Disabled',
@@ -854,6 +873,9 @@ function PeersGroup({
   const [busy, setBusy] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<A2APeerSummary | null>(null);
+  const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [theirFingerprint, setTheirFingerprint] = useState('');
+  const [upgradeNote, setUpgradeNote] = useState<string | null>(null);
   const secret = useRef<HTMLInputElement | null>(null);
   const newSecrets = useRef(new Map<string, HTMLInputElement>());
 
@@ -976,11 +998,20 @@ function PeersGroup({
               subtitle={
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate">
-                    {[PEER_STATUS[row.status], row.name]
+                    {[
+                      PEER_AUTH[row.auth ?? 'bearer'],
+                      PEER_STATUS[row.status],
+                      row.name,
+                    ]
                       .filter((part) => part !== '')
                       .join(' · ')}
                   </span>
                   <span className="truncate font-mono">{row.interfaceUrl}</span>
+                  {row.fingerprint != null && (
+                    <span className="truncate font-mono">
+                      {row.fingerprint}
+                    </span>
+                  )}
                 </span>
               }
               control={
@@ -1022,6 +1053,19 @@ function PeersGroup({
                         <Play aria-hidden />
                       </IconButton>
                     ) : null}
+                    {(row.auth ?? 'bearer') === 'bearer' && (
+                      <IconButton
+                        label={`Upgrade a2a:${row.alias} to signed`}
+                        disabled={busy !== null}
+                        onClick={() => {
+                          setUpgrading(row.alias);
+                          setTheirFingerprint('');
+                          setUpgradeNote(null);
+                        }}
+                      >
+                        <ShieldCheck aria-hidden />
+                      </IconButton>
+                    )}
                     <IconButton
                       label={`Remove a2a:${row.alias}`}
                       disabled={busy !== null}
@@ -1033,6 +1077,36 @@ function PeersGroup({
                 ) : undefined
               }
             >
+              {canDecide && upgrading === row.alias && (
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const fp = theirFingerprint.trim();
+                    if (fp === '') return;
+                    void act(row.alias, async (api) => {
+                      const started = await api.upgradeA2APeer(row.alias, fp);
+                      setUpgrading(null);
+                      setUpgradeNote(
+                        `a2a:${row.alias} (key ${started.fingerprint}) waits for its owner to approve signed requests.`
+                      );
+                    });
+                  }}
+                >
+                  <Input
+                    aria-label="Their fingerprint"
+                    placeholder="As its owner reads it to you"
+                    value={theirFingerprint}
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="h-7 min-w-0 flex-1 font-mono text-[12px]"
+                    onChange={(e) => setTheirFingerprint(e.target.value)}
+                  />
+                  <Button type="submit" size="sm" disabled={busy !== null}>
+                    Ask to upgrade
+                  </Button>
+                </form>
+              )}
               {canDecide && row.status === 'auth-failed' && (
                 <form
                   className="flex items-center gap-2"
@@ -1076,6 +1150,7 @@ function PeersGroup({
           ))
         )}
         <FieldProblem message={rowError} />
+        {upgradeNote !== null && <SettingsHint>{upgradeNote}</SettingsHint>}
         {!canDecide && (
           <SettingsRow
             title="Adding and changing peers"
@@ -1219,5 +1294,335 @@ function PeersGroup({
         </AlertDialog>
       )}
     </>
+  );
+}
+
+/** Pairing: one code, typed once on each side, and both agents sign their
+ *  requests to each other. The code made here is shown until Done; a code
+ *  entered here lives only in its password field (never React state). SAS
+ *  and fingerprints render as plain text. */
+function PairingGroup({
+  client,
+  canDecide,
+}: {
+  client: Api;
+  canDecide: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [alias, setAlias] = useState('');
+  const [offered, setOffered] = useState<{
+    code: string;
+    fingerprint: string;
+    expiresAt: string;
+  } | null>(null);
+  const [theirAlias, setTheirAlias] = useState('');
+  const [accepted, setAccepted] = useState<{
+    alias: string;
+    sas: string;
+    fingerprint: string;
+  } | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const code = useRef<HTMLInputElement | null>(null);
+  const pairings = useA2AQuery(
+    client,
+    'pairings',
+    (api) => api.a2aPairings(),
+    canDecide
+  );
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ['dispatch-a2a'] });
+
+  async function offer() {
+    const name = alias.trim();
+    if (client === null || pending || name === '') return;
+    setPending(true);
+    setError(null);
+    try {
+      setOffered(await client.createA2APairing({ alias: name }));
+      setAlias('');
+      await refresh();
+    } catch (err) {
+      setError(isInsufficientTier(err) ? DECIDE_HINT : errorText(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function accept() {
+    // Taken first, so the field is empty whether or not the request goes out.
+    const text = takeSecret(code);
+    const name = theirAlias.trim();
+    if (client === null || pending || text === '' || name === '') return;
+    setPending(true);
+    setError(null);
+    try {
+      setAccepted(await client.acceptA2APairing({ code: text, alias: name }));
+      setTheirAlias('');
+      await refresh();
+    } catch (err) {
+      setError(isInsufficientTier(err) ? DECIDE_HINT : errorText(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <SettingsGroup
+      title="Pairing"
+      requires="none"
+      hint="Pair with another Dispatch agent by one code. Both sides then sign their requests to each other, and compare the same SAS."
+      keywords="a2a pair pairing code sas fingerprint signed"
+    >
+      {!canDecide ? (
+        <SettingsRow
+          title="Pairing with other agents"
+          subtitle="Someone who can approve pairs this project with other Dispatch agents."
+          locked={DECIDE_HINT}
+        />
+      ) : (
+        <>
+          {offered !== null && (
+            <SettingsRow
+              title="Pairing code"
+              subtitle={`Shown once, good until ${formatShortDate(offered.expiresAt)}. This agent's fingerprint: ${offered.fingerprint}`}
+              stacked
+            >
+              <div className="flex items-center gap-2">
+                <code className="bg-surface-quaternary rounded-control min-w-0 flex-1 px-2 py-1 font-mono text-[12px] break-all">
+                  {offered.code}
+                </code>
+                <CopyButton value={offered.code} label="code" />
+                <Button size="sm" onClick={() => setOffered(null)}>
+                  Done
+                </Button>
+              </div>
+            </SettingsRow>
+          )}
+          <SettingsRow title="Pair as" htmlFor="a2a-pair-alias" stacked>
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void offer();
+              }}
+            >
+              <Input
+                id="a2a-pair-alias"
+                value={alias}
+                placeholder="bob"
+                spellCheck={false}
+                autoComplete="off"
+                className="min-w-0 flex-1"
+                onChange={(e) => setAlias(e.target.value)}
+              />
+              <Button type="submit" disabled={alias.trim() === '' || pending}>
+                <Link2 />
+                Pair with…
+              </Button>
+            </form>
+          </SettingsRow>
+          <SettingsRow title="Pairing code" htmlFor="a2a-pair-code" stacked>
+            <form
+              className="flex flex-col gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void accept();
+              }}
+            >
+              <Input
+                id="a2a-pair-code"
+                type="password"
+                placeholder="dispatch-a2a-pair:…"
+                autoComplete="off"
+                spellCheck={false}
+                className="font-mono text-[12px]"
+                ref={code}
+              />
+              <label
+                htmlFor="a2a-pair-their-alias"
+                className="text-foreground text-[13px] font-medium"
+              >
+                Their alias
+              </label>
+              <Input
+                id="a2a-pair-their-alias"
+                value={theirAlias}
+                placeholder="alice"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e) => setTheirAlias(e.target.value)}
+              />
+              <div>
+                <Button type="submit" disabled={pending}>
+                  Enter code
+                </Button>
+              </div>
+            </form>
+          </SettingsRow>
+          {accepted !== null && (
+            <SettingsRow
+              title={
+                <span className="font-mono">
+                  Paired with a2a:{accepted.alias}
+                </span>
+              }
+              subtitle={
+                <span className="flex min-w-0 flex-col">
+                  <span className="font-mono">SAS {accepted.sas}</span>
+                  <span className="truncate font-mono">
+                    {accepted.fingerprint}
+                  </span>
+                  <span>Check the other side shows the same SAS.</span>
+                </span>
+              }
+            />
+          )}
+          {(pairings.data?.pairings ?? []).map((p) => (
+            <SettingsRow
+              key={p.id}
+              title={<span className="font-mono">a2a:{p.alias}</span>}
+              subtitle={
+                p.state === 'completed' && p.sas !== null ? (
+                  <span className="flex min-w-0 flex-col">
+                    <span className="font-mono">SAS {p.sas}</span>
+                    {p.fingerprint !== null && (
+                      <span className="truncate font-mono">
+                        {p.fingerprint}
+                      </span>
+                    )}
+                  </span>
+                ) : p.state === 'offered' ? (
+                  `Waiting for the other side, until ${formatShortDate(p.expiresAt)}`
+                ) : (
+                  (PAIRING_STATE[p.state] ?? p.state)
+                )
+              }
+              control={
+                p.state === 'offered' && p.role === 'offer' ? (
+                  <IconButton
+                    label={`Cancel the offer for a2a:${p.alias}`}
+                    disabled={pending}
+                    onClick={() => {
+                      if (client === null) return;
+                      void client
+                        .cancelA2APairing(p.id)
+                        .then(refresh, (err: unknown) =>
+                          setError(errorText(err))
+                        );
+                    }}
+                  >
+                    <Ban aria-hidden />
+                  </IconButton>
+                ) : undefined
+              }
+            />
+          ))}
+          <FieldProblem message={error} />
+        </>
+      )}
+    </SettingsGroup>
+  );
+}
+
+const PAIRING_STATE: Record<string, string> = {
+  canceled: 'Canceled',
+  expired: 'Expired',
+  unpairing: 'Unpairing',
+  unpaired: 'Unpaired',
+};
+
+/** This project's card key: its fingerprint for others to confirm, and a
+ *  rotation the operator starts (paired peers re-pin from its statement). */
+function KeysGroup({
+  client,
+  canOperate,
+}: {
+  client: Api;
+  canOperate: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const keys = useA2AQuery(client, 'keys', (api) => api.a2aKeys());
+  const [confirming, setConfirming] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function rotate() {
+    if (client === null) return;
+    setError(null);
+    try {
+      const r = await client.rotateA2AKey(false);
+      setResult(
+        `New key ${r.fingerprint}.${r.untold.length > 0 ? ` Not reached yet (retried): ${r.untold.join(', ')}.` : ''}`
+      );
+      await queryClient.invalidateQueries({ queryKey: ['dispatch-a2a'] });
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  return (
+    <SettingsGroup
+      title="Card key"
+      requires="none"
+      hint="The key this agent signs its card and paired requests with. Others confirm its fingerprint when they pair or upgrade."
+      keywords="a2a key fingerprint rotate jwks"
+    >
+      <SettingsRow
+        title="Fingerprint"
+        subtitle={
+          keys.isError ? (
+            errorText(keys.error)
+          ) : keys.data === undefined ? (
+            'Loading…'
+          ) : (
+            <span className="flex min-w-0 flex-col">
+              <span className="font-mono">{keys.data.current.fingerprint}</span>
+              {keys.data.next !== null && (
+                <span>
+                  Rotating to{' '}
+                  <span className="font-mono">
+                    {keys.data.next.fingerprint}
+                  </span>{' '}
+                  until {formatShortDate(keys.data.next.until)}
+                </span>
+              )}
+            </span>
+          )
+        }
+        control={
+          canOperate ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={keys.data?.next != null}
+              onClick={() => setConfirming(true)}
+            >
+              <KeyRound />
+              Rotate key
+            </Button>
+          ) : undefined
+        }
+      />
+      {result !== null && <SettingsHint>{result}</SettingsHint>}
+      <FieldProblem message={error} />
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Rotate the card key?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A new key signs at once. Paired peers are sent a statement from
+              the old key and re-pin; both keys are served for 7 days.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void rotate()}>
+              Rotate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </SettingsGroup>
   );
 }

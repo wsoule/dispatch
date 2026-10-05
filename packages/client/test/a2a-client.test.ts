@@ -19,6 +19,11 @@ beforeAll(() => {
       });
       if (url.pathname === '/api/a2a/peers/acme' && req.method === 'DELETE')
         return new Response(null, { status: 204 });
+      if (
+        url.pathname.startsWith('/api/a2a/pairings/') &&
+        req.method === 'DELETE'
+      )
+        return new Response(null, { status: 204 });
       if (url.pathname === '/api/a2a/clients' && req.method === 'POST') {
         return Response.json(
           {
@@ -164,6 +169,46 @@ it('turns standalone hosts on and off', async () => {
       method: 'PUT',
       path: '/api/a2a/listener/standalone',
       body: { enabled: false },
+    },
+  ]);
+});
+
+it('speaks the pairing, upgrade and key routes (P5)', async () => {
+  seen.length = 0;
+  const client = createApiClient(`http://127.0.0.1:${server.port}`);
+  await client.createA2APairing({ alias: 'bob', ttlMin: 15 });
+  await client.acceptA2APairing({
+    code: 'dispatch-a2a-pair:x',
+    alias: 'alice',
+  });
+  await client.a2aPairings();
+  await client.cancelA2APairing('p 1');
+  await client.upgradeA2APeer('acme', 'A9B8-C7D6');
+  await client.a2aKeys();
+  await client.rotateA2AKey(true);
+  expect(seen).toEqual([
+    {
+      method: 'POST',
+      path: '/api/a2a/pairings',
+      body: { alias: 'bob', ttlMin: 15 },
+    },
+    {
+      method: 'POST',
+      path: '/api/a2a/pairings/accept',
+      body: { code: 'dispatch-a2a-pair:x', alias: 'alice' },
+    },
+    { method: 'GET', path: '/api/a2a/pairings', body: null },
+    { method: 'DELETE', path: '/api/a2a/pairings/p%201', body: null },
+    {
+      method: 'POST',
+      path: '/api/a2a/peers/acme/upgrade',
+      body: { confirmFingerprint: 'A9B8-C7D6' },
+    },
+    { method: 'GET', path: '/api/a2a/keys', body: null },
+    {
+      method: 'POST',
+      path: '/api/a2a/keys/rotate',
+      body: { compromised: true },
     },
   ]);
 });

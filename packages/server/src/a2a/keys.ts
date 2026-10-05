@@ -14,6 +14,7 @@ import {
 import type { PeerRow, RequestParts } from '@dispatch/a2a';
 import {
   readA2AKeyStatement,
+  readA2ANextSigningKey,
   replaceA2ASigningKeys,
   writeA2ANextSigningKey,
 } from '@dispatch/core';
@@ -220,6 +221,27 @@ export class KeyService {
       overlapUntil: compromised
         ? null
         : new Date(at.getTime() + KEY_OVERLAP_MS).toISOString(),
+    };
+  }
+
+  /** This project's key, and a rotation's next key through its overlap. */
+  show(): {
+    current: { fingerprint: string };
+    next: { fingerprint: string; since: string; until: string } | null;
+  } {
+    const [current, next] = this.signer().keysInUse();
+    const read = readA2ANextSigningKey(this.d.rootDir);
+    const since = read.status === 'ok' ? read.next.at : null;
+    return {
+      current: { fingerprint: a2aFingerprint(current.keyid) },
+      next:
+        next === undefined || since === null
+          ? null
+          : {
+              fingerprint: a2aFingerprint(next.keyid),
+              since,
+              until: new Date(Date.parse(since) + KEY_OVERLAP_MS).toISOString(),
+            },
     };
   }
 

@@ -24,7 +24,14 @@ const TERMINAL_STATES = new Set([
  *  `a2a.changed` event refreshes them with one prefix. */
 export function a2aQueryKey(
   baseUrl: string | undefined,
-  what: 'listener' | 'card' | 'clients' | 'tasks' | 'peers'
+  what:
+    | 'listener'
+    | 'card'
+    | 'clients'
+    | 'tasks'
+    | 'peers'
+    | 'keys'
+    | 'pairings'
 ): readonly unknown[] {
   return ['dispatch-a2a', baseUrl, what];
 }

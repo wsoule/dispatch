@@ -297,7 +297,7 @@ describe('A2A types mirror dispatchd', () => {
   // The daemon keeps ListenerStatus file-private, so `export` is optional.
   const fieldsOf = (source: string, name: string): string[] | null => {
     const body = new RegExp(
-      `(?:export )?interface ${name} \\{([\\s\\S]*?)\\n\\}`
+      `(?:export )?interface ${name}(?: extends [^{]+)? \\{([\\s\\S]*?)\\n\\}`
     ).exec(source)?.[1];
     if (body === undefined) return null;
     return [...body.matchAll(/\n {2}(\w+\??):/g)].map((m) => m[1]);
@@ -327,12 +327,16 @@ describe('A2A types mirror dispatchd', () => {
     expect(fieldsOf(clientSource(), 'A2ATaskSummary')).toEqual(theirs);
   });
 
-  // GET /api/a2a/clients spreads each clients row and adds its agent's status.
+  // GET /api/a2a/clients spreads each clients row (its key fields too) and
+  // adds its agent's status.
   it("A2AClientSummary declares @dispatch/a2a's ClientRow plus the status", () => {
     const theirs = fieldsOf(storeSource(), 'ClientRow');
+    const keys = fieldsOf(storeSource(), 'KeyFields');
     expect(theirs).not.toBeNull();
+    expect(keys).not.toBeNull();
     expect(fieldsOf(clientSource(), 'A2AClientSummary')).toEqual([
       ...(theirs ?? []),
+      ...(keys ?? []),
       'status',
     ]);
   });

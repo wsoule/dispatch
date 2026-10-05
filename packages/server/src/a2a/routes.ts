@@ -665,6 +665,13 @@ export async function handleA2ARoute(
     return pairingRoute(req, ctx, segments.slice(1), method);
   if (segments[0] === 'keys' && segments[1] === 'rotate' && method === 'POST')
     return rotateKeys(req, ctx);
+  if (segments[0] === 'keys' && segments.length === 1 && method === 'GET') {
+    const b = bridge(ctx);
+    if (!b.ok) return b.response;
+    if (b.a2a.keys === null)
+      return errorResponse(503, 'the A2A bridge is unavailable');
+    return jsonResponse(b.a2a.keys.show());
+  }
   if (
     segments[0] === 'hosts' ||
     (segments[0] === 'listener' && segments[1] === 'standalone')
