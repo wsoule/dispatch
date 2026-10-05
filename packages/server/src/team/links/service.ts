@@ -24,7 +24,7 @@ import type {
   LogEntry,
 } from '@dispatch/protocol/federation';
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultAsyncGitRunner } from '../../sync/worktree.js';
@@ -82,10 +82,14 @@ export interface LinkServiceDeps {
 
 export type PublishResult = 'published' | 'waiting' | 'refused' | 'oversize';
 
-/** A link replica id: stable for a link sign key, and valid for federation. */
-export function linkReplicaId(signPub: string): string {
-  const h = createHash('sha256').update(signPub).digest('hex').slice(0, 8);
-  return `a2a-${h}`;
+/**
+ * A link replica id: 64 bits of sha256(signPub ‖ linkId), so one key has a
+ * different id on each link (T53 review L1). The sealed AAD names the
+ * replica, so it binds the link too.
+ */
+export function linkReplicaId(signPub: string, linkId: string): string {
+  const h = createHash('sha256').update(`${signPub}\n${linkId}`).digest('hex');
+  return `a2a.${h.slice(0, 8)}-${h.slice(8, 16)}`;
 }
 
 // The newest timestamp a payload claims, for the one-sided hlc rule (FW-R32(1)).
@@ -119,8 +123,10 @@ export class LinkService {
   private fresh: FederatedOp[] = [];
 
   constructor(private readonly deps: LinkServiceDeps) {
-    mkdirSync(deps.dir, { recursive: true });
-    this.replica = linkReplicaId(deps.keys.signPub);
+    // M1: the outbox holds plaintext, so the directory is owner-only.
+    mkdirSync(deps.dir, { recursive: true, mode: 0o700 });
+    chmodSync(deps.dir, 0o700);
+    this.replica = linkReplicaId(deps.keys.signPub, deps.link.id);
     this.store = new LinkStore(join(deps.dir, 'link.db'), deps.now);
     this.clock = new OpClock(this.replica, this.store.getMeta('hlc'), () =>
       deps.now().getTime()
@@ -160,20 +166,17 @@ export class LinkService {
           'transport:rewrite:self',
           "someone with push access changed this side's own files on the link branch; Dispatch wrote them afresh from this side's log"
         ),
-      onRewritten: (rs) => {
-        for (const r of rs)
-          this.store.problem(
-            `transport:rewrite:${r}`,
-            `${r}'s files on the link branch were rewritten rather than appended to`
-          );
-      },
-      onOversized: (files) => {
-        for (const f of files)
-          this.store.problem(
-            `transport:bloat:${f}`,
-            `${f} on the link branch is far over a segment's size; only this link's read share is spent on it`
-          );
-      },
+      // M2: one rolling note per kind, never keyed by a name on the branch.
+      onRewritten: (rs) =>
+        this.store.problem(
+          'transport:rewrite',
+          `files of ${rs.length} replica${rs.length === 1 ? '' : 's'} on the link branch were rewritten rather than appended to`
+        ),
+      onOversized: (files) =>
+        this.store.problem(
+          'transport:bloat',
+          `${files.length} file${files.length === 1 ? '' : 's'} on the link branch ${files.length === 1 ? 'is' : 'are'} far over a segment's size; only this link's read share is spent on them`
+        ),
       onReset: (why) =>
         this.store.problem(
           'transport:reset',
@@ -199,7 +202,9 @@ export class LinkService {
   /** The peer's link replica id, once its keys are decided. */
   peerReplica(): string | null {
     const peer = this.deps.peer();
-    return peer === null ? null : linkReplicaId(peer.signPub);
+    return peer === null
+      ? null
+      : linkReplicaId(peer.signPub, this.deps.link.id);
   }
 
   /** Paired, the peer's keys decided, and the branch reached once (FW-R32(7)). */
@@ -376,15 +381,16 @@ export class LinkService {
         ? null
         : { seq: cursor.seq, hash: cursor.hash, hlc: cursor.hlc };
     // Parked ops go first, each still matching its kept hash (FW-R37).
+    // M3: one still parked never holds up the rest (FW-R35(3)).
     for (const op of this.store.parked(peerId)) {
       const done = await this.deliverOp(peer, op);
-      if (done === 'parked' || done === 'held') return;
-      this.store.release(peerId, op.seq);
+      if (done !== 'parked' && done !== 'held')
+        this.store.release(peerId, op.seq);
     }
     for (;;) {
       const next = signed.filter((e) =>
         head === null
-          ? e.type === 'key' && e.prev === ZERO_HASH
+          ? e.type === 'key' && e.prev === ZERO_HASH && this.namesLink(e)
           : e.prev === head.hash
       );
       const distinct = new Set(next.map((e) => opHash(e)));
@@ -436,7 +442,7 @@ export class LinkService {
     peer: LinkPeer,
     op: FederatedOp
   ): Promise<'applied' | 'parked' | 'dropped' | 'held'> {
-    const peerId = linkReplicaId(peer.signPub);
+    const peerId = linkReplicaId(peer.signPub, this.deps.link.id);
     let opened: JsonValue | null = null;
     try {
       opened = openPayload(op, this.replica, this.deps.keys.sealPriv);
@@ -487,15 +493,24 @@ export class LinkService {
       (e) =>
         e.type === 'key' &&
         e.replica !== this.replica &&
-        !(e.replica === peerId && signedEntry(e, signPub))
+        !(e.replica === peerId && signedEntry(e, signPub) && this.namesLink(e))
     );
     if (rivals.length === 0) return;
+    // M5: a count; the ids are the branch writer's words.
     this.store.problem(
       `link-rival:${this.deps.link.id}`,
-      `a key op on the link branch (${rivals
-        .map((e) => e.replica)
-        .slice(0, 3)
-        .join(', ')}) is not signed by the paired link key; it is ignored`
+      `${rivals.length} key op${rivals.length === 1 ? '' : 's'} on the link branch ${rivals.length === 1 ? 'is' : 'are'} not this link's paired key for this link; ignored`
+    );
+  }
+
+  // L1: a key op starts this link's chain only when it names this link.
+  private namesLink(e: LogEntry): boolean {
+    const body = (e as FederatedOp).body;
+    return (
+      typeof body === 'object' &&
+      body !== null &&
+      !Array.isArray(body) &&
+      (body as Record<string, unknown>)['link'] === this.deps.link.id
     );
   }
 

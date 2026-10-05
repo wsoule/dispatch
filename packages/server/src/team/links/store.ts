@@ -1,6 +1,7 @@
 import type { FederatedOp, LogEntry } from '@dispatch/protocol/federation';
 import { opHash } from '@dispatch/protocol/federation';
 import { Database } from 'bun:sqlite';
+import { chmodSync } from 'node:fs';
 
 /** Ops of one publisher a link keeps parked at most (FW-R37). */
 export const MAX_PARKED_PER_PUBLISHER = 256;
@@ -32,6 +33,7 @@ export class LinkStore {
     private readonly now: () => Date
   ) {
     this.db = new Database(path, { create: true, strict: true });
+    chmodSync(path, 0o600);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS own_ops (seq INTEGER PRIMARY KEY, json TEXT NOT NULL);

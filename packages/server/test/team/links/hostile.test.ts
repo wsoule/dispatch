@@ -140,7 +140,11 @@ describe('LinkService on a hostile branch (T53)', () => {
   it('writes its own files afresh when someone changed them', async () => {
     const { bob, raw } = await setup();
     await raw.repo.exchange();
-    const mine = join(raw.repo.dir, 'fed', linkReplicaId(bob.keys.signPub));
+    const mine = join(
+      raw.repo.dir,
+      'fed',
+      linkReplicaId(bob.keys.signPub, 'L1')
+    );
     const seg = readdirSync(mine).find((n) => n !== 'acks.json');
     if (seg === undefined) throw new Error('no own segment');
     appendFileSync(join(mine, seg), '{"v":2,"tampered":true}\n');
@@ -166,5 +170,78 @@ describe('LinkService on a hostile branch (T53)', () => {
     await bob.service.sync();
     expect(bob.got.map((g) => g.seq)).toEqual([good.seq]);
     expect(bob.service.health().readBytes).toBeLessThanOrEqual(LINK_READ_BYTES);
+  });
+});
+
+describe('T53 review L1 probes', () => {
+  // Probe 1: ada's chain from an old link L0, with a sealed send to bob's L0
+  // id, copied onto L1, delivers nothing and halts nothing.
+  it('ignores an old link chain replayed onto this branch, as a rival', async () => {
+    const { bob, raw } = await setup();
+    const old = new RawPeer(s, raw.keys, linkReplicaId(raw.keys.signPub, 'L0'));
+    const k0 = old.next({ type: 'key', body: { link: 'L0' } });
+    const m0 = old.next(
+      {
+        payload: send('m-old') as never,
+        to: bob.keys,
+        toReplica: linkReplicaId(bob.keys.signPub, 'L0'),
+      },
+      k0
+    );
+    await old.write(k0, m0);
+    const good = raw.next({ payload: send('m-2') as never, to: bob.keys });
+    await raw.write(good);
+    await bob.service.sync();
+    expect(bob.got.map((g) => g.seq)).toEqual([good.seq]);
+    expect(subjects(bob)).toContain('link-rival:L1');
+    expect(subjects(bob)).not.toContain('link-fork:L1');
+  });
+
+  // Probe 2: a genuine key op of ada's under this link's id but naming
+  // another link is a rival, never a fork.
+  it('lists a key op naming another link as a rival, and never halts', async () => {
+    s = scratch();
+    const [ada, bob] = pairOf(s);
+    open.push(bob);
+    ada.service.close();
+    const raw = new RawPeer(s, ada.keys);
+    await raw.write(raw.next({ type: 'key', body: { link: 'L9' } }));
+    await bob.service.sync();
+    expect(subjects(bob)).toContain('link-rival:L1');
+    expect(subjects(bob)).not.toContain('link-fork:L1');
+    raw.ops.length = 0;
+    const key = raw.next({ type: 'key', body: { link: 'L1' } });
+    const good = raw.next({ payload: send('m-1') as never, to: bob.keys }, key);
+    await raw.write(key, good);
+    await bob.service.sync();
+    expect(subjects(bob)).not.toContain('link-fork:L1');
+  });
+
+  it("names rivals by count, never by the branch's replica ids (M5)", async () => {
+    const { bob } = await setup();
+    const rival = new RawPeer(s, linkKeys());
+    await rival.write(rival.next({ type: 'key', body: { link: 'L1' } }));
+    await bob.service.sync();
+    const note = bob.service
+      .problems()
+      .find((p) => p.subject === 'link-rival:L1');
+    expect(note?.message).toContain('1 key op');
+    expect(note?.message).not.toContain(rival.replica);
+  });
+
+  it('keeps one rolling note per transport kind, keyed by no branch name (M2)', async () => {
+    const { bob, raw } = await setup();
+    const dir = join(raw.repo.dir, 'fed', raw.replica);
+    const line = `${'z'.repeat(1000)}\n`;
+    for (const n of ['700000000001', '700000000002'])
+      writeFileSync(join(dir, `${n}.jsonl`), line.repeat(10_000));
+    commitAll(raw.repo.dir, 'bloat');
+    await raw.repo.exchange();
+    for (let i = 0; i < 3; i++) await bob.service.sync();
+    const subs = subjects(bob).filter((x) => x.startsWith('transport:'));
+    expect(subs.every((x) => !x.includes(raw.replica))).toBe(true);
+    expect(subs.filter((x) => x.startsWith('transport:bloat'))).toEqual([
+      'transport:bloat',
+    ]);
   });
 });

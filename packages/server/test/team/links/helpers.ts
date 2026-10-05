@@ -66,13 +66,24 @@ export interface Side {
   keys: LinkKeys;
   service: LinkService;
   got: { payload: LinkPayload; seq: number }[];
-  state: { paired: boolean; peer: LinkKeys | null; park: boolean };
+  state: {
+    paired: boolean;
+    peer: LinkKeys | null;
+    park: boolean;
+    // A send with this messageId stays parked (M3).
+    stuck: string | null;
+  };
 }
 
 /** A LinkService for `name`, delivering into `got`. */
 function side(s: Scratch, name: string, keys = linkKeys()): Side {
   const got: Side['got'] = [];
-  const state: Side['state'] = { paired: true, peer: null, park: false };
+  const state: Side['state'] = {
+    paired: true,
+    peer: null,
+    park: false,
+    stuck: null,
+  };
   const service = new LinkService({
     dir: join(s.dir, name),
     link: { id: 'L1', remote: s.remote, branch: BRANCH },
@@ -84,6 +95,8 @@ function side(s: Scratch, name: string, keys = linkKeys()): Side {
     paired: () => state.paired,
     deliver: (payload, from) => {
       if (state.park) return 'parked';
+      if (payload.kind === 'send' && payload.message.messageId === state.stuck)
+        return 'parked';
       got.push({ payload, seq: from.seq });
       return 'applied';
     },
@@ -123,7 +136,7 @@ export class RawPeer {
     readonly keys: LinkKeys,
     replica?: string
   ) {
-    this.replica = replica ?? linkReplicaId(keys.signPub);
+    this.replica = replica ?? linkReplicaId(keys.signPub, 'L1');
     this.repo = new SyncRepo(
       join(s.dir, `raw-${this.replica}-${Math.random().toString(36).slice(2)}`),
       s.remote,
@@ -144,6 +157,7 @@ export class RawPeer {
       body?: JsonValue;
       payload?: JsonValue;
       to?: LinkKeys;
+      toReplica?: string;
       hlcMs?: number;
     },
     after: FederatedOp | null = this.ops.at(-1) ?? null
@@ -159,7 +173,10 @@ export class RawPeer {
             type: 'a2a',
             payload: fields.payload,
             recipients: new Map([
-              [linkReplicaId(fields.to.signPub), fields.to.sealPub],
+              [
+                fields.toReplica ?? linkReplicaId(fields.to.signPub, 'L1'),
+                fields.to.sealPub,
+              ],
             ]),
           });
     return buildOp(

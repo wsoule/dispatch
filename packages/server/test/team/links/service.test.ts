@@ -1,23 +1,32 @@
+import {
+  buildOp,
+  openPayload,
+  sealPayload,
+  ZERO_HASH,
+} from '@dispatch/protocol/federation';
 import type { FederatedOp } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it, setDefaultTimeout } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { linkReplicaId } from '../../../src/team/links/service.js';
-import { event, pairOf, RawPeer, scratch, send } from './helpers.js';
+import { event, linkKeys, pairOf, RawPeer, scratch, send } from './helpers.js';
 import type { Scratch, Side } from './helpers.js';
 
 // Each pass runs real git exchanges against a scratch remote.
 setDefaultTimeout(60_000);
 
 let s: Scratch;
+let made = false;
 const open: Side[] = [];
 afterEach(() => {
   for (const x of open.splice(0)) x.service.close();
-  s.cleanup();
+  if (made) s.cleanup();
+  made = false;
 });
 function pair() {
   s = scratch();
+  made = true;
   const sides = pairOf(s);
   open.push(...sides);
   return sides;
@@ -115,7 +124,7 @@ describe('LinkService (T53)', () => {
     await settle(ada, bob);
     expect(bob.got).toEqual([]);
     expect(subjects(bob)).toContain(
-      `link-clock:${linkReplicaId(ada.keys.signPub)}`
+      `link-clock:${linkReplicaId(ada.keys.signPub, 'L1')}`
     );
   });
 
@@ -140,7 +149,7 @@ describe('LinkService (T53)', () => {
       'ada',
       'repo',
       'fed',
-      linkReplicaId(ada.keys.signPub)
+      linkReplicaId(ada.keys.signPub, 'L1')
     );
     const lines = readdirSync(dir)
       .flatMap((f) => readFileSync(join(dir, f), 'utf8').split('\n'))
@@ -168,7 +177,13 @@ function subjects(x: Side): string[] {
 
 // The ops ada's service has published so far, read off the branch clone.
 function ownOps(x: Side) {
-  const dir = join(s.dir, x.name, 'repo', 'fed', linkReplicaId(x.keys.signPub));
+  const dir = join(
+    s.dir,
+    x.name,
+    'repo',
+    'fed',
+    linkReplicaId(x.keys.signPub, 'L1')
+  );
   return readdirSync(dir)
     .filter((f) => f !== 'acks.json')
     .flatMap((f) => readFileSync(join(dir, f), 'utf8').split('\n'))
@@ -176,3 +191,67 @@ function ownOps(x: Side) {
     .map((l) => JSON.parse(l) as FederatedOp)
     .sort((a, b) => a.seq - b.seq);
 }
+
+describe('T53 review M1 and M3', () => {
+  it('keeps the link directory owner-only and its database 0600', async () => {
+    const [ada, bob] = pair();
+    await settle(ada, bob);
+    expect(statSync(join(s.dir, 'ada')).mode & 0o777).toBe(0o700);
+    expect(statSync(join(s.dir, 'ada', 'link.db')).mode & 0o777).toBe(0o600);
+  });
+
+  it('reads on past a parked op that is still parked', async () => {
+    const [ada, bob] = pair();
+    await settle(ada, bob);
+    bob.state.stuck = 'stuck';
+    ada.service.publish(send('stuck'));
+    await settle(ada, bob);
+    ada.service.publish(send('after'));
+    await settle(ada, bob);
+    const ids = bob.got.map((g) =>
+      g.payload.kind === 'send' ? g.payload.message.messageId : ''
+    );
+    expect(ids).toEqual(['after']);
+  });
+});
+
+describe('T53 review L1: a chain is bound to its link', () => {
+  it('gives the same key a different replica id on each link, 64 bits of it', () => {
+    const k = linkKeys();
+    const a = linkReplicaId(k.signPub, 'L1');
+    const b = linkReplicaId(k.signPub, 'L2');
+    expect(a).not.toBe(b);
+    expect(a.replace(/[^0-9a-f]/g, '').length).toBeGreaterThanOrEqual(16);
+  });
+
+  it("seals to the link: bob's L0 payload never opens as bob on L1", () => {
+    const ada = linkKeys();
+    const bob = linkKeys();
+    const from = linkReplicaId(ada.signPub, 'L0');
+    const { to, sealed } = sealPayload({
+      replica: from,
+      seq: 2,
+      type: 'a2a',
+      payload: { kind: 'cancel', taskId: 't-1' },
+      recipients: new Map([[linkReplicaId(bob.signPub, 'L0'), bob.sealPub]]),
+    });
+    const op = buildOp(
+      {
+        replica: from,
+        seq: 2,
+        prev: ZERO_HASH,
+        hlc: `1791201600000.0000.${from}`,
+        type: 'a2a',
+        to,
+        sealed,
+      },
+      ada.signPriv
+    );
+    expect(
+      openPayload(op, linkReplicaId(bob.signPub, 'L0'), bob.sealPriv)
+    ).not.toBeNull();
+    expect(
+      openPayload(op, linkReplicaId(bob.signPub, 'L1'), bob.sealPriv)
+    ).toBeNull();
+  });
+});

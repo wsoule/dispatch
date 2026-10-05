@@ -1,7 +1,7 @@
 import { ENVELOPE_URI, WORK_URI } from '@dispatch/a2a';
 import type { LinkPayload } from '@dispatch/a2a';
 import { Database } from 'bun:sqlite';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AsyncGitRunner } from '../../sync/worktree.js';
@@ -90,11 +90,13 @@ export class LinkHub {
   private stopped = false;
 
   constructor(private readonly deps: LinkHubDeps) {
-    mkdirSync(deps.dir, { recursive: true });
+    mkdirSync(deps.dir, { recursive: true, mode: 0o700 });
+    chmodSync(deps.dir, 0o700);
     this.db = new Database(join(deps.dir, 'hub.db'), {
       create: true,
       strict: true,
     });
+    chmodSync(join(deps.dir, 'hub.db'), 0o600);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS links (alias TEXT PRIMARY KEY, paired_id TEXT NOT NULL UNIQUE, remote TEXT NOT NULL, branch TEXT NOT NULL, sign_pub TEXT NOT NULL, seal_pub TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -323,7 +325,7 @@ export class LinkHub {
     payload: LinkPayload,
     from: string
   ): Promise<'applied' | 'parked'> {
-    if (from !== linkReplicaId(row.signPub)) return 'applied';
+    if (from !== linkReplicaId(row.signPub, row.pairedId)) return 'applied';
     switch (payload.kind) {
       case 'send':
         return this.served(row, payload);
