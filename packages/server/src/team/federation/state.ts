@@ -68,7 +68,12 @@ export class StateOut implements Collector {
 
   /** A received message's deliveries, as the engine left them. */
   received(message: Message, _origin: string, deliveries: Delivery[]): void {
-    for (const d of deliveries) this.delivery(d, message);
+    // As stored now: a push the receive made reads pushed, not sending, and
+    // the forwarder written after the receive hears it (FW-R35).
+    const stored = this.deps.messages.getMessage(message.id) ?? message;
+    const now = this.deps.messages.deliveries({ messageId: message.id });
+    for (const d of deliveries)
+      this.delivery(now.find((n) => n.id === d.id) ?? d, stored);
   }
 
   collect(now: Date): void {
@@ -138,15 +143,25 @@ export class StateOut implements Collector {
     const entries: StateEntry[] = [];
     for (const e of payload.entries) {
       if (e.t === 'delivery') {
-        // FW-R33(2): only a machine the message was sealed to reports it.
+        // FW-R35(1): sealed the message AND a home of this recipient, or the
+        // machine this one handed the recipient's held copy to.
         if (
           REPORTED.includes(e.state) &&
-          wasSealedTo(fed, e.message, publisher)
+          wasSealedTo(fed, e.message, publisher) &&
+          (this.homesOf(e.recipient).includes(publisher) ||
+            handedTo(fed, e.message, publisher))
         )
           entries.push(e);
       } else if (e.t === 'refused') {
         const rows = messages.remoteDeliveries({ messageId: e.message });
         if (rows.some((r) => r.homes.includes(publisher))) entries.push(e);
+        // FW-R35(2): a refused hand-off is tried again on the next pass.
+        if (handedTo(fed, e.message, publisher))
+          fed.db
+            .query(
+              "DELETE FROM fed_published WHERE kind = 'held-out' AND ref = ?"
+            )
+            .run(`${e.message}\n${publisher}`);
       } else if (e.t === 'settle') {
         try {
           engine.applySettlement(e, publisher);
@@ -186,6 +201,13 @@ export class StateOut implements Collector {
       ...rows.flatMap((r) => r.homes),
       ...forwarders,
     ]);
+    // Once delivered, the forwarder has what it waits for: its row goes.
+    if (forwarders.length > 0 && d.state !== 'held')
+      this.deps.fed.db
+        .query(
+          "DELETE FROM fed_published WHERE kind = 'forwarder' AND ref LIKE ? ESCAPE '\\'"
+        )
+        .run(`${message.id.replace(/[\\%_]/g, '\\$&')}\n%`);
     if (message.origin !== undefined) to.add(message.origin);
     this.queue(
       {
@@ -353,4 +375,15 @@ export class HeldMail implements Collector {
         .run(ref);
     }
   }
+}
+
+// Whether this machine handed `messageId`'s held task copy to `replica`.
+function handedTo(fed: FedStore, messageId: string, replica: string): boolean {
+  return (
+    fed.db
+      .query<{ ref: string }, [string]>(
+        "SELECT ref FROM fed_published WHERE kind = 'held-out' AND ref = ?"
+      )
+      .get(`${messageId}\n${replica}`) !== null
+  );
 }

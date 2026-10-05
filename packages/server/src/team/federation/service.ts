@@ -154,6 +154,8 @@ export interface V1Branch extends V1Log {
 export interface FederationServiceOptions {
   /** Waiting ops per publisher before the oldest go (tests lower it). */
   maxParkedPerPublisher?: number;
+  /** Waiting ops restaged per publisher each pass (tests lower it). */
+  restagePerPublisher?: number;
   store: SyncedTaskStore;
   ledger: SyncLedger;
   v1: V1Branch;
@@ -209,6 +211,9 @@ export class FederationService {
   private inbox: InboxDrainer | null = null;
   private fast: Date | null = null;
   private restageStart = 0;
+  private restagePass = 0;
+  // When each waiting op was last restaged, by pass (FW-R35(3)).
+  private readonly restageTried = new Map<string, number>();
 
   constructor(private readonly opts: FederationServiceOptions) {}
 
@@ -1119,15 +1124,43 @@ export class FederationService {
   // Parked ops and ops of a type now registered get their handler again.
   private restage(ctx: StageContext): void {
     const { db } = this.opts.fed;
-    // FW-R33(5): a budget per publisher and per pass, publishers rotated.
-    const take = (table: 'fed_parked' | 'fed_unknown') =>
+    // FW-R33(5), FW-R35(3): a budget per publisher and per pass; within a
+    // publisher the least recently tried go first, so stuck ops cannot
+    // starve the ones behind them, and publishers rotate.
+    const perPublisher = this.opts.restagePerPublisher ?? RESTAGE_PER_PUBLISHER;
+    const keys = (['fed_parked', 'fed_unknown'] as const).flatMap((table) =>
       db
-        .query<{ replica: string; seq: number; op_json: string }, [number]>(
-          `SELECT replica, seq, op_json FROM (SELECT replica, seq, op_json, ROW_NUMBER() OVER (PARTITION BY replica ORDER BY seq) AS n FROM ${table}) WHERE n <= ? ORDER BY replica, seq`
+        .query<{ replica: string; seq: number }, []>(
+          `SELECT replica, seq FROM ${table}`
         )
-        .all(RESTAGE_PER_PUBLISHER)
-        .map((row) => ({ ...row, table }));
-    const all = [...take('fed_parked'), ...take('fed_unknown')];
+        .all()
+        .map((row) => ({ ...row, table }))
+    );
+    const tried = (k: { table: string; replica: string; seq: number }) =>
+      this.restageTried.get(`${k.table}:${k.replica}:${k.seq}`) ?? -1;
+    const byPublisher = new Map<string, typeof keys>();
+    for (const k of keys) {
+      const list = byPublisher.get(k.replica) ?? [];
+      list.push(k);
+      byPublisher.set(k.replica, list);
+    }
+    const all = [...byPublisher.values()].flatMap((list) =>
+      list
+        .sort((a, b) =>
+          tried(a) !== tried(b) ? tried(a) - tried(b) : a.seq - b.seq
+        )
+        .slice(0, perPublisher)
+        .sort((a, b) => a.seq - b.seq)
+        .map((k) => ({
+          ...k,
+          op_json:
+            db
+              .query<{ op_json: string }, [string, number]>(
+                `SELECT op_json FROM ${k.table} WHERE replica = ? AND seq = ?`
+              )
+              .get(k.replica, k.seq)?.op_json ?? 'null',
+        }))
+    );
     const publishers = [...new Set(all.map((r) => r.replica))].sort();
     const start =
       publishers.length === 0 ? 0 : this.restageStart % publishers.length;
@@ -1137,7 +1170,15 @@ export class FederationService {
       .flatMap((r) => all.filter((row) => row.replica === r))
       .slice(0, RESTAGE_PER_PASS);
     const ready = this.opts.roster.mailReady();
+    const pass = ++this.restagePass;
+    // Rows no longer waiting are forgotten.
+    const waitingNow = new Set(
+      keys.map((k) => `${k.table}:${k.replica}:${k.seq}`)
+    );
+    for (const key of this.restageTried.keys())
+      if (!waitingNow.has(key)) this.restageTried.delete(key);
     for (const row of rows) {
+      this.restageTried.set(`${row.table}:${row.replica}:${row.seq}`, pass);
       const op = JSON.parse(row.op_json) as FederatedOp;
       const handler = this.handlers.get(op.type);
       if (handler === undefined) continue;

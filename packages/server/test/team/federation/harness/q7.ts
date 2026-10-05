@@ -79,6 +79,9 @@ export function q7Violations(remote: string, members: Member[]): string[] {
   const keys = new Map(members.map((m) => [keysOf(m).replica, keysOf(m)]));
   const out: string[] = [];
   withClone(remote, (dir) => {
+    // Every message the branch carries, so a reply is judged with its reply
+    // target and thread root (FW-R35).
+    const carried: { op: string; message: Message }[] = [];
     for (const e of allEntries(dir)) {
       if (isStub(e) || e.type !== 'mail') continue;
       const reader = (e.to ?? []).find((r) => keys.has(r));
@@ -89,15 +92,22 @@ export function q7Violations(remote: string, members: Member[]): string[] {
         out.push(`${e.replica}:${e.seq} does not open for ${k.replica}`);
         continue;
       }
-      for (const message of messagesIn(e, payload, k)) {
-        const why = localOnlyReason(message, null, null);
-        if (why !== null)
-          out.push(`${e.replica}:${e.seq} carries ${why}: ${message.id}`);
-      }
+      for (const message of messagesIn(e, payload, k))
+        carried.push({ op: `${e.replica}:${e.seq}`, message });
+    }
+    const byId = new Map(carried.map((c) => [c.message.id, c.message]));
+    for (const { op, message } of carried) {
+      const why = localOnlyReason(
+        message,
+        message.replyTo === null ? null : (byId.get(message.replyTo) ?? null),
+        byId.get(message.thread) ?? null
+      );
+      if (why !== null) out.push(`${op} carries ${why}: ${message.id}`);
     }
   });
-  for (const m of members)
-    for (const row of m.handle.messagesDb<{
+  for (const m of members) {
+    const stored = new Map<string, Message>();
+    const rowsOf = m.handle.messagesDb<{
       id: string;
       thread: string;
       reply_to: string | null;
@@ -106,8 +116,9 @@ export function q7Violations(remote: string, members: Member[]): string[] {
       data_json: string | null;
       origin: string | null;
     }>(
-      'SELECT id, thread, reply_to, from_addr, kind, data_json, origin FROM messages WHERE origin IS NOT NULL'
-    )) {
+      'SELECT id, thread, reply_to, from_addr, kind, data_json, origin FROM messages'
+    );
+    for (const row of rowsOf) {
       const to = m.handle
         .messagesDb<{ addr: string }>(
           'SELECT addr FROM recipients WHERE message_id = ? ORDER BY position',
@@ -125,9 +136,22 @@ export function q7Violations(remote: string, members: Member[]): string[] {
           ? {}
           : { data: JSON.parse(row.data_json) as unknown }),
       } as Message;
-      if (localOnlyReason(message, null, null) !== null)
+      stored.set(row.id, message);
+    }
+    // A row from another replica, judged with its reply target and root.
+    for (const row of rowsOf) {
+      if (row.origin === null) continue;
+      const message = stored.get(row.id);
+      if (message === undefined) continue;
+      const why = localOnlyReason(
+        message,
+        row.reply_to === null ? null : (stored.get(row.reply_to) ?? null),
+        stored.get(row.thread) ?? null
+      );
+      if (why !== null)
         out.push(`${m.name} stores ${row.id} from another replica`);
     }
+  }
   return out;
 }
 

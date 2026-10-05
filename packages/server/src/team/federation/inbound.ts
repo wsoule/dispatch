@@ -89,6 +89,8 @@ export class Inbound implements OpHandler, InboxDrainer {
       maxWaiting?: number;
       /** State ops per publisher per hour (tests lower it). */
       stateOpsPerHour?: number;
+      /** Seen mail ops kept per publisher (tests lower it). */
+      mailSeenKept?: number;
     }
   ) {}
 
@@ -369,12 +371,12 @@ export class Inbound implements OpHandler, InboxDrainer {
       .query<{ replica: string; n: number }, [number]>(
         'SELECT replica, COUNT(*) AS n FROM fed_mail_seen GROUP BY replica HAVING n > ?'
       )
-      .all(MAIL_SEEN_PER_PUBLISHER))
+      .all(this.deps.mailSeenKept ?? MAIL_SEEN_PER_PUBLISHER))
       for (const row of db
         .query<{ seq: number }, [string, number]>(
           'SELECT seq FROM fed_mail_seen WHERE replica = ? ORDER BY seq LIMIT ?'
         )
-        .all(replica, n - MAIL_SEEN_PER_PUBLISHER))
+        .all(replica, n - (this.deps.mailSeenKept ?? MAIL_SEEN_PER_PUBLISHER)))
         if (!held.has(`${replica}:${row.seq}`))
           db.query(
             'DELETE FROM fed_mail_seen WHERE replica = ? AND seq = ?'
@@ -400,13 +402,6 @@ export class Inbound implements OpHandler, InboxDrainer {
         .query('DELETE FROM fed_inbox WHERE replica = ? AND seq = ?')
         .run(row.replica, row.seq);
     };
-    // A holder that forwarded it here hears its delivery, as the origin does.
-    if (p.forwardTarget !== undefined)
-      fed.db
-        .query(
-          "INSERT OR IGNORE INTO fed_published (kind, ref, hash) VALUES ('forwarder', ?, '')"
-        )
-        .run(`${p.message.id}\n${row.replica}`);
     try {
       const result = await engine.receive(p.message, {
         replica: p.origin,
@@ -435,6 +430,14 @@ export class Inbound implements OpHandler, InboxDrainer {
             .run(p.message.id, JSON.stringify(p.op));
       });
       recordSealed(fed, p.message.id, [...p.sealedTo, p.origin]);
+      // A holder that forwarded it here hears its delivery, as the origin
+      // does; written once the receive went through (FW-R35).
+      if (p.forwardTarget !== undefined)
+        fed.db
+          .query(
+            "INSERT OR IGNORE INTO fed_published (kind, ref, hash) VALUES ('forwarder', ?, '')"
+          )
+          .run(`${p.message.id}\n${row.replica}`);
       state?.received(p.message, p.origin, result.deliveries);
       return true;
     } catch (err) {
@@ -535,6 +538,24 @@ export class Inbound implements OpHandler, InboxDrainer {
     if (seen === null) {
       const head = fed.cursor(inner.replica).head?.seq ?? 0;
       if (head < inner.seq) return 'parked';
+      // FW-R35(2): one this machine no longer remembers waits; a refusal
+      // would lose the holder's copy, so nothing is refused here.
+      if (
+        fed.db
+          .query<{ n: number }, [string]>(
+            'SELECT COUNT(*) AS n FROM fed_mail_seen WHERE replica = ?'
+          )
+          .get(inner.replica)?.n ===
+        (this.deps.mailSeenKept ?? MAIL_SEEN_PER_PUBLISHER)
+      ) {
+        dropNote(
+          fed,
+          'mail-drop',
+          op.replica,
+          `${label} forwarded an op of ${roster.label(inner.replica)}'s this machine no longer remembers; it waits`
+        );
+        return 'parked';
+      }
       dropNote(
         fed,
         'mail-drop',

@@ -679,6 +679,8 @@ describe('mail convergence over git', () => {
         [`run:${run.runId}`, `task:${mine}`]
       );
       expect(notices.some((n) => n.body.includes('denied'))).toBe(true);
+      // A teammate's machine is not told who denied it (FW-R35).
+      expect(notices.some((n) => n.body.includes('human:ada'))).toBe(false);
     },
     SLOW
   );

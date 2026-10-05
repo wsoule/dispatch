@@ -260,10 +260,13 @@ export function openMessaging(deps: {
     if (original === null) return;
     // A denied wake tells its sender, so a run waiting on it does not wait on.
     if (answer.choice !== 'approve') {
+      // A teammate's machine hears that it was denied, not by whom.
       if (answer.choice === 'deny')
         await noticeWakeSender(
           original,
-          `Not woken: ${answer.from} denied waking ${gate.target}. Your message is waiting for it.`
+          original.origin === undefined
+            ? `Not woken: ${answer.from} denied waking ${gate.target}. Your message is waiting for it.`
+            : `Not woken: waking ${gate.target} was denied. Your message is waiting for it.`
         );
       return;
     }
