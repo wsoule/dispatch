@@ -31,8 +31,6 @@ export async function cluster(
     gitNames?: Record<string, string>;
     /** Extra .dispatch/config.yml lines per member. */
     config?: Record<string, string>;
-    /** The build every member announces. */
-    build?: string;
   } = {}
 ): Promise<Cluster> {
   const env = daemons();
@@ -53,7 +51,6 @@ export async function cluster(
     const handle = await env.teammate(name, {
       federationNow: () => clock.ms,
       federationDebounceMs: 0,
-      ...(opts.build === undefined ? {} : { federationBuild: opts.build }),
       ...(gitName === undefined ? {} : { gitName }),
       ...(config === undefined ? {} : { config }),
     });

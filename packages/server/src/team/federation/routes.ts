@@ -10,6 +10,7 @@ import {
 } from '../../api/http.js';
 import type { AuthTier } from '../../tiers.js';
 import { tierAllows } from '../../tiers.js';
+import { capsOf } from './caps.js';
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
 import type { FedStore } from './store.js';
@@ -44,6 +45,8 @@ export interface FederationContext {
     presence: { replica: string; handle: string; device: string } | null;
     waitingOn: string | null;
   };
+  /** Tests only: a ws:// relay on this machine may be switched to. */
+  allowLoopbackRelay?: boolean;
   /** How long a route waits for its pass; ROUTE_PASS_WAIT_MS unless a test sets it. */
   passWaitMs?: number;
 }
@@ -391,24 +394,8 @@ async function act(
   }
 }
 
-/** The first build that speaks to a relay (F4). */
-const RELAY_MIN_BUILD = '0.37.0';
-
-// Whether dotted version `a` is older than `b`; an unreadable one is old.
-function olderThan(a: string, b: string): boolean {
-  const pa = a.split(/[.+-]/).slice(0, 3).map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    const x = pa[i];
-    const y = pb[i] ?? 0;
-    if (x === undefined || !Number.isFinite(x)) return true;
-    if (x !== y) return x < y;
-  }
-  return false;
-}
-
-// A relay URL a machine may dial: wss, or ws on this machine only.
-function relayUrlProblem(url: string): string | null {
+// A relay URL a machine may dial: wss, or, in tests, ws on this machine.
+function relayUrlProblem(url: string, loopback: boolean): string | null {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -417,12 +404,12 @@ function relayUrlProblem(url: string): string | null {
   }
   if (parsed.protocol === 'wss:') return null;
   const local = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
-  if (parsed.protocol === 'ws:' && local) return null;
-  return 'url must be wss:// (ws:// only on this machine)';
+  if (loopback && parsed.protocol === 'ws:' && local) return null;
+  return 'url must be wss://';
 }
 
 // POST /api/team/transport: an admin switches the team between git and a
-// relay. The relay needs every admitted machine on an F4 build, the legacy
+// relay. The relay needs every admitted machine to speak it (FW-R39), the legacy
 // window closed, and its disclosure confirmed first (F-D31).
 async function switchTransport(
   fedCtx: FederationContext,
@@ -440,23 +427,20 @@ async function switchTransport(
     throw new RosterError('conflict', 'this machine is in no team');
   if (kind === 'relay') {
     const url = typeof body.url === 'string' ? body.url : '';
-    const bad = url === '' ? 'url is required' : relayUrlProblem(url);
+    const bad =
+      url === ''
+        ? 'url is required'
+        : relayUrlProblem(url, fedCtx.allowLoopbackRelay === true);
     if (bad !== null) throw new RosterError('invalid', bad);
-    const builds = new Map(
-      fed.db
-        .query<{ replica: string; build: string }, []>(
-          'SELECT replica, build FROM fed_replicas'
-        )
-        .all()
-        .map((r) => [r.replica, r.build])
+    // FW-R39: every admitted machine must announce that it speaks the relay.
+    // Invitees waiting to be admitted count too: they join over the relay.
+    const lacking = [...view.members.keys(), ...view.invitedBy.keys()].filter(
+      (r) => !capsOf(fed, r).includes('relay')
     );
-    const old = [...view.members.keys()].filter((r) =>
-      olderThan(builds.get(r) ?? fed.pinned(r)?.build ?? '', RELAY_MIN_BUILD)
-    );
-    if (old.length > 0)
+    if (lacking.length > 0)
       throw new RosterError(
         'conflict',
-        `every machine needs Dispatch ${RELAY_MIN_BUILD} or later to use a relay; still older: ${old.map((r) => fedCtx.label(r)).join(', ')}`
+        `every machine needs a Dispatch build that speaks the relay; not yet: ${lacking.map((r) => fedCtx.label(r)).join(', ')}`
       );
     if (view.legacy.closed === null)
       throw new RosterError(

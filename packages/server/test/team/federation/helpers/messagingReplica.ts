@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import type { ApiContext } from '../../../../src/api.js';
 import { createTeamMemoryPort } from '../../../../src/memory/teamPort.js';
 import { AgentSync } from '../../../../src/team/federation/agents.js';
+import { BUILD_CAPS } from '../../../../src/team/federation/caps.js';
 import { ChannelSync } from '../../../../src/team/federation/channels.js';
 import { Homes } from '../../../../src/team/federation/homes.js';
 import { DaemonFederationHooks } from '../../../../src/team/federation/hooks.js';
@@ -202,6 +203,8 @@ export interface MessagingReplica extends ServiceReplica {
   startRun(meta: RunInfo): void;
   /** `other`'s pass, then this replica's. */
   settleWith(other: MessagingReplica): Promise<void>;
+  /** This build now speaks `caps`, as after an upgrade (FW-R39). */
+  setCaps(caps: readonly string[]): void;
   /** POSTs to an /api/team route as this machine's operator. */
   teamRoute(
     path: string,
@@ -210,7 +213,12 @@ export interface MessagingReplica extends ServiceReplica {
   /** A relay transport for this replica; `signFor` signs for another URL. */
   relayTransport(
     url: string,
-    opts?: { signFor?: string; wake?: () => void; teamId?: string }
+    opts?: {
+      signFor?: string;
+      wake?: () => void;
+      teamId?: string;
+      opsPerFrame?: number;
+    }
   ): RelayFederationTransport;
   /** A recording docs port and its DocSync, when the team asked for docs. */
   docs?: { port: RecordingDocsPort; sync: DocSync };
@@ -235,6 +243,8 @@ export interface TeamOpts {
   withMemory?: boolean;
   /** How many of each replica's op hashes fed_seen_ops keeps. */
   seenOpsKept?: number;
+  /** What a handle's build speaks (FW-R39), in place of BUILD_CAPS. */
+  capsFor?: Record<string, readonly string[]>;
   /** A bare repo every replica syncs through over git instead of memory. */
   gitRemote?: string;
   /** Set by foundedTeamWith on the founder, which installs `license`. */
@@ -261,7 +271,12 @@ export function messagingReplica(
   v1: MemoryV1 = new MemoryV1(),
   opts: TeamOpts = {}
 ): MessagingReplica {
+  const capsRef: { current: readonly string[] | null } = {
+    current: opts.capsFor?.[handle] ?? null,
+  };
+  const caps = (): readonly string[] => capsRef.current ?? BUILD_CAPS;
   const base = serviceReplica(handle, remote, v1, {
+    caps,
     ...(opts.gitRemote === undefined ? {} : { gitRemote: opts.gitRemote }),
     ...(opts.seenOpsKept === undefined
       ? {}
@@ -300,6 +315,7 @@ export function messagingReplica(
     knowsRun,
     isLive: (run) => host.isLiveRun(run),
     now: () => base.clock.now,
+    caps,
     onLiveRun: (task, replica) => {
       heldRef.current?.onLiveRun(task, replica);
     },
@@ -416,6 +432,7 @@ export function messagingReplica(
       wake: o.wake ?? (() => {}),
       now: () => base.clock.now,
       ...(o.signFor === undefined ? {} : { signFor: o.signFor }),
+      ...(o.opsPerFrame === undefined ? {} : { opsPerFrame: o.opsPerFrame }),
     });
     relays.push(t);
     return t;
@@ -490,6 +507,9 @@ export function messagingReplica(
       await base.service.syncNow();
     },
     relayTransport,
+    setCaps: (next) => {
+      capsRef.current = next;
+    },
     teamRoute: async (path, body) => {
       const ctx = {
         caller: { tier: 'operator' },
@@ -500,6 +520,7 @@ export function messagingReplica(
           now: () => base.clock.now,
           label: (r: string) => base.roster.label(r),
           passWaitMs: 5000,
+          allowLoopbackRelay: true,
         },
       } as unknown as ApiContext;
       const res = await handleFederationRoute(

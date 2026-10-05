@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { RELAY_DISCLOSURE } from '../../../src/team/federation/relay.js';
 import { startFakeRelay } from './fakeRelay.js';
 import type { FakeRelay } from './fakeRelay.js';
-import { foundedTeam, messagingReplica } from './helpers/messagingReplica.js';
+import {
+  foundedTeam,
+  foundedTeamWith,
+  messagingReplica,
+} from './helpers/messagingReplica.js';
 import type { MessagingReplica } from './helpers/messagingReplica.js';
 
 // Task 22: the relay transport against the in-repo fake relay.
@@ -237,22 +241,41 @@ describe('switching a team to the relay', () => {
     ).toBe(1);
   });
 
-  it('refuses while the legacy window is open, or a machine runs an older build', async () => {
+  it('refuses while the legacy window is open', async () => {
     open = await foundedTeam('ada', 'bob');
     relay = await startFakeRelay(at(0));
     const body = { kind: 'relay', url: relay.url, confirmed: true };
-    expect((await at(0).teamRoute('/api/team/transport', body)).status).toBe(
-      409
-    );
+    const res = await at(0).teamRoute('/api/team/transport', body);
+    expect(res.status).toBe(409);
+    expect(String(res.body.error)).toContain('legacy window');
+  });
+
+  it('refuses while an admitted machine does not announce the relay capability (FW-R39)', async () => {
+    open = await foundedTeamWith({ capsFor: { bob: [] } }, 'ada', 'bob');
     at(0).roster.closeLegacy();
-    at(0)
-      .fed.db.query(
-        "INSERT OR REPLACE INTO fed_replicas (replica, build, device, last_hlc, skew_ms) VALUES (?, '0.30.1', 'desk', '', 0)"
-      )
-      .run(at(1).fed.replica);
-    const old = await at(0).teamRoute('/api/team/transport', body);
-    expect(old.status).toBe(409);
-    expect(String(old.body.error)).toContain('0.37.0');
+    await passes(open);
+    relay = await startFakeRelay(at(0));
+    const body = { kind: 'relay', url: relay.url, confirmed: true };
+    const res = await at(0).teamRoute('/api/team/transport', body);
+    expect(res.status).toBe(409);
+    expect(String(res.body.error)).toContain('bob');
+    expect(at(0).roster.view()?.transport.kind).toBe('git');
+  });
+
+  it('lets a machine that upgraded announce the capability in presence (FW-R39)', async () => {
+    open = await foundedTeamWith({ capsFor: { bob: [] } }, 'ada', 'bob');
+    at(0).roster.closeLegacy();
+    await passes(open);
+    relay = await startFakeRelay(at(0));
+    // Bob's next build speaks the relay; its key op stays as it was.
+    at(1).setCaps(['relay']);
+    await passes(open);
+    const res = await at(0).teamRoute('/api/team/transport', {
+      kind: 'relay',
+      url: relay.url,
+      confirmed: true,
+    });
+    expect(res.status).toBe(200);
   });
 
   it('refuses a relay URL that is not wss, and a member who is no admin', async () => {
@@ -442,5 +465,84 @@ describe("the fake relay's limits", () => {
     await expect(cy.relayTransport(r.url).pull(new Map())).rejects.toThrow(
       'too many joins'
     );
+  });
+});
+
+describe('F4 review fixes', () => {
+  it('keeps git when the roster names a relay that is not wss (M1)', async () => {
+    open = await foundedTeam('ada', 'bob');
+    at(0).roster.closeLegacy();
+    await passes(open);
+    // An admin signs a plaintext URL past the route's check.
+    at(0).roster.setTransport('relay', 'ws://relay.attacker.example');
+    await passes(open, 3);
+    for (const m of open) {
+      expect(m.service.status().transport).toBe('git');
+      // Refused before dialing, not after failing to reach it.
+      expect(
+        m.fed.problems().find((p) => p.subject === 'transport:switch')?.message
+      ).toContain('not wss://');
+    }
+  });
+
+  it('uploads a long log in frames, stopping at the first short answer (M2)', async () => {
+    open = await foundedTeam('ada');
+    const r = await startRelay(at(0));
+    for (let i = 0; i < 5; i++) at(0).store.create({ title: `task ${i}` });
+    const t = at(0).relayTransport(r.url, { opsPerFrame: 2 });
+    await t.upload(at(0).fed.ownLog());
+    expect(r.publishFrames()).toBe(Math.ceil(at(0).fed.ownLog().length / 2));
+    expect(r.stored(at(0).fed.replica).at(-1)?.seq).toBe(at(0).fed.head()?.seq);
+  });
+
+  it('stops uploading after a frame the relay stored only part of (M2)', async () => {
+    open = await foundedTeam('ada');
+    const r = await startRelay(at(0), { limits: { opsPerMinute: 1 } });
+    for (let i = 0; i < 5; i++) at(0).store.create({ title: `task ${i}` });
+    const t = at(0).relayTransport(r.url, { opsPerFrame: 2 });
+    await expect(t.upload(at(0).fed.ownLog())).rejects.toThrow(
+      'only through seq'
+    );
+    expect(r.publishFrames()).toBe(2);
+  });
+
+  it('signs the URL without its trailing slash', async () => {
+    open = await foundedTeam('ada');
+    const r = await startRelay(at(0));
+    await expect(
+      at(0).relayTransport(`${r.url}/`).pull(new Map())
+    ).resolves.toBeDefined();
+  });
+
+  it('refuses while a pending invitee does not announce the relay capability', async () => {
+    open = await foundedTeamWith({ capsFor: { cy: [] } }, 'ada');
+    at(0).roster.closeLegacy();
+    const { code } = at(0).roster.invite('cy');
+    const cy = messagingReplica('cy', at(0).remote, undefined, {
+      capsFor: { cy: [] },
+    });
+    open.push(cy);
+    cy.roster.join(code);
+    await passes(open);
+    relay = await startFakeRelay(at(0));
+    const res = await at(0).teamRoute('/api/team/transport', {
+      kind: 'relay',
+      url: relay.url,
+      confirmed: true,
+    });
+    expect(res.status).toBe(409);
+    expect(String(res.body.error)).toContain('cy');
+  });
+
+  it('closes the socket on a malformed frame', async () => {
+    open = await foundedTeam('ada');
+    const r = await startRelay(at(0));
+    const t = at(0).relayTransport(r.url);
+    await t.pull(new Map());
+    r.sendRaw('{not json');
+    const started = Date.now();
+    while (t.presence() !== null && Date.now() - started < 1000)
+      await Bun.sleep(5);
+    expect(t.presence()).toBeNull();
   });
 });

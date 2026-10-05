@@ -141,6 +141,7 @@ export interface KeyBody {
   sealPub: string; // raw 32 bytes, base64url
   legacy: { throughSeq: number; digest: string } | null; // its unsigned v1 history
   invite?: { id: string; sig: string };
+  caps?: string[]; // what this build speaks, e.g. 'relay' (FW-R39); absent: none
 }
 
 export type RosterBody = { rv: 1 } & (
@@ -206,6 +207,14 @@ export interface LegacyAttestation {
 
 export type PresenceBody =
   | { kind: 'replica'; build: string; device: string; wall: number } // wall = its raw clock, ms
+  // FW-R39: the same, re-announcing what this build speaks when it changed.
+  | {
+      kind: 'replica';
+      build: string;
+      device: string;
+      wall: number;
+      caps: string[];
+    }
   | {
       kind: 'run';
       run: string;

@@ -6,9 +6,11 @@ import type {
   RosterView,
 } from '@dispatch/federation';
 import {
+  compareHlc,
   fingerprint,
   isStub,
   opHash,
+  parseOpHlc,
   stubOf,
   verifyText,
 } from '@dispatch/protocol/federation';
@@ -60,8 +62,15 @@ export interface FakeRelay {
   stored(replica: string): LogEntry[];
   /** The relay's clock, for retention and rate limits. */
   clock: { now: Date };
+  /** Publish frames received so far. */
+  publishFrames(): number;
+  /** Sends `text` as is to every connection, as a broken relay would. */
+  sendRaw(text: string): void;
   stop(): Promise<void>;
 }
+
+// A frame over this many bytes closes the socket (the contract's cap).
+const FRAME_MAX_BYTES = 8 * 1024 * 1024;
 
 /** A relay for the founder's team, registered from its `key` and `found`
  *  ops as `POST /v1/teams` would. */
@@ -111,6 +120,7 @@ export function startFakeRelay(
       return ok ? undefined : new Response('upgrade failed', { status: 400 });
     },
     websocket: {
+      maxPayloadLength: FRAME_MAX_BYTES,
       open(ws) {
         send(ws, { t: 'challenge', nonce: ws.data.nonce });
       },
@@ -129,6 +139,10 @@ export function startFakeRelay(
     teamId,
     stored: (r) => relay.stored(r),
     clock: relay.clock,
+    publishFrames: () => relay.publishFrames,
+    sendRaw: (text) => {
+      for (const ws of relay.conns.keys()) ws.send(text);
+    },
     stop: async () => {
       for (const ws of relay.conns.keys()) ws.close();
       await server.stop(true);
@@ -142,6 +156,7 @@ function send(ws: ServerWebSocket<Conn>, frame: RelayFrame): void {
 
 class Relay {
   readonly conns = new Map<ServerWebSocket<Conn>, Conn>();
+  publishFrames = 0;
   private readonly logs = new Map<string, LogEntry[]>();
   private readonly acks = new Map<string, Record<string, number>>();
   private readonly firstSeen = new Map<string, number>();
@@ -186,6 +201,7 @@ class Relay {
       return;
     }
     if (frame.t === 'publish') {
+      this.publishFrames += 1;
       const through = this.store(conn, frame.ops);
       send(ws, { t: 'stored', re: frame.id, through });
       this.push(conn.replica);
@@ -284,10 +300,18 @@ class Relay {
     const times = (this.publishTimes.get(replica) ?? []).filter(
       (t) => now - t < MINUTE
     );
-    // The switch op may ride in this very upload.
-    const switchedAt = this.transportHlc(
+    // The switch-over upload is exempt: the switching admin's ops below the
+    // transport op's seq (it may ride in this very upload), and another
+    // replica's ops stamped before it.
+    const switchOp = this.transportOp(
       conn.status === 'member' ? ops.filter((e) => e.replica === replica) : []
     );
+    const exemptOf = (e: LogEntry): boolean => {
+      if (switchOp === null) return false;
+      if (e.replica === switchOp.replica) return e.seq < switchOp.seq;
+      const [a, b] = [parseOpHlc(e.hlc), parseOpHlc(switchOp.hlc)];
+      return a !== null && b !== null && compareHlc(a, b) < 0;
+    };
     const mine = ops
       .filter((e) => e.replica === replica)
       .filter((e) => conn.status === 'member' || e.type === 'key')
@@ -296,7 +320,7 @@ class Relay {
       if (log.some((h) => h.seq === e.seq)) continue;
       if (Buffer.byteLength(JSON.stringify(e)) > this.limits.opMaxBytes) break;
       // The switch-over upload (ops before the relay switch) is not limited.
-      const exempt = switchedAt !== null && e.hlc < switchedAt;
+      const exempt = exemptOf(e);
       if (!exempt && times.length >= this.limits.opsPerMinute) break;
       const head = log.at(-1);
       const pinned = log[0] === undefined ? null : pinnedOf(log[0]);
@@ -409,9 +433,9 @@ class Relay {
     }
   }
 
-  // The hlc of the folded roster's transport op naming the relay, if any.
-  private transportHlc(incoming: readonly LogEntry[] = []): string | null {
-    const clocks: string[] = [];
+  // The team's first transport op naming the relay, stored or incoming.
+  private transportOp(incoming: readonly LogEntry[] = []): LogEntry | null {
+    const found: LogEntry[] = [];
     for (const log of [...this.logs.values(), incoming])
       for (const e of log)
         if (
@@ -420,8 +444,12 @@ class Relay {
           (e.body as RosterBody | undefined)?.action === 'transport' &&
           (e.body as { kind?: string }).kind === 'relay'
         )
-          clocks.push(e.hlc);
-    return clocks.sort()[0] ?? null;
+          found.push(e);
+    found.sort((a, b) => {
+      const [x, y] = [parseOpHlc(a.hlc), parseOpHlc(b.hlc)];
+      return x === null || y === null ? 0 : compareHlc(x, y);
+    });
+    return found[0] ?? null;
   }
 
   // The roster as the relay folds it: every stored roster op with its

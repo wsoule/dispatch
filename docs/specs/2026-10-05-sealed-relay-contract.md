@@ -35,11 +35,18 @@ container with a SQLite volume.
 
 Every frame is one JSON text message with a `t` field. Requests carry an `id`,
 and the answer to a request carries it back as `re`. A frame with an unknown `t`
-is ignored. A malformed frame closes the socket.
+is ignored. A malformed frame closes the socket, on either side.
+
+- **Frame size.** A frame is at most 8 MiB on the wire. The relay closes a
+  socket that sends a larger one, and a client closes one that receives a frame
+  over 16 MiB.
+- **Publish frames.** A `publish` carries at most 1,000 entries and about 4 MiB.
+  A client uploading more sends several in order, and stops at the first one
+  whose `stored` answer is short.
 
 | From   | Frame                                       | Meaning                                                                                                                                                                                        |
 | ------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| relay  | `{t:'challenge', nonce}`                    | Sent on open.                                                                                                                                                                                  |
+| relay  | `{t:'challenge', nonce}`                    | Sent on open. The nonce is random, at least 128 bits, and good for this socket only.                                                                                                           |
 | client | `{t:'auth', replica, sig, keyOp?}`          | `sig` signs `"dispatch-relay-v1\n" + URL + "\n" + teamId + "\n" + nonce` with the replica's key. `keyOp` is the replica's own key op, so the relay can check a machine it has not seen before. |
 | relay  | `{t:'ready'}` or `{t:'refused', reason}`    | Refusing closes the socket.                                                                                                                                                                    |
 | client | `{t:'publish', id, ops}`                    | The client's own log entries, stubs included.                                                                                                                                                  |
@@ -55,8 +62,9 @@ is ignored. A malformed frame closes the socket.
 ## Rules
 
 - **URL-bound auth.** The URL in the signed text is the exact base URL the
-  client dialed. The relay checks the signature against its own public URL, so a
-  signature captured by another endpoint cannot be replayed to it.
+  client dialed, without a trailing slash. The relay checks the signature
+  against its own public URL, so a signature captured by another endpoint cannot
+  be replayed to it.
 - **Keys come from the fold.** The relay folds the roster with
   `@dispatch/federation`'s `foldRoster` (`relay: true`, so it never pauses). It
   verifies every stored log with `verifyLog`, using the key the fold bound to
@@ -81,9 +89,11 @@ is ignored. A malformed frame closes the socket.
   - Only the latest `presence` op per run and per replica is kept whole.
 - **Limits.**
   - An op may be at most 1 MiB.
-  - A replica may store at most 1,000 ops a minute. Ops whose `hlc` precedes the
-    team's `transport {kind: 'relay'}` op are exempt: that is the switch-over
-    upload.
+  - A replica may store at most 1,000 ops a minute. The switch-over upload is
+    exempt: the switching admin's ops below the seq of the team's
+    `transport {kind: 'relay'}` op, and another replica's ops whose `hlc`
+    precedes that op's, compared as clocks (milliseconds, then counter), not as
+    text.
 - **Idempotence.** A stored `(replica, seq)` is never replaced. A second publish
   of the same seq is acknowledged and ignored.
 
@@ -97,8 +107,13 @@ stops writing the old one. Switching back to git uses the same op with
 `kind: 'git'`. The route that signs the op is refused in each of these cases:
 
 - the legacy window is open;
-- any admitted machine runs a build older than the first relay build;
-- the URL is not `wss://` (`ws://` only on this machine);
+- the URL is not `wss://`. Every receiver checks this too, before it dials a URL
+  the roster names: a plaintext URL leaves it on git with a problem note, since
+  dialing would send its log in the clear;
+- any admitted machine, or any invitee waiting to be admitted, does not announce
+  the `relay` capability. A machine announces it in its key op's `caps`, or
+  re-announces it in a `presence` op after an upgrade; one that announces no
+  `caps` lacks it (FW-R39);
 - the disclosure is unconfirmed.
 
 ## Acceptance (Task 21)

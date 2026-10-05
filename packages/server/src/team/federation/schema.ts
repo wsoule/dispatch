@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS fed_run_tombs (run TEXT PRIMARY KEY, replica TEXT NOT
 -- waiting: it waits on a gate or a cap here.
 CREATE TABLE IF NOT EXISTS fed_memory (memory TEXT PRIMARY KEY, trust TEXT NOT NULL, origin_replica TEXT NOT NULL, dirty INTEGER NOT NULL, backed INTEGER NOT NULL DEFAULT 0, waiting INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS fed_memory_fields (memory TEXT NOT NULL, field TEXT NOT NULL, hlc TEXT NOT NULL, value_json TEXT NOT NULL, PRIMARY KEY (memory, field));
+-- FW-R39: what each replica speaks, from its key ops (per signing key) and
+-- from its latest presence re-announcement.
+CREATE TABLE IF NOT EXISTS fed_caps_keys (replica TEXT NOT NULL, sign_pub TEXT NOT NULL, caps_json TEXT NOT NULL, PRIMARY KEY (replica, sign_pub));
+CREATE TABLE IF NOT EXISTS fed_caps_presence (replica TEXT PRIMARY KEY, caps_json TEXT NOT NULL, hlc TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_state_out (id INTEGER PRIMARY KEY, recipients TEXT NOT NULL, entry_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_replicas (replica TEXT PRIMARY KEY, build TEXT NOT NULL, device TEXT NOT NULL, last_hlc TEXT NOT NULL, skew_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS fed_members (channel TEXT NOT NULL, member TEXT NOT NULL, joined INTEGER NOT NULL, hlc TEXT NOT NULL, PRIMARY KEY (channel, member));

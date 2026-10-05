@@ -47,6 +47,8 @@ export interface FederationDeps {
   onBoardChanged: () => void;
   now: () => Date;
   debounceMs?: number;
+  /** Tests only: follow a ws:// relay on this machine. */
+  allowLoopbackRelay?: boolean;
 }
 
 /** The pieces the daemon keeps: Task 11's routes read fed and roster. */
@@ -260,6 +262,7 @@ export function buildFederation(deps: FederationDeps): Federation {
     );
   const serviceRef: { current: FederationService | null } = { current: null };
   const service = new FederationService({
+    ...(deps.allowLoopbackRelay === true ? { allowLoopbackRelay: true } : {}),
     // A relay the roster switches to; a push from it runs a pass at once.
     relayFor: (url) =>
       new RelayFederationTransport({

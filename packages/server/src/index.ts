@@ -339,8 +339,8 @@ export interface StartServerOptions {
   federationNow?: () => number;
   // Debounce for a board sync pass after a local change; test-only.
   federationDebounceMs?: number;
-  // The build this daemon announces to its team; test-only (the package version).
-  federationBuild?: string;
+  // Lets a test follow the fake relay on ws://127.0.0.1; test-only.
+  federationAllowLoopbackRelay?: boolean;
   // Debounce for the receipts exporter's response to a task change. Defaults
   // to ReceiptsScheduler's own multi-second default; tests pass something much
   // shorter. There is no periodic counterpart: the export has no remote to
@@ -1245,7 +1245,7 @@ async function bootServer(
         store: syncedStore,
         team,
         handle: actorContext.member.handle,
-        build: opts.federationBuild ?? packageJson.version,
+        build: packageJson.version,
         remoteUrl,
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
@@ -1263,6 +1263,9 @@ async function bootServer(
         ...(opts.federationDebounceMs === undefined
           ? {}
           : { debounceMs: opts.federationDebounceMs }),
+        ...(opts.federationAllowLoopbackRelay === true
+          ? { allowLoopbackRelay: true }
+          : {}),
       });
       boardSync = federation.service;
       const { roster, fed } = federation;
@@ -1275,6 +1278,9 @@ async function bootServer(
         // The origin warning names the code remote only when sync.repo is unset.
         remote: syncConfig.repo === undefined ? remoteUrl : null,
         label: (replica) => roster.label(replica),
+        ...(opts.federationAllowLoopbackRelay === true
+          ? { allowLoopbackRelay: true }
+          : {}),
         observer: () => {
           const watcher = [...(roster.view()?.members.values() ?? [])].find(
             (m) => m.observer
@@ -1462,7 +1468,7 @@ async function bootServer(
       : wireMessagingFederation(federation, {
           ledger: syncLedger,
           tasks: store,
-          build: opts.federationBuild ?? packageJson.version,
+          build: packageJson.version,
           device: hostname().split('.')[0] ?? 'machine',
           knowsRun: (id) => orchestrator.getRun(id) !== null,
           isLive: (id) => orchestrator.isRunLive(id),

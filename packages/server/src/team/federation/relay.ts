@@ -45,6 +45,11 @@ const BACKOFF_MIN_MS = 1_000;
 const BACKOFF_MAX_MS = 60_000;
 // Pull rounds one call follows `more` for.
 const PULL_ROUNDS = 20;
+// A publish frame carries at most this many entries and bytes (the contract).
+const OPS_PER_FRAME = 1000;
+const FRAME_BYTES = 4 * 1024 * 1024;
+// A frame from the relay over this many characters closes the socket.
+const MAX_INCOMING_CHARS = 16 * 1024 * 1024;
 
 interface Waiter {
   resolve: (frame: RelayFrame) => void;
@@ -65,7 +70,12 @@ export interface RelayDeps {
   now: () => Date;
   /** Tests only: sign the challenge for another URL than the one dialed. */
   signFor?: string;
+  /** Tests only: entries per publish frame, in place of OPS_PER_FRAME. */
+  opsPerFrame?: number;
 }
+
+/** A relay URL as it is dialed and signed: no trailing slash. */
+const normalRelayUrl = (url: string): string => url.replace(/\/+$/, '');
 
 /** Ops on the relay; every call made while it is unreachable throws
  *  TransportOffline, so the outbox waits (no fallback to git). */
@@ -93,21 +103,38 @@ export class RelayFederationTransport implements FederationTransport {
     await this.upload(ops);
   }
 
-  /** Stores entries (stubs too) on the relay, idempotent by (replica, seq). */
+  /** Stores entries (stubs too) on the relay, idempotent by (replica, seq),
+   *  in frames of at most OPS_PER_FRAME entries and FRAME_BYTES; it stops at
+   *  the first frame the relay stored only part of. */
   async upload(entries: readonly LogEntry[]): Promise<void> {
-    if (entries.length === 0) return;
-    const reply = await this.request({
-      t: 'publish',
-      id: 0,
-      ops: [...entries],
-    });
-    if (reply.t !== 'stored')
-      throw new TransportOffline('the relay stored nothing');
-    const top = Math.max(...entries.map((e) => e.seq));
-    if (reply.through < top)
-      throw new TransportOffline(
-        `the relay holds this machine's ops only through seq ${reply.through}`
-      );
+    const per = this.deps.opsPerFrame ?? OPS_PER_FRAME;
+    let frame: LogEntry[] = [];
+    let bytes = 0;
+    const send = async (): Promise<void> => {
+      if (frame.length === 0) return;
+      const ops = frame;
+      frame = [];
+      bytes = 0;
+      const reply = await this.request({ t: 'publish', id: 0, ops });
+      if (reply.t !== 'stored')
+        throw new TransportOffline('the relay stored nothing');
+      const top = Math.max(...ops.map((e) => e.seq));
+      if (reply.through < top)
+        throw new TransportOffline(
+          `the relay holds this machine's ops only through seq ${reply.through}`
+        );
+    };
+    for (const e of entries) {
+      const size = Buffer.byteLength(JSON.stringify(e));
+      if (
+        frame.length >= per ||
+        (frame.length > 0 && bytes + size > FRAME_BYTES)
+      )
+        await send();
+      frame.push(e);
+      bytes += size;
+    }
+    await send();
   }
 
   async pull(since: Watermarks): Promise<LogEntry[]> {
@@ -125,11 +152,13 @@ export class RelayFederationTransport implements FederationTransport {
   forgetScans(): void {}
 
   async ack(through: Watermarks): Promise<void> {
-    await this.request({
+    const reply = await this.request({
       t: 'ack',
       id: 0,
       through: Object.fromEntries(through),
     });
+    if (reply.t !== 'acknowledged')
+      throw new TransportOffline('the relay did not acknowledge');
   }
 
   presence(): { replica: string; since: string }[] | null {
@@ -221,8 +250,9 @@ export class RelayFederationTransport implements FederationTransport {
   }
 
   private open(): Promise<WebSocket> {
-    const { url, teamId, replica, signPriv } = this.deps;
-    const endpoint = `${url.replace(/\/+$/, '')}/v1/teams/${teamId}`;
+    const { teamId, replica, signPriv } = this.deps;
+    const url = normalRelayUrl(this.deps.url);
+    const endpoint = `${url}/v1/teams/${teamId}`;
     return new Promise<WebSocket>((resolve, reject) => {
       let settled = false;
       const fail = (why: string): void => {
@@ -250,7 +280,11 @@ export class RelayFederationTransport implements FederationTransport {
       }, REQUEST_MS);
       ws.onmessage = (ev) => {
         const frame = readFrame(ev.data);
-        if (frame === null) return;
+        // A frame off the contract closes the socket, as the contract says.
+        if (frame === null) {
+          ws.close();
+          return;
+        }
         if (!settled && frame.t === 'challenge') {
           const keyOp = this.deps.keyOp();
           const sig = signText(
@@ -330,7 +364,7 @@ export class RelayFederationTransport implements FederationTransport {
 
 // A frame off the wire, or null; its ops are checked by the pass, not here.
 function readFrame(data: unknown): RelayFrame | null {
-  if (typeof data !== 'string') return null;
+  if (typeof data !== 'string' || data.length > MAX_INCOMING_CHARS) return null;
   try {
     const v = JSON.parse(data) as unknown;
     if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;

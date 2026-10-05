@@ -31,7 +31,7 @@ describe('a team of real daemons on the relay', () => {
   it(
     'switches from git, exchanges mail and board ops on the relay, and switches back',
     async () => {
-      const c = await cluster(['ada', 'bob', 'cy'], { build: '0.40.0' });
+      const c = await cluster(['ada', 'bob', 'cy']);
       stops.push(c.stop);
       const [ada, bob, cy] = c.members as [Member, Member, Member];
       await ada.handle.found();

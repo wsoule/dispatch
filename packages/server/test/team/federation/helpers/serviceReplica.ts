@@ -95,6 +95,8 @@ export function serviceReplica(
     restagePerPublisher?: number;
     /** A bare repo: the git transport and v1 branch over it, as a daemon has. */
     gitRemote?: string;
+    /** What this build speaks (FW-R39), in place of BUILD_CAPS. */
+    caps?: () => readonly string[];
   } = {}
 ): ServiceReplica {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), `fed-svc-${handle}-`)));
@@ -118,6 +120,7 @@ export function serviceReplica(
   const legacyRef: { current: LegacyWindow | null } = { current: null };
   const signerRef: { current: TaskOpSigner | null } = { current: null };
   const roster = new RosterService({
+    ...(opts.caps === undefined ? {} : { caps: opts.caps }),
     fed,
     handle,
     device: `${handle}-laptop`,
@@ -180,6 +183,8 @@ export function serviceReplica(
             readHints: () => readHints(fed, roster),
             now,
           }),
+    // The fake relay listens on ws://127.0.0.1.
+    allowLoopbackRelay: true,
     // As a daemon wires it: a push from the relay runs a pass.
     relayFor: (url) =>
       new RelayFederationTransport({

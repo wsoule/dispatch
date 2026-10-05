@@ -179,6 +179,8 @@ export interface FederationServiceOptions {
   /** A relay transport for the URL a `transport {kind: 'relay'}` op names;
    *  absent, this build stays on git and says so. */
   relayFor?: (url: string) => SwitchableTransport;
+  /** Tests only: follow a ws:// relay on this machine, as the fake relay is. */
+  allowLoopbackRelay?: boolean;
   remote: string;
   branch: string;
   intervalMs: number;
@@ -1147,6 +1149,23 @@ export class FederationService {
       );
   }
 
+  // Whether a relay URL from the roster may be dialed: wss://, or, in tests
+  // only, ws:// on this machine.
+  private relayUrlOk(url: string): boolean {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol === 'wss:') return true;
+    return (
+      this.opts.allowLoopbackRelay === true &&
+      parsed.protocol === 'ws:' &&
+      ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
+    );
+  }
+
   // Moves to the transport the roster's `transport` op names: this
   // replica's whole log goes up first, idempotent by (replica, seq), so
   // nothing is lost, and only once the outbox is empty, so the op that made
@@ -1168,6 +1187,13 @@ export class FederationService {
       fed.problem(
         'transport:switch',
         'the team switched to a relay this machine cannot reach; it keeps syncing over git until it can'
+      );
+      return;
+    } else if (!this.relayUrlOk(want.url)) {
+      // M1: a roster URL is dialed with this machine's log; only over TLS.
+      fed.problem(
+        'transport:switch',
+        'the team switched to a relay whose address is not wss://, so this machine keeps syncing over git; an admin can switch again with a wss:// address'
       );
       return;
     } else next = this.opts.relayFor(want.url);
