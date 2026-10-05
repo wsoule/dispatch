@@ -1,9 +1,10 @@
 import type { Message } from '@dispatch/protocol';
-import { b64u, buildOp, sealPayload } from '@dispatch/protocol/federation';
-import type { FederatedOp, MailTarget } from '@dispatch/protocol/federation';
+import { sealPayload } from '@dispatch/protocol/federation';
+import type { MailTarget } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { MailOut } from '../../../src/team/federation/mail.js';
+import { forgeInner, forward } from './helpers/forgeMail.js';
 import { MemoryRemote } from './helpers/memoryTransport.js';
 import {
   foundedTeam,
@@ -54,64 +55,6 @@ const target = (recipient: string, r: MessagingReplica): MailTarget => ({
   via: 'direct',
   homes: [r.fed.replica],
 });
-
-// A mail op signed with `as`'s key at any seq and prev, as a revoked replica
-// can still make one: sealed to `to`, its content key kept for a forward.
-function forgeInner(
-  as: MessagingReplica,
-  seq: number,
-  message: Message,
-  targets: MailTarget[],
-  to: MessagingReplica
-): { op: FederatedOp; key: Buffer } {
-  const {
-    to: sealedTo,
-    sealed,
-    key,
-  } = sealPayload({
-    replica: as.fed.replica,
-    seq,
-    type: 'mail',
-    payload: { message, targets } as never,
-    recipients: new Map([[to.fed.replica, to.fed.keys.sealPub]]),
-  });
-  const op = buildOp(
-    {
-      replica: as.fed.replica,
-      seq,
-      prev: 'f'.repeat(64),
-      hlc: message.hlc ?? '',
-      type: 'mail',
-      to: sealedTo,
-      sealed,
-    },
-    as.fed.keys.signPriv
-  );
-  return { op, key };
-}
-
-// `by` forwards `inner` (whose key it holds) to `to` for `forTarget`.
-function forward(
-  by: MessagingReplica,
-  inner: { op: FederatedOp; key: Buffer },
-  forTarget: string,
-  to: MessagingReplica
-): void {
-  by.fed.append({
-    type: 'mail',
-    body: { forward: inner.op as never },
-    seal: (stamp) => {
-      const { to: sealedTo, sealed } = sealPayload({
-        replica: by.fed.replica,
-        seq: stamp.seq,
-        type: 'mail',
-        payload: { target: forTarget, key: b64u(inner.key) },
-        recipients: new Map([[to.fed.replica, to.fed.keys.sealPub]]),
-      });
-      return { to: sealedTo, sealed };
-    },
-  });
-}
 
 describe('I1: the hlc binding is one-sided (FW-R32(1))', () => {
   it('delivers honest mail published long after it was written', async () => {

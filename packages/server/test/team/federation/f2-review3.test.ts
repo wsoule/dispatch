@@ -3,6 +3,7 @@ import { sealPayload } from '@dispatch/protocol/federation';
 import type { MailTarget } from '@dispatch/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { forgeInner, forward } from './helpers/forgeMail.js';
 import { foundedTeam, foundedTeamWith } from './helpers/messagingReplica.js';
 import type { MessagingReplica } from './helpers/messagingReplica.js';
 
@@ -67,11 +68,51 @@ describe('X1: a delivery report counts only from a home of its recipient (FW-R35
   });
 });
 
-describe('X2: a forward of an op no longer remembered (FW-R35(2))', () => {
-  // Bob held ada's task mail when his run ended; cy's run takes the task
-  // after cy's seen rows have moved past ada's original.
-  async function handoff(gone: boolean) {
-    open = await foundedTeamWith({ mailSeenKept: 1 }, 'ada', 'bob', 'cy');
+describe('X1b: the hand-off exception covers only the handed recipient (FW-R36(3))', () => {
+  it("lets no claimant report another recipient's state", async () => {
+    open = await foundedTeam('ada', 'bob', 'cy');
+    const [ada, bob, cy] = [at(0), at(1), at(2)];
+    const task = bob.store.create({ title: 'T', assignee: 'human' }).meta.id;
+    for (const r of [ada, cy]) await r.settleWith(bob);
+    await ada.startExecute(task, 'r-0000000000a3');
+    await bob.settleWith(ada);
+    ada.host.endRun(task);
+    const { message } = await bob.engine.send(
+      { to: [`task:${task}`, 'human:ada'], kind: 'message', body: 'both' },
+      human('bob')
+    );
+    await ada.settleWith(bob);
+    ada.presence.runEnded({
+      id: 'r-0000000000a3',
+      taskId: task,
+      kind: 'execute',
+    });
+    await cy.startExecute(task, 'r-0000000000c3');
+    await ada.settleWith(cy);
+    await cy.settleWith(ada);
+    const mine = () =>
+      ada.messages
+        .deliveries({ messageId: message.id, recipient: 'human:ada' })
+        .map((d) => d.state);
+    expect(mine()).toEqual(['notified']);
+    report(cy, ada, [
+      {
+        t: 'delivery',
+        message: message.id,
+        recipient: 'human:ada',
+        state: 'read',
+        at: cy.clock.now.toISOString(),
+      },
+    ]);
+    await ada.settleWith(cy);
+    expect(mine()).toEqual(['notified']);
+  });
+});
+
+describe('X2: a forward is applied only against a hash verified here (FW-R36)', () => {
+  // Bob held ada's task mail when his run ended; cy's run takes the task.
+  async function handoff(forgetOriginal: boolean) {
+    open = await foundedTeam('ada', 'bob', 'cy');
     const [ada, bob, cy] = [at(0), at(1), at(2)];
     const task = ada.store.create({ title: 'held', assignee: 'human' }).meta.id;
     for (const r of [bob, cy]) await r.settleWith(ada);
@@ -82,23 +123,13 @@ describe('X2: a forward of an op no longer remembered (FW-R35(2))', () => {
       { to: [`task:${task}`], kind: 'message', body: 'context' },
       human('ada')
     );
-    // More of ada's mail after it pushes it out of cy's seen rows.
-    for (const body of ['one', 'two'])
-      await ada.engine.send(
-        { to: ['human:cy'], kind: 'message', body },
-        human('ada')
-      );
     await bob.settleWith(ada);
     await cy.settleWith(ada);
-    await cy.service.syncNow();
-    if (gone) {
-      // The branch no longer carries ada's original, not even its stub.
-      const original = (ada.remote.logs.get(ada.fed.replica) ?? []).find(
-        (e) => e.type === 'mail' && (e.to ?? []).includes(bob.fed.replica)
-      );
-      if (original === undefined) throw new Error('no original');
-      ada.remote.gone.add(original);
-    }
+    if (forgetOriginal)
+      // As on a machine that verified ada's op before it kept these rows.
+      cy.fed.db
+        .query('DELETE FROM fed_mail_seen WHERE replica = ?')
+        .run(ada.fed.replica);
     bob.presence.runEnded({
       id: 'r-0000000000b1',
       taskId: task,
@@ -112,14 +143,9 @@ describe('X2: a forward of an op no longer remembered (FW-R35(2))', () => {
     return { ada, bob, cy, task, message };
   }
 
-  it('checks the original against the branch and delivers it', async () => {
+  it('delivers a forward of an op whose hash this machine verified', async () => {
     const { bob, cy, task, message } = await handoff(false);
     expect(cy.host.pushed.map((p) => p.messageId)).toContain(message.id);
-    expect(
-      cy.fed.db
-        .query<{ n: number }, []>('SELECT COUNT(*) AS n FROM fed_parked')
-        .get()?.n
-    ).toBe(0);
     await bob.settleWith(cy);
     expect(
       bob.messages.deliveries({
@@ -129,7 +155,7 @@ describe('X2: a forward of an op no longer remembered (FW-R35(2))', () => {
     ).toEqual([]);
   });
 
-  it('refuses a forward whose original the branch no longer has; the holder keeps its copy', async () => {
+  it('refuses a forward of an op passed with no hash here; the holder keeps its copy', async () => {
     const { bob, cy, task, message } = await handoff(true);
     expect(cy.host.pushed.map((p) => p.messageId)).not.toContain(message.id);
     expect(
@@ -145,7 +171,6 @@ describe('X2: a forward of an op no longer remembered (FW-R35(2))', () => {
     expect(
       bob.fed.problems().some((p) => p.subject === `mail-out:${message.id}`)
     ).toBe(true);
-    // Nothing would verify it now, so bob does not forward it again.
     const before = bob.fed.head()?.seq ?? 0;
     await bob.service.syncNow();
     await bob.service.syncNow();
@@ -154,6 +179,53 @@ describe('X2: a forward of an op no longer remembered (FW-R35(2))', () => {
         (e) => e.type === 'mail' && e.seq > before
       )
     ).toEqual([]);
+  });
+
+  // FW-R32 I2b, reopened by the branch check: a revoked replica's fork of an
+  // old seq, forwarded by a member, is never delivered.
+  it("never delivers a revoked replica's fork of an old op through a forward", async () => {
+    open = await foundedTeam('ada', 'bob', 'cy');
+    const [ada, bob, cy] = [at(0), at(1), at(2)];
+    for (let i = 0; i < 6; i++)
+      await cy.engine.send(
+        { to: ['human:bob'], kind: 'message', body: `n${i}` },
+        human('cy')
+      );
+    await bob.settleWith(cy);
+    await ada.settleWith(cy);
+    ada.roster.revoke(cy.fed.replica, 'left');
+    await ada.service.syncNow();
+    await bob.settleWith(ada);
+    const mails = (cy.remote.logs.get(cy.fed.replica) ?? []).filter(
+      (e) => e.type === 'mail'
+    );
+    const old = mails[0];
+    if (old === undefined) throw new Error('no mail');
+    const forged = {
+      id: 'm-09forged',
+      thread: 'm-09forged',
+      replyTo: null,
+      from: 'human:cy',
+      to: ['human:bob'],
+      kind: 'message' as const,
+      body: 'forged',
+      refs: [],
+      urgent: false,
+      blocking: false,
+      wake: 'none' as const,
+      createdAt: cy.clock.now.toISOString(),
+      hlc: old.hlc,
+    };
+    const inner = forgeInner(
+      cy,
+      old.seq,
+      forged,
+      [{ recipient: 'human:bob', via: 'direct', homes: [bob.fed.replica] }],
+      ada
+    );
+    forward(ada, inner, 'human:bob', bob);
+    for (let i = 0; i < 2; i++) await bob.settleWith(ada);
+    expect(bob.messages.getMessage('m-09forged')).toBeNull();
   });
 
   it('hands a held copy on again after any other refusal', async () => {

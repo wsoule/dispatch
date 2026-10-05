@@ -279,11 +279,6 @@ export class FederationService {
     this.collectors.sort((a, b) => a.order - b.order);
   }
 
-  /** The branch's lines for one op of a replica (FW-R35(2)). */
-  findOp(replica: string, seq: number): Promise<LogEntry[]> {
-    return this.opts.transport.findOp(replica, seq);
-  }
-
   setInbox(inbox: InboxDrainer): void {
     this.inbox = inbox;
   }

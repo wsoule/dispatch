@@ -150,7 +150,7 @@ export class StateOut implements Collector {
           REPORTED.includes(e.state) &&
           wasSealedTo(fed, e.message, publisher) &&
           (this.homesOf(e.recipient).includes(publisher) ||
-            handedTo(fed, e.message, publisher))
+            handedTo(fed, e.message, publisher, e.recipient))
         )
           entries.push(e);
       } else if (e.t === 'refused') {
@@ -166,9 +166,9 @@ export class StateOut implements Collector {
         else if (handedTo(fed, e.message, publisher))
           fed.db
             .query(
-              "DELETE FROM fed_published WHERE kind = 'held-out' AND ref = ?"
+              "DELETE FROM fed_published WHERE kind = 'held-out' AND ref LIKE ? ESCAPE '\\'"
             )
-            .run(`${e.message}\n${publisher}`);
+            .run(`${likeEscape(`${e.message}\n${publisher}\n`)}%`);
       } else if (e.t === 'settle') {
         try {
           engine.applySettlement(e, publisher);
@@ -352,8 +352,8 @@ export class HeldMail implements Collector {
     for (const d of messages.deliveries({ recipient, states: ['held'] })) {
       const message = messages.getMessage(d.messageId);
       if (message === null) continue;
-      // Once per message and machine: a later pass waits for the report.
-      const ref = `${message.id}\n${replica}`;
+      // Once per message, machine and recipient: a later pass waits for the report.
+      const ref = `${message.id}\n${replica}\n${recipient}`;
       const sent = fed.db
         .query<{ ref: string }, [string]>(
           "SELECT ref FROM fed_published WHERE kind = 'held-out' AND ref = ?"
@@ -384,13 +384,29 @@ export class HeldMail implements Collector {
   }
 }
 
-// Whether this machine handed `messageId`'s held task copy to `replica`.
-function handedTo(fed: FedStore, messageId: string, replica: string): boolean {
+// Whether this machine handed `messageId`'s held copy for `recipient` (any
+// recipient when omitted) to `replica`.
+function handedTo(
+  fed: FedStore,
+  messageId: string,
+  replica: string,
+  recipient?: string
+): boolean {
+  const prefix = `${messageId}\n${replica}\n`;
   return (
     fed.db
       .query<{ ref: string }, [string]>(
-        "SELECT ref FROM fed_published WHERE kind = 'held-out' AND ref = ?"
+        "SELECT ref FROM fed_published WHERE kind = 'held-out' AND ref LIKE ? ESCAPE '\\'"
       )
-      .get(`${messageId}\n${replica}`) !== null
+      .get(
+        recipient === undefined
+          ? `${likeEscape(prefix)}%`
+          : likeEscape(`${prefix}${recipient}`)
+      ) !== null
   );
+}
+
+// A LIKE pattern matching `text` literally.
+function likeEscape(text: string): string {
+  return text.replace(/[\\%_]/g, '\\$&');
 }

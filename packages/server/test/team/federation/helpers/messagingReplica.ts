@@ -141,7 +141,6 @@ export interface TeamOpts {
   stateOpsPerHour?: number;
   maxParkedPerPublisher?: number;
   restagePerPublisher?: number;
-  mailSeenKept?: number;
 }
 
 // One daemon's board sync plus its messages.db, engine and the federation
@@ -271,13 +270,9 @@ export function messagingReplica(
     ...(opts.maxWaitingPerPublisher === undefined
       ? {}
       : { maxWaiting: opts.maxWaitingPerPublisher }),
-    ...(opts.mailSeenKept === undefined
-      ? {}
-      : { mailSeenKept: opts.mailSeenKept }),
     homes,
     now: () => base.clock.now,
     state,
-    findOp: (replica, seq) => base.service.findOp(replica, seq),
   });
   base.service.register(inbound);
   base.service.register(inbound.stateHandler(stateOut));
