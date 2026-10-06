@@ -104,4 +104,6 @@ jobs:
         working-directory: ${{ runner.temp }}/package
         env:
           DIST_TAG: ${{ steps.pkg.outputs.distTag }}
-        run: npx --yes npm@11.15.0 stage publish --provenance --access public --tag "$DIST_TAG"
+        run:
+          npx --yes npm@11.15.0 stage publish --provenance --access public --tag
+          "$DIST_TAG"
