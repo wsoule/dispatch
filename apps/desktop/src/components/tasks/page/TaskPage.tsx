@@ -125,6 +125,8 @@ export interface TaskPageProps {
   onExpand?: () => void;
   /** Leaves the full page once its task has gone. */
   onBack?: () => void;
+  /** Unread messages to you about this task; Two views shows it on the Conversation toggle. */
+  conversationCount?: number;
 }
 
 // Where the task's run is live on the team and whom it waits on; nothing
@@ -327,6 +329,7 @@ function TaskPageLoaded({
   onClose,
   onExpand,
   onBack,
+  conversationCount = 0,
 }: TaskPageProps & { host: TaskPageHost; item: TaskListItem }) {
   const { project } = host;
   const meta = item.meta;
@@ -658,15 +661,38 @@ function TaskPageLoaded({
           (p) => p.viewing === taskId && p.ref !== project.me
         )}
       />
-      {threadView !== undefined && (
-        <IconButton
-          label="Thread"
-          active={mode === 'thread'}
-          onClick={() => selectMode(mode === 'thread' ? autoMode : 'thread')}
-        >
-          <MessagesSquare />
-        </IconButton>
-      )}
+      {threadView !== undefined &&
+        (compact ? (
+          // Two views names the toggle, as the conversation is this task's home.
+          <button
+            type="button"
+            aria-pressed={mode === 'thread'}
+            data-testid="task-conversation-toggle"
+            onClick={() => selectMode(mode === 'thread' ? autoMode : 'thread')}
+            className={cn(
+              'rounded-control flex h-7 items-center gap-1.5 px-2 text-[12px] font-medium',
+              mode === 'thread'
+                ? 'bg-surface-active text-foreground'
+                : 'text-muted-foreground hover:text-foreground hover:bg-surface-hover'
+            )}
+          >
+            <MessagesSquare className="size-3.5" />
+            Conversation
+            {conversationCount > 0 && (
+              <span className="text-(--accent) tabular-nums">
+                · {conversationCount}
+              </span>
+            )}
+          </button>
+        ) : (
+          <IconButton
+            label="Thread"
+            active={mode === 'thread'}
+            onClick={() => selectMode(mode === 'thread' ? autoMode : 'thread')}
+          >
+            <MessagesSquare />
+          </IconButton>
+        ))}
       {runTab(filesView) && (
         <IconButton
           label="The run's files"
