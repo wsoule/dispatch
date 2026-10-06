@@ -67,7 +67,7 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { SettingsPage } from '../lib/appNav';
 import { isInsufficientTier } from '../lib/daemonAuth';
 import { cn } from '@/lib/utils';
-import { PageHeader } from '@/ui/ai/page-header';
+import { PageHeader, PageHeaderEmbeddedContext } from '@/ui/ai/page-header';
 import {
   SIDEBAR_ROW_ACTIVE_CLASS,
   SIDEBAR_ROW_CLASS,
@@ -617,8 +617,21 @@ export function SettingsView({
           </nav>
 
           {hosted !== undefined && !searching ? (
+            // Titled like every other page; the hosted view keeps only its tabs row.
             <div className="flex min-h-0 flex-col overflow-hidden">
-              {hosted.render()}
+              <div className="flex flex-col gap-1 px-6 pt-5 pb-3">
+                <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
+                  {hosted.label}
+                </h1>
+                <p className="font-book text-muted-foreground text-[13px]">
+                  {hosted.intro}
+                </p>
+              </div>
+              <PageHeaderEmbeddedContext.Provider value>
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  {hosted.render()}
+                </div>
+              </PageHeaderEmbeddedContext.Provider>
             </div>
           ) : (
             <div className="min-h-0 overflow-y-auto px-6 py-5">

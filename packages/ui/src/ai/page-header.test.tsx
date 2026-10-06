@@ -4,6 +4,7 @@ import { expect, test } from 'bun:test';
 import {
   HeaderIconTriad,
   PageHeader,
+  PageHeaderEmbeddedContext,
   type PageHeaderShell,
   PageHeaderShellContext,
   ViewTabs,
@@ -152,4 +153,28 @@ test('the triad shows a dot only while a filter is active', () => {
   expect(
     active.querySelector('[data-slot="filter-active-dot"]')
   ).not.toBeNull();
+});
+
+test('embedded, the crumb row gives way and actions join the tabs row', () => {
+  const { container } = render(
+    <PageHeaderEmbeddedContext.Provider value>
+      <PageHeader
+        crumb={['Sessions']}
+        actions={<button type="button">Export</button>}
+        tabs={<span>tabs</span>}
+      />
+    </PageHeaderEmbeddedContext.Provider>
+  );
+  expect(screen.queryByText('Sessions')).toBeNull();
+  expect(rows(container)).toHaveLength(1);
+  expect(rows(container)[0]?.textContent).toBe('tabsExport');
+});
+
+test('embedded with nothing but a crumb renders nothing', () => {
+  const { container } = render(
+    <PageHeaderEmbeddedContext.Provider value>
+      <PageHeader crumb={['Sessions']} />
+    </PageHeaderEmbeddedContext.Provider>
+  );
+  expect(container.innerHTML).toBe('');
 });

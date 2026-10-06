@@ -32,6 +32,10 @@ export const PageHeaderShellContext = createContext<PageHeaderShell | null>(
   null
 );
 
+/** True where a host titles the page itself (a Settings panel hosting a whole view): the
+ * header drops its crumb row and keeps the tabs row, with `actions` at its right end. */
+export const PageHeaderEmbeddedContext = createContext(false);
+
 export type PageHeaderProps = {
   /** Before the crumb: a team icon, a back button. */
   leading?: ReactNode;
@@ -61,9 +65,27 @@ export function PageHeader({
   className,
 }: PageHeaderProps) {
   const shell = useContext(PageHeaderShellContext);
+  const embedded = useContext(PageHeaderEmbeddedContext);
   const showSidebarToggle = shell?.sidebarHidden === true;
   const inset = showSidebarToggle && shell.trafficLightInset;
   const hasRow2 = tabs !== undefined || controls !== undefined;
+  if (embedded) {
+    if (!hasRow2 && actions === undefined) return null;
+    return (
+      <header data-slot="page-header" className={cn('shrink-0', className)}>
+        <div
+          data-slot="page-header-row"
+          className="shadow-hairline-bottom flex min-h-11 flex-wrap items-center gap-2 px-6 py-1.5"
+        >
+          {tabs}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {controls}
+            {actions}
+          </div>
+        </div>
+      </header>
+    );
+  }
   return (
     <header data-slot="page-header" className={cn('shrink-0', className)}>
       <div
