@@ -70,7 +70,6 @@ import {
 import { useToasts } from './components/shell/Toasts';
 import { TwoViewShell } from './components/shell/TwoViewShell';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
-import { BackToTasks } from './components/tasks/BackToTasks';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
 import { TaskPage } from './components/tasks/page/TaskPage';
@@ -79,6 +78,7 @@ import {
   TaskPageHostContext,
 } from './components/tasks/page/TaskPageHost';
 import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
+import { TasksBackButton } from './components/tasks/TasksPageHeader';
 import { TaskThreadTab } from './components/tasks/TaskThreadTab';
 import { useAdminItems } from './hooks/useAdminItems';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
@@ -186,7 +186,7 @@ import { TwoViewOverseer } from './views/TwoViewOverseer';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
+import { EmptyState, SectionLabel } from '@/ui/chrome';
 import {
   Empty,
   EmptyContent,
@@ -1536,7 +1536,7 @@ function App() {
       return (
         <div className="flex h-full min-h-0 flex-col">
           <div className="px-4 pt-2">
-            <BackToTasks onBack={closeTwoViewsPage} />
+            <TasksBackButton onBack={closeTwoViewsPage} />
           </div>
           <DaemonUnavailable
             starting={data.portLoading}
@@ -1604,6 +1604,11 @@ function App() {
             initialMerge={page.merge}
             onSelectDoc={(docId) => openDoc(docId, null)}
             onOpenRef={openRef}
+            tasksPage={{
+              onBack: closeTwoViewsPage,
+              onOpenAllDocs: () =>
+                dispatchNav({ type: 'setProjectView', view: 'docs' }),
+            }}
             discussion={(docId) => (
               <ConversationTimeline
                 key={docId}
@@ -1612,9 +1617,7 @@ function App() {
                 composerTo={null}
                 composerLabel=""
                 onOpenRef={openRef}
-                header={
-                  <span className="text-[12px] font-semibold">Discussion</span>
-                }
+                header={<SectionLabel>Discussion</SectionLabel>}
                 emptyText="No discussion yet. Messages that reference this doc show here."
               />
             )}
@@ -1628,6 +1631,7 @@ function App() {
             data={data}
             prNumber={page.number}
             onBack={closeTwoViewsPage}
+            tasksPage
           />
         );
       case 'draft': {
@@ -1649,7 +1653,14 @@ function App() {
         );
       }
       case 'room':
-        return <RoomHome data={data} room={page.room} onOpenRef={openRef} />;
+        return (
+          <RoomHome
+            data={data}
+            room={page.room}
+            onOpenRef={openRef}
+            onBack={closeTwoViewsPage}
+          />
+        );
       case 'view':
         return renderHostedView(page.view);
       case 'impact':
@@ -2636,6 +2647,7 @@ function App() {
                         entries={paletteEntries}
                         onClose={() => dispatchNav({ type: 'closePalette' })}
                         searchDocs={searchDocs}
+                        twoViews={twoViews}
                       />
                     </div>
                   </SurfaceHosts>

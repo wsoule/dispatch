@@ -69,6 +69,8 @@ interface DocPageProps {
     availability: DecideAvailability;
     onRestartDaemon: () => Promise<void>;
   };
+  /** The page header's crumb already names the doc (Two views), so the toolbar omits it. */
+  titleInCrumb?: boolean;
 }
 
 // The reject reason when a conflict was resolved in the doc itself.
@@ -99,6 +101,7 @@ export function DocPage({
   onOpenRef,
   taskIdOfRun,
   gates,
+  titleInCrumb = false,
 }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
@@ -425,8 +428,14 @@ export function DocPage({
     setPanel((p) => (p === to ? 'editor' : to));
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
-        <h2 className="truncate text-sm font-medium">{doc.title}</h2>
+      <header
+        className={`flex items-center gap-2 border-b border-[var(--color-border)] ${
+          titleInCrumb ? 'px-4 py-1.5' : 'px-3 py-2'
+        }`}
+      >
+        {!titleInCrumb && (
+          <h2 className="truncate text-sm font-medium">{doc.title}</h2>
+        )}
         <span className="text-xs text-[var(--color-muted-foreground)]">
           {doc.handle}
         </span>

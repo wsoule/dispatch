@@ -77,11 +77,13 @@ function mount({
   ran = [],
   onClose = () => {},
   searchDocs,
+  twoViews,
 }: {
   actions?: ShellActions;
   ran?: string[];
   onClose?: () => void;
   searchDocs?: (query: string) => Promise<PaletteEntry[]>;
+  twoViews?: boolean;
 } = {}) {
   return render(
     <ShellActionsProvider value={actions}>
@@ -90,6 +92,7 @@ function mount({
         entries={entries(ran)}
         onClose={onClose}
         searchDocs={searchDocs}
+        twoViews={twoViews}
       />
     </ShellActionsProvider>
   );
@@ -150,6 +153,16 @@ test('the input shows the Ask Overseer Tab hint and is described by it', () => {
   expect(hint?.querySelector('[data-slot="kbd"]')?.textContent).toBe('Tab');
   expect(hint?.id).not.toBe('');
   expect(input().getAttribute('aria-describedby')).toBe(hint?.id);
+});
+
+test('in Two views the Tab hint and the empty state name your agent', () => {
+  mount({ twoViews: true });
+  const hint = document.querySelector('[data-slot="command-input-hint"]');
+  expect(hint?.textContent).toContain('Ask your agent');
+  expect(hint?.textContent).not.toContain('Assistant');
+  fireEvent.change(input(), { target: { value: 'zzz-no-match' } });
+  const empty = document.querySelector('[data-slot="empty-state"]');
+  expect(empty?.textContent).toContain('press Tab to ask your agent.');
 });
 
 test('the first row is the 40px active row', () => {

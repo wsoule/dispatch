@@ -6,7 +6,7 @@ import { FilePreview } from '../components/files/FilePreview';
 import { FileTree } from '../components/files/FileTree';
 import { QuickOpenDialog } from '../components/files/QuickOpenDialog';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { BackToTasks } from '../components/tasks/BackToTasks';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { EditorBuffer } from '../lib/editorBuffer';
 import {
@@ -143,7 +143,7 @@ export function FilesView({ data, runId = null, onBack }: FilesViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
-        {onBack && <BackToTasks onBack={onBack} />}
+        {onBack && <TasksBackButton onBack={onBack} />}
         <FileCode2 className="size-4" />
         <h1 className="text-sm font-medium">Files</h1>
         {runId !== null && (

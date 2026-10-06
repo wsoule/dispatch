@@ -329,6 +329,21 @@ test('an Assistant conversation this pane cannot reply to is read-only, with a w
   expect(screen.queryByLabelText('Reply')).toBeNull();
 });
 
+test('in Two views the reply box names your agent, never the Assistant', () => {
+  renderPane({ route: 'overseer', overseerVoice: 'agent' });
+  expect(screen.getByText('To your agent')).toBeTruthy();
+  expect(replyBox().placeholder).toBe('Reply to your agent…');
+  cleanup();
+  renderPane({ route: 'overseer', overseerVoice: 'agent', overseerBusy: true });
+  expect(replyBox().placeholder).toBe('Your agent is answering…');
+  cleanup();
+  renderPane({ route: 'overseer-elsewhere', overseerVoice: 'agent' });
+  expect(
+    screen.getByText('This conversation with your agent takes no replies here.')
+  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Open Overseer' })).toBeTruthy();
+});
+
 // happy-dom has no layout, so the scroller's height is given by hand.
 test('opens a thread at its newest message', () => {
   const height = Object.getOwnPropertyDescriptor(

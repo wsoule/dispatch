@@ -19,7 +19,7 @@ import { GitRightPane } from '../components/git/GitRightPane';
 import { StashesPanel } from '../components/git/StashesPanel';
 import { StatusPanel } from '../components/git/StatusPanel';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { BackToTasks } from '../components/tasks/BackToTasks';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useGit } from '../hooks/useGit';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
@@ -583,7 +583,7 @@ export function BranchesView({
       onKeyDown={onRootKeyDown}
     >
       <PageHeader
-        leading={onBack && <BackToTasks onBack={onBack} />}
+        leading={onBack && <TasksBackButton onBack={onBack} />}
         crumb={crumb}
         actions={
           <>

@@ -6,8 +6,11 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useTaskComments } from '../../hooks/useTaskComments';
 import { threadsPrefix, useChannels } from '../../hooks/useThreads';
 import type { RefAction } from '../../lib/threadSources';
+import { TasksPageHeader } from '../tasks/TasksPageHeader';
 import { ConversationTimeline } from './ConversationTimeline';
+import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 import { Button } from '@/ui/button';
+import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 // Follow or leave a room; humans are never implicit members.
 function FollowButton({
@@ -111,15 +114,32 @@ export function TaskConversationHome({
   );
 }
 
+// A member's chip label: a person's name, or the address with what kind of member it is.
+function memberLabel(
+  member: string,
+  people: DispatchProjectData['people']
+): string {
+  if (member.startsWith('a2a:')) return `${member.slice(4)} · A2A`;
+  if (member.startsWith('run:') || member.startsWith('agent:')) {
+    return `${member.replace(/^(run|agent):/, '')} · agent`;
+  }
+  return (
+    people.find((p) => p.ref === member)?.name ?? member.replace(/^human:/, '')
+  );
+}
+
 /** A named room (#release): members, Follow, a flat timeline. Never listed; reached by name. */
 export function RoomHome({
   data,
   room,
   onOpenRef,
+  onBack,
 }: {
   data: DispatchProjectData;
   room: string;
   onOpenRef: (action: RefAction) => void;
+  /** Back to the Tasks list. */
+  onBack: () => void;
 }) {
   const channels = useChannels(
     data.client,
@@ -129,23 +149,30 @@ export function RoomHome({
   const members = channels.find((c) => c.name === room)?.members ?? [];
   return (
     <div data-testid="room-page" className="flex h-full min-h-0 flex-col">
-      <div className="border-border flex flex-wrap items-center gap-2 border-b-[0.5px] px-4 py-2">
-        <span className="text-[15px] font-semibold"># {room}</span>
-        <span className="text-muted-foreground text-[12px]">
-          {members.length} {members.length === 1 ? 'member' : 'members'}
-        </span>
-        <span className="flex flex-wrap gap-1">
-          {members.slice(0, 8).map((member) => (
-            <span
-              key={member}
-              className="rounded-pill border-border-chip text-muted-foreground border-[0.5px] px-2 text-[11px]"
-            >
-              {member.startsWith('a2a:') ? `${member} · A2A` : member}
-            </span>
-          ))}
-        </span>
-        <span className="flex-1" />
-        <FollowButton data={data} room={room} />
+      <TasksPageHeader
+        onBack={onBack}
+        crumb={[`# ${room}`]}
+        actions={<FollowButton data={data} room={room} />}
+      />
+      <div className="shadow-hairline-bottom flex flex-wrap items-center gap-1.5 px-4 py-2">
+        <SectionLabel count={members.length}>Members</SectionLabel>
+        {members.slice(0, 8).map((member) => (
+          <span
+            key={member}
+            className="rounded-control border-border-chip flex h-[22px] items-center gap-1.5 border-[0.5px] px-2 text-[11.5px] text-(--text-secondary)"
+          >
+            <InitialsAvatar
+              name={memberLabel(member, data.people)}
+              className="size-3.5 text-[7px]"
+            />
+            {memberLabel(member, data.people)}
+          </span>
+        ))}
+        {members.length > 8 && (
+          <span className="text-muted-foreground text-[11.5px]">
+            +{members.length - 8}
+          </span>
+        )}
       </div>
       <div className="min-h-0 flex-1">
         <ConversationTimeline

@@ -25,6 +25,47 @@ interface DocListProps {
   error: Error | null;
   /** The list has not arrived yet. */
   loading?: boolean;
+  /** `page` (Two views' All docs): filters on one line over full-width rows. */
+  layout?: 'rail' | 'page';
+}
+
+// One All docs row at the Tasks list's density: glyph, title, then its tags.
+function PageRow({
+  doc,
+  onSelect,
+}: {
+  doc: DocSummary;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={doc.title}
+      onClick={() => onSelect(doc.id)}
+      className="hover:bg-surface-hover focus-visible:bg-surface-hover flex h-9 w-full items-center gap-2 px-4 text-left text-[13px] outline-none"
+    >
+      <span aria-hidden className="text-muted-foreground">
+        ▤
+      </span>
+      <span className="min-w-0 flex-1 truncate">{doc.title}</span>
+      {docBadges(doc).map((b) => (
+        <span
+          key={b}
+          className={cn(
+            'rounded-chip text-muted-foreground shrink-0 px-1.5 text-[11px]',
+            b === 'unreviewed'
+              ? 'border border-dashed border-(--text-ghost)'
+              : 'border-border-chip border-[0.5px]'
+          )}
+        >
+          {b}
+        </span>
+      ))}
+      <span className="text-muted-foreground w-40 shrink-0 truncate text-right font-mono text-[11px]">
+        {doc.handle}
+      </span>
+    </button>
+  );
 }
 
 // The Docs view's left pane: search, the scope, archived and unreviewed
@@ -37,7 +78,9 @@ export function DocList({
   onSelect,
   error,
   loading = false,
+  layout = 'rail',
 }: DocListProps) {
+  const page = layout === 'page';
   const idPrefix = useId();
   // j/k (and the arrows) move the selection, as in the other lists.
   const onKeyDown = (event: KeyboardEvent<HTMLUListElement>): void => {
@@ -54,10 +97,18 @@ export function DocList({
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-col gap-2 border-b border-[var(--color-border)] p-2">
+      <div
+        className={cn(
+          'flex gap-2',
+          page
+            ? 'shadow-hairline-bottom flex-wrap items-center px-4 py-2'
+            : 'flex-col border-b border-[var(--color-border)] p-2'
+        )}
+      >
         <Input
           aria-label="Search docs"
           placeholder="Search docs"
+          className={page ? 'h-7 w-[220px] text-[12px]' : undefined}
           value={filter.query}
           onChange={(e) => onFilter({ ...filter, query: e.target.value })}
         />
@@ -117,35 +168,47 @@ export function DocList({
         aria-label="Docs"
         tabIndex={0}
         onKeyDown={onKeyDown}
-        className="min-h-0 flex-1 overflow-auto p-1 outline-none"
+        className={cn(
+          'min-h-0 flex-1 overflow-auto outline-none',
+          page ? 'py-1' : 'p-1'
+        )}
       >
-        {docs.map((d) => (
-          <li key={d.id}>
-            <button
-              type="button"
-              aria-label={d.title}
-              aria-describedby={`${idPrefix}-${d.id}`}
-              aria-current={selected === d.id ? 'true' : undefined}
-              onClick={() => onSelect(d.id)}
-              className={cn(
-                'flex w-full flex-col items-start gap-1 rounded-control px-2 py-1.5 text-left hover:bg-surface-control',
-                selected === d.id && 'bg-surface-selected'
-              )}
-            >
-              <span className="w-full truncate text-[13px]">{d.title}</span>
-              <span id={`${idPrefix}-${d.id}`} className="flex flex-wrap gap-1">
-                {docBadges(d).map((b) => (
-                  <span
-                    key={b}
-                    className="rounded bg-[var(--color-muted)] px-1 text-[10px] text-[var(--color-muted-foreground)]"
-                  >
-                    {b}
-                  </span>
-                ))}
-              </span>
-            </button>
-          </li>
-        ))}
+        {docs.map((d) =>
+          page ? (
+            <li key={d.id}>
+              <PageRow doc={d} onSelect={onSelect} />
+            </li>
+          ) : (
+            <li key={d.id}>
+              <button
+                type="button"
+                aria-label={d.title}
+                aria-describedby={`${idPrefix}-${d.id}`}
+                aria-current={selected === d.id ? 'true' : undefined}
+                onClick={() => onSelect(d.id)}
+                className={cn(
+                  'flex w-full flex-col items-start gap-1 rounded-control px-2 py-1.5 text-left hover:bg-surface-control',
+                  selected === d.id && 'bg-surface-selected'
+                )}
+              >
+                <span className="w-full truncate text-[13px]">{d.title}</span>
+                <span
+                  id={`${idPrefix}-${d.id}`}
+                  className="flex flex-wrap gap-1"
+                >
+                  {docBadges(d).map((b) => (
+                    <span
+                      key={b}
+                      className="rounded bg-[var(--color-muted)] px-1 text-[10px] text-[var(--color-muted-foreground)]"
+                    >
+                      {b}
+                    </span>
+                  ))}
+                </span>
+              </button>
+            </li>
+          )
+        )}
       </ul>
     </div>
   );

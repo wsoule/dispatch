@@ -4,8 +4,8 @@ import { Fragment, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useToasts } from '../components/shell/Toasts';
-import { BackToTasks } from '../components/tasks/BackToTasks';
 import { StatusIcon } from '../components/tasks/StatusIcon';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   BRAIN_DUMP_DRAFT_KEY,
@@ -132,7 +132,7 @@ export function BrainDumpView({
     return (
       <div className="flex h-full min-h-0 flex-col">
         <PageHeader
-          leading={onBack && <BackToTasks onBack={onBack} />}
+          leading={onBack && <TasksBackButton onBack={onBack} />}
           crumb={['Notes']}
         />
         <div className="px-6 py-4">
@@ -311,7 +311,7 @@ export function BrainDumpView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        leading={onBack && <BackToTasks onBack={onBack} />}
+        leading={onBack && <TasksBackButton onBack={onBack} />}
         crumb={['Notes']}
         actions={<ExplainerPopover />}
       />

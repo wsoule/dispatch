@@ -8,6 +8,10 @@ import { PrReviewPanel } from '../components/runs/PrReviewPanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { ReviewThreadIndex } from '../components/runs/ReviewThreadIndex';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import {
+  TasksBackButton,
+  TasksPageHeader,
+} from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { repoPrsKey } from '../hooks/useDispatchProject';
 import { usePrFindings } from '../hooks/useOrchestration';
@@ -25,6 +29,8 @@ interface PrReviewViewProps {
   /** Which repo pull request is open — `navReducer`'s `activePrNumber`. */
   prNumber: number;
   onBack: () => void;
+  /** Two views: "‹ tasks" leads the header and the crumb starts at Pull requests. */
+  tasksPage?: boolean;
 }
 
 // How often the open-PR list is re-fetched while this page is on screen.
@@ -51,6 +57,7 @@ export function PrReviewView({
   projectName,
   prNumber,
   onBack,
+  tasksPage = false,
 }: PrReviewViewProps) {
   const queryClient = useQueryClient();
 
@@ -156,12 +163,23 @@ export function PrReviewView({
   };
 
   if (data.portLoading || data.portError || data.client === null) {
-    return (
+    const unavailable = (
       <DaemonUnavailable
         starting={data.portLoading}
         errorDetail={data.portErrorDetail}
         onRetry={data.retryEnsureDispatchd}
       />
+    );
+    return tasksPage ? (
+      <div className="flex h-full min-h-0 flex-col">
+        <TasksPageHeader
+          onBack={onBack}
+          crumb={['Pull requests', `#${prNumber}`]}
+        />
+        <div className="min-h-0 flex-1">{unavailable}</div>
+      </div>
+    ) : (
+      unavailable
     );
   }
 
@@ -174,17 +192,28 @@ export function PrReviewView({
           walks back to it and the back button does the same in one click. */}
       <PageHeader
         leading={
-          <IconButton label="Back" onClick={onBack}>
-            <ArrowLeft />
-          </IconButton>
+          tasksPage ? (
+            <TasksBackButton onBack={onBack} />
+          ) : (
+            <IconButton label="Back" onClick={onBack}>
+              <ArrowLeft />
+            </IconButton>
+          )
         }
-        crumb={[
-          ...(projectName !== undefined && projectName !== null
-            ? [projectName]
-            : []),
-          'Merge queue',
-          `#${prNumber} ${title}`,
-        ]}
+        crumb={
+          tasksPage
+            ? [
+                'Pull requests',
+                `#${prNumber} ${repoPr.prDetail?.status.title ?? selectedRepoPr?.title ?? ''}`.trim(),
+              ]
+            : [
+                ...(projectName !== undefined && projectName !== null
+                  ? [projectName]
+                  : []),
+                'Merge queue',
+                `#${prNumber} ${title}`,
+              ]
+        }
         actions={
           <>
             <IconButton

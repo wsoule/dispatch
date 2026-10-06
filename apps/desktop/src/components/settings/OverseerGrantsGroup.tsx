@@ -38,9 +38,9 @@ export function OverseerGrantsGroup({
   const rows = grants.data?.grants ?? [];
   return (
     <SettingsGroup
-      title="Assistant grants"
+      title="Your agent’s grants"
       hint="What “Allow for this conversation” still covers. Each ends after four hours or when the conversation starts over. Irreversible commands and changes to Dispatch itself always ask."
-      keywords="overseer allow session permission revoke"
+      keywords="overseer assistant allow session permission revoke"
       requires="none"
     >
       {rows.length === 0 ? (

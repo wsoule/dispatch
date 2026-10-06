@@ -22,9 +22,33 @@ export type ReplyBoxProps = Pick<
   | 'onOverseerReply'
   | 'overseerBusy'
   | 'onOpenOverseer'
+  | 'overseerVoice'
 > & {
   /** Where a typed reply goes, from `replyPlan`; null when nothing takes one. */
   plan: ReplyPlan | null;
+};
+
+export type OverseerVoice = 'assistant' | 'agent';
+
+// The Overseer's name in each layout: classic says Assistant, Two views says your agent.
+const VOICE: Record<
+  OverseerVoice,
+  { elsewhere: string; open: string; to: string; busy: string; reply: string }
+> = {
+  assistant: {
+    elsewhere: 'This Assistant conversation takes no replies here.',
+    open: 'Open Assistant',
+    to: 'To the Assistant',
+    busy: 'The Assistant is answering…',
+    reply: 'Reply to the Assistant…',
+  },
+  agent: {
+    elsewhere: 'This conversation with your agent takes no replies here.',
+    open: 'Open Overseer',
+    to: 'To your agent',
+    busy: 'Your agent is answering…',
+    reply: 'Reply to your agent…',
+  },
 };
 
 /** The typed reply under a thread, or why there is none. */
@@ -40,7 +64,9 @@ export function ReplyBox({
   onOverseerReply,
   overseerBusy,
   onOpenOverseer,
+  overseerVoice = 'assistant',
 }: ReplyBoxProps) {
+  const voice = VOICE[overseerVoice];
   const [body, setBody] = useState('');
   const [problem, setProblem] = useState<ComposeProblem | null>(null);
   const [sending, setSending] = useState(false);
@@ -58,9 +84,9 @@ export function ReplyBox({
   if (route === 'overseer-elsewhere') {
     return (
       <p className="text-muted-foreground flex items-center gap-2 text-[12px]">
-        This Assistant conversation takes no replies here.
+        {voice.elsewhere}
         <Button size="sm" variant="ghost" onClick={onOpenOverseer}>
-          Open Assistant
+          {voice.open}
         </Button>
       </p>
     );
@@ -102,7 +128,7 @@ export function ReplyBox({
     <div className="flex flex-col gap-1">
       <p className="text-muted-foreground truncate text-[12px]">
         {route === 'overseer'
-          ? 'To the Assistant'
+          ? voice.to
           : next === null
             ? null
             : replyTarget(next, lookups)}
@@ -117,11 +143,7 @@ export function ReplyBox({
         onSubmit={() => void submit()}
         disabled={sending || waiting}
         placeholder={
-          waiting
-            ? 'The Assistant is answering…'
-            : route === 'overseer'
-              ? 'Reply to the Assistant…'
-              : 'Reply…'
+          waiting ? voice.busy : route === 'overseer' ? voice.reply : 'Reply…'
         }
         ariaLabel="Reply"
       />

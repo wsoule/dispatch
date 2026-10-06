@@ -3,7 +3,7 @@ import { TerminalSquare } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { BackToTasks } from '../components/tasks/BackToTasks';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import { TerminalSplitView } from '../components/terminal/TerminalSplitView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TerminalSubscribe } from '../hooks/useTerminalOutput';
@@ -188,7 +188,7 @@ export function TerminalsView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-3">
       <header className="flex items-center gap-2">
-        {onBack && <BackToTasks onBack={onBack} />}
+        {onBack && <TasksBackButton onBack={onBack} />}
         <TerminalSquare className="size-4" />
         <h1 className="text-sm font-medium">Terminals</h1>
         <span className="text-xs text-[var(--color-muted-foreground)]">

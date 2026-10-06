@@ -3,7 +3,7 @@ import { Copy, Crosshair, Globe, Plus, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import { BackToTasks } from '../components/tasks/BackToTasks';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   designHandoffText,
@@ -161,7 +161,7 @@ export function DesignView({ data, onBack }: DesignViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
-        {onBack && <BackToTasks onBack={onBack} />}
+        {onBack && <TasksBackButton onBack={onBack} />}
         <Globe className="size-4" />
         <h1 className="text-sm font-medium">Design</h1>
         <Input

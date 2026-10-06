@@ -2,10 +2,10 @@ import { Plus } from 'lucide-react';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
 
 import { MilestoneMapView } from '../components/graph/MilestoneMap';
-import { BackToTasks } from '../components/tasks/BackToTasks';
 import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import { TasksStrip } from '../components/tasks/TasksStrip';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
@@ -49,6 +49,16 @@ const MODES: { id: TasksMode; label: string }[] = [
   { id: 'list', label: 'List' },
   { id: 'graph', label: 'Graph' },
 ];
+
+// Pages that lead their own header with "‹ tasks"; the rest get a bare one here.
+const OWN_HEADER: ReadonlySet<TasksPage['kind']> = new Set([
+  'task',
+  'docs',
+  'pr',
+  'room',
+  'view',
+  'impact',
+]);
 
 const GRAPH_NEEDS_FOLDED_KEY = 'dispatch:graph-needs-you-folded';
 
@@ -249,13 +259,11 @@ export function TasksView({
       </div>
       {full ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {page.kind !== 'task' &&
-            page.kind !== 'view' &&
-            page.kind !== 'impact' && (
-              <div className="px-4 pt-2">
-                <BackToTasks onBack={onClosePage} />
-              </div>
-            )}
+          {!OWN_HEADER.has(page.kind) && (
+            <div className="px-4 pt-2">
+              <TasksBackButton onBack={onClosePage} />
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-hidden">
             {renderPage(page as TasksSidePage)}
           </div>

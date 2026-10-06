@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp, TriangleAlert, Waypoints } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ImpactPanel } from '../components/impact/ImpactPanel';
-import { BackToTasks } from '../components/tasks/BackToTasks';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef } from '../lib/appNav';
 import { findClaimOverlaps } from '../lib/claimOverlap';
@@ -456,7 +456,7 @@ export function ImpactView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        leading={onBack && <BackToTasks onBack={onBack} />}
+        leading={onBack && <TasksBackButton onBack={onBack} />}
         crumb={[
           ...(projectName !== undefined && projectName !== null
             ? [projectName]
