@@ -29,6 +29,7 @@ import { PersonPeek } from './components/peek/PersonPeek';
 import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { accessFor } from './components/settings/access';
+import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { ClassicDoor } from './components/shell/ClassicDoor';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -1906,6 +1907,14 @@ function App() {
           onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
           hostedPages={hostedSettingsPages}
           pageExtras={{
+            autonomy:
+              data.client === null ? null : (
+                <OverseerGrantsGroup
+                  client={data.client}
+                  port={data.port}
+                  conversationId={overseer.conversationId}
+                />
+              ),
             memory:
               data.client === null ? null : (
                 <MemoryRecent client={data.client} port={data.port} />

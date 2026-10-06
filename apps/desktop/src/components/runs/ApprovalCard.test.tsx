@@ -176,3 +176,21 @@ describe('ApprovalCard — a preview cut short of the full call', () => {
     expect(screen.queryByText(/Preview truncated/)).toBeNull();
   });
 });
+
+describe('ApprovalCard — a held call', () => {
+  // A call held for Dispatch itself is answered one at a time: no broader grant to offer.
+  it('drops the session option when the gate does not offer it', () => {
+    render(
+      <ApprovalCard
+        toolName="Bash"
+        toolInput={{ command: 'dispatch task create x' }}
+        onDecide={() => Promise.resolve()}
+        sessionAllowed={false}
+      />
+    );
+    expect(screen.getByRole('radio', { name: /approve once/i })).toBeTruthy();
+    expect(
+      screen.queryByRole('radio', { name: /allow bash for this run/i })
+    ).toBeNull();
+  });
+});

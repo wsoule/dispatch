@@ -81,6 +81,8 @@ export interface OverseerToolRequest {
   requestId: string;
   toolName: string;
   input: unknown;
+  /** Set when the pre-tool hook held the call: a floor check or an Overseer hold. */
+  check?: string;
 }
 
 /** Per-turn knobs the manager resolves from config and hands to a backend. */

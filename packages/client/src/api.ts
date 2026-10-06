@@ -1726,6 +1726,8 @@ export interface OverseerApproval {
   /** One line, safe to render verbatim, saying what the call would do. */
   summary: string;
   requestedAt: string;
+  /** Held by the floor or by a hold on Dispatch's own surfaces: allowed once only. */
+  held?: boolean;
 }
 
 // Mirrors OverseerAction in packages/server/src/orchestrator/overseerTools.ts —
@@ -1744,8 +1746,18 @@ export interface OverseerAction {
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the
 // body of `POST /api/overseer` and `GET /api/overseer/:id`.
+/** One live "Allow for this conversation" grant. */
+export interface OverseerGrant {
+  /** `Bash:<program>` for Bash, else the tool's name. */
+  key: string;
+  grantedAt: string;
+  expiresAt: string;
+}
+
 export interface OverseerRecord {
   id: string;
+  /** The human who opened it; only they and the operator read it or speak in it. */
+  owner?: string;
   /** The opening prompt, kept alongside `messages[0]` for callers that only want the ask. */
   prompt: string;
   /** Which registered backend this conversation talks to; follow-ups re-resolve it. */
@@ -3739,6 +3751,15 @@ export interface ApiClient {
     conversationId: string,
     text: string
   ): Promise<OverseerRecord>;
+  /** What "Allow for this conversation" still covers: per program for Bash, up to four hours. */
+  listOverseerGrants(
+    conversationId: string
+  ): Promise<{ grants: OverseerGrant[] }>;
+  /** Ends one grant at once; `revoked` is false when there was none. */
+  revokeOverseerGrant(
+    conversationId: string,
+    key: string
+  ): Promise<{ revoked: boolean }>;
   // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
   // server-side to the project's `orchestrator.epicConcurrency` config;
   // `maxSpendUsd`/`maxRuns` are ceilings that pause the session when reached.
@@ -4773,6 +4794,14 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ text }),
       }),
+    listOverseerGrants: (conversationId) =>
+      request(target, `/api/overseer/${conversationId}/grants`),
+    revokeOverseerGrant: (conversationId, key) =>
+      request(
+        target,
+        `/api/overseer/${conversationId}/grants/${encodeURIComponent(key)}`,
+        { method: 'DELETE' }
+      ),
     startEpic: (epicId, opts = {}) =>
       request(target, `/api/epics/${epicId}/dispatch`, {
         method: 'POST',

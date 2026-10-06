@@ -5,6 +5,7 @@ import type {
   FloorHoldRequest,
 } from '../../src/orchestrator/floorHook.js';
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
+import { overseerHoldFor } from '../../src/orchestrator/overseerHold.js';
 import { floorDecision, preToolUse } from './helpers.js';
 
 // A stand-in for the human behind a hold: records every request it is asked
@@ -184,5 +185,30 @@ describe('floorGuard', () => {
         disableSkillShellExecution: true,
       });
     }
+  });
+});
+
+describe('floorGuard with a session’s own holds', () => {
+  it('holds what the extra check names, with its reason, and leaves the rest alone', async () => {
+    const human = stubHuman({ allow: false, reason: 'not now' });
+    const hooks = floorGuard(human.hold, undefined, (toolName, input) =>
+      overseerHoldFor(toolName, input, '/work/shop')
+    ).hooks;
+    expect(
+      await floorDecision(hooks, 'Bash', { command: 'dispatch task create x' })
+    ).toBe('deny');
+    expect(
+      await floorDecision(hooks, 'Bash', { command: 'ls' })
+    ).toBeUndefined();
+    expect(human.asked.map((r) => r.check)).toEqual(['dispatch-cli']);
+  });
+
+  it('a session without the extra check runs the same call', async () => {
+    const human = stubHuman({ allow: false });
+    const hooks = floorGuard(human.hold).hooks;
+    expect(
+      await floorDecision(hooks, 'Bash', { command: 'dispatch task create x' })
+    ).toBeUndefined();
+    expect(human.asked).toEqual([]);
   });
 });

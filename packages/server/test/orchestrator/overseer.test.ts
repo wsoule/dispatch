@@ -662,7 +662,11 @@ class GatedBackend implements OverseerBackend {
   options: OverseerTurnOptions | undefined;
 
   constructor(
-    private readonly calls: { toolName: string; input: unknown }[],
+    private readonly calls: {
+      toolName: string;
+      input: unknown;
+      check?: string;
+    }[],
     private readonly reply = 'done'
   ) {}
 
@@ -693,6 +697,7 @@ class GatedBackend implements OverseerBackend {
         requestId: `req-${n}`,
         toolName: call.toolName,
         input: call.input,
+        ...(call.check === undefined ? {} : { check: call.check }),
       })) ?? { allow: false };
       this.decisions.push({ toolName: call.toolName, ...decision });
     }
@@ -701,7 +706,7 @@ class GatedBackend implements OverseerBackend {
 }
 
 function makeGated(
-  calls: { toolName: string; input: unknown }[]
+  calls: { toolName: string; input: unknown; check?: string }[]
 ): ManagerHarness & { gated: GatedBackend } {
   const h = makeManager({ ok: true, reply: 'unused' });
   const gated = new GatedBackend(calls);
@@ -800,9 +805,74 @@ describe('OverseerManager built-in tool gate', () => {
       h.manager
         .get(started.id)
         .messages.find((m) => m.role === 'approval' && m.outcome === 'allowed')
-    ).toMatchObject({ text: 'Allowed for this conversation: Bash: ls' });
+    ).toMatchObject({
+      text: 'Allowed Bash:ls for this conversation (up to 4 hours): Bash: ls',
+    });
     h.manager.decideApproval(started.id, 'req-3', { allow: false });
     await waitFor(() => h.manager.get(started.id).state === 'ready');
+  });
+
+  it('a Bash grant covers its own program, not another', async () => {
+    const h = makeGated([
+      { toolName: 'Bash', input: { command: 'moonx desktop:test' } },
+      { toolName: 'Bash', input: { command: 'rm -rf build' } },
+    ]);
+    const started = h.manager.start('test it', 'gated');
+    await waitFor(() => h.manager.get(started.id).pendingApprovals.length > 0);
+    h.manager.decideApproval(started.id, 'req-1', {
+      allow: true,
+      scope: 'session',
+    });
+    // `rm` is another program, so it parks for a human.
+    await waitFor(
+      () => h.manager.get(started.id).pendingApprovals[0]?.requestId === 'req-2'
+    );
+    expect(h.manager.listGrants(started.id).map((g) => g.key)).toEqual([
+      'Bash:moonx',
+    ]);
+    h.manager.decideApproval(started.id, 'req-2', { allow: false });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+  });
+
+  it('a held call always asks, and a session answer to it grants nothing', async () => {
+    const h = makeGated([
+      {
+        toolName: 'Bash',
+        input: { command: 'dispatch task list' },
+        check: 'dispatch-cli',
+      },
+      {
+        toolName: 'Bash',
+        input: { command: 'dispatch task list' },
+        check: 'dispatch-cli',
+      },
+    ]);
+    const started = h.manager.start('list tasks', 'gated');
+    await waitFor(() => h.manager.get(started.id).pendingApprovals.length > 0);
+    expect(h.manager.get(started.id).pendingApprovals[0]?.held).toBe(true);
+    h.manager.decideApproval(started.id, 'req-1', {
+      allow: true,
+      scope: 'session',
+    });
+    await waitFor(
+      () => h.manager.get(started.id).pendingApprovals[0]?.requestId === 'req-2'
+    );
+    expect(h.manager.listGrants(started.id)).toEqual([]);
+    h.manager.decideApproval(started.id, 'req-2', { allow: false });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+  });
+
+  it('a revoked grant asks again', async () => {
+    const h = makeGated([{ toolName: 'Edit', input: { file_path: 'a.ts' } }]);
+    const started = h.manager.start('edit', 'gated');
+    await waitFor(() => h.manager.get(started.id).pendingApprovals.length > 0);
+    h.manager.decideApproval(started.id, 'req-1', {
+      allow: true,
+      scope: 'session',
+    });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.manager.revokeGrant(started.id, 'Edit')).toBe(true);
+    expect(h.manager.listGrants(started.id)).toEqual([]);
   });
 
   it('never lets a session grant or acceptEdits wave an irreversible command through', async () => {
@@ -1406,5 +1476,22 @@ describe('overseer on the bus', () => {
       type: 'x-closed',
     });
     messaging.close();
+  });
+});
+
+describe('an answer pinned to its card', () => {
+  it('refuses an answer whose card named a different tool', async () => {
+    const h = makeGated([{ toolName: 'Bash', input: { command: 'ls' } }]);
+    const started = h.manager.start('look', 'gated');
+    await waitFor(() => h.manager.get(started.id).pendingApprovals.length > 0);
+    expect(() =>
+      h.manager.decideApproval(started.id, 'req-1', { allow: true }, 'Edit')
+    ).toThrow('waiting on Bash');
+    // The call is still parked for the right card.
+    expect(h.manager.get(started.id).pendingApprovals[0]?.requestId).toBe(
+      'req-1'
+    );
+    h.manager.decideApproval(started.id, 'req-1', { allow: false }, 'Bash');
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
   });
 });

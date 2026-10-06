@@ -337,7 +337,14 @@ describe('personal privacy', () => {
     });
     overseerReads = personal.id;
     const ada = handle.team.teammates.issue('ada', 'decide');
-    for (const token of [null, ada, handle.tokens.agentToken]) {
+    // The agent token cannot open the overseer at all.
+    const refused = await fetch(`${base}/api/overseer`, {
+      method: 'POST',
+      headers: authHeaders(handle.tokens.agentToken),
+      body: JSON.stringify({ prompt: 'what do you remember?' }),
+    });
+    expect(refused.status).toBe(403);
+    for (const token of [null, ada]) {
       const headers =
         token === null
           ? { 'content-type': 'application/json' }
