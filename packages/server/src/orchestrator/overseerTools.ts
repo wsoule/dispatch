@@ -1051,6 +1051,82 @@ const cancelRun: OverseerMutatingTool<z.infer<typeof cancelInput>> = {
   },
 };
 
+const discardInput = z
+  .strictObject({
+    runId: z.string().optional().describe('The finished run (r-…) to discard.'),
+    runIds: z
+      .array(z.string())
+      .min(1)
+      .optional()
+      .describe('Several finished runs to discard on one card.'),
+  })
+  .refine((v) => (v.runId === undefined) !== (v.runIds === undefined), {
+    message: 'give exactly one of runId, runIds',
+  });
+
+// The runs a discard_run call names, one id or many, in the order given.
+function discardTargets(input: z.infer<typeof discardInput>): string[] {
+  return input.runIds ?? (input.runId === undefined ? [] : [input.runId]);
+}
+
+// Checks one run can be discarded and says how the card names it. Refuses what
+// Orchestrator.review would refuse at apply time (live, already reviewed), plus
+// a run sitting in the merge queue, so the human never confirms a card that
+// was always going to fail.
+function describeDiscard(
+  ctx: OverseerToolContext,
+  runId: string,
+  queued: ReadonlySet<string>
+): string {
+  const meta = requireRun(ctx, runId);
+  if (isLive(meta)) {
+    throw new OverseerToolError(
+      `run is still live: ${meta.id} (cancel it with cancel_run first)`
+    );
+  }
+  if (meta.reviewedAt !== undefined) {
+    const done = meta.reviewAction === 'merge' ? 'merged' : 'discarded';
+    throw new OverseerToolError(`run already ${done}: ${meta.id}`);
+  }
+  if (queued.has(meta.id)) {
+    throw new OverseerToolError(`run is in the merge queue: ${meta.id}`);
+  }
+  const dirty =
+    meta.state === 'interrupted-dirty'
+      ? ', dropping its uncommitted changes with no undo'
+      : '';
+  return `${meta.id} ("${safeTitle(meta.taskTitle)}", ${meta.state}${dirty})`;
+}
+
+const discardRun: OverseerMutatingTool<z.infer<typeof discardInput>> = {
+  name: 'discard_run',
+  description:
+    'Discard finished, failed or interrupted runs nobody will land: removes each worktree and branch, the same as Discard in the app. Pass runIds to clear several on one card. Cancel a live run first.',
+  inputSchema: discardInput,
+  describe(ctx, input) {
+    const ids = discardTargets(input);
+    const duplicate = ids.find((id, i) => ids.indexOf(id) !== i);
+    if (duplicate !== undefined) {
+      throw new OverseerToolError(`run listed twice: ${duplicate}`);
+    }
+    const queued = new Set(
+      ctx.mergeQueue.snapshot().entries.map((e) => e.runId)
+    );
+    const runs = ids.map((id) => describeDiscard(ctx, id, queued));
+    return runs.length === 1
+      ? `Discard run ${runs[0]}`
+      : `Discard ${runs.length} runs: ${runs.join('; ')}`;
+  },
+  apply(ctx, input, meta) {
+    for (const id of discardTargets(input)) {
+      // A run reviewed since the card was drawn has nothing left to discard;
+      // skipping it also lets a retry after a part-way failure finish the rest.
+      if (ctx.orchestrator.getRun(id)?.meta.reviewedAt !== undefined) continue;
+      ctx.orchestrator.review(id, 'discard', { actor: meta.actor });
+    }
+  },
+};
+
 const dequeueInput = z.object({
   runId: z.string().describe('The queued run (r-…) to pull out.'),
 });
@@ -1430,6 +1506,7 @@ export const OVERSEER_MUTATING_TOOLS: readonly OverseerMutatingTool[] = [
   approveRun,
   denyRun,
   cancelRun,
+  discardRun,
   dequeueMerge,
   messageRun,
   sendAsYou,

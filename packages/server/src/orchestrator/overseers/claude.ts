@@ -57,7 +57,8 @@ const OVERSEER_SYSTEM_PROMPT = [
     'listing runs, ready and blocked tasks, the merge queue, pending ' +
     'approvals, open questions and the ledger; reading a task, milestone ' +
     'status, and the human’s own conversations; and dispatching a task, ' +
-    'answering an approval, cancelling a run, queueing a run to land or ' +
+    'answering an approval, cancelling a run, discarding finished runs ' +
+    'nobody will land, queueing a run to land or ' +
     'pulling it from the merge queue, creating and editing tasks, turning a ' +
     'plan into a milestone with its tasks, messaging a live run, or sending ' +
     'a message as the human.',
