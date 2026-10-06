@@ -98,6 +98,7 @@ import {
   withActionFeedback,
 } from './lib/actionFeedback';
 import { orbLabel, orbState, overseerTurnLive } from './lib/agentPresence';
+import { overseerOf } from './lib/agentRoster';
 import type {
   GlobalView,
   ProjectView,
@@ -846,9 +847,8 @@ function App() {
         since: narrator.since,
         runs: data.runs,
         merges: data.mergeQueue?.history ?? [],
-        asks: needs.count,
       }),
-    [narrator.since, data.runs, data.mergeQueue, needs.count]
+    [narrator.since, data.runs, data.mergeQueue]
   );
   // Asks of mine decided in the last 15 minutes, for "Decided by you" receipts.
   const recentlyDecided = useMemo(() => {
@@ -1759,7 +1759,8 @@ function App() {
             me: data.me,
             myTaskIds,
             followed: followedRooms,
-            muted: new Set(),
+            // The agent's own lines are already the stream; never a post too.
+            muted: new Set([overseerOf(data.me)]),
             authorOf: () => null,
             now: Date.now(),
           }),

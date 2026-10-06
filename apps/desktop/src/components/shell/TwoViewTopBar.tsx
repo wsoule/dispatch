@@ -79,7 +79,7 @@ export function TwoViewTopBar({
       data-tauri-drag-region
       data-testid="two-views-top-bar"
       className={cn(
-        'grid h-[68px] shrink-0 grid-cols-[1fr_auto_1fr] items-center pr-4',
+        'grid h-[80px] shrink-0 grid-cols-[1fr_auto_1fr] items-center pr-4',
         trafficLightInset ? 'pl-[84px]' : 'pl-4'
       )}
     >

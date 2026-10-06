@@ -29,14 +29,19 @@ interface RosterActions {
   revoke: boolean;
 }
 
-/** The owner's own Overseer, `agent:<owner>/overseer`, named only for a
- *  window holding the owner's app token: re-approving it is their off switch. */
+/** A human's own Overseer: `agent:<handle>/overseer`. */
+export function overseerOf(me: string): string {
+  return `agent:${handleOf(me)}/overseer`;
+}
+
+/** The owner's own Overseer, named only for a window holding the owner's
+ *  app token: re-approving it is their off switch. */
 export function ownerOverseer(
   me: string | null,
   ownerCredential: boolean
 ): string | null {
   if (me === null || !ownerCredential) return null;
-  return `agent:${handleOf(me)}/overseer`;
+  return overseerOf(me);
 }
 
 /** What a roster row offers. A revoked agent's token is dead and it returns

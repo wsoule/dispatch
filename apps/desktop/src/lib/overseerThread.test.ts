@@ -5,7 +5,12 @@ import type {
 } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { buildOverseerThread, doorLabel, findInThread } from './overseerThread';
+import {
+  buildOverseerThread,
+  doorLabel,
+  findInThread,
+  groupToolRows,
+} from './overseerThread';
 
 function makeAction(overrides: Partial<OverseerAction> = {}): OverseerAction {
   return {
@@ -462,5 +467,27 @@ describe('show_tasks doors', () => {
     expect(doorLabel({ taskId: 't-203', preset: 'ready' })).toBe(
       'Show t-203 in tasks →'
     );
+  });
+});
+
+describe('groupToolRows', () => {
+  test('folds a run of tool calls into one row and hides ToolSearch', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        { role: 'user', text: 'whats up', at: 'a' },
+        { role: 'tool', tool: 'ToolSearch', text: 'select:…', at: 'b' },
+        { role: 'tool', tool: 'list_runs', text: '{"runs":[]}', at: 'c' },
+        { role: 'tool', tool: 'merge_queue', text: 'error: boom', at: 'd' },
+        { role: 'assistant', text: 'quiet', at: 'e' },
+      ])
+    );
+    const grouped = groupToolRows(items);
+    expect(grouped.map((i) => i.kind)).toEqual(['message', 'tools', 'message']);
+    expect(grouped[1]).toMatchObject({
+      calls: [
+        { tool: 'list_runs', failed: false },
+        { tool: 'merge_queue', failed: true },
+      ],
+    });
   });
 });

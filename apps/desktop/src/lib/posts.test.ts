@@ -111,3 +111,13 @@ describe('buildPosts', () => {
     ]);
   });
 });
+
+test('my own Overseer never becomes a post: its lines are the stream', () => {
+  const overseer = 'agent:wyat/overseer';
+  expect(
+    buildPosts([item('o', '2026-10-06T09:00:00Z', { from: overseer })], {
+      ...ctx,
+      muted: new Set([overseer]),
+    })
+  ).toEqual([]);
+});

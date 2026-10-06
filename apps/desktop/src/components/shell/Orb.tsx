@@ -79,7 +79,7 @@ export function Orb({ state, label, postsDot, onClick, active }: OrbProps) {
           aria-hidden
           data-testid="two-views-orb-count"
           className={cn(
-            'absolute -top-1.5 -right-3 min-w-[18px] rounded-full px-1 text-center text-[11px] leading-[18px] font-semibold text-white',
+            'absolute -top-1 -right-2.5 min-w-[18px] rounded-full px-1 text-center text-[11px] leading-[18px] font-semibold text-white',
             BADGE[state.tone]
           )}
         >

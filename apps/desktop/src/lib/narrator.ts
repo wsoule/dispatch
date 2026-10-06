@@ -5,7 +5,7 @@ import type { OverseerDoor } from './overseerThread';
 /** One line the narrator says: deterministic, free, and never stored in the transcript. */
 export interface NarratorLine {
   key: string;
-  tone: 'asks' | 'failed' | 'review' | 'landed';
+  tone: 'failed' | 'review' | 'landed';
   text: string;
   door: OverseerDoor;
 }
@@ -16,8 +16,6 @@ export interface NarratorInput {
   runs: readonly RunMeta[];
   /** Landed and failed merges, newest last (the merge queue's history). */
   merges: readonly MergeQueueEntry[];
-  /** Asks waiting now: the one number, read after the policy has settled. */
-  asks: number;
 }
 
 // How many titles a line names before it counts the rest.
@@ -36,19 +34,10 @@ function settledSince(run: RunMeta, since: string): boolean {
 
 /**
  * "While you were away": what settled since `since`, most urgent first.
- * Asks come from the settled decision feed, never from raw approval events,
- * so a call the autonomy policy approved on its own is never announced.
+ * Asks are not repeated here: the stream's own door already counts them.
  */
 export function awayDigest(input: NarratorInput): NarratorLine[] {
   const lines: NarratorLine[] = [];
-  if (input.asks > 0) {
-    lines.push({
-      key: 'asks',
-      tone: 'asks',
-      text: `● ${input.asks} ${input.asks === 1 ? 'ask waits' : 'asks wait'} on you`,
-      door: { preset: 'needs-you' },
-    });
-  }
   const recent = input.runs.filter((run) => settledSince(run, input.since));
   const failed = recent.filter(
     (run) => run.state === 'failed' || run.state === 'interrupted-dirty'
