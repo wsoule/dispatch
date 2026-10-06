@@ -183,13 +183,16 @@ function OverseerApproveCard({
           )}
           Allow
         </Button>
-        <PillButton
-          disabled={locked}
-          onClick={() => onDecide({ allow: true, scope: 'session' })}
-          aria-label={`Allow ${approval.toolName} for this conversation`}
-        >
-          Allow for this conversation
-        </PillButton>
+        {/* A held call (the floor, or Dispatch's own surfaces) is allowed once only. */}
+        {approval.held !== true && (
+          <PillButton
+            disabled={locked}
+            onClick={() => onDecide({ allow: true, scope: 'session' })}
+            aria-label={`Allow ${approval.toolName} for this conversation`}
+          >
+            Allow for this conversation
+          </PillButton>
+        )}
         <PillButton
           disabled={locked}
           onClick={() => onDecide({ allow: false })}

@@ -90,6 +90,7 @@ export function GateCard({
           availability={availability}
           onRestartDaemon={onRestartDaemon}
           onDecide={(allow, opts) => answer(approvalReply(allow, opts))}
+          sessionAllowed={message.choices?.includes('approve-session') ?? true}
         />
       );
     }

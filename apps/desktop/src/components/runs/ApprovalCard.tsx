@@ -30,6 +30,8 @@ interface ApprovalCardProps {
    *  only so a caller that has not wired daemon auth still renders a working card. */
   availability?: DecideAvailability;
   onRestartDaemon?: () => Promise<void>;
+  /** Whether the gate offers a grant past this call; a held call's never does. */
+  sessionAllowed?: boolean;
 }
 
 const ALWAYS_AVAILABLE: DecideAvailability = {
@@ -119,6 +121,7 @@ export function ApprovalCard({
   onDecide,
   availability = ALWAYS_AVAILABLE,
   onRestartDaemon,
+  sessionAllowed = true,
 }: ApprovalCardProps) {
   // Only a deciding window may read the full call; any other keeps the preview.
   const {
@@ -167,11 +170,16 @@ export function ApprovalCard({
 
   const options: ApprovalCardOption[] = [
     { id: DENY_ID, label: 'Deny and tell it why' },
-    {
-      id: SESSION_ID,
-      label: `Allow ${toolName} for this run`,
-      description: 'Scoped to this run — never carries into the next one.',
-    },
+    ...(sessionAllowed
+      ? [
+          {
+            id: SESSION_ID,
+            label: `Allow ${toolName} for this run`,
+            description:
+              'Scoped to this run — never carries into the next one.',
+          },
+        ]
+      : []),
     { id: ONCE_ID, label: 'Approve once', recommended: true },
   ];
 
