@@ -52,6 +52,19 @@ describe('initProjectStores', () => {
     expect(stores.tasks.get(doc.meta.id)).toEqual(doc);
   });
 
+  it("keeps a restored database's custom statuses in a missing config.yml", () => {
+    const first = track(
+      initProjectStores({ rootDir: root, backend: 'sqlite' })
+    );
+    first.tasks.create({ title: 'Imported', status: 'Triage' });
+    first.close();
+    rmSync(join(root, '.dispatch/config.yml'));
+    track(initProjectStores({ rootDir: root, backend: 'sqlite' }));
+    expect(readFileSync(join(root, '.dispatch/config.yml'), 'utf8')).toContain(
+      '"Triage"'
+    );
+  });
+
   it('honours an explicit dbPath outside .dispatch', () => {
     const dbPath = join(root, 'receipts', 'nested', 'state.db');
     const stores = track(
