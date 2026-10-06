@@ -81,10 +81,13 @@ describe('projectViewDestination', () => {
     'terminals',
     'design',
     'impact',
-    'plans',
     'brain-dump',
   ] as const)('%p is Classic-only behind a door', (view) => {
     expect(projectViewDestination(view)).toEqual({ kind: 'classic', view });
+  });
+
+  test('plans fold into Overseer', () => {
+    expect(projectViewDestination('plans')).toEqual({ kind: 'overseer' });
   });
 
   test.each(['task', 'pr', 'draft', 'new-task'] as const)(
