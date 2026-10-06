@@ -916,9 +916,13 @@ async function recordMutation(
 // fields stay plain strings (see task_save), so this is the only place an
 // agent learns the valid values before a call fails.
 const STATUS_PARAM_DOC =
-  'Built-in statuses: draft | ready | working | review | landing | landed | ' +
-  'dropped. A project may define its own set in .dispatch/config.yml, and ' +
-  'that set is what this is checked against.';
+  "A status name from this project's .dispatch/config.yml, which is what " +
+  'this is checked against; a board imported from Linear keeps its own ' +
+  'names (Backlog, Todo, In Progress, Done, …). Each status has a workflow ' +
+  'type (triage | backlog | unstarted | started | completed | canceled), and ' +
+  'Dispatch keys off the type and config `statusRoles`, never the name. ' +
+  'With no statuses configured the built-ins apply: draft | ready | working ' +
+  '| review | landing | landed | dropped.';
 
 // Registers every dispatch tool against a fixed root. Each call re-resolves the
 // store, config and daemon file, so a later init or daemon start is picked up.
@@ -999,9 +1003,10 @@ export function registerDispatchTools(
           .string()
           .optional()
           .describe(
-            `${STATUS_PARAM_DOC} working, review, landing and landed are ` +
-              'normally set by dispatchd as runs and the merge queue advance; ' +
-              'landed means merged.'
+            `${STATUS_PARAM_DOC} The statuses statusRoles names for ` +
+              'dispatched, review, landing and landed (built-in: working, ' +
+              'review, landing, landed) are normally set by dispatchd as runs ' +
+              'and the merge queue advance; the landed role means merged.'
           ),
         kind: z
           .string()
@@ -1104,7 +1109,10 @@ export function registerDispatchTools(
     {
       title: 'Ready work',
       description:
-        'List tasks ready to start now: kind task, status ready, every blocker landed or dropped. Priority-ordered.',
+        'List tasks ready to start now, priority-ordered: kind task (not a ' +
+        'container), not archived, in a status whose type is `unstarted` ' +
+        '(built-in: ready; on a Linear-imported board e.g. Todo), and every ' +
+        'blocker in a completed or canceled status.',
       outputSchema: {
         tasks: z.array(
           z.object({
