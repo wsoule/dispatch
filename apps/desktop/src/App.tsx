@@ -642,7 +642,8 @@ function App() {
     rawData.port,
     activeProject?.path ?? null,
     rawData.config?.models.overseer,
-    rawData.config?.effort?.overseer
+    rawData.config?.effort?.overseer,
+    twoViews
   );
 
   // Opens the full task view; unspecified runId resolves to the task's latest

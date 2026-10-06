@@ -41,7 +41,17 @@ export type OverseerThreadItem =
     }
   | { kind: 'approve'; key: string; approval: OverseerApproval }
   | { kind: 'pending'; key: string }
-  | { kind: 'failed'; key: string; error: string };
+  | { kind: 'failed'; key: string; error: string }
+  /** A line across the stream: Stop, a context rollover, a daemon restart. */
+  | {
+      kind: 'notice';
+      key: string;
+      notice: 'stopped' | 'rollover' | 'restarted';
+      text: string;
+      at: string;
+    }
+  /** Typed during a turn; `waiting` once that turn ended without sending it. */
+  | { kind: 'queued'; key: string; text: string; waiting: boolean };
 
 const TURN_FAILED_FALLBACK =
   'The overseer stopped before it answered. Send the message again to retry.';
@@ -138,6 +148,14 @@ export function buildOverseerThread(
           : TURN_FAILED_FALLBACK,
     });
   }
+  (record.queued ?? []).forEach((queued, i) => {
+    items.push({
+      kind: 'queued',
+      key: `${record.id}-queued-${i}`,
+      text: queued.text,
+      waiting: record.state !== 'running',
+    });
+  });
   return items;
 }
 
@@ -158,6 +176,15 @@ function buildRow(
       kind: 'message',
       key,
       role: message.role,
+      text: message.text,
+      at: message.at,
+    };
+  }
+  if (message.role === 'notice') {
+    return {
+      kind: 'notice',
+      key,
+      notice: message.notice ?? 'stopped',
       text: message.text,
       at: message.at,
     };
@@ -231,4 +258,37 @@ function buildRow(
     };
   }
   return null;
+}
+
+// The words a row can be found by; cards and spinners have none of their own.
+function searchableText(item: OverseerThreadItem): string | null {
+  switch (item.kind) {
+    case 'message':
+    case 'outcome':
+    case 'notice':
+    case 'queued':
+      return item.text;
+    case 'tool':
+      return `${item.tool} ${item.text}`;
+    case 'confirm':
+      return item.action.summary;
+    case 'approve':
+      return item.approval.summary;
+    case 'failed':
+      return item.error;
+    case 'pending':
+      return null;
+  }
+}
+
+/** ⌘F over the stream: the rows whose text holds `query`, ignoring case. */
+export function findInThread(
+  items: OverseerThreadItem[],
+  query: string
+): OverseerThreadItem[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return items;
+  return items.filter(
+    (item) => searchableText(item)?.toLowerCase().includes(needle) === true
+  );
 }

@@ -257,7 +257,7 @@ describe('POST /api/overseer/:id/message', () => {
     );
   });
 
-  it('409s while a turn is in flight and 404s an unknown id', async () => {
+  it('queues while a turn is in flight, Stop ends it, and 404s an unknown id', async () => {
     await startWithOverseer(new HangingOverseer());
     const { record } = await startConversation();
     expect(record.state).toBe('running');
@@ -267,7 +267,22 @@ describe('POST /api/overseer/:id/message', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'still there?' }),
     });
-    expect(busy.status).toBe(409);
+    expect(busy.status).toBe(202);
+    const queued = (await busy.json()) as OverseerRecord;
+    expect(queued.queued?.map((q) => q.text)).toEqual(['still there?']);
+
+    const stopped = await fetch(`${baseUrl}/api/overseer/${record.id}/stop`, {
+      method: 'POST',
+    });
+    expect(stopped.status).toBe(200);
+    const after = await settled(record.id);
+    expect(after.state).toBe('ready');
+    expect(after.messages.at(-1)).toMatchObject({ notice: 'stopped' });
+
+    const current = (await json(
+      await fetch(`${baseUrl}/api/overseer/current`)
+    )) as { conversation: OverseerRecord | null };
+    expect(current.conversation?.id).toBe(record.id);
 
     const missing = await fetch(`${baseUrl}/api/overseer/wc-000000/message`, {
       method: 'POST',
