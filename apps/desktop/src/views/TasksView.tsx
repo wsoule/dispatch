@@ -243,8 +243,9 @@ export function TasksView({
                 : 'flex min-w-0 flex-1 flex-col'
             }
           >
-            <div className="max-h-[45%] shrink-0 overflow-y-auto">
+            <div className="max-h-[45%] shrink-0 overflow-y-auto px-2 pt-2">
               <NeedsYouBlock
+                flush
                 data={data}
                 needs={needs}
                 decided={decided}

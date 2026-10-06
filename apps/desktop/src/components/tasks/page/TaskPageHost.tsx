@@ -87,6 +87,8 @@ export interface TaskPageHost {
   filesView?: (runId: string) => ReactNode;
   /** Summary lists the memory this task's runs wrote (Two views). */
   showLessons?: boolean;
+  /** A milestone's plan opens a task as its own page, not a pane beside the plan (Two views). */
+  planOpensPages?: boolean;
   /** A run's pull request reviewed in place; without it "Review PR" leaves for the PR page. */
   prView?: (runId: string, onClose: () => void) => ReactNode;
   terminalView?: (runId: string) => ReactNode;

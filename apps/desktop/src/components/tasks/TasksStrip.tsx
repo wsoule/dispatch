@@ -60,9 +60,12 @@ export function TasksStrip({
         const active = chipPreset !== null && chipPreset === preset;
         const className = cn(
           'rounded-pill px-2 py-px whitespace-nowrap',
-          spec.tone === '' || n === 0
-            ? 'border-border-chip text-muted-foreground border-[0.5px]'
-            : spec.tone,
+          // A zero still shows (nothing appears or vanishes), but quietly.
+          n === 0
+            ? 'text-muted-foreground opacity-60'
+            : spec.tone === ''
+              ? 'border-border-chip text-muted-foreground border-[0.5px]'
+              : spec.tone,
           active && 'ring-1 ring-current'
         );
         return chipPreset !== null ? (
