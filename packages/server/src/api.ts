@@ -498,6 +498,9 @@ export interface ApiContext {
   turnOnSharing?: (precheck?: (now: Date) => void) => Promise<SharingAnswer>;
   /** This server's restart mark while it restarts to turn on sync. */
   sharing?: SharingState;
+  /** What a restart would cut short, in words (index.ts); absent in contexts
+   *  built without a daemon. */
+  liveWork?: () => string[];
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -5376,6 +5379,20 @@ export async function handleApi(
     // endpoint that exists purely because tokens now name people: presence,
     // claims and attribution all need a caller to be identifiable before they
     // can mean anything, and this is how a client checks that it is.
+    // What stopping this daemon would cut short, so the desktop app can refuse
+    // to take over a daemon it did not start while it is busy, and how many
+    // items wait on a human, which an attached window cannot list.
+    if (
+      segments[0] === 'live-work' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return jsonResponse({
+        liveWork: ctx.liveWork?.() ?? [],
+        waiting: ctx.decisionFeed.list({ disposition: 'blocking' }).length,
+      });
+    }
+
     if (segments[0] === 'whoami' && segments.length === 1 && method === 'GET') {
       // requiredTier already rejected an unusable credential, so a missing
       // caller here would be a bug rather than an unauthenticated one.

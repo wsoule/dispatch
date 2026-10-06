@@ -2322,6 +2322,7 @@ async function bootServer(
     count(browsers.list().length, 'browser', 'browsers');
     return out;
   };
+  apiCtx.liveWork = liveWork;
   // This server's own restart mark (never shared with another server).
   const sharing = new SharingState();
   apiCtx.sharing = sharing;

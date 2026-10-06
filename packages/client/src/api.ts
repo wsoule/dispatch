@@ -3438,6 +3438,9 @@ export interface ApiClient {
   abandonInvite(): Promise<RosterAnswer>;
   /** Decide-tier: acknowledges a race, cut, merge or route note. */
   ackProblem(subject: string): Promise<void>;
+  /** What stopping the daemon would cut short, and how many items wait on a
+   *  human. Request tier, so an attached window can read it. */
+  fetchLiveWork(): Promise<{ liveWork: string[]; waiting: number }>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;
@@ -4449,6 +4452,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     ackProblem: async (subject) => {
       await teamPost(target, '/api/team/problems/ack', { subject });
     },
+    fetchLiveWork: () => request(target, '/api/live-work'),
     fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>
