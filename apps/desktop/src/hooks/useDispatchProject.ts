@@ -1170,7 +1170,8 @@ export function useDispatchProject(
       attachedWithoutAppToken
         ? {
             background: connection?.background === true,
-            liveWork: liveWork?.liveWork ?? null,
+            busy: liveWork?.busy ?? null,
+            parked: liveWork?.parked ?? 0,
             waiting: liveWork?.waiting ?? 0,
           }
         : null,

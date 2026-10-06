@@ -11,7 +11,11 @@ import {
   SettingsAccessProvider,
 } from './access';
 import { dataWith } from './fixtures.test-helper';
-import { takeoverBusyReason, takeoverWaitingNotice } from './TakeOverDaemon';
+import {
+  takeoverBusyReason,
+  takeoverParkedConfirm,
+  takeoverWaitingNotice,
+} from './TakeOverDaemon';
 import { TeamSetupGroup } from './TeamSetupGroup';
 
 function status(over: Partial<TeamStatus> = {}): TeamStatus {
@@ -110,7 +114,12 @@ function mount(
   );
 }
 
-const IDLE: DaemonTakeover = { background: false, liveWork: [], waiting: 0 };
+const IDLE: DaemonTakeover = {
+  background: false,
+  busy: [],
+  parked: 0,
+  waiting: 0,
+};
 
 describe('TeamSetupGroup', () => {
   test('starts a team in one press, beside the relay disclosure, and shows the recovery code', async () => {
@@ -221,7 +230,7 @@ describe('TeamSetupGroup', () => {
 
   test('names a background CLI daemon and the items waiting behind it', async () => {
     mount(client(status()), 'request', {
-      takeover: { background: true, liveWork: [], waiting: 2 },
+      takeover: { ...IDLE, background: true, waiting: 2 },
     });
     expect(await screen.findByText(ATTACHED_BACKGROUND_READ_ONLY)).toBeTruthy();
     expect(screen.getByText(takeoverWaitingNotice(2))).toBeTruthy();
@@ -229,7 +238,7 @@ describe('TeamSetupGroup', () => {
 
   test('holds the restart back while the daemon is busy, and says why', async () => {
     mount(client(status()), 'request', {
-      takeover: { ...IDLE, liveWork: ['1 live run', '1 terminal'] },
+      takeover: { ...IDLE, busy: ['1 live run', '1 terminal'] },
     });
     expect(
       await screen.findByText(takeoverBusyReason(['1 live run', '1 terminal']))
@@ -246,6 +255,34 @@ describe('TeamSetupGroup', () => {
     });
     fireEvent.click(await screen.findByTestId('daemon-takeover'));
     expect((await screen.findByRole('alert')).textContent).toBe(refusal);
+  });
+
+  test('confirms first when runs wait on a human, then restarts', async () => {
+    const restart = mock(() => Promise.resolve());
+    mount(client(status()), 'request', {
+      takeover: { ...IDLE, parked: 2, waiting: 2 },
+      handleRestartDaemon: restart,
+    });
+    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    expect(screen.getByText(takeoverParkedConfirm(2))).toBeTruthy();
+    expect(takeoverParkedConfirm(2)).toBe(
+      "2 runs are waiting on you; they'll pick up again after the restart, and you can answer them here."
+    );
+    expect(restart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('daemon-takeover-confirm'));
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+  });
+
+  test('a cancelled confirm restarts nothing', async () => {
+    const restart = mock(() => Promise.resolve());
+    mount(client(status()), 'request', {
+      takeover: { ...IDLE, parked: 1 },
+      handleRestartDaemon: restart,
+    });
+    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.getByTestId('daemon-takeover')).toBeTruthy();
+    expect(restart).not.toHaveBeenCalled();
   });
 
   test('a teammate below operator, not attached, sees no restart', async () => {

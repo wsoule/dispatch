@@ -3438,9 +3438,10 @@ export interface ApiClient {
   abandonInvite(): Promise<RosterAnswer>;
   /** Decide-tier: acknowledges a race, cut, merge or route note. */
   ackProblem(subject: string): Promise<void>;
-  /** What stopping the daemon would cut short, and how many items wait on a
-   *  human. Request tier, so an attached window can read it. */
-  fetchLiveWork(): Promise<{ liveWork: string[]; waiting: number }>;
+  /** What restarting the daemon would cut short (`busy`), how many runs it
+   *  would only pause because they wait on a human (`parked`), and how many
+   *  items wait on a human. Request tier, so an attached window can read it. */
+  fetchLiveWork(): Promise<{ busy: string[]; parked: number; waiting: number }>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;

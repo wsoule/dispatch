@@ -687,7 +687,7 @@ describe('below the decide tier, config is read-only', () => {
       tierData({
         myTier: 'request',
         attachedWithoutAppToken: true,
-        takeover: { background: false, liveWork: [], waiting: 0 },
+        takeover: { background: false, busy: [], parked: 0, waiting: 0 },
         handleRestartDaemon: restart,
       }),
       'agents'
@@ -701,7 +701,7 @@ describe('below the decide tier, config is read-only', () => {
       tierData({
         myTier: 'request',
         attachedWithoutAppToken: true,
-        takeover: { background: true, liveWork: null, waiting: 0 },
+        takeover: { background: true, busy: null, parked: 0, waiting: 0 },
       }),
       'agents'
     );

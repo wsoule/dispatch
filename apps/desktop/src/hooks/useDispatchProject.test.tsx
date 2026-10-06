@@ -244,7 +244,7 @@ void mock.module('@dispatch/client', () => ({
       }),
     confirmPlan: () => Promise.resolve({ epicId: 'e-1', taskIds: ['t-1'] }),
     fetchLiveWork: () =>
-      Promise.resolve({ liveWork: ['1 terminal'], waiting: 2 }),
+      Promise.resolve({ busy: ['1 terminal'], parked: 1, waiting: 2 }),
     fetchWhoami: () =>
       whoamiFixture === null
         ? Promise.reject(new Error('dispatchd is still starting'))
@@ -1633,7 +1633,8 @@ test('a window on the agent token reads no gates, notifies none and sends nothin
     await waitFor(() => {
       expect(result.current.takeover).toEqual({
         background: false,
-        liveWork: ['1 terminal'],
+        busy: ['1 terminal'],
+        parked: 1,
         waiting: 2,
       });
     });

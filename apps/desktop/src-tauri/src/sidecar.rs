@@ -1059,15 +1059,16 @@ async fn wait_for_spawned_daemon(
 /// How long a stopped daemon gets to shut down before a takeover gives up.
 const STOP_WAIT: Duration = Duration::from_secs(15);
 
-/// Parses `GET /api/live-work`: what stopping the daemon would cut short.
+/// Parses `GET /api/live-work`'s `busy`: what stopping the daemon would cut
+/// short. Its `parked` runs (waiting on a human) resume after a restart, so
+/// they never block one; the UI confirms those first.
 fn parse_live_work(body: &str) -> Result<Vec<String>, String> {
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct LiveWork {
-        live_work: Vec<String>,
+        busy: Vec<String>,
     }
     serde_json::from_str::<LiveWork>(body)
-        .map(|parsed| parsed.live_work)
+        .map(|parsed| parsed.busy)
         .map_err(|e| format!("invalid /api/live-work response: {e}"))
 }
 
@@ -1689,7 +1690,7 @@ mod tests {
     #[test]
     fn parse_live_work_reads_the_list_and_rejects_garbage() {
         assert_eq!(
-            parse_live_work(r#"{"liveWork":["1 live run","2 terminals"],"waiting":3}"#),
+            parse_live_work(r#"{"busy":["1 live run","2 terminals"],"parked":1,"waiting":3}"#),
             Ok(vec!["1 live run".to_string(), "2 terminals".to_string()])
         );
         assert!(parse_live_work("not json").is_err());
@@ -1774,7 +1775,7 @@ mod tests {
             (
                 "/api/live-work",
                 200,
-                r#"{"liveWork":["1 live run"],"waiting":2}"#.to_string(),
+                r#"{"busy":["1 live run"],"parked":0,"waiting":2}"#.to_string(),
             ),
         ]);
         let pid = spawn_orphan_sleeper();
@@ -1804,14 +1805,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stop_for_takeover_stops_an_idle_daemon_and_frees_its_port() {
+    async fn stop_for_takeover_stops_a_daemon_with_only_parked_runs_and_frees_its_port() {
         let root = "/tmp/dispatch-takeover-idle";
         let port = fake_daemon(vec![
             healthy(root),
             (
                 "/api/live-work",
                 200,
-                r#"{"liveWork":[],"waiting":0}"#.to_string(),
+                r#"{"busy":[],"parked":2,"waiting":2}"#.to_string(),
             ),
         ]);
         let pid = spawn_orphan_sleeper();

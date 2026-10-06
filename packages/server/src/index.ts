@@ -2278,13 +2278,16 @@ async function bootServer(
   // What a restart would interrupt or lose, in words: a live agent, a queued
   // merge, a shell, a browser. Idle shutdown and the restart that turns on
   // board sync both wait for it to be empty.
-  const liveWork = (): string[] => {
+  // `skipRuns` leaves out runs a caller counts on their own (parked ones).
+  const workIn = (skipRuns: ReadonlySet<string>): string[] => {
     const out: string[] = [];
     const count = (n: number, one: string, many: string) => {
       if (n > 0) out.push(`${n} ${n === 1 ? one : many}`);
     };
     count(
-      orchestrator.list().filter((r) => !TERMINAL_RUN_STATES.has(r.state))
+      orchestrator
+        .list()
+        .filter((r) => !TERMINAL_RUN_STATES.has(r.state) && !skipRuns.has(r.id))
         .length,
       'live run',
       'live runs'
@@ -2322,7 +2325,36 @@ async function bootServer(
     count(browsers.list().length, 'browser', 'browsers');
     return out;
   };
-  apiCtx.liveWork = liveWork;
+  const liveWork = (): string[] => workIn(new Set());
+  // Live runs whose only state is waiting on a human: parked on a tool
+  // approval, or on a blocking question or scope request they sent. A restart
+  // force-fails and then auto-resumes them, with nothing written meanwhile.
+  const parkedRuns = (): Set<string> => {
+    const asking = new Set<string>();
+    for (const item of decisionFeed.list({ disposition: 'blocking' })) {
+      if (
+        item.runId !== undefined &&
+        (item.kind === 'approval' ||
+          item.kind === 'question' ||
+          item.kind === 'scope-request')
+      )
+        asking.add(item.runId);
+    }
+    return new Set(
+      orchestrator
+        .list()
+        .filter(
+          (r) =>
+            !TERMINAL_RUN_STATES.has(r.state) &&
+            (r.state === 'awaiting-approval' || asking.has(r.id))
+        )
+        .map((r) => r.id)
+    );
+  };
+  apiCtx.liveWork = () => {
+    const parked = parkedRuns();
+    return { busy: workIn(parked), parked: parked.size };
+  };
   // This server's own restart mark (never shared with another server).
   const sharing = new SharingState();
   apiCtx.sharing = sharing;

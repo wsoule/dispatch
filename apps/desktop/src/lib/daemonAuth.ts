@@ -187,9 +187,12 @@ function errorCode(error: unknown): string | null {
 export interface DaemonTakeover {
   /** The daemon file says the CLI started it in the background. */
   background: boolean;
-  /** What the restart would stop, in words; `null` until the daemon answers,
-   *  or for an older one that cannot say. */
-  liveWork: readonly string[] | null;
+  /** What the restart would cut short, in words; `null` until the daemon
+   *  answers, or for an older one that cannot say. */
+  busy: readonly string[] | null;
+  /** Runs only waiting on a human: the restart pauses them, and they resume
+   *  on boot. */
+  parked: number;
   /** Items waiting on a human, which this window cannot list. */
   waiting: number;
 }

@@ -6,7 +6,8 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
-import { runGitSync } from './orchestrator/helpers.js';
+import { ParkingExecutor } from './messaging/harness.js';
+import { runGitSync, StallingExecutor } from './orchestrator/helpers.js';
 import { rawFetch } from './testAuth.js';
 
 // GET /api/live-work: what the desktop app checks before it stops a daemon it
@@ -27,6 +28,8 @@ let fakeHome: string;
 let root: string;
 let handle: ServerHandle;
 let baseUrl: string;
+let parking: ParkingExecutor;
+let stalling: StallingExecutor;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
 beforeEach(async () => {
@@ -34,11 +37,16 @@ beforeEach(async () => {
   process.env.DISPATCH_HOME = fakeHome;
   root = initDispatchGitRepo();
   TaskStore.init(root);
+  parking = new ParkingExecutor();
+  stalling = new StallingExecutor();
   handle = await startServer({
     rootDir: root,
     port: 0,
     webDistDir: null,
-    registerExecutors: () => {},
+    registerExecutors: (orchestrator) => {
+      orchestrator.registerExecutor('claude', stalling);
+      orchestrator.registerExecutor('parking', parking);
+    },
   });
   baseUrl = `http://127.0.0.1:${handle.port}`;
 });
@@ -51,6 +59,14 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+async function waitUntil(check: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error('waitUntil timed out');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 function get(token: string | null): Promise<Response> {
   return rawFetch(`${baseUrl}/api/live-work`, {
     headers: token === null ? {} : { authorization: `Bearer ${token}` },
@@ -61,7 +77,7 @@ describe('GET /api/live-work', () => {
   it('answers the agent token with nothing live on an idle daemon', async () => {
     const res = await get(handle.tokens.agentToken);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ liveWork: [], waiting: 0 });
+    expect(await res.json()).toEqual({ busy: [], parked: 0, waiting: 0 });
   });
 
   it('names an open terminal', async () => {
@@ -75,7 +91,7 @@ describe('GET /api/live-work', () => {
     });
     expect(opened.status).toBe(201);
     const res = await get(handle.tokens.agentToken);
-    expect(((await res.json()) as { liveWork: string[] }).liveWork).toEqual([
+    expect(((await res.json()) as { busy: string[] }).busy).toEqual([
       '1 terminal',
     ]);
   });
@@ -92,6 +108,49 @@ describe('GET /api/live-work', () => {
     expect(registered.ok).toBe(true);
     const res = await get(handle.tokens.agentToken);
     expect(((await res.json()) as { waiting: number }).waiting).toBe(1);
+  });
+
+  it('counts a working run as busy and one parked on a human as parked', async () => {
+    const app = { authorization: `Bearer ${handle.tokens.appToken}` };
+    const post = (path: string, body: unknown) =>
+      rawFetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: { ...app, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(
+        (r) => r.json() as Promise<{ id?: string; meta?: { id: string } }>
+      );
+    const dispatch = async (executor: string) => {
+      const task = await post('/api/tasks', { title: executor });
+      return post(`/api/tasks/${task.meta?.id ?? ''}/runs`, { executor });
+    };
+    const read = async () =>
+      (await (await get(handle.tokens.agentToken)).json()) as {
+        busy: string[];
+        parked: number;
+      };
+    await dispatch('claude');
+    await dispatch('parking');
+    await waitUntil(async () => (await read()).busy[0] === '2 live runs');
+    parking.park('req-1', 'Bash', { command: 'pnpm install' });
+    await waitUntil(async () => (await read()).parked === 1);
+    expect((await read()).busy).toEqual(['1 live run']);
+    // The working run asks a blocking question: now it only waits too.
+    await rawFetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${stalling.lastRunToken ?? ''}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        body: 'Which database?',
+      }),
+    });
+    await waitUntil(async () => (await read()).parked === 2);
+    expect((await read()).busy).toEqual([]);
   });
 
   it('refuses a request with no credential', async () => {
