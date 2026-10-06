@@ -58,6 +58,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     setEffortId: () => {},
     configuredEffort: undefined,
     reset: () => {},
+    stop: () => Promise.resolve(),
     draft: '',
     setDraft: () => {},
     ...over,
@@ -70,15 +71,18 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
 function ChatWithDraft({
   overseer,
   compact = false,
+  durable = false,
 }: {
   overseer: OverseerSession;
   compact?: boolean;
+  durable?: boolean;
 }) {
   const [draft, setDraft] = useState('');
   return (
     <OverseerChat
       overseer={{ ...overseer, draft, setDraft }}
       compact={compact}
+      durable={durable}
     />
   );
 }
@@ -612,4 +616,51 @@ test('the confirm card heading is 12px sentence case and its tool id is sans', (
   const toolId = screen.getByText('cancel_run');
   expect(toolId.className).toContain('font-book');
   expect(toolId.className).not.toContain('font-mono');
+});
+
+test('a durable conversation takes a message mid-turn and offers Stop', () => {
+  let submitted = '';
+  let stopped = false;
+  render(
+    <ChatWithDraft
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({ state: 'running', spendUsd: 0.5 }),
+        submit: (text) => {
+          submitted = text;
+          return Promise.resolve();
+        },
+        stop: () => {
+          stopped = true;
+          return Promise.resolve();
+        },
+      })}
+      durable
+    />
+  );
+  const box = screen.getByRole('textbox', { name: 'Follow-up message' });
+  expect(box.hasAttribute('disabled')).toBe(false);
+  fireEvent.change(box, { target: { value: 'also this' } });
+  fireEvent.keyDown(box, { key: 'Enter' });
+  expect(submitted).toBe('also this');
+  fireEvent.click(screen.getByTestId('overseer-stop'));
+  expect(stopped).toBe(true);
+  expect(screen.getByTestId('overseer-spend').textContent).toContain('$0.50');
+});
+
+test('a classic conversation still locks its composer mid-turn', () => {
+  render(
+    <ChatWithDraft
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({ state: 'running' }),
+      })}
+    />
+  );
+  expect(
+    screen
+      .getByRole('textbox', { name: 'Follow-up message' })
+      .hasAttribute('disabled')
+  ).toBe(true);
+  expect(screen.queryByTestId('overseer-stop')).toBeNull();
 });

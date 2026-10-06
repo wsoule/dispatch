@@ -8,7 +8,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   OverseerApprovalDecision,
@@ -17,7 +17,7 @@ import type {
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { effortOptions, modelLabel, MODELS } from '../../lib/models';
 import type { OverseerThreadItem } from '../../lib/overseerThread';
-import { buildOverseerThread } from '../../lib/overseerThread';
+import { buildOverseerThread, findInThread } from '../../lib/overseerThread';
 import { Markdown } from '../runs/Markdown';
 import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
@@ -261,6 +261,11 @@ interface OverseerChatProps {
   aboveComposer?: ReactNode;
   /** Locks the composer, as for a revoked Overseer. */
   disabled?: boolean;
+  /**
+   * Two views' one conversation: typing during a turn queues, Stop ends the
+   * turn, the stream shows its spend, and ⌘F searches it.
+   */
+  durable?: boolean;
 }
 
 /**
@@ -276,6 +281,7 @@ export function OverseerChat({
   placeholder,
   aboveComposer,
   disabled = false,
+  durable = false,
 }: OverseerChatProps) {
   // The composer's text is the session's, not this component's: the rail
   // unmounts this chat on a tab flip and on collapse, and navigating to the
@@ -302,10 +308,33 @@ export function OverseerChat({
   const decidingRequestId = overseer.decidingRequestId;
   const decideError = overseer.decideError;
 
-  const thread = useMemo(
+  const fullThread = useMemo(
     () => buildOverseerThread(overseer.record),
     [overseer.record]
   );
+  const [query, setQuery] = useState<string | null>(null);
+  const thread = useMemo(
+    () => (query === null ? fullThread : findInThread(fullThread, query)),
+    [fullThread, query]
+  );
+  const rootRef = useRef<HTMLDivElement>(null);
+  const findRef = useRef<HTMLInputElement>(null);
+
+  // ⌘F searches the stream while it is on screen; a view kept mounted but
+  // hidden has no layout box, so it never takes the key.
+  useEffect(() => {
+    if (!durable) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f')
+        return;
+      if (rootRef.current?.offsetParent === null) return;
+      event.preventDefault();
+      setQuery((current) => current ?? '');
+      requestAnimationFrame(() => findRef.current?.select());
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [durable]);
 
   // Pin the transcript to the newest row — keyed on the last row's identity as
   // well as the count, since a turn settling in place (pending spinner → reply)
@@ -353,7 +382,8 @@ export function OverseerChat({
    */
   function submitDraft() {
     const text = draft.trim();
-    if (text === '' || sending || busy) return;
+    // A durable conversation takes a message mid-turn: the daemon queues it.
+    if (text === '' || sending || (busy && !durable)) return;
     void overseer.submit(text);
   }
 
@@ -441,6 +471,36 @@ export function OverseerChat({
             <ErrorLine>{item.error}</ErrorLine>
           </div>
         );
+      case 'notice':
+        return (
+          <div
+            key={item.key}
+            role="separator"
+            data-testid={`overseer-notice-${item.notice}`}
+            className="text-muted-foreground font-book flex items-center gap-2 py-1 text-[11px]"
+          >
+            <span className="bg-border h-px flex-1" />
+            <span className="max-w-[80%] text-center">
+              {item.text} · {formatRelativeTimeFromIso(item.at)}
+            </span>
+            <span className="bg-border h-px flex-1" />
+          </div>
+        );
+      case 'queued':
+        return (
+          <div
+            key={item.key}
+            data-testid="overseer-queued"
+            className="rounded-control bg-surface-quaternary/60 text-muted-foreground font-book max-w-[85%] self-end border-[0.5px] border-dashed px-3 py-1.5 text-[13px]"
+          >
+            <span className="whitespace-pre-wrap">{item.text}</span>
+            <span className="mt-0.5 block text-[11px]">
+              {item.waiting
+                ? 'Queued · goes with your next message'
+                : 'Queued · goes out when this turn ends'}
+            </span>
+          </div>
+        );
     }
   }
 
@@ -474,13 +534,44 @@ export function OverseerChat({
     );
   }
 
+  const spend = overseer.record?.spendUsd ?? 0;
+
   return (
     <div
+      ref={rootRef}
       className={cn(
         'flex min-h-0 flex-1 flex-col',
         compact ? 'gap-2' : 'gap-3'
       )}
     >
+      {query !== null && (
+        <div className="rounded-control border-border flex items-center gap-2 border-[0.5px] px-2 py-1">
+          <input
+            ref={findRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setQuery(null);
+            }}
+            placeholder="Find in this conversation"
+            aria-label="Find in this conversation"
+            className="font-book min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+          />
+          <span className="text-muted-foreground font-book text-[11px] tabular-nums">
+            {query.trim() === ''
+              ? ''
+              : `${thread.length} ${thread.length === 1 ? 'match' : 'matches'}`}
+          </span>
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-label="Close find"
+            onClick={() => setQuery(null)}
+          >
+            Done
+          </Button>
+        </div>
+      )}
       {overseer.recordError !== null && overseer.record === undefined && (
         <ErrorLine>{overseer.recordError}</ErrorLine>
       )}
@@ -502,14 +593,33 @@ export function OverseerChat({
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground font-book min-w-0 flex-1 truncate text-[12px]">
             {busy
-              ? 'The overseer is answering…'
+              ? durable
+                ? 'Working · what you send now goes when it finishes'
+                : 'The overseer is answering…'
               : compact
                 ? 'Actions wait for your approval.'
                 : 'Ask a follow-up. Actions always wait for your approval.'}
             {overseer.record?.model !== undefined && (
               <> · {modelLabel(overseer.record.model)}</>
             )}
+            {durable && spend > 0 && (
+              <span data-testid="overseer-spend">
+                {' '}
+                · ${spend.toFixed(2)} so far
+              </span>
+            )}
           </span>
+          {durable && busy && (
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={() => void overseer.stop()}
+              data-testid="overseer-stop"
+              className="shrink-0"
+            >
+              Stop
+            </Button>
+          )}
           {compact && (
             // The full page's "New conversation" lives in its header; the rail
             // has no header of its own, so the reset rides the composer row.
@@ -542,7 +652,7 @@ export function OverseerChat({
           value={draft}
           onChange={setDraft}
           onSubmit={submitDraft}
-          disabled={disabled || busy || sending}
+          disabled={disabled || (busy && !durable) || sending}
           placeholder={
             placeholder ??
             'Ask about runs, tasks, the queue — or ask it to act…'

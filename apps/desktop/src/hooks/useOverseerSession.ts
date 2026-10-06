@@ -6,7 +6,7 @@ import {
 } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dispatch, SetStateAction } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { isFakeOverseerDevToolEnabled } from '../lib/devTools';
 import {
@@ -175,6 +175,8 @@ export interface OverseerSession {
   decideError: string | null;
   /** Drops back to the "start a conversation" state. Nothing is deleted server-side. */
   reset: () => void;
+  /** Stops the running turn; what was typed during it waits for the next send. */
+  stop: () => Promise<void>;
   /**
    * What the human has typed into the composer but not sent yet. It lives on
    * the session rather than inside OverseerChat because every surface that
@@ -221,7 +223,9 @@ export function useOverseerSession(
   // what the composer's picker shows until the human picks otherwise.
   configuredModel?: string,
   // The project's configured `effort.overseer`, named on the Default entry.
-  configuredEffort?: EffortLevel
+  configuredEffort?: EffortLevel,
+  // Two views: reopen this person's one conversation instead of a blank composer.
+  resume = false
 ): OverseerSession {
   const queryClient = useQueryClient();
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -269,6 +273,32 @@ export function useOverseerSession(
     setDecideError(null);
     setRevoked(false);
   }, [projectPath]);
+
+  // One conversation per person per project: pick up the newest one once per
+  // project, unless the human has already started typing into a fresh one.
+  const resumedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!resume || client === null || projectPath === null) return;
+    if (resumedFor.current === projectPath) return;
+    resumedFor.current = projectPath;
+    let cancelled = false;
+    client
+      .currentOverseer()
+      .then(({ conversation }) => {
+        if (cancelled || conversation === null) return;
+        queryClient.setQueryData(
+          overseerKey(port, conversation.id),
+          conversation
+        );
+        setConversationId((open) => open ?? conversation.id);
+      })
+      .catch(() => {
+        // An older daemon has no such route; the blank composer is the fallback.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, port, projectPath, queryClient, resume]);
 
   const { data: record, error } = useQuery({
     queryKey: overseerKey(port, conversationId),
@@ -502,6 +532,19 @@ export function useOverseerSession(
     setDecideError(null);
   }, []);
 
+  const stop = useCallback(async () => {
+    if (client === null || conversationId === null) return;
+    try {
+      const rec = await client.stopOverseer(conversationId);
+      queryClient.setQueryData(overseerKey(port, conversationId), rec);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : String(err));
+    }
+    await queryClient.invalidateQueries({
+      queryKey: overseerKey(port, conversationId),
+    });
+  }, [client, conversationId, port, queryClient]);
+
   // react-query keeps the last good `data` through a *background* refetch
   // failure, which is right for a hiccup and wrong for a conversation the
   // daemon no longer has (records are in-memory, so a restart 404s every id
@@ -531,6 +574,7 @@ export function useOverseerSession(
     setEffortId,
     configuredEffort,
     reset,
+    stop,
     draft,
     setDraft,
   };

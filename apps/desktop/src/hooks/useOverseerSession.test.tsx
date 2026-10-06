@@ -728,3 +728,30 @@ test('another 409 is not a revocation', async () => {
   expect(result.current.revoked).toBe(false);
   expect(result.current.sendError).toBe('still answering');
 });
+
+// Two views: one conversation per person per project, reopened on mount.
+test('resume reopens the person’s own conversation; classic stays blank', async () => {
+  let asked = 0;
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    currentOverseer: () => {
+      asked += 1;
+      return Promise.resolve({ conversation: overseerRecord() });
+    },
+    getOverseer: () => Promise.resolve(overseerRecord()),
+  } as unknown as ApiClient;
+
+  const resumed = renderHook(
+    () => useOverseerSession(client, PORT, '/repo', undefined, undefined, true),
+    { wrapper }
+  );
+  await waitFor(() => {
+    expect(resumed.result.current.conversationId).toBe('w-1');
+  });
+
+  const classic = renderHook(() => useOverseerSession(client, PORT, '/repo'), {
+    wrapper,
+  });
+  expect(classic.result.current.conversationId).toBeNull();
+  expect(asked).toBe(1);
+});
