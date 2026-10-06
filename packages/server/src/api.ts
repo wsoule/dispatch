@@ -499,6 +499,14 @@ export interface ApiContext {
   turnOnSharing?: (precheck?: (now: Date) => void) => Promise<SharingAnswer>;
   /** This server's restart mark while it restarts to turn on sync. */
   sharing?: SharingState;
+  /** Exits for another daemon to take over, or names the live work that
+   *  stops it. Set by startServer when its process can exit. */
+  shutdownForHandover?: (
+    allowParked: boolean
+  ) => { ok: true } | { ok: false; code: 'busy' | 'parked'; live: string[] };
+  /** What stopping this daemon would interrupt (index.ts workReport), and
+   *  how many items block on a human; absent without a daemon. */
+  liveWork?: () => { busy: string[]; parked: string[]; waiting: number };
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -4920,6 +4928,40 @@ function requiredTier(
   return 'request';
 }
 
+// POST /api/daemon/shutdown: `dispatch serve` taking this project over. Only
+// this machine's own credentials (agent or app token, not a run's or a
+// teammate's), which could stop the process anyway, and never with work live.
+async function daemonShutdown(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const own =
+    ctx.ownerCredential === true ||
+    (ctx.viaAgentToken === true && ctx.viaRun === undefined);
+  if (!own)
+    return errorResponse(
+      403,
+      "only this machine's agent or app token can stop the daemon"
+    );
+  const handover = ctx.shutdownForHandover;
+  if (handover === undefined)
+    return errorResponse(409, 'this daemon cannot be stopped from its API');
+  // `{ parked: true }`: the caller confirmed runs parked on a human may stop;
+  // they resume after the next boot.
+  const body = (await req.json().catch(() => ({}))) as { parked?: unknown };
+  const answer = handover(body.parked === true);
+  if (!answer.ok)
+    return jsonResponse(
+      {
+        error: `it has ${answer.code === 'busy' ? 'live work' : 'runs parked on a human'}: ${answer.live.join(', ')}`,
+        code: answer.code,
+        live: answer.live,
+      },
+      409
+    );
+  return jsonResponse({ ok: true, pid: process.pid }, 202);
+}
+
 /** The credential a request presents: a bearer header, or failing that a
  *  team-local session cookie sent from the daemon's own page (session.ts). The
  *  header wins so the CLI, MCP and desktop app are never affected by a stray
@@ -5230,6 +5272,23 @@ export async function handleApi(
   }
 
   try {
+    if (
+      method === 'POST' &&
+      segments.length === 2 &&
+      segments[0] === 'daemon' &&
+      segments[1] === 'shutdown'
+    )
+      return await daemonShutdown(req, ctx);
+    // What stopping this daemon would cut short, so a takeover can refuse
+    // while work is under way and ask first about runs parked on a human.
+    if (
+      segments[0] === 'live-work' &&
+      segments.length === 1 &&
+      method === 'GET'
+    )
+      return jsonResponse(
+        ctx.liveWork?.() ?? { busy: [], parked: [], waiting: 0 }
+      );
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
       // `rootDir` lets the web UI show a project name (its basename) in the
       // top bar without a separate endpoint — see the phase-2 plan's Slice

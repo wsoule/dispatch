@@ -389,3 +389,44 @@ describe('GET /api/whoami', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('handing the project to another daemon', () => {
+  it('reports no live work on the agent token', async () => {
+    const res = await rawFetch(`${baseUrl}/api/live-work`, {
+      headers: auth(agentToken),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ busy: [], parked: [], waiting: 0 });
+  });
+
+  it('refuses to stop when its process cannot exit', async () => {
+    const res = await rawFetch(`${baseUrl}/api/daemon/shutdown`, {
+      method: 'POST',
+      headers: auth(agentToken),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it('exits on its own agent token once idle, after answering', async () => {
+    await handle.stop();
+    let stopped = 0;
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      webDistDir: null,
+      writeDaemonFile: true,
+      registerExecutors: () => {},
+      onShutdownRequest: () => {
+        stopped += 1;
+      },
+    });
+    const res = await rawFetch(
+      `http://127.0.0.1:${handle.port}/api/daemon/shutdown`,
+      { method: 'POST', headers: auth(handle.tokens.agentToken) }
+    );
+    expect(res.status).toBe(202);
+    expect(stopped).toBe(0);
+    await Bun.sleep(300);
+    expect(stopped).toBe(1);
+  });
+});

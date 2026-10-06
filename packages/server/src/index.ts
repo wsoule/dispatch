@@ -61,6 +61,7 @@ import { ConversationStore } from './conversations.js';
 import {
   assertRootNotServed,
   removeDaemonFile,
+  waitForRootReleased,
   writeDaemonFile,
 } from './daemonfile.js';
 import { DecisionFeed } from './decisionFeed.js';
@@ -267,9 +268,9 @@ export interface StartServerOptions {
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
-  // Boot even when the daemon file names a live dispatchd for this root. Off
-  // by default: a second daemon force-fails the first one's runs (see
-  // assertRootNotServed). bin.ts sets it for `--replace` and `--init`.
+  // Boot once the live dispatchd the daemon file names has exited, waiting
+  // for it instead of refusing (waitForRootReleased); never beside it. bin.ts
+  // sets it for `--replace` and `--init`, whose callers stop the old one.
   replaceRunningDaemon?: boolean;
   // Which backend this daemon's state lives in. Left unset it comes from
   // `DISPATCH_STORE_BACKEND` (see `resolveStoreBackend`), which defaults to
@@ -370,6 +371,9 @@ export interface StartServerOptions {
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   onIdle?: () => void;
+  // Exits this process for `POST /api/daemon/shutdown`, once nothing is live:
+  // how `dispatch serve` takes a project over. Absent, the route refuses.
+  onShutdownRequest?: () => void;
   // Who spawned this daemon in the background (dispatchd's `--started-by`),
   // recorded in the daemon file so a missing-app-token error can name it.
   startedBy?: string;
@@ -889,8 +893,10 @@ export async function startServer(
 ): Promise<ServerHandle> {
   // Before touching any state: a root another live daemon is serving is not
   // ours to reconcile.
-  if ((opts.writeDaemonFile ?? true) && opts.replaceRunningDaemon !== true) {
-    await assertRootNotServed(opts.rootDir);
+  if (opts.writeDaemonFile ?? true) {
+    if (opts.replaceRunningDaemon === true)
+      await waitForRootReleased(opts.rootDir);
+    else await assertRootNotServed(opts.rootDir);
   }
 
   // Started before anything that can block, so a boot-time stall (a migration,
@@ -2278,16 +2284,38 @@ async function bootServer(
     shared,
   };
 
-  // What a restart would interrupt or lose, in words: a live agent, a queued
-  // merge, a shell, a browser. Idle shutdown and the restart that turns on
-  // board sync both wait for it to be empty.
-  const liveWork = (): string[] => {
+  // Live runs doing nothing but wait on a human (an approval, or any open
+  // decision the run is parked on): a restart loses no work of theirs.
+  const parkedRunIds = (): Set<string> => {
+    const open = new Set(
+      decisionFeed
+        .list()
+        .flatMap((item) => (item.runId === undefined ? [] : [item.runId]))
+    );
+    return new Set(
+      orchestrator
+        .list()
+        .filter(
+          (r) =>
+            !TERMINAL_RUN_STATES.has(r.state) &&
+            (r.state === 'awaiting-approval' || open.has(r.id))
+        )
+        .map((r) => r.id)
+    );
+  };
+  // What a restart would interrupt, in words: `busy` is work under way (an
+  // agent, a queued merge, a shell, a browser), `parked` runs waiting on a
+  // human, which pick up again after a restart.
+  const workReport = (): { busy: string[]; parked: string[] } => {
     const out: string[] = [];
     const count = (n: number, one: string, many: string) => {
       if (n > 0) out.push(`${n} ${n === 1 ? one : many}`);
     };
+    const parked = parkedRunIds();
     count(
-      orchestrator.list().filter((r) => !TERMINAL_RUN_STATES.has(r.state))
+      orchestrator
+        .list()
+        .filter((r) => !TERMINAL_RUN_STATES.has(r.state) && !parked.has(r.id))
         .length,
       'live run',
       'live runs'
@@ -2323,11 +2351,49 @@ async function bootServer(
       'terminals'
     );
     count(browsers.list().length, 'browser', 'browsers');
-    return out;
+    const n = parked.size;
+    return {
+      busy: out,
+      parked:
+        n === 0 ? [] : [`${n} ${n === 1 ? 'run' : 'runs'} waiting on a human`],
+    };
   };
+  // Idle shutdown and the restart that turns on board sync wait for both.
+  const liveWork = (): string[] => {
+    const { busy, parked } = workReport();
+    return [...busy, ...parked];
+  };
+  apiCtx.liveWork = () => ({
+    ...workReport(),
+    waiting: decisionFeed.list({ disposition: 'blocking' }).length,
+  });
   // This server's own restart mark (never shared with another server).
   const sharing = new SharingState();
   apiCtx.sharing = sharing;
+  // Hands the project to another daemon: refuses while anything is live,
+  // holds new runs, and exits after the answer leaves unless work began.
+  const onShutdown = opts.onShutdownRequest;
+  let handingOver = false;
+  if (onShutdown !== undefined)
+    apiCtx.shutdownForHandover = (allowParked) => {
+      const { busy, parked } = workReport();
+      if (busy.length > 0) return { ok: false, code: 'busy', live: busy };
+      if (parked.length > 0 && !allowParked)
+        return { ok: false, code: 'parked', live: parked };
+      if (handingOver) return { ok: true };
+      handingOver = true;
+      orchestrator.hold('Dispatch is handing this project to another daemon.');
+      setTimeout(() => {
+        const late = workReport().busy;
+        if (late.length === 0) return onShutdown();
+        handingOver = false;
+        orchestrator.release();
+        console.error(
+          `dispatchd: NOT handing over: ${late.join(', ')} started meanwhile.`
+        );
+      }, 100);
+      return { ok: true };
+    };
   apiCtx.turnOnSharing = (precheck) =>
     turnOnSharing(
       {

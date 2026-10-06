@@ -531,9 +531,9 @@ const serverOpts: Parameters<typeof startServer>[0] = {
         },
       }),
   ...(Object.keys(a2aOverrides).length === 0 ? {} : { a2a: a2aOverrides }),
-  // `--init` is the desktop's add-project spawn, which deliberately replaces
-  // whatever daemon predates the project's tracker; `--replace` is the
-  // explicit operator override.
+  // `--init` is the desktop's add-project spawn, which stops whatever daemon
+  // predates the project's tracker; `--replace` is the explicit override.
+  // Either way this boot waits for the old pid to exit, never runs beside it.
   replaceRunningDaemon: args.includes('--init') || args.includes('--replace'),
   // `undefined` here defers to index.ts's own production defaults (the real
   // 'claude' backend, plus 'codex' when installed) — see the module comment
@@ -587,6 +587,12 @@ const serverOpts: Parameters<typeof startServer>[0] = {
   idleTimeoutMs:
     idleTimeoutSeconds !== undefined ? idleTimeoutSeconds * 1000 : undefined,
   ...(startedBy === undefined ? {} : { startedBy }),
+  onShutdownRequest: () => {
+    console.log(
+      'dispatchd: another dispatchd is taking over this project, exiting'
+    );
+    void shutdown();
+  },
   onIdle: () => {
     console.log(
       `dispatchd: unused for ${idleTimeoutSeconds}s with no live work, exiting`
