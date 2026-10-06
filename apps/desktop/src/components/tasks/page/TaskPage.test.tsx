@@ -826,3 +826,17 @@ describe('Two views’ compact page', () => {
     expect(back).toBe(1);
   });
 });
+
+test('Two views names the Conversation toggle and shows its unread count', async () => {
+  const log = newLog();
+  const host = {
+    ...fakeHost(log, { tasks: [task('t-1')], body: BODY }),
+    compactPage: true,
+    threadView: () => <div>thread</div>,
+  };
+  mount(host, { layout: 'full', conversationCount: 2 });
+  const toggle = await screen.findByTestId('task-conversation-toggle');
+  expect(toggle.textContent).toBe('Conversation· 2');
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+});

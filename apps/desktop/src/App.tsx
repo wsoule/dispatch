@@ -1541,6 +1541,7 @@ function App() {
             onClose={closeTwoViewsPage}
             onExpand={() => dispatchNav({ type: 'tv/expandTask' })}
             onBack={closeTwoViewsPage}
+            conversationCount={speechByTask.get(page.taskId)?.count ?? 0}
           />
         );
       case 'docs':
