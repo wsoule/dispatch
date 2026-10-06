@@ -109,7 +109,11 @@ import { docsOverflowPort } from './memory/overflow.js';
 import { memoryReceiptsStep, memoryRestoreDir } from './memory/receipts.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
-import { newestOpenRoot } from './messaging/conversations.js';
+import {
+  conversationMatch,
+  newestOpenRoot,
+  scanConversation,
+} from './messaging/conversations.js';
 import {
   closeOrphanedGates,
   openHumanDecisions,
@@ -136,6 +140,11 @@ import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
+import {
+  fileOverseerStore,
+  overseerDir,
+  type OverseerStore,
+} from './orchestrator/overseerStore.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
 import { boardSyncDir, taskAuthorshipPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
@@ -309,6 +318,8 @@ export interface StartServerOptions {
   // FakeOverseer (see orchestrator/overseers/fake.ts) under 'claude' so no
   // endpoint test ever drives a real Agent SDK conversation.
   registerOverseers?: (overseerManager: OverseerManager) => void;
+  /** Where Overseer conversations persist; a file per conversation under the run state by default. */
+  overseerStore?: OverseerStore;
   // Overrides PrManager's gh/git seam and its capability-detection seam
   // (both take the same CommandRunner shape) so tests can exercise the PR
   // review path without a real GitHub remote or a logged-in gh CLI.
@@ -1975,6 +1986,7 @@ async function bootServer(
   );
   const overseerManager = new OverseerManager({
     rootDir,
+    store: opts.overseerStore ?? fileOverseerStore(overseerDir(rootDir)),
     registry: new OverseerToolRegistry({
       store,
       cache,
@@ -1983,13 +1995,49 @@ async function bootServer(
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
       memory: overseerMemory(memory),
-      messaging: overseerToolMessaging(messaging.engine, (sender, to) =>
-        newestOpenRoot(
-          { engine: messaging.engine, store: messaging.store, orchestrator },
-          sender,
-          to
-        )
-      ),
+      messaging: {
+        ...overseerToolMessaging(messaging.engine, (sender, to) =>
+          newestOpenRoot(
+            { engine: messaging.engine, store: messaging.store, orchestrator },
+            sender,
+            to
+          )
+        ),
+        // Read as a participant only: no decide-tier view of others' threads.
+        readAs: (reader, query, limit) => {
+          const match = conversationMatch(
+            orchestrator,
+            reader,
+            query.with ?? null,
+            query.about ?? null
+          );
+          if (typeof match === 'string') throw new Error(match);
+          return scanConversation(
+            messaging.store,
+            messaging.engine,
+            match,
+            { address: reader, canDecide: false },
+            { limit }
+          ).messages;
+        },
+      },
+      // Writes as the API makes them; a refusal fails the card with its reason.
+      tasks: {
+        create: (input) => {
+          const made = createTaskChecked(
+            { rootDir, store, cache, events },
+            input
+          );
+          if (!made.ok) throw new Error(made.error);
+          return made.doc;
+        },
+        update: (id, patch) => {
+          const doc = store.update(id, patch);
+          cache.refresh(store, [id]);
+          events.broadcast({ type: 'task.changed', ids: [id] });
+          return doc;
+        },
+      },
       ownerRef: actorContext.humanRef,
       overseer: overseerAddress,
       docs: docs.service,

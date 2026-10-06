@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react';
 
+import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { ForYouPosts } from './components/chat/ForYouPosts';
 import { TasksComposer } from './components/chat/TasksComposer';
 import { ConversationTimeline } from './components/conversation/ConversationTimeline';
@@ -29,6 +30,7 @@ import { PersonPeek } from './components/peek/PersonPeek';
 import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { accessFor } from './components/settings/access';
+import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { ClassicDoor } from './components/shell/ClassicDoor';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -112,7 +114,9 @@ import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
 import type { GlobalKeyCommand } from './lib/keyboard';
 import { liveCeilingsOf, spendToday } from './lib/liveSpend';
+import { awayDigest } from './lib/narrator';
 import { needsYou } from './lib/needsYou';
+import type { OverseerDoor } from './lib/overseerThread';
 import {
   addressEntries,
   buildPaletteEntries,
@@ -641,7 +645,8 @@ function App() {
     rawData.port,
     activeProject?.path ?? null,
     rawData.config?.models.overseer,
-    rawData.config?.effort?.overseer
+    rawData.config?.effort?.overseer,
+    twoViews
   );
 
   // Opens the full task view; unspecified runId resolves to the task's latest
@@ -830,6 +835,20 @@ function App() {
   const needs = useMemo(
     () => needsYou(data.decisions, data.me, { mailbox, myTaskIds }),
     [data.decisions, data.me, mailbox, myTaskIds]
+  );
+  // The narrator: what settled since the human last dismissed it, no model involved.
+  const narrator = useNarratorSince(
+    twoViews ? (activeProject?.path ?? null) : null
+  );
+  const digest = useMemo(
+    () =>
+      awayDigest({
+        since: narrator.since,
+        runs: data.runs,
+        merges: data.mergeQueue?.history ?? [],
+        asks: needs.count,
+      }),
+    [narrator.since, data.runs, data.mergeQueue, needs.count]
   );
   // Asks of mine decided in the last 15 minutes, for "Decided by you" receipts.
   const recentlyDecided = useMemo(() => {
@@ -1746,6 +1765,15 @@ function App() {
           }),
     [twoViews, solo, data.me, mailbox, myTaskIds, followedRooms]
   );
+  // An agent or narrator door: Tasks on a task, a milestone or a preset.
+  const openDoor = (door: OverseerDoor) => {
+    const taskId = door.taskId ?? door.milestoneId;
+    dispatchNav(
+      taskId !== undefined
+        ? { type: 'openTask', taskId }
+        : { type: 'tv/showTasks', preset: door.preset }
+    );
+  };
   const openPost = (post: Post) => {
     const client = data.client;
     if (client !== null) {
@@ -1837,6 +1865,7 @@ function App() {
             asks={needs.count}
             revoked={overseer.revoked}
             onShowAsks={() => dispatchNav({ type: 'tv/showTasks' })}
+            onOpenDoor={openDoor}
             onOpenConnectedAgents={() =>
               dispatchNav({
                 type: 'tv/openSettings',
@@ -1844,16 +1873,24 @@ function App() {
               })
             }
             posts={
-              <ForYouPosts
-                posts={posts}
-                label={(address) =>
-                  data.people.find((p) => p.ref === address)?.name ??
-                  address.replace(/^(human|a2a|run|agent):/, '')
-                }
-                onOpen={openPost}
-                onReply={replyToPost}
-                holding={overseerTurnLive(overseer)}
-              />
+              <>
+                <AwayDigest
+                  lines={digest}
+                  since={narrator.since}
+                  onDismiss={narrator.dismiss}
+                  onOpenDoor={openDoor}
+                />
+                <ForYouPosts
+                  posts={posts}
+                  label={(address) =>
+                    data.people.find((p) => p.ref === address)?.name ??
+                    address.replace(/^(human|a2a|run|agent):/, '')
+                  }
+                  onOpen={openPost}
+                  onReply={replyToPost}
+                  holding={overseerTurnLive(overseer)}
+                />
+              </>
             }
           />
         }
@@ -1906,6 +1943,14 @@ function App() {
           onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
           hostedPages={hostedSettingsPages}
           pageExtras={{
+            autonomy:
+              data.client === null ? null : (
+                <OverseerGrantsGroup
+                  client={data.client}
+                  port={data.port}
+                  conversationId={overseer.conversationId}
+                />
+              ),
             memory:
               data.client === null ? null : (
                 <MemoryRecent client={data.client} port={data.port} />

@@ -3799,8 +3799,9 @@ async function startOverseer(
 
 // POST /api/overseer/:id/message — mirrors sendPlanMessage: 202 with the record
 // already flipped back to `running`; the reply lands via `overseer.changed`.
-// 404s an unknown conversation and 409s one mid-turn or a revoked overseer
-// (raised by sendMessage and mapped by handleApi's outer catch).
+// Mid-turn, the message queues for the turn's end instead. 404s an unknown
+// conversation and 409s a revoked overseer (raised by sendMessage and mapped
+// by handleApi's outer catch).
 async function sendOverseerMessage(
   req: Request,
   ctx: ApiContext,
@@ -3819,6 +3820,19 @@ async function sendOverseerMessage(
     speaker
   );
   return jsonResponse(record, 202);
+}
+
+// A conversation is its owner's and the operator's; one with no owner (opened by
+// no human, or before owners were kept) stays readable as before.
+function overseerReadable(
+  ctx: ApiContext,
+  speaker: Sender | null,
+  conversationId: string
+): boolean {
+  const owner = ctx.overseerManager.find(conversationId)?.owner;
+  if (owner === undefined) return true;
+  if (ctx.caller?.tier === 'operator') return true;
+  return speaker?.address === owner;
 }
 
 // Who speaks on an overseer route: a human principal, whose lines the bus
@@ -6882,11 +6896,14 @@ export async function handleApi(
     }
 
     if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
+      const viewer = overseerSpeaker(daemonCtx, presented);
       return jsonResponse(
         buildAgentSessions(
           ctx.planManager.listPlans(),
           ctx.planManager.listDrafts(),
-          ctx.overseerManager.list()
+          ctx.overseerManager
+            .list()
+            .filter((record) => overseerReadable(ctx, viewer, record.id))
         )
       );
     }
@@ -6915,27 +6932,77 @@ export async function handleApi(
     }
 
     if (segments[0] === 'overseer') {
+      // The assistant is a human's: the shared agent token, and every run's, is refused.
+      if (ctx.viaAgentToken === true) {
+        return jsonResponse(
+          {
+            error: 'an agent cannot use the overseer; a human opens it',
+            code: 'auth_agent_token',
+          },
+          403
+        );
+      }
+      const speaker = overseerSpeaker(daemonCtx, presented);
       if (segments.length === 1 && method === 'POST') {
-        return await startOverseer(
-          req,
-          ctx,
-          overseerSpeaker(daemonCtx, presented)
+        return await startOverseer(req, ctx, speaker);
+      }
+      // One conversation per person per project: the newest one they opened.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'current' &&
+        method === 'GET'
+      ) {
+        return jsonResponse({
+          conversation:
+            ctx.overseerManager.current(speaker?.address ?? null) ?? null,
+        });
+      }
+      const conversationId = segments[1];
+      if (
+        conversationId !== undefined &&
+        !overseerReadable(ctx, speaker, conversationId)
+      ) {
+        return errorResponse(
+          404,
+          `overseer conversation not found: ${conversationId}`
         );
       }
       if (segments.length === 2 && method === 'GET') {
-        return jsonResponse(ctx.overseerManager.get(segments[1]));
+        return jsonResponse(ctx.overseerManager.get(conversationId));
       }
       if (
         segments.length === 3 &&
         segments[2] === 'message' &&
         method === 'POST'
       ) {
-        return await sendOverseerMessage(
-          req,
-          ctx,
-          segments[1],
-          overseerSpeaker(daemonCtx, presented)
+        return await sendOverseerMessage(req, ctx, conversationId, speaker);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'stop' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.overseerManager.stop(conversationId));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'grants' &&
+        method === 'GET'
+      ) {
+        return jsonResponse({
+          grants: ctx.overseerManager.listGrants(conversationId),
+        });
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'grants' &&
+        method === 'DELETE'
+      ) {
+        const revoked = ctx.overseerManager.revokeGrant(
+          conversationId,
+          decodeURIComponent(segments[3])
         );
+        return jsonResponse({ revoked });
       }
     }
 

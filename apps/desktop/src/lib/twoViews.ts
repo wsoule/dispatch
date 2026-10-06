@@ -132,9 +132,11 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
     case 'terminals':
     case 'design':
     case 'impact':
-    case 'plans':
     case 'brain-dump':
       return { kind: 'classic', view };
+    // Planning is a conversation with the agent, ending in one create_plan card.
+    case 'plans':
+      return { kind: 'overseer' };
     // These name a record; without its id there is nowhere to go.
     case 'task':
     case 'pr':

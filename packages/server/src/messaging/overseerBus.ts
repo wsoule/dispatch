@@ -56,6 +56,7 @@ export interface OverseerBus {
       toolName: string;
       input: unknown;
       summary: string;
+      held?: boolean;
     }
   ): Promise<void>;
   closeGate(
@@ -157,7 +158,11 @@ export function createOverseerBus(
           to: [opts.owner],
           kind: 'question',
           blocking: true,
-          choices: [...TOOL_APPROVAL_CHOICES],
+          // A held call is never offered for the whole conversation.
+          choices:
+            approval.held === true
+              ? TOOL_APPROVAL_CHOICES.filter((c) => c !== 'approve-session')
+              : [...TOOL_APPROVAL_CHOICES],
           body: `The overseer wants to run ${approval.summary}`,
           data: toolApprovalGateData(
             { conversation: conversationId },

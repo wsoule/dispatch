@@ -1,10 +1,10 @@
-import { Plus } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { OverseerChat } from '../components/chat/OverseerChat';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
+import type { OverseerDoor } from '../lib/overseerThread';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 
@@ -18,6 +18,8 @@ export interface TwoViewOverseerProps {
   onOpenConnectedAgents: () => void;
   /** "For you" posts, between the conversation and its composer. */
   posts?: ReactNode;
+  /** Opens one of the agent's "Show in tasks" doors. */
+  onOpenDoor: (door: OverseerDoor) => void;
 }
 
 /** Overseer in Two views: one conversation with your agent, a door to the asks. */
@@ -29,11 +31,8 @@ export function TwoViewOverseer({
   onShowAsks,
   onOpenConnectedAgents,
   posts,
+  onOpenDoor,
 }: TwoViewOverseerProps) {
-  // A queued mutation must stay decidable, so reset waits on it (as OverseerView does).
-  const hasPendingAction =
-    (overseer.record?.pendingActions.length ?? 0) > 0 ||
-    (overseer.record?.pendingApprovals.length ?? 0) > 0;
   const daemonDown = data.portLoading || data.portError || data.client === null;
 
   if (daemonDown) {
@@ -73,21 +72,6 @@ export function TwoViewOverseer({
           overseer.conversationId === null && 'justify-end'
         )}
       >
-        {overseer.conversationId !== null && (
-          <div className="flex justify-end">
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={hasPendingAction}
-              title={
-                hasPendingAction ? 'Decide the pending action first' : undefined
-              }
-              onClick={() => overseer.reset()}
-            >
-              <Plus className="size-3" /> New conversation
-            </Button>
-          </div>
-        )}
         {revoked && (
           <div
             role="alert"
@@ -110,6 +94,8 @@ export function TwoViewOverseer({
             </>
           }
           disabled={revoked}
+          durable
+          onOpenDoor={onOpenDoor}
         />
       </div>
     </div>

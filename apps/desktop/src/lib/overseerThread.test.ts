@@ -5,7 +5,7 @@ import type {
 } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { buildOverseerThread } from './overseerThread';
+import { buildOverseerThread, doorLabel, findInThread } from './overseerThread';
 
 function makeAction(overrides: Partial<OverseerAction> = {}): OverseerAction {
   return {
@@ -391,5 +391,76 @@ describe('buildOverseerThread', () => {
         failure: null,
       },
     ]);
+  });
+});
+
+describe('one durable conversation', () => {
+  test('notices render as their own rows and queued messages follow the stream', () => {
+    const record = makeRecord(
+      [
+        { role: 'user', text: 'hi', at: '2026-10-06T09:00:00Z' },
+        {
+          role: 'notice',
+          notice: 'stopped',
+          text: 'Stopped',
+          at: '2026-10-06T09:00:01Z',
+        },
+      ],
+      { queued: [{ text: 'and this', at: '2026-10-06T09:00:02Z' }] }
+    );
+    const items = buildOverseerThread(record);
+    expect(items.map((i) => i.kind)).toEqual(['message', 'notice', 'queued']);
+    expect(items[2]).toMatchObject({ text: 'and this', waiting: true });
+  });
+
+  test('a queued message waits on a running turn', () => {
+    const record = makeRecord([], {
+      state: 'running',
+      queued: [{ text: 'next', at: '2026-10-06T09:00:02Z' }],
+    });
+    expect(buildOverseerThread(record).at(-1)).toMatchObject({
+      kind: 'queued',
+      waiting: false,
+    });
+  });
+
+  test('find keeps the rows holding the words, ignoring case', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        { role: 'user', text: 'Ship the Ready ones', at: 'a' },
+        { role: 'assistant', text: 'Queued two dispatches', at: 'b' },
+      ])
+    );
+    expect(findInThread(items, 'ready').map((i) => i.key)).toEqual([
+      items[0].key,
+    ]);
+    expect(findInThread(items, '  ')).toEqual(items);
+    expect(findInThread(items, 'nothing like it')).toEqual([]);
+  });
+});
+
+describe('show_tasks doors', () => {
+  test('a show_tasks result is a door, an error stays a tool line', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        {
+          role: 'tool',
+          tool: 'show_tasks',
+          text: JSON.stringify({ door: { preset: 'ready' }, note: 'x' }),
+          at: 'a',
+        },
+        { role: 'tool', tool: 'show_tasks', text: 'error: nope', at: 'b' },
+      ])
+    );
+    expect(items[0]).toMatchObject({ kind: 'door', door: { preset: 'ready' } });
+    expect(items[1].kind).toBe('tool');
+  });
+
+  test('the label names what the door opens', () => {
+    expect(doorLabel({})).toBe('Show in tasks →');
+    expect(doorLabel({ preset: 'ready' })).toBe('Show Ready in tasks →');
+    expect(doorLabel({ taskId: 't-203', preset: 'ready' })).toBe(
+      'Show t-203 in tasks →'
+    );
   });
 });

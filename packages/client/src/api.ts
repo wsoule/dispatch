@@ -1694,7 +1694,7 @@ export type OverseerState = 'running' | 'ready' | 'failed';
 // `approval` records a built-in tool call's life: parked at `pending`, then
 // `allowed`/`denied`.
 export interface OverseerMessage {
-  role: 'user' | 'assistant' | 'tool' | 'action' | 'approval';
+  role: 'user' | 'assistant' | 'tool' | 'action' | 'approval' | 'notice';
   text: string;
   at: string;
   /** `tool`, `action` and `approval` entries: which tool the entry is about. */
@@ -1711,6 +1711,10 @@ export interface OverseerMessage {
   outcome?: 'pending' | 'applied' | 'allowed' | 'denied' | 'failed';
   /** `user` and `assistant` entries posted to the bus: the message there. */
   messageId?: string;
+  /** `assistant` entries: what the turn that produced it cost. */
+  costUsd?: number;
+  /** `notice` entries: a line across the stream, not a speaker's words. */
+  notice?: 'stopped' | 'rollover' | 'restarted';
 }
 
 // Mirrors OverseerApproval in packages/server/src/orchestrator/overseer.ts —
@@ -1726,6 +1730,8 @@ export interface OverseerApproval {
   /** One line, safe to render verbatim, saying what the call would do. */
   summary: string;
   requestedAt: string;
+  /** Held by the floor or by a hold on Dispatch's own surfaces: allowed once only. */
+  held?: boolean;
 }
 
 // Mirrors OverseerAction in packages/server/src/orchestrator/overseerTools.ts —
@@ -1744,8 +1750,18 @@ export interface OverseerAction {
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the
 // body of `POST /api/overseer` and `GET /api/overseer/:id`.
+/** One live "Allow for this conversation" grant. */
+export interface OverseerGrant {
+  /** `Bash:<program>` for Bash, else the tool's name. */
+  key: string;
+  grantedAt: string;
+  expiresAt: string;
+}
+
 export interface OverseerRecord {
   id: string;
+  /** The human who opened it; only they and the operator read it or speak in it. */
+  owner?: string;
   /** The opening prompt, kept alongside `messages[0]` for callers that only want the ask. */
   prompt: string;
   /** Which registered backend this conversation talks to; follow-ups re-resolve it. */
@@ -1774,6 +1790,12 @@ export interface OverseerRecord {
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
   sessionId?: string;
+  /** How full the session's context was at the end of the last turn, in tokens. */
+  contextTokens?: number;
+  /** What every turn of this conversation has cost so far. */
+  spendUsd?: number;
+  /** Messages typed while a turn ran; they go out together when it ends. */
+  queued?: { text: string; at: string }[];
   /** The bus thread this conversation's lines are posted to, once one is. */
   thread?: string;
   error?: string;
@@ -3750,11 +3772,24 @@ export interface ApiClient {
   getOverseer(id: string): Promise<OverseerRecord>;
   // Sends a follow-up on an existing conversation. Resolves (202) with the
   // record already back in `running` — watch `overseer.changed` for the reply.
-  // 404s an unknown conversation and 409s one mid-turn.
+  // Mid-turn it queues for the turn's end. 404s an unknown conversation.
   sendOverseerMessage(
     conversationId: string,
     text: string
   ): Promise<OverseerRecord>;
+  /** Stops the running turn; anything queued waits for the next send. */
+  stopOverseer(conversationId: string): Promise<OverseerRecord>;
+  /** The caller's own conversation on this project, newest first, or null. */
+  currentOverseer(): Promise<{ conversation: OverseerRecord | null }>;
+  /** What "Allow for this conversation" still covers: per program for Bash, up to four hours. */
+  listOverseerGrants(
+    conversationId: string
+  ): Promise<{ grants: OverseerGrant[] }>;
+  /** Ends one grant at once; `revoked` is false when there was none. */
+  revokeOverseerGrant(
+    conversationId: string,
+    key: string
+  ): Promise<{ revoked: boolean }>;
   // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
   // server-side to the project's `orchestrator.epicConcurrency` config;
   // `maxSpendUsd`/`maxRuns` are ceilings that pause the session when reached.
@@ -4790,6 +4825,19 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ text }),
       }),
+    stopOverseer: (conversationId) =>
+      request(target, `/api/overseer/${conversationId}/stop`, {
+        method: 'POST',
+      }),
+    currentOverseer: () => request(target, '/api/overseer/current'),
+    listOverseerGrants: (conversationId) =>
+      request(target, `/api/overseer/${conversationId}/grants`),
+    revokeOverseerGrant: (conversationId, key) =>
+      request(
+        target,
+        `/api/overseer/${conversationId}/grants/${encodeURIComponent(key)}`,
+        { method: 'DELETE' }
+      ),
     startEpic: (epicId, opts = {}) =>
       request(target, `/api/epics/${epicId}/dispatch`, {
         method: 'POST',

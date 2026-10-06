@@ -90,7 +90,8 @@ interface OverseerGateTarget {
   decideApproval(
     conversationId: string,
     requestId: string,
-    decision: ApprovalDecision
+    decision: ApprovalDecision,
+    expectedTool?: string
   ): unknown;
   list(): { id: string }[];
 }
@@ -520,7 +521,8 @@ export function openMessaging(deps: {
         target.decideApproval(
           conversation,
           requestId,
-          toolApprovalDecision(answer)
+          toolApprovalDecision(answer),
+          gate.tool
         )
       );
       return;

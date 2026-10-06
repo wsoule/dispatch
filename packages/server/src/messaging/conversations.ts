@@ -31,21 +31,21 @@ function taskAndRuns(orchestrator: RunLookup, taskId: string): Address[] {
   ];
 }
 
-// The `with=` / `about=` query as a store match, or why it is malformed.
-// A malformed address throws a MessagingError naming its field (400).
-function matchOf(
-  ctx: ApiContext,
+/**
+ * A `with` / `about` query as a store match, or a sentence saying why it is
+ * malformed. A malformed address throws a MessagingError naming its field.
+ */
+export function conversationMatch(
+  orchestrator: RunLookup,
   me: Address,
-  url: URL
-): ConversationMatch | Response {
-  const peer = url.searchParams.get('with');
-  const about = url.searchParams.get('about');
+  peer: string | null,
+  about: string | null
+): ConversationMatch | string {
   if ((peer === null) === (about === null))
-    return errorResponse(400, 'pass exactly one of with= or about=');
+    return 'pass exactly one of with= or about=';
   if (peer !== null) {
     parseAddress(peer, 'with');
-    if (peer === me)
-      return errorResponse(400, 'with= names the caller; name someone else');
+    if (peer === me) return 'with= names the caller; name someone else';
     return { kind: 'pair', a: me, b: peer };
   }
   const value = about ?? '';
@@ -55,13 +55,63 @@ function matchOf(
   if (parsed.kind === 'task')
     return {
       kind: 'about',
-      addresses: taskAndRuns(ctx.orchestrator, parsed.id),
+      addresses: taskAndRuns(orchestrator, parsed.id),
     };
   if (parsed.kind === 'channel') return { kind: 'about', addresses: [value] };
-  return errorResponse(
-    400,
-    `invalid about ${JSON.stringify(value)}: expected task:<id>, channel:<name> or doc:<id>`
-  );
+  return `invalid about ${JSON.stringify(value)}: expected task:<id>, channel:<name> or doc:<id>`;
+}
+
+/**
+ * One page of a conversation, newest page first, keeping only the threads
+ * `reader` may read. `next` is the cursor for the older page, or null.
+ */
+export function scanConversation(
+  store: Pick<SqliteMessageStore, 'conversation'>,
+  engine: Pick<DeliveryEngine, 'canReadThread'>,
+  match: ConversationMatch,
+  reader: Sender,
+  page: { before?: string; limit: number }
+): { messages: Message[]; next: string | null } {
+  const readable = new Map<string, boolean>();
+  const canRead = (thread: string): boolean => {
+    let ok = readable.get(thread);
+    if (ok === undefined) {
+      ok = engine.canReadThread(thread, reader);
+      readable.set(thread, ok);
+    }
+    return ok;
+  };
+  const { limit } = page;
+  const kept: Message[] = [];
+  // The last row scanned; only ever handed back when it is a kept row.
+  let cursor = page.before;
+  let scanned = 0;
+  let done = false;
+  while (!done && kept.length < limit && scanned < conversationScan.ceiling) {
+    const batch = store.conversation(match, {
+      before: cursor,
+      limit: conversationScan.batch,
+    });
+    let read = 0;
+    for (const m of batch) {
+      cursor = m.id;
+      read++;
+      if (canRead(m.thread)) kept.push(m);
+      if (kept.length === limit || scanned + read >= conversationScan.ceiling)
+        break;
+    }
+    scanned += read;
+    // Read to the end of the match: a short batch, wholly consumed.
+    done = batch.length < conversationScan.batch && read === batch.length;
+  }
+  // The cursor is the oldest kept row, never a scanned one the caller cannot
+  // read; a scan that read to the end, or kept nothing, says nothing more.
+  const oldest = kept.at(-1)?.id;
+  const older =
+    !done &&
+    oldest !== undefined &&
+    store.conversation(match, { before: oldest, limit: 1 }).length > 0;
+  return { messages: kept.reverse(), next: older ? oldest : null };
 }
 
 // A row as the thread route shows it: with federation, who sent it from
@@ -96,56 +146,23 @@ export function listBusConversation(ctx: ApiContext, url: URL): Response {
   );
   const before = url.searchParams.get('before');
   if (before === '') return errorResponse(400, 'invalid before: empty');
-  const match = matchOf(ctx, principal.address, url);
-  if (match instanceof Response) return match;
-
-  const reader: Sender = {
-    address: principal.address,
-    canDecide: principal.canDecide,
-  };
-  const readable = new Map<string, boolean>();
-  const canRead = (thread: string): boolean => {
-    let ok = readable.get(thread);
-    if (ok === undefined) {
-      ok = ctx.messaging.engine.canReadThread(thread, reader);
-      readable.set(thread, ok);
-    }
-    return ok;
-  };
-
-  const store = ctx.messaging.store;
-  const kept: Message[] = [];
-  // The last row scanned; only ever handed back when it is a kept row.
-  let cursor = before ?? undefined;
-  let scanned = 0;
-  let done = false;
-  while (!done && kept.length < limit && scanned < conversationScan.ceiling) {
-    const batch = store.conversation(match, {
-      before: cursor,
-      limit: conversationScan.batch,
-    });
-    let read = 0;
-    for (const m of batch) {
-      cursor = m.id;
-      read++;
-      if (canRead(m.thread)) kept.push(m);
-      if (kept.length === limit || scanned + read >= conversationScan.ceiling)
-        break;
-    }
-    scanned += read;
-    // Read to the end of the match: a short batch, wholly consumed.
-    done = batch.length < conversationScan.batch && read === batch.length;
-  }
-  // The cursor is the oldest kept row, never a scanned one the caller cannot
-  // read; a scan that read to the end, or kept nothing, says nothing more.
-  const oldest = kept.at(-1)?.id;
-  const older =
-    !done &&
-    oldest !== undefined &&
-    store.conversation(match, { before: oldest, limit: 1 }).length > 0;
+  const match = conversationMatch(
+    ctx.orchestrator,
+    principal.address,
+    url.searchParams.get('with'),
+    url.searchParams.get('about')
+  );
+  if (typeof match === 'string') return errorResponse(400, match);
+  const { messages, next } = scanConversation(
+    ctx.messaging.store,
+    ctx.messaging.engine,
+    match,
+    { address: principal.address, canDecide: principal.canDecide },
+    { ...(before === null ? {} : { before }), limit }
+  );
   return jsonResponse({
-    messages: kept.reverse().map((m) => federatedRow(ctx, m)),
-    next: older ? oldest : null,
+    messages: messages.map((m) => federatedRow(ctx, m)),
+    next,
   });
 }
 

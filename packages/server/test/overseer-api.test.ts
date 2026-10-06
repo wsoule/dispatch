@@ -26,7 +26,7 @@ import {
   seedLedger,
 } from './memory/fixtures.js';
 import { runGitSync } from './orchestrator/helpers.js';
-import { useTestAuth, wsUrl } from './testAuth.js';
+import { rawFetch, useTestAuth, wsUrl } from './testAuth.js';
 
 async function waitFor(
   check: () => Promise<boolean>,
@@ -257,7 +257,7 @@ describe('POST /api/overseer/:id/message', () => {
     );
   });
 
-  it('409s while a turn is in flight and 404s an unknown id', async () => {
+  it('queues while a turn is in flight, Stop ends it, and 404s an unknown id', async () => {
     await startWithOverseer(new HangingOverseer());
     const { record } = await startConversation();
     expect(record.state).toBe('running');
@@ -267,7 +267,22 @@ describe('POST /api/overseer/:id/message', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'still there?' }),
     });
-    expect(busy.status).toBe(409);
+    expect(busy.status).toBe(202);
+    const queued = (await busy.json()) as OverseerRecord;
+    expect(queued.queued?.map((q) => q.text)).toEqual(['still there?']);
+
+    const stopped = await fetch(`${baseUrl}/api/overseer/${record.id}/stop`, {
+      method: 'POST',
+    });
+    expect(stopped.status).toBe(200);
+    const after = await settled(record.id);
+    expect(after.state).toBe('ready');
+    expect(after.messages.at(-1)).toMatchObject({ notice: 'stopped' });
+
+    const current = (await json(
+      await fetch(`${baseUrl}/api/overseer/current`)
+    )) as { conversation: OverseerRecord | null };
+    expect(current.conversation?.id).toBe(record.id);
 
     const missing = await fetch(`${baseUrl}/api/overseer/wc-000000/message`, {
       method: 'POST',
@@ -656,7 +671,7 @@ describe('overseer lines on the bus', () => {
     ]);
   });
 
-  it('a turn from the shared agent token runs but opens no thread', async () => {
+  it("the shared agent token is refused: the overseer is a human's", async () => {
     await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
 
     const res = await fetch(`${baseUrl}/api/overseer`, {
@@ -667,14 +682,10 @@ describe('overseer lines on the bus', () => {
       },
       body: JSON.stringify({ prompt: 'what is running?' }),
     });
-    expect(res.status).toBe(202);
-    const record = (await json(res)) as OverseerRecord;
-    const ready = await settled(record.id);
-
-    expect(ready.messages.at(-1)).toEqual(
-      expect.objectContaining({ role: 'assistant', text: 'all quiet' })
+    expect(res.status).toBe(403);
+    expect(((await json(res)) as { code: string }).code).toBe(
+      'auth_agent_token'
     );
-    expect(ready.thread).toBeUndefined();
     expect(await threads()).toEqual([]);
   });
 });
@@ -775,5 +786,58 @@ describe('POST /api/overseer model choice', () => {
 
     const { record } = await startConversation('plain');
     expect(record.model).toBeUndefined();
+  });
+});
+
+describe('who an overseer conversation belongs to', () => {
+  // A teammate's own decide-tier token, issued through the team route.
+  async function teammate(): Promise<string> {
+    const res = await fetch(`${baseUrl}/api/team/tokens`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'priya@example.com', tier: 'decide' }),
+    });
+    return ((await json(res)) as { token: string }).token;
+  }
+
+  it('records its owner, who reads it; a teammate cannot read or speak in it', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const { record } = await startConversation();
+    expect(record.owner).toBeDefined();
+
+    const token = await teammate();
+    const read = await rawFetch(`${baseUrl}/api/overseer/${record.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(read.status).toBe(404);
+    const speak = await rawFetch(
+      `${baseUrl}/api/overseer/${record.id}/message`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text: 'hi' }),
+      }
+    );
+    expect(speak.status).toBe(404);
+
+    // The operator (the app token) still reads it.
+    expect((await fetch(`${baseUrl}/api/overseer/${record.id}`)).status).toBe(
+      200
+    );
+  });
+
+  it('lists and revokes its grants', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const { record } = await startConversation();
+    const grants = await fetch(`${baseUrl}/api/overseer/${record.id}/grants`);
+    expect(await json(grants)).toEqual({ grants: [] });
+    const revoked = await fetch(
+      `${baseUrl}/api/overseer/${record.id}/grants/${encodeURIComponent('Bash:moonx')}`,
+      { method: 'DELETE' }
+    );
+    expect(await json(revoked)).toEqual({ revoked: false });
   });
 });

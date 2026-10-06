@@ -81,6 +81,8 @@ export interface OverseerToolRequest {
   requestId: string;
   toolName: string;
   input: unknown;
+  /** Set when the pre-tool hook held the call: a floor check or an Overseer hold. */
+  check?: string;
 }
 
 /** Per-turn knobs the manager resolves from config and hands to a backend. */
@@ -114,6 +116,8 @@ export interface OverseerTurnOptions {
    * only the calls that did not go through it.
    */
   onToolUse?: (toolName: string, input: unknown) => void;
+  /** Fired by Stop; the backend ends the turn as soon as it can. */
+  abortController?: AbortController;
 }
 
 /** One settled assistant turn: the text reply, and the handle to resume from. */
@@ -125,6 +129,10 @@ export interface OverseerTurn {
    * the prior turns — including the tool calls they made — in context.
    */
   sessionId?: string;
+  /** What the turn cost, when the backend reports it. */
+  costUsd?: number;
+  /** How full the session's context is after the turn, in tokens. */
+  contextTokens?: number;
 }
 
 export interface OverseerBackend {
