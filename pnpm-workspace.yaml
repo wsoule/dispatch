@@ -108,6 +108,10 @@ auditConfig:
 # the catalog entry below are two places one version lives: bump both together.
 overrides:
   '@types/node': '24.13.2'
+  # Critical advisories in transitive deps (proxy-addr IP spoofing, tinypool RCE):
+  # pinned to the patched releases until every parent ships them.
+  'proxy-addr': '^2.0.8'
+  'tinypool': '^2.1.2'
   'typescript': '5.9.2'
 
 # The dependency catalog. Every package references these as `catalog:` rather
