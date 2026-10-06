@@ -1,5 +1,4 @@
-import { X } from 'lucide-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { OverseerSession } from '../../hooks/useOverseerSession';
@@ -14,7 +13,7 @@ import { subjectOf } from '../../lib/conversationScope';
 import type { RefAction } from '../../lib/threadSources';
 import { replyRoute } from '../../lib/threadSources';
 import { ThreadPane } from '../threads/ThreadPane';
-import { IconButton } from '@/ui/ai/icon-button';
+import { PeekDrawer } from './PeekDrawer';
 import { EmptyState } from '@/ui/chrome';
 import { Spinner } from '@/ui/spinner';
 
@@ -53,32 +52,18 @@ export function ThreadPeek({
     markRead(open.deliveries);
   }, [markRead, open.deliveries]);
 
-  // Focus moves into the drawer and back to whatever opened it.
-  const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const opener =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    closeRef.current?.focus();
-    return () => opener?.focus();
-  }, []);
-
   const ready = open.thread !== null && open.messages.length > 0 && me !== null;
   const root = open.messages[0];
   const home = root === undefined || me === null ? null : subjectOf(root, me);
   return (
-    <aside
-      role="dialog"
-      aria-label="Thread"
-      data-testid="thread-peek"
-      className="bg-background border-border-strong rounded-popover shadow-raised absolute top-3 right-3 bottom-[96px] z-20 flex w-[420px] max-w-[calc(100%-24px)] flex-col overflow-hidden border-[0.5px]"
-    >
-      <div className="border-border flex items-center gap-2 border-b-[0.5px] px-3 py-2">
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
-          Thread
-        </span>
-        {home !== null && (
+    <PeekDrawer
+      label="Thread"
+      testId="thread-peek"
+      title="Thread"
+      subtitle={home ?? undefined}
+      onClose={onClose}
+      actions={
+        home !== null && (
           <button
             type="button"
             onClick={() => {
@@ -89,11 +74,9 @@ export function ThreadPeek({
           >
             Open in its home →
           </button>
-        )}
-        <IconButton ref={closeRef} label="Close" onClick={onClose}>
-          <X aria-hidden />
-        </IconButton>
-      </div>
+        )
+      }
+    >
       <div className="min-h-0 flex-1">
         {!access.canMessage ? (
           <EmptyState
@@ -131,6 +114,7 @@ export function ThreadPeek({
             onOverseerReply={overseer.reply}
             overseerBusy={overseer.sending || overseerTurnLive(overseer)}
             onOpenOverseer={onShowOverseer}
+            overseerVoice="agent"
           />
         ) : open.error !== null ? (
           <EmptyState className="h-full" heading={open.error.message} />
@@ -140,6 +124,6 @@ export function ThreadPeek({
           </div>
         )}
       </div>
-    </aside>
+    </PeekDrawer>
   );
 }

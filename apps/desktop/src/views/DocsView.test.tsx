@@ -76,6 +76,8 @@ function renderView(opts: {
   publish?: ApiClient['publishDoc'];
   createDoc?: ApiClient['createDoc'];
   promoteDoc?: ApiClient['promoteDoc'];
+  tasksPage?: { onBack: () => void; onOpenAllDocs: () => void };
+  initialDoc?: string;
 }) {
   const calls: string[] = [];
   const doc = opts.doc ?? summary;
@@ -128,7 +130,11 @@ function renderView(opts: {
   } as unknown as DispatchProjectData;
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <DocsView data={data} />
+      <DocsView
+        data={data}
+        tasksPage={opts.tasksPage}
+        initialDoc={opts.initialDoc}
+      />
     </QueryClientProvider>
   );
   return calls;
@@ -993,4 +999,54 @@ test('j and k move through the list', async () => {
   expect(await screen.findByLabelText('Editing plan')).toBeDefined();
   fireEvent.keyDown(screen.getByRole('list', { name: 'Docs' }), { key: 'k' });
   expect(await screen.findByLabelText('Editing auth')).toBeDefined();
+});
+
+test('in Two views the All docs page leads with ‹ tasks and lists docs full width', async () => {
+  const calls: string[] = [];
+  renderView({
+    canDecide: true,
+    tasksPage: {
+      onBack: () => calls.push('back'),
+      onOpenAllDocs: () => calls.push('all docs'),
+    },
+  });
+  const header = document.querySelector<HTMLElement>(
+    '[data-slot="page-header"]'
+  );
+  expect(header).not.toBeNull();
+  expect(within(header).getByText('All docs')).toBeDefined();
+  // No classic rail chrome: no "Docs" heading, no "Pick a doc." placeholder.
+  expect(screen.queryByRole('heading', { name: 'Docs' })).toBeNull();
+  expect(screen.queryByText('Pick a doc.')).toBeNull();
+  expect(
+    await screen.findByRole('button', { name: 'Auth refactor' })
+  ).toBeDefined();
+  fireEvent.click(screen.getByTestId('tasks-back'));
+  expect(calls).toEqual(['back']);
+});
+
+test('in Two views an open doc sits under All docs › its title, and the crumb walks back', async () => {
+  const calls: string[] = [];
+  renderView({
+    canDecide: true,
+    initialDoc: 'doc-1',
+    tasksPage: {
+      onBack: () => calls.push('back'),
+      onOpenAllDocs: () => calls.push('all docs'),
+    },
+  });
+  await screen.findByLabelText('Editing auth');
+  const header = document.querySelector<HTMLElement>(
+    '[data-slot="page-header"]'
+  );
+  await waitFor(() =>
+    expect(within(header).getByText('Auth refactor')).toBeDefined()
+  );
+  // The crumb names the doc, so the doc's own toolbar does not repeat it.
+  expect(screen.getAllByText('Auth refactor')).toHaveLength(1);
+  fireEvent.click(within(header).getByRole('button', { name: 'All docs' }));
+  expect(calls).toEqual(['all docs']);
+  expect(
+    await screen.findByRole('button', { name: 'Auth refactor' })
+  ).toBeDefined();
 });

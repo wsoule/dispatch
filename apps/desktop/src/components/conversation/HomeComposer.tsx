@@ -210,7 +210,8 @@ export function HomeComposer({
           }
         }}
       />
-      <div className="flex items-center gap-2">
+      {/* Wraps in a peek's narrow drawer rather than clipping the send button. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <div
           role="radiogroup"
           aria-label="Kind"
@@ -234,7 +235,7 @@ export function HomeComposer({
             </button>
           ))}
         </div>
-        <span className="text-muted-foreground flex-1 text-[11px]">
+        <span className="text-muted-foreground min-w-[140px] flex-1 text-[11px]">
           {kind === 'comment'
             ? 'Synced to the team and Linear · wakes no agent'
             : kind === 'notice'
@@ -243,6 +244,7 @@ export function HomeComposer({
         </span>
         <Button
           size="sm"
+          className="ml-auto max-w-full"
           disabled={disabled || body.trim() === '' || held !== null}
           onClick={hold}
         >

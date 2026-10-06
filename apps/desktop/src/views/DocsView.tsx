@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { BookText } from 'lucide-react';
+import { BookText, Plus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 
@@ -7,6 +7,10 @@ import { DocList } from '../components/docs/DocList';
 import { DocPage } from '../components/docs/DocPage';
 import { NewDocDialog } from '../components/docs/NewDocDialog';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import {
+  CrumbLink,
+  TasksPageHeader,
+} from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { docsKey, useDocList, useDocSearch } from '../hooks/useDocs';
 import type { DocFilter } from '../lib/docs';
@@ -19,6 +23,7 @@ const SEARCH_LIMIT = 50;
 
 // Team documents beside tasks: a filtered list on the left, the open doc on the right.
 // `initialDoc` and `initialAnchor` are what navigation names; `onSelectDoc` hears list picks.
+// With `tasksPage` (Two views) it is one pane: the All docs list, or one doc under a crumb.
 export function DocsView({
   data,
   initialDoc = null,
@@ -27,8 +32,11 @@ export function DocsView({
   onSelectDoc,
   onOpenRef,
   discussion,
+  tasksPage,
 }: {
   data: DispatchProjectData;
+  /** Two views: "‹ tasks" leads the header and "All docs" walks back to the list. */
+  tasksPage?: { onBack: () => void; onOpenAllDocs: () => void };
   /** The open doc's discussion, under it (Two views). */
   discussion?: (docId: string) => ReactNode;
   initialDoc?: string | null;
@@ -74,7 +82,8 @@ export function DocsView({
     named.merge !== initialMerge
   ) {
     setNamed({ doc: initialDoc, anchor: initialAnchor, merge: initialMerge });
-    if (initialDoc !== null) {
+    // One pane: navigation naming no doc means the list.
+    if (initialDoc !== null || tasksPage !== undefined) {
       setOpen(initialDoc);
       setAnchor(initialAnchor);
       setMerge(initialMerge);
@@ -102,20 +111,113 @@ export function DocsView({
       (d) => found.has(d.id) || byTitle.has(d.id)
     );
   }, [docs, filter, hits, query]);
+  // Two views frames every state of the page under its header; classic shows it bare.
+  const frame = (body: ReactNode, crumb: ReactNode[], actions?: ReactNode) =>
+    tasksPage === undefined ? (
+      body
+    ) : (
+      <div data-testid="docs-page" className="flex h-full min-h-0 flex-col">
+        <TasksPageHeader
+          onBack={tasksPage.onBack}
+          crumb={crumb}
+          actions={actions}
+        />
+        <div className="min-h-0 flex-1">{body}</div>
+      </div>
+    );
   if (client === null) {
-    return (
+    return frame(
       <DaemonUnavailable
         starting={data.portLoading}
         errorDetail={data.portErrorDetail}
         onRetry={data.retryEnsureDispatchd}
-      />
+      />,
+      ['All docs']
     );
   }
   if (!messageAccess.canMessage) {
-    return (
+    return frame(
       <p className="p-4 text-xs text-[var(--color-muted-foreground)]">
         {messageAccess.explanation ?? 'Docs need a teammate or app token.'}
-      </p>
+      </p>,
+      ['All docs']
+    );
+  }
+  const newDoc = (
+    <NewDocDialog
+      client={client}
+      open={creating}
+      onClose={() => setCreating(false)}
+      onCreated={(id) => {
+        setCreating(false);
+        void queryClient.invalidateQueries({ queryKey: docsKey(port) });
+        select(id);
+      }}
+    />
+  );
+  const docBody = (docId: string) => (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <DocPage
+          key={docId}
+          client={client}
+          port={port}
+          refId={docId}
+          canDecide={messageAccess.canDecide}
+          anchor={anchor}
+          mergeProposal={merge}
+          onOpenDoc={select}
+          onOpenRef={onOpenRef}
+          taskIdOfRun={taskIdOfRun}
+          gates={gates}
+          titleInCrumb={tasksPage !== undefined}
+        />
+      </div>
+      {discussion !== undefined && (
+        <section
+          aria-label="Discussion"
+          className="border-border h-[38%] shrink-0 border-t-[0.5px]"
+        >
+          {discussion(docId)}
+        </section>
+      )}
+    </div>
+  );
+  if (tasksPage !== undefined) {
+    if (open !== null) {
+      const title = docs.find((d) => d.id === open)?.title ?? 'Doc';
+      return frame(docBody(open), [
+        <CrumbLink
+          key="all"
+          onClick={() => {
+            setOpen(null);
+            tasksPage.onOpenAllDocs();
+          }}
+        >
+          All docs
+        </CrumbLink>,
+        title,
+      ]);
+    }
+    return frame(
+      <>
+        {newDoc}
+        <DocList
+          layout="page"
+          docs={shown}
+          loading={loading}
+          filter={filter}
+          onFilter={setFilter}
+          selected={open}
+          onSelect={select}
+          error={error}
+        />
+      </>,
+      ['All docs'],
+      <Button size="sm" variant="ghost" onClick={() => setCreating(true)}>
+        <Plus className="size-3.5" />
+        New doc
+      </Button>
     );
   }
   return (
@@ -133,16 +235,7 @@ export function DocsView({
             New doc
           </Button>
         </header>
-        <NewDocDialog
-          client={client}
-          open={creating}
-          onClose={() => setCreating(false)}
-          onCreated={(id) => {
-            setCreating(false);
-            void queryClient.invalidateQueries({ queryKey: docsKey(port) });
-            select(id);
-          }}
-        />
+        {newDoc}
         <DocList
           docs={shown}
           loading={loading}
@@ -160,31 +253,7 @@ export function DocsView({
             <p>Pick a doc.</p>
           </div>
         ) : (
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <DocPage
-                key={open}
-                client={client}
-                port={port}
-                refId={open}
-                canDecide={messageAccess.canDecide}
-                anchor={anchor}
-                mergeProposal={merge}
-                onOpenDoc={select}
-                onOpenRef={onOpenRef}
-                taskIdOfRun={taskIdOfRun}
-                gates={gates}
-              />
-            </div>
-            {discussion !== undefined && (
-              <section
-                aria-label="Discussion"
-                className="border-border h-[38%] shrink-0 border-t-[0.5px]"
-              >
-                {discussion(open)}
-              </section>
-            )}
-          </div>
+          docBody(open)
         )}
       </main>
     </div>

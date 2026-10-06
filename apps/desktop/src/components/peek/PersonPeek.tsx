@@ -5,7 +5,9 @@ import { threadListsKey } from '../../hooks/useThreads';
 import { subjectOf } from '../../lib/conversationScope';
 import type { RefAction } from '../../lib/threadSources';
 import { ConversationTimeline } from '../conversation/ConversationTimeline';
-import { PeekDrawer } from './PeekDrawer';
+import { PeekChip, PeekDrawer, PresenceLine } from './PeekDrawer';
+import { InitialsAvatar } from '@/ui/ai/initials-avatar';
+import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
 function clock(iso: string): string {
   const date = new Date(iso);
@@ -58,39 +60,44 @@ export function PersonPeek({
       label={`Conversation with ${name}`}
       testId="person-peek"
       title={name}
+      leading={<InitialsAvatar name={name} className="size-7 text-[11px]" />}
+      subtitle={`${address} · teammate`}
       onClose={onClose}
+      summary={
+        <>
+          <PresenceLine live={here !== undefined}>
+            {here === undefined
+              ? 'Not on this daemon right now'
+              : [
+                  `here since ${clock(here.since)}`,
+                  `${here.runs.length} ${here.runs.length === 1 ? 'agent' : 'agents'} running`,
+                  ...(here.viewing === null ? [] : [`viewing ${here.viewing}`]),
+                ].join(' · ')}
+            {here !== undefined && (
+              <span className="text-muted-foreground"> · this daemon only</span>
+            )}
+          </PresenceLine>
+          {elsewhere.length > 0 && (
+            <>
+              <SectionLabel>Elsewhere with {name}</SectionLabel>
+              <div className="flex flex-wrap items-center gap-1">
+                {elsewhere.map((subject) => {
+                  const taskId = subject.slice('task:'.length);
+                  return (
+                    <PeekChip
+                      key={subject}
+                      onClick={() => onOpenRef({ kind: 'task', taskId })}
+                    >
+                      {taskId}
+                    </PeekChip>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </>
+      }
     >
-      <div className="border-border flex flex-col gap-1.5 border-b-[0.5px] px-3 py-2 text-[12px]">
-        <span className="text-muted-foreground">
-          {here === undefined
-            ? 'Not on this daemon right now'
-            : [
-                `here since ${clock(here.since)}`,
-                `${here.runs.length} ${here.runs.length === 1 ? 'agent' : 'agents'} running`,
-                ...(here.viewing === null ? [] : [`viewing ${here.viewing}`]),
-              ].join(' · ')}
-        </span>
-        {elsewhere.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-muted-foreground">
-              Elsewhere with {name}:
-            </span>
-            {elsewhere.map((subject) => {
-              const taskId = subject.slice('task:'.length);
-              return (
-                <button
-                  key={subject}
-                  type="button"
-                  onClick={() => onOpenRef({ kind: 'task', taskId })}
-                  className="rounded-pill border-border-chip border-[0.5px] px-2 hover:underline"
-                >
-                  {taskId}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
       <div className="min-h-0 flex-1">
         <ConversationTimeline
           data={data}

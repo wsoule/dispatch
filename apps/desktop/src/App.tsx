@@ -181,7 +181,7 @@ import { TwoViewOverseer } from './views/TwoViewOverseer';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
+import { EmptyState, SectionLabel } from '@/ui/chrome';
 import {
   Empty,
   EmptyContent,
@@ -1551,6 +1551,11 @@ function App() {
             initialMerge={page.merge}
             onSelectDoc={(docId) => openDoc(docId, null)}
             onOpenRef={openRef}
+            tasksPage={{
+              onBack: closeTwoViewsPage,
+              onOpenAllDocs: () =>
+                dispatchNav({ type: 'setProjectView', view: 'docs' }),
+            }}
             discussion={(docId) => (
               <ConversationTimeline
                 key={docId}
@@ -1559,9 +1564,7 @@ function App() {
                 composerTo={null}
                 composerLabel=""
                 onOpenRef={openRef}
-                header={
-                  <span className="text-[12px] font-semibold">Discussion</span>
-                }
+                header={<SectionLabel>Discussion</SectionLabel>}
                 emptyText="No discussion yet. Messages that reference this doc show here."
               />
             )}
@@ -1575,6 +1578,7 @@ function App() {
             data={data}
             prNumber={page.number}
             onBack={closeTwoViewsPage}
+            tasksPage
           />
         );
       case 'draft': {
@@ -1596,7 +1600,14 @@ function App() {
         );
       }
       case 'room':
-        return <RoomHome data={data} room={page.room} onOpenRef={openRef} />;
+        return (
+          <RoomHome
+            data={data}
+            room={page.room}
+            onOpenRef={openRef}
+            onBack={closeTwoViewsPage}
+          />
+        );
       case 'classic':
         return (
           <ClassicDoor
@@ -2576,6 +2587,7 @@ function App() {
                         entries={paletteEntries}
                         onClose={() => dispatchNav({ type: 'closePalette' })}
                         searchDocs={searchDocs}
+                        twoViews={twoViews}
                       />
                     </div>
                   </SurfaceHosts>

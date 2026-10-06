@@ -49,6 +49,14 @@ const MODES: { id: TasksMode; label: string }[] = [
   { id: 'graph', label: 'Graph' },
 ];
 
+// Pages that lead their own header with "‹ tasks"; the rest get a bare one here.
+const OWN_HEADER: ReadonlySet<TasksPage['kind']> = new Set([
+  'task',
+  'docs',
+  'pr',
+  'room',
+]);
+
 /** A page that is not the list: a task, a doc, a PR, a draft or a door to Classic. */
 export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
 
@@ -221,7 +229,7 @@ export function TasksView({
       </div>
       {full ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {page.kind !== 'task' && (
+          {!OWN_HEADER.has(page.kind) && (
             <button
               type="button"
               onClick={onClosePage}

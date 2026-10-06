@@ -17,7 +17,7 @@ import type {
 import { replyPlan, threadOpenIds } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
 import { MessageRow } from './MessageRow';
-import { ReplyBox } from './ReplyBox';
+import { type OverseerVoice, ReplyBox } from './ReplyBox';
 
 // How long a message a link opened the thread at stays marked.
 const LINKED_MARK_MS = 2000;
@@ -57,6 +57,8 @@ export interface ThreadPaneProps {
   /** The Assistant is mid-turn or taking a message, so it would refuse another. */
   overseerBusy: boolean;
   onOpenOverseer: () => void;
+  /** How the reply box names the Overseer: "the Assistant", or "your agent" in Two views. */
+  overseerVoice?: OverseerVoice;
 }
 
 /** An open thread, following its newest message: its messages, then a reply
