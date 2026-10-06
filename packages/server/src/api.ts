@@ -301,6 +301,7 @@ import {
 import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
+import { looksLikeInvite } from './team/federation/onboarding.js';
 import type { FederationContext } from './team/federation/routes.js';
 import {
   boardSyncNow,
@@ -4596,8 +4597,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
-  // The team in one line: its name, seats, transport and problems.
-  { method: 'GET', segments: ['team', 'status'], tier: 'decide' },
+  // GET team/status is absent on purpose: below decide its route answers
+  // only the summary line (teamStatusFor), so a stuck joiner can still read it.
   { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
@@ -4945,7 +4946,13 @@ const MISSING_TOKEN_MESSAGE =
 
 const INVALID_TOKEN_MESSAGE =
   'daemon token not recognized: it belongs to a different or restarted daemon. ' +
-  'Re-read `agentToken` from ~/.dispatch/daemons/<key>.json.';
+  'The app token is the DISPATCH_APP_TOKEN line this daemon printed at startup ' +
+  '(a restarted daemon prints a new one); the CLI and MCP read `agentToken` ' +
+  'from ~/.dispatch/daemons/<key>.json.';
+
+const INVITE_AS_TOKEN_MESSAGE =
+  'that is a team invite link, not a daemon token: run `dispatch team join` ' +
+  'and paste it at the prompt, or paste it in Settings → Members → Join a team.';
 
 /** Why a valid credential was turned away, naming the tier it lacked. The
  *  operator's own fix (the app token) and a teammate's (ask for a higher
@@ -4999,7 +5006,13 @@ export function rejectUnauthorized(
   }
   const caller = found.kind === 'valid' ? found.identity : null;
   if (caller === null) {
-    return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
+    return authErrorResponse(
+      401,
+      looksLikeInvite(presented)
+        ? INVITE_AS_TOKEN_MESSAGE
+        : INVALID_TOKEN_MESSAGE,
+      'auth_invalid_token'
+    );
   }
   if (!tierAllows(caller.tier, required)) {
     return authErrorResponse(

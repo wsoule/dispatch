@@ -205,6 +205,25 @@ describe('request tier', () => {
     const body = await json<AuthError>(res);
     expect(body.code).toBe('auth_invalid_token');
     expect(body.error).toContain('restarted daemon');
+    // Someone holding a stale app token is told which line it comes from.
+    expect(body.error).toContain('DISPATCH_APP_TOKEN line');
+  });
+
+  it('says an invite link is not a daemon token, in every form', async () => {
+    for (const invite of [
+      'dispatch-team:payload',
+      'https://dispatch.foo/join#payload',
+      'di1.abc',
+    ]) {
+      const res = await rawFetch(`${baseUrl}/api/tasks`, {
+        headers: auth(invite),
+      });
+      expect(res.status).toBe(401);
+      const body = await json<AuthError>(res);
+      expect(body.code).toBe('auth_invalid_token');
+      expect(body.error).toStartWith('that is a team invite link');
+      expect(body.error).not.toContain(invite);
+    }
   });
 
   it('accepts the agent token', async () => {
@@ -314,6 +333,25 @@ describe('token storage', () => {
     const path = daemonFilePath(root);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(readDaemonFile(root)?.agentToken).toBe(agentToken);
+  });
+
+  it('marks only a daemon with an idle timeout as background, with who started it', async () => {
+    expect(readDaemonFile(root)?.background).toBeUndefined();
+    await handle.stop();
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      webDistDir: null,
+      writeDaemonFile: true,
+      registerExecutors: () => {},
+      idleTimeoutMs: 60_000,
+      onIdle: () => {},
+      startedBy: 'dispatch mcp (pid 1)',
+    });
+    expect(readDaemonFile(root)).toMatchObject({
+      background: true,
+      startedBy: 'dispatch mcp (pid 1)',
+    });
   });
 
   it('never writes the app token anywhere under the dispatch home', () => {

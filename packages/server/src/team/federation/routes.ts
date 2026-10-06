@@ -257,7 +257,10 @@ export async function handleFederationRoute(
     return jsonResponse(
       fedCtx === null || service === null
         ? SHARING_OFF
-        : statusOf(fedCtx, service)
+        : teamStatusFor(
+            statusOf(fedCtx, service),
+            ctx.caller?.tier ?? 'request'
+          )
     );
   if (fedCtx === null || service === null) {
     if (
@@ -724,6 +727,14 @@ const SHARING_OFF: TeamStatus = {
     },
   ],
 };
+
+/** The team status as `tier` may see it: below decide, only the summary,
+ *  without teammates, checks or problems (as board-sync status drops the
+ *  team's problems, F-D29), marked `reduced` so a client can say so. */
+export function teamStatusFor(status: TeamStatus, tier: AuthTier): TeamStatus {
+  if (tierAllows(tier, 'decide')) return status;
+  return { ...status, teammates: [], check: null, problems: [], reduced: true };
+}
 
 // GET /api/team/status: the team in one line, and its problems in plain
 // words with the command that fixes each.
