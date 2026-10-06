@@ -52,7 +52,7 @@ const PRESET_BUCKET: Partial<Record<TasksPreset, TaskBucket>> = {
 };
 
 /** The bucket a preset narrows to, when it is one. */
-export function bucketForPreset(preset: TasksPreset): TaskBucket | null {
+function bucketForPreset(preset: TasksPreset): TaskBucket | null {
   return PRESET_BUCKET[preset] ?? null;
 }
 

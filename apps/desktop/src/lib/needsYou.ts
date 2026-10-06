@@ -64,7 +64,7 @@ export function askGroup(item: DecisionItem): AskGroup | null {
   }
 }
 
-export interface AskGroupRows {
+interface AskGroupRows {
   group: AskGroup;
   items: DecisionItem[];
 }

@@ -90,6 +90,8 @@ interface SettingsViewProps {
   hostedPages?: readonly HostedSettingsPage[];
   /** Replaces the header's crumb-only row, e.g. with the panel's close button. */
   headerActions?: ReactNode;
+  /** Shown after a page's own groups (Two views puts memory's Recent under Memory). */
+  pageExtras?: Partial<Record<SettingsPage, ReactNode>>;
 }
 
 /** A page that is a whole view: full width, its own state, left out of search. */
@@ -415,6 +417,7 @@ export function SettingsView({
   initialPage,
   hostedPages = [],
   headerActions,
+  pageExtras,
 }: SettingsViewProps) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
   const [page, setPage] = useState<SettingsPage | HostedSettingsPage['id']>(
@@ -681,6 +684,7 @@ export function SettingsView({
                         </p>
                       )}
                     {spec.render(ctx)}
+                    {pageExtras?.[spec.id]}
                   </>
                 )}
               </div>

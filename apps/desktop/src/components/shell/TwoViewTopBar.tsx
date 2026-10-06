@@ -48,6 +48,8 @@ export interface TwoViewTopBarProps {
   counts: TopCounts;
   /** Admin items with no other home; muted, never amber. */
   settingsCount: number;
+  /** What those items are, for the link's tooltip. */
+  settingsTitle?: string;
   onOpenSettings: () => void;
   settingsOpen: boolean;
   /** The project menu under the orb ("dispatch ▾"). */
@@ -66,6 +68,7 @@ export function TwoViewTopBar({
   onCount,
   counts,
   settingsCount,
+  settingsTitle,
   onOpenSettings,
   settingsOpen,
   projectMenu,
@@ -133,6 +136,7 @@ export function TwoViewTopBar({
           type="button"
           onClick={onOpenSettings}
           aria-expanded={settingsOpen}
+          title={settingsTitle}
           data-testid="two-views-settings"
           className={cn(
             'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
