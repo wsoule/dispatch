@@ -14,9 +14,11 @@ import {
   MAX_HANDLE_BYTES,
   openProjectStores,
   SqliteTaskStore,
+  syncPlace,
   syncSettings,
   TaskStore,
   totalImported,
+  updateConfig,
 } from '@dispatch-foo/core';
 import type {
   CartoMode,
@@ -180,6 +182,7 @@ import {
   defaultGitRunner,
   SyncWorktree,
 } from './sync/worktree.js';
+import { implicitRemote } from './team/boardSync/implicitPlace.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import { appendAuditToReceipts } from './team/federation/audit.js';
@@ -1010,6 +1013,8 @@ async function bootServer(
   // database backend syncs this way — a file-backed board already travels in
   // the repo itself.
   const syncConfig = backend === 'sqlite' ? bootSyncSettings(rootDir) : null;
+  // What sync runs with, once a place adopted below is written.
+  let bootSync = syncConfig;
   const stores =
     backend === 'sqlite'
       ? initProjectStores({
@@ -1240,18 +1245,45 @@ async function bootServer(
   // time), then exchange changes with the other replicas on the remote. A
   // remote that cannot be resolved costs the daemon its sync, not its boot.
   if (syncConfig !== null && syncLedger !== null && syncedStore !== null) {
-    // A repository of its own when the config names one, else a branch on
-    // one of the project's own remotes.
-    const remoteUrl = await resolvePushTarget(
-      rootDir,
-      syncConfig.repo === undefined
-        ? { remote: syncConfig.remote }
-        : { repo: syncConfig.repo },
-      defaultAsyncGitRunner
-    );
-    if (remoteUrl === null) {
+    // A repository of its own, or a branch on one of the project's remotes,
+    // only as the config names it: no remote is ever implied.
+    let place = syncPlace(syncConfig);
+    // A project that already syncs with teammates through its sync clone's
+    // remote, from before a place had to be named, keeps that place.
+    if (place === null) {
+      const adopted = await implicitRemote(
+        rootDir,
+        boardSyncDir(rootDir),
+        syncLedger.database,
+        syncLedger.replica,
+        defaultAsyncGitRunner
+      );
+      if (adopted !== null) {
+        try {
+          updateConfig(rootDir, { sync: { remote: adopted } });
+          place = { remote: adopted };
+          bootSync = { ...syncConfig, remote: adopted };
+          console.log(
+            `dispatchd: board sync named no place but already shares through the "${adopted}" remote with other machines; wrote sync.remote: ${adopted} to .dispatch/config.yml`
+          );
+        } catch (err) {
+          console.error(
+            `dispatchd: could not write sync.remote: ${adopted} to .dispatch/config.yml: ${(err as Error).message}`
+          );
+        }
+      }
+    }
+    const remoteUrl =
+      place === null
+        ? null
+        : await resolvePushTarget(rootDir, place, defaultAsyncGitRunner);
+    if (place === null) {
       console.error(
-        `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
+        'dispatchd: board sync is on but no place is set (sync.remote or sync.repo); choose one in Settings → Board sync. Nothing is pushed until then.'
+      );
+    } else if (remoteUrl === null) {
+      console.error(
+        `dispatchd: board sync is on but ${'repo' in place ? place.repo : `"${place.remote}"`} could not be resolved for ${rootDir}; add the remote, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
       // Only here are the federation's store and roster built; the team
@@ -2267,6 +2299,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    bootSync,
     federation: federationContext,
     team,
     presence: presenceTracker,

@@ -179,8 +179,21 @@ test('agents: a CLI agent is declared from one argument per line', () => {
 test('where sync and receipts go: nothing is written until there is somewhere to write', () => {
   // A repo of its own waits for its URL.
   expect(syncPlacePatch('repo', {})).toBeNull();
-  expect(syncPlacePatch('remote', { repo: 'x' })).toEqual({ repo: null });
-  expect(syncPlacePatch('remote', {})).toBeNull();
+  // The project's repo is written by name, never left implied.
+  expect(syncPlacePatch('remote', { repo: 'x' })).toEqual({
+    repo: null,
+    remote: 'origin',
+  });
+  expect(syncPlacePatch('remote', {})).toEqual({
+    repo: null,
+    remote: 'origin',
+  });
+  expect(syncPlacePatch('remote', { remote: 'upstream' })).toBeNull();
+  expect(syncPlacePatch('unset', { remote: 'origin' })).toEqual({
+    remote: null,
+    repo: null,
+  });
+  expect(syncPlacePatch('unset', {})).toBeNull();
   // Entering one writes it alone, never beside a remote.
   expect(ownRepoPatch('git@x:y.git')).toEqual({
     remote: null,

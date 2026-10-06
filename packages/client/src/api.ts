@@ -2294,8 +2294,9 @@ export interface IssuedTeamToken {
 
 /** Why board sync isn't running — mirrors BoardSyncOffReason in
  *  packages/server/src/api.ts: the board is kept as files, which it can't
- *  share; it is off; or it is on in config.yml but didn't start. */
-export type BoardSyncOffReason = 'files' | 'off' | 'not-started';
+ *  share; it is off; it is on in config.yml but didn't start; or it is on
+ *  with no place chosen. */
+export type BoardSyncOffReason = 'files' | 'off' | 'not-started' | 'no-place';
 
 /** Board sync's state — mirrors SyncStatus in
  *  packages/server/src/team/boardSync/service.ts. `reason` is absent on
@@ -2332,6 +2333,8 @@ interface FederationSyncFields {
   federationProblems?: TeamProblem[];
   /** On POST /now: the pass outran the daemon's wait and carries on. */
   running?: boolean;
+  /** config.yml names other sync settings than the running ones. */
+  restartRequired?: string;
 }
 
 /** One federation problem: its subject names its source (halt:, clock:,
@@ -2444,6 +2447,10 @@ export interface TeamStatus {
 export interface StartTeamInput {
   name?: string;
   git?: boolean;
+  /** Where the team's board is kept: one of this project's remotes, or a
+   *  repository of its own. */
+  remote?: string;
+  repo?: string;
   relayUrl?: string;
   confirmed?: boolean;
   /** Sent only in the relay registration; never kept. */
@@ -5454,31 +5461,33 @@ function rosterPath(replica: string, action: string): string {
 const SHARING_RESTART_WAIT_MS = 90_000;
 
 /**
- * Team start and join on a daemon with board sync off: it turns sync on,
- * answers `restarting`, and comes back on the same port with the same
- * tokens. This waits for sync to be on, then sends the same request once
- * more, so it stays one action for the person.
+ * Team start and join on a daemon with board sync off, or syncing somewhere
+ * other than the team: it turns sync on (or moves it), answers `restarting`,
+ * and comes back on the same port with the same tokens. This waits for sync
+ * to be on and sends the same request again, for as long as the daemon still
+ * answers `restarting`, so it stays one action for the person.
  */
 async function afterSharingRestart<T>(
   target: ApiTarget,
   send: () => Promise<T>
 ): Promise<T> {
-  const first = await send();
-  if ((first as { code?: unknown }).code !== 'restarting') return first;
+  let answer = await send();
   const until = Date.now() + SHARING_RESTART_WAIT_MS;
-  while (Date.now() < until) {
+  while ((answer as { code?: unknown }).code === 'restarting') {
+    if (Date.now() >= until)
+      throw new Error(
+        'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
+      );
     await new Promise((resolve) => setTimeout(resolve, 250));
     try {
       const sync = await request<{ enabled?: boolean }>(
         target,
         '/api/board-sync'
       );
-      if (sync.enabled === true) return await send();
+      if (sync.enabled === true) answer = await send();
     } catch {
       // Down while it restarts; ask again.
     }
   }
-  throw new Error(
-    'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
-  );
+  return answer;
 }

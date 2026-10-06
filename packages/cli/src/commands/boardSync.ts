@@ -17,6 +17,11 @@ export function describeSync(
           "Board sync isn't available: it shares boards kept in Dispatch's database, and this project keeps its tasks as files.",
           'They reach teammates through "Commit task files to the main branch". The person running Dispatch for this project turns it on in Settings → Board sync, or with `autoCommit: true` in .dispatch/config.yml.',
         ];
+      case 'no-place':
+        return [
+          'Board sync is on but no place is set, so nothing is pushed: Dispatch never pushes to a remote nobody chose.',
+          "Choose one in Settings → Board sync, or set `sync.remote` (one of this project's remotes) or `sync.repo` in .dispatch/config.yml, then restart Dispatch for this project.",
+        ];
       case 'not-started':
         return [
           "Board sync is on but isn't running: its remote or repo couldn't be resolved when Dispatch started, or it was turned on since.",
@@ -35,6 +40,7 @@ export function describeSync(
       ? 'Not synced yet.'
       : `Last synced ${status.lastSyncAt}.`,
   ];
+  if (status.restartRequired !== undefined) lines.push(status.restartRequired);
   if (status.paused !== null) lines.push(status.paused);
   if (status.lastError !== null) {
     lines.push(`The remote could not be reached: ${status.lastError}`);

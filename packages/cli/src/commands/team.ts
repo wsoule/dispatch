@@ -1,3 +1,4 @@
+import { loadConfig, syncPlace, syncSettings } from '@dispatch-foo/core';
 import { Command, Option } from 'commander';
 import { createInterface } from 'node:readline';
 
@@ -137,6 +138,44 @@ async function defaultConfirm(question: string): Promise<boolean> {
   }
 }
 
+// Reads one line on a terminal; null when nobody can answer.
+async function defaultAsk(question: string): Promise<string | null> {
+  if (process.stdin.isTTY !== true) return null;
+  process.stderr.write(question);
+  const rl = createInterface({ input: process.stdin, terminal: false });
+  try {
+    return await new Promise<string>((resolve) => rl.once('line', resolve));
+  } finally {
+    rl.close();
+  }
+}
+
+const NO_PLACE_FLAGS =
+  "Choose where the team's board is kept: --repo <git url> for a separate board repo (recommended), or --remote origin for a dispatch-sync branch on this project's repo.";
+
+// Where `team start` keeps the board when no flag and no config names a
+// place: asked on a terminal, refused with the flags otherwise. Null when
+// config.yml already names one (or can't be read: the daemon then decides).
+async function startPlace(
+  ctx: CliContext
+): Promise<{ remote: string } | { repo: string } | null> {
+  try {
+    if (syncPlace(syncSettings(loadConfig(ctx.cwd))) !== null) return null;
+  } catch {
+    return null;
+  }
+  const ask = ctx.ask ?? defaultAsk;
+  const choice = await ask(
+    "Where should the team's board be kept?\n  1) A separate board repo (recommended)\n  2) This project's origin remote, on branch dispatch-sync\nChoose 1 or 2: "
+  );
+  if (choice === null) throw new CliError(NO_PLACE_FLAGS);
+  if (choice.trim() === '2') return { remote: 'origin' };
+  if (choice.trim() !== '1') throw new CliError(NO_PLACE_FLAGS);
+  const repo = (await ask('Board repo URL: '))?.trim() ?? '';
+  if (repo === '') throw new CliError(NO_PLACE_FLAGS);
+  return { repo };
+}
+
 // start / invite / join / status / leave: the whole of setting a team up.
 function registerTeamEssentials(team: Command, ctx: CliContext): void {
   const tokenOption = '--token <token>';
@@ -151,6 +190,14 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
     )
     .option('--name <team>', 'the team name (default: the project folder)')
     .option('--git', 'sync over a git branch instead of the relay')
+    .option(
+      '--remote <name>',
+      "keep the team's board on a branch of one of this project's remotes (like origin)"
+    )
+    .option(
+      '--repo <url>',
+      "keep the team's board in a repository of its own (a git URL or path)"
+    )
     .option(
       '--relay <url>',
       'another relay (default: DISPATCH_RELAY_URL, or wss://relay.dispatch.foo)'
@@ -169,6 +216,8 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
       async (opts: {
         name?: string;
         git?: boolean;
+        remote?: string;
+        repo?: string;
         relay?: string;
         registrationToken?: string | true;
         yes?: boolean;
@@ -179,6 +228,14 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
         const git = opts.git === true;
         if (git && opts.relay !== undefined)
           throw new CliError('Pick one: --git or --relay <url>.');
+        if (opts.remote !== undefined && opts.repo !== undefined)
+          throw new CliError('Pick one: --remote <name> or --repo <url>.');
+        const place =
+          opts.remote !== undefined
+            ? { remote: opts.remote }
+            : opts.repo !== undefined
+              ? { repo: opts.repo }
+              : await startPlace(ctx);
         let confirmed = false;
         if (!git) {
           const where = hostOf(opts.relay ?? 'wss://relay.dispatch.foo');
@@ -208,6 +265,7 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
               : given;
         const started = await api.startTeam({
           ...(opts.name === undefined ? {} : { name: opts.name }),
+          ...(place ?? {}),
           ...(git ? { git: true } : { confirmed }),
           ...(opts.relay === undefined ? {} : { relayUrl: opts.relay }),
           ...(registrationToken === undefined ? {} : { registrationToken }),

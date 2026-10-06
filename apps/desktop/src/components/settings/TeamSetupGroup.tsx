@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { StartTeamRow } from './StartTeamRow';
 import { CopyButton } from './TeamSection';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
@@ -114,25 +115,16 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       ))}
 
       {canOperate && (s.state === 'none' || s.state === 'off') && (
-        <SettingsRow
-          title="Start a team"
-          subtitle={RELAY_DISCLOSURE}
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              data-testid="team-start"
-              disabled={busy}
-              onClick={() =>
-                void act(async () => {
-                  const started = await api.startTeam({ confirmed: true });
-                  setRecovery(started.recoveryCode);
-                  setNotice(started.notice);
-                })
-              }
-            >
-              Start a team
-            </Button>
+        <StartTeamRow
+          sync={data.config?.sync}
+          disclosure={RELAY_DISCLOSURE}
+          busy={busy}
+          onStart={(input) =>
+            void act(async () => {
+              const started = await api.startTeam(input);
+              setRecovery(started.recoveryCode);
+              setNotice(started.notice);
+            })
           }
         />
       )}

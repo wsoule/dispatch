@@ -1,10 +1,11 @@
+import type { DispatchConfig } from '@dispatch-foo/core/browser';
 import type { TeamStatus } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
 
 import { accessFor, SettingsAccessProvider } from './access';
-import { dataWith } from './fixtures.test-helper';
+import { dataWith, testConfig } from './fixtures.test-helper';
 import { TeamSetupGroup } from './TeamSetupGroup';
 
 function status(over: Partial<TeamStatus> = {}): TeamStatus {
@@ -72,7 +73,11 @@ function client(initial: TeamStatus) {
   };
 }
 
-function mount(c: ReturnType<typeof client>, tier: 'operator' | 'decide') {
+function mount(
+  c: ReturnType<typeof client>,
+  tier: 'operator' | 'decide',
+  sync?: DispatchConfig['sync']
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -80,7 +85,12 @@ function mount(c: ReturnType<typeof client>, tier: 'operator' | 'decide') {
     <QueryClientProvider client={queryClient}>
       <SettingsAccessProvider access={accessFor(tier, false)}>
         <TeamSetupGroup
-          data={dataWith({ presence: [], myTier: tier, client: c as never })}
+          data={dataWith({
+            presence: [],
+            myTier: tier,
+            client: c as never,
+            ...(sync === undefined ? {} : { config: { ...testConfig, sync } }),
+          })}
         />
       </SettingsAccessProvider>
     </QueryClientProvider>
@@ -88,18 +98,62 @@ function mount(c: ReturnType<typeof client>, tier: 'operator' | 'decide') {
 }
 
 describe('TeamSetupGroup', () => {
-  test('starts a team in one press, beside the relay disclosure, and shows the recovery code', async () => {
+  test('starts a team in a separate board repo, beside the relay disclosure, and shows the recovery code', async () => {
     const c = client(status());
     mount(c, 'operator');
     await screen.findByTestId('team-status-line');
     expect(screen.getByText(/The relay can read everything/)).toBeTruthy();
+    // Nowhere chosen yet: a board repo URL comes first.
+    expect(screen.getByTestId('team-start').hasAttribute('disabled')).toBe(
+      true
+    );
+    fireEvent.change(screen.getByLabelText('Board repo URL'), {
+      target: { value: ' git@example.com:acme/board.git ' },
+    });
     fireEvent.click(screen.getByTestId('team-start'));
     await waitFor(() =>
       expect(screen.getByTestId('team-recovery-code').textContent).toBe(
         'RECOVERY-CODE'
       )
     );
-    expect(c.startTeam).toHaveBeenCalledWith({ confirmed: true });
+    expect(c.startTeam).toHaveBeenCalledWith({
+      confirmed: true,
+      repo: 'git@example.com:acme/board.git',
+    });
+  });
+
+  test('or on a branch of this project’s repo', async () => {
+    const c = client(status());
+    mount(c, 'operator');
+    fireEvent.click(
+      await screen.findByRole('radio', { name: /This project’s repo/ })
+    );
+    expect(screen.queryByLabelText('Board repo URL')).toBeNull();
+    fireEvent.click(screen.getByTestId('team-start'));
+    await waitFor(() =>
+      expect(c.startTeam).toHaveBeenCalledWith({
+        confirmed: true,
+        remote: 'origin',
+      })
+    );
+  });
+
+  test('starts where config.yml already keeps the board, and says where', async () => {
+    const c = client(status());
+    mount(c, 'operator', {
+      enabled: true,
+      repo: 'git@example.com:acme/board.git',
+      branch: 'dispatch-sync',
+      intervalSec: 30,
+    });
+    expect(
+      (await screen.findByTestId('team-start-place')).textContent
+    ).toContain('git@example.com:acme/board.git');
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    fireEvent.click(screen.getByTestId('team-start'));
+    await waitFor(() =>
+      expect(c.startTeam).toHaveBeenCalledWith({ confirmed: true })
+    );
   });
 
   test('offers start and join while team sync is still off', async () => {

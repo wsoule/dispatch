@@ -136,8 +136,9 @@ export const DEFAULT_RECEIPTS_BRANCH = 'dispatch-receipts';
 export interface SyncConfig {
   enabled: boolean;
   /** Which of the project's own remotes carries the sync branch, by name.
-   *  Ignored when `repo` is set. */
-  remote: string;
+   *  Set only when the config names one; with neither this nor `repo`, sync
+   *  has no place and pushes nothing. */
+  remote?: string;
   /**
    * A repository of its own for the board instead: a git URL, or a path
    * (relative to the project root). Set only when the config names one;
@@ -152,7 +153,6 @@ export interface SyncConfig {
 
 export const DEFAULT_SYNC: SyncConfig = {
   enabled: false,
-  remote: 'origin',
   branch: 'dispatch-sync',
   intervalSec: 30,
 };

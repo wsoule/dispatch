@@ -29,6 +29,8 @@ const FINGERPRINT = /^[0-9A-Z]{4}(?:-[0-9A-Z]{4}){5}$/;
 const MAX_NAME_CHARS = 64;
 const MAX_REMOTE_CHARS = 256;
 const MAX_TEXT_CHARS = 300;
+/** A sync branch a link may name: a plain ref name, never an option. */
+const SYNC_BRANCH = /^(?!-)[A-Za-z0-9._/-]{1,100}$/;
 
 // ANSI CSI and OSC sequences, whole, so no fragment of one reaches a terminal.
 // Built from code points, so the source holds no raw escape characters.
@@ -101,6 +103,8 @@ export interface TeamLink {
   via: TeamVia;
   /** The git remote the sync branch rides, without credentials, or null. */
   remote: string | null;
+  /** The sync branch on it; absent from links made before it was carried. */
+  branch?: string;
 }
 
 // The link's fields as they go on the wire, in JCS order, without the sum.
@@ -116,6 +120,7 @@ function wireFields(link: TeamLink): Record<string, unknown> {
     expires: link.expires,
     via: link.via,
     remote: link.remote,
+    ...(link.branch === undefined ? {} : { branch: link.branch }),
   };
 }
 
@@ -201,6 +206,12 @@ export function decodeTeamLink(text: string): TeamLink {
     throw new RosterError('invalid', DAMAGED);
   const cleanRemote =
     remote === null ? null : plainText(remote, MAX_REMOTE_CHARS);
+  const branch = fields.branch;
+  if (
+    branch !== undefined &&
+    (typeof branch !== 'string' || !SYNC_BRANCH.test(branch))
+  )
+    throw new RosterError('invalid', DAMAGED);
   return {
     team,
     name,
@@ -211,7 +222,25 @@ export function decodeTeamLink(text: string): TeamLink {
     expires: new Date(expiresMs).toISOString(),
     via: relay === null ? { kind: 'git' } : { kind: 'relay', url: relay },
     remote: cleanRemote === '' ? null : cleanRemote,
+    ...(branch === undefined ? {} : { branch }),
   };
+}
+
+// Whether two git remotes name one repository, read loosely: scheme, login,
+// a trailing .git and scp-style colons do not matter. Null when either is
+// not a remote the comparison can read.
+export function sameRemote(a: string, b: string): boolean | null {
+  const norm = (r: string): string =>
+    r
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z+]+:\/\//, '')
+      .replace(/^[^@/]+@/, '')
+      .replace(/:(?!\d)/, '/')
+      .replace(/\.git$/, '')
+      .replace(/\/+$/, '');
+  if (a.trim() === '' || b.trim() === '') return null;
+  return norm(a) === norm(b);
 }
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';

@@ -16,6 +16,8 @@ let fakeHome: string;
 let lines: string[];
 let asked: string[];
 let ctx: CliContext;
+// What the place prompt is answered with, in turn; null once empty.
+let answers: string[] = [];
 let server: ReturnType<typeof Bun.serve>;
 let posted: { path: string; body: unknown }[];
 let syncOn = true;
@@ -92,6 +94,7 @@ beforeEach(async () => {
   lines = [];
   asked = [];
   posted = [];
+  answers = [];
   syncOn = true;
   ctx = {
     cwd: root,
@@ -103,6 +106,10 @@ beforeEach(async () => {
     readSecret: (prompt) => {
       asked.push(prompt);
       return Promise.resolve('  dispatch-team:LINK \n');
+    },
+    ask: (question) => {
+      asked.push(question.split('\n')[0] ?? question);
+      return Promise.resolve(answers.shift() ?? null);
     },
   };
   await run('init');
@@ -155,11 +162,18 @@ afterEach(() => {
 });
 
 describe('team setup from the CLI', () => {
-  it('start shows the disclosure, asks once, and prints the recovery code', async () => {
+  it('start asks where the board goes, shows the disclosure, and prints the recovery code', async () => {
+    answers = ['2'];
     await run('team', 'start', '--name', 'acme');
-    expect(asked).toEqual(['Sync this team through relay.dispatch.foo?']);
+    expect(asked).toEqual([
+      "Where should the team's board be kept?",
+      'Sync this team through relay.dispatch.foo?',
+    ]);
     expect(posted).toEqual([
-      { path: '/api/team/start', body: { name: 'acme', confirmed: true } },
+      {
+        path: '/api/team/start',
+        body: { name: 'acme', remote: 'origin', confirmed: true },
+      },
     ]);
     const text = lines.join('\n');
     expect(text).toContain('The relay can read X.');
@@ -170,10 +184,32 @@ describe('team setup from the CLI', () => {
     expect(text).toContain('RECOVERY-CODE');
   });
 
-  it('start --git asks nothing', async () => {
+  it('start --git asks only where the board goes: a separate repo', async () => {
+    answers = ['1', ' git@example.com:acme/board.git '];
     await run('team', 'start', '--git');
+    expect(asked).toEqual([
+      "Where should the team's board be kept?",
+      'Board repo URL: ',
+    ]);
+    expect(posted).toEqual([
+      {
+        path: '/api/team/start',
+        body: { repo: 'git@example.com:acme/board.git', git: true },
+      },
+    ]);
+  });
+
+  it('start with nobody to ask and no place refuses with the flags', async () => {
+    await expect(run('team', 'start', '--git')).rejects.toThrow('--repo');
+    expect(posted).toEqual([]);
+  });
+
+  it('start --remote names where the board is kept', async () => {
+    await run('team', 'start', '--git', '--remote', 'origin');
     expect(asked).toEqual([]);
-    expect(posted).toEqual([{ path: '/api/team/start', body: { git: true } }]);
+    expect(posted).toEqual([
+      { path: '/api/team/start', body: { remote: 'origin', git: true } },
+    ]);
   });
 
   it('invite prints one link, for an email or a handle', async () => {

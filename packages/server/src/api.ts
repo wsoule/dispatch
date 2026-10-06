@@ -12,6 +12,8 @@ import {
   isValidAssignee,
   loadConfig,
   PRIORITIES,
+  syncPlace,
+  syncSettings,
   TaskParseError,
   untrustedFenced,
   updateConfig,
@@ -25,6 +27,7 @@ import type {
   LinearConfig,
   ModelConfig,
   QueueWeights,
+  SyncConfig,
   TaskStoreBackend,
   UpdatePatch,
   VerifyConfig,
@@ -307,9 +310,14 @@ import {
   handleFederationRoute,
   isFederationRoute,
   statusFor,
+  syncRestartNeeded,
 } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
-import type { SharingAnswer, SharingState } from './team/federation/sharing.js';
+import type {
+  SharingAnswer,
+  SharingState,
+  SyncMove,
+} from './team/federation/sharing.js';
 import { FROZEN_MESSAGE, frozenBySharing } from './team/federation/sharing.js';
 import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
@@ -457,6 +465,9 @@ export interface ApiContext {
   previewGateway: PreviewGateway | null;
   /** Board sync between replicas (team/boardSync/); null when it is off. */
   boardSync: FederationService | null;
+  /** The sync settings board sync was wired with at boot, to tell when
+   *  config.yml has moved on without a restart. */
+  bootSync?: SyncConfig | null;
   /** The signed roster and its store, once board sync is on (Task 10b). */
   federation: FederationContext | null;
   /** Teammates' credentials and the license that says how many people may
@@ -495,7 +506,9 @@ export interface ApiContext {
   /** Turns board sync on and restarts to wire it (team/federation/sharing.ts):
    *  what `team start` and `team join` do when sync is off. Set by
    *  startServer; absent in contexts built without a daemon. */
-  turnOnSharing?: (precheck?: (now: Date) => void) => Promise<SharingAnswer>;
+  turnOnSharing?: (
+    precheck?: (now: Date) => SyncMove | null
+  ) => Promise<SharingAnswer>;
   /** This server's restart mark while it restarts to turn on sync. */
   sharing?: SharingState;
 }
@@ -1590,15 +1603,16 @@ const OFF_SYNC_DETAIL =
 
 // Why board sharing (team/boardSync) isn't running: the board is kept as files,
 // which it can't share; it is off; or it is on in config.yml but didn't start,
-// because its remote didn't resolve at boot or it was turned on since.
-type BoardSyncOffReason = 'files' | 'off' | 'not-started';
+// because its remote didn't resolve at boot or it was turned on since; or it
+// is on with no place chosen, so it pushes nowhere.
+type BoardSyncOffReason = 'files' | 'off' | 'not-started' | 'no-place';
 
 function boardSyncOffReason(ctx: ApiContext): BoardSyncOffReason {
   if (ctx.storeBackend === 'files') return 'files';
   try {
-    return loadConfig(ctx.rootDir).sync?.enabled === true
-      ? 'not-started'
-      : 'off';
+    const sync = syncSettings(loadConfig(ctx.rootDir));
+    if (!sync.enabled) return 'off';
+    return syncPlace(sync) === null ? 'no-place' : 'not-started';
   } catch {
     // Boot reads the same file and turns sharing off when it can't.
     return 'off';
@@ -1621,6 +1635,10 @@ const BOARD_SYNC_OFF_MESSAGE: Record<BoardSyncOffReason, string> = {
     'resolved when Dispatch started, or it was turned on since. Check ' +
     '`sync.remote` or `sync.repo` in Settings → Board sync, then restart ' +
     'Dispatch for this project',
+  'no-place':
+    'sharing is on but no place is set, so nothing is pushed: Dispatch ' +
+    'never pushes to a remote nobody chose. Choose one in Settings → Board ' +
+    'sync (`sync.remote` or `sync.repo`), then restart Dispatch for this project',
 };
 
 const MERGE_DRIVER_WARNING =
@@ -5340,11 +5358,17 @@ export async function handleApi(
     // answered below and read by the app's status strip.
     if (segments[0] === 'board-sync') {
       if (segments.length === 1 && method === 'GET') {
+        const restartRequired = syncRestartNeeded(ctx);
         const status = ctx.boardSync?.status() ?? {
           enabled: false,
           reason: boardSyncOffReason(ctx),
         };
-        return jsonResponse(statusFor(status, ctx.caller?.tier ?? 'request'));
+        return jsonResponse(
+          statusFor(
+            restartRequired === null ? status : { ...status, restartRequired },
+            ctx.caller?.tier ?? 'request'
+          )
+        );
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {

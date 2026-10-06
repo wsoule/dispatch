@@ -37,6 +37,8 @@ export function syncedVia(
  *  it. An older daemon gives none; off is the likely one. */
 export function notSharingHint(reason: BoardSyncOffReason | undefined): string {
   switch (reason) {
+    case 'no-place':
+      return 'Sharing is on but no place is set, so nothing is pushed. Choose where the board is kept below, then restart Dispatch for this project.';
     case 'not-started':
       return "Sharing is on but didn't start: its remote or repo couldn't be reached when Dispatch started, or it was turned on since. Check where the board is kept below, then restart Dispatch for this project.";
     case 'files':
@@ -121,6 +123,11 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
         {syncError !== null && (
           <SettingsHint className="text-state-failed">
             Couldn&rsquo;t sync: {syncError}
+          </SettingsHint>
+        )}
+        {status.restartRequired !== undefined && (
+          <SettingsHint className="text-(--state-waiting-fg)">
+            {status.restartRequired}
           </SettingsHint>
         )}
         {status.paused !== null && (
