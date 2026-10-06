@@ -17,6 +17,7 @@ import {
   Archive,
   ArchiveRestore,
   Ban,
+  ChevronLeft,
   Copy,
   Ellipsis,
   FolderTree,
@@ -325,6 +326,7 @@ function TaskPageLoaded({
   onSelectRun,
   onClose,
   onExpand,
+  onBack,
 }: TaskPageProps & { host: TaskPageHost; item: TaskListItem }) {
   const { project } = host;
   const meta = item.meta;
@@ -334,7 +336,8 @@ function TaskPageLoaded({
   const deepLink = useDeepLinkActions();
   const savedViews = useSavedViewsContext();
   const rootRef = useRef<HTMLDivElement>(null);
-  const [railOpen, setRailOpen] = useState(layout !== 'split');
+  const compact = host.compactPage === true;
+  const [railOpen, setRailOpen] = useState(layout !== 'split' && !compact);
   const [picker, setPicker] = useState<RailPicker | null>(null);
   const [localMode, setLocalMode] = useState<TaskTab>('auto');
   const [localRunId, setLocalRunId] = useState<string | null>(null);
@@ -613,6 +616,19 @@ function TaskPageLoaded({
   );
   const openCrumb = layout === 'full' ? host.openTaskPage : host.peekTask;
   const crumb: ReactNode[] = [
+    // Two views' full page leads with the way back to the list.
+    ...(compact && layout === 'full' && onBack !== undefined
+      ? [
+          <button
+            key="back"
+            type="button"
+            onClick={onBack}
+            className="hover:text-foreground flex items-center gap-0.5 outline-none focus-visible:underline"
+          >
+            <ChevronLeft className="size-3.5" /> tasks
+          </button>,
+        ]
+      : []),
     ...(host.projectName !== null ? [host.projectName] : []),
     ...ancestors.map((a) => (
       <button
@@ -918,7 +934,7 @@ function TaskPageLoaded({
               port={project.port}
               taskId={meta.id}
             />
-            {layout === 'split' && !railOpen && (
+            {(layout === 'split' || compact) && !railOpen && (
               <PropertyChips page={page} onOpenRail={() => setRailOpen(true)} />
             )}
             <LifecycleTrack
