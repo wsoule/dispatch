@@ -115,7 +115,11 @@ export function fileTokenStore(path: string): TokenStore {
     }
   };
   const moveAside = (): void => {
-    const aside = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    // Two move-asides in one millisecond share a timestamp; a counter keeps the
+    // second rename from overwriting the first aside.
+    const stamp = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    let aside = stamp;
+    for (let n = 1; existsSync(aside); n++) aside = `${stamp}-${n}`;
     renameSync(path, aside);
     const problem = `team token file ${path} was unreadable; moved to ${aside}. Issue teammates fresh tokens, or repair it and restart.`;
     problems.push(problem);

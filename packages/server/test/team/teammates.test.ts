@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setSystemTime, test } from 'bun:test';
 import {
   mkdtempSync,
   readdirSync,
@@ -386,15 +386,26 @@ describe('fileTokenStore', () => {
     const path = join(dir, 'team-tokens.json');
     writeFileSync(path, '{ not json');
     const store = fileTokenStore(path);
-    expect(store.load()).toEqual([]);
+    setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+    try {
+      expect(store.load()).toEqual([]);
+    } finally {
+      setSystemTime();
+    }
     const aside = readdirSync(dir).filter((f) => f.includes('.corrupt-'));
     expect(aside).toHaveLength(1);
     expect(readFileSync(join(dir, aside[0]), 'utf8')).toBe('{ not json');
     expect(store.problems?.()).toEqual([expect.stringContaining(aside[0])]);
     expect(new TeammateTokens({ store }).problems()).toHaveLength(1);
-    // A file damaged after load is moved aside too, not overwritten.
+    // A file damaged after load is moved aside too, not overwritten — even in
+    // the same millisecond as the first, when both asides share a timestamp.
     writeFileSync(path, '[{ broken');
-    store.save([]);
+    setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+    try {
+      store.save([]);
+    } finally {
+      setSystemTime();
+    }
     expect(
       readdirSync(dir).filter((f) => f.includes('.corrupt-'))
     ).toHaveLength(2);
