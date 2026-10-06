@@ -2,8 +2,9 @@ import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import type { ListGroup } from './listGrouping';
-import { milestoneMap } from './milestoneMap';
+import { milestoneMap, milestoneMix } from './milestoneMap';
 import { taskDoc } from './taskDoc.test-helper';
+import type { TaskBucket } from './taskStatus';
 
 function task(id: string, blockedBy: string[] = []): TaskListItem {
   return taskDoc({ id, title: id, blockedBy }) as TaskListItem;
@@ -66,5 +67,65 @@ describe('milestoneMap', () => {
         .childrenOf.get('m2')
         ?.map((t) => t.meta.id)
     ).toEqual(['c', 'd']);
+  });
+});
+
+describe('milestoneMix', () => {
+  const doc = (id: string, status = 'ready') =>
+    taskDoc({ id, title: id, status }) as TaskListItem;
+  const buckets: Record<string, TaskBucket | null> = {
+    r1: 'ready',
+    r2: 'ready',
+    w: 'working',
+    n: 'need-you',
+    f: 'failed',
+    v: 'review',
+    l: 'landing',
+    d: 'draft',
+    b: 'blocked',
+  };
+  const bucketOf = (t: TaskListItem) => buckets[t.meta.id] ?? null;
+
+  test('counts each task once by where it stands; dropped work is left out', () => {
+    const { mix } = milestoneMix(
+      [
+        doc('done', 'landed'),
+        doc('gone', 'dropped'),
+        ...Object.keys(buckets).map((id) => doc(id)),
+      ],
+      { bucketOf }
+    );
+    expect(mix).toEqual({
+      landed: 1,
+      landing: 1,
+      review: 1,
+      working: 1,
+      needYou: 1,
+      failed: 1,
+      ready: 2,
+      waiting: 2,
+    });
+  });
+
+  test('open tasks come most urgent first, list order within a state', () => {
+    const { open } = milestoneMix(
+      [
+        doc('d'),
+        doc('r1'),
+        doc('v'),
+        doc('done', 'landed'),
+        doc('n'),
+        doc('r2'),
+      ],
+      { bucketOf }
+    );
+    expect(open.map((t) => t.meta.id)).toEqual(['n', 'v', 'r1', 'r2', 'd']);
+  });
+
+  test('next is the first ready task in list order', () => {
+    expect(
+      milestoneMix([doc('w'), doc('r2'), doc('r1')], { bucketOf }).next?.meta.id
+    ).toBe('r2');
+    expect(milestoneMix([doc('w')], { bucketOf }).next).toBeNull();
   });
 });

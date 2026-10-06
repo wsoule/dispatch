@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react';
-import { type ReactNode, useCallback, useMemo } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 
 import { MilestoneMapView } from '../components/graph/MilestoneMap';
 import { BackToTasks } from '../components/tasks/BackToTasks';
@@ -49,6 +49,25 @@ const MODES: { id: TasksMode; label: string }[] = [
   { id: 'list', label: 'List' },
   { id: 'graph', label: 'Graph' },
 ];
+
+const GRAPH_NEEDS_FOLDED_KEY = 'dispatch:graph-needs-you-folded';
+
+// Graph mode keeps Needs you to its header unless it was opened there before.
+function storedGraphFold(): boolean {
+  try {
+    return localStorage.getItem(GRAPH_NEEDS_FOLDED_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function storeGraphFold(folded: boolean): void {
+  try {
+    localStorage.setItem(GRAPH_NEEDS_FOLDED_KEY, String(folded));
+  } catch {
+    // Kept for this session only.
+  }
+}
 
 /** A page that is not the list: a task, a doc, a PR, a draft, a room or a hosted view. */
 export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
@@ -110,6 +129,11 @@ export function TasksView({
   composer,
 }: TasksViewProps) {
   const split = page.kind === 'task' && !page.full;
+  const [graphFolded, setGraphFolded] = useState(storedGraphFold);
+  const onGraphFold = useCallback((folded: boolean) => {
+    setGraphFolded(folded);
+    storeGraphFold(folded);
+  }, []);
   const taskFilter = useMemo(
     () => presetMatcher(preset, presetContext),
     [preset, presetContext]
@@ -253,6 +277,8 @@ export function TasksView({
                 decided={decided}
                 onOpenRef={onOpenRef}
                 onOpenDecision={onOpenDecision}
+                folded={mode === 'graph' ? graphFolded : undefined}
+                onFoldedChange={mode === 'graph' ? onGraphFold : undefined}
               />
             </div>
             {preset !== 'all' && (
@@ -277,6 +303,7 @@ export function TasksView({
                   bucketOf={presetContext.bucketOf}
                   asksByTask={needs.byTask}
                   projectKey={projectKey}
+                  dueDateOf={(id) => epicById.get(id)?.meta.dueDate ?? null}
                   onOpenTask={onSelectTask}
                 />
               ) : (
