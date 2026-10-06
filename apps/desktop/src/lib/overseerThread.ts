@@ -5,6 +5,8 @@ import type {
   OverseerRecord,
 } from '@dispatch/client';
 
+import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
+
 // One rendered row of a overseer conversation, flattened from the record's
 // transcript the same way planThread.ts flattens a plan's. Beyond the plan
 // thread's message/pending/failed rows, the overseer transcript carries three
@@ -51,7 +53,48 @@ export type OverseerThreadItem =
       at: string;
     }
   /** Typed during a turn; `waiting` once that turn ended without sending it. */
-  | { kind: 'queued'; key: string; text: string; waiting: boolean };
+  | { kind: 'queued'; key: string; text: string; waiting: boolean }
+  /** The agent's show_tasks: a door the human opens, never a jump. */
+  | { kind: 'door'; key: string; door: OverseerDoor; at: string };
+
+/** Where a show_tasks door opens Tasks. */
+export interface OverseerDoor {
+  preset?: TasksPreset;
+  taskId?: string;
+  milestoneId?: string;
+}
+
+// The door a show_tasks result recorded, or null for an error or a shape this build does not know.
+function doorOf(text: string): OverseerDoor | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const door = (parsed as { door?: unknown } | null)?.door;
+  if (typeof door !== 'object' || door === null) return null;
+  const { preset, taskId, milestoneId } = door as Record<string, unknown>;
+  const presets: readonly string[] = TASKS_PRESETS.map((p) => p.id);
+  return {
+    ...(typeof preset === 'string' && presets.includes(preset)
+      ? { preset: preset as TasksPreset }
+      : {}),
+    ...(typeof taskId === 'string' ? { taskId } : {}),
+    ...(typeof milestoneId === 'string' ? { milestoneId } : {}),
+  };
+}
+
+/** The door's button text. */
+export function doorLabel(door: OverseerDoor): string {
+  const target =
+    door.taskId ??
+    door.milestoneId ??
+    (door.preset !== undefined && door.preset !== 'all'
+      ? TASKS_PRESETS.find((p) => p.id === door.preset)?.label
+      : undefined);
+  return target === undefined ? 'Show in tasks →' : `Show ${target} in tasks →`;
+}
 
 const TURN_FAILED_FALLBACK =
   'The overseer stopped before it answered. Send the message again to retry.';
@@ -189,6 +232,10 @@ function buildRow(
       at: message.at,
     };
   }
+  if (message.role === 'tool' && message.tool === 'show_tasks') {
+    const door = doorOf(message.text);
+    if (door !== null) return { kind: 'door', key, door, at: message.at };
+  }
   if (message.role === 'tool') {
     return {
       kind: 'tool',
@@ -277,6 +324,7 @@ function searchableText(item: OverseerThreadItem): string | null {
     case 'failed':
       return item.error;
     case 'pending':
+    case 'door':
       return null;
   }
 }

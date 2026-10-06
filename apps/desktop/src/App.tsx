@@ -1839,6 +1839,14 @@ function App() {
             asks={needs.count}
             revoked={overseer.revoked}
             onShowAsks={() => dispatchNav({ type: 'tv/showTasks' })}
+            onOpenDoor={(door) => {
+              const taskId = door.taskId ?? door.milestoneId;
+              dispatchNav(
+                taskId !== undefined
+                  ? { type: 'openTask', taskId }
+                  : { type: 'tv/showTasks', preset: door.preset }
+              );
+            }}
             onOpenConnectedAgents={() =>
               dispatchNav({
                 type: 'tv/openSettings',

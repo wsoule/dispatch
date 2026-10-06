@@ -17,7 +17,12 @@ import type {
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { effortOptions, modelLabel, MODELS } from '../../lib/models';
 import type { OverseerThreadItem } from '../../lib/overseerThread';
-import { buildOverseerThread, findInThread } from '../../lib/overseerThread';
+import {
+  buildOverseerThread,
+  doorLabel,
+  findInThread,
+  type OverseerDoor,
+} from '../../lib/overseerThread';
 import { Markdown } from '../runs/Markdown';
 import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
@@ -266,6 +271,8 @@ interface OverseerChatProps {
    * turn, the stream shows its spend, and ⌘F searches it.
    */
   durable?: boolean;
+  /** Opens a show_tasks door; without it a door reads as a plain line. */
+  onOpenDoor?: (door: OverseerDoor) => void;
 }
 
 /**
@@ -282,6 +289,7 @@ export function OverseerChat({
   aboveComposer,
   disabled = false,
   durable = false,
+  onOpenDoor,
 }: OverseerChatProps) {
   // The composer's text is the session's, not this component's: the rail
   // unmounts this chat on a tab flip and on collapse, and navigating to the
@@ -485,6 +493,25 @@ export function OverseerChat({
             </span>
             <span className="bg-border h-px flex-1" />
           </div>
+        );
+      case 'door':
+        return onOpenDoor === undefined ? (
+          <div
+            key={item.key}
+            className="text-muted-foreground font-book self-start px-1 text-[12px]"
+          >
+            {doorLabel(item.door)}
+          </div>
+        ) : (
+          <button
+            key={item.key}
+            type="button"
+            data-testid="overseer-door"
+            onClick={() => onOpenDoor(item.door)}
+            className="rounded-pill border-border text-foreground hover:bg-surface-quaternary self-start border-[0.5px] px-3 py-1 text-[12px]"
+          >
+            {doorLabel(item.door)}
+          </button>
         );
       case 'queued':
         return (
