@@ -93,6 +93,19 @@ describe('a public-pinned sync repo', () => {
     expect(calls).toHaveLength(1);
   });
 
+  // git splits `-c http.<remote>.proxy=` at the first `=`, so a remote
+  // carrying one could set some other http setting.
+  it('refuses a remote with an = that would end a config key early', async () => {
+    const { runner, calls } = recorder();
+    const git = publicPinnedGit(
+      runner,
+      'https://git.example.com/r.git.cookieFile=/etc/passwd#',
+      () => Promise.resolve(['93.184.216.34'])
+    );
+    expect((await git('/x', ['fetch', 'origin'])).status).toBe(1);
+    expect(calls).toHaveLength(0);
+  });
+
   it('refuses a network command to a remote it cannot pin', async () => {
     const { runner, calls } = recorder();
     const git = publicPinnedGit(runner, 'git@example.com:acme/board.git');

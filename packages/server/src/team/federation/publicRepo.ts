@@ -11,6 +11,7 @@ import { join } from 'node:path';
 
 import type { AsyncGitRunner } from '../../sync/worktree.js';
 import {
+  checkLinkRemote,
   linkGitRunner,
   pinFlags,
   redactRemotes,
@@ -90,6 +91,8 @@ export function publicPinnedGit(
       const host = remoteHostUrl(remote);
       if (host === null || !/^https:\/\//i.test(remote))
         return refused(remote, 'it is not an https remote');
+      if (!checkLinkRemote(remote))
+        return refused(remote, 'it is not a plain git remote');
       try {
         const { address } = await pinPublicUrl(
           `https://${new URL(host).hostname}/`,

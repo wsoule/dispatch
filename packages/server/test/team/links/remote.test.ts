@@ -23,6 +23,8 @@ describe('link remotes (T55 review M1-M3)', () => {
       'https://example.com/a\nb',
       '',
       `https://example.com/${'a'.repeat(1100)}`,
+      // Would end a `-c http.<remote>.*` key early and set another setting.
+      'https://example.com/r.git.cookieFile=/etc/passwd#',
     ])
       expect(checkLinkRemote(bad)).toBe(false);
     for (const good of [

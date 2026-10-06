@@ -16,8 +16,8 @@ function hasControl(v: string): boolean {
 
 /**
  * Whether `remote` may be a link's remote: no option-looking start, no
- * control characters, no `<helper>::` form (which runs a program), and at
- * most 1 KiB. Both the offer and a code's reader apply it.
+ * control characters, no `<helper>::` form (which runs a program), no `=`
+ * (it would end a `-c` config key early), and at most 1 KiB. Both the offer and a code's reader apply it.
  */
 export function checkLinkRemote(remote: string): boolean {
   if (
@@ -26,6 +26,9 @@ export function checkLinkRemote(remote: string): boolean {
     remote.startsWith('-') ||
     hasControl(remote) ||
     remote.includes('::') ||
+    // Runners put the remote in a `-c http.<remote>.*` key, which git splits
+    // at the first `=`: one would set some other http setting.
+    remote.includes('=') ||
     // P1: git and the URL parser read a backslash differently.
     remote.includes('\\')
   )
