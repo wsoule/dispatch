@@ -1,6 +1,7 @@
 import { isStub, opHash, signText } from '@dispatch-foo/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 
+import { plainText } from './onboarding.js';
 import { RELAY_DISCLOSURE } from './teamKeys.js';
 import { TransportOffline } from './transport.js';
 import type {
@@ -316,7 +317,7 @@ export async function registerAtRelay(
   }
   if (res.ok && typeof answer.teamId === 'string') return answer.teamId;
   const said =
-    typeof answer.error === 'string' ? `: ${answer.error.slice(0, 200)}` : '';
+    typeof answer.error === 'string' ? `: ${plainText(answer.error, 200)}` : '';
   throw fail(
     res.status === 401
       ? useToken

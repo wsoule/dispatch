@@ -17,6 +17,7 @@ import { capsOf } from './caps.js';
 import {
   checkString,
   defaultRelayUrl,
+  normalRelay,
   teamLinkUrl,
   teamStatus,
 } from './onboarding.js';
@@ -772,10 +773,12 @@ async function startTeam(
       `This machine is already in team ${view.name}.`
     );
   const toRelay = body.git !== true;
-  const url =
+  const given =
     typeof body.relayUrl === 'string' && body.relayUrl !== ''
       ? body.relayUrl
       : defaultRelayUrl();
+  // Shown and dialed in one normal form; a URL that has none is refused below.
+  const url = normalRelay(given) ?? given;
   const token = body.registrationToken;
   if (token !== undefined && (typeof token !== 'string' || token === ''))
     throw new RosterError(

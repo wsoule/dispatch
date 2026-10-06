@@ -1,4 +1,4 @@
-import { printable } from '@dispatch-foo/federation';
+import { HANDLE } from '@dispatch-foo/federation';
 import type { PinnedKey, RosterView } from '@dispatch-foo/federation';
 import {
   b64u,
@@ -24,6 +24,58 @@ export function defaultRelayUrl(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 const LINK_PREFIX = 'dispatch-team:';
+/** A machine fingerprint: six groups of four Crockford characters. */
+const FINGERPRINT = /^[0-9A-Z]{4}(?:-[0-9A-Z]{4}){5}$/;
+const MAX_NAME_CHARS = 64;
+const MAX_REMOTE_CHARS = 256;
+const MAX_TEXT_CHARS = 300;
+
+// ANSI CSI and OSC sequences, whole, so no fragment of one reaches a terminal.
+// Built from code points, so the source holds no raw escape characters.
+const ESC = String.fromCharCode(0x1b);
+const BEL = String.fromCharCode(0x07);
+const ANSI = new RegExp(
+  `${ESC}\\[[0-?]*[ -/]*[@-~]|${ESC}\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)?|${ESC}[@-Z\\\\-_]`,
+  'g'
+);
+// Controls, format characters (bidi overrides, zero-widths) and line or
+// paragraph separators: nothing that moves the cursor or reorders text.
+const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+/**
+ * Text from elsewhere (an invite link, a relay's answer, a peer's op) made
+ * safe to print to a terminal, a status line or the desktop: escape
+ * sequences and every control, format and separator character removed,
+ * runs of space collapsed, and capped at `max` characters.
+ */
+export function plainText(value: string, max = MAX_TEXT_CHARS): string {
+  const clean = value
+    .replace(ANSI, '')
+    .replace(UNPRINTABLE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const chars = [...clean];
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : clean;
+}
+
+/** A relay URL as it is shown and dialed: wss:// (ws:// only on this
+ *  machine), no credentials, query or fragment, no trailing slash; null
+ *  when it is not one. */
+export function normalRelay(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const local = ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+  if (parsed.protocol !== 'wss:' && !(parsed.protocol === 'ws:' && local))
+    return null;
+  if (parsed.username !== '' || parsed.password !== '') return null;
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.href.replace(/\/+$/, '');
+}
 /** The web form of a link: the payload rides the fragment, never a request. */
 export const LINK_URL_BASE = 'https://dispatch.foo/join#';
 const SEED_BYTES = 32;
@@ -118,30 +170,46 @@ export function decodeTeamLink(text: string): TeamLink {
     if (typeof v !== 'string') throw new RosterError('invalid', DAMAGED);
     return v;
   };
+  // Every field is checked against its grammar, or cleaned where it is free
+  // text: the link is a stranger's input until its secret is proven.
   const team = str('team');
   const seed = fromCrockford(str('secret'));
-  const expires = str('expires');
+  const expiresMs = Date.parse(str('expires'));
+  const handle = str('handle');
+  const by = str('by');
+  const fp = str('fp');
+  const name = plainText(str('name'), MAX_NAME_CHARS);
   if (
     !/^[0-9a-f]{32}$/.test(team) ||
     seed === null ||
-    Number.isNaN(Date.parse(expires))
+    Number.isNaN(expiresMs) ||
+    !HANDLE.test(handle) ||
+    !HANDLE.test(by) ||
+    !FINGERPRINT.test(fp) ||
+    name === ''
   )
     throw new RosterError('invalid', DAMAGED);
   const via = fields.via as { kind?: unknown; url?: unknown } | undefined;
+  let relay: string | null = null;
+  if (via?.kind === 'relay') {
+    relay = typeof via.url === 'string' ? normalRelay(via.url) : null;
+    if (relay === null) throw new RosterError('invalid', DAMAGED);
+  } else if (via?.kind !== 'git') throw new RosterError('invalid', DAMAGED);
   const remote = fields.remote;
+  if (remote !== null && typeof remote !== 'string')
+    throw new RosterError('invalid', DAMAGED);
+  const cleanRemote =
+    remote === null ? null : plainText(remote, MAX_REMOTE_CHARS);
   return {
     team,
-    name: printable(str('name'), 128),
-    by: printable(str('by'), 64),
-    fp: printable(str('fp'), 64),
-    handle: str('handle'),
+    name,
+    by,
+    fp,
+    handle,
     seed,
-    expires,
-    via:
-      via?.kind === 'relay' && typeof via.url === 'string'
-        ? { kind: 'relay', url: via.url }
-        : { kind: 'git' },
-    remote: typeof remote === 'string' ? remote : null,
+    expires: new Date(expiresMs).toISOString(),
+    via: relay === null ? { kind: 'git' } : { kind: 'relay', url: relay },
+    remote: cleanRemote === '' ? null : cleanRemote,
   };
 }
 
@@ -275,11 +343,11 @@ export function whereOf(
     try {
       return new URL(health.url).host;
     } catch {
-      return health.url;
+      return plainText(health.url, 80);
     }
   }
   if (remote === null) return 'git';
-  const tail = remote
+  const tail = plainText(remote, MAX_REMOTE_CHARS)
     .replace(/\.git$/, '')
     .replace(/^.*[:/]([^:/]+\/[^:/]+)$/, '$1');
   return `git (${tail})`;
@@ -311,11 +379,14 @@ export function teamStatus(
   const problems: StatusProblem[] = [];
   if (input.lastError !== null)
     problems.push({
-      message: `Can't reach ${where}: ${input.lastError.slice(0, 200)}. Changes made here wait and go out on the next sync.`,
+      message: `Can't reach ${where}: ${plainText(input.lastError, 200)}. Changes made here wait and go out on the next sync.`,
       fix: 'dispatch sync now',
     });
   if (input.paused !== null)
-    problems.push({ message: input.paused, fix: 'dispatch license' });
+    problems.push({
+      message: plainText(input.paused),
+      fix: 'dispatch license',
+    });
   const me = view?.members.get(machine.replica);
   if (view === null || me === undefined) {
     if (input.foundings.length > 1)
@@ -326,8 +397,11 @@ export function teamStatus(
       });
     problems.push(...plainProblems(input.problems, false));
     if (input.joining !== null) {
-      const name = input.joining.name ?? view?.name ?? 'the team';
-      const by = input.joining.by ?? 'whoever invited you';
+      const name = plainText(
+        input.joining.name ?? view?.name ?? 'the team',
+        MAX_NAME_CHARS
+      );
+      const by = plainText(input.joining.by ?? 'whoever invited you', 64);
       return {
         state: 'joining',
         line: `Joining team '${name}' · waiting for ${by}'s Dispatch to let this machine in${synced === null ? '' : ` · last sync ${synced}`}`,
@@ -365,7 +439,7 @@ export function teamStatus(
     const you = m.replica === machine.replica;
     return {
       handle: m.handle,
-      device: printable(pins.get(m.replica)?.device ?? ''),
+      device: plainText(pins.get(m.replica)?.device ?? '', 64),
       role: m.observer ? ('observer' as const) : m.role,
       you,
       check:
@@ -386,7 +460,7 @@ export function teamStatus(
   for (const w of input.waiting)
     if (w.invitedBy === null)
       problems.push({
-        message: `${w.handle} on ${printable(w.device)} asked to join without an invite.${isAdmin ? ' Let them in only if you know this machine.' : ''}`,
+        message: `${w.handle} on ${plainText(w.device, 64)} asked to join without an invite.${isAdmin ? ' Let them in only if you know this machine.' : ''}`,
         fix: isAdmin
           ? `dispatch team advanced admit ${w.replica} --fingerprint ${w.fingerprint}`
           : null,
@@ -398,8 +472,9 @@ export function teamStatus(
     });
   problems.push(...plainProblems(input.problems, isAdmin));
   const seats = { used: view.people.length, total: view.seats };
+  const name = plainText(view.name, MAX_NAME_CHARS);
   const parts = [
-    `Team '${view.name}'`,
+    `Team '${name}'`,
     `${seats.used} of ${seats.total} seats`,
     `syncing via ${where}`,
     synced === null ? 'not synced yet' : `last sync ${synced}`,
@@ -407,7 +482,7 @@ export function teamStatus(
   return {
     state: 'member',
     line: parts.join(' · '),
-    team: { id: view.teamId, name: view.name },
+    team: { id: view.teamId, name },
     role: me.observer ? 'observer' : me.role,
     seats,
     sync,
@@ -426,14 +501,17 @@ function plainProblems(
   return notes.map((p) => {
     if (p.subject.startsWith('op:'))
       return {
-        message: p.message,
+        message: plainText(p.message),
         fix: isAdmin ? 'dispatch team advanced keys' : null,
       };
     if (ACKABLE.some((a) => p.subject.startsWith(a)))
       return {
-        message: p.message,
-        fix: `dispatch team advanced ack ${p.subject}`,
+        message: plainText(p.message),
+        fix: `dispatch team advanced ack ${plainText(p.subject, 120)}`,
       };
-    return { message: p.message, fix: 'dispatch team advanced keys' };
+    return {
+      message: plainText(p.message),
+      fix: 'dispatch team advanced keys',
+    };
   });
 }
