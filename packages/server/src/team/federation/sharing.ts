@@ -1,11 +1,17 @@
 import {
   DISPATCH_DIR,
   loadConfig,
+  syncPlace,
   syncSettings,
   updateConfig,
 } from '@dispatch-foo/core';
+import type { ConfigPatch } from '@dispatch-foo/core';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { boardSyncDir } from '../../orchestrator/paths.js';
+import { sameRemote } from './onboarding.js';
+import { markPublicRepo } from './publicRepo.js';
 
 // Turning board sync on from `team start` or `team join` (team-easy): sync
 // decides how ids are minted and which store everything is handed, so it is
@@ -21,6 +27,16 @@ import { join } from 'node:path';
 // - just before the stop, work is checked again; if any began, the restart
 //   is abandoned and the config rolled back;
 // - a restart that fails rolls the config back and boots as before.
+
+/** Where a team action points board sync: an invite's repo and branch, or
+ *  the place a founder named. */
+export interface SyncMove {
+  place: { remote: string } | { repo: string };
+  branch?: string;
+  /** An invite chose this repo without the joiner's say-so: it must keep
+   *  resolving public, pinned on every pass (publicRepo.ts). */
+  pinPublic?: boolean;
+}
 
 /** What a request that needs sync gets back when sync is off. */
 export type SharingAnswer =
@@ -100,18 +116,23 @@ export function frozenBySharing(
 /** The refusal the API answers a frozen request with. */
 export const FROZEN_MESSAGE = HELD;
 
+/** The refusal when sync has nowhere to go and the request named nowhere. */
+const NO_PLACE =
+  'Team sync has no place to keep the board: nobody chose one, and Dispatch never pushes to a remote nobody named. Choose one in Settings → Board sync (or start with `dispatch team start --remote origin`, or `--repo <git url>`), then run this again.';
+
 /**
- * Turns board sync on and schedules the restart that wires it, or answers
- * why it cannot. The caller answers the request with it, then the client
- * waits for sync to be on and sends the same request again.
+ * Turns board sync on (at the place the request names, when it names one)
+ * and schedules the restart that wires it, or answers why it cannot. The
+ * caller answers the request with it, then the client waits for sync to be
+ * on and sends the same request again.
  */
 export async function turnOnSharing(
   deps: SharingDeps,
-  /** What the request can be refused for before anything changes; it
-   *  throws, and nothing is written or restarted. */
-  precheck: (now: Date) => void = () => {}
+  /** What the request can be refused for before anything changes, and where
+   *  it points sync; it throws, and nothing is written or restarted. */
+  precheck: (now: Date) => SyncMove | null = () => null
 ): Promise<SharingAnswer> {
-  precheck(deps.now());
+  const want = precheck(deps.now());
   const accepted: SharingAnswer = {
     ok: true,
     message:
@@ -127,38 +148,49 @@ export async function turnOnSharing(
       'sync_unavailable',
       "This board is kept as files, which board sync can't carry, so it can't join a team."
     );
-  const restart = deps.restart;
-  if (restart === undefined)
+  const live = deps.liveWork();
+  if (live.length > 0)
     return refuse(
       409,
-      'sync_off',
-      'Board sync is off. Turn it on in Settings → Board sync (or set `sync.enabled: true` in .dispatch/config.yml), then restart Dispatch for this project.'
+      'busy',
+      `Turning on team sync restarts Dispatch for this project, which would stop ${live.join(', ')}. Run this again once they finish.`
     );
-  const busy = (live: string[]) =>
-    `Turning on team sync restarts Dispatch for this project, which would stop ${live.join(', ')}. Run this again once they finish.`;
-  const live = deps.liveWork();
-  if (live.length > 0) return refuse(409, 'busy', busy(live));
   const settings = syncSettings(loadConfig(deps.rootDir));
-  const target =
-    settings.repo === undefined
-      ? { remote: settings.remote }
-      : { repo: settings.repo };
+  const current = syncPlace(settings);
+  const target = want?.place ?? current;
+  if (target === null) return refuse(409, 'no_place', NO_PLACE);
   const remote = await deps.resolveRemote(target);
-  // Asked again after the await: another request may have got here first.
+  const patch = await syncPatch(deps, want, remote, current, settings.branch);
+  // Asked again after the awaits: another request may have got here first.
   if (deps.state.pending) return accepted;
   if (remote === null)
     return refuse(
       409,
       'no_remote',
-      settings.repo === undefined
-        ? `Team sync rides a branch on this project's "${settings.remote}" git remote, and it has none. Add the remote your teammates push to, then run this again.`
-        : `Team sync rides ${settings.repo}, which Dispatch can't reach. Check sync.repo in Settings → Board sync, then run this again.`
+      'remote' in target
+        ? `Team sync rides a branch on this project's "${target.remote}" git remote, and it has none. Add the remote your teammates push to, then run this again.`
+        : `Team sync rides ${target.repo}, which Dispatch can't reach. Check sync.repo in Settings → Board sync, then run this again.`
+    );
+  const moved = typeof patch.branch === 'string' ? patch.branch : null;
+  const restart = deps.restart;
+  if (restart === undefined)
+    return refuse(
+      409,
+      'sync_off',
+      moved === null
+        ? 'Board sync is off. Turn it on in Settings → Board sync (or set `sync.enabled: true` in .dispatch/config.yml), then restart Dispatch for this project.'
+        : `The team's board is kept at ${placeWords(target)} on branch ${moved}, and this project syncs elsewhere. Point Settings → Board sync there (${placeKeys(target, moved)} in .dispatch/config.yml), restart Dispatch for this project, then run this again.`
     );
   if (!deps.state.claim()) return accepted;
   deps.hold(HELD);
   const rollback = configRollback(deps.rootDir);
   try {
-    updateConfig(deps.rootDir, { sync: { enabled: true } });
+    updateConfig(deps.rootDir, { sync: patch });
+    if (want !== null)
+      markPublicRepo(
+        boardSyncDir(deps.rootDir),
+        want.pinPublic === true && 'repo' in want.place ? want.place.repo : null
+      );
   } catch (err) {
     rollback();
     deps.release();
@@ -168,7 +200,52 @@ export async function turnOnSharing(
   setTimeout(() => {
     void finish(deps, restart, rollback);
   }, deps.delayMs ?? RESTART_AFTER_MS);
-  return accepted;
+  if (moved === null) return accepted;
+  return {
+    ok: true,
+    message: `Pointed team sync at ${placeWords(target)} on branch ${moved}, where the team's board is kept; Dispatch is restarting for this project. Your request goes through once it is back.`,
+  };
+}
+
+// What turning sync on writes: `enabled`, plus the asked-for place and
+// branch unless the config already names that same repository and branch.
+async function syncPatch(
+  deps: SharingDeps,
+  want: SyncMove | null,
+  wanted: string | null,
+  current: SyncMove['place'] | null,
+  branch: string
+): Promise<NonNullable<ConfigPatch['sync']>> {
+  if (want === null) return { enabled: true };
+  const toBranch = want.branch ?? branch;
+  const here = current === null ? null : await deps.resolveRemote(current);
+  if (
+    here !== null &&
+    wanted !== null &&
+    sameRemote(here, wanted) === true &&
+    toBranch === branch
+  )
+    return { enabled: true };
+  return 'repo' in want.place
+    ? { enabled: true, repo: want.place.repo, remote: null, branch: toBranch }
+    : {
+        enabled: true,
+        remote: want.place.remote,
+        repo: null,
+        branch: toBranch,
+      };
+}
+
+function placeWords(place: SyncMove['place']): string {
+  return 'repo' in place
+    ? place.repo
+    : `this project's "${place.remote}" remote`;
+}
+
+function placeKeys(place: SyncMove['place'], branch: string): string {
+  return 'repo' in place
+    ? `sync.repo: ${place.repo}, sync.branch: ${branch}`
+    : `sync.remote: ${place.remote}, sync.branch: ${branch}`;
 }
 
 // The restart itself, once the answer has left: work is checked a last time

@@ -4,7 +4,12 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import { accessFor, SettingsAccessProvider } from './access';
-import { BoardSyncGroup, notSharingHint, syncedWhen } from './BoardSyncGroup';
+import {
+  BoardSyncGroup,
+  notSharingHint,
+  syncedVia,
+  syncedWhen,
+} from './BoardSyncGroup';
 import { dataWith } from './fixtures.test-helper';
 
 // Mounted at the request tier: Sync now is its own route, open to any
@@ -46,7 +51,7 @@ const on: BoardSyncStatus = {
 test('off, it says how to turn it on', async () => {
   mount({ enabled: false, reason: 'off' });
   expect(await screen.findByText('Not sharing')).toBeTruthy();
-  expect(screen.getByText(/Turn on sharing below/)).toBeTruthy();
+  expect(screen.getByText(/Start or join a team in Members/)).toBeTruthy();
 });
 
 // Already on in config: turning it on again is not the fix.
@@ -54,7 +59,7 @@ test('on but not started, it says what to check instead', async () => {
   mount({ enabled: false, reason: 'not-started' });
   expect(await screen.findByText('Not sharing')).toBeTruthy();
   expect(screen.getByText(/Sharing is on but didn.t start/)).toBeTruthy();
-  expect(screen.queryByText(/Turn on sharing below/)).toBeNull();
+  expect(screen.queryByText(/Start or join a team/)).toBeNull();
 });
 
 test('an older daemon that gives no reason reads as off', () => {
@@ -113,6 +118,27 @@ test('syncedWhen reads the states a person sees', () => {
   expect(syncedWhen({ enabled: false })).toBe('Off');
   expect(syncedWhen({ ...on, lastSyncAt: null })).toBe('Not synced yet');
   expect(syncedWhen(on)).toMatch(/^Synced /);
+});
+
+test('syncedVia names the relay when the team syncs over one, else the branch', () => {
+  expect(syncedVia(on)).toBe('dispatch-sync on git@example.com:team/repo.git');
+  expect(syncedVia({ ...on, transport: 'relay' })).toBe('via the team relay');
+  expect(
+    syncedVia({
+      ...on,
+      transport: 'relay',
+      transportHealth: {
+        kind: 'relay',
+        lastExchangeAt: null,
+        lastError: null,
+        unpublished: 0,
+        sizeBytes: null,
+        readBytes: 0,
+        acks: {},
+        url: 'wss://relay.example.com',
+      },
+    })
+  ).toBe('via wss://relay.example.com');
 });
 
 test('past the seats it says it is paused, not that the remote is down', async () => {

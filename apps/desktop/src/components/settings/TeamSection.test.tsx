@@ -78,19 +78,25 @@ describe('holderDates', () => {
 });
 
 describe('TeamSection', () => {
-  test('folds the shared-host tokens and machine keys behind Advanced', () => {
+  test('folds machine keys and browser access into separate, closed sections', () => {
     mount({ myTier: 'operator', client: teamClient([]) as never });
-    const advanced = screen.getByTestId('team-advanced');
-    expect(advanced.tagName).toBe('DETAILS');
-    expect(advanced.hasAttribute('open')).toBe(false);
-    expect(advanced.textContent).toContain('Invite someone');
+    const machines = screen.getByTestId('team-machines');
+    const browser = screen.getByTestId('team-browser-access');
+    for (const section of [machines, browser]) {
+      expect(section.tagName).toBe('DETAILS');
+      expect(section.hasAttribute('open')).toBe(false);
+    }
+    expect(browser.textContent).toContain('Give someone browser access');
+    // Points a teammate who runs Dispatch back to the real team invite.
+    expect(browser.textContent).toContain('use Invite teammate above');
+    expect(machines.textContent).not.toContain('browser access');
   });
 
   test('below decide, it says who to ask instead of offering controls', () => {
     mount({ myTier: 'request', client: teamClient([]) as never });
-    expect(screen.getByText('Inviting people')).toBeTruthy();
+    expect(screen.getByText('Giving people browser access')).toBeTruthy();
     expect(screen.getByText(/Needs Can approve access/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Invite/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Create token/ })).toBeNull();
     // Invites need Can approve, not the owner, and the lock agrees.
     expect(screen.getByLabelText(NEEDS_DECIDE)).toBeTruthy();
     expect(screen.queryByLabelText(OPERATOR_ONLY)).toBeNull();
@@ -134,14 +140,14 @@ describe('TeamSection', () => {
     expect(remove.getAttribute('title')).toContain('above yours');
   });
 
-  test('inviting shows the token once, beside the address to send', async () => {
+  test('creating a token shows it once, beside the address and how to use it', async () => {
     const client = teamClient([], ['http://192.168.1.5:4771']);
     mount({ myTier: 'operator', client: client as never });
 
     fireEvent.change(screen.getByLabelText('Email or handle'), {
       target: { value: 'grace@example.com' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Invite/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create token/ }));
 
     await waitFor(() =>
       expect(screen.getByTestId('issued-token').textContent).toBe(
@@ -149,6 +155,9 @@ describe('TeamSection', () => {
       )
     );
     expect(screen.getByText('http://192.168.1.5:4771')).toBeTruthy();
+    expect(
+      screen.getByText(/paste the token on the sign-in screen/)
+    ).toBeTruthy();
     expect(client.issueTeamToken).toHaveBeenCalledWith({
       email: 'grace@example.com',
       tier: 'request',
@@ -162,7 +171,7 @@ describe('TeamSection', () => {
     fireEvent.change(screen.getByLabelText('Email or handle'), {
       target: { value: 'grace@example.com' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Invite/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Create token/ }));
     await waitFor(() =>
       expect(
         screen.getByText(/only accepts connections from this machine/)

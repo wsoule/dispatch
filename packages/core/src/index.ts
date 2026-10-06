@@ -259,6 +259,7 @@ export {
   parseMemoryConfig,
   previewSettings,
   readMemoryConfig,
+  syncPlace,
   syncSettings,
   projectPolicy,
   queueWeights,

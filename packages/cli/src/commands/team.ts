@@ -1,18 +1,25 @@
+import { loadConfig, syncPlace, syncSettings } from '@dispatch-foo/core';
 import { Command, Option } from 'commander';
 import { createInterface } from 'node:readline';
 
 import type {
   ApiClient,
+  JoinedTeam,
   RosterAnswer,
   TeamInvite,
   TeamKeys,
   TeamStatus,
   TeamTier,
 } from '../apiClient.js';
+import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
-import { appTokenClient } from './appToken.js';
+import {
+  appTokenClient,
+  attachToRunningDaemon,
+  optionalAppToken,
+} from './appToken.js';
 import { readSecret } from './secret.js';
 
 const TIERS: readonly TeamTier[] = ['request', 'decide', 'operator'];
@@ -119,10 +126,54 @@ function describeTeamStatus(status: TeamStatus): string[] {
       if (p.fix !== null) lines.push(`    fix: ${p.fix}`);
     }
   }
+  if (status.reduced === true)
+    lines.push(
+      'Teammates, checks and problems need the daemon app token: pass --token or set DISPATCH_APP_TOKEN.'
+    );
   return lines;
 }
 
 // Asks a yes/no question on a terminal; false when nobody can answer.
+// Joins, and when the daemon answers `confirm_repo` (the invite keeps the
+// board on a local path or private host) says where and asks before
+// retrying with consent; `--accept-repo` answers yes without a terminal.
+async function joinConfirmingRepo(
+  ctx: CliContext,
+  api: ApiClient,
+  code: string,
+  accepted: boolean
+): Promise<JoinedTeam> {
+  try {
+    return await api.joinTeam(code);
+  } catch (err) {
+    if (!(err instanceof CliError) || err.code !== 'confirm_repo') throw err;
+    ctx.log(err.message);
+    const yes =
+      accepted ||
+      (await (ctx.confirm ?? confirmNo)('Join and sync with that repo?'));
+    if (!yes)
+      throw new CliError(
+        'Not joined. Ask whoever invited you where the board is kept, or run this again with --accept-repo.'
+      );
+    return await api.joinTeam(code, { confirmRepo: true });
+  }
+}
+
+// Like defaultConfirm, but no is the default: this guards a risk.
+async function confirmNo(question: string): Promise<boolean> {
+  if (process.stdin.isTTY !== true) return false;
+  process.stderr.write(`${question} [y/N] `);
+  const rl = createInterface({ input: process.stdin, terminal: false });
+  try {
+    const answer = await new Promise<string>((resolve) =>
+      rl.once('line', resolve)
+    );
+    return /^y/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
 async function defaultConfirm(question: string): Promise<boolean> {
   if (process.stdin.isTTY !== true) return false;
   process.stderr.write(`${question} [Y/n] `);
@@ -135,6 +186,44 @@ async function defaultConfirm(question: string): Promise<boolean> {
   } finally {
     rl.close();
   }
+}
+
+// Reads one line on a terminal; null when nobody can answer.
+async function defaultAsk(question: string): Promise<string | null> {
+  if (process.stdin.isTTY !== true) return null;
+  process.stderr.write(question);
+  const rl = createInterface({ input: process.stdin, terminal: false });
+  try {
+    return await new Promise<string>((resolve) => rl.once('line', resolve));
+  } finally {
+    rl.close();
+  }
+}
+
+const NO_PLACE_FLAGS =
+  "Choose where the team's board is kept: --repo <git url> for a separate board repo (recommended), or --remote origin for a dispatch-sync branch on this project's repo.";
+
+// Where `team start` keeps the board when no flag and no config names a
+// place: asked on a terminal, refused with the flags otherwise. Null when
+// config.yml already names one (or can't be read: the daemon then decides).
+async function startPlace(
+  ctx: CliContext
+): Promise<{ remote: string } | { repo: string } | null> {
+  try {
+    if (syncPlace(syncSettings(loadConfig(ctx.cwd))) !== null) return null;
+  } catch {
+    return null;
+  }
+  const ask = ctx.ask ?? defaultAsk;
+  const choice = await ask(
+    "Where should the team's board be kept?\n  1) A separate board repo (recommended)\n  2) This project's origin remote, on branch dispatch-sync\nChoose 1 or 2: "
+  );
+  if (choice === null) throw new CliError(NO_PLACE_FLAGS);
+  if (choice.trim() === '2') return { remote: 'origin' };
+  if (choice.trim() !== '1') throw new CliError(NO_PLACE_FLAGS);
+  const repo = (await ask('Board repo URL: '))?.trim() ?? '';
+  if (repo === '') throw new CliError(NO_PLACE_FLAGS);
+  return { repo };
 }
 
 // start / invite / join / status / leave: the whole of setting a team up.
@@ -151,6 +240,14 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
     )
     .option('--name <team>', 'the team name (default: the project folder)')
     .option('--git', 'sync over a git branch instead of the relay')
+    .option(
+      '--remote <name>',
+      "keep the team's board on a branch of one of this project's remotes (like origin)"
+    )
+    .option(
+      '--repo <url>',
+      "keep the team's board in a repository of its own (a git URL or path)"
+    )
     .option(
       '--relay <url>',
       'another relay (default: DISPATCH_RELAY_URL, or wss://relay.dispatch.foo)'
@@ -169,6 +266,8 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
       async (opts: {
         name?: string;
         git?: boolean;
+        remote?: string;
+        repo?: string;
         relay?: string;
         registrationToken?: string | true;
         yes?: boolean;
@@ -179,6 +278,14 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
         const git = opts.git === true;
         if (git && opts.relay !== undefined)
           throw new CliError('Pick one: --git or --relay <url>.');
+        if (opts.remote !== undefined && opts.repo !== undefined)
+          throw new CliError('Pick one: --remote <name> or --repo <url>.');
+        const place =
+          opts.remote !== undefined
+            ? { remote: opts.remote }
+            : opts.repo !== undefined
+              ? { repo: opts.repo }
+              : await startPlace(ctx);
         let confirmed = false;
         if (!git) {
           const where = hostOf(opts.relay ?? 'wss://relay.dispatch.foo');
@@ -208,6 +315,7 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
               : given;
         const started = await api.startTeam({
           ...(opts.name === undefined ? {} : { name: opts.name }),
+          ...(place ?? {}),
           ...(git ? { git: true } : { confirmed }),
           ...(opts.relay === undefined ? {} : { relayUrl: opts.relay }),
           ...(registrationToken === undefined ? {} : { registrationToken }),
@@ -301,12 +409,16 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
     .description(
       'Join a team with the link a teammate sent you, pasted at the prompt (or piped in)'
     )
+    .option(
+      '--accept-repo',
+      "join even when the invite's board repo is on this machine or a private network"
+    )
     .option(tokenOption, tokenHelp)
     .option('--json')
     .action(
       async (
         given: string | undefined,
-        opts: { token?: string; json?: boolean }
+        opts: { token?: string; json?: boolean; acceptRepo?: boolean }
       ) => {
         // M2: an invite is a secret, so it is never taken from argv, where
         // shell history and ps keep it.
@@ -314,9 +426,16 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
           throw new CliError(
             'Paste the link at the prompt instead: `dispatch team join`, then paste. An invite is a secret, and arguments stay in shell history.'
           );
-        const code = await readSecret(ctx, 'Invite link: ');
+        // The token and daemon first, so a missing one fails before the
+        // person has pasted a secret.
         const api = await client(opts, 'dispatch team join');
-        const joined = await api.joinTeam(code);
+        const code = await readSecret(ctx, 'Invite link: ');
+        const joined = await joinConfirmingRepo(
+          ctx,
+          api,
+          code,
+          opts.acceptRepo === true
+        );
         if (opts.json === true) {
           ctx.log(JSON.stringify(joined, null, 2));
           return;
@@ -344,14 +463,64 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
   team
     .command('status')
     .description('The team in one line, and anything that needs attention')
-    .option(tokenOption, tokenHelp)
+    .option(
+      tokenOption,
+      'the daemon app token (or DISPATCH_APP_TOKEN); without it, the summary line alone'
+    )
     .option('--json')
     .action(async (opts: { token?: string; json?: boolean }) => {
-      const status = await (
-        await client(opts, 'dispatch team status')
+      // Without an app token, the agent token's reduced view: where this
+      // machine stands, so someone stuck without a token can still see it.
+      const { baseUrl, agentToken } = await attachToRunningDaemon(ctx);
+      const appToken = optionalAppToken(opts.token);
+      const status = await createApiClient(
+        baseUrl,
+        appToken ?? agentToken
       ).getTeamStatus();
       if (opts.json === true) ctx.log(JSON.stringify(status, null, 2));
       else for (const line of describeTeamStatus(status)) ctx.log(line);
+    });
+
+  team
+    .command('agents')
+    .description(
+      "Every agent address you can message: this machine's and teammates' synced ones"
+    )
+    .option('--all', 'include revoked agents')
+    .option('--json')
+    .action(async (opts: { all?: boolean; json?: boolean }) => {
+      // The roster is a request-tier read: the daemon file's token is enough.
+      const { baseUrl, agentToken } = await attachToRunningDaemon(ctx);
+      const { agents } = await createApiClient(
+        baseUrl,
+        agentToken
+      ).listAgentRoster();
+      const shown = agents
+        .filter((a) => opts.all === true || a.status !== 'revoked')
+        .sort((a, b) => a.address.localeCompare(b.address));
+      if (opts.json === true) {
+        ctx.log(JSON.stringify(shown, null, 2));
+        return;
+      }
+      if (shown.length === 0) {
+        ctx.log('No agents are registered.');
+        return;
+      }
+      ctx.log(
+        formatTable([
+          ['ADDRESS', 'STATUS', 'MACHINE', 'CLIENT'],
+          ...shown.map((a) => [
+            a.address,
+            a.status,
+            a.remote ?? 'this machine',
+            a.client,
+          ]),
+        ])
+      );
+      ctx.log('');
+      ctx.log(
+        "To reach work on a teammate's machine, message its task:<id> or run:<id>."
+      );
     });
 
   team
@@ -679,8 +848,8 @@ function registerFederationCommands(
     .option(tokenOption, tokenHelp)
     .allowExcessArguments(false)
     .action(async (opts: { token?: string }) => {
-      const code = await readSecret(ctx, 'Invite code: ');
       const api = await client(opts, 'dispatch team join');
+      const code = await readSecret(ctx, 'Invite code: ');
       logAnswer(ctx, await api.joinTeam(code));
       const { machine } = await api.getTeamKeys();
       ctx.log(
@@ -707,11 +876,9 @@ function registerFederationCommands(
     .option(tokenOption, tokenHelp)
     .allowExcessArguments(false)
     .action(async (opts: { token?: string }) => {
+      const api = await client(opts, 'dispatch team recover');
       const code = await readSecret(ctx, 'Recovery code: ');
-      logAnswer(
-        ctx,
-        await (await client(opts, 'dispatch team recover')).recoverTeam(code)
-      );
+      logAnswer(ctx, await api.recoverTeam(code));
       ctx.log('Recovered: this machine is an admin, ranked after every other.');
     });
 

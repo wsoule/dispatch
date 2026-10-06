@@ -99,6 +99,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     stopEpic: () => Promise.reject(new Error('not used')),
     getEpicProgress: () => Promise.reject(new Error('not used')),
     openDecisions: () => Promise.reject(new Error('not used')),
+    listAgentRoster: () => Promise.reject(new Error('not used')),
     getMessage: () => Promise.reject(new Error('not used')),
     getAnswer: () => Promise.reject(new Error('not used')),
     replyToMessage: () => Promise.reject(new Error('not used')),

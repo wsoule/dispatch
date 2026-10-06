@@ -32,6 +32,29 @@ describe('TaskStore.init', () => {
       'autoCommit: true'
     );
   });
+
+  it('leaves an existing config.yml byte-for-byte alone', () => {
+    const cfg = join(root, '.dispatch/config.yml');
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    const custom = 'statuses: [Backlog, Todo, In Progress, Done]\n';
+    writeFileSync(cfg, custom);
+    TaskStore.init(root);
+    expect(readFileSync(cfg, 'utf8')).toBe(custom);
+  });
+
+  // A board with no config.yml keeps the statuses its tasks use rather than
+  // being handed defaults that match none of them.
+  it("writes a starter config carrying an existing board's custom statuses", () => {
+    const store = TaskStore.init(root);
+    store.create({ title: 'One', status: 'Todo' });
+    store.create({ title: 'Two', status: 'In Progress' });
+    rmSync(join(root, '.dispatch/config.yml'));
+    TaskStore.init(root);
+    const config = readFileSync(join(root, '.dispatch/config.yml'), 'utf8');
+    expect(config).toContain('"Todo"');
+    expect(config).toContain('"In Progress"');
+    expect(config).toContain('"ready"');
+  });
 });
 
 describe('create/get', () => {

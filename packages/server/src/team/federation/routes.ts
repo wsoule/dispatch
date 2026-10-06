@@ -1,4 +1,12 @@
-import { upsertMember } from '@dispatch-foo/core';
+import { guardPublicUrl } from '@dispatch-foo/a2a';
+import {
+  DEFAULT_SYNC,
+  loadConfig,
+  syncPlace,
+  syncSettings,
+  upsertMember,
+} from '@dispatch-foo/core';
+import type { SyncConfig } from '@dispatch-foo/core';
 import { HANDLE, printable } from '@dispatch-foo/federation';
 import { fingerprint } from '@dispatch-foo/protocol/federation';
 import type { LogEntry } from '@dispatch-foo/protocol/federation';
@@ -12,6 +20,11 @@ import {
 } from '../../api/http.js';
 import type { AuthTier } from '../../tiers.js';
 import { tierAllows } from '../../tiers.js';
+import {
+  checkLinkRemote,
+  redactRemotes,
+  remoteHostUrl,
+} from '../links/remote.js';
 import { readRoster } from '../routes.js';
 import { capsOf } from './caps.js';
 import {
@@ -19,10 +32,11 @@ import {
   decodeTeamLink,
   defaultRelayUrl,
   normalRelay,
+  sameRemote,
   teamLinkUrl,
   teamStatus,
 } from './onboarding.js';
-import type { TeamStatus } from './onboarding.js';
+import type { TeamLink, TeamStatus } from './onboarding.js';
 import {
   founderChain,
   registerAtRelay,
@@ -30,7 +44,7 @@ import {
 } from './relay.js';
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
-import type { SharingAnswer } from './sharing.js';
+import type { SharingAnswer, SyncMove } from './sharing.js';
 import type { FedStore } from './store.js';
 import { OpTooLargeError } from './store.js';
 import {
@@ -256,8 +270,11 @@ export async function handleFederationRoute(
   if (method === 'GET' && segments.length === 2 && segments[1] === 'status')
     return jsonResponse(
       fedCtx === null || service === null
-        ? SHARING_OFF
-        : statusOf(fedCtx, service)
+        ? sharingOff(ctx)
+        : teamStatusFor(
+            withRestartNote(ctx, statusOf(fedCtx, service)),
+            ctx.caller?.tier ?? 'request'
+          )
     );
   if (fedCtx === null || service === null) {
     if (
@@ -283,6 +300,15 @@ export async function handleFederationRoute(
   const tooBig = oversized(body) ?? offGrammar(body);
   if (tooBig !== null)
     return jsonResponse({ error: tooBig, code: 'invalid' }, 400);
+  // A team action naming another place than the one sync runs on moves
+  // sync there first: the same restart that turns it on.
+  if (
+    segments.length === 2 &&
+    (segments[1] === 'start' || segments[1] === 'join')
+  ) {
+    const moved = await elsewhere(ctx, fedCtx, service, segments[1], body);
+    if (moved !== null) return moved;
+  }
   try {
     const answer = await act(ctx, fedCtx, service, segments, body);
     return answer instanceof Response
@@ -403,7 +429,7 @@ async function act(
     case 'invite':
       return after(invite(ctx, fedCtx, service, body));
     case 'join':
-      return after(join(fedCtx, service, need('code')));
+      return after(join(fedCtx, need('code')));
     case 'leave':
       return after(leave(fedCtx));
     case 'recover':
@@ -720,10 +746,73 @@ const SHARING_OFF: TeamStatus = {
     {
       message:
         'Team sync is off here. Starting or joining a team turns it on: Dispatch restarts for this project once no run is live.',
-      fix: 'dispatch team start',
+      fix: 'dispatch team join (with an invite link), or dispatch team start',
     },
   ],
 };
+
+// The status while sync isn't running: off, or on with no place chosen,
+// which pushes nothing until someone picks one.
+function sharingOff(ctx: ApiContext): TeamStatus {
+  let unplaced = false;
+  try {
+    const sync = syncSettings(loadConfig(ctx.rootDir));
+    unplaced = sync.enabled && syncPlace(sync) === null;
+  } catch {
+    // Boot reads the same file and turns sharing off when it can't.
+  }
+  if (!unplaced) return SHARING_OFF;
+  return {
+    ...SHARING_OFF,
+    problems: [
+      {
+        message:
+          'Sharing is on but no place is set, so nothing is pushed. Choose one in Settings → Board sync, then restart Dispatch for this project.',
+        fix: null,
+      },
+    ],
+  };
+}
+
+/** What board sync says while config.yml names other sync settings than
+ *  the ones it was wired with at boot: it keeps the old ones until a restart. */
+export function syncRestartNeeded(ctx: ApiContext): string | null {
+  const boot = ctx.bootSync;
+  if (ctx.boardSync === null || boot == null) return null;
+  let now: SyncConfig;
+  try {
+    now = syncSettings(loadConfig(ctx.rootDir));
+  } catch {
+    return null;
+  }
+  const same =
+    now.enabled &&
+    now.remote === boot.remote &&
+    now.repo === boot.repo &&
+    now.branch === boot.branch &&
+    now.intervalSec === boot.intervalSec;
+  return same
+    ? null
+    : 'Board sync settings in .dispatch/config.yml changed since Dispatch started; it keeps syncing with the old ones until Dispatch restarts for this project.';
+}
+
+// The status with a problem saying config.yml moved sync since boot.
+function withRestartNote(ctx: ApiContext, status: TeamStatus): TeamStatus {
+  const note = syncRestartNeeded(ctx);
+  if (note === null) return status;
+  return {
+    ...status,
+    problems: [...status.problems, { message: note, fix: null }],
+  };
+}
+
+/** The team status as `tier` may see it: below decide, only the summary,
+ *  without teammates, checks or problems (as board-sync status drops the
+ *  team's problems, F-D29), marked `reduced` so a client can say so. */
+export function teamStatusFor(status: TeamStatus, tier: AuthTier): TeamStatus {
+  if (tierAllows(tier, 'decide')) return status;
+  return { ...status, teammates: [], check: null, problems: [], reduced: true };
+}
 
 // GET /api/team/status: the team in one line, and its problems in plain
 // words with the command that fixes each.
@@ -899,6 +988,7 @@ function invite(
               ? { kind: 'relay', url: view.transport.url }
               : { kind: 'git' },
           remote: withoutCredentials(status.remote),
+          branch: status.branch,
         }
   );
   return {
@@ -932,20 +1022,14 @@ function inviteeHandle(ctx: ApiContext, body: Body): string {
 }
 
 // POST /api/team/join: what the joiner sees right away, the team, who
-// invited it and the optional check, and whether this project syncs where
-// the team does.
+// invited it and the optional check. The route has already moved sync to
+// where the team's board is kept (`elsewhere`), so the request lands there.
 function join(
   fedCtx: FederationContext,
-  service: NonNullable<ApiContext['boardSync']>,
   code: string
 ): Record<string, unknown> {
   const { teamId, link } = fedCtx.roster.join(code);
   if (link === null) return { ok: true, team: { id: teamId, name: null } };
-  const here = withoutCredentials(service.status().remote);
-  const warning =
-    link.remote !== null && sameRemote(link.remote, here) === false
-      ? `This team syncs through ${link.remote}, but this project syncs through ${here}. Only if you know this repo, point Settings → Board sync at ${link.remote} (sync.repo), then restart Dispatch.`
-      : undefined;
   return {
     ok: true,
     team: { id: teamId, name: link.name },
@@ -956,25 +1040,158 @@ function join(
       link.fp,
       fingerprint(fedCtx.fed.keys.signPub, fedCtx.fed.keys.sealPub)
     ),
-    ...(warning === undefined ? {} : { warning }),
   };
 }
 
-// Whether two git remotes name one repository, read loosely: scheme, login,
-// a trailing .git and scp-style colons do not matter. Null when either is
-// not a remote the comparison can read.
-function sameRemote(a: string, b: string): boolean | null {
-  const norm = (r: string): string =>
-    r
-      .trim()
-      .toLowerCase()
-      .replace(/^[a-z+]+:\/\//, '')
-      .replace(/^[^@/]+@/, '')
-      .replace(/:(?!\d)/, '/')
-      .replace(/\.git$/, '')
-      .replace(/\/+$/, '');
-  if (a.trim() === '' || b.trim() === '') return null;
-  return norm(a) === norm(b);
+// Where an invite says the team's board is kept, or null when it does not
+// say (an older code). A remote that could run a program is refused.
+function linkMove(link: TeamLink): SyncMove | null {
+  if (link.remote === null) return null;
+  if (!checkLinkRemote(link.remote))
+    throw new RosterError(
+      'invalid',
+      `This invite names a sync repo Dispatch will not use (${link.remote}). Ask ${link.by} for a new link.`
+    );
+  return {
+    place: { repo: link.remote },
+    branch: link.branch ?? DEFAULT_SYNC.branch,
+  };
+}
+
+// An invite's repo is chosen by whoever made the link, so one on this machine
+// or its private network (or unresolvable) needs the joiner's explicit
+// `confirmRepo: true`, sent with that same code, before sync uses it. Null
+// when it may go ahead.
+async function inviteRepoConsent(
+  move: SyncMove | null,
+  body: Body
+): Promise<Response | null> {
+  if (move === null || !('repo' in move.place)) return null;
+  const repo = move.place.repo;
+  if (body.confirmRepo === true) return null;
+  const host = remoteHostUrl(repo);
+  let why: string | null = null;
+  if (host === null) why = 'a path on this machine';
+  else if (!/^https:\/\//i.test(repo))
+    // ssh and git:// resolve the host themselves, so it cannot be pinned.
+    why = 'an ssh or git:// host Dispatch cannot pin to the address it checks';
+  else {
+    try {
+      await guardPublicUrl(`https://${new URL(host).hostname}/`, {
+        field: 'invite repo',
+      });
+    } catch {
+      why = 'a private, local or unresolvable host';
+    }
+  }
+  if (why === null) return null;
+  return jsonResponse(
+    {
+      error: `This invite keeps the team's board at ${redactRemotes(repo)}, ${why}. Join only if you expected that: confirm this repo to go ahead.`,
+      code: 'confirm_repo',
+      repo,
+    },
+    409
+  );
+}
+
+// Where `team start` was told to keep the board, or null.
+function startMove(body: Body): SyncMove | null {
+  const { repo, remote } = body;
+  if (repo !== undefined && remote !== undefined)
+    throw new RosterError('invalid', 'Pick one: remote or repo.');
+  if (typeof repo === 'string' && repo !== '') {
+    if (!checkLinkRemote(repo))
+      throw new RosterError('invalid', `repo: ${repo} is not a git remote`);
+    return { place: { repo } };
+  }
+  if (typeof remote === 'string' && remote !== '') {
+    if (!/^(?![-./])[A-Za-z0-9._/-]+$/.test(remote))
+      throw new RosterError(
+        'invalid',
+        `remote: ${remote} is not the name of one of this project's remotes`
+      );
+    return { place: { remote } };
+  }
+  if (repo !== undefined || remote !== undefined)
+    throw new RosterError(
+      'invalid',
+      'remote and repo must be non-empty strings'
+    );
+  return null;
+}
+
+// Whether this machine has read other machines' changes where sync runs
+// now: then moving it would leave them, and is the person's call.
+function sharedWithOthers(fed: FedStore): boolean {
+  const row = fed.db
+    .query<{ n: number }, [string, string]>(
+      'SELECT (SELECT COUNT(*) FROM cursors WHERE replica != ? AND seq > 0) + (SELECT COUNT(*) FROM fed_cursors WHERE replica != ? AND seq > 0) AS n'
+    )
+    .get(fed.replica, fed.replica);
+  return (row?.n ?? 0) > 0;
+}
+
+// `team start` or `team join` naming another place than the one sync runs
+// on: moves sync there with a restart (202, like shareFirst), or refuses
+// when sync here already carries other machines' changes. Null when the
+// place is already right, and the action goes ahead here.
+async function elsewhere(
+  ctx: ApiContext,
+  fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>,
+  action: 'start' | 'join',
+  body: Body
+): Promise<Response | null> {
+  let want: SyncMove | null;
+  try {
+    if (action === 'join') {
+      const code = typeof body.code === 'string' ? body.code.trim() : '';
+      if (code === '' || code.startsWith('di1.')) return null;
+      const link = decodeTeamLink(code);
+      checkLink(ctx, link, fedCtx.now());
+      want = withPin(linkMove(link), body);
+      const consent = await inviteRepoConsent(want, body);
+      if (consent !== null) return consent;
+    } else want = startMove(body);
+  } catch (err) {
+    if (err instanceof RosterError)
+      return jsonResponse(
+        { error: err.message, code: err.code },
+        STATUS[err.code]
+      );
+    throw err;
+  }
+  if (want === null) return null;
+  const status = service.status();
+  const here = withoutCredentials(status.remote);
+  const branch = want.branch ?? status.branch;
+  if ('repo' in want.place) {
+    if (sameRemote(want.place.repo, here) !== false && branch === status.branch)
+      return null;
+  } else {
+    const named = syncPlace(syncSettings(loadConfig(ctx.rootDir)));
+    if (
+      named !== null &&
+      'remote' in named &&
+      named.remote === want.place.remote
+    )
+      return null;
+  }
+  if (sharedWithOthers(fedCtx.fed)) {
+    const where =
+      'repo' in want.place
+        ? `sync.repo: ${want.place.repo}, sync.branch: ${branch}`
+        : `sync.remote: ${want.place.remote}`;
+    return jsonResponse(
+      {
+        error: `This project already shares its board through ${here} (${status.branch}) with other machines, and ${action === 'join' ? 'this team keeps its board' : 'you asked for'} somewhere else. Moving would leave them behind, so nothing changed. Only if you mean to move, set ${where} in Settings → Board sync, restart Dispatch for this project, then run this again.`,
+        code: 'conflict',
+      },
+      409
+    );
+  }
+  return await restartWith(ctx, () => want);
 }
 
 // POST /api/team/leave: lets go of an invite this machine is waiting on. A
@@ -1001,9 +1218,9 @@ function leave(fedCtx: FederationContext): Record<string, unknown> {
 
 // `team start` or `team join` while board sync is off: check what can be
 // checked without sync (a link's shape, expiry and handle; the relay's
-// disclosure), then turn sync on and restart. Answers 202 `restarting`; the
-// client waits for sync to be on and sends the same request again, so it is
-// still one action.
+// disclosure), then turn sync on at the place the link or the founder names
+// and restart. Answers 202 `restarting`; the client waits for sync to be on
+// and sends the same request again, so it is still one action.
 async function shareFirst(
   req: Request,
   ctx: ApiContext,
@@ -1025,25 +1242,71 @@ async function shareFirst(
       },
       409
     );
+  if (action === 'join') {
+    const consent = await inviteConsentFor(ctx, body);
+    if (consent !== null) return consent;
+  }
   // A link's shape, expiry and handle are checked before sync is touched.
-  const precheck = (now: Date): void => {
-    if (action !== 'join') return;
+  return await restartWith(ctx, (now) => {
+    if (action === 'start') return startMove(body);
     const code = typeof body.code === 'string' ? body.code.trim() : '';
     if (code === '') throw new RosterError('invalid', 'code is required');
-    if (code.startsWith('di1.')) return;
+    if (code.startsWith('di1.')) return null;
     const link = decodeTeamLink(code);
-    const me = ctx.actorContext.member.handle;
-    if (Date.parse(link.expires) <= now.getTime())
-      throw new RosterError(
-        'invalid',
-        `This invite expired on ${link.expires.slice(0, 10)}. Ask ${link.by} for a new link.`
-      );
-    if (link.handle !== me)
-      throw new RosterError(
-        'invalid',
-        `This invite is for ${link.handle}, but this machine's Dispatch handle is ${me}. Ask ${link.by} to invite ${me} instead.`
-      );
-  };
+    checkLink(ctx, link, now);
+    return withPin(linkMove(link), body);
+  });
+}
+
+// An invite's repo the joiner did not confirm stays pinned public on every
+// pass; one they confirmed is theirs to keep.
+function withPin(move: SyncMove | null, body: Body): SyncMove | null {
+  if (move === null || !('repo' in move.place) || body.confirmRepo === true)
+    return move;
+  return { ...move, pinPublic: true };
+}
+
+// The consent check for a join while sync is off, ahead of the restart (its
+// host lookup cannot run inside restartWith's synchronous precheck). A link
+// the precheck would refuse anyway is left to refuse there.
+async function inviteConsentFor(
+  ctx: ApiContext,
+  body: Body
+): Promise<Response | null> {
+  const code = typeof body.code === 'string' ? body.code.trim() : '';
+  if (code === '' || code.startsWith('di1.')) return null;
+  let move: SyncMove | null;
+  try {
+    const link = decodeTeamLink(code);
+    checkLink(ctx, link, new Date());
+    move = linkMove(link);
+  } catch (err) {
+    if (err instanceof RosterError) return null;
+    throw err;
+  }
+  return await inviteRepoConsent(move, body);
+}
+
+// A link this machine may join with: not expired, and for its handle.
+function checkLink(ctx: ApiContext, link: TeamLink, now: Date): void {
+  const me = ctx.actorContext.member.handle;
+  if (Date.parse(link.expires) <= now.getTime())
+    throw new RosterError(
+      'invalid',
+      `This invite expired on ${link.expires.slice(0, 10)}. Ask ${link.by} for a new link.`
+    );
+  if (link.handle !== me)
+    throw new RosterError(
+      'invalid',
+      `This invite is for ${link.handle}, but this machine's Dispatch handle is ${me}. Ask ${link.by} to invite ${me} instead.`
+    );
+}
+
+// Turns sync on (or moves it) and restarts: 202 `restarting`, or why not.
+async function restartWith(
+  ctx: ApiContext,
+  precheck: (now: Date) => SyncMove | null
+): Promise<Response> {
   if (ctx.turnOnSharing === undefined)
     return errorResponse(409, 'board sync is not on');
   let answer: SharingAnswer;

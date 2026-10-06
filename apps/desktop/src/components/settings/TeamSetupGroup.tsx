@@ -1,10 +1,13 @@
 import type { TeamInvite, TeamStatus } from '@dispatch/client';
+import { ApiError } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { StartTeamRow } from './StartTeamRow';
+import { TakeOverDaemon } from './TakeOverDaemon';
 import { CopyButton } from './TeamSection';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
@@ -12,6 +15,11 @@ import { Input } from '@/ui/input';
 interface TeamSetupGroupProps {
   data: DispatchProjectData;
 }
+
+// What the invited person does with the link, on their own machine. Shown
+// with the link so whoever sends it can pass the steps along.
+const JOIN_STEPS =
+  'On their machine: open Dispatch, go to Settings → Members, and paste it under Join a team. Or run dispatch team join in a terminal and paste it there. When they join, their name shows above with an optional check you can read together.';
 
 // Shown beside "Start a team" so pressing it is the confirmation the relay
 // switch needs (F-D31); the daemon's own sentence once the team exists.
@@ -27,7 +35,7 @@ const RELAY_DISCLOSURE =
  */
 export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
   const { client } = data;
-  const { canOperate } = useSettingsAccess();
+  const { canOperate, operateReason } = useSettingsAccess();
   const queryClient = useQueryClient();
   const key = ['team-status', client?.baseUrl];
   const status = useQuery({
@@ -48,6 +56,12 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
   const [invite, setInvite] = useState<TeamInvite | null>(null);
   const [link, setLink] = useState('');
   const [check, setCheck] = useState<string | null>(null);
+  // An invite whose board repo is local or private waits here, with the
+  // daemon's warning, until the person joins anyway or cancels.
+  const [repoWarning, setRepoWarning] = useState<{
+    code: string;
+    message: string;
+  } | null>(null);
 
   // Runs one team action, then reads the status (and the details) again.
   async function act(change: () => Promise<void>) {
@@ -67,11 +81,39 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
     }
   }
 
+  // Joins with a pasted link; `confirm_repo` is held for the person to decide.
+  function join(code: string, confirmRepo = false) {
+    if (client === null) return;
+    const api = client;
+    void act(async () => {
+      try {
+        const joined = confirmRepo
+          ? await api.joinTeam(code, { confirmRepo: true })
+          : await api.joinTeam(code);
+        setLink('');
+        setRepoWarning(null);
+        setCheck(joined.check ?? null);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'confirm_repo') {
+          setRepoWarning({ code, message: err.message });
+          return;
+        }
+        throw err;
+      }
+    });
+  }
+
   if (client === null || status.data === undefined) return null;
   const s: TeamStatus = status.data;
   const api = client;
   const isAdmin = s.role === 'admin';
   const canInvite = canOperate && s.state === 'member' && s.role !== 'observer';
+  // The owner's own window, attached to a daemon it did not start: offer the
+  // restart that unlocks these rows rather than hiding them without a word.
+  const locked =
+    !canOperate &&
+    data.takeover !== null &&
+    (s.state !== 'member' || s.role !== 'observer');
 
   return (
     <SettingsGroup
@@ -108,26 +150,31 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         />
       ))}
 
-      {canOperate && (s.state === 'none' || s.state === 'off') && (
+      {locked && data.takeover !== null && (
         <SettingsRow
-          title="Start a team"
-          subtitle={RELAY_DISCLOSURE}
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              data-testid="team-start"
-              disabled={busy}
-              onClick={() =>
-                void act(async () => {
-                  const started = await api.startTeam({ confirmed: true });
-                  setRecovery(started.recoveryCode);
-                  setNotice(started.notice);
-                })
-              }
-            >
-              Start a team
-            </Button>
+          title={
+            s.state === 'member' ? 'Invite teammate' : 'Start or join a team'
+          }
+          subtitle={operateReason}
+          stacked
+        >
+          <TakeOverDaemon
+            takeover={data.takeover}
+            onRestart={data.handleRestartDaemon}
+          />
+        </SettingsRow>
+      )}
+      {canOperate && (s.state === 'none' || s.state === 'off') && (
+        <StartTeamRow
+          sync={data.config?.sync}
+          disclosure={RELAY_DISCLOSURE}
+          busy={busy}
+          onStart={(input) =>
+            void act(async () => {
+              const started = await api.startTeam(input);
+              setRecovery(started.recoveryCode);
+              setNotice(started.notice);
+            })
           }
         />
       )}
@@ -160,7 +207,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       {canInvite && (
         <SettingsRow
           title="Invite teammate"
-          subtitle="They paste the link in Settings → Team, or run `dispatch team join`. It works once, for 7 days."
+          subtitle="Makes a link to send them. It works once, for 7 days."
           htmlFor="team-invite-link-for"
           control={
             <form
@@ -199,7 +246,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       {invite !== null && (
         <SettingsRow
           title={`Send this privately: anyone holding it can join as ${invite.handle} until ${invite.expires.slice(0, 10)}`}
-          subtitle="It works once. When they join, their name shows above with an optional check you can read together."
+          subtitle={JOIN_STEPS}
           stacked
         >
           <div className="flex items-center gap-2">
@@ -217,7 +264,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         </SettingsRow>
       )}
 
-      {canOperate && s.state !== 'member' && (
+      {canOperate && (s.state === 'none' || s.state === 'off') && (
         <SettingsRow
           title="Join a team"
           subtitle="Paste the link a teammate sent you."
@@ -229,11 +276,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
                 e.preventDefault();
                 const pasted = link.trim();
                 if (pasted === '') return;
-                void act(async () => {
-                  const joined = await api.joinTeam(pasted);
-                  setLink('');
-                  setCheck(joined.check ?? null);
-                });
+                join(pasted);
               }}
             >
               <Input
@@ -259,6 +302,37 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
           }
         />
       )}
+      {repoWarning !== null && (
+        <SettingsRow
+          title="Check where this team keeps its board"
+          subtitle={
+            <span data-testid="team-join-repo-warning">
+              {repoWarning.message}
+            </span>
+          }
+          control={
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setRepoWarning(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid="team-join-confirm-repo"
+                disabled={busy}
+                onClick={() => join(repoWarning.code, true)}
+              >
+                Join anyway
+              </Button>
+            </div>
+          }
+        />
+      )}
       {check !== null && s.state !== 'member' && (
         <SettingsHint>
           <span data-testid="team-join-check">
@@ -268,7 +342,8 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       )}
       {isAdmin && s.problems.length === 0 && s.seats !== null && (
         <SettingsHint>
-          You are an admin: you can add and remove people under Advanced below.
+          You are an admin: you can admit and remove machines under Machines
+          below.
         </SettingsHint>
       )}
       {error !== null && (

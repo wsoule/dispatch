@@ -112,6 +112,7 @@ export interface LinkFacts {
   fp: string;
   via: TeamVia;
   remote: string | null;
+  branch?: string;
 }
 
 // The daemon's side of the signed roster: it publishes this machine's roster
@@ -373,12 +374,23 @@ export class RosterService {
         );
       this.unpinFounder();
     }
+    const inviteKey = ed25519FromSeed(seed);
+    const asked = this.pendingInvite();
+    // The same invite again while still waiting to be let in, after sync
+    // moved to where the team is: its key op already carries the proof and
+    // goes out wherever sync runs now. Once admitted it is a conflict.
+    if (
+      this.fed.head() !== null &&
+      !this.isAdmitted(this.me) &&
+      asked?.teamId === teamId &&
+      asked.id === sha256Hex(inviteKey.signPub).slice(0, 16)
+    )
+      return { teamId, link };
     if (this.fed.head() !== null)
       throw new RosterError(
         'conflict',
         'This machine already asked to join a team; an admin lets it in from `dispatch team status`, or run `dispatch team leave` first.'
       );
-    const inviteKey = ed25519FromSeed(seed);
     const sig = signText(
       inviteKey.signPriv,
       `${TAG.invite}\n${teamId}\n${this.me}\n${this.fed.keys.signPub}`
@@ -1502,6 +1514,7 @@ function linkOf(
     expires: issued.expires,
     via: facts.via,
     remote: facts.remote,
+    ...(facts.branch === undefined ? {} : { branch: facts.branch }),
   });
 }
 

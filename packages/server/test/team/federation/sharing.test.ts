@@ -23,7 +23,8 @@ import type { SharingDeps } from '../../../src/team/federation/sharing.js';
 let root: string;
 let state: SharingState;
 const config = () => join(root, '.dispatch', 'config.yml');
-const ORIGINAL = '# mine\nsync:\n  enabled: false\n  intervalSec: 3600\n';
+const ORIGINAL =
+  '# mine\nsync:\n  enabled: false\n  repo: /remote.git\n  intervalSec: 3600\n';
 
 beforeEach(() => {
   state = new SharingState();
@@ -104,7 +105,7 @@ describe('turnOnSharing', () => {
   it('rolls a config that did not exist back to none', async () => {
     rmSync(config());
     const { d, done } = deps({ live: [[], ['1 terminal']] });
-    await turnOnSharing(d);
+    await turnOnSharing(d, () => ({ place: { repo: '/remote.git' } }));
     await done;
     expect(existsSync(config())).toBe(false);
   });
@@ -133,6 +134,40 @@ describe('turnOnSharing', () => {
     expect(answer.ok).toBe(true);
     await Promise.all([done, second.done]);
     expect(second.log.filter((l) => l === 'restart')).toHaveLength(1);
+  });
+
+  it('refuses with nowhere named, rather than push to origin', async () => {
+    writeFileSync(config(), 'sync:\n  enabled: false\n');
+    const { d, log } = deps();
+    const answer = await turnOnSharing(d);
+    expect(answer.ok ? '' : answer.code).toBe('no_place');
+    expect(log).toEqual([]);
+    expect(readFileSync(config(), 'utf8')).toBe('sync:\n  enabled: false\n');
+  });
+
+  it('writes the place a request names, unless the config already names it', async () => {
+    const { d, done } = deps({
+      resolveRemote: (t) =>
+        Promise.resolve('repo' in t ? t.repo : '/origin.git'),
+    });
+    const answer = await turnOnSharing(d, () => ({
+      place: { repo: '/team.git' },
+      branch: 'board',
+    }));
+    expect(answer.ok ? answer.message : '').toContain('/team.git');
+    await done;
+    const written = readFileSync(config(), 'utf8');
+    expect(written).toContain('repo: /team.git');
+    expect(written).toContain('branch: board');
+
+    writeFileSync(config(), ORIGINAL);
+    const same = deps();
+    await turnOnSharing(same.d, () => ({
+      place: { repo: '/remote.git' },
+      branch: 'dispatch-sync',
+    }));
+    await same.done;
+    expect(readFileSync(config(), 'utf8')).not.toContain('branch:');
   });
 
   it('clears the mark when the server stops', () => {

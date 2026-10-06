@@ -32,7 +32,7 @@ import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import type { DocsApi, ImportReportInfo } from '../docsApi.js';
 import { createDocsApi } from '../docsApi.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenConnection } from './appToken.js';
 
 // `dispatch docs`: humans only. It authenticates with --token, DISPATCH_APP_TOKEN
 // or a teammate token, never with a token an agent could read (appToken.ts).
@@ -47,8 +47,11 @@ async function docsClient(
   ctx: CliContext,
   token: string | undefined
 ): Promise<DocsApi> {
-  const appToken = resolveAppToken(token, 'dispatch docs');
-  const { baseUrl } = await attachToRunningDaemon(ctx);
+  const { baseUrl, appToken } = await appTokenConnection(
+    ctx,
+    token,
+    'dispatch docs'
+  );
   return createDocsApi(baseUrl, appToken);
 }
 

@@ -23,12 +23,17 @@ export interface CliContext {
   // Asks a yes/no question (team start's relay disclosure); tests inject
   // it, real usage asks on the terminal and answers no without one.
   confirm?: (question: string) => Promise<boolean>;
+  // Asks for a line of text (team start's place); tests inject it, real
+  // usage asks on the terminal and answers null without one.
+  ask?: (question: string) => Promise<string | null>;
 }
 
 export class CliError extends Error {
   constructor(
     message: string,
-    readonly exitCode: number = 1
+    readonly exitCode: number = 1,
+    /** The daemon's stable error `code`, when the failure came from one. */
+    readonly code?: string
   ) {
     super(message);
     this.name = 'CliError';

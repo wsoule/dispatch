@@ -21,16 +21,30 @@ export function syncedWhen(status: BoardSyncStatus): string {
   })}`;
 }
 
+/** Where the board travels: the team relay once the team switched to one,
+ *  otherwise the git branch and remote. */
+export function syncedVia(
+  status: Extract<BoardSyncStatus, { enabled: true }>
+): string {
+  if (status.transport === 'relay') {
+    const url = status.transportHealth?.url;
+    return url === undefined ? 'via the team relay' : `via ${url}`;
+  }
+  return `${status.branch} on ${status.remote}`;
+}
+
 /** What to do about sharing that isn't running, by the daemon's reason for
  *  it. An older daemon gives none; off is the likely one. */
 export function notSharingHint(reason: BoardSyncOffReason | undefined): string {
   switch (reason) {
+    case 'no-place':
+      return 'Sharing is on but no place is set, so nothing is pushed. Choose where the board is kept below, then restart Dispatch for this project.';
     case 'not-started':
       return "Sharing is on but didn't start: its remote or repo couldn't be reached when Dispatch started, or it was turned on since. Check where the board is kept below, then restart Dispatch for this project.";
     case 'files':
       return "This board is kept as files, which sharing can't carry.";
     default:
-      return 'Turn on sharing below, then restart Dispatch for this project.';
+      return 'Start or join a team in Members and sharing turns on for you. To share over git without a team, turn it on below, then restart Dispatch for this project.';
   }
 }
 
@@ -93,11 +107,7 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
       <SettingsRow
         title={syncedWhen(status)}
         keywords="sync now last synced"
-        subtitle={
-          <span className="font-mono">
-            {status.branch} on {status.remote}
-          </span>
-        }
+        subtitle={<span className="font-mono">{syncedVia(status)}</span>}
         control={
           <Button
             variant="outline"
@@ -113,6 +123,11 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
         {syncError !== null && (
           <SettingsHint className="text-state-failed">
             Couldn&rsquo;t sync: {syncError}
+          </SettingsHint>
+        )}
+        {status.restartRequired !== undefined && (
+          <SettingsHint className="text-(--state-waiting-fg)">
+            {status.restartRequired}
           </SettingsHint>
         )}
         {status.paused !== null && (

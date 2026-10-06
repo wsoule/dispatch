@@ -125,6 +125,7 @@ describe('dispatch mcp (CLI entrypoint) stdio e2e', () => {
         .map((t) => t.name)
         .sort();
       expect(names).toEqual([
+        'agent_list',
         'channel_join',
         'channel_leave',
         'channel_list',

@@ -8,7 +8,7 @@ import { Check, Copy, UserMinus, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
-import { useSettingsAccess } from './access';
+import { NEEDS_DECIDE, useSettingsAccess } from './access';
 import { MachinesGroup } from './MachinesGroup';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { TeamSetupGroup } from './TeamSetupGroup';
@@ -108,12 +108,11 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
 }
 
 /**
- * Settings → Team: who can reach this daemon, at what tier, and a way to add
- * or remove someone without leaving the app — the page `dispatch team`
- * commands stood in for.
+ * Settings → Members: the team (start, invite, join), then two folded extras
+ * that are easy to mistake for it — the team's machine keys, and browser
+ * sign-in tokens for using this machine's Dispatch from elsewhere.
  *
- * Needs the decide tier to list or change anything. Below it the page says so
- * and who to ask, instead of rendering controls the daemon would refuse.
+ * The browser tokens need the decide tier; below it that part says who to ask.
  */
 export function TeamSection({ data }: TeamSectionProps) {
   const { client, myTier, presence } = data;
@@ -151,10 +150,18 @@ export function TeamSection({ data }: TeamSectionProps) {
     return (
       <>
         <TeamSetupGroup data={data} />
-        <SettingsGroup title="Members" keywords="invite team" requires="none">
+        <SettingsGroup
+          title="Browser access"
+          keywords="invite team token"
+          requires="none"
+        >
           <SettingsRow
-            title="Inviting people"
-            subtitle="Needs Can approve access. Ask the person running Dispatch for this project to invite them, or to raise your access."
+            title="Giving people browser access"
+            subtitle={
+              decideReason === NEEDS_DECIDE
+                ? 'Needs Can approve access. Ask the person running Dispatch for this project to give them access, or to raise yours.'
+                : 'Restart Dispatch from this app (above) to manage browser access.'
+            }
             locked={decideReason}
           />
         </SettingsGroup>
@@ -203,21 +210,32 @@ export function TeamSection({ data }: TeamSectionProps) {
   return (
     <>
       <TeamSetupGroup data={data} />
-      {/* The shared-host tokens and the machine keys: everything a team
-          needs beyond start, invite and join, folded away. */}
       <details
-        data-testid="team-advanced"
+        data-testid="team-machines"
         className="group flex flex-col gap-4"
       >
         <summary className="text-muted-foreground cursor-pointer px-0.5 text-[13px] select-none">
-          Advanced: shared-host sign-in tokens and machine keys
+          Machines: keys, fingerprints and admitting by hand
+        </summary>
+        <div className="mt-3 flex flex-col gap-6">
+          <MachinesGroup data={data} />
+        </div>
+      </details>
+      {/* Not a team invite: a token for using this machine's Dispatch from a
+          browser, with nothing installed on the other end. */}
+      <details
+        data-testid="team-browser-access"
+        className="group flex flex-col gap-4"
+      >
+        <summary className="text-muted-foreground cursor-pointer px-0.5 text-[13px] select-none">
+          Browser access: let someone use this machine&rsquo;s Dispatch
         </summary>
         <div className="mt-3 flex flex-col gap-6">
           <SettingsGroup
-            title="Invite someone"
+            title="Give someone browser access"
             requires="none"
-            hint="They get their own sign-in token, so everything they do is credited to them."
-            keywords="add member token access"
+            hint="For someone without Dispatch of their own. They sign in to this machine from a browser with their own token, so everything they do is credited to them. To add a teammate who runs Dispatch, use Invite teammate above."
+            keywords="add member token access invite"
           >
             <SettingsRow
               title="Email or handle"
@@ -270,7 +288,7 @@ export function TeamSection({ data }: TeamSectionProps) {
                 </Select>
                 <Button type="submit" disabled={email.trim() === '' || pending}>
                   <UserPlus />
-                  Invite
+                  Create token
                 </Button>
               </form>
               <SettingsHint className="mt-1.5">
@@ -289,7 +307,7 @@ export function TeamSection({ data }: TeamSectionProps) {
             {issued !== null && (
               <SettingsRow
                 title={`Send ${issued.handle} these privately`}
-                subtitle="The token is only shown once. If it's lost, invite them again to replace it."
+                subtitle="They open the address in a browser and paste the token on the sign-in screen. The token is only shown once. If it's lost, create a new one to replace it."
                 stacked
               >
                 <div className="flex flex-col gap-2">
@@ -308,8 +326,8 @@ export function TeamSection({ data }: TeamSectionProps) {
                       now. To let them connect, restart it with{' '}
                       <code className="font-mono">
                         dispatch serve --host 0.0.0.0
-                      </code>{' '}
-                      for teammates to reach it.
+                      </code>
+                      .
                     </SettingsHint>
                   )}
                   <div className="flex items-center gap-2">
@@ -326,11 +344,15 @@ export function TeamSection({ data }: TeamSectionProps) {
             )}
           </SettingsGroup>
 
-          <SettingsGroup title="People" keywords="members team" requires="none">
+          <SettingsGroup
+            title="People with browser access"
+            keywords="members team"
+            requires="none"
+          >
             {people.length === 0 && (
               <SettingsRow
-                title="Nobody else yet"
-                subtitle="People you invite show up here."
+                title="Nobody yet"
+                subtitle="People you create a token for show up here."
               />
             )}
             {people.map((holder) => {
@@ -378,7 +400,6 @@ export function TeamSection({ data }: TeamSectionProps) {
               );
             })}
           </SettingsGroup>
-          <MachinesGroup data={data} />
         </div>
       </details>
     </>

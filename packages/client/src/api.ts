@@ -2325,8 +2325,9 @@ export interface IssuedTeamToken {
 
 /** Why board sync isn't running — mirrors BoardSyncOffReason in
  *  packages/server/src/api.ts: the board is kept as files, which it can't
- *  share; it is off; or it is on in config.yml but didn't start. */
-export type BoardSyncOffReason = 'files' | 'off' | 'not-started';
+ *  share; it is off; it is on in config.yml but didn't start; or it is on
+ *  with no place chosen. */
+export type BoardSyncOffReason = 'files' | 'off' | 'not-started' | 'no-place';
 
 /** Board sync's state — mirrors SyncStatus in
  *  packages/server/src/team/boardSync/service.ts. `reason` is absent on
@@ -2363,6 +2364,8 @@ interface FederationSyncFields {
   federationProblems?: TeamProblem[];
   /** On POST /now: the pass outran the daemon's wait and carries on. */
   running?: boolean;
+  /** config.yml names other sync settings than the running ones. */
+  restartRequired?: string;
 }
 
 /** One federation problem: its subject names its source (halt:, clock:,
@@ -2467,7 +2470,11 @@ export interface TeamStatus {
   }[];
   /** While joining: the check to compare with whoever invited this machine. */
   check: string | null;
-  problems: { message: string; fix: string | null }[];
+  problems: {
+    message: string;
+    fix: string | null;
+  }[] /** True when the token's tier withheld teammates, checks and problems. */;
+  reduced?: true;
 }
 
 /** What `team start` sends: the relay is the default, `git` keeps the team
@@ -2475,6 +2482,10 @@ export interface TeamStatus {
 export interface StartTeamInput {
   name?: string;
   git?: boolean;
+  /** Where the team's board is kept: one of this project's remotes, or a
+   *  repository of its own. */
+  remote?: string;
+  repo?: string;
   relayUrl?: string;
   confirmed?: boolean;
   /** Sent only in the relay registration; never kept. */
@@ -3420,7 +3431,8 @@ export interface ApiClient {
   installLicense(key: string): Promise<LicenseStatus>;
   /** Decide-tier: this machine, the signed team, its roster and problems. */
   getTeamKeys(): Promise<TeamKeys>;
-  /** Decide-tier: the team in one line, with plain-worded problems. */
+  /** The team in one line; plain-worded problems and teammates only at the
+   *  decide tier (below it the answer is `reduced`). */
   getTeamStatus(): Promise<TeamStatus>;
   /** Operator-tier: founds the team and moves it to the relay (by default)
    *  in one step. Rejects with `confirm_required` until the relay's
@@ -3438,7 +3450,9 @@ export interface ApiClient {
   /** An invite link for a handle, or an email (team.yml's handle for it). */
   inviteToTeam(handleOrEmail: string): Promise<TeamInvite>;
   /** Joins with a team link (or an older invite code). */
-  joinTeam(code: string): Promise<JoinedTeam>;
+  /** `confirmRepo` accepts an invite whose board repo is local or private,
+   *  after the daemon answered `confirm_repo` for it. */
+  joinTeam(code: string, opts?: { confirmRepo?: boolean }): Promise<JoinedTeam>;
   recoverTeam(code: string): Promise<RosterAnswer>;
   newRecoveryCode(): Promise<{ recoveryCode: string } & RosterAnswer>;
   shareTeamLicense(): Promise<RosterAnswer>;
@@ -3469,6 +3483,10 @@ export interface ApiClient {
   abandonInvite(): Promise<RosterAnswer>;
   /** Decide-tier: acknowledges a race, cut, merge or route note. */
   ackProblem(subject: string): Promise<void>;
+  /** What restarting the daemon would cut short (`busy`), how many runs it
+   *  would only pause because they wait on a human (`parked`), and how many
+   *  items wait on a human. Request tier, so an attached window can read it. */
+  fetchLiveWork(): Promise<{ busy: string[]; parked: number; waiting: number }>;
   /** Who this client's credential speaks for. */
   fetchWhoami(): Promise<{
     handle: string;
@@ -4476,9 +4494,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         '/api/team/invite',
         who.includes('@') ? { email: who } : { handle: who }
       ),
-    joinTeam: (code) =>
+    joinTeam: (code, opts) =>
       afterSharingRestart(target, () =>
-        teamPost(target, '/api/team/join', { code })
+        teamPost(target, '/api/team/join', {
+          code,
+          ...(opts?.confirmRepo === true ? { confirmRepo: true } : {}),
+        })
       ),
     recoverTeam: (code) => teamPost(target, '/api/team/recover', { code }),
     newRecoveryCode: () => teamPost(target, '/api/team/recovery-key', {}),
@@ -4503,6 +4524,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     ackProblem: async (subject) => {
       await teamPost(target, '/api/team/problems/ack', { subject });
     },
+    fetchLiveWork: () => request(target, '/api/live-work'),
     fetchWhoami: () => request(target, '/api/whoami'),
     fetchRunPreview: (runId) => request(target, `/api/runs/${runId}/preview`),
     startRunPreview: (runId) =>
@@ -5531,31 +5553,33 @@ function rosterPath(replica: string, action: string): string {
 const SHARING_RESTART_WAIT_MS = 90_000;
 
 /**
- * Team start and join on a daemon with board sync off: it turns sync on,
- * answers `restarting`, and comes back on the same port with the same
- * tokens. This waits for sync to be on, then sends the same request once
- * more, so it stays one action for the person.
+ * Team start and join on a daemon with board sync off, or syncing somewhere
+ * other than the team: it turns sync on (or moves it), answers `restarting`,
+ * and comes back on the same port with the same tokens. This waits for sync
+ * to be on and sends the same request again, for as long as the daemon still
+ * answers `restarting`, so it stays one action for the person.
  */
 async function afterSharingRestart<T>(
   target: ApiTarget,
   send: () => Promise<T>
 ): Promise<T> {
-  const first = await send();
-  if ((first as { code?: unknown }).code !== 'restarting') return first;
+  let answer = await send();
   const until = Date.now() + SHARING_RESTART_WAIT_MS;
-  while (Date.now() < until) {
+  while ((answer as { code?: unknown }).code === 'restarting') {
+    if (Date.now() >= until)
+      throw new Error(
+        'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
+      );
     await new Promise((resolve) => setTimeout(resolve, 250));
     try {
       const sync = await request<{ enabled?: boolean }>(
         target,
         '/api/board-sync'
       );
-      if (sync.enabled === true) return await send();
+      if (sync.enabled === true) answer = await send();
     } catch {
       // Down while it restarts; ask again.
     }
   }
-  throw new Error(
-    'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
-  );
+  return answer;
 }

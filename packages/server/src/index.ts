@@ -14,9 +14,11 @@ import {
   MAX_HANDLE_BYTES,
   openProjectStores,
   SqliteTaskStore,
+  syncPlace,
   syncSettings,
   TaskStore,
   totalImported,
+  updateConfig,
 } from '@dispatch-foo/core';
 import type {
   CartoMode,
@@ -61,6 +63,7 @@ import { ConversationStore } from './conversations.js';
 import {
   assertRootNotServed,
   removeDaemonFile,
+  waitForRootReleased,
   writeDaemonFile,
 } from './daemonfile.js';
 import { DecisionFeed } from './decisionFeed.js';
@@ -189,6 +192,7 @@ import {
   defaultGitRunner,
   SyncWorktree,
 } from './sync/worktree.js';
+import { implicitRemote } from './team/boardSync/implicitPlace.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import { appendAuditToReceipts } from './team/federation/audit.js';
@@ -276,9 +280,9 @@ export interface StartServerOptions {
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
-  // Boot even when the daemon file names a live dispatchd for this root. Off
-  // by default: a second daemon force-fails the first one's runs (see
-  // assertRootNotServed). bin.ts sets it for `--replace` and `--init`.
+  // Boot once the live dispatchd the daemon file names has exited, waiting
+  // for it instead of refusing (waitForRootReleased); never beside it. bin.ts
+  // sets it for `--replace` and `--init`, whose callers stop the old one.
   replaceRunningDaemon?: boolean;
   // Which backend this daemon's state lives in. Left unset it comes from
   // `DISPATCH_STORE_BACKEND` (see `resolveStoreBackend`), which defaults to
@@ -381,6 +385,12 @@ export interface StartServerOptions {
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   onIdle?: () => void;
+  // Exits this process for `POST /api/daemon/shutdown`, once nothing is live:
+  // how `dispatch serve` takes a project over. Absent, the route refuses.
+  onShutdownRequest?: () => void;
+  // Who spawned this daemon in the background (dispatchd's `--started-by`),
+  // recorded in the daemon file so a missing-app-token error can name it.
+  startedBy?: string;
   // Restarts this daemon in its own process with the same port and tokens,
   // so board sync turned on by `team start` or `team join` is wired at boot
   // (team/federation/sharing.ts). Absent, those ask the person to restart.
@@ -897,8 +907,10 @@ export async function startServer(
 ): Promise<ServerHandle> {
   // Before touching any state: a root another live daemon is serving is not
   // ours to reconcile.
-  if ((opts.writeDaemonFile ?? true) && opts.replaceRunningDaemon !== true) {
-    await assertRootNotServed(opts.rootDir);
+  if (opts.writeDaemonFile ?? true) {
+    if (opts.replaceRunningDaemon === true)
+      await waitForRootReleased(opts.rootDir);
+    else await assertRootNotServed(opts.rootDir);
   }
 
   // Started before anything that can block, so a boot-time stall (a migration,
@@ -1021,6 +1033,8 @@ async function bootServer(
   // database backend syncs this way — a file-backed board already travels in
   // the repo itself.
   const syncConfig = backend === 'sqlite' ? bootSyncSettings(rootDir) : null;
+  // What sync runs with, once a place adopted below is written.
+  let bootSync = syncConfig;
   const stores =
     backend === 'sqlite'
       ? initProjectStores({
@@ -1251,18 +1265,45 @@ async function bootServer(
   // time), then exchange changes with the other replicas on the remote. A
   // remote that cannot be resolved costs the daemon its sync, not its boot.
   if (syncConfig !== null && syncLedger !== null && syncedStore !== null) {
-    // A repository of its own when the config names one, else a branch on
-    // one of the project's own remotes.
-    const remoteUrl = await resolvePushTarget(
-      rootDir,
-      syncConfig.repo === undefined
-        ? { remote: syncConfig.remote }
-        : { repo: syncConfig.repo },
-      defaultAsyncGitRunner
-    );
-    if (remoteUrl === null) {
+    // A repository of its own, or a branch on one of the project's remotes,
+    // only as the config names it: no remote is ever implied.
+    let place = syncPlace(syncConfig);
+    // A project that already syncs with teammates through its sync clone's
+    // remote, from before a place had to be named, keeps that place.
+    if (place === null) {
+      const adopted = await implicitRemote(
+        rootDir,
+        boardSyncDir(rootDir),
+        syncLedger.database,
+        syncLedger.replica,
+        defaultAsyncGitRunner
+      );
+      if (adopted !== null) {
+        try {
+          updateConfig(rootDir, { sync: { remote: adopted } });
+          place = { remote: adopted };
+          bootSync = { ...syncConfig, remote: adopted };
+          console.log(
+            `dispatchd: board sync named no place but already shares through the "${adopted}" remote with other machines; wrote sync.remote: ${adopted} to .dispatch/config.yml`
+          );
+        } catch (err) {
+          console.error(
+            `dispatchd: could not write sync.remote: ${adopted} to .dispatch/config.yml: ${(err as Error).message}`
+          );
+        }
+      }
+    }
+    const remoteUrl =
+      place === null
+        ? null
+        : await resolvePushTarget(rootDir, place, defaultAsyncGitRunner);
+    if (place === null) {
       console.error(
-        `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
+        'dispatchd: board sync is on but no place is set (sync.remote or sync.repo); choose one in Settings → Board sync. Nothing is pushed until then.'
+      );
+    } else if (remoteUrl === null) {
+      console.error(
+        `dispatchd: board sync is on but ${'repo' in place ? place.repo : `"${place.remote}"`} could not be resolved for ${rootDir}; add the remote, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
       // Only here are the federation's store and roster built; the team
@@ -2315,6 +2356,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    bootSync,
     federation: federationContext,
     team,
     presence: presenceTracker,
@@ -2326,13 +2368,16 @@ async function bootServer(
   // What a restart would interrupt or lose, in words: a live agent, a queued
   // merge, a shell, a browser. Idle shutdown and the restart that turns on
   // board sync both wait for it to be empty.
-  const liveWork = (): string[] => {
+  // `skipRuns` leaves out runs a caller counts on their own (parked ones).
+  const workIn = (skipRuns: ReadonlySet<string>): string[] => {
     const out: string[] = [];
     const count = (n: number, one: string, many: string) => {
       if (n > 0) out.push(`${n} ${n === 1 ? one : many}`);
     };
     count(
-      orchestrator.list().filter((r) => !TERMINAL_RUN_STATES.has(r.state))
+      orchestrator
+        .list()
+        .filter((r) => !TERMINAL_RUN_STATES.has(r.state) && !skipRuns.has(r.id))
         .length,
       'live run',
       'live runs'
@@ -2370,9 +2415,70 @@ async function bootServer(
     count(browsers.list().length, 'browser', 'browsers');
     return out;
   };
+  const liveWork = (): string[] => workIn(new Set());
+  // Live runs whose only state is waiting on a human: parked on a tool
+  // approval, or on a blocking question or scope request they sent. A restart
+  // force-fails and then auto-resumes them, with nothing written meanwhile.
+  const parkedRuns = (): Set<string> => {
+    const asking = new Set<string>();
+    for (const item of decisionFeed.list({ disposition: 'blocking' })) {
+      if (
+        item.runId !== undefined &&
+        (item.kind === 'approval' ||
+          item.kind === 'question' ||
+          item.kind === 'scope-request')
+      )
+        asking.add(item.runId);
+    }
+    return new Set(
+      orchestrator
+        .list()
+        .filter(
+          (r) =>
+            !TERMINAL_RUN_STATES.has(r.state) &&
+            (r.state === 'awaiting-approval' || asking.has(r.id))
+        )
+        .map((r) => r.id)
+    );
+  };
+  // `busy` is work a restart would cut short; `parked` counts runs it would
+  // only pause (they auto-resume after boot).
+  const workReport = (): { busy: string[]; parked: number } => {
+    const parked = parkedRuns();
+    return { busy: workIn(parked), parked: parked.size };
+  };
+  apiCtx.liveWork = workReport;
   // This server's own restart mark (never shared with another server).
   const sharing = new SharingState();
   apiCtx.sharing = sharing;
+  // Hands the project to another daemon: refuses while anything is live,
+  // holds new runs, and exits after the answer leaves unless work began.
+  const onShutdown = opts.onShutdownRequest;
+  let handingOver = false;
+  if (onShutdown !== undefined)
+    apiCtx.shutdownForHandover = (allowParked) => {
+      const { busy, parked } = workReport();
+      if (busy.length > 0) return { ok: false, code: 'busy', live: busy };
+      if (parked > 0 && !allowParked)
+        return {
+          ok: false,
+          code: 'parked',
+          live: [`${parked} ${parked === 1 ? 'run' : 'runs'} waiting on you`],
+        };
+      if (handingOver) return { ok: true };
+      handingOver = true;
+      orchestrator.hold('Dispatch is handing this project to another daemon.');
+      setTimeout(() => {
+        const late = workReport().busy;
+        if (late.length === 0) return onShutdown();
+        handingOver = false;
+        orchestrator.release();
+        console.error(
+          `dispatchd: NOT handing over: ${late.join(', ')} started meanwhile.`
+        );
+      }, 100);
+      return { ok: true };
+    };
   apiCtx.turnOnSharing = (precheck) =>
     turnOnSharing(
       {
@@ -2634,6 +2740,8 @@ async function bootServer(
       pid: process.pid,
       startedAt,
       agentToken: tokens.agentToken,
+      ...(opts.idleTimeoutMs === undefined ? {} : { background: true }),
+      ...(opts.startedBy === undefined ? {} : { startedBy: opts.startedBy }),
     });
   }
 

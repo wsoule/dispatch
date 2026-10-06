@@ -533,6 +533,17 @@ describe('dispatch serve', () => {
     ]);
   });
 
+  it('takes --replace itself rather than passing it to dispatchd', () => {
+    // serve stops the old daemon first; dispatchd must then refuse anything
+    // still serving, so the flag is never forwarded.
+    expect(serveArgs('/r', { replace: true })).toEqual(['--root', '/r']);
+    const serve = makeProgram({ cwd: '/r', log: () => {} }).commands.find(
+      (c) => c.name() === 'serve'
+    );
+    expect(serve?.helpInformation()).toContain('--replace');
+    expect(serve?.helpInformation()).toContain('refused while it has live');
+  });
+
   it('checks --a2a-tls-cert and --a2a-tls-key together', () => {
     expect(() => serveArgs('/r', { a2aTlsCert: 'c.pem' })).toThrow(
       /--a2a-tls-cert and --a2a-tls-key go together/

@@ -114,6 +114,10 @@ describe('ensureDaemon race (I3)', () => {
     // Both callers must agree on which daemon actually won — otherwise one
     // of them is talking to a process nothing else knows about.
     expect(a.port).toBe(b.port);
+    // The winner's daemon file says it runs in the background, and for whom,
+    // which is what a missing-app-token error names.
+    expect(a.background).toBe(true);
+    expect(a.startedBy).toBe(`dispatch (pid ${process.pid})`);
 
     // Give a SIGKILL'd loser a moment to actually disappear from `ps`.
     await sleep(1000);

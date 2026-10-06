@@ -24,6 +24,11 @@ export interface DaemonFileInfo {
   // Request-tier token for the CLI and MCP, which have no other channel. The
   // decide-tier token stays out: this file is readable by anything as the user.
   agentToken: string;
+  // Set when started with `--idle-timeout`: a background daemon some dispatch
+  // command spawned with its stdout (and so its app token) discarded.
+  background?: true;
+  // Who spawned that background daemon, e.g. "dispatch mcp (pid 4120)".
+  startedBy?: string;
 }
 
 // `DISPATCH_HOME` lets tests (and anything else) redirect daemon files away
@@ -134,25 +139,56 @@ export async function assertRootNotServed(
   rootDir: string,
   healthTimeoutMs = 2000
 ): Promise<void> {
+  const prior = await servingDaemon(rootDir, healthTimeoutMs);
+  if (prior === null) return;
+  throw new RootServedError(
+    `another dispatchd (pid ${prior.pid}) is already serving ${rootDir} on port ${prior.port}; refusing to start a second one, which would force-fail the runs it has in flight. Run \`dispatch serve --replace\`, which stops it once it has no live work and takes over.`
+  );
+}
+
+// The live daemon this root's file names, when its port answers health or
+// stalls on it; null for no file, our own pid, a dead pid or a refused port.
+async function servingDaemon(
+  rootDir: string,
+  healthTimeoutMs: number
+): Promise<DaemonFileInfo | null> {
   const prior = readDaemonFile(rootDir);
   if (prior === null || prior.pid === process.pid || !pidAlive(prior.pid)) {
-    return;
+    return null;
   }
-  let served: boolean;
   try {
     const res = await fetch(`http://127.0.0.1:${prior.port}/api/health`, {
       signal: AbortSignal.timeout(healthTimeoutMs),
     });
-    served = res.ok;
+    return res.ok ? prior : null;
   } catch (err) {
     // Only a timeout means "alive but busy"; a refusal means nothing is there.
-    served = (err as { name?: string }).name === 'TimeoutError';
+    return (err as { name?: string }).name === 'TimeoutError' ? prior : null;
   }
-  if (!served) return;
-  throw new Error(
-    `another dispatchd (pid ${prior.pid}) is already serving ${rootDir} on port ${prior.port}; refusing to start a second one, which would force-fail the runs it has in flight. Stop it first (kill ${prior.pid}), or pass --replace to take over anyway.`
-  );
 }
+
+// `--replace`/`--init`: whoever replaces a daemon stops it first, and this
+// waits for its pid to exit rather than ever serving beside it (two daemons
+// on one root force-failed runs and orphaned agents on 2026-09-07).
+export async function waitForRootReleased(
+  rootDir: string,
+  timeoutMs = 30_000,
+  healthTimeoutMs = 2000
+): Promise<void> {
+  const prior = await servingDaemon(rootDir, healthTimeoutMs);
+  if (prior === null) return;
+  const deadline = Date.now() + timeoutMs;
+  while (pidAlive(prior.pid)) {
+    if (Date.now() >= deadline)
+      throw new RootServedError(
+        `dispatchd (pid ${prior.pid}) still serves ${rootDir} on port ${prior.port}; a replacement waits for it to exit rather than run beside it. Run \`dispatch serve --replace\`, which stops it once it has no live work.`
+      );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/** The refusal `assertRootNotServed` throws; dispatchd prints it as one line. */
+export class RootServedError extends Error {}
 
 // Whether this process is still the daemon clients will find for `rootDir`.
 // Health reports it on every probe so a displaced daemon stops being visible

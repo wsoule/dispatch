@@ -29,17 +29,33 @@ function placeOf(target: { repo?: string }): Place {
   return target.repo === undefined ? 'remote' : 'repo';
 }
 
+/** Where board sync goes; `unset` until someone chooses, which pushes nothing. */
+function syncPlaceOf(sync: {
+  remote?: string;
+  repo?: string;
+}): Place | 'unset' {
+  if (sync.repo !== undefined) return 'repo';
+  return sync.remote === undefined ? 'unset' : 'remote';
+}
+
 /**
- * What choosing where board sync goes writes right away: going back to the
- * project's repo clears a repo of its own; choosing a repo of its own writes
- * nothing yet (null), since it has no URL until one is typed.
+ * What choosing where board sync goes writes right away: the project's repo
+ * writes its remote by name (origin unless one is set), so the choice is
+ * explicit; choosing a repo of its own writes nothing yet (null), since it
+ * has no URL until one is typed; unset clears both.
  */
 export function syncPlacePatch(
-  place: Place,
-  current: { repo?: string }
+  place: Place | 'unset',
+  current: { remote?: string; repo?: string }
 ): NonNullable<ConfigPatch['sync']> | null {
+  if (place === 'unset')
+    return current.remote === undefined && current.repo === undefined
+      ? null
+      : { remote: null, repo: null };
   if (place === 'remote')
-    return current.repo === undefined ? null : { repo: null };
+    return current.remote !== undefined && current.repo === undefined
+      ? null
+      : { repo: null, remote: current.remote ?? 'origin' };
   return null;
 }
 
@@ -94,15 +110,14 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
   const locked = canOperate ? undefined : OPERATOR_ONLY;
   const sync = config.sync ?? {
     enabled: false,
-    remote: 'origin',
     branch: 'dispatch-sync',
     intervalSec: 30,
   };
   // The choice is held here, not read back from config, until it can be
   // saved: picking "a repo of its own" has nothing to write until a URL is
   // typed, and writing an empty one would snap the choice straight back.
-  const savedSyncPlace = placeOf(sync);
-  const [syncPlace, setSyncPlace] = useState<Place>(savedSyncPlace);
+  const savedSyncPlace = syncPlaceOf(sync);
+  const [syncPlace, setSyncPlace] = useState<Place | 'unset'>(savedSyncPlace);
   // Follows the config when it changes underneath (a save, another window).
   useEffect(() => setSyncPlace(savedSyncPlace), [savedSyncPlace]);
 
@@ -110,7 +125,7 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
     <>
       <SettingsGroup
         title="Sharing"
-        hint="Changes to these take effect the next time Dispatch restarts for this project."
+        hint="Starting or joining a team in Members sets this up for you. Where the board is kept only matters while the team syncs over git rather than the relay. Changes here take effect the next time Dispatch restarts for this project."
         keywords="sync restart"
       >
         <SwitchSetting
@@ -128,6 +143,7 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
           value={syncPlace}
           locked={locked}
           choices={[
+            { value: 'unset', label: 'Not chosen' },
             { value: 'remote', label: "This project's repo" },
             { value: 'repo', label: 'A separate repo' },
           ]}
@@ -137,7 +153,7 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
             if (patch !== null) void onSave({ sync: patch });
           }}
         />
-        {syncPlace === 'remote' ? (
+        {syncPlace === 'unset' ? null : syncPlace === 'remote' ? (
           <TextSetting
             id="sync-remote"
             title="Remote"

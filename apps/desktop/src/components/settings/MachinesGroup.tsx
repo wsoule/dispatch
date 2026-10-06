@@ -263,7 +263,7 @@ export function MachinesGroup({ data }: MachinesGroupProps) {
       {canAdmin && k.team !== null && (
         <SettingsRow
           title="Invite a machine"
-          subtitle="Its owner runs `dispatch team join` and pastes the code; you then compare fingerprints and admit it."
+          subtitle="Its owner runs dispatch team join and pastes the code; you then compare fingerprints and admit it."
           control={
             <span className="flex items-center gap-2">
               <Input

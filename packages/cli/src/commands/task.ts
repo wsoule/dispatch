@@ -4,6 +4,7 @@ import {
   ASSIGNEES,
   canonicalStatus,
   childEnv,
+  DISPATCH_DIR,
   loadConfig,
   PRIORITIES,
   readProjectBackend,
@@ -24,7 +25,8 @@ import type {
 } from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { TaskApiClient } from '../apiClient.js';
 import { createTaskApiClient } from '../apiClient.js';
@@ -84,6 +86,10 @@ export function requireStore(ctx: CliContext): TaskStore {
  * the tracked `.dispatch/config.yml`, while the backend marker and the task
  * board live at the root the daemon serves. The raw cwd is still accepted
  * so a plain project directory behaves exactly as before.
+ *
+ * A committed `.dispatch/config.yml` counts too: a teammate's fresh clone of
+ * a database-backed project has the config but no board yet, and dispatchd
+ * creates the database itself when it boots there.
  */
 export function requireInitialized(ctx: CliContext): void {
   const root = projectRoot(ctx.cwd);
@@ -93,7 +99,11 @@ export function requireInitialized(ctx: CliContext): void {
 }
 
 function isInitialized(rootDir: string): boolean {
-  return new TaskStore(rootDir).isInitialized() || databaseBacked(rootDir);
+  return (
+    new TaskStore(rootDir).isInitialized() ||
+    databaseBacked(rootDir) ||
+    existsSync(join(rootDir, DISPATCH_DIR, 'config.yml'))
+  );
 }
 
 /**

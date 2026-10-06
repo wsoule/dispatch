@@ -29,6 +29,8 @@ const FINGERPRINT = /^[0-9A-Z]{4}(?:-[0-9A-Z]{4}){5}$/;
 const MAX_NAME_CHARS = 64;
 const MAX_REMOTE_CHARS = 256;
 const MAX_TEXT_CHARS = 300;
+/** A sync branch a link may name: a plain ref name, never an option. */
+const SYNC_BRANCH = /^(?!-)[A-Za-z0-9._/-]{1,100}$/;
 
 // ANSI CSI and OSC sequences, whole, so no fragment of one reaches a terminal.
 // Built from code points, so the source holds no raw escape characters.
@@ -101,6 +103,8 @@ export interface TeamLink {
   via: TeamVia;
   /** The git remote the sync branch rides, without credentials, or null. */
   remote: string | null;
+  /** The sync branch on it; absent from links made before it was carried. */
+  branch?: string;
 }
 
 // The link's fields as they go on the wire, in JCS order, without the sum.
@@ -116,6 +120,7 @@ function wireFields(link: TeamLink): Record<string, unknown> {
     expires: link.expires,
     via: link.via,
     remote: link.remote,
+    ...(link.branch === undefined ? {} : { branch: link.branch }),
   };
 }
 
@@ -130,6 +135,17 @@ export function encodeTeamLink(link: TeamLink): string {
 /** The same link as a URL, for a chat client that only makes URLs clickable. */
 export function teamLinkUrl(link: string): string {
   return `${LINK_URL_BASE}${link.slice(LINK_PREFIX.length)}`;
+}
+
+/** Whether `text` is a team invite in any form: a link, its URL, or an
+ *  older `di1.` code — what someone may paste where a token belongs. */
+export function looksLikeInvite(text: string): boolean {
+  const t = text.trim();
+  return (
+    t.startsWith(LINK_PREFIX) ||
+    t.startsWith(LINK_URL_BASE) ||
+    t.startsWith('di1.')
+  );
 }
 
 const DAMAGED = 'This invite link is damaged; copy the whole link again.';
@@ -201,6 +217,12 @@ export function decodeTeamLink(text: string): TeamLink {
     throw new RosterError('invalid', DAMAGED);
   const cleanRemote =
     remote === null ? null : plainText(remote, MAX_REMOTE_CHARS);
+  const branch = fields.branch;
+  if (
+    branch !== undefined &&
+    (typeof branch !== 'string' || !SYNC_BRANCH.test(branch))
+  )
+    throw new RosterError('invalid', DAMAGED);
   return {
     team,
     name,
@@ -211,7 +233,25 @@ export function decodeTeamLink(text: string): TeamLink {
     expires: new Date(expiresMs).toISOString(),
     via: relay === null ? { kind: 'git' } : { kind: 'relay', url: relay },
     remote: cleanRemote === '' ? null : cleanRemote,
+    ...(branch === undefined ? {} : { branch }),
   };
+}
+
+// Whether two git remotes name one repository, read loosely: scheme, login,
+// a trailing .git and scp-style colons do not matter. Null when either is
+// not a remote the comparison can read.
+export function sameRemote(a: string, b: string): boolean | null {
+  const norm = (r: string): string =>
+    r
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z+]+:\/\//, '')
+      .replace(/^[^@/]+@/, '')
+      .replace(/:(?!\d)/, '/')
+      .replace(/\.git$/, '')
+      .replace(/\/+$/, '');
+  if (a.trim() === '' || b.trim() === '') return null;
+  return norm(a) === norm(b);
 }
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -282,6 +322,8 @@ export interface TeamStatus {
   /** While joining: the check to compare with whoever invited this machine. */
   check: string | null;
   problems: StatusProblem[];
+  /** True when the caller's tier withheld teammates, checks and problems. */
+  reduced?: true;
 }
 
 export interface TeamStatusInput {

@@ -12,6 +12,8 @@ import {
   isValidAssignee,
   loadConfig,
   PRIORITIES,
+  syncPlace,
+  syncSettings,
   TaskParseError,
   untrustedFenced,
   updateConfig,
@@ -25,6 +27,7 @@ import type {
   LinearConfig,
   ModelConfig,
   QueueWeights,
+  SyncConfig,
   TaskStoreBackend,
   UpdatePatch,
   VerifyConfig,
@@ -256,6 +259,7 @@ import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { OverseerManager } from './orchestrator/overseer.js';
+import { boardSyncDir } from './orchestrator/paths.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
 import {
@@ -302,15 +306,22 @@ import {
 import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
+import { looksLikeInvite } from './team/federation/onboarding.js';
+import { markPublicRepo } from './team/federation/publicRepo.js';
 import type { FederationContext } from './team/federation/routes.js';
 import {
   boardSyncNow,
   handleFederationRoute,
   isFederationRoute,
   statusFor,
+  syncRestartNeeded,
 } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
-import type { SharingAnswer, SharingState } from './team/federation/sharing.js';
+import type {
+  SharingAnswer,
+  SharingState,
+  SyncMove,
+} from './team/federation/sharing.js';
 import { FROZEN_MESSAGE, frozenBySharing } from './team/federation/sharing.js';
 import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
@@ -458,6 +469,9 @@ export interface ApiContext {
   previewGateway: PreviewGateway | null;
   /** Board sync between replicas (team/boardSync/); null when it is off. */
   boardSync: FederationService | null;
+  /** The sync settings board sync was wired with at boot, to tell when
+   *  config.yml has moved on without a restart. */
+  bootSync?: SyncConfig | null;
   /** The signed roster and its store, once board sync is on (Task 10b). */
   federation: FederationContext | null;
   /** Teammates' credentials and the license that says how many people may
@@ -496,9 +510,20 @@ export interface ApiContext {
   /** Turns board sync on and restarts to wire it (team/federation/sharing.ts):
    *  what `team start` and `team join` do when sync is off. Set by
    *  startServer; absent in contexts built without a daemon. */
-  turnOnSharing?: (precheck?: (now: Date) => void) => Promise<SharingAnswer>;
+  turnOnSharing?: (
+    precheck?: (now: Date) => SyncMove | null
+  ) => Promise<SharingAnswer>;
   /** This server's restart mark while it restarts to turn on sync. */
   sharing?: SharingState;
+  /** Exits for another daemon to take over, or names the live work that
+   *  stops it. Set by startServer when its process can exit. */
+  shutdownForHandover?: (
+    allowParked: boolean
+  ) => { ok: true } | { ok: false; code: 'busy' | 'parked'; live: string[] };
+  /** What a restart would cut short (`busy`, in words) and how many runs it
+   *  would only pause (`parked`), from index.ts workReport; absent in
+   *  contexts built without a daemon. */
+  liveWork?: () => { busy: string[]; parked: number };
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -1456,6 +1481,13 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
 
   try {
     const config = updateConfig(ctx.rootDir, patch);
+    // The owner chose where the board goes, which outranks an invite's pick.
+    const syncPlaceSaved = patch.sync as Record<string, unknown> | undefined;
+    if (
+      syncPlaceSaved !== undefined &&
+      ('repo' in syncPlaceSaved || 'remote' in syncPlaceSaved)
+    )
+      markPublicRepo(boardSyncDir(ctx.rootDir), null);
     ctx.events.broadcast({ type: 'config.changed' });
     // A changed interval or enabled flag only takes effect once the poll timer is rebuilt.
     ctx.linearSync.start();
@@ -1591,15 +1623,16 @@ const OFF_SYNC_DETAIL =
 
 // Why board sharing (team/boardSync) isn't running: the board is kept as files,
 // which it can't share; it is off; or it is on in config.yml but didn't start,
-// because its remote didn't resolve at boot or it was turned on since.
-type BoardSyncOffReason = 'files' | 'off' | 'not-started';
+// because its remote didn't resolve at boot or it was turned on since; or it
+// is on with no place chosen, so it pushes nowhere.
+type BoardSyncOffReason = 'files' | 'off' | 'not-started' | 'no-place';
 
 function boardSyncOffReason(ctx: ApiContext): BoardSyncOffReason {
   if (ctx.storeBackend === 'files') return 'files';
   try {
-    return loadConfig(ctx.rootDir).sync?.enabled === true
-      ? 'not-started'
-      : 'off';
+    const sync = syncSettings(loadConfig(ctx.rootDir));
+    if (!sync.enabled) return 'off';
+    return syncPlace(sync) === null ? 'no-place' : 'not-started';
   } catch {
     // Boot reads the same file and turns sharing off when it can't.
     return 'off';
@@ -1622,6 +1655,10 @@ const BOARD_SYNC_OFF_MESSAGE: Record<BoardSyncOffReason, string> = {
     'resolved when Dispatch started, or it was turned on since. Check ' +
     '`sync.remote` or `sync.repo` in Settings → Board sync, then restart ' +
     'Dispatch for this project',
+  'no-place':
+    'sharing is on but no place is set, so nothing is pushed: Dispatch ' +
+    'never pushes to a remote nobody chose. Choose one in Settings → Board ' +
+    'sync (`sync.remote` or `sync.repo`), then restart Dispatch for this project',
 };
 
 const MERGE_DRIVER_WARNING =
@@ -4611,8 +4648,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
-  // The team in one line: its name, seats, transport and problems.
-  { method: 'GET', segments: ['team', 'status'], tier: 'decide' },
+  // GET team/status is absent on purpose: below decide its route answers
+  // only the summary line (teamStatusFor), so a stuck joiner can still read it.
   { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
@@ -4934,6 +4971,40 @@ function requiredTier(
   return 'request';
 }
 
+// POST /api/daemon/shutdown: `dispatch serve` taking this project over. Only
+// this machine's own credentials (agent or app token, not a run's or a
+// teammate's), which could stop the process anyway, and never with work live.
+async function daemonShutdown(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const own =
+    ctx.ownerCredential === true ||
+    (ctx.viaAgentToken === true && ctx.viaRun === undefined);
+  if (!own)
+    return errorResponse(
+      403,
+      "only this machine's agent or app token can stop the daemon"
+    );
+  const handover = ctx.shutdownForHandover;
+  if (handover === undefined)
+    return errorResponse(409, 'this daemon cannot be stopped from its API');
+  // `{ parked: true }`: the caller confirmed runs parked on a human may stop;
+  // they resume after the next boot.
+  const body = (await req.json().catch(() => ({}))) as { parked?: unknown };
+  const answer = handover(body.parked === true);
+  if (!answer.ok)
+    return jsonResponse(
+      {
+        error: `it has ${answer.code === 'busy' ? 'live work' : 'runs parked on a human'}: ${answer.live.join(', ')}`,
+        code: answer.code,
+        live: answer.live,
+      },
+      409
+    );
+  return jsonResponse({ ok: true, pid: process.pid }, 202);
+}
+
 /** The credential a request presents: a bearer header, or failing that a
  *  team-local session cookie sent from the daemon's own page (session.ts). The
  *  header wins so the CLI, MCP and desktop app are never affected by a stray
@@ -4960,7 +5031,13 @@ const MISSING_TOKEN_MESSAGE =
 
 const INVALID_TOKEN_MESSAGE =
   'daemon token not recognized: it belongs to a different or restarted daemon. ' +
-  'Re-read `agentToken` from ~/.dispatch/daemons/<key>.json.';
+  'The app token is the DISPATCH_APP_TOKEN line this daemon printed at startup ' +
+  '(a restarted daemon prints a new one); the CLI and MCP read `agentToken` ' +
+  'from ~/.dispatch/daemons/<key>.json.';
+
+const INVITE_AS_TOKEN_MESSAGE =
+  'that is a team invite link, not a daemon token: run `dispatch team join` ' +
+  'and paste it at the prompt, or paste it in Settings → Members → Join a team.';
 
 /** Why a valid credential was turned away, naming the tier it lacked. The
  *  operator's own fix (the app token) and a teammate's (ask for a higher
@@ -5014,7 +5091,13 @@ export function rejectUnauthorized(
   }
   const caller = found.kind === 'valid' ? found.identity : null;
   if (caller === null) {
-    return authErrorResponse(401, INVALID_TOKEN_MESSAGE, 'auth_invalid_token');
+    return authErrorResponse(
+      401,
+      looksLikeInvite(presented)
+        ? INVITE_AS_TOKEN_MESSAGE
+        : INVALID_TOKEN_MESSAGE,
+      'auth_invalid_token'
+    );
   }
   if (!tierAllows(caller.tier, required)) {
     return authErrorResponse(
@@ -5232,6 +5315,34 @@ export async function handleApi(
   }
 
   try {
+    if (
+      method === 'POST' &&
+      segments.length === 2 &&
+      segments[0] === 'daemon' &&
+      segments[1] === 'shutdown'
+    )
+      return await daemonShutdown(req, ctx);
+    // GET /api/live-work, request tier, for whoever wants to restart this
+    // daemon (the desktop app's takeover, `dispatch serve`):
+    //   busy:    string[]  what a restart would cut short, in words ("1 live
+    //                      run", "2 terminals"); refuse while non-empty
+    //   parked:  number    live runs only waiting on a human (a tool approval,
+    //                      a blocking question); a restart pauses them and
+    //                      they resume on boot, so confirm rather than refuse
+    //   waiting: number    items waiting on a human, which the agent token
+    //                      cannot list
+    if (
+      segments[0] === 'live-work' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      const work = ctx.liveWork?.() ?? { busy: [], parked: 0 };
+      return jsonResponse({
+        busy: work.busy,
+        parked: work.parked,
+        waiting: ctx.decisionFeed.list({ disposition: 'blocking' }).length,
+      });
+    }
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
       // `rootDir` lets the web UI show a project name (its basename) in the
       // top bar without a separate endpoint — see the phase-2 plan's Slice
@@ -5355,11 +5466,17 @@ export async function handleApi(
     // answered below and read by the app's status strip.
     if (segments[0] === 'board-sync') {
       if (segments.length === 1 && method === 'GET') {
+        const restartRequired = syncRestartNeeded(ctx);
         const status = ctx.boardSync?.status() ?? {
           enabled: false,
           reason: boardSyncOffReason(ctx),
         };
-        return jsonResponse(statusFor(status, ctx.caller?.tier ?? 'request'));
+        return jsonResponse(
+          statusFor(
+            restartRequired === null ? status : { ...status, restartRequired },
+            ctx.caller?.tier ?? 'request'
+          )
+        );
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {

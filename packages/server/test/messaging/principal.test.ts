@@ -113,7 +113,12 @@ function makeHarness(teammates: CredentialSource | null = null): {
   opened.push(messaging);
   // resolvePrincipal reads only tokens, orchestrator and messaging, so a cast
   // subset stands in for the full ApiContext.
-  const ctx = { tokens, orchestrator, messaging } as unknown as ApiContext;
+  const ctx = {
+    tokens,
+    orchestrator,
+    messaging,
+    rootDir: root,
+  } as unknown as ApiContext;
   return { ctx, tokens, orchestrator, messaging, executor, store };
 }
 
@@ -306,12 +311,52 @@ describe('resolvePrincipal', () => {
     );
 
     const result = resolvePrincipal(ctx, raw);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: false,
       status: 403,
-      error: 'awaiting approval in Dispatch',
       code: 'auth_agent_pending',
     });
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.error).toContain('agent:codex/pending');
+    expect(result.error).toContain(root);
+    expect(result.error).toContain('no approval request is open');
+  });
+
+  it("a pending agent's refusal names its gate and both ways to approve it", async () => {
+    const { ctx, messaging } = makeHarness();
+    const raw = 'agent-gated-token';
+    messaging.store.putAgent(
+      stubAgent({
+        address: 'agent:codex/gated',
+        tokenHash: tokenHash(raw),
+        status: 'pending',
+        approvedBy: null,
+      })
+    );
+    const { message: gate } = await messaging.engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        blocking: true,
+        choices: ['approve', 'deny'],
+        body: 'New agent agent:codex/gated wants to join',
+        data: {
+          type: 'agent-registration',
+          agent: 'agent:codex/gated',
+          client: 'codex',
+          requestedBy: 'human:wyat',
+          key: 'k',
+        },
+      },
+      { address: 'agent:dispatch', canDecide: true }
+    );
+
+    const result = resolvePrincipal(ctx, raw);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.error).toContain(`pending agent-registration ${gate.id}`);
+    expect(result.error).toContain('Needs you');
+    expect(result.error).toContain(`dispatch approvals approve ${gate.id}`);
+    expect(result.error).toContain(root);
   });
 
   it('a revoked agent is refused as access revoked (401)', () => {

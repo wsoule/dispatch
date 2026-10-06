@@ -15,6 +15,7 @@ import {
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
 
 import { type CliContext, CliError } from '../context.js';
 import { projectRoot } from '../projectRoot.js';
@@ -47,6 +48,10 @@ interface DaemonFileInfo {
   // Request-tier credential. Optional here only so a file written by a daemon
   // that predates token auth still parses into an actionable error.
   agentToken?: string;
+  // Written by a daemon started with --idle-timeout, i.e. by ensureDaemon
+  // below, whose app token went to /dev/null; startedBy names the spawner.
+  background?: boolean;
+  startedBy?: string;
 }
 
 export function daemonHome(): string {
@@ -255,17 +260,21 @@ function defaultOpenApp(rootDir: string): void {
 // platform falls back to the browser at the daemon's own URL. Both branches
 // route through CliContext seams (`openApp`/`openBrowser`) so tests can
 // assert on which path was taken without anything actually opening.
-export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
+export function openDesktopOrBrowser(
+  ctx: CliContext,
+  port: number
+): 'app' | 'browser' {
   if (process.platform === 'darwin') {
     const probe = spawnSync('open', ['-Ra', DESKTOP_PRODUCT_NAME], {
       env: childEnv(),
     });
     if (probe.status === 0) {
       (ctx.openApp ?? defaultOpenApp)(projectRoot(ctx.cwd));
-      return;
+      return 'app';
     }
   }
   openBrowserFor(ctx, `http://127.0.0.1:${port}`);
+  return 'browser';
 }
 
 // A stale daemon file can name a port some OTHER process now holds — one that
@@ -345,9 +354,7 @@ async function locateDaemon(
   const deadline = Date.now() + stalledWaitMs;
   for (;;) {
     const probe = await probeHealth(info.port, opts.healthTimeoutMs);
-    if (probe === 'healthy') {
-      return { port: info.port, agentToken: requireAgentToken(info) };
-    }
+    if (probe === 'healthy') return connectionFrom(info);
     if (probe === 'down' || !pidAlive(info.pid)) return null;
     if (Date.now() >= deadline) {
       throw new CliError(
@@ -392,10 +399,25 @@ function requireAgentToken(info: DaemonFileInfo): string {
   return info.agentToken;
 }
 
-/** A daemon this CLI can talk to: where it listens, and the token to present. */
+/** A daemon this CLI can talk to: where it listens, the token to present,
+ *  and who it is, for errors that have to name it. */
 export interface DaemonConnection {
   port: number;
   agentToken: string;
+  pid: number;
+  // Started in the background by ensureDaemon, and by whom (daemon file).
+  background: boolean;
+  startedBy: string | null;
+}
+
+function connectionFrom(info: DaemonFileInfo): DaemonConnection {
+  return {
+    port: info.port,
+    agentToken: requireAgentToken(info),
+    pid: info.pid,
+    background: info.background === true,
+    startedBy: info.startedBy ?? null,
+  };
 }
 
 // Attaches to an already-running daemon without ever starting one — the
@@ -414,6 +436,9 @@ export interface EnsureDaemonOptions extends LocateDaemonOptions {
   // Port to request when a fresh daemon must be spawned (default: ephemeral,
   // same as `dispatch serve`/`dispatch ui` with no `--port`).
   port?: string;
+  // Who is spawning, written to the daemon file so a missing-app-token error
+  // can name it (default: this dispatch process).
+  startedBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,9 +536,7 @@ export async function ensureDaemon(
   // loaded machine and still leaves the stale-lock takeover as the backstop.
   if (!claimSpawn(rootDir)) {
     const winner = await waitForHealthyDaemon(rootDir, 20_000);
-    if (winner !== null) {
-      return { port: winner.port, agentToken: requireAgentToken(winner) };
-    }
+    if (winner !== null) return connectionFrom(winner);
     // The holder never produced a healthy daemon; fall through and spawn one
     // ourselves rather than failing because another process misbehaved.
   }
@@ -525,6 +548,8 @@ export async function ensureDaemon(
     rootDir,
     '--idle-timeout',
     String(BACKGROUND_DAEMON_IDLE_TIMEOUT_S),
+    '--started-by',
+    opts.startedBy ?? `dispatch (pid ${process.pid})`,
   ];
   if (opts.port !== undefined) args.push('--port', opts.port);
 
@@ -570,7 +595,7 @@ export async function ensureDaemon(
     // someone started outside this code path (a bare `dispatch serve`) landing
     // between our claim and our child's own daemon-file write.
     const winner = await resolveRaceWinner(rootDir, child, info);
-    return { port: winner.port, agentToken: requireAgentToken(winner) };
+    return connectionFrom(winner);
   } finally {
     // Only once the daemon is up (or has failed): releasing earlier would let
     // a waiting caller through while there is still nothing to find.
@@ -630,6 +655,7 @@ export interface ServeOptions {
   a2aPublicUrl?: string;
   a2aTlsCert?: string;
   a2aTlsKey?: string;
+  replace?: boolean;
 }
 
 // The dispatchd arguments `dispatch serve` passes, in a stable order; throws
@@ -660,6 +686,205 @@ export function serveArgs(root: string, o: ServeOptions): string[] {
     if (value !== undefined) args.push(flag, value);
   }
   return args;
+}
+
+// How long `dispatch serve` waits on a spawn claim another process holds, and
+// on a daemon it asked to exit.
+const SERVE_CLAIM_WAIT_MS = 25_000;
+const HANDOVER_EXIT_WAIT_MS = 30_000;
+
+// `dispatch serve`: takes the project over from a background daemon (or, with
+// --replace, any daemon) by asking it to exit once nothing is live, then runs
+// dispatchd in the foreground. The spawn claim is held from before the old
+// daemon exits until the new one has written its daemon file, so an MCP call
+// in that gap waits for this daemon instead of spawning another.
+async function serveInForeground(
+  ctx: CliContext,
+  root: string,
+  opts: ServeOptions
+): Promise<number> {
+  const launcher = resolveDaemonLauncher();
+  const args = [...launcher.leadingArgs, ...serveArgs(root, opts)];
+  const deadline = Date.now() + SERVE_CLAIM_WAIT_MS;
+  while (!claimSpawn(root)) {
+    if (Date.now() >= deadline)
+      throw new CliError(
+        'another dispatch process is starting a daemon for this project; try again in a moment'
+      );
+    await sleep(200);
+  }
+  let claimed = true;
+  const release = () => {
+    if (claimed) releaseSpawn(root);
+    claimed = false;
+  };
+  try {
+    await stopForTakeover(ctx, root, opts.replace === true);
+    const child = spawn(launcher.cmd, args, {
+      stdio: 'inherit',
+      env: childEnvFor(launcher),
+    });
+    const exited = new Promise<number>((resolve, reject) => {
+      child.on('error', (err) => {
+        reject(
+          (err as NodeJS.ErrnoException).code === 'ENOENT'
+            ? new CliError(
+                launcher.usesBun
+                  ? 'dispatch serve requires bun (https://bun.sh)'
+                  : `dispatch serve could not launch the daemon binary: ${launcher.cmd}`
+              )
+            : err
+        );
+      });
+      child.on('exit', (code, signal) => {
+        resolve(code ?? (signal === null ? 0 : 1));
+      });
+    });
+    // Ctrl+C reaches dispatchd through the terminal; a kill of this process
+    // is passed on, and either way this waits for it to shut down.
+    const ignore = () => {};
+    const forward = () => child.kill('SIGTERM');
+    process.on('SIGINT', ignore);
+    process.on('SIGTERM', forward);
+    try {
+      const booted = waitForDaemonPid(root, child.pid, 20_000);
+      await Promise.race([booted, exited.catch(() => undefined)]);
+      release();
+      return await exited;
+    } finally {
+      process.off('SIGINT', ignore);
+      process.off('SIGTERM', forward);
+    }
+  } finally {
+    release();
+  }
+}
+
+// A yes/no question on the terminal that defaults to no.
+async function askNo(question: string): Promise<boolean> {
+  process.stderr.write(`${question} [y/N] `);
+  const rl = createInterface({ input: process.stdin, terminal: false });
+  try {
+    const answer = await new Promise<string>((resolve) =>
+      rl.once('line', resolve)
+    );
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
+// Resolves once this root's daemon file names `pid` and answers health.
+async function waitForDaemonPid(
+  rootDir: string,
+  pid: number | undefined,
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const info = readDaemonFile(rootDir);
+    if (info?.pid === pid && info !== null && (await isHealthy(info.port)))
+      return;
+    await sleep(200);
+  }
+}
+
+// Stops the daemon serving `rootDir` so this one can take over: a background
+// one always, any other only with `replace`. It is asked over its API (the
+// daemon file's agent token), refuses while work is live, and is waited for
+// until its pid exits; nothing is ever killed by name or pattern.
+async function stopForTakeover(
+  ctx: CliContext,
+  rootDir: string,
+  replace: boolean
+): Promise<void> {
+  const info = readDaemonFile(rootDir);
+  if (info === null || !pidAlive(info.pid)) return;
+  const which = `pid ${info.pid}, port ${info.port}`;
+  type Health = { pid?: number; rootDir?: string };
+  let health: Health | null = null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${info.port}/api/health`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
+    health = res.ok ? ((await res.json()) as Health) : null;
+  } catch (err) {
+    if ((err as { name?: string }).name === 'TimeoutError')
+      throw new CliError(
+        `the dispatchd serving this project (${which}) is not answering; wait and retry, or, if it stays stuck, stop it yourself (kill ${info.pid}), which fails any run it has in flight.`
+      );
+  }
+  // Nothing answers on its port: a stale file whose pid was reused.
+  if (health === null) return;
+  if (health.pid !== info.pid || health.rootDir !== info.rootDir)
+    throw new CliError(
+      `this project's daemon file names pid ${info.pid}, but port ${info.port} answers as pid ${health.pid ?? 'unknown'} for ${health.rootDir ?? 'another project'}; stop the stray daemon yourself, then run this again.`
+    );
+  if (info.background !== true && !replace)
+    throw new CliError(
+      `the Dispatch app or another \`dispatch serve\` is already serving this project (${which}); use that one, or run \`dispatch serve --replace\` to stop it once it has no live work and take over.`
+    );
+  const base = `http://127.0.0.1:${info.port}`;
+  const authorization = `Bearer ${requireAgentToken(info)}`;
+  const busy = (what: string) =>
+    new CliError(
+      `not taking over: the dispatchd serving this project (${which}) has live work (${what}). See it with \`dispatch runs\` or in the Dispatch app, and run this again once it finishes; nothing was stopped.`
+    );
+  // Work under way refuses; runs parked on a human are asked about, since
+  // they resume after the takeover and only a fresh app token can answer them.
+  let parked = false;
+  const work = await fetch(`${base}/api/live-work`, {
+    headers: { authorization },
+    signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS * 5),
+  });
+  if (work.ok) {
+    const live = (await work.json()) as { busy: string[]; parked: number };
+    if (live.busy.length > 0) throw busy(live.busy.join(', '));
+    if (live.parked > 0) {
+      const n = live.parked;
+      const why = `${n} ${n === 1 ? 'run is' : 'runs are'} waiting on you in the dispatchd serving this project (${which}). They'll pick up again after the restart. Questions stay open; tool approvals will be asked again. Answer them afterwards with \`dispatch approvals\`.`;
+      const ask = ctx.confirm ?? (process.stdin.isTTY === true ? askNo : null);
+      if (ask === null)
+        throw new CliError(
+          `not taking over without a terminal to confirm: ${why} Run \`dispatch serve\` in a terminal to answer the question.`
+        );
+      if (!(await ask(`${why} Take over?`)))
+        throw new CliError('not taking over; nothing was stopped.');
+      parked = true;
+    }
+  }
+  const res = await fetch(`${base}/api/daemon/shutdown`, {
+    method: 'POST',
+    headers: { authorization, 'content-type': 'application/json' },
+    body: JSON.stringify({ parked }),
+    signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS * 5),
+  });
+  if (res.status === 404)
+    throw new CliError(
+      `the dispatchd serving this project (${which}) predates taking over; once \`dispatch runs\` shows nothing live, stop it (kill ${info.pid}) and run this again.`
+    );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as {
+      code?: string;
+      error?: string;
+      live?: string[];
+    };
+    // Work that began since the live-work read lands here.
+    throw body.code === 'busy' || body.code === 'parked'
+      ? busy(body.live?.join(', ') ?? '')
+      : new CliError(
+          `could not stop the dispatchd serving this project (${which}): ${body.error ?? res.status}`
+        );
+  }
+  const deadline = Date.now() + HANDOVER_EXIT_WAIT_MS;
+  while (pidAlive(info.pid) || readDaemonFile(rootDir)?.pid === info.pid) {
+    if (Date.now() >= deadline)
+      throw new CliError(
+        `the dispatchd serving this project (${which}) agreed to stop but is still running after ${HANDOVER_EXIT_WAIT_MS / 1000}s; it may have started work meanwhile. Check \`dispatch runs\`, then run this again.`
+      );
+    await sleep(100);
+  }
+  ctx.log(`Took over from the dispatchd that served this project (${which}).`);
 }
 
 const A2A_OVERRIDE_HELP = 'override for this boot; see `dispatch a2a listen`';
@@ -701,7 +926,11 @@ export function registerDaemonCommands(
       '--a2a-tls-key <file>',
       `A2A listener private key ${A2A_OVERRIDE_HELP}`
     )
-    .action((opts: ServeOptions) => {
+    .option(
+      '--replace',
+      'also take over a daemon the Dispatch app or another `dispatch serve` started (a background one is taken over without it); refused while it has live work'
+    )
+    .action(async (opts: ServeOptions) => {
       // requireInitialized, NOT requireStore: the latter demands
       // `.dispatch/tasks`, which a database-backed project does not have and
       // never will. Gating on it made this command refuse to start the daemon
@@ -709,27 +938,11 @@ export function registerDaemonCommands(
       // sends them here ("Start it with: dispatch serve") and this sent them
       // back with "not initialized".
       requireInitialized(ctx);
-      const launcher = resolveDaemonLauncher();
-      const args = [
-        ...launcher.leadingArgs,
-        ...serveArgs(projectRoot(ctx.cwd), opts),
-      ];
-
-      const result = spawnSync(launcher.cmd, args, {
-        stdio: 'inherit',
-        env: childEnvFor(launcher),
-      });
-      if (result.error !== undefined) {
-        if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
-          throw new CliError(
-            launcher.usesBun
-              ? 'dispatch serve requires bun (https://bun.sh)'
-              : `dispatch serve could not launch the daemon binary: ${launcher.cmd}`
-          );
-        }
-        throw result.error;
-      }
-      process.exitCode = result.status ?? 0;
+      process.exitCode = await serveInForeground(
+        ctx,
+        projectRoot(ctx.cwd),
+        opts
+      );
     });
 
   program

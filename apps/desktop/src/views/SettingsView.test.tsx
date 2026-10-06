@@ -12,6 +12,7 @@ import { Bot } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import {
+  ATTACHED_BACKGROUND_READ_ONLY,
   ATTACHED_READ_ONLY,
   NEEDS_DECIDE,
 } from '../components/settings/access';
@@ -114,7 +115,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     client: { fetchLedger: () => Promise.resolve([]) } as unknown as ApiClient,
   });
   render(<SettingsView activeProject={project} data={ledgerData} />);
-  for (const heading of ['Project', 'Team', 'This machine']) {
+  for (const heading of ['Project', 'Team', 'Connections', 'This machine']) {
     expect(screen.getByText(heading)).toBeDefined();
   }
   expect(navRows().map((row) => row.textContent)).toEqual([
@@ -126,11 +127,11 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Previews',
     'Notifications',
     'Members',
-    'Connected agents',
     'Board sync',
-    'Linear',
-    'A2A',
     'License',
+    'Linear',
+    'Connected agents',
+    'A2A',
     'Remotes',
     'Background',
     'Diff display',
@@ -677,6 +678,42 @@ describe('below the decide tier, config is read-only', () => {
     expect(screen.getByRole('note').textContent).toBe(ATTACHED_READ_ONLY);
     expect(screen.queryByText(NEEDS_DECIDE)).toBeNull();
     expect(headingLock('Limits')).toBe(ATTACHED_READ_ONLY);
+  });
+
+  // The restart that note asks for sits right under it.
+  test('an attached window offers the restart under the note', async () => {
+    const restart = mock(() => Promise.resolve());
+    renderAt(
+      tierData({
+        myTier: 'request',
+        attachedWithoutAppToken: true,
+        takeover: { background: false, busy: [], parked: 0, waiting: 0 },
+        handleRestartDaemon: restart,
+      }),
+      'agents'
+    );
+    fireEvent.click(screen.getByTestId('daemon-takeover'));
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+  });
+
+  test('says when the CLI started the daemon in the background', () => {
+    renderAt(
+      tierData({
+        myTier: 'request',
+        attachedWithoutAppToken: true,
+        takeover: { background: true, busy: null, parked: 0, waiting: 0 },
+      }),
+      'agents'
+    );
+    expect(screen.getByRole('note').textContent).toBe(
+      ATTACHED_BACKGROUND_READ_ONLY
+    );
+    expect(screen.getByTestId('daemon-takeover')).toBeTruthy();
+  });
+
+  test('a teammate below decide is offered no restart', () => {
+    renderAt(tierData({ myTier: 'request' }), 'agents');
+    expect(screen.queryByTestId('daemon-takeover')).toBeNull();
   });
 
   // No tier means no connection yet, not a refusal: the owner is not told to

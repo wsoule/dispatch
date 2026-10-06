@@ -84,11 +84,21 @@ describe('team setup in two actions', () => {
       const actions: string[] = [];
       const began = performance.now();
 
-      // Founder, action 1: start the team (Settings: "Start a team").
+      // Nowhere chosen: starting refuses rather than push to origin.
+      const unplaced = await post(ada, '/api/team/start', {
+        name: 'acme',
+        relayUrl: relay.url,
+        confirmed: true,
+      });
+      expect([unplaced.status, unplaced.body?.code]).toEqual([409, 'no_place']);
+      expect((await statusOf(ada)).state).toBe('off');
+
+      // Founder, action 1: start the team on this project's origin.
       const started = await act(ada, '/api/team/start', {
         name: 'acme',
         relayUrl: relay.url,
         confirmed: true,
+        remote: 'origin',
       });
       actions.push('ada: start');
       expect(started.restarted).toBe(true);
@@ -112,7 +122,10 @@ describe('team setup in two actions', () => {
       expect(decoded.handle).toBe('bob');
 
       // Joiner, action 1: paste the link.
-      const joined = await act(bob, '/api/team/join', { code: link });
+      const joined = await act(bob, '/api/team/join', {
+        code: link,
+        confirmRepo: true,
+      });
       actions.push('bob: join');
       expect([joined.restarted, joined.status, joined.body?.error]).toEqual([
         true,
@@ -187,7 +200,10 @@ describe('team setup in two actions', () => {
       const stale = (await post(ada, '/api/team/invite', { handle: 'bob' }))
         .body?.link as string;
       advance(c.members, 8 * 24 * 60 * 60 * 1000);
-      const late = await post(bob, '/api/team/join', { code: stale });
+      const late = await post(bob, '/api/team/join', {
+        code: stale,
+        confirmRepo: true,
+      });
       expect(late.status).toBe(400);
       expect(late.body?.error).toContain('expired');
 
@@ -195,23 +211,28 @@ describe('team setup in two actions', () => {
       const link = (await post(ada, '/api/team/invite', { handle: 'bob' })).body
         ?.link as string;
       const flipped = `${link.slice(0, -3)}${link.at(-3) === 'A' ? 'B' : 'A'}${link.slice(-2)}`;
-      const damaged = await post(bob, '/api/team/join', { code: flipped });
+      const damaged = await post(bob, '/api/team/join', {
+        code: flipped,
+        confirmRepo: true,
+      });
       expect(damaged.status).toBe(400);
       expect(damaged.body?.error).toContain('damaged');
 
       // The real link admits bob.
-      expect((await post(bob, '/api/team/join', { code: link })).status).toBe(
-        200
-      );
+      expect(
+        (await post(bob, '/api/team/join', { code: link, confirmRepo: true }))
+          .status
+      ).toBe(200);
       await settle(c.members);
       expect((await statusOf(bob)).state).toBe('member');
 
       // Reused: bob's second machine pastes the same link. It is never let in,
       // and ada's status says why.
       const bob2 = await c.add('bob2', { gitName: 'bob' });
-      expect((await post(bob2, '/api/team/join', { code: link })).status).toBe(
-        200
-      );
+      expect(
+        (await post(bob2, '/api/team/join', { code: link, confirmRepo: true }))
+          .status
+      ).toBe(200);
       await settle(c.members);
       expect((await statusOf(bob2)).state).toBe('joining');
       const reused = (await statusOf(ada)).problems.find((p) =>
@@ -227,9 +248,10 @@ describe('team setup in two actions', () => {
           ?.link as string
       );
       const forged = encodeTeamLink({ ...real, seed: randomBytes(32) });
-      expect((await post(cy, '/api/team/join', { code: forged })).status).toBe(
-        200
-      );
+      expect(
+        (await post(cy, '/api/team/join', { code: forged, confirmRepo: true }))
+          .status
+      ).toBe(200);
       await settle(c.members);
       expect((await statusOf(cy)).state).toBe('joining');
       expect(
@@ -242,7 +264,10 @@ describe('team setup in two actions', () => {
         team: 'f'.repeat(32),
         handle: 'bob',
       });
-      const other = await post(bob, '/api/team/join', { code: elsewhere });
+      const other = await post(bob, '/api/team/join', {
+        code: elsewhere,
+        confirmRepo: true,
+      });
       expect(other.status).toBe(400);
       expect(other.body?.error).toContain('another team');
     },
@@ -257,13 +282,17 @@ describe('team setup in two actions', () => {
       const [ada] = c.members as [Member];
       const task = await ada.handle.create('long job');
       await ada.handle.startRun(task);
-      const refused = await post(ada, '/api/team/start', { git: true });
+      const refused = await post(ada, '/api/team/start', {
+        git: true,
+        remote: 'origin',
+      });
       expect(refused.status).toBe(409);
       expect(refused.body?.code).toBe('busy');
       expect(String(refused.body?.error)).toContain('1 live run');
       expect((await statusOf(ada)).state).toBe('off');
       // A bad link is refused before anything restarts.
       const bad = await post(ada, '/api/team/join', {
+        confirmRepo: true,
         code: 'dispatch-team:xx',
       });
       expect(bad.status).toBe(400);
@@ -279,15 +308,18 @@ describe('team setup in two actions', () => {
       stops.push(c.stop);
       const [ada] = c.members as [Member];
       const [a, b] = await Promise.all([
-        post(ada, '/api/team/start', { git: true }),
-        post(ada, '/api/team/start', { git: true }),
+        post(ada, '/api/team/start', { git: true, remote: 'origin' }),
+        post(ada, '/api/team/start', { git: true, remote: 'origin' }),
       ]);
       expect([a.status, b.status]).toEqual([202, 202]);
       const meanwhile = await post(ada, '/api/tasks', { title: 'too soon' });
       expect(meanwhile.status).toBe(503);
       expect(String(meanwhile.body?.error)).toContain('restarting');
       // Back with sync on, the start goes through once.
-      const started = await act(ada, '/api/team/start', { git: true });
+      const started = await act(ada, '/api/team/start', {
+        git: true,
+        remote: 'origin',
+      });
       expect(started.status).toBe(200);
       expect((await statusOf(ada)).state).toBe('member');
       expect(

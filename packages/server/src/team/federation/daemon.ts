@@ -36,6 +36,7 @@ import { MemorySync } from './memory.js';
 import type { TeamMemoryPort } from './memory.js';
 import { DocSync } from './ops.js';
 import { Presence, trackWaiting } from './presence.js';
+import { syncGitFor } from './publicRepo.js';
 import { RelayFederationTransport } from './relay.js';
 import { RosterService } from './roster.js';
 import { FederationService } from './service.js';
@@ -233,7 +234,7 @@ export function buildFederation(deps: FederationDeps): Federation {
     deps.remoteUrl,
     deps.branch,
     ledger.replica,
-    deps.git
+    syncGitFor(deps.git, deps.syncDir, deps.remoteUrl)
   );
   const fed = new FedStore(
     ledger,

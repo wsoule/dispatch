@@ -37,7 +37,16 @@ import { registerDocTools, taskDocLines } from './docs.js';
 import { registerMemoryTools } from './memory.js';
 import { registerMessagingTools } from './messaging.js';
 import type { MessageBlockingTiming, ToolOutcome } from './toolKit.js';
-import { callingRunId, projectRoot, toolError, toolResult } from './toolKit.js';
+import {
+  callingRunId,
+  DEFAULT_PAGE_LIMIT,
+  pageInput,
+  pageOf,
+  pageOutput,
+  projectRoot,
+  toolError,
+  toolResult,
+} from './toolKit.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
 // (and core's ConfigError) via wrap() and turns it into an MCP tool-error
@@ -300,6 +309,12 @@ function noDaemonResult(): ToolOutcome {
   return toolResult({ runs: [], note: 'dispatchd not running' });
 }
 
+// A list tool's paging input (see pageOf).
+interface PageArgs {
+  limit?: number;
+  offset?: number;
+}
+
 // Proxies `GET /api/runs` from this project's dispatchd, if one is running
 // and healthy. Unlike every other tool in this file, `run_list` never
 // touches the filesystem directly — awareness of *other* agents' live runs
@@ -308,7 +323,7 @@ function noDaemonResult(): ToolOutcome {
 // half). The response shape is passed through as-is (RunMeta objects,
 // typed loosely here since @dispatch/mcp intentionally has no dependency on
 // @dispatch/server, which is Bun-only).
-async function runList(rootDir: string): Promise<ToolOutcome> {
+async function runList(rootDir: string, args: PageArgs): Promise<ToolOutcome> {
   const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
     return noDaemonResult();
@@ -321,7 +336,12 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
     if (!res.ok) return noDaemonResult();
     const runs = await res.json();
     if (!Array.isArray(runs)) return noDaemonResult();
-    return toolResult({ runs });
+    const page = pageOf(runs as unknown[], args);
+    return toolResult({
+      runs: page.items,
+      total: page.total,
+      nextOffset: page.nextOffset,
+    });
   } catch {
     return noDaemonResult();
   }
@@ -351,9 +371,24 @@ async function daemonDocs(
   return daemonRequest<TaskDoc[]>(daemon, path);
 }
 
+// A task list tool's result: one page of summaries and the store problems.
+function taskPage<T>(
+  tasks: readonly T[],
+  args: PageArgs,
+  problems: string[]
+): ToolOutcome {
+  const page = pageOf(tasks, args);
+  return toolResult({
+    tasks: page.items,
+    total: page.total,
+    nextOffset: page.nextOffset,
+    problems,
+  });
+}
+
 async function taskList(
   rootDir: string,
-  args: { status?: string; kind?: string; parent?: string }
+  args: { status?: string; kind?: string; parent?: string } & PageArgs
 ): Promise<ToolOutcome> {
   const route = await resolveStoreRoute(rootDir);
   if (route.via === 'refused') return toolError(route.message);
@@ -381,10 +416,7 @@ async function taskList(
     const suffix = `?${query.toString()}`;
     try {
       const docs = await daemonDocs(route.daemon, `/api/tasks${suffix}`);
-      return toolResult({
-        tasks: docs.map(toSummary),
-        problems: route.problems,
-      });
+      return taskPage(docs.map(toSummary), args, route.problems);
     } catch (err) {
       // The daemon died between the health probe and this read. A read is
       // safely repeatable and the files are right there, so fall through to
@@ -404,10 +436,7 @@ async function taskList(
     kind,
     parent: args.parent,
   });
-  return toolResult({
-    tasks: docs.map(toSummary),
-    problems: formatProblems(errors),
-  });
+  return taskPage(docs.map(toSummary), args, formatProblems(errors));
 }
 
 // A task's first-class comment thread (what people and agents said about it,
@@ -620,7 +649,7 @@ async function taskSave(
   return toolResult({ meta: doc.meta, body: doc.body });
 }
 
-async function taskNext(rootDir: string): Promise<ToolOutcome> {
+async function taskNext(rootDir: string, args: PageArgs): Promise<ToolOutcome> {
   const route = await resolveStoreRoute(rootDir);
   if (route.via === 'refused') return toolError(route.message);
 
@@ -636,14 +665,15 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
         route.daemon,
         '/api/tasks/ready'
       );
-      return toolResult({
-        tasks: docs.map((doc) =>
+      return taskPage(
+        docs.map((doc) =>
           doc.readiness === undefined
             ? toSummary(doc)
             : { ...toSummary(doc), readiness: doc.readiness }
         ),
-        problems: route.problems,
-      });
+        args,
+        route.problems
+      );
     } catch (err) {
       // Same reasoning as task_list: a dead daemon must not cost a read that
       // the files can answer.
@@ -653,7 +683,7 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
 
   const store = requireStore(rootDir);
   const { docs, errors } = store.listSafe();
-  return toolResult({
+  return taskPage(
     // Archived tasks dropped to match `/api/tasks/ready`, which filters them
     // via the cache's default query. Unlike task_list — where including them
     // preserves what a raw file scan always returned — the daemon is simply
@@ -663,9 +693,10 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
     // happened to be running.
     // The FULL set, archived included — readyTasks drops archived candidates
     // itself but needs them present to resolve blockers (see graph.ts).
-    tasks: readyTasks(docs, statusModelOf(loadConfig(rootDir))).map(toSummary),
-    problems: formatProblems(errors),
-  });
+    readyTasks(docs, statusModelOf(loadConfig(rootDir))).map(toSummary),
+    args,
+    formatProblems(errors)
+  );
 }
 
 // Adds a comment to a task's thread (the same records task_comments reads),
@@ -916,9 +947,13 @@ async function recordMutation(
 // fields stay plain strings (see task_save), so this is the only place an
 // agent learns the valid values before a call fails.
 const STATUS_PARAM_DOC =
-  'Built-in statuses: draft | ready | working | review | landing | landed | ' +
-  'dropped. A project may define its own set in .dispatch/config.yml, and ' +
-  'that set is what this is checked against.';
+  "A status name from this project's .dispatch/config.yml, which is what " +
+  'this is checked against; a board imported from Linear keeps its own ' +
+  'names (Backlog, Todo, In Progress, Done, …). Each status has a workflow ' +
+  'type (triage | backlog | unstarted | started | completed | canceled), and ' +
+  'Dispatch keys off the type and config `statusRoles`, never the name. ' +
+  'With no statuses configured the built-ins apply: draft | ready | working ' +
+  '| review | landing | landed | dropped.';
 
 // Registers every dispatch tool against a fixed root. Each call re-resolves the
 // store, config and daemon file, so a later init or daemon start is picked up.
@@ -937,8 +972,12 @@ export function registerDispatchTools(
     {
       title: 'List tasks',
       description:
-        'List tasks (metadata only — no body) optionally filtered by status, kind, or parent.',
+        'List tasks (metadata only — no body) optionally filtered by status, ' +
+        'kind, or parent, oldest first. Paged: at most `limit` (default ' +
+        `${DEFAULT_PAGE_LIMIT}) from \`offset\`; \`total\` counts every match and ` +
+        '`nextOffset` is the offset of the next page, null on the last.',
       inputSchema: {
+        ...pageInput,
         status: z.string().optional().describe(STATUS_PARAM_DOC),
         kind: z.string().optional().describe('task | epic'),
         parent: z
@@ -948,12 +987,15 @@ export function registerDispatchTools(
       },
       outputSchema: {
         tasks: z.array(z.object(taskSummaryShape)),
+        ...pageOutput,
         problems: z.array(z.string()),
       },
       annotations: { readOnlyHint: true },
     },
-    ({ status, kind, parent }) =>
-      wrapAsync(() => taskList(rootDir, { status, kind, parent }))
+    ({ status, kind, parent, limit, offset }) =>
+      wrapAsync(() =>
+        taskList(rootDir, { status, kind, parent, limit, offset })
+      )
   );
 
   server.registerTool(
@@ -999,9 +1041,10 @@ export function registerDispatchTools(
           .string()
           .optional()
           .describe(
-            `${STATUS_PARAM_DOC} working, review, landing and landed are ` +
-              'normally set by dispatchd as runs and the merge queue advance; ' +
-              'landed means merged.'
+            `${STATUS_PARAM_DOC} The statuses statusRoles names for ` +
+              'dispatched, review, landing and landed (built-in: working, ' +
+              'review, landing, landed) are normally set by dispatchd as runs ' +
+              'and the merge queue advance; the landed role means merged.'
           ),
         kind: z
           .string()
@@ -1104,7 +1147,12 @@ export function registerDispatchTools(
     {
       title: 'Ready work',
       description:
-        'List tasks ready to start now: kind task, status ready, every blocker landed or dropped. Priority-ordered.',
+        'List tasks ready to start now, priority-ordered: kind task (not a ' +
+        'container), not archived, in a status whose type is `unstarted` ' +
+        '(built-in: ready; on a Linear-imported board e.g. Todo), and every ' +
+        'blocker in a completed or canceled status. Paged: `limit` (default ' +
+        `${DEFAULT_PAGE_LIMIT}) and \`offset\`; \`nextOffset\` is null on the last page.`,
+      inputSchema: pageInput,
       outputSchema: {
         tasks: z.array(
           z.object({
@@ -1115,11 +1163,12 @@ export function registerDispatchTools(
             readiness: readinessShape.optional(),
           })
         ),
+        ...pageOutput,
         problems: z.array(z.string()),
       },
       annotations: { readOnlyHint: true },
     },
-    () => wrapAsync(() => taskNext(rootDir))
+    ({ limit, offset }) => wrapAsync(() => taskNext(rootDir, { limit, offset }))
   );
 
   server.registerTool(
@@ -1133,14 +1182,18 @@ export function registerDispatchTools(
         'declared or actually touched — before assuming exclusive access ' +
         'to the repo. Returns an empty list with a note when dispatchd ' +
         "isn't running — that's a normal, not-an-error response, not " +
-        'every project runs the daemon.',
+        'every project runs the daemon. Newest first and paged: at most ' +
+        `\`limit\` (default ${DEFAULT_PAGE_LIMIT}) from \`offset\`.`,
+      inputSchema: pageInput,
       outputSchema: {
         runs: z.array(z.record(z.string(), z.unknown())),
+        total: z.number().optional(),
+        nextOffset: z.number().nullable().optional(),
         note: z.string().optional(),
       },
       annotations: { readOnlyHint: true },
     },
-    () => runList(rootDir)
+    ({ limit, offset }) => runList(rootDir, { limit, offset })
   );
 
   server.registerTool(

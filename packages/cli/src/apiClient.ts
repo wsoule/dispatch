@@ -321,6 +321,20 @@ export interface Message {
   createdAt: string;
 }
 
+// Mirrors GET /api/agents/roster's rows (packages/server's listAgentRoster):
+// `remote` names a teammate's agent's machine, null for this one's, and is
+// absent when the daemon has no team.
+interface RosterAgent {
+  address: string;
+  displayName: string;
+  client: string;
+  status: 'pending' | 'approved' | 'revoked';
+  muted: boolean;
+  approvedBy: string | null;
+  createdAt: string;
+  remote?: string | null;
+}
+
 // Mirrors SendResult in packages/protocol/src/engine.ts.
 interface SendResult {
   message: Message;
@@ -403,8 +417,15 @@ async function request<T>(
     );
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new CliError(body.error ?? `request failed: ${res.status}`);
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+    };
+    throw new CliError(
+      body.error ?? `request failed: ${res.status}`,
+      1,
+      body.code
+    );
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -709,6 +730,8 @@ export interface ApiClient {
   // client on a human's token (the app token) to call these.
   /** Open blocking questions and gates addressed to a human. */
   openDecisions(): Promise<{ items: Message[] }>;
+  /** Every registered agent, this machine's and teammates' synced ones. */
+  listAgentRoster(): Promise<{ agents: RosterAgent[] }>;
   getMessage(id: string): Promise<Message>;
   /** The answer to a question, or null while it is open. */
   getAnswer(id: string): Promise<{ answer: Message | null }>;
@@ -818,7 +841,7 @@ export interface ApiClient {
   /** An invite for a handle, or an email (team.yml's handle for it). */
   inviteToTeam(handleOrEmail: string): Promise<TeamInvite>;
   /** Joins with a team link (or an older invite code). */
-  joinTeam(code: string): Promise<JoinedTeam>;
+  joinTeam(code: string, opts?: { confirmRepo?: boolean }): Promise<JoinedTeam>;
   recoverTeam(code: string): Promise<RosterAnswer>;
   newRecoveryCode(): Promise<{ recoveryCode: string }>;
   shareTeamLicense(): Promise<void>;
@@ -925,13 +948,21 @@ export interface TeamStatus {
     check: string | null;
   }[];
   check: string | null;
-  problems: { message: string; fix: string | null }[];
+  problems: {
+    message: string;
+    fix: string | null;
+  }[] /** True when the token's tier withheld teammates, checks and problems. */;
+  reduced?: true;
 }
 
 /** What `team start` sends; see POST /api/team/start. */
 interface StartTeamInput {
   name?: string;
   git?: boolean;
+  /** Where the team's board is kept: one of this project's remotes, or a
+   *  repository of its own. */
+  remote?: string;
+  repo?: string;
   relayUrl?: string;
   confirmed?: boolean;
   registrationToken?: string;
@@ -957,7 +988,7 @@ export interface TeamInvite extends RosterAnswer {
 }
 
 /** What joining answers: the team, who invited, and the optional check. */
-interface JoinedTeam extends RosterAnswer {
+export interface JoinedTeam extends RosterAnswer {
   team: { id: string; name: string | null };
   by?: string;
   check?: string;
@@ -1041,7 +1072,7 @@ export interface TeamKeys {
  *  `reason` (BoardSyncOffReason in packages/server/src/api.ts) is absent on
  *  daemons older than it. */
 export type SyncStatus =
-  | { enabled: false; reason?: 'files' | 'off' | 'not-started' }
+  | { enabled: false; reason?: 'files' | 'off' | 'not-started' | 'no-place' }
   | {
       enabled: true;
       replica: string;
@@ -1063,6 +1094,8 @@ export type SyncStatus =
       federationProblems?: { subject: string; message: string; at: string }[];
       /** On POST /now: the pass outran the daemon's wait and carries on. */
       running?: boolean;
+      /** config.yml names other sync settings than the running ones. */
+      restartRequired?: string;
     };
 
 /** Mirrors licenseView in packages/server/src/team/routes.ts. */
@@ -1207,6 +1240,7 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     getEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
     openDecisions: () => request(target, '/api/decisions/open'),
+    listAgentRoster: () => request(target, '/api/agents/roster'),
     getMessage: (id) =>
       request(target, `/api/messages/${encodeURIComponent(id)}`),
     getAnswer: (id) =>
@@ -1264,9 +1298,16 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         '/api/team/invite',
         jsonBody(who.includes('@') ? { email: who } : { handle: who })
       ),
-    joinTeam: (code) =>
+    joinTeam: (code, opts) =>
       afterSharingRestart(target, () =>
-        request(target, '/api/team/join', jsonBody({ code }))
+        request(
+          target,
+          '/api/team/join',
+          jsonBody({
+            code,
+            ...(opts?.confirmRepo === true ? { confirmRepo: true } : {}),
+          })
+        )
       ),
     recoverTeam: (code) =>
       request(target, '/api/team/recover', jsonBody({ code })),
@@ -1658,31 +1699,33 @@ export function createA2AApiClient(
 const SHARING_RESTART_WAIT_MS = 90_000;
 
 /**
- * Team start and join on a daemon with board sync off: it turns sync on,
- * answers `restarting`, and comes back on the same port with the same
- * tokens. This waits for sync to be on, then sends the same request once
- * more, so it stays one action for the person.
+ * Team start and join on a daemon with board sync off, or syncing somewhere
+ * other than the team: it turns sync on (or moves it), answers `restarting`,
+ * and comes back on the same port with the same tokens. This waits for sync
+ * to be on and sends the same request again, for as long as the daemon still
+ * answers `restarting`, so it stays one action for the person.
  */
 async function afterSharingRestart<T>(
   target: ApiTarget,
   send: () => Promise<T>
 ): Promise<T> {
-  const first = await send();
-  if ((first as { code?: unknown }).code !== 'restarting') return first;
+  let answer = await send();
   const until = Date.now() + SHARING_RESTART_WAIT_MS;
-  while (Date.now() < until) {
+  while ((answer as { code?: unknown }).code === 'restarting') {
+    if (Date.now() >= until)
+      throw new CliError(
+        'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
+      );
     await new Promise((resolve) => setTimeout(resolve, 250));
     try {
       const sync = await request<{ enabled?: boolean }>(
         target,
         '/api/board-sync'
       );
-      if (sync.enabled === true) return await send();
+      if (sync.enabled === true) answer = await send();
     } catch {
       // Down while it restarts; ask again.
     }
   }
-  throw new CliError(
-    'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
-  );
+  return answer;
 }

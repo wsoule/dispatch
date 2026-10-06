@@ -113,6 +113,9 @@ describe('a live daemon whose health check stalls', () => {
       expect(conn).toEqual({
         port: portOf(server),
         agentToken: 'test-agent-token',
+        pid: process.pid,
+        background: false,
+        startedBy: null,
       });
     } finally {
       await server.stop(true);

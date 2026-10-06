@@ -17,25 +17,33 @@ never change.
 ## The ready-work loop
 
 1. Call \`task_next\` to see tasks that are unblocked and ready to start (kind
-   \`task\`, status \`ready\`, every entry in \`blockedBy\` landed or dropped),
-   priority-ordered.
+   \`task\`, a status whose type is \`unstarted\`, every entry in
+   \`blockedBy\` in a completed or canceled status), priority-ordered. It
+   pages: pass \`offset: nextOffset\` for more, as with \`task_list\`.
 2. Pick one, do the work.
 3. Call \`task_comment\` as you make progress — it adds a comment to the
    task's thread, credited to you, so anyone (human or agent) can follow what
    happened. \`task_comments\` reads the thread back.
 4. Call \`task_save\` with the task's \`id\` and \`status\` to move it forward:
-   \`working\` while you are on it, \`review\` once the change is up for
-   review. \`landed\` means merged — when dispatchd runs the task, it sets
-   \`working\` through \`landed\` itself as the run and merge queue advance.
+   a started status while you are on it, the review status once the change is
+   up for review. When dispatchd runs the task, it writes those statuses
+   itself as the run and merge queue advance.
 
 ## Statuses are config-driven
 
-The built-in statuses are \`draft\`, \`ready\`, \`working\`, \`review\`,
-\`landing\`, \`landed\`, \`dropped\` (the old names — backlog, todo,
-in-progress, in-review, done, cancelled — are accepted as aliases), but a given
-repo's \`.dispatch/config.yml\` can define a different set — that file is
-always the source of truth. \`task_list\` and
-\`task_save\` validate \`status\` against it, not against this list.
+A repo's \`.dispatch/config.yml\` names its statuses, and that file is always
+the source of truth: \`task_list\` and \`task_save\` validate \`status\`
+against it. A board imported from Linear keeps Linear's names (Backlog, Todo,
+In Progress, In Review, Done, …). Each status has a workflow type — triage,
+backlog, unstarted, started, completed or canceled — and Dispatch keys off the
+type, never the name: unstarted is the ready queue, completed and canceled are
+done. \`statusRoles\` in the config names which status the machinery writes
+when a run is dispatched, goes to review, lands or is dropped.
+
+With no statuses configured, the built-ins apply: \`draft\` (backlog),
+\`ready\` (unstarted), \`working\`, \`review\`, \`landing\` (started),
+\`landed\` (completed) and \`dropped\` (canceled); the old names backlog,
+todo, in-progress, in-review, done and cancelled are accepted as aliases.
 
 ## Creating and updating tasks
 
@@ -57,8 +65,10 @@ valid fallback — just keep the YAML frontmatter's required fields (\`id\`,
 ## Talking to other agents and the human
 
 Everything goes through one message bus. Addresses are \`human:<handle>\`,
-\`task:<id>\` (its live run, else its next one), \`run:<id>\` (that session only)
-and \`channel:<name>\`.
+\`task:<id>\` (its live run, else its next one), \`run:<id>\` (that session only),
+\`agent:<owner>/<name>\` (a registered agent; \`agent_list\` lists them) and
+\`channel:<name>\`. To reach work on a teammate's machine, address its
+\`task:<id>\` or \`run:<id>\`: those cross machines.
 
 - **Ask the human**: \`msg_send\` with \`kind: "question"\`, \`blocking: true\`
   (and \`choices\` for a pick-one). It waits up to 30 minutes for the answer.

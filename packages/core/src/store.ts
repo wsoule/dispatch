@@ -14,7 +14,7 @@ import { generateTaskId, isTaskId, taskIdFromFilename } from './ids.js';
 import { canonicalKind } from './kinds.js';
 import type { TaskKindInput } from './kinds.js';
 import { slugify } from './slug.js';
-import { canonicalStatus } from './status.js';
+import { CANONICAL_STATUSES, canonicalStatus } from './status.js';
 import type { TaskStoreBackend } from './storeBackend.js';
 import {
   appendActivity,
@@ -318,14 +318,35 @@ export function applyUpdatePatch(
   return { meta, body };
 }
 
-// Writes the starter `.dispatch/config.yml` if the project has none. Config
-// stays a plain committable file whichever backend holds the tasks, so both
-// initializers call this rather than each spelling out the default.
-export function ensureProjectConfig(rootDir: string): void {
+// The starter config.yml. A board that already uses statuses outside the
+// built-ins keeps them, after the built-ins the machinery writes; their types
+// and roles are left for the team to set rather than guessed.
+function starterConfig(inUse: readonly string[]): string {
+  const builtIn = CANONICAL_STATUSES as readonly string[];
+  const custom = [...new Set(inUse.map(canonicalStatus))].filter(
+    (name) => !builtIn.includes(name)
+  );
+  if (custom.length === 0) return DEFAULT_CONFIG;
+  const names = [...builtIn, ...custom].map((name) => JSON.stringify(name));
+  return `statuses: [${names.join(', ')}]\nautoCommit: true\n`;
+}
+
+/** The statuses a project's existing tasks use, for its starter config. */
+export function boardStatuses(store: TaskStorePort): string[] {
+  return store.listSafe().docs.map((doc) => doc.meta.status);
+}
+
+// Writes the starter `.dispatch/config.yml` if the project has none; an
+// existing one is never touched. Config stays a plain committable file
+// whichever backend holds the tasks, so both initializers call this.
+export function ensureProjectConfig(
+  rootDir: string,
+  statuses: readonly string[] = []
+): void {
   const dir = join(rootDir, DISPATCH_DIR);
   mkdirSync(dir, { recursive: true });
   const cfg = join(dir, 'config.yml');
-  if (!existsSync(cfg)) writeFileSync(cfg, DEFAULT_CONFIG);
+  if (!existsSync(cfg)) writeFileSync(cfg, starterConfig(statuses));
 }
 
 // What `.dispatch/.gitignore` excludes, per backend.
@@ -461,8 +482,9 @@ export class TaskStore implements TaskStorePort {
 
   static init(rootDir: string): TaskStore {
     const store = new TaskStore(rootDir);
+    const statuses = store.isInitialized() ? boardStatuses(store) : [];
     mkdirSync(store.tasksDir, { recursive: true });
-    ensureProjectConfig(rootDir);
+    ensureProjectConfig(rootDir, statuses);
     return store;
   }
 

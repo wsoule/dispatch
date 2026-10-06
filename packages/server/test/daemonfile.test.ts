@@ -15,6 +15,8 @@ import {
   daemonFilePath,
   readDaemonFile,
   removeDaemonFile,
+  RootServedError,
+  waitForRootReleased,
   writeDaemonFile,
 } from '../src/daemonfile.js';
 
@@ -190,6 +192,14 @@ describe('assertRootNotServed', () => {
       await expect(assertRootNotServed(rootDir)).rejects.toThrow(
         /already serving .* on port \d+/
       );
+      // A typed refusal dispatchd prints as one line, naming the CLI's flag.
+      const refusal = await assertRootNotServed(rootDir).catch(
+        (e: unknown) => e
+      );
+      expect(refusal).toBeInstanceOf(RootServedError);
+      expect((refusal as Error).message).toContain(
+        '`dispatch serve --replace`'
+      );
     } finally {
       await server.stop(true);
     }
@@ -241,6 +251,56 @@ describe('assertRootNotServed', () => {
       await expect(assertRootNotServed(rootDir)).resolves.toBeUndefined();
     } finally {
       await server.stop(true);
+    }
+  });
+});
+
+// `--replace`/`--init` boots wait for the old daemon's pid to exit and never
+// serve beside it (2026-09-07). A real child process stands in for it.
+describe('waitForRootReleased', () => {
+  async function spawnHealthServer(): Promise<{
+    proc: ReturnType<typeof Bun.spawn>;
+    port: number;
+  }> {
+    const proc = Bun.spawn(
+      [
+        'bun',
+        '-e',
+        'const s = Bun.serve({ port: 0, fetch: () => Response.json({ ok: true }) }); console.log(s.port);',
+      ],
+      { stdout: 'pipe' }
+    );
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    const { value } = await reader.read();
+    reader.releaseLock();
+    return { proc, port: Number(new TextDecoder().decode(value).trim()) };
+  }
+
+  it('returns at once when nothing live serves the root', async () => {
+    await expect(waitForRootReleased(rootDir, 100)).resolves.toBeUndefined();
+  });
+
+  it('refuses while the old pid is alive, and boots once it exits', async () => {
+    const { proc, port } = await spawnHealthServer();
+    try {
+      writeDaemonFile({
+        rootDir,
+        port,
+        pid: proc.pid,
+        startedAt: '2026-10-06T00:00:00Z',
+        agentToken: 'a'.repeat(64),
+      });
+      const refused = await waitForRootReleased(rootDir, 300).catch(
+        (e: unknown) => e
+      );
+      expect(refused).toBeInstanceOf(RootServedError);
+      expect((refused as Error).message).toContain(`pid ${proc.pid}`);
+
+      const waiting = waitForRootReleased(rootDir, 10_000);
+      setTimeout(() => proc.kill(), 200);
+      await expect(waiting).resolves.toBeUndefined();
+    } finally {
+      proc.kill();
     }
   });
 });

@@ -1,6 +1,7 @@
 // Every tool the dispatch MCP server registers. @dispatch/mcp's tests hold its
 // registrations to this list; executors that gate MCP tools by name use it.
 export const DISPATCH_MCP_TOOLS = [
+  'agent_list',
   'channel_join',
   'channel_leave',
   'channel_list',
@@ -33,6 +34,7 @@ export const DISPATCH_MCP_TOOLS = [
 // The messaging subset of DISPATCH_MCP_TOOLS. Executors auto-allow these:
 // gating one would make a human approve a question before seeing it.
 export const DISPATCH_MESSAGING_TOOLS = [
+  'agent_list',
   'channel_join',
   'channel_leave',
   'channel_list',
