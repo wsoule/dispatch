@@ -1,10 +1,12 @@
 import type {
   GlobalView,
   NavAction,
+  NavState,
   ProjectView,
   SettingsPage,
   TaskTab,
 } from './appNav';
+import { initialNavState, navReducer } from './appNav';
 
 // Two views' navigation: App dispatches every legacy NavAction here as well as to
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
@@ -13,11 +15,7 @@ export type MainView = 'overseer' | 'tasks';
 export type TasksMode = 'list' | 'graph';
 
 /** Settings' own pages plus the three global views that fold into it. */
-export type TwoViewsSettingsPage =
-  | SettingsPage
-  | 'usage'
-  | 'runs'
-  | 'developer';
+type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs' | 'developer';
 
 /** Views with no Two views home yet; they render a door to the classic layout. */
 export type ClassicOnlyView = Extract<
@@ -53,7 +51,7 @@ export type TasksPage =
   | { kind: 'classic'; view: ClassicOnlyView };
 
 /** A drawer over either view; it never changes the view underneath. */
-export type Peek =
+type Peek =
   | { kind: 'thread'; messageId: string }
   | { kind: 'task'; taskId: string };
 
@@ -332,4 +330,34 @@ export function twoViewsReducer(
       return unhandled;
     }
   }
+}
+
+/** Both layouts' navigation, moved by one dispatch so either can render at any time. */
+export interface AppNavState {
+  nav: NavState;
+  twoViews: TwoViewsState;
+}
+
+export const initialAppNavState: AppNavState = {
+  nav: initialNavState,
+  twoViews: initialTwoViewsState,
+};
+
+function isTwoViewsAction(
+  action: NavAction | TwoViewsAction
+): action is TwoViewsAction {
+  return action.type.startsWith('tv/');
+}
+
+export function appNavReducer(
+  state: AppNavState,
+  action: NavAction | TwoViewsAction
+): AppNavState {
+  const nav = isTwoViewsAction(action)
+    ? state.nav
+    : navReducer(state.nav, action);
+  const twoViews = twoViewsReducer(state.twoViews, action);
+  return nav === state.nav && twoViews === state.twoViews
+    ? state
+    : { nav, twoViews };
 }

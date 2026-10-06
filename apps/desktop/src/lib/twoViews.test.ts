@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 
 import type { GlobalView, NavAction, ProjectView } from './appNav';
 import {
+  appNavReducer,
   globalViewDestination,
+  initialAppNavState,
   initialTwoViewsState,
   projectViewDestination,
   type TwoViewsAction,
@@ -335,5 +337,29 @@ describe('twoViewsReducer', () => {
         initialTwoViewsState
       );
     }
+  });
+});
+
+describe('appNavReducer', () => {
+  test('a legacy action moves both layouts', () => {
+    const state = appNavReducer(initialAppNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    expect(state.nav.projectView).toBe('task');
+    expect(state.twoViews.tasksPage).toMatchObject({ kind: 'task' });
+  });
+
+  test('a Two views action leaves Classic alone', () => {
+    const state = appNavReducer(initialAppNavState, { type: 'tv/showTasks' });
+    expect(state.nav).toBe(initialAppNavState.nav);
+    expect(state.twoViews.mainView).toBe('tasks');
+  });
+
+  test('an action neither layout acts on keeps the same state', () => {
+    // A tab change with no task open is a no-op for both reducers.
+    expect(
+      appNavReducer(initialAppNavState, { type: 'setTaskTab', tab: 'review' })
+    ).toBe(initialAppNavState);
   });
 });
