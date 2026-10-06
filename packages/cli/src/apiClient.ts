@@ -321,6 +321,20 @@ export interface Message {
   createdAt: string;
 }
 
+// Mirrors GET /api/agents/roster's rows (packages/server's listAgentRoster):
+// `remote` names a teammate's agent's machine, null for this one's, and is
+// absent when the daemon has no team.
+interface RosterAgent {
+  address: string;
+  displayName: string;
+  client: string;
+  status: 'pending' | 'approved' | 'revoked';
+  muted: boolean;
+  approvedBy: string | null;
+  createdAt: string;
+  remote?: string | null;
+}
+
 // Mirrors SendResult in packages/protocol/src/engine.ts.
 interface SendResult {
   message: Message;
@@ -709,6 +723,8 @@ export interface ApiClient {
   // client on a human's token (the app token) to call these.
   /** Open blocking questions and gates addressed to a human. */
   openDecisions(): Promise<{ items: Message[] }>;
+  /** Every registered agent, this machine's and teammates' synced ones. */
+  listAgentRoster(): Promise<{ agents: RosterAgent[] }>;
   getMessage(id: string): Promise<Message>;
   /** The answer to a question, or null while it is open. */
   getAnswer(id: string): Promise<{ answer: Message | null }>;
@@ -1207,6 +1223,7 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     getEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
     openDecisions: () => request(target, '/api/decisions/open'),
+    listAgentRoster: () => request(target, '/api/agents/roster'),
     getMessage: (id) =>
       request(target, `/api/messages/${encodeURIComponent(id)}`),
     getAnswer: (id) =>
