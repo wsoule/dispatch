@@ -1,3 +1,4 @@
+import { guardPublicUrl } from '@dispatch-foo/a2a';
 import {
   DEFAULT_SYNC,
   loadConfig,
@@ -19,7 +20,11 @@ import {
 } from '../../api/http.js';
 import type { AuthTier } from '../../tiers.js';
 import { tierAllows } from '../../tiers.js';
-import { checkLinkRemote } from '../links/remote.js';
+import {
+  checkLinkRemote,
+  redactRemotes,
+  remoteHostUrl,
+} from '../links/remote.js';
 import { readRoster } from '../routes.js';
 import { capsOf } from './caps.js';
 import {
@@ -1053,6 +1058,40 @@ function linkMove(link: TeamLink): SyncMove | null {
   };
 }
 
+// An invite's repo is chosen by whoever made the link, so one on this machine
+// or its private network (or unresolvable) needs the joiner's explicit
+// `confirmRepo: true`, sent with that same code, before sync uses it. Null
+// when it may go ahead.
+async function inviteRepoConsent(
+  move: SyncMove | null,
+  body: Body
+): Promise<Response | null> {
+  if (move === null || !('repo' in move.place)) return null;
+  const repo = move.place.repo;
+  if (body.confirmRepo === true) return null;
+  const host = remoteHostUrl(repo);
+  let why: string | null = null;
+  if (host === null) why = 'a path on this machine';
+  else {
+    try {
+      await guardPublicUrl(`https://${new URL(host).hostname}/`, {
+        field: 'invite repo',
+      });
+    } catch {
+      why = 'a private, local or unresolvable host';
+    }
+  }
+  if (why === null) return null;
+  return jsonResponse(
+    {
+      error: `This invite keeps the team's board at ${redactRemotes(repo)}, ${why}. Join only if you expected that: confirm this repo to go ahead.`,
+      code: 'confirm_repo',
+      repo,
+    },
+    409
+  );
+}
+
 // Where `team start` was told to keep the board, or null.
 function startMove(body: Body): SyncMove | null {
   const { repo, remote } = body;
@@ -1109,6 +1148,8 @@ async function elsewhere(
       const link = decodeTeamLink(code);
       checkLink(ctx, link, fedCtx.now());
       want = linkMove(link);
+      const consent = await inviteRepoConsent(want, body);
+      if (consent !== null) return consent;
     } else want = startMove(body);
   } catch (err) {
     if (err instanceof RosterError)
@@ -1198,6 +1239,10 @@ async function shareFirst(
       },
       409
     );
+  if (action === 'join') {
+    const consent = await inviteConsentFor(ctx, body);
+    if (consent !== null) return consent;
+  }
   // A link's shape, expiry and handle are checked before sync is touched.
   return await restartWith(ctx, (now) => {
     if (action === 'start') return startMove(body);
@@ -1208,6 +1253,27 @@ async function shareFirst(
     checkLink(ctx, link, now);
     return linkMove(link);
   });
+}
+
+// The consent check for a join while sync is off, ahead of the restart (its
+// host lookup cannot run inside restartWith's synchronous precheck). A link
+// the precheck would refuse anyway is left to refuse there.
+async function inviteConsentFor(
+  ctx: ApiContext,
+  body: Body
+): Promise<Response | null> {
+  const code = typeof body.code === 'string' ? body.code.trim() : '';
+  if (code === '' || code.startsWith('di1.')) return null;
+  let move: SyncMove | null;
+  try {
+    const link = decodeTeamLink(code);
+    checkLink(ctx, link, new Date());
+    move = linkMove(link);
+  } catch (err) {
+    if (err instanceof RosterError) return null;
+    throw err;
+  }
+  return await inviteRepoConsent(move, body);
 }
 
 // A link this machine may join with: not expired, and for its handle.

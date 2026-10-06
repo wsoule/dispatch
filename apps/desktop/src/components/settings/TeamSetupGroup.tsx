@@ -1,4 +1,5 @@
 import type { TeamInvite, TeamStatus } from '@dispatch/client';
+import { ApiError } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -55,6 +56,12 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
   const [invite, setInvite] = useState<TeamInvite | null>(null);
   const [link, setLink] = useState('');
   const [check, setCheck] = useState<string | null>(null);
+  // An invite whose board repo is local or private waits here, with the
+  // daemon's warning, until the person joins anyway or cancels.
+  const [repoWarning, setRepoWarning] = useState<{
+    code: string;
+    message: string;
+  } | null>(null);
 
   // Runs one team action, then reads the status (and the details) again.
   async function act(change: () => Promise<void>) {
@@ -72,6 +79,28 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Joins with a pasted link; `confirm_repo` is held for the person to decide.
+  function join(code: string, confirmRepo = false) {
+    if (client === null) return;
+    const api = client;
+    void act(async () => {
+      try {
+        const joined = confirmRepo
+          ? await api.joinTeam(code, { confirmRepo: true })
+          : await api.joinTeam(code);
+        setLink('');
+        setRepoWarning(null);
+        setCheck(joined.check ?? null);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'confirm_repo') {
+          setRepoWarning({ code, message: err.message });
+          return;
+        }
+        throw err;
+      }
+    });
   }
 
   if (client === null || status.data === undefined) return null;
@@ -247,11 +276,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
                 e.preventDefault();
                 const pasted = link.trim();
                 if (pasted === '') return;
-                void act(async () => {
-                  const joined = await api.joinTeam(pasted);
-                  setLink('');
-                  setCheck(joined.check ?? null);
-                });
+                join(pasted);
               }}
             >
               <Input
@@ -274,6 +299,37 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
                 Join
               </Button>
             </form>
+          }
+        />
+      )}
+      {repoWarning !== null && (
+        <SettingsRow
+          title="Check where this team keeps its board"
+          subtitle={
+            <span data-testid="team-join-repo-warning">
+              {repoWarning.message}
+            </span>
+          }
+          control={
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setRepoWarning(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid="team-join-confirm-repo"
+                disabled={busy}
+                onClick={() => join(repoWarning.code, true)}
+              >
+                Join anyway
+              </Button>
+            </div>
           }
         />
       )}

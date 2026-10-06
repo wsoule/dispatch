@@ -1,4 +1,5 @@
 import type { TeamStatus } from '@dispatch/client';
+import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
@@ -204,6 +205,47 @@ describe('TeamSetupGroup', () => {
       )
     );
     expect(c.joinTeam).toHaveBeenCalledWith('dispatch-team:LINK');
+  });
+
+  // The invite chose a local or private repo: say so, and join only on a yes.
+  test('holds a link whose board repo is local until Join anyway', async () => {
+    const c = client(status());
+    c.joinTeam
+      .mockImplementationOnce(() =>
+        Promise.reject(
+          new ApiError(
+            "This invite keeps the team's board at /srv/board.git, a path on this machine.",
+            409,
+            'confirm_repo'
+          )
+        )
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          team: { id: 'a'.repeat(32), name: 'acme' },
+          by: 'ada',
+          check: '654 321',
+        })
+      );
+    mount(c, 'operator');
+    fireEvent.change(await screen.findByLabelText('Invite link'), {
+      target: { value: 'dispatch-team:LINK' },
+    });
+    fireEvent.click(screen.getByTestId('team-join'));
+    expect(
+      (await screen.findByTestId('team-join-repo-warning')).textContent
+    ).toContain('/srv/board.git');
+    expect(screen.queryByTestId('team-join-check')).toBeNull();
+    fireEvent.click(screen.getByTestId('team-join-confirm-repo'));
+    await waitFor(() =>
+      expect(screen.getByTestId('team-join-check').textContent).toContain(
+        '654 321'
+      )
+    );
+    expect(c.joinTeam).toHaveBeenLastCalledWith('dispatch-team:LINK', {
+      confirmRepo: true,
+    });
+    expect(screen.queryByTestId('team-join-repo-warning')).toBeNull();
   });
 
   test('while a join waits to be let in, it offers no second join or start', async () => {

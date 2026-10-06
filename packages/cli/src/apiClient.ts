@@ -417,8 +417,15 @@ async function request<T>(
     );
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new CliError(body.error ?? `request failed: ${res.status}`);
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+    };
+    throw new CliError(
+      body.error ?? `request failed: ${res.status}`,
+      1,
+      body.code
+    );
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -834,7 +841,7 @@ export interface ApiClient {
   /** An invite for a handle, or an email (team.yml's handle for it). */
   inviteToTeam(handleOrEmail: string): Promise<TeamInvite>;
   /** Joins with a team link (or an older invite code). */
-  joinTeam(code: string): Promise<JoinedTeam>;
+  joinTeam(code: string, opts?: { confirmRepo?: boolean }): Promise<JoinedTeam>;
   recoverTeam(code: string): Promise<RosterAnswer>;
   newRecoveryCode(): Promise<{ recoveryCode: string }>;
   shareTeamLicense(): Promise<void>;
@@ -981,7 +988,7 @@ export interface TeamInvite extends RosterAnswer {
 }
 
 /** What joining answers: the team, who invited, and the optional check. */
-interface JoinedTeam extends RosterAnswer {
+export interface JoinedTeam extends RosterAnswer {
   team: { id: string; name: string | null };
   by?: string;
   check?: string;
@@ -1291,9 +1298,16 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         '/api/team/invite',
         jsonBody(who.includes('@') ? { email: who } : { handle: who })
       ),
-    joinTeam: (code) =>
+    joinTeam: (code, opts) =>
       afterSharingRestart(target, () =>
-        request(target, '/api/team/join', jsonBody({ code }))
+        request(
+          target,
+          '/api/team/join',
+          jsonBody({
+            code,
+            ...(opts?.confirmRepo === true ? { confirmRepo: true } : {}),
+          })
+        )
       ),
     recoverTeam: (code) =>
       request(target, '/api/team/recover', jsonBody({ code })),

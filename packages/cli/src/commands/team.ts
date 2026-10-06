@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 
 import type {
   ApiClient,
+  JoinedTeam,
   RosterAnswer,
   TeamInvite,
   TeamKeys,
@@ -133,6 +134,46 @@ function describeTeamStatus(status: TeamStatus): string[] {
 }
 
 // Asks a yes/no question on a terminal; false when nobody can answer.
+// Joins, and when the daemon answers `confirm_repo` (the invite keeps the
+// board on a local path or private host) says where and asks before
+// retrying with consent; `--accept-repo` answers yes without a terminal.
+async function joinConfirmingRepo(
+  ctx: CliContext,
+  api: ApiClient,
+  code: string,
+  accepted: boolean
+): Promise<JoinedTeam> {
+  try {
+    return await api.joinTeam(code);
+  } catch (err) {
+    if (!(err instanceof CliError) || err.code !== 'confirm_repo') throw err;
+    ctx.log(err.message);
+    const yes =
+      accepted ||
+      (await (ctx.confirm ?? confirmNo)('Join and sync with that repo?'));
+    if (!yes)
+      throw new CliError(
+        'Not joined. Ask whoever invited you where the board is kept, or run this again with --accept-repo.'
+      );
+    return await api.joinTeam(code, { confirmRepo: true });
+  }
+}
+
+// Like defaultConfirm, but no is the default: this guards a risk.
+async function confirmNo(question: string): Promise<boolean> {
+  if (process.stdin.isTTY !== true) return false;
+  process.stderr.write(`${question} [y/N] `);
+  const rl = createInterface({ input: process.stdin, terminal: false });
+  try {
+    const answer = await new Promise<string>((resolve) =>
+      rl.once('line', resolve)
+    );
+    return /^y/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+
 async function defaultConfirm(question: string): Promise<boolean> {
   if (process.stdin.isTTY !== true) return false;
   process.stderr.write(`${question} [Y/n] `);
@@ -368,12 +409,16 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
     .description(
       'Join a team with the link a teammate sent you, pasted at the prompt (or piped in)'
     )
+    .option(
+      '--accept-repo',
+      "join even when the invite's board repo is on this machine or a private network"
+    )
     .option(tokenOption, tokenHelp)
     .option('--json')
     .action(
       async (
         given: string | undefined,
-        opts: { token?: string; json?: boolean }
+        opts: { token?: string; json?: boolean; acceptRepo?: boolean }
       ) => {
         // M2: an invite is a secret, so it is never taken from argv, where
         // shell history and ps keep it.
@@ -385,7 +430,12 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
         // person has pasted a secret.
         const api = await client(opts, 'dispatch team join');
         const code = await readSecret(ctx, 'Invite link: ');
-        const joined = await api.joinTeam(code);
+        const joined = await joinConfirmingRepo(
+          ctx,
+          api,
+          code,
+          opts.acceptRepo === true
+        );
         if (opts.json === true) {
           ctx.log(JSON.stringify(joined, null, 2));
           return;

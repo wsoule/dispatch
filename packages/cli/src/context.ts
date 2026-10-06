@@ -31,7 +31,9 @@ export interface CliContext {
 export class CliError extends Error {
   constructor(
     message: string,
-    readonly exitCode: number = 1
+    readonly exitCode: number = 1,
+    /** The daemon's stable error `code`, when the failure came from one. */
+    readonly code?: string
   ) {
     super(message);
     this.name = 'CliError';

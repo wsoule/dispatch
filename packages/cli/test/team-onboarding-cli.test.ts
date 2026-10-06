@@ -22,6 +22,8 @@ let server: ReturnType<typeof Bun.serve>;
 let posted: { path: string; body: unknown }[];
 let syncOn = true;
 let statusAuth: (string | null)[];
+// When set, a join without confirmRepo is held as the daemon holds a local repo.
+let holdRepo = false;
 const originalHome = process.env.DISPATCH_HOME;
 const originalToken = process.env.DISPATCH_APP_TOKEN;
 
@@ -97,6 +99,7 @@ beforeEach(async () => {
   posted = [];
   answers = [];
   syncOn = true;
+  holdRepo = false;
   statusAuth = [];
   ctx = {
     cwd: root,
@@ -135,7 +138,21 @@ beforeEach(async () => {
       }
       if (url.pathname === '/api/board-sync')
         return Response.json({ enabled: syncOn });
-      posted.push({ path: url.pathname, body: await req.json() });
+      const body = (await req.json()) as Record<string, unknown>;
+      posted.push({ path: url.pathname, body });
+      if (
+        holdRepo &&
+        url.pathname === '/api/team/join' &&
+        body.confirmRepo !== true
+      )
+        return Response.json(
+          {
+            error:
+              "This invite keeps the team's board at /srv/board.git, a path on this machine.",
+            code: 'confirm_repo',
+          },
+          { status: 409 }
+        );
       // Sync off: the first start or join turns it on and restarts.
       if (
         !syncOn &&
@@ -245,6 +262,37 @@ describe('team setup from the CLI', () => {
     const text = lines.join('\n');
     expect(text).toContain("Joined team 'acme'");
     expect(text).toContain('123 456');
+  });
+
+  it('join says where an invite keeps a local board and asks before using it', async () => {
+    holdRepo = true;
+    await run('team', 'join');
+    expect(asked).toEqual(['Invite link: ', 'Join and sync with that repo?']);
+    expect(posted.map((p) => p.body)).toEqual([
+      { code: 'dispatch-team:LINK' },
+      { code: 'dispatch-team:LINK', confirmRepo: true },
+    ]);
+    expect(lines.join('\n')).toContain('/srv/board.git');
+  });
+
+  it('join refuses a held repo when the answer is no, and --accept-repo skips the question', async () => {
+    holdRepo = true;
+    ctx.confirm = (question) => {
+      asked.push(question);
+      return Promise.resolve(false);
+    };
+    const err = await run('team', 'join').catch((e: unknown) => e);
+    expect(String(err)).toContain('Not joined');
+    expect(posted).toHaveLength(1);
+
+    asked = [];
+    posted = [];
+    await run('team', 'join', '--accept-repo');
+    expect(asked).toEqual(['Invite link: ']);
+    expect(posted.at(-1)?.body).toEqual({
+      code: 'dispatch-team:LINK',
+      confirmRepo: true,
+    });
   });
 
   it('status prints the line, teammates with their checks, and each fix', async () => {

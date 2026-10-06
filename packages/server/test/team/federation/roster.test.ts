@@ -189,6 +189,13 @@ describe('joining and admission', () => {
     feed(ada, bob);
     feed(bob, ada);
     expect(ada.roster.view()?.invitedBy.get(bob.fed.replica)).toBe('ada');
+    // Re-sent while bob still waits (sync moved under him): a no-op, no new op.
+    const head = bob.fed.head();
+    expect(bob.roster.join(code).teamId).toBe(ada.roster.view()?.teamId ?? '');
+    expect(bob.fed.head()).toEqual(head);
+    // Once bob has seen himself admitted, the same link is a conflict.
+    ada.roster.admit(bob.fed.replica, { fingerprint: fp(bob) });
+    feed(ada, bob);
     expect(() => bob.roster.join(code)).toThrow(
       expect.objectContaining({ code: 'conflict' })
     );

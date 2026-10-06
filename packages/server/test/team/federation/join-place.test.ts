@@ -63,6 +63,40 @@ const config = (m: Member) =>
   readFileSync(join(m.handle.root, '.dispatch', 'config.yml'), 'utf8');
 
 describe('joining from a project that syncs elsewhere', () => {
+  // The invite chose this repo, not the joiner: a local path waits for an
+  // explicit yes, and nothing is written or pushed before it.
+  it(
+    'holds an invite whose repo is a local path until the joiner confirms it',
+    async () => {
+      const c = await cluster(['ada']);
+      stops.push(c.stop);
+      const [ada] = c.members as [Member];
+      await post(ada, '/api/team/start', { name: 'acme', git: true });
+      const link = (await post(ada, '/api/team/invite', { handle: 'bob' })).body
+        ?.link as string;
+
+      const wrong = otherRepo();
+      const bob = await c.add('bob', { syncRepo: wrong });
+      const before = config(bob);
+      const held = await post(bob, '/api/team/join', { code: link });
+      expect(held.status).toBe(409);
+      expect(held.body?.code).toBe('confirm_repo');
+      expect(String(held.body?.error)).toContain('a path on this machine');
+      expect(config(bob)).toBe(before);
+      expect((await bob.handle.api('/api/team/status')).body?.state).toBe(
+        'none'
+      );
+
+      const joined = await act(bob, '/api/team/join', {
+        code: link,
+        confirmRepo: true,
+      });
+      expect([joined.status, joined.body?.error]).toEqual([200, undefined]);
+      expect(config(bob)).toContain(`repo: ${c.remote}`);
+    },
+    SLOW
+  );
+
   it(
     'moves sync to the repo and branch the invite names, and the admin lets it in',
     async () => {
@@ -77,7 +111,10 @@ describe('joining from a project that syncs elsewhere', () => {
 
       const wrong = otherRepo();
       const bob = await c.add('bob', { syncRepo: wrong });
-      const joined = await act(bob, '/api/team/join', { code: link });
+      const joined = await act(bob, '/api/team/join', {
+        code: link,
+        confirmRepo: true,
+      });
       expect(joined.restarts).toBeGreaterThan(0);
       expect([joined.status, joined.body?.error]).toEqual([200, undefined]);
       expect(joined.body?.team).toMatchObject({ name: 'acme' });
@@ -113,7 +150,10 @@ describe('joining from a project that syncs elsewhere', () => {
       await bob.handle.sync();
       const before = config(bob);
 
-      const refused = await post(bob, '/api/team/join', { code: link });
+      const refused = await post(bob, '/api/team/join', {
+        code: link,
+        confirmRepo: true,
+      });
       expect(refused.status).toBe(409);
       expect(String(refused.body?.error)).toContain(`sync.repo: ${c.remote}`);
       expect(String(refused.body?.error)).toContain('nothing changed');
@@ -140,9 +180,10 @@ describe('joining from a project that syncs elsewhere', () => {
       const wrong = otherRepo();
       const bob = await c.add('bob', { syncRepo: wrong });
       const stale = encodeTeamLink({ ...decodeTeamLink(link), remote: wrong });
-      expect((await post(bob, '/api/team/join', { code: stale })).status).toBe(
-        200
-      );
+      expect(
+        (await post(bob, '/api/team/join', { code: stale, confirmRepo: true }))
+          .status
+      ).toBe(200);
       await bob.handle.sync();
       await ada.handle.sync();
       expect((await bob.handle.api('/api/team/status')).body?.state).toBe(
@@ -150,7 +191,10 @@ describe('joining from a project that syncs elsewhere', () => {
       );
 
       // The real link moves sync, and the ask already made goes out there.
-      const again = await act(bob, '/api/team/join', { code: link });
+      const again = await act(bob, '/api/team/join', {
+        code: link,
+        confirmRepo: true,
+      });
       expect(again.restarts).toBeGreaterThan(0);
       expect([again.status, again.body?.error]).toEqual([200, undefined]);
       await quiesce(c.members, 24, 100);

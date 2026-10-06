@@ -376,10 +376,12 @@ export class RosterService {
     }
     const inviteKey = ed25519FromSeed(seed);
     const asked = this.pendingInvite();
-    // The same invite again, after sync moved to where the team is: its key
-    // op already carries the proof and goes out wherever sync runs now.
+    // The same invite again while still waiting to be let in, after sync
+    // moved to where the team is: its key op already carries the proof and
+    // goes out wherever sync runs now. Once admitted it is a conflict.
     if (
       this.fed.head() !== null &&
+      !this.isAdmitted(this.me) &&
       asked?.teamId === teamId &&
       asked.id === sha256Hex(inviteKey.signPub).slice(0, 16)
     )

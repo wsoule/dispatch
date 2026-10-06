@@ -3441,7 +3441,9 @@ export interface ApiClient {
   /** An invite link for a handle, or an email (team.yml's handle for it). */
   inviteToTeam(handleOrEmail: string): Promise<TeamInvite>;
   /** Joins with a team link (or an older invite code). */
-  joinTeam(code: string): Promise<JoinedTeam>;
+  /** `confirmRepo` accepts an invite whose board repo is local or private,
+   *  after the daemon answered `confirm_repo` for it. */
+  joinTeam(code: string, opts?: { confirmRepo?: boolean }): Promise<JoinedTeam>;
   recoverTeam(code: string): Promise<RosterAnswer>;
   newRecoveryCode(): Promise<{ recoveryCode: string } & RosterAnswer>;
   shareTeamLicense(): Promise<RosterAnswer>;
@@ -4473,9 +4475,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         '/api/team/invite',
         who.includes('@') ? { email: who } : { handle: who }
       ),
-    joinTeam: (code) =>
+    joinTeam: (code, opts) =>
       afterSharingRestart(target, () =>
-        teamPost(target, '/api/team/join', { code })
+        teamPost(target, '/api/team/join', {
+          code,
+          ...(opts?.confirmRepo === true ? { confirmRepo: true } : {}),
+        })
       ),
     recoverTeam: (code) => teamPost(target, '/api/team/recover', { code }),
     newRecoveryCode: () => teamPost(target, '/api/team/recovery-key', {}),
