@@ -386,6 +386,7 @@ export class FederationService {
         // A founding pinned just now: this replica's key op goes out this pass.
         if (!roster.founded()) return;
       }
+      roster.announceIfUpgrading();
       const now = this.now();
       if (!this.coveredHere()) {
         this.paused = this.opts.seatMessage(roster.seats());
@@ -425,6 +426,8 @@ export class FederationService {
       const before = roster.view();
       const verified = this.verify(entries);
       this.afterFold(before);
+      // A machine waiting with proof of an invite issued here is let in.
+      if (roster.autoAdmit().length > 0) this.notifyLocalChange();
       const changed = this.stage(verified, v1Ops, now);
       this.stageRereads(entries, now);
       await this.findNamedKeys();

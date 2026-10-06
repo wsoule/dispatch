@@ -4588,6 +4588,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
+  // The team in one line: its name, seats, transport and problems.
+  { method: 'GET', segments: ['team', 'status'], tier: 'decide' },
   { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
@@ -4607,6 +4609,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
   // Roster changes are signed with this machine's key, so they need its owner.
+  { method: 'POST', segments: ['team', 'start'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'leave'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'found'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'trust'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'invite'], tier: 'operator' },

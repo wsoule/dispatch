@@ -120,6 +120,7 @@ export function serviceReplica(
   const legacyRef: { current: LegacyWindow | null } = { current: null };
   const signerRef: { current: TaskOpSigner | null } = { current: null };
   const roster = new RosterService({
+    announceWhenPinned: true,
     ...(opts.caps === undefined ? {} : { caps: opts.caps }),
     fed,
     handle,

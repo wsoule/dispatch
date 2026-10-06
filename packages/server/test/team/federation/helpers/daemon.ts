@@ -119,7 +119,11 @@ export interface TeammateDaemon {
     recoveryCode: string;
     fingerprint: string;
   }>;
-  /** Admits `other`'s waiting key by its fingerprint, syncing both first. */
+  /** Trusts the founding this daemon follows, which announces its key to
+   *  that team: a daemon announces itself only to a team it chose. */
+  choose(): Promise<void>;
+  /** Admits `other`'s waiting key by its fingerprint, syncing both first;
+   *  `other` chooses the team first (`choose`). */
   admit(
     other: TeammateDaemon,
     opts?: { role?: 'admin'; observer?: boolean }
@@ -241,9 +245,20 @@ export function daemons(): {
           fingerprint: string;
         };
       },
+      choose: async () => {
+        const fingerprint = (await self.keys()).team?.founder.fingerprint;
+        if (fingerprint === undefined || fingerprint === '') return;
+        const r = await call('/api/team/trust', {
+          method: 'POST',
+          body: JSON.stringify({ fingerprint }),
+        });
+        if (r.status !== 200)
+          throw new Error(`trust: ${r.status} ${JSON.stringify(r.body)}`);
+      },
       admit: async (other, admitOpts = {}) => {
         await self.sync();
         await other.sync();
+        await other.choose();
         await self.sync();
         const { machine } = await other.keys();
         const r = await call(`/api/team/keys/${machine.replica}/admit`, {

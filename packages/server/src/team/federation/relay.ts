@@ -1,4 +1,4 @@
-import { isStub, signText } from '@dispatch-foo/protocol/federation';
+import { isStub, opHash, signText } from '@dispatch-foo/protocol/federation';
 import type { FederatedOp, LogEntry } from '@dispatch-foo/protocol/federation';
 
 import { RELAY_DISCLOSURE } from './teamKeys.js';
@@ -137,39 +137,177 @@ export class RelayRegistrationError extends Error {
 
 // How long a registration waits for the relay's answer.
 const REGISTER_MS = 15_000;
+/** The most leading zero bits a relay may ask a stamp for; past it, the
+ *  relay is refused rather than costing this machine minutes of hashing. */
+export const MAX_POW_DIFFICULTY = 26;
+// Hashes between yields to the event loop while minting, so the daemon
+// keeps answering requests during the second or two a stamp takes.
+const MINT_SLICE = 20_000;
+
+/** What `GET /v1/registration` answers: the stamp's difficulty in leading
+ *  zero bits, whether this relay needs its operator's token (self-hosted),
+ *  and whether it takes one in place of a stamp. */
+export interface RegistrationTerms {
+  difficulty: number;
+  tokenRequired: boolean;
+  tokenAccepted: boolean;
+}
+
+/** The text a registration stamp hashes (the contract's Registration):
+ *  `t` in unix seconds, the URL with no trailing slash, a decimal nonce. */
+export const powText = (
+  teamId: string,
+  relayUrl: string,
+  t: number,
+  nonce: string
+) => `dispatch-relay-reg-v1\n${teamId}\n${relayUrl}\n${String(t)}\n${nonce}`;
+
+/** Leading zero bits of a digest, most significant bit first. */
+export function leadingZeroBits(digest: Uint8Array): number {
+  let bits = 0;
+  for (const byte of digest) {
+    if (byte === 0) {
+      bits += 8;
+      continue;
+    }
+    return bits + Math.clz32(byte) - 24;
+  }
+  return bits;
+}
+
+/**
+ * A hashcash-style stamp: the first decimal nonce whose
+ * sha256(powText(teamId, relayUrl, t, nonce)) has at least `difficulty`
+ * leading zero bits. The relay checks one hash; this machine pays about
+ * 2^difficulty, which keeps anonymous registrations cheap to accept and
+ * dear to flood. It yields every MINT_SLICE hashes.
+ */
+export async function mintStamp(
+  teamId: string,
+  relayUrl: string,
+  t: number,
+  difficulty: number
+): Promise<string> {
+  const hasher = new Bun.CryptoHasher('sha256');
+  for (let n = 0; ; n++) {
+    if (n > 0 && n % MINT_SLICE === 0)
+      await new Promise((resolve) => setImmediate(resolve));
+    const nonce = String(n);
+    hasher.update(powText(teamId, relayUrl, t, nonce));
+    if (leadingZeroBits(hasher.digest()) >= difficulty) return nonce;
+  }
+}
+
+// The relay's registration terms, or null when it publishes none (an older
+// relay, which takes a token or nothing).
+async function registrationTerms(
+  base: string,
+  doFetch: typeof fetch
+): Promise<RegistrationTerms | null> {
+  let res: Response;
+  try {
+    res = await doFetch(`${base}/v1/registration`, {
+      signal: AbortSignal.timeout(REGISTER_MS),
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  try {
+    const body = (await res.json()) as {
+      difficulty?: unknown;
+      tokenRequired?: unknown;
+      tokenAccepted?: unknown;
+    };
+    if (
+      typeof body.difficulty !== 'number' ||
+      !Number.isInteger(body.difficulty) ||
+      body.difficulty < 0
+    )
+      return null;
+    return {
+      difficulty: body.difficulty,
+      tokenRequired: body.tokenRequired === true,
+      tokenAccepted: body.tokenAccepted === true,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Registers the team at the relay with `POST /v1/teams`, before a switch
  * signs its `transport` op: the relay serves no team it has not registered.
- * Registering a team the relay already holds succeeds. `token` goes only
- * into this request's Authorization header. Answers the relay's team id;
- * throws RelayRegistrationError with a reason a person can act on.
+ * Registering a team the relay already holds succeeds.
+ *
+ * The relay's terms (`GET /v1/registration`) decide what proves the
+ * registration besides the founder's signed chain: a proof-of-work stamp,
+ * or the operator's token where the relay needs one or takes one in place
+ * of the stamp. A stamp the relay calls stale (403) is minted once more
+ * with a fresh time. `token` goes only into this request's Authorization
+ * header. Answers the relay's team id; throws RelayRegistrationError with
+ * a reason a person can act on.
  */
 export async function registerAtRelay(
   url: string,
   registration: RelayRegistration,
-  opts: { token?: string; fetch?: typeof fetch } = {}
+  opts: { token?: string; fetch?: typeof fetch; now?: () => number } = {}
 ): Promise<string> {
-  const endpoint = `${relayHttpBase(url)}/v1/teams`;
+  const base = relayHttpBase(url);
   const where = normalRelayUrl(url);
-  let res: Response;
-  try {
-    res = await (opts.fetch ?? fetch)(endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(opts.token === undefined
-          ? {}
-          : { authorization: `Bearer ${opts.token}` }),
-      },
-      body: JSON.stringify(registration),
-      signal: AbortSignal.timeout(REGISTER_MS),
-    });
-  } catch (err) {
-    throw new RelayRegistrationError(
-      `could not register the team at the relay ${where}: it is unreachable (${(err as Error).message})`
+  const doFetch = opts.fetch ?? fetch;
+  const fail = (why: string): RelayRegistrationError =>
+    new RelayRegistrationError(
+      `could not register the team at the relay ${where}: ${why}`
     );
-  }
+  const terms = await registrationTerms(base, doFetch);
+  if (terms?.tokenRequired === true && opts.token === undefined)
+    throw fail(
+      'it needs a registration token; pass the one its operator gave you'
+    );
+  if (terms !== null && terms.difficulty > MAX_POW_DIFFICULTY)
+    throw fail(
+      `it asks for more work (${String(terms.difficulty)} bits) than Dispatch will do`
+    );
+  // An older relay publishes no terms: it gets the token, if any, and no
+  // stamp. A newer one gets the token where it takes one, else a stamp.
+  const useToken =
+    opts.token !== undefined &&
+    (terms === null || terms.tokenRequired || terms.tokenAccepted);
+  const stamp = async (): Promise<{ t: number; nonce: string } | undefined> => {
+    if (terms === null || useToken) return undefined;
+    const t = Math.floor((opts.now?.() ?? Date.now()) / 1000);
+    const nonce = await mintStamp(
+      opHash(registration.found).slice(0, 32),
+      where,
+      t,
+      terms.difficulty
+    );
+    return { t, nonce };
+  };
+  const post = async (pow: { t: number; nonce: string } | undefined) => {
+    try {
+      return await doFetch(`${base}/v1/teams`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(useToken ? { authorization: `Bearer ${opts.token ?? ''}` } : {}),
+        },
+        body: JSON.stringify({
+          ...registration,
+          ...(pow === undefined ? {} : { pow }),
+        }),
+        signal: AbortSignal.timeout(REGISTER_MS),
+      });
+    } catch (err) {
+      throw fail(`it is unreachable (${(err as Error).message})`);
+    }
+  };
+  let res = await post(await stamp());
+  // A stale stamp (the relay's clock moved on while it was minted) gets one
+  // more try with a fresh time.
+  if (res.status === 403 && !useToken && terms !== null)
+    res = await post(await stamp());
   let answer: { teamId?: unknown; error?: unknown } = {};
   try {
     answer = (await res.json()) as typeof answer;
@@ -179,16 +317,16 @@ export async function registerAtRelay(
   if (res.ok && typeof answer.teamId === 'string') return answer.teamId;
   const said =
     typeof answer.error === 'string' ? `: ${answer.error.slice(0, 200)}` : '';
-  const why =
+  throw fail(
     res.status === 401
-      ? opts.token === undefined
-        ? 'it needs a registration token; pass the one its operator gave you'
-        : 'it refused the registration token'
-      : res.ok
-        ? 'its answer named no team'
-        : `it answered HTTP ${String(res.status)}${said}`;
-  throw new RelayRegistrationError(
-    `could not register the team at the relay ${where}: ${why}`
+      ? useToken
+        ? 'it refused the registration token'
+        : 'it needs a registration token; pass the one its operator gave you'
+      : res.status === 403
+        ? `it refused the proof of work twice${said}; check this machine's clock`
+        : res.ok
+          ? 'its answer named no team'
+          : `it answered HTTP ${String(res.status)}${said}`
   );
 }
 
