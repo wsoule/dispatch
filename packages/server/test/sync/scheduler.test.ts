@@ -1,9 +1,15 @@
 import { ActorContext, TaskStore } from '@dispatch-foo/core';
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
-  chmodSync,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+  spyOn,
+} from 'bun:test';
+import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -14,20 +20,32 @@ import { join } from 'node:path';
 
 import type { ServerEvent } from '../../src/events.js';
 import { EventBus } from '../../src/events.js';
+import type { SyncResult } from '../../src/sync/boardSyncer.js';
 import { BoardSyncer } from '../../src/sync/boardSyncer.js';
 import { BoardSyncScheduler } from '../../src/sync/scheduler.js';
 import { SyncWorktree } from '../../src/sync/worktree.js';
 import { gitReaderFor, run, twoClones } from './helpers.js';
 
 let fakeHome: string;
+// Bumped after every test, so a test that timed out mid-advance() stops
+// driving the clock instead of advancing the next test's timers.
+let clockGeneration = 0;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 
+// Every test runs on fake timers: the scheduler's debounce and periodic
+// timers only fire when a test advances the clock, so nothing here depends on
+// how fast the machine is. Date is faked too, so timestamps are exact.
 beforeEach(() => {
+  jest.useFakeTimers();
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
   process.env.DISPATCH_HOME = fakeHome;
 });
 
 afterEach(() => {
+  clockGeneration++;
+  // Drops whatever a failed test left armed, so it cannot fire in the next.
+  jest.clearAllTimers();
+  jest.useRealTimers();
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -64,14 +82,57 @@ function schedulerFor(
   });
 }
 
-// Mirrors boardSyncer.test.ts's own helper: a pre-receive hook is a
-// deterministic, cross-platform way to force a rejected push.
-function installRejectingHook(bareRepo: string): void {
-  const hooksDir = join(bareRepo, 'hooks');
-  mkdirSync(hooksDir, { recursive: true });
-  const hookPath = join(hooksDir, 'pre-receive');
-  writeFileSync(hookPath, '#!/bin/sh\nexit 1\n');
-  chmodSync(hookPath, 0o755);
+// Stands in for BoardSyncer.syncOnce in tests about the timers alone. The
+// scheduler treats every result alike, so a stubbed rejected push exercises
+// the same path as a real one (boardSyncer.test.ts covers that) without
+// seconds of git per attempt on a loaded machine.
+function stubSyncs(state: SyncResult['state'] = 'idle'): {
+  calls: () => number;
+  restore: () => void;
+} {
+  const spy = spyOn(BoardSyncer.prototype, 'syncOnce').mockResolvedValue({
+    pushed: 0,
+    pulled: 0,
+    state,
+    detail: null,
+  });
+  return {
+    calls: () => spy.mock.calls.length,
+    restore: () => spy.mockRestore(),
+  };
+}
+
+// Runs every promise continuation queued so far. setImmediate is not faked,
+// so this waits on the real event loop rather than the fake clock.
+function settle(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+// Moves the fake clock forward one millisecond at a time, settling between
+// steps the way a real event loop would: a sync a timer starts gets to finish
+// (and clear its in-flight guard) before the next timer is due.
+async function advance(ms: number): Promise<void> {
+  const generation = clockGeneration;
+  for (
+    let elapsed = 0;
+    elapsed < ms && generation === clockGeneration;
+    elapsed++
+  ) {
+    jest.advanceTimersByTime(1);
+    await settle();
+  }
+}
+
+// Resolves with the next `board.sync` event's result. Subscribe before
+// advancing the clock: a real sync can finish inside the advance call.
+function nextBoardSync(events: EventBus): Promise<SyncResult> {
+  return new Promise((resolve) => {
+    const unsubscribe = events.subscribe((event) => {
+      if (event.type !== 'board.sync') return;
+      unsubscribe();
+      resolve(event.result);
+    });
+  });
 }
 
 function collectBoardSyncEvents(events: EventBus): ServerEvent[] {
@@ -93,8 +154,12 @@ describe('BoardSyncScheduler', () => {
     const scheduler = schedulerFor(a, events, 20);
 
     scheduler.notifyTaskChanged();
+    await advance(19);
     expect(seen.length).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const synced = nextBoardSync(events);
+    await advance(1);
+    await synced;
 
     expect(seen.length).toBe(1);
     expect(seen[0]).toMatchObject({
@@ -115,20 +180,29 @@ describe('BoardSyncScheduler', () => {
     const events = new EventBus();
     const seen = collectBoardSyncEvents(events);
     const scheduler = schedulerFor(a, events, 30);
+    const syncs = stubSyncs();
 
-    // A burst: several edits in quick succession, each re-arming the timer —
-    // this must produce ONE sync, not one per call.
-    for (let i = 0; i < 5; i++) {
-      store.create({ title: `Burst ${i}` });
-      scheduler.notifyTaskChanged();
-      await new Promise((resolve) => setTimeout(resolve, 5));
+    try {
+      // A burst: several edits in quick succession, each re-arming the
+      // timer — this must produce ONE sync, not one per call.
+      for (let i = 0; i < 5; i++) {
+        store.create({ title: `Burst ${i}` });
+        scheduler.notifyTaskChanged();
+        await advance(5);
+      }
+      expect(syncs.calls()).toBe(0);
+
+      await advance(30);
+      // Several more debounce windows: nothing was left armed to fire again.
+      await advance(100);
+
+      expect(syncs.calls()).toBe(1);
+      expect(seen.length).toBe(1);
+      expect(seen[0]).toMatchObject({ type: 'board.sync' });
+    } finally {
+      scheduler.stop();
+      syncs.restore();
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    expect(seen.length).toBe(1);
-    expect(seen[0]).toMatchObject({ type: 'board.sync' });
-
-    scheduler.stop();
     rmSync(origin, { recursive: true, force: true });
   });
 
@@ -142,7 +216,7 @@ describe('BoardSyncScheduler', () => {
     const scheduler = schedulerFor(a, events, 20);
 
     scheduler.notifyTaskChanged();
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await advance(80);
 
     expect(seen.length).toBe(0);
     const worktree = SyncWorktree.open(a, run);
@@ -158,26 +232,31 @@ describe('BoardSyncScheduler', () => {
   it('a failing sync does not retry itself — only the next real change tries again', async () => {
     const { origin, a } = twoClones();
     enableAutoCommit(a);
-    installRejectingHook(origin);
     new TaskStore(a).create({ title: 'Will fail to push' });
 
     const events = new EventBus();
     const seen = collectBoardSyncEvents(events);
     const scheduler = schedulerFor(a, events, 15);
+    const syncs = stubSyncs('local-only');
 
-    scheduler.notifyTaskChanged();
-    // Long enough for several debounce windows to have elapsed if the
-    // scheduler were silently re-arming itself after the failure — proves
-    // absence, not just an unlucky timing window.
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    try {
+      scheduler.notifyTaskChanged();
+      await advance(15);
+      expect(seen.length).toBe(1);
+      expect(seen[0]).toMatchObject({
+        type: 'board.sync',
+        result: { state: 'local-only' },
+      });
 
-    expect(seen.length).toBe(1);
-    expect(seen[0]).toMatchObject({
-      type: 'board.sync',
-      result: { state: 'local-only' },
-    });
-
-    scheduler.stop();
+      // Several debounce windows elapse with no new change: a scheduler that
+      // silently re-armed itself after the failure would sync again here.
+      await advance(150);
+      expect(syncs.calls()).toBe(1);
+      expect(seen.length).toBe(1);
+    } finally {
+      scheduler.stop();
+      syncs.restore();
+    }
     rmSync(origin, { recursive: true, force: true });
   });
 
@@ -191,8 +270,10 @@ describe('BoardSyncScheduler', () => {
     expect(scheduler.lastResult()).toBeNull();
     expect(scheduler.lastSyncedAt()).toBeNull();
 
+    const synced = nextBoardSync(events);
     scheduler.notifyTaskChanged();
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await advance(15);
+    await synced;
 
     expect(scheduler.lastResult()).toMatchObject({
       state: 'idle',
@@ -253,17 +334,13 @@ describe('BoardSyncScheduler periodic pull', () => {
     // reader must still see a sync attempt.
 
     const events = new EventBus();
-    const seen = collectBoardSyncEvents(events);
     // debounceMs kept enormous so only the periodic timer can produce a sync.
     const scheduler = schedulerFor(a, events, 999_000, 20);
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const synced = nextBoardSync(events);
+    await advance(20);
 
-    expect(seen.length).toBeGreaterThanOrEqual(1);
-    expect(seen[0]).toMatchObject({
-      type: 'board.sync',
-      result: { state: 'idle', pushed: 0 },
-    });
+    expect(await synced).toMatchObject({ state: 'idle', pushed: 0 });
 
     scheduler.stop();
     rmSync(origin, { recursive: true, force: true });
@@ -278,7 +355,7 @@ describe('BoardSyncScheduler periodic pull', () => {
     const seen = collectBoardSyncEvents(events);
     const scheduler = schedulerFor(a, events, 999_000, 20);
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await advance(100);
 
     expect(seen.length).toBe(0);
     const worktree = SyncWorktree.open(a, run);
@@ -292,29 +369,31 @@ describe('BoardSyncScheduler periodic pull', () => {
   it('a failing periodic sync does not fire the timer faster than its interval', async () => {
     const { origin, a } = twoClones();
     enableAutoCommit(a);
-    installRejectingHook(origin);
     new TaskStore(a).create({ title: 'Will fail to push, repeatedly' });
 
     const events = new EventBus();
-    const timestamps: number[] = [];
-    events.subscribe((event) => {
-      if (event.type === 'board.sync') timestamps.push(Date.now());
-    });
+    const seen = collectBoardSyncEvents(events);
     const periodicMs = 30;
     const scheduler = schedulerFor(a, events, 999_000, periodicMs);
+    const syncs = stubSyncs('local-only');
 
-    await new Promise((resolve) => setTimeout(resolve, 160));
-    scheduler.stop();
+    try {
+      await advance(periodicMs);
+      expect(syncs.calls()).toBe(1);
+      expect(seen[0]).toMatchObject({ result: { state: 'local-only' } });
 
-    // At least two attempts in this window prove the timer is actually
-    // retrying (recovering from the outage), not just proving absence.
-    expect(timestamps.length).toBeGreaterThanOrEqual(2);
-    for (let i = 1; i < timestamps.length; i++) {
-      // A small tolerance below periodicMs for scheduler/GC jitter — proves
-      // failures never shorten the interval into a retry storm.
-      expect(timestamps[i] - timestamps[i - 1]).toBeGreaterThanOrEqual(
-        periodicMs - 10
-      );
+      // Right up to the next tick, the failure has not brought a retry
+      // forward — failures never shorten the interval into a retry storm.
+      await advance(periodicMs - 1);
+      expect(syncs.calls()).toBe(1);
+
+      // The tick itself still retries, recovering from the outage.
+      await advance(1);
+      expect(syncs.calls()).toBe(2);
+      expect(seen.length).toBe(2);
+    } finally {
+      scheduler.stop();
+      syncs.restore();
     }
 
     rmSync(origin, { recursive: true, force: true });
@@ -328,17 +407,22 @@ describe('BoardSyncScheduler periodic pull', () => {
     const events = new EventBus();
     const seen = collectBoardSyncEvents(events);
     const scheduler = schedulerFor(a, events, 999_000, 20);
+    const syncs = stubSyncs();
 
-    await new Promise((resolve) => setTimeout(resolve, 70));
-    expect(seen.length).toBeGreaterThanOrEqual(1);
+    try {
+      await advance(20);
+      expect(seen.length).toBe(1);
 
-    scheduler.stop();
-    const countAtStop = seen.length;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // No further syncs land after stop() — the periodic interval was
-    // actually cleared, not just the debounce.
-    expect(seen.length).toBe(countAtStop);
+      scheduler.stop();
+      // The periodic interval was actually cleared, not just the debounce.
+      expect(jest.getTimerCount()).toBe(0);
+      await advance(100);
+      expect(syncs.calls()).toBe(1);
+      expect(seen.length).toBe(1);
+    } finally {
+      scheduler.stop();
+      syncs.restore();
+    }
 
     rmSync(origin, { recursive: true, force: true });
   });
@@ -385,8 +469,8 @@ describe('BoardSyncScheduler periodic pull', () => {
     };
 
     try {
-      // Long enough for the first (throwing) tick plus at least one more.
-      await new Promise((resolve) => setTimeout(resolve, periodicMs * 4 + 40));
+      // The first (throwing) tick, then the next one.
+      await advance(periodicMs * 2);
     } finally {
       console.error = originalConsoleError;
       process.off('unhandledRejection', onUnhandledRejection);
@@ -395,8 +479,8 @@ describe('BoardSyncScheduler periodic pull', () => {
     }
 
     expect(unhandled).toEqual([]);
-    expect(callCount).toBeGreaterThanOrEqual(2);
-    expect(errorCalls.length).toBeGreaterThanOrEqual(1);
+    expect(callCount).toBe(2);
+    expect(errorCalls.length).toBe(1);
 
     rmSync(origin, { recursive: true, force: true });
   });
@@ -414,10 +498,12 @@ describe('BoardSyncScheduler periodic pull', () => {
     // mechanism of its own.
     const scheduler = schedulerFor(a, events, 10, 10);
 
+    let calls = 0;
     let concurrent = 0;
     let maxConcurrent = 0;
     const spy = spyOn(BoardSyncer.prototype, 'syncOnce').mockImplementation(
       async () => {
+        calls++;
         concurrent++;
         maxConcurrent = Math.max(maxConcurrent, concurrent);
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -426,11 +512,16 @@ describe('BoardSyncScheduler periodic pull', () => {
       }
     );
 
-    scheduler.notifyTaskChanged();
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    scheduler.stop();
-    spy.mockRestore();
+    try {
+      scheduler.notifyTaskChanged();
+      await advance(180);
+    } finally {
+      scheduler.stop();
+      spy.mockRestore();
+    }
 
+    // Syncs did run back to back through the window, never two at once.
+    expect(calls).toBeGreaterThanOrEqual(3);
     expect(maxConcurrent).toBe(1);
 
     rmSync(origin, { recursive: true, force: true });
@@ -447,31 +538,28 @@ describe('BoardSyncScheduler periodic pull', () => {
     // debounceMs kept enormous so only the periodic timer drives this test.
     const scheduler = schedulerFor(a, events, 999_000, periodicMs);
 
+    const startedAt = Date.now();
     const starts: number[] = [];
     const spy = spyOn(BoardSyncer.prototype, 'syncOnce').mockImplementation(
       async () => {
-        starts.push(Date.now());
+        starts.push(Date.now() - startedAt);
         await new Promise((resolve) => setTimeout(resolve, syncDurationMs));
         return { pushed: 0, pulled: 0, state: 'idle' as const, detail: null };
       }
     );
 
-    // Long enough for several sync cycles at (periodicMs + syncDurationMs)
-    // pace, so a still-buggy scheduler (back-to-back, no idle gap) and a
-    // fixed one (idle until the next tick) produce a clearly different count.
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    scheduler.stop();
-    spy.mockRestore();
-
-    expect(starts.length).toBeGreaterThanOrEqual(3);
-    for (let i = 1; i < starts.length; i++) {
-      const gap = starts[i] - starts[i - 1];
-      // A tick landing mid-sync must be dropped, not queued: the next sync
-      // only starts at a later tick, once the previous one is done — so the
-      // gap is always a real idle wait beyond the sync's own duration, never
-      // just the duration itself (back-to-back, zero idle time).
-      expect(gap).toBeGreaterThan(syncDurationMs + periodicMs / 2);
+    try {
+      await advance(800);
+    } finally {
+      scheduler.stop();
+      spy.mockRestore();
     }
+
+    // A tick landing mid-sync is dropped, not queued. Each sync spans the
+    // two ticks after its own (+50, +100) and ends at +120; the next one
+    // only starts at the tick after that (+150), after a real idle wait — a
+    // queued tick would have started it back-to-back at +120.
+    expect(starts).toEqual([50, 200, 350, 500, 650, 800]);
 
     rmSync(origin, { recursive: true, force: true });
   });
