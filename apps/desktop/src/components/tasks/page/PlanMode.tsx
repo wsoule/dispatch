@@ -1,5 +1,6 @@
 import { ContainerFlightPlanSection } from '../../flightplan/ContainerFlightPlanSection';
 import type { TaskPageModel } from './pageModel';
+import { useTaskPageHost } from './TaskPageHost';
 
 /**
  * Plan mode — a container's Flight Plan as the main pane: its children as waves, live.
@@ -7,7 +8,9 @@ import type { TaskPageModel } from './pageModel';
  * room for one, so there a node opens its own page.
  */
 export function PlanMode({ page }: { page: TaskPageModel }) {
-  const full = page.layout === 'full';
+  // Two views has no room for a third column: a node opens its own page there.
+  const opensPages = useTaskPageHost()?.planOpensPages === true;
+  const full = page.layout === 'full' && !opensPages;
   return (
     <div
       data-slot="plan-mode"
@@ -16,7 +19,7 @@ export function PlanMode({ page }: { page: TaskPageModel }) {
       <ContainerFlightPlanSection
         containerId={page.item.meta.id}
         openIn={full ? 'pane' : 'page'}
-        focusOnMount={full}
+        focusOnMount={page.layout === 'full'}
       />
     </div>
   );

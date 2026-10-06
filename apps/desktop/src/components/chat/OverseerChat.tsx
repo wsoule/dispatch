@@ -685,7 +685,8 @@ export function OverseerChat({
               : compact
                 ? 'Actions wait for your approval.'
                 : 'Ask a follow-up. Actions always wait for your approval.'}
-            {overseer.record?.model !== undefined && (
+            {/* The picker below names the model; the classic rail has none. */}
+            {!durable && overseer.record?.model !== undefined && (
               <> · {modelLabel(overseer.record.model)}</>
             )}
             {durable && spend > 0 && (

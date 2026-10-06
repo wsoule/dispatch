@@ -1077,6 +1077,7 @@ function App() {
           // Two views moves the repo-wide Files and Terminals onto each run's page.
           ...(twoViews && {
             showLessons: true,
+            planOpensPages: true,
             filesView: (runId: string) => (
               <FilesView data={data} runId={runId} />
             ),
