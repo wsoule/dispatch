@@ -84,8 +84,19 @@ describe('noAppTokenMessage', () => {
     );
     expect(message).not.toContain('kill');
     expect(message).not.toContain('--replace');
+    expect(message).toContain('press Restart Dispatch from this app.');
     expect(message).not.toContain('Join a team');
     expect(message).not.toContain('\n');
+  });
+
+  it('points a background join at the app’s takeover, then Join a team', () => {
+    const message = noAppTokenMessage('dispatch team join', {
+      ...daemon,
+      background: true,
+    });
+    expect(message).toContain(
+      'press Restart Dispatch from this app, then use Settings → Members → Join a team.'
+    );
   });
 });
 

@@ -31,7 +31,9 @@ export function noAppTokenMessage(
       `the background by ${daemon.startedBy ?? 'a dispatch command'}, so its ` +
       'app token went nowhere, on purpose: agents read that output. Run ' +
       '`dispatch serve` in a terminal you keep open; it takes over the ' +
-      'background daemon (once it has no live work) and prints a token.'
+      'background daemon (once it has no live work) and prints a token. Or ' +
+      'open the project in the Dispatch app and press Restart Dispatch from ' +
+      `this app${inApp === '' ? '' : `, then use ${inApp.slice(2, -1)}`}.`
     );
   return (
     `${lead} The dispatchd serving this project (${which}) was started by ` +

@@ -884,6 +884,7 @@ async function stopForTakeover(
       );
     await sleep(100);
   }
+  ctx.log(`Took over from the dispatchd that served this project (${which}).`);
 }
 
 const A2A_OVERRIDE_HELP = 'override for this boot; see `dispatch a2a listen`';

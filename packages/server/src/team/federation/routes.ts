@@ -741,7 +741,7 @@ const SHARING_OFF: TeamStatus = {
     {
       message:
         'Team sync is off here. Starting or joining a team turns it on: Dispatch restarts for this project once no run is live.',
-      fix: 'dispatch team start',
+      fix: 'dispatch team join (with an invite link), or dispatch team start',
     },
   ],
 };
