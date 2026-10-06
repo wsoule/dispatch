@@ -196,3 +196,86 @@ describe('dagWaves', () => {
     expect(waves.get('a')).toBe(0);
   });
 });
+
+describe('left-to-right layout', () => {
+  const at = (layout: ReturnType<typeof dagLayout>, id: string) => {
+    const node = layout.nodes.find((n) => n.id === id);
+    if (node === undefined) throw new Error(`no node ${id}`);
+    return { x: node.x, y: node.y };
+  };
+
+  it('puts each layer in its own column, left to right', () => {
+    const layout = dagLayout(
+      [makeTask('a'), makeTask('b', ['a']), makeTask('c', ['b'])],
+      { direction: 'LR' }
+    );
+    const [a, b, c] = ['a', 'b', 'c'].map((id) => at(layout, id));
+    expect(a.x).toBeLessThan(b.x);
+    expect(b.x).toBeLessThan(c.x);
+    expect(new Set([a.y, b.y, c.y]).size).toBe(1);
+  });
+
+  it('stacks a layer’s nodes down its column', () => {
+    const layout = dagLayout(
+      [makeTask('a'), makeTask('b', ['a']), makeTask('c', ['a'])],
+      { direction: 'LR' }
+    );
+    expect(at(layout, 'b').x).toBe(at(layout, 'c').x);
+    expect(at(layout, 'b').y).not.toBe(at(layout, 'c').y);
+  });
+
+  it('wraps after the given number of columns into a band below', () => {
+    const chain = Array.from({ length: 8 }, (_, i) =>
+      makeTask(`n${i}`, i === 0 ? [] : [`n${i - 1}`])
+    );
+    const layout = dagLayout(chain, { direction: 'LR', wrap: 6 });
+    expect(at(layout, 'n6').x).toBe(at(layout, 'n0').x);
+    expect(at(layout, 'n6').y).toBeGreaterThan(at(layout, 'n5').y);
+    expect(layout.width).toBeLessThan(7 * (DAG_NODE_WIDTH + 48));
+  });
+
+  it('top-to-bottom stays the default and does not move', () => {
+    const tasks = [makeTask('a'), makeTask('b', ['a']), makeTask('c', ['a'])];
+    expect(dagLayout(tasks)).toEqual(dagLayout(tasks, { direction: 'TB' }));
+    expect(at(dagLayout(tasks), 'b').y).toBe(
+      at(dagLayout(tasks), 'a').y + DAG_NODE_HEIGHT + 64
+    );
+  });
+});
+
+describe('layout cost', () => {
+  // A seeded random DAG: each node waits on up to three earlier ones.
+  function randomDag(n: number): DagTask[] {
+    let seed = 7;
+    const rand = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    return Array.from({ length: n }, (_, i) => {
+      const blockers = new Set<string>();
+      for (let k = 0; k < 3 && i > 0; k++) {
+        blockers.add(`t${Math.floor(rand() * i)}`);
+      }
+      return makeTask(
+        `t${i}`,
+        [...blockers],
+        `2026-01-01T00:00:${String(i % 60).padStart(2, '0')}.000Z`
+      );
+    });
+  }
+
+  // Generous budgets: these guard against quadratic blow-ups, not machine speed.
+  test.each([
+    [64, 50],
+    [200, 100],
+    [600, 300],
+    [2000, 1500],
+  ])('%p nodes lay out in under %pms', (n, budget) => {
+    const tasks = randomDag(n);
+    const start = performance.now();
+    const layout = dagLayout(tasks, { direction: 'LR', wrap: 6 });
+    dagWaves(tasks);
+    expect(performance.now() - start).toBeLessThan(budget);
+    expect(layout.nodes).toHaveLength(n);
+  });
+});

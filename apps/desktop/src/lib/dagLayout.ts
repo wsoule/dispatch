@@ -89,6 +89,65 @@ interface NodeDims {
   nodeHeight: number;
 }
 
+/** Top to bottom (layers are rows) or left to right (layers are columns). */
+export type DagDirection = 'TB' | 'LR';
+
+interface LayoutOptions extends NodeDims {
+  direction: DagDirection;
+  /** Left to right only: after this many columns, continue in a band below. */
+  wrap: number | null;
+}
+
+// Left to right leaves room between columns for an edge's count label.
+const GAP_LR_X = 72;
+const GAP_LR_Y = 24;
+const BAND_GAP = 48;
+
+// A binary min-heap; the zero-in-degree pool pops its least task without re-sorting.
+class MinHeap<T> {
+  private items: T[] = [];
+  private readonly less: (a: T, b: T) => number;
+  constructor(less: (a: T, b: T) => number) {
+    this.less = less;
+  }
+  get size(): number {
+    return this.items.length;
+  }
+  push(item: T): void {
+    const items = this.items;
+    items.push(item);
+    let i = items.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this.less(items[i], items[parent]) >= 0) break;
+      [items[i], items[parent]] = [items[parent], items[i]];
+      i = parent;
+    }
+  }
+  pop(): T | undefined {
+    const items = this.items;
+    const top = items[0];
+    const last = items.pop();
+    if (items.length > 0 && last !== undefined) {
+      items[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let least = i;
+        if (l < items.length && this.less(items[l], items[least]) < 0)
+          least = l;
+        if (r < items.length && this.less(items[r], items[least]) < 0)
+          least = r;
+        if (least === i) break;
+        [items[i], items[least]] = [items[least], items[i]];
+        i = least;
+      }
+    }
+    return top;
+  }
+}
+
 /**
  * Longest-path layering via Kahn's algorithm: a task's layer is one more than the deepest of
  * its blockers (real edges only — see `dagLayout`'s filtering), computed so every blocker's
@@ -110,15 +169,20 @@ function computeLayers(
     inDegree.set(t.id, (blockersOf.get(t.id) ?? []).length);
   }
 
-  // The zero-in-degree pool, re-sorted by (created, id) on every pop — mirrors computeStack's
-  // "re-sort the pool each pop" convention so processing order (and therefore every downstream
-  // layer/position decision) is fully deterministic.
-  let queue = tasks.filter((t) => inDegree.get(t.id) === 0);
-  const queued = new Set(queue.map((t) => t.id));
+  // The zero-in-degree pool, popped in (created, id) order — the same order computeStack's
+  // "re-sort the pool each pop" gives, so every downstream layer/position decision is
+  // fully deterministic, without the sort per pop.
+  const queue = new MinHeap<DagTask>(byCreatedThenId);
+  const queued = new Set<string>();
+  for (const t of tasks) {
+    if (inDegree.get(t.id) === 0) {
+      queue.push(t);
+      queued.add(t.id);
+    }
+  }
 
-  while (queue.length > 0) {
-    queue.sort(byCreatedThenId);
-    const doc = queue.shift();
+  while (queue.size > 0) {
+    const doc = queue.pop();
     if (doc === undefined) break;
     queued.delete(doc.id);
     // Roots (no real blockers) never get a layer written by the dependent-update loop below,
@@ -170,17 +234,18 @@ function orderWithinLayers(
   tasks: DagTask[],
   layer: Map<string, number>,
   blockersOf: Map<string, string[]>,
-  dims: NodeDims
+  opts: LayoutOptions
 ): Map<string, Position> {
   const maxLayer = Math.max(...tasks.map((t) => layer.get(t.id) ?? 0));
   const byLayer: DagTask[][] = Array.from({ length: maxLayer + 1 }, () => []);
   for (const t of tasks) byLayer[layer.get(t.id) ?? 0].push(t);
 
-  const positions = new Map<string, Position>();
+  // A node's slot within its layer; positions follow from layer and slot.
+  const slots = new Map<string, number>();
   for (let l = 0; l <= maxLayer; l++) {
     const scored = byLayer[l].map((doc) => {
       const blockerXs = (blockersOf.get(doc.id) ?? [])
-        .map((id) => positions.get(id)?.x)
+        .map((id) => slots.get(id))
         .filter((x): x is number => x !== undefined);
       const barycenter =
         blockerXs.length > 0
@@ -199,13 +264,40 @@ function orderWithinLayers(
       return byCreatedThenId(a.doc, b.doc);
     });
     scored.forEach(({ doc }, col) => {
-      positions.set(doc.id, {
-        x: PADDING + col * (dims.nodeWidth + GAP_X),
-        y: PADDING + l * (dims.nodeHeight + GAP_Y),
-      });
+      slots.set(doc.id, col);
     });
   }
+  const widest = Math.max(...byLayer.map((nodes) => nodes.length));
+  const positions = new Map<string, Position>();
+  for (const t of tasks) {
+    const l = layer.get(t.id) ?? 0;
+    const slot = slots.get(t.id) ?? 0;
+    positions.set(t.id, place(l, slot, widest, opts));
+  }
   return positions;
+}
+
+// Where a node in layer `l`, slot `slot` sits. Left to right wraps every `wrap` layers
+// into a band below, each band as tall as the widest layer.
+function place(
+  l: number,
+  slot: number,
+  widest: number,
+  opts: LayoutOptions
+): Position {
+  if (opts.direction === 'TB') {
+    return {
+      x: PADDING + slot * (opts.nodeWidth + GAP_X),
+      y: PADDING + l * (opts.nodeHeight + GAP_Y),
+    };
+  }
+  const band = opts.wrap === null ? 0 : Math.floor(l / opts.wrap);
+  const column = opts.wrap === null ? l : l % opts.wrap;
+  const bandHeight = widest * (opts.nodeHeight + GAP_LR_Y) + BAND_GAP;
+  return {
+    x: PADDING + column * (opts.nodeWidth + GAP_LR_X),
+    y: PADDING + band * bandHeight + slot * (opts.nodeHeight + GAP_LR_Y),
+  };
 }
 
 // Fallback for a set of tasks with no real blockedBy edges among them at all: laying every one
@@ -288,13 +380,15 @@ export function dagWaves(tasks: DagTask[]): Map<string, number> {
  */
 export function dagLayout(
   tasks: DagTask[],
-  opts?: Partial<NodeDims>
+  opts?: Partial<LayoutOptions>
 ): DagLayoutResult {
   if (tasks.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
 
-  const dims: NodeDims = {
+  const dims: LayoutOptions = {
     nodeWidth: opts?.nodeWidth ?? DAG_NODE_WIDTH,
     nodeHeight: opts?.nodeHeight ?? DAG_NODE_HEIGHT,
+    direction: opts?.direction ?? 'TB',
+    wrap: opts?.wrap ?? null,
   };
 
   const { byId, blockersOf, dependentsOf } = dependencyMaps(tasks);

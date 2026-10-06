@@ -1631,6 +1631,7 @@ function App() {
             onOpenRef={openRef}
             onOpenDecision={onOpenDecision}
             onClosePage={closeTwoViewsPage}
+            projectKey={activeProject?.path ?? ''}
             onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
             onOpenDoc={(docId) => openDoc(docId, null)}
             onOpenAllDocs={() =>

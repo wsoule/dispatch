@@ -1,6 +1,7 @@
 import { Plus } from 'lucide-react';
 import { type ReactNode, useCallback, useMemo } from 'react';
 
+import { MilestoneMapView } from '../components/graph/MilestoneMap';
 import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
@@ -9,8 +10,9 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import { containerStatus } from '../lib/containerStatus';
 import type { DecisionItem } from '../lib/decisionFeed';
-import type { ListGroup } from '../lib/listGrouping';
+import { groupTasks, type ListGroup } from '../lib/listGrouping';
 import type { NeedsYou } from '../lib/needsYou';
+import { useStatusModelOf } from '../lib/statusModel';
 import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
@@ -24,7 +26,6 @@ import {
 import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
 import type { TasksMode, TasksPage } from '../lib/twoViews';
-import { MilestoneBranchesView } from './MilestoneBranchesView';
 import { TasksListView } from './TasksListView';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -74,6 +75,8 @@ export interface TasksViewProps {
   onOpenPr: (number: number) => void;
   onOpenDoc: (docId: string) => void;
   onOpenAllDocs: () => void;
+  /** Keys per-project choices such as the graph's Milestones | Tasks. */
+  projectKey: string;
   composer: ReactNode;
 }
 
@@ -98,6 +101,7 @@ export function TasksView({
   onOpenPr,
   onOpenDoc,
   onOpenAllDocs,
+  projectKey,
   composer,
 }: TasksViewProps) {
   const split = page.kind === 'task' && !page.full;
@@ -136,6 +140,21 @@ export function TasksView({
       onOpenDoc={onOpenDoc}
       onOpenAllDocs={onOpenAllDocs}
     />
+  );
+  const model = useStatusModelOf(data.config);
+  // The list's milestone groups, so the map and the list agree on membership.
+  const graphGroups = useMemo(
+    () =>
+      mode !== 'graph' || data.config === null
+        ? []
+        : groupTasks(
+            taskFilter === undefined
+              ? data.tasks
+              : data.tasks.filter(taskFilter),
+            BY_MILESTONE,
+            { statuses: data.config.statuses, epics: data.epics, model }
+          ),
+    [mode, data.config, data.tasks, data.epics, taskFilter, model]
   );
   const presetLabel =
     TASKS_PRESETS.find((p) => p.id === preset)?.label ?? 'All';
@@ -248,10 +267,12 @@ export function TasksView({
             )}
             <div className="min-h-0 flex-1 overflow-hidden">
               {mode === 'graph' ? (
-                <MilestoneBranchesView
-                  data={data}
+                <MilestoneMapView
+                  groups={graphGroups}
+                  bucketOf={presetContext.bucketOf}
+                  asksByTask={needs.byTask}
+                  projectKey={projectKey}
                   onOpenTask={onSelectTask}
-                  taskFilter={taskFilter}
                 />
               ) : (
                 <TasksListView
