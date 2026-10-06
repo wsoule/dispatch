@@ -19,7 +19,10 @@ import { openMessaging } from '../../src/messaging/service.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { MergeQueue } from '../../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
-import { OverseerManager } from '../../src/orchestrator/overseer.js';
+import {
+  OverseerManager,
+  ROLLOVER_TOKENS,
+} from '../../src/orchestrator/overseer.js';
 import type { OverseerRecord } from '../../src/orchestrator/overseer.js';
 import type {
   OverseerBackend,
@@ -29,6 +32,10 @@ import type {
 } from '../../src/orchestrator/overseerBackend.js';
 import { FakeOverseer } from '../../src/orchestrator/overseers/fake.js';
 import type { FakeOverseerScript } from '../../src/orchestrator/overseers/fake.js';
+import {
+  fileOverseerStore,
+  overseerDir,
+} from '../../src/orchestrator/overseerStore.js';
 import type { OverseerToolContext } from '../../src/orchestrator/overseerTools.js';
 import { OverseerToolRegistry } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
@@ -330,30 +337,6 @@ describe('OverseerManager turns', () => {
 
     expect(record.state).toBe('failed');
     expect(record.error).toBe('model unreachable');
-  });
-
-  it('rejects a follow-up while a turn is still in flight', async () => {
-    const h = makeManager({ ok: true, reply: 'unused' });
-    // A backend that never settles, so the conversation stays `running`.
-    let release: (() => void) | undefined;
-    const stuck: OverseerBackend = {
-      start: () =>
-        new Promise<OverseerTurn>((resolve) => {
-          release = () => resolve({ reply: 'done' });
-        }),
-      sendMessage: async () => ({ reply: 'done' }),
-    };
-    h.manager.registerBackend('stuck', stuck);
-
-    const started = h.manager.start('hello', 'stuck');
-    expect(() => h.manager.sendMessage(started.id, 'and also')).toThrow(
-      OrchestratorConflictError
-    );
-
-    release?.();
-    await waitFor(() => h.manager.get(started.id).state === 'ready');
-    // Idle again — the same follow-up is now accepted.
-    expect(h.manager.sendMessage(started.id, 'and also').state).toBe('running');
   });
 
   it('resumes the prior session on a follow-up and keeps the whole transcript', async () => {
@@ -1493,5 +1476,184 @@ describe('an answer pinned to its card', () => {
     );
     h.manager.decideApproval(started.id, 'req-1', { allow: false }, 'Bash');
     await waitFor(() => h.manager.get(started.id).state === 'ready');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One durable conversation: persistence, Stop, the queue, rollover, spend
+// ---------------------------------------------------------------------------
+
+// A backend whose turns end when the test says, or when Stop aborts them.
+class HeldBackend implements OverseerBackend {
+  readonly prompts: string[] = [];
+  readonly resumed: (string | undefined)[] = [];
+  private finish: ((turn: OverseerTurn) => void) | null = null;
+
+  start(
+    prompt: string,
+    _toolset: OverseerToolset,
+    options?: OverseerTurnOptions
+  ): Promise<OverseerTurn> {
+    return this.turn(undefined, prompt, options);
+  }
+
+  sendMessage(
+    sessionId: string | undefined,
+    message: string,
+    _toolset: OverseerToolset,
+    options?: OverseerTurnOptions
+  ): Promise<OverseerTurn> {
+    return this.turn(sessionId, message, options);
+  }
+
+  // Ends the turn in flight with this reply.
+  settle(turn: Partial<OverseerTurn> = {}): void {
+    const finish = this.finish;
+    this.finish = null;
+    finish?.({ reply: 'ok', sessionId: 's-1', ...turn });
+  }
+
+  private turn(
+    sessionId: string | undefined,
+    prompt: string,
+    options?: OverseerTurnOptions
+  ): Promise<OverseerTurn> {
+    this.resumed.push(sessionId);
+    this.prompts.push(prompt);
+    return new Promise((resolve, reject) => {
+      this.finish = resolve;
+      options?.abortController?.signal.addEventListener('abort', () =>
+        reject(new Error('aborted'))
+      );
+    });
+  }
+}
+
+function heldManager(store = fileOverseerStore(overseerDir(repo))) {
+  const h = makeHarness();
+  const backend = new HeldBackend();
+  const manager = new OverseerManager({
+    rootDir: repo,
+    registry: h.registry,
+    events: h.events,
+    store,
+  });
+  manager.registerBackend('held', backend);
+  return { ...h, manager, backend, store };
+}
+
+describe('one durable conversation', () => {
+  it('survives the daemon: a settled conversation loads back whole', async () => {
+    const h = heldManager();
+    const started = h.manager.start('hello', 'held');
+    h.backend.settle({ reply: 'hi', costUsd: 0.25 });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+
+    const again = heldManager(h.store);
+    const loaded = again.manager.get(started.id);
+    expect(loaded.state).toBe('ready');
+    expect(loaded.messages.map((m) => m.text)).toEqual(['hello', 'hi']);
+    expect(loaded.spendUsd).toBe(0.25);
+    expect(loaded.messages[1].costUsd).toBe(0.25);
+  });
+
+  it('a turn the daemon died in loads as failed, behind a restarted notice', () => {
+    const h = heldManager();
+    const started = h.manager.start('hello', 'held');
+
+    const again = heldManager(h.store);
+    const loaded = again.manager.get(started.id);
+    expect(loaded.state).toBe('failed');
+    expect(loaded.pendingApprovals).toEqual([]);
+    expect(loaded.messages.at(-1)).toMatchObject({
+      role: 'notice',
+      notice: 'restarted',
+    });
+  });
+
+  it('Stop ends the turn as stopped, not failed', async () => {
+    const h = heldManager();
+    const started = h.manager.start('do a long thing', 'held');
+    h.manager.stop(started.id);
+    await waitFor(() => h.manager.get(started.id).state !== 'running');
+    const record = h.manager.get(started.id);
+    expect(record.state).toBe('ready');
+    expect(record.error).toBeUndefined();
+    expect(record.messages.at(-1)).toMatchObject({
+      role: 'notice',
+      notice: 'stopped',
+    });
+  });
+
+  it('a message typed mid-turn queues, then goes out when the turn ends', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    const queued = h.manager.sendMessage(started.id, 'and also this');
+    expect(queued.state).toBe('running');
+    expect(queued.queued?.map((q) => q.text)).toEqual(['and also this']);
+    expect(queued.messages.map((m) => m.text)).toEqual(['first']);
+
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 2);
+    expect(h.backend.prompts[1]).toBe('and also this');
+    const record = h.manager.get(started.id);
+    expect(record.state).toBe('running');
+    expect(record.queued).toEqual([]);
+    expect(record.messages.map((m) => m.text)).toEqual([
+      'first',
+      'ok',
+      'and also this',
+    ]);
+  });
+
+  it('after Stop, the queue waits and goes out with the next message', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.manager.sendMessage(started.id, 'queued one');
+    h.manager.stop(started.id);
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.backend.prompts).toHaveLength(1);
+
+    h.manager.sendMessage(started.id, 'now this');
+    expect(h.backend.prompts[1]).toBe('queued one\n\nnow this');
+  });
+
+  it('a full context rolls over: fresh session, recap, divider, grants gone', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.backend.settle({ reply: 'answer one', contextTokens: ROLLOVER_TOKENS });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+
+    h.manager.sendMessage(started.id, 'next');
+    expect(h.backend.resumed[1]).toBeUndefined();
+    expect(h.backend.prompts[1]).toContain('Human: first');
+    expect(h.backend.prompts[1]).toContain('You: answer one');
+    expect(h.backend.prompts[1].endsWith('next')).toBe(true);
+    const record = h.manager.get(started.id);
+    expect(record.messages.at(-2)).toMatchObject({
+      role: 'notice',
+      notice: 'rollover',
+    });
+  });
+
+  it('under the threshold the session resumes', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.backend.settle({ contextTokens: ROLLOVER_TOKENS - 1 });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    h.manager.sendMessage(started.id, 'next');
+    expect(h.backend.resumed[1]).toBe('s-1');
+    expect(h.backend.prompts[1]).toBe('next');
+  });
+
+  it('current is the newest conversation its owner opened', () => {
+    const h = heldManager();
+    const ada: Sender = { address: 'human:ada', canDecide: true };
+    const bo: Sender = { address: 'human:bo', canDecide: true };
+    h.manager.start('ada one', 'held', undefined, undefined, ada);
+    h.manager.start('bo one', 'held', undefined, undefined, bo);
+    expect(h.manager.current('human:ada')?.prompt).toBe('ada one');
+    expect(h.manager.current('human:bo')?.prompt).toBe('bo one');
+    expect(h.manager.current('human:cy')).toBeUndefined();
   });
 });

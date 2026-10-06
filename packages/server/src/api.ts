@@ -3771,8 +3771,9 @@ async function startOverseer(
 
 // POST /api/overseer/:id/message — mirrors sendPlanMessage: 202 with the record
 // already flipped back to `running`; the reply lands via `overseer.changed`.
-// 404s an unknown conversation and 409s one mid-turn or a revoked overseer
-// (raised by sendMessage and mapped by handleApi's outer catch).
+// Mid-turn, the message queues for the turn's end instead. 404s an unknown
+// conversation and 409s a revoked overseer (raised by sendMessage and mapped
+// by handleApi's outer catch).
 async function sendOverseerMessage(
   req: Request,
   ctx: ApiContext,
@@ -6837,6 +6838,17 @@ export async function handleApi(
       if (segments.length === 1 && method === 'POST') {
         return await startOverseer(req, ctx, speaker);
       }
+      // One conversation per person per project: the newest one they opened.
+      if (
+        segments.length === 2 &&
+        segments[1] === 'current' &&
+        method === 'GET'
+      ) {
+        return jsonResponse({
+          conversation:
+            ctx.overseerManager.current(speaker?.address ?? null) ?? null,
+        });
+      }
       const conversationId = segments[1];
       if (
         conversationId !== undefined &&
@@ -6856,6 +6868,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await sendOverseerMessage(req, ctx, conversationId, speaker);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'stop' &&
+        method === 'POST'
+      ) {
+        return jsonResponse(ctx.overseerManager.stop(conversationId));
       }
       if (
         segments.length === 3 &&

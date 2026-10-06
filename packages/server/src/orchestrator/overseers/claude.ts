@@ -303,6 +303,9 @@ export class ClaudeOverseer implements OverseerBackend {
       ...(resume !== undefined ? { resume } : {}),
       ...(opts.model !== undefined ? { model: opts.model } : {}),
       ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
+      ...(opts.abortController !== undefined
+        ? { abortController: opts.abortController }
+        : {}),
     };
 
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
@@ -313,6 +316,7 @@ export class ClaudeOverseer implements OverseerBackend {
 
     try {
       let sessionId: string | undefined;
+      let contextTokens: number | undefined;
       for await (const message of sdkQuery) {
         if (message.type === 'system') {
           sessionId = message.session_id;
@@ -320,6 +324,7 @@ export class ClaudeOverseer implements OverseerBackend {
         }
         if (message.type === 'assistant') {
           reportToolUses(message.message.content, opts.onToolUse);
+          contextTokens = contextOf(message.message.usage) ?? contextTokens;
           continue;
         }
         if (message.type !== 'result') continue;
@@ -330,6 +335,8 @@ export class ClaudeOverseer implements OverseerBackend {
         return {
           reply: reply === '' ? EMPTY_REPLY_MESSAGE : reply,
           sessionId: message.session_id ?? sessionId,
+          costUsd: message.total_cost_usd,
+          ...(contextTokens !== undefined ? { contextTokens } : {}),
         };
       }
       throw new Error('overseer turn produced no result message');
@@ -340,6 +347,18 @@ export class ClaudeOverseer implements OverseerBackend {
       throw new Error(rewriteMissingCliError((err as Error).message));
     }
   }
+}
+
+// The context one API call read: its fresh input plus whatever came from cache.
+function contextOf(usage: unknown): number | undefined {
+  if (typeof usage !== 'object' || usage === null) return undefined;
+  const u = usage as Record<string, unknown>;
+  const n = (key: string) => (typeof u[key] === 'number' ? u[key] : 0);
+  const total =
+    n('input_tokens') +
+    n('cache_read_input_tokens') +
+    n('cache_creation_input_tokens');
+  return total > 0 ? total : undefined;
 }
 
 // Hands each built-in tool call in an assistant message to `onToolUse`. The
