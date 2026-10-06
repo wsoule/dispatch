@@ -59,6 +59,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     configuredEffort: undefined,
     reset: () => {},
     stop: () => Promise.resolve(),
+    setConversationOptions: () => Promise.resolve(),
     draft: '',
     setDraft: () => {},
     ...over,
@@ -571,8 +572,7 @@ test('a parked tool call renders an allow/deny card wired to decideApproval', as
 });
 
 // The opening composer picks the model the conversation opens on (the
-// `PromptBar`'s own model select); an open conversation names the model it
-// started on and offers no picker.
+// `PromptBar`'s own model select); an open conversation's picker shows its own model.
 test('the opening composer offers the model picker and an open conversation names its model', () => {
   const picks: string[] = [];
   const fresh = overseerSession({
@@ -597,8 +597,10 @@ test('the opening composer offers the model picker and an open conversation name
       })}
     />
   );
-  expect(screen.queryByRole('combobox', { name: 'Choose model' })).toBeNull();
-  expect(screen.getByText(/Fable 5\.1/)).toBeDefined();
+  // An open conversation's picker shows its own model; a change applies from its next turn.
+  expect(
+    screen.getByRole('combobox', { name: 'Choose model' }).textContent
+  ).toContain('Fable 5.1');
 });
 
 // Card headings are 12px/500 sentence case, never uppercase tracked labels, and the
@@ -663,4 +665,22 @@ test('a classic conversation still locks its composer mid-turn', () => {
       .hasAttribute('disabled')
   ).toBe(true);
   expect(screen.queryByTestId('overseer-stop')).toBeNull();
+});
+
+test('an open conversation shows its own model and effort in the pickers', () => {
+  render(
+    <ChatWithDraft
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({ model: 'claude-opus-5-5', effort: 'high' }),
+      })}
+      durable
+    />
+  );
+  expect(
+    screen.getByRole('combobox', { name: 'Choose model' }).textContent
+  ).toContain('Opus 5.5');
+  expect(
+    screen.getByRole('combobox', { name: 'Choose effort' }).textContent
+  ).toContain('High');
 });

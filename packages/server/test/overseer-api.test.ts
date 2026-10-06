@@ -292,6 +292,29 @@ describe('POST /api/overseer/:id/message', () => {
     expect(missing.status).toBe(404);
   });
 
+  it('PATCH changes the model and effort, and 400s a bad effort', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true }));
+    const { record } = await startConversation();
+    await settled(record.id);
+    const patch = (body: unknown) =>
+      fetch(`${baseUrl}/api/overseer/${record.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const ok = await patch({ model: 'claude-sonnet-5', effort: 'low' });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({
+      model: 'claude-sonnet-5',
+      effort: 'low',
+    });
+    expect((await patch({ effort: 'extreme' })).status).toBe(400);
+    const cleared = (await (await patch({ model: null })).json()) as {
+      model?: string;
+    };
+    expect(cleared.model).toBeUndefined();
+  });
+
   it('400s an empty text', async () => {
     await startWithOverseer(new FakeOverseer({ ok: true }));
     const { record } = await startConversation();

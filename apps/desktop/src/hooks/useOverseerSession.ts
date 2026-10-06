@@ -178,6 +178,14 @@ export interface OverseerSession {
   /** Stops the running turn; what was typed during it waits for the next send. */
   stop: () => Promise<void>;
   /**
+   * Moves the open conversation to another model or effort for its next
+   * turns. `DEFAULT_EFFORT_ID` goes back to the project's configured effort.
+   */
+  setConversationOptions: (options: {
+    model?: string;
+    effortId?: string;
+  }) => Promise<void>;
+  /**
    * What the human has typed into the composer but not sent yet. It lives on
    * the session rather than inside OverseerChat because every surface that
    * renders that composer is unmounted by something ordinary: the rail's tab
@@ -549,6 +557,24 @@ export function useOverseerSession(
     });
   }, [client, conversationId, port, queryClient]);
 
+  const setConversationOptions = useCallback(
+    async (options: { model?: string; effortId?: string }) => {
+      if (client === null || conversationId === null) return;
+      try {
+        const rec = await client.setOverseerOptions(conversationId, {
+          ...(options.model !== undefined ? { model: options.model } : {}),
+          ...(options.effortId !== undefined
+            ? { effort: effortFromId(options.effortId) ?? null }
+            : {}),
+        });
+        queryClient.setQueryData(overseerKey(port, conversationId), rec);
+      } catch (err) {
+        setSendError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [client, conversationId, port, queryClient]
+  );
+
   // react-query keeps the last good `data` through a *background* refetch
   // failure, which is right for a hiccup and wrong for a conversation the
   // daemon no longer has (records are in-memory, so a restart 404s every id
@@ -579,6 +605,7 @@ export function useOverseerSession(
     configuredEffort,
     reset,
     stop,
+    setConversationOptions,
     draft,
     setDraft,
   };

@@ -667,6 +667,27 @@ export class OverseerManager {
     }
   }
 
+  /**
+   * Changes the model or effort the conversation's next turns run on; `null`
+   * goes back to the project's configured default. A running turn keeps its own.
+   */
+  setOptions(
+    conversationId: string,
+    options: { model?: string | null; effort?: EffortLevel | null }
+  ): OverseerRecord {
+    const record = this.get(conversationId);
+    const next: OverseerRecord = { ...record };
+    if (options.model === null) delete next.model;
+    else if (options.model !== undefined) next.model = options.model;
+    if (options.effort === null) delete next.effort;
+    else if (options.effort !== undefined) next.effort = options.effort;
+    this.updateRecord(conversationId, {
+      model: next.model,
+      effort: next.effort,
+    });
+    return this.get(conversationId);
+  }
+
   /** The newest conversation `owner` opened, or undefined: one per person per project. */
   current(owner: string | null): OverseerRecord | undefined {
     return this.list().find((record) =>
