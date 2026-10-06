@@ -8,7 +8,7 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { type ReactNode, StrictMode } from 'react';
 
 import {
   overseerKey,
@@ -754,4 +754,23 @@ test('resume reopens the person’s own conversation; classic stays blank', asyn
   });
   expect(classic.result.current.conversationId).toBeNull();
   expect(asked).toBe(1);
+});
+
+// Resume under StrictMode's double-run effects still opens the conversation.
+test('resume opens the conversation under StrictMode', async () => {
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    currentOverseer: () => Promise.resolve({ conversation: overseerRecord() }),
+    getOverseer: () => Promise.resolve(overseerRecord()),
+  } as unknown as ApiClient;
+  const strict = ({ children }: { children: ReactNode }) => (
+    <StrictMode>{wrapper({ children })}</StrictMode>
+  );
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo', undefined, undefined, true),
+    { wrapper: strict }
+  );
+  await waitFor(() => {
+    expect(result.current.conversationId).toBe('w-1');
+  });
 });

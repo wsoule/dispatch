@@ -340,3 +340,38 @@ export function findInThread(
     (item) => searchableText(item)?.toLowerCase().includes(needle) === true
   );
 }
+
+// The SDK's own tool-loading step: plumbing, not work the human asked about.
+const HIDDEN_TOOLS = new Set(['ToolSearch']);
+
+/** A thread row as the chat renders it: consecutive tool calls fold into one chip row. */
+export type OverseerStreamItem =
+  | OverseerThreadItem
+  | {
+      kind: 'tools';
+      key: string;
+      calls: { tool: string; text: string; failed: boolean }[];
+    };
+
+/** Folds each run of tool rows into one `tools` row and drops the SDK's own plumbing. */
+export function groupToolRows(
+  items: readonly OverseerThreadItem[]
+): OverseerStreamItem[] {
+  const out: OverseerStreamItem[] = [];
+  for (const item of items) {
+    if (item.kind !== 'tool') {
+      out.push(item);
+      continue;
+    }
+    if (HIDDEN_TOOLS.has(item.tool)) continue;
+    const call = {
+      tool: item.tool,
+      text: item.text,
+      failed: item.text.startsWith('error:'),
+    };
+    const last = out.at(-1);
+    if (last?.kind === 'tools') last.calls.push(call);
+    else out.push({ kind: 'tools', key: item.key, calls: [call] });
+  }
+  return out;
+}

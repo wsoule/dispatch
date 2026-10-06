@@ -280,12 +280,15 @@ export function useOverseerSession(
   useEffect(() => {
     if (!resume || client === null || projectPath === null) return;
     if (resumedFor.current === projectPath) return;
-    resumedFor.current = projectPath;
     let cancelled = false;
+    // Marked done only when the answer lands: a cancelled fetch (a remount, a
+    // new client) must leave the next run free to ask again.
     client
       .currentOverseer()
       .then(({ conversation }) => {
-        if (cancelled || conversation === null) return;
+        if (cancelled) return;
+        resumedFor.current = projectPath;
+        if (conversation === null) return;
         queryClient.setQueryData(
           overseerKey(port, conversation.id),
           conversation
@@ -294,6 +297,7 @@ export function useOverseerSession(
       })
       .catch(() => {
         // An older daemon has no such route; the blank composer is the fallback.
+        if (!cancelled) resumedFor.current = projectPath;
       });
     return () => {
       cancelled = true;

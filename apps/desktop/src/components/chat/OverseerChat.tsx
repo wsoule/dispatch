@@ -16,17 +16,19 @@ import type {
 } from '../../hooks/useOverseerSession';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { effortOptions, modelLabel, MODELS } from '../../lib/models';
-import type { OverseerThreadItem } from '../../lib/overseerThread';
 import {
   buildOverseerThread,
   doorLabel,
   findInThread,
+  groupToolRows,
   type OverseerDoor,
+  type OverseerStreamItem,
 } from '../../lib/overseerThread';
 import { Markdown } from '../runs/Markdown';
 import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
+import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
 import { Spinner } from '@/ui/spinner';
 
@@ -250,6 +252,54 @@ function OverseerOutcomeRow({
   );
 }
 
+// How many chips a tool run shows before "+N".
+const SHOWN_TOOLS = 6;
+
+/** One turn's tool calls as a chip row; the raw results stay behind "details". */
+function ToolRun({
+  calls,
+}: {
+  calls: { tool: string; text: string; failed: boolean }[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="flex min-w-0 flex-col gap-1 self-start"
+      data-testid="overseer-tools"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <ToolChipGroup overflowCount={Math.max(0, calls.length - SHOWN_TOOLS)}>
+          {calls.slice(0, SHOWN_TOOLS).map((call, i) => (
+            <ToolChip
+              key={`${call.tool}-${i}`}
+              icon={Wrench}
+              label={call.tool}
+              state={call.failed ? 'failed' : 'done'}
+            />
+          ))}
+        </ToolChipGroup>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="text-muted-foreground hover:text-foreground shrink-0 text-[11px] hover:underline"
+        >
+          {open ? 'hide details' : 'details'}
+        </button>
+      </div>
+      {open && (
+        <ul className="text-muted-foreground flex flex-col gap-1 px-1 font-mono text-[11px] break-all whitespace-pre-wrap">
+          {calls.map((call, i) => (
+            <li key={`${call.tool}-${i}`}>
+              <span className="text-foreground">{call.tool}</span> {call.text}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 interface OverseerChatProps {
   overseer: OverseerSession;
   /**
@@ -408,7 +458,7 @@ export function OverseerChat({
     void overseer.decideApproval(requestId, decision);
   }
 
-  function renderRow(item: OverseerThreadItem) {
+  function renderRow(item: OverseerStreamItem) {
     switch (item.kind) {
       case 'message':
         return (
@@ -431,6 +481,8 @@ export function OverseerChat({
             </span>
           </div>
         );
+      case 'tools':
+        return <ToolRun key={item.key} calls={item.calls} />;
       case 'confirm':
         return (
           <OverseerConfirmCard
@@ -607,9 +659,9 @@ export function OverseerChat({
         ref={scrollRef}
         role="log"
         aria-label="Overseer conversation"
-        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto"
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto [overflow-wrap:anywhere]"
       >
-        {thread.map(renderRow)}
+        {groupToolRows(thread).map(renderRow)}
       </div>
 
       {aboveComposer}

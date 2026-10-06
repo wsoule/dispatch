@@ -57,7 +57,6 @@ function initial(key: string): string {
 
 // The same colours as the top bar's counts.
 const TONE: Record<NarratorLine['tone'], string> = {
-  asks: 'text-(--state-waiting-fg)',
   failed: 'text-(--state-failed-fg)',
   review: 'text-(--state-review-fg)',
   landed: 'text-muted-foreground',
