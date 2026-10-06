@@ -96,12 +96,14 @@ function EdgePath({
   nodesById,
   horizontal,
   label,
+  hint,
   tone,
 }: {
   edge: DagEdge;
   nodesById: Map<string, DagNode>;
   horizontal: boolean;
   label?: string;
+  hint?: string;
   tone: EdgeTone;
 }) {
   const from = nodesById.get(edge.from);
@@ -120,35 +122,60 @@ function EdgePath({
     ? `M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}`
     : `M ${fromX} ${fromY} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${toY}`;
 
+  const attention = tone === 'attention';
+  // A pill wide enough for the label at 11px tabular figures.
+  const pillWidth = label === undefined ? 0 : label.length * 7 + 12;
   return (
-    <>
+    <g data-slot="graph-edge">
       <path
         d={d}
         className={cn(
           'fill-none',
-          tone === 'attention'
+          attention
             ? 'stroke-(--state-waiting-fg)'
             : 'stroke-[var(--border-strong)]'
         )}
         strokeWidth={1.5}
-        markerEnd="url(#dep-graph-arrow)"
+        markerEnd={
+          attention
+            ? 'url(#dep-graph-arrow-attention)'
+            : 'url(#dep-graph-arrow)'
+        }
       />
       {label !== undefined && (
-        <text
-          x={midX}
-          y={midY - 6}
-          textAnchor="middle"
-          className={cn(
-            'text-[11px]',
-            tone === 'attention'
-              ? 'fill-(--state-waiting-fg)'
-              : 'fill-(--text-secondary)'
-          )}
-        >
-          {label}
-        </text>
+        <g className="pointer-events-auto">
+          {hint !== undefined && <title>{hint}</title>}
+          <rect
+            data-slot="graph-edge-label"
+            x={midX - pillWidth / 2}
+            y={midY - 9}
+            width={pillWidth}
+            height={18}
+            rx={9}
+            strokeWidth={1}
+            className={cn(
+              'fill-(--background)',
+              attention
+                ? 'stroke-(--state-waiting-fg)'
+                : 'stroke-[var(--border-strong)]'
+            )}
+          />
+          <text
+            x={midX}
+            y={midY + 4}
+            textAnchor="middle"
+            className={cn(
+              'text-[11px] font-semibold tabular-nums',
+              attention
+                ? 'fill-(--state-waiting-fg)'
+                : 'fill-(--text-secondary)'
+            )}
+          >
+            {label}
+          </text>
+        </g>
       )}
-    </>
+    </g>
   );
 }
 
@@ -174,6 +201,8 @@ export interface DependencyGraphProps {
   wrap?: number;
   /** A label on an edge, such as how many waits it stands for. */
   edgeLabel?: (edge: DagEdge) => string | undefined;
+  /** An edge's tooltip, saying in words what its label counts. */
+  edgeHint?: (edge: DagEdge) => string | undefined;
   edgeTone?: (edge: DagEdge) => EdgeTone;
   /** Draws a node's body in place of the task card; `nodeSize` sizes it. */
   renderNode?: (node: DagNode) => ReactNode;
@@ -200,6 +229,7 @@ export function DependencyGraph({
   direction = 'TB',
   wrap,
   edgeLabel,
+  edgeHint,
   edgeTone,
   renderNode,
   nodeSize,
@@ -264,6 +294,20 @@ export function DependencyGraph({
                 className="fill-[var(--border-strong)]"
               />
             </marker>
+            <marker
+              id="dep-graph-arrow-attention"
+              viewBox="0 0 8 8"
+              refX={4}
+              refY={4}
+              markerWidth={6}
+              markerHeight={6}
+              orient="auto-start-reverse"
+            >
+              <path
+                d="M 0 0 L 8 4 L 0 8 z"
+                className="fill-(--state-waiting-fg)"
+              />
+            </marker>
           </defs>
           {layout.edges.map((edge) => (
             <EdgePath
@@ -272,6 +316,7 @@ export function DependencyGraph({
               nodesById={nodesById}
               horizontal={direction === 'LR'}
               label={edgeLabel?.(edge)}
+              hint={edgeHint?.(edge)}
               tone={edgeTone?.(edge) ?? 'default'}
             />
           ))}

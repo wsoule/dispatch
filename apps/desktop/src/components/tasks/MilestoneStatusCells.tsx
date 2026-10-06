@@ -4,23 +4,25 @@ import type {
 } from '../../lib/containerStatus';
 import { cn } from '@/lib/utils';
 
-const HEALTH: Record<ContainerHealth, { label: string; tone: string }> = {
-  attention: {
-    label: 'attention',
-    tone: 'bg-(--state-waiting-surface) text-(--state-waiting-fg)',
-  },
-  moving: {
-    label: 'moving',
-    tone: 'bg-(--state-working-surface) text-(--state-working-fg)',
-  },
-  idle: { label: 'idle', tone: 'text-muted-foreground' },
-  finished: {
-    label: 'finished',
-    tone: 'bg-(--state-review-surface) text-(--state-review-fg)',
-  },
-};
+export const HEALTH: Record<ContainerHealth, { label: string; tone: string }> =
+  {
+    attention: {
+      label: 'attention',
+      tone: 'bg-(--state-waiting-surface) text-(--state-waiting-fg)',
+    },
+    moving: {
+      label: 'moving',
+      tone: 'bg-(--state-working-surface) text-(--state-working-fg)',
+    },
+    idle: { label: 'idle', tone: 'text-muted-foreground' },
+    finished: {
+      label: 'finished',
+      tone: 'bg-(--state-review-surface) text-(--state-review-fg)',
+    },
+  };
 
-const CELLS = [
+/** The four urgent counts, in the glyphs and colours the top bar uses. */
+export const CELLS = [
   { key: 'asks', glyph: '●', tone: 'text-(--state-waiting-fg)', label: 'asks' },
   {
     key: 'failed',
@@ -42,7 +44,7 @@ const CELLS = [
   },
 ] as const;
 
-function shortDate(iso: string): string {
+export function shortDate(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime())
     ? iso

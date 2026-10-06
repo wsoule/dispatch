@@ -104,6 +104,9 @@ export interface NeedsYouBlockProps {
   onOpenDecision: (item: DecisionItem) => void;
   /** Drops the list's own margins, for a column that spaces its children. */
   flush?: boolean;
+  /** Controls folding from outside, e.g. a view that keeps the block to one line. */
+  folded?: boolean;
+  onFoldedChange?: (folded: boolean) => void;
 }
 
 /** Every ask waiting on you, pinned above the list, regardless of filters. */
@@ -114,12 +117,19 @@ export function NeedsYouBlock({
   onOpenRef,
   onOpenDecision,
   flush = false,
+  folded: foldedProp,
+  onFoldedChange,
 }: NeedsYouBlockProps) {
   const { client, port, me, messageAccess: access } = data;
   const gates = useOpenGates(client, port, access);
   const pane = useThreadPaneProps(data, onOpenRef);
   const actions = useThreadActions(client, port, me, access, data);
-  const [folded, setFolded] = useState(false);
+  const [foldedState, setFoldedState] = useState(false);
+  const folded = foldedProp ?? foldedState;
+  const setFolded = (next: boolean) => {
+    if (foldedProp === undefined) setFoldedState(next);
+    onFoldedChange?.(next);
+  };
   // Asks answered here, kept in place as receipts so rows never reshuffle.
   const [answered, setAnswered] = useState<ReadonlyMap<string, Receipt>>(
     new Map()
@@ -251,11 +261,19 @@ export function NeedsYouBlock({
             ? 'Nothing needs you'
             : `Needs you · ${needs.count}`}
         </span>
-        {needs.count > 0 && (
-          <span className="text-muted-foreground text-[12px]">
-            oldest first · this machine only
-          </span>
-        )}
+        {needs.count > 0 &&
+          (folded ? (
+            <span
+              data-testid="needs-you-preview"
+              className="text-muted-foreground min-w-0 truncate text-[12px]"
+            >
+              {groups.find((g) => g.items.length > 0)?.items[0]?.summary}
+            </span>
+          ) : (
+            <span className="text-muted-foreground text-[12px]">
+              oldest first · this machine only
+            </span>
+          ))}
       </button>
       {!folded &&
         groups.map(({ group, items, receipts }) => (
