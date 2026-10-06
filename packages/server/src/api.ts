@@ -506,7 +506,7 @@ export interface ApiContext {
   ) => { ok: true } | { ok: false; code: 'busy' | 'parked'; live: string[] };
   /** What stopping this daemon would interrupt (index.ts workReport), and
    *  how many items block on a human; absent without a daemon. */
-  liveWork?: () => { busy: string[]; parked: string[]; waiting: number };
+  liveWork?: () => { busy: string[]; parked: number; waiting: number };
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -5287,7 +5287,7 @@ export async function handleApi(
       method === 'GET'
     )
       return jsonResponse(
-        ctx.liveWork?.() ?? { busy: [], parked: [], waiting: 0 }
+        ctx.liveWork?.() ?? { busy: [], parked: 0, waiting: 0 }
       );
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
       // `rootDir` lets the web UI show a project name (its basename) in the

@@ -838,11 +838,11 @@ async function stopForTakeover(
     signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS * 5),
   });
   if (work.ok) {
-    const live = (await work.json()) as { busy: string[]; parked: string[] };
+    const live = (await work.json()) as { busy: string[]; parked: number };
     if (live.busy.length > 0) throw busy(live.busy.join(', '));
-    if (live.parked.length > 0) {
-      const what = live.parked.join(', ');
-      const why = `the dispatchd serving this project (${which}) has ${what}. Taking over stops it; those runs pick up again under the new daemon, and its token answers them (\`dispatch approve <run>\`, or in the app).`;
+    if (live.parked > 0) {
+      const n = live.parked;
+      const why = `${n} ${n === 1 ? 'run is' : 'runs are'} waiting on you in the dispatchd serving this project (${which}). They'll pick up again after the restart. Questions stay open; tool approvals will be asked again.`;
       const ask = ctx.confirm ?? (process.stdin.isTTY === true ? askNo : null);
       if (ask === null)
         throw new CliError(

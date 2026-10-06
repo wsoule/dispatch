@@ -265,8 +265,9 @@ describe('dispatch serve takes over', () => {
     const s = serve();
     expect(await s.exit).toBe(1);
     expect(s.err()).toContain('without a terminal to confirm');
-    expect(s.err()).toContain('1 run waiting on a human');
-    expect(s.err()).toContain('pick up again');
+    expect(s.err()).toContain('1 run is waiting on you');
+    expect(s.err()).toContain("They'll pick up again after the restart.");
+    expect(s.err()).toContain('tool approvals will be asked again');
     expect(alive(old.pid)).toBe(true);
     expect(daemonFile().pid).toBe(old.pid);
   }, 90_000);
@@ -298,7 +299,8 @@ describe('dispatch serve takes over', () => {
     spawned.push(now.pid);
     expect(now.pid).not.toBe(old.pid);
     expect(asked).toHaveLength(1);
-    expect(asked[0]).toContain('1 run waiting on a human');
+    expect(asked[0]).toContain('1 run is waiting on you');
+    expect(asked[0]).toContain('Questions stay open');
     process.kill(now.pid, 'SIGTERM');
     await done;
     // serve hands dispatchd's exit code to the process; not this runner's.

@@ -2284,12 +2284,12 @@ async function bootServer(
     shared,
   };
 
-  // Live runs doing nothing but wait on a human (an approval, or any open
-  // decision the run is parked on): a restart loses no work of theirs.
+  // Live runs doing nothing but wait on a human (awaiting approval, or a
+  // blocking decision item of theirs): they pick up again after a restart.
   const parkedRunIds = (): Set<string> => {
     const open = new Set(
       decisionFeed
-        .list()
+        .list({ disposition: 'blocking' })
         .flatMap((item) => (item.runId === undefined ? [] : [item.runId]))
     );
     return new Set(
@@ -2304,9 +2304,9 @@ async function bootServer(
     );
   };
   // What a restart would interrupt, in words: `busy` is work under way (an
-  // agent, a queued merge, a shell, a browser), `parked` runs waiting on a
-  // human, which pick up again after a restart.
-  const workReport = (): { busy: string[]; parked: string[] } => {
+  // agent, a queued merge, a shell, a browser), worded as team start/join
+  // say it; `parked` counts the runs only waiting on a human.
+  const workReport = (): { busy: string[]; parked: number } => {
     const out: string[] = [];
     const count = (n: number, one: string, many: string) => {
       if (n > 0) out.push(`${n} ${n === 1 ? one : many}`);
@@ -2351,17 +2351,14 @@ async function bootServer(
       'terminals'
     );
     count(browsers.list().length, 'browser', 'browsers');
-    const n = parked.size;
-    return {
-      busy: out,
-      parked:
-        n === 0 ? [] : [`${n} ${n === 1 ? 'run' : 'runs'} waiting on a human`],
-    };
+    return { busy: out, parked: parked.size };
   };
   // Idle shutdown and the restart that turns on board sync wait for both.
   const liveWork = (): string[] => {
     const { busy, parked } = workReport();
-    return [...busy, ...parked];
+    if (parked > 0)
+      busy.push(`${parked} ${parked === 1 ? 'run' : 'runs'} waiting on you`);
+    return busy;
   };
   apiCtx.liveWork = () => ({
     ...workReport(),
@@ -2378,8 +2375,12 @@ async function bootServer(
     apiCtx.shutdownForHandover = (allowParked) => {
       const { busy, parked } = workReport();
       if (busy.length > 0) return { ok: false, code: 'busy', live: busy };
-      if (parked.length > 0 && !allowParked)
-        return { ok: false, code: 'parked', live: parked };
+      if (parked > 0 && !allowParked)
+        return {
+          ok: false,
+          code: 'parked',
+          live: [`${parked} ${parked === 1 ? 'run' : 'runs'} waiting on you`],
+        };
       if (handingOver) return { ok: true };
       handingOver = true;
       orchestrator.hold('Dispatch is handing this project to another daemon.');

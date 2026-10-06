@@ -396,7 +396,7 @@ describe('handing the project to another daemon', () => {
       headers: auth(agentToken),
     });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ busy: [], parked: [], waiting: 0 });
+    expect(await res.json()).toEqual({ busy: [], parked: 0, waiting: 0 });
   });
 
   it('refuses to stop when its process cannot exit', async () => {
