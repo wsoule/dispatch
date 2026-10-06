@@ -1,3 +1,4 @@
+import { presetForBucket, type TasksPreset } from '../../lib/tasksPresets';
 import type { TaskBucket, TaskStatusCounts } from '../../lib/taskStatus';
 import { cn } from '@/lib/utils';
 
@@ -37,22 +38,15 @@ const ORDER: readonly TaskBucket[] = [
   'blocked',
 ];
 
-// The buckets the top bar also counts; their chips filter the list.
-const FILTERABLE: ReadonlySet<TaskBucket> = new Set([
-  'failed',
-  'working',
-  'review',
-]);
-
 /** The Tasks strip: every open task in one bucket, plus landed over total. */
 export function TasksStrip({
   counts,
-  filter,
-  onFilter,
+  preset,
+  onPreset,
 }: {
   counts: TaskStatusCounts;
-  filter: TaskBucket | null;
-  onFilter: (bucket: TaskBucket | null) => void;
+  preset: TasksPreset;
+  onPreset: (preset: TasksPreset) => void;
 }) {
   return (
     <div
@@ -62,20 +56,22 @@ export function TasksStrip({
       {ORDER.map((bucket) => {
         const n = counts.buckets[bucket];
         const spec = CHIP[bucket];
+        const chipPreset = presetForBucket(bucket);
+        const active = chipPreset !== null && chipPreset === preset;
         const className = cn(
           'rounded-pill px-2 py-px whitespace-nowrap',
           spec.tone === '' || n === 0
             ? 'border-border-chip text-muted-foreground border-[0.5px]'
             : spec.tone,
-          filter === bucket && 'ring-1 ring-current'
+          active && 'ring-1 ring-current'
         );
-        return FILTERABLE.has(bucket) ? (
+        return chipPreset !== null ? (
           <button
             key={bucket}
             type="button"
             data-testid={`tasks-strip-${bucket}`}
-            aria-pressed={filter === bucket}
-            onClick={() => onFilter(filter === bucket ? null : bucket)}
+            aria-pressed={active}
+            onClick={() => onPreset(active ? 'all' : chipPreset)}
             className={cn(className, 'hover:underline')}
           >
             {spec.label(n)}

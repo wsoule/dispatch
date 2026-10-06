@@ -7,7 +7,7 @@ import type {
   TaskTab,
 } from './appNav';
 import { initialNavState, navReducer } from './appNav';
-import type { TaskBucket } from './taskStatus';
+import type { TasksPreset } from './tasksPresets';
 
 // Two views' navigation: App dispatches every legacy NavAction here as well as to
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
@@ -63,8 +63,8 @@ interface Place {
 
 export interface TwoViewsState extends Place {
   tasksMode: TasksMode;
-  /** The top bar's ✕ ◇ ◐ narrow the list to one bucket; `null` shows everything. */
-  tasksFilter: TaskBucket | null;
+  /** What the list and graph show: All, or one question like Needs you or Failed. */
+  tasksPreset: TasksPreset;
   peek: Peek | null;
   /** The open Settings page, or `null` while Settings is closed. */
   settings: TwoViewsSettingsPage | null;
@@ -74,8 +74,8 @@ export interface TwoViewsState extends Place {
 
 export type TwoViewsAction =
   | { type: 'tv/showOverseer' }
-  | { type: 'tv/showTasks'; filter?: TaskBucket }
-  | { type: 'tv/setTasksFilter'; filter: TaskBucket | null }
+  | { type: 'tv/showTasks'; preset?: TasksPreset }
+  | { type: 'tv/setTasksPreset'; preset: TasksPreset }
   | { type: 'tv/setTasksMode'; mode: TasksMode }
   | { type: 'tv/openSettings'; page?: TwoViewsSettingsPage }
   | { type: 'tv/closeSettings' }
@@ -97,7 +97,7 @@ export const initialTwoViewsState: TwoViewsState = {
   mainView: 'overseer',
   tasksPage: LIST,
   tasksMode: 'list',
-  tasksFilter: null,
+  tasksPreset: 'all',
   peek: null,
   settings: null,
   history: [{ mainView: 'overseer', tasksPage: LIST }],
@@ -310,14 +310,14 @@ export function twoViewsReducer(
     case 'tv/showOverseer':
       return applyDestination(state, { kind: 'overseer' });
     case 'tv/showTasks':
-      return action.filter === undefined
+      return action.preset === undefined
         ? {
             ...go(state, { mainView: 'tasks', tasksPage: state.tasksPage }),
-            tasksFilter: null,
+            tasksPreset: 'all',
           }
-        : { ...toTasks(state, LIST), tasksFilter: action.filter };
-    case 'tv/setTasksFilter':
-      return { ...state, tasksFilter: action.filter };
+        : { ...toTasks(state, LIST), tasksPreset: action.preset };
+    case 'tv/setTasksPreset':
+      return { ...state, tasksPreset: action.preset };
     case 'tv/setTasksMode':
       return { ...state, tasksMode: action.mode };
     case 'tv/openSettings':

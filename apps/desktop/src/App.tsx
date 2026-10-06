@@ -806,6 +806,19 @@ function App() {
       statusModel,
     ]
   );
+  const starredTaskIds = useMemo(
+    () =>
+      new Set(
+        savedViews.favorites.flatMap((ref) =>
+          ref.kind === 'task' ? [ref.id] : []
+        )
+      ),
+    [savedViews.favorites]
+  );
+  const presetContext = useMemo(
+    () => ({ bucketOf, starred: starredTaskIds }),
+    [bucketOf, starredTaskIds]
+  );
   const daemonDown = data.portLoading || data.portError || data.client === null;
   const orb = orbState({
     revoked: overseer.revoked,
@@ -1512,7 +1525,10 @@ function App() {
             dispatchNav(
               count === 'asks'
                 ? { type: 'tv/showTasks' }
-                : { type: 'tv/showTasks', filter: count }
+                : {
+                    type: 'tv/showTasks',
+                    preset: count === 'working' ? 'moving' : count,
+                  }
             ),
           counts: {
             asks: needs.count,
@@ -1564,11 +1580,11 @@ function App() {
             onModeChange={(mode) =>
               dispatchNav({ type: 'tv/setTasksMode', mode })
             }
-            filter={twoViewsState.tasksFilter}
-            onFilter={(filter) =>
-              dispatchNav({ type: 'tv/setTasksFilter', filter })
+            preset={twoViewsState.tasksPreset}
+            onPreset={(preset) =>
+              dispatchNav({ type: 'tv/setTasksPreset', preset })
             }
-            bucketOf={bucketOf}
+            presetContext={presetContext}
             onSelectTask={selectBoardTask}
             onNewTask={() => openCreateTask()}
             onOpenRef={openRef}
