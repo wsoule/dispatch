@@ -11,6 +11,9 @@ tasks:
   # Without this edge `cli:build` and `cli:test` are unordered siblings: locally
   # a warm dist/ hid that, but on a cold CI checkout the test ran first and every
   # spawn died with "Cannot find module .../packages/cli/dist/cli.js".
+  # Several tests also spawn dispatchd, which loads server's dependencies from
+  # dist; `^:build` never reaches them, since server has no build task.
   test:
     deps:
       - 'build'
+      - 'server:build-deps'

@@ -46,13 +46,22 @@ function initGitRepo(dir: string): void {
 
 // Polls this test's own DISPATCH_HOME-scoped daemon file + health check
 // until dispatchd finishes booting (or `timeoutMs` elapses), reusing the
-// exact reader under test rather than a second copy of the same logic.
+// exact reader under test rather than a second copy of the same logic. A
+// daemon that exits first fails at once with its stderr, rather than as a
+// timeout that hides why it died.
 async function waitForHealthyDaemon(
   rootDir: string,
+  child: Bun.Subprocess<'ignore', 'ignore', 'pipe'>,
   timeoutMs = 5000
 ): Promise<{ port: number; auth: Record<string, string> }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      const stderr = await new Response(child.stderr).text();
+      throw new Error(
+        `dispatchd exited with ${child.exitCode} before becoming healthy:\n${stderr}`
+      );
+    }
     const info = readDaemonFile(rootDir);
     if (info !== null && (await isDaemonHealthy(info.port))) {
       return { port: info.port, auth: daemonAuth(info) };
@@ -143,10 +152,10 @@ describe('run_list (live daemon)', () => {
         DISPATCH_ENABLE_FAKES: '1',
       },
       stdout: 'ignore',
-      stderr: 'ignore',
+      stderr: 'pipe',
     });
     try {
-      const { port, auth } = await waitForHealthyDaemon(root);
+      const { port, auth } = await waitForHealthyDaemon(root, child);
 
       const client = await connectClient(root);
       const empty = (await client.callTool({
