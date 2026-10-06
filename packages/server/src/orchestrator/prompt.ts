@@ -4,8 +4,8 @@ import {
   untrustedBlock,
   untrustedFenced,
   untrustedInline,
-} from '@dispatch/core';
-import type { LedgerEntry, TaskComment, TaskDoc } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { TaskComment, TaskDoc } from '@dispatch-foo/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -15,17 +15,6 @@ import type { RunMeta, RunSurvey } from './types.js';
 // every prompt builder in this package imports them from './prompt.js'.
 export { untrustedBlock, untrustedFenced, untrustedInline };
 
-// Terse bulleted section for entries carried forward, or null (no header
-// at all) when there are none — this goes into every dispatch prompt.
-function renderLedgerSection(entries: LedgerEntry[]): string | null {
-  if (entries.length === 0) return null;
-  const lines = entries.map(
-    (e) =>
-      `- **${e.kind}**: ${untrustedInline(e.title)} — ${untrustedInline(e.detail)}`
-  );
-  return ['## Findings and decisions from earlier work', ...lines].join('\n');
-}
-
 // The newest comments kept in a prompt, and the character budget they share.
 const PROMPT_COMMENT_LIMIT = 20;
 const PROMPT_COMMENT_CHARS = 8000;
@@ -34,7 +23,9 @@ const PROMPT_COMMENT_CHARS = 8000;
 // earlier runs and teammates left with task_comment. Keeps the newest that fit
 // the budget and says how many older ones it left out. Null when there are none.
 export function renderCommentsSection(
-  comments: readonly TaskComment[]
+  comments: readonly TaskComment[],
+  // An A2A-origin task: the whole thread is fenced as external text.
+  external = false
 ): string | null {
   if (comments.length === 0) return null;
   const kept: string[] = [];
@@ -47,21 +38,47 @@ export function renderCommentsSection(
     used += entry.length;
   }
   const omitted = comments.length - kept.length;
+  const entries = kept.reverse();
   return [
     '## Comments',
     ...(omitted > 0 ? [`(${String(omitted)} earlier comments omitted.)`] : []),
-    ...kept.reverse(),
+    ...(external
+      ? [untrustedFenced('comments on an A2A task', entries.join('\n\n'))]
+      : entries),
   ].join('\n\n');
 }
 
 // Renders a task's recorded amendments after its description, with an
 // explicit line stating they take precedence over it where they conflict.
-function renderAmendmentsSection(amendmentsText: string): string {
-  return [
-    '## Amendments',
-    'These amendments override the description where they conflict.',
-    untrustedBlock(amendmentsText),
-  ].join('\n\n');
+// An A2A task's amendments are external text and claim no precedence.
+function renderAmendmentsSection(
+  amendmentsText: string,
+  external: boolean
+): string {
+  return external
+    ? [
+        '## Amendments',
+        untrustedFenced('amendments to an A2A task', amendmentsText),
+      ].join('\n\n')
+    : [
+        '## Amendments',
+        'These amendments override the description where they conflict.',
+        untrustedBlock(amendmentsText),
+      ].join('\n\n');
+}
+
+// How the prompt asks for scope: of the run's human, or of `decider` when
+// the run's human cannot grant it.
+function scopeAsk(human: string, decider: string | null): string {
+  const scope =
+    'kind: "question", blocking: true, choices: ["grant", "deny"], ' +
+    'data: { type: "scope", paths: [...], reason: "..." }) ';
+  if (decider === null || decider === human)
+    return `To edit outside your declared writes, ask first with msg_send(${scope}`;
+  return (
+    `To edit outside your declared writes, ask ${decider} first (${human} ` +
+    `cannot grant it) with msg_send(to: ["${decider}"], ${scope}`
+  );
 }
 
 // Builds the exact prompt handed to an executor for a dispatched task — its
@@ -69,14 +86,26 @@ function renderAmendmentsSection(amendmentsText: string): string {
 export function buildTaskPrompt(
   task: TaskDoc,
   parentEpic: TaskDoc | null,
-  ledgerEntries: LedgerEntry[] = [],
+  // The rendered `## Memory` section, or null when there is nothing to show.
+  memorySection: string | null = null,
   // Optional so this stays callable (and snapshot-stable) without a real
   // checkout to collect from — see collectOrientation, which is the impure half.
   orientation: RepoOrientation | null = null,
   // False for executors with no dispatch MCP server (ExecutorProfile.dispatchMcp):
   // their prompt must not send the agent after tools it does not have.
   dispatchTools = true,
-  comments: readonly TaskComment[] = []
+  // The address the agent asks: the run's operator, or the project owner for a
+  // run acting for no one (XH-R9); null names a placeholder.
+  human: string | null = null,
+  // The rendered `## Docs` section; null when docs are off or nothing links.
+  docsSection: string | null = null,
+  // The task's comment thread, oldest first; its newest entries join the prompt.
+  comments: readonly TaskComment[] = [],
+  // An A2A-origin task (XH-R5): amendments and comments fenced, no epic.
+  a2aOrigin = false,
+  // Who decides a scope request, when not `human`: the owner, for an
+  // operator who cannot decide (XH-R9).
+  scopeDecider: string | null = null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -84,26 +113,29 @@ export function buildTaskPrompt(
   const bodyForPrompt =
     amendmentsText === '' ? task.body : removeSection(task.body, 'Amendments');
 
+  // An A2A task's spec came from a client, however a decider edited it since.
   const sections: string[] = [
     `# Task ${task.meta.id}: ${untrustedInline(task.meta.title)}`,
-    bodyForPrompt.trim(),
+    a2aOrigin
+      ? untrustedFenced('the A2A task as written', bodyForPrompt.trim())
+      : bodyForPrompt.trim(),
   ];
 
   if (amendmentsText !== '') {
-    sections.push(renderAmendmentsSection(amendmentsText));
+    sections.push(renderAmendmentsSection(amendmentsText, a2aOrigin));
   }
 
-  const commentsSection = renderCommentsSection(comments);
+  const commentsSection = renderCommentsSection(comments, a2aOrigin);
   if (commentsSection !== null) sections.push(commentsSection);
 
-  if (parentEpic !== null) {
+  if (parentEpic !== null && !a2aOrigin) {
     sections.push(
       `## Parent epic: ${parentEpic.meta.id} — ${untrustedInline(parentEpic.meta.title)}\n\n${parentEpic.body.trim()}`
     );
   }
 
-  const ledgerSection = renderLedgerSection(ledgerEntries);
-  if (ledgerSection !== null) sections.push(ledgerSection);
+  if (memorySection !== null) sections.push(memorySection);
+  if (docsSection !== null) sections.push(docsSection);
 
   // The orientation section answers the questions the two instructions below
   // would otherwise send the agent off to answer for itself, so when it is
@@ -147,16 +179,21 @@ export function buildTaskPrompt(
             'open with `run_list`.'
     );
 
+    const askWho = human ?? 'human:<owner handle>';
     sections.push(
       'When the task genuinely does not say which way to go — ambiguous ' +
         'requirements, several valid approaches with different end results, ' +
-        'missing acceptance criteria — call `ask_user`; it blocks until the ' +
-        'human answers and returns their reply. Use it whenever a decision ' +
-        'would change the shape of the result and the task does not specify ' +
-        'it, and bundle everything you are unsure about into one call rather ' +
-        'than asking repeatedly. Do not use it for anything you can settle by ' +
-        'reading the repo (existing conventions, how a helper behaves, where ' +
-        'a file lives) — find that out yourself.'
+        'missing acceptance criteria — ask with `msg_send` ' +
+        `(to: ["${askWho}"], kind: "question", blocking: true, plus ` +
+        'choices when the answer is one of a few options); it blocks until ' +
+        'the human answers and returns their reply. Bundle everything you ' +
+        'are unsure about into one question, and never ask what you can ' +
+        'settle by reading the repo. ' +
+        scopeAsk(askWho, scopeDecider) +
+        'and edit only on "grant". Messages for you arrive ' +
+        'in this session; answer a question with `msg_reply`, and ' +
+        '`inbox_read` lists anything you missed. A message to another task ' +
+        'reaches its live run, or waits for its next one.'
     );
 
     sections.push(
@@ -226,53 +263,6 @@ function renderSurveySection(survey: RunSurvey): string {
   return ['## Recovered state from the previous run', ...lines].join('\n');
 }
 
-// The slice of a scope request a resumed agent is told about — see
-// renderScopeRequestsSection. Named here rather than importing the registry's
-// record so the prompt module stays free of orchestrator state.
-export interface CarriedScopeRequest {
-  id: string;
-  paths: string[];
-  reason: string;
-  granted: boolean | null;
-  decisionReason: string | null;
-  decidedBy: string | null;
-}
-
-// Tells a resumed agent what became of the out-of-fence requests its previous
-// process was parked on when dispatchd restarted: still open ones are waiting
-// on a human and re-issuing `request_scope` with the same paths re-parks on
-// them; decided ones carry the ruling, since the poll that would have
-// delivered it died with the process. Null when nothing was carried.
-export function renderScopeRequestsSection(
-  requests: CarriedScopeRequest[]
-): string | null {
-  if (requests.length === 0) return null;
-  const lines = requests.map((r) => {
-    const paths = r.paths.map((p) => `\`${p}\``).join(', ');
-    const why = untrustedInline(r.reason);
-    if (r.granted === null) {
-      return (
-        `- ${r.id} (${paths}) — ${why}. **Still awaiting a decision.** If you ` +
-        'still need these paths, call `request_scope` again with exactly the ' +
-        'same paths: it re-attaches to this pending request rather than filing ' +
-        'a new one, and blocks until a human decides. Until then, stay inside ' +
-        'your declared writes.'
-      );
-    }
-    const verdict = r.granted ? 'GRANTED' : 'DENIED';
-    const by = r.decidedBy === null ? '' : ` via ${r.decidedBy}`;
-    const ruling =
-      r.decisionReason === null ? '' : `: ${untrustedInline(r.decisionReason)}`;
-    return `- ${r.id} (${paths}) — ${why}. **${verdict}${by}**${ruling}`;
-  });
-  return [
-    '## Scope requests from before the restart',
-    'Your previous process asked to edit outside its declared scope and was ' +
-      'interrupted by a dispatchd restart before the answer reached it.',
-    ...lines,
-  ].join('\n');
-}
-
 // The opening message for a run that REATTACHES its predecessor's session
 // (see Orchestrator.resumeRun). The agent still has the whole conversation —
 // the task brief, any amendments, every answer and scope ruling it was given
@@ -327,4 +317,32 @@ export function renderFreshSessionNotice(
     sections.push(renderSurveySection(previous.survey));
   }
   return sections.join('\n\n');
+}
+
+// The task's own spec, one index line, and how to read it in full.
+export function specSection(
+  specLine: string | null | undefined
+): string | null {
+  if (specLine === null || specLine === undefined) return null;
+  const handle = /^- spec · (\S+) ·/.exec(specLine)?.[1] ?? '';
+  return [
+    "## The task's spec",
+    specLine,
+    `Judge the work against it: doc_read("${handle}") reads it.`,
+  ].join('\n');
+}
+
+// A review or verify prompt's spec line; null with no reader, or when reading
+// it fails, so a docs outage never blocks the run.
+export function specLineOf(
+  read: ((taskId: string) => string | null) | undefined,
+  taskId: string
+): string | null {
+  if (read === undefined) return null;
+  try {
+    return read(taskId);
+  } catch (err) {
+    console.error(`dispatchd: reading ${taskId}'s spec line failed`, err);
+    return null;
+  }
 }

@@ -1,10 +1,10 @@
-import type { ReadinessReading, RunMeta } from '@dispatch/client';
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import {
   claimConflictsWithWrites,
   isDoneStatus,
   isSatisfiedForDispatchStatus,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { ReadinessReading, RunMeta } from '@dispatch/client';
 
 import type { LiveClaim } from './dispatchPreview';
 import { isTerminalRunState } from './runState';

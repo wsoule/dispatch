@@ -1,0 +1,1670 @@
+{
+  "dmp": "1.0.0-draft.2",
+  "kit": "1.0.0-draft.2",
+  "implementation": {
+    "name": "dispatch-reference",
+    "version": "1.0.0-draft.2"
+  },
+  "claims": {
+    "core": "pass",
+    "dispatch-profile": "pass"
+  },
+  "classes": {
+    "envelope": {
+      "pass": 64,
+      "fail": 0,
+      "skipped": 0,
+      "notApplicable": 0,
+      "shouldFailures": 0
+    },
+    "host-core": {
+      "pass": 139,
+      "fail": 0,
+      "skipped": 0,
+      "notApplicable": 1,
+      "shouldFailures": 0
+    }
+  },
+  "vectors": [
+    {
+      "id": "env.address.parses-each-scheme",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.parses-an-agent-without-an-operator",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.parses-a-single-segment-channel",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.dispatch-grammar-admits-epic-ids",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-a-string-without-a-scheme",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-a-handle-outside-the-identifier-grammar",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-an-operator-on-a-human",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-an-id-outside-the-identifier-grammar",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-a-task-id-outside-the-dispatch-grammar",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-a-run-id-outside-the-dispatch-grammar",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-an-empty-channel-segment",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-an-unknown-scheme",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.address.refuses-the-reserved-at-sign",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.caps.handles-and-segments-are-at-most-64-bytes",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.caps.an-address-is-at-most-256-bytes",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.accepts-a-plain-message",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.to-is-a-non-empty-list",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.names-the-bad-recipient-index",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.unknown-kind-refused-x-kind-accepted",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.body-is-required-unless-an-answer-chooses",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.body-must-be-a-string",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.blocking-only-on-questions-and-handoffs",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.choices-only-on-questions-and-handoffs",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.choices-are-distinct",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-local-ref-type-must-be-registered",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.an-answer-needs-reply-to",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-reply-to-no-message-is-not-found",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.only-questions-and-handoffs-take-answers",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-choice-must-be-one-of-the-questions",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.free-text-may-answer-a-plain-question",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-gate-answer-must-choose",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-handoff-answer-must-choose",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-gate-answer-needs-a-deciding-principal",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.only-sessions-raise-scope-gates",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.agents-may-not-forge-tool-approval-gates",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.scope-gates-have-a-fixed-shape",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-scope-gate-names-a-path",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-scope-gate-names-no-empty-path",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-scope-gate-gives-a-reason",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-carriage-return-line-feed",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-line-feed",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-carriage-return",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-vertical-tab",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-form-feed",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-next-line",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-line-separator",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.one-line-fields-refuse-paragraph-separator",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.body-may-hold-line-breaks",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.body-is-at-most-64-kib",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.data-is-at-most-64-kib-as-jcs",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.refs-hold-at-most-50-entries",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.to-holds-at-most-50-recipients",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.choices-hold-at-most-20-entries",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-ref-id-is-at-most-512-bytes",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-ref-at-is-at-most-512-bytes",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-choice-entry-is-at-most-200-bytes",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.an-answer-choice-is-at-most-200-bytes",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-session-is-at-most-200-bytes",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-memory-gate-names-a-proposal",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-memory-gate-has-a-project-or-team-scope",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-memory-gate-names-its-action-and-kind",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.memory-gates-have-a-fixed-shape",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.a-doc-gate-names-its-doc-and-proposal",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "env.envelope.doc-gates-have-a-fixed-shape",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-answers-and-closes-the-question",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-session-goes-to-its-work-item",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-reaches-the-successor-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-rewrites-and-collapses-an-ended-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-auxiliary-session-is-held-on-it",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-recipient-goes-to-its-work-item",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-recipient-reaches-the-successor-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-naming-an-ended-session-its-target-never-reached-fails",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.only-a-deciding-principal-answers-a-gate",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-plain-question-has-no-effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-reply-to-a-non-question-is-a-message",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-question-takes-one-answer",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-failing-effect-still-commits-the-answer",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.an-answer-to-a-system-gate-has-no-delivery",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-gate-effect-runs-before-the-answer-is-published",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-human-decides-an-agent-registration-gate",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-human-decides-an-overseer-action-gate",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-handoff-defaults-to-accept-or-decline",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.the-addressed-work-items-session-answers",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-deciding-human-answers-any-question",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-session-bound-by-redelivery-answers",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-successor-session-answers",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.the-sender-replies-in-its-thread",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-recipient-replies",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.the-addressed-work-items-session-replies",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-successor-session-replies",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-later-session-replies-to-its-predecessors-message",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.a-deciding-human-replies-anywhere",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.answers.an-agent-registration-gate-names-its-key",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.channels.join-creates-and-leave-removes",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.channels.a-session-cannot-join",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.channels.a-channel-cannot-join-a-channel",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.channels.a-stored-channel-member-is-skipped",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.channels.implicit-members-are-notified",
+      "class": "host-core",
+      "level": "MAY",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.close.answers-without-effect-or-deliveries",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.close.moves-the-question-to-answered",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.close.an-absent-question-is-not-found",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.close.an-answered-question-conflicts",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.close.a-non-question-is-invalid",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.close.a-reply-after-close-conflicts",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.unregistered-type-refused",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.gate-data-on-a-notice-refused",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.an-unimplemented-registered-type-is-refused",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "not-applicable",
+      "reasons": ["every registered gate type is implemented"]
+    },
+    {
+      "id": "core.gates.unknown-stored-gate-is-decide-only",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.agent-question-with-free-data-stays-plain",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.choiceless-gate-takes-a-choiceless-answer",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.recover-leaves-an-unknown-gate-unapplied",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.an-agent-answer-is-voided-on-recover",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.voiding-tells-the-owner",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.only-humans-and-the-system-decide",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.wake-is-raised-only-by-the-system",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.task-proposal-is-raised-only-by-the-system",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.task-proposal-needs-a-deciding-answer",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.task-proposal-is-answered-with-approve-or-decline",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.memory-is-raised-only-by-the-system",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.memory-is-refused-from-a-session-or-an-agent",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.memory-needs-a-deciding-answer",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.doc-is-raised-only-by-the-system",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.gates.doc-needs-a-deciding-answer",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.guardrails.urgent-over-the-quota-is-downgraded",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.guardrails.the-urgent-quota-window-slides",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.guardrails.humans-have-no-urgent-quota",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.guardrails.breaker-refuses-the-next-agent-turn",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.guardrails.breaker-tells-the-owner-once-per-window",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.guardrails.a-human-is-not-limited",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.idempotency.replays-the-first-message",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.idempotency.keys-are-per-sender",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.idempotency.a-key-is-one-line-of-at-most-200-bytes",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.idempotency.a-revoked-sender-gets-no-replay",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.idempotency.a-retried-answer-replays",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.mailbox.inbox-lists-and-mark-read-reads",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.mailbox.marking-read-leaves-answered-alone",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.mailbox.a-muted-senders-mail-starts-read",
+      "class": "host-core",
+      "level": "MAY",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.markers.close-is-honored-only-from-the-system",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.participation.absent-and-foreign-look-alike",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.participation.a-bystander-session-cannot-reply",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.participation.comes-before-validation",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.participation.an-empty-reply-to-names-no-message",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.participation.a-reply-authorizes-before-its-target",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.read.can-read-participants",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.read.can-read-not-bystanders",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.read.can-read-any-as-a-deciding-principal",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.read.can-read-no-absent-id",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.refs.received-unknown-type-is-kept",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.refs.local-unknown-type-is-refused",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.refs.a-received-type-is-an-identifier",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.refs.a-local-doc-ref-is-accepted",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.recover.dispatches-sending-rows-whose-session-is-live",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.recover.returns-sending-rows-to-held",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.recover.leaves-settled-rows-alone",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.recover.replays-an-unapplied-gate-effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.recover.skips-applied-and-closed-gates",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.body-lines-never-pass-for-a-header",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.every-line-break-starts-a-quoted-line",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.a-digest-ends-at-the-first-line-break",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.an-external-sender-is-quoted-throughout",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.an-external-reply-quotes-its-text-not-the-reply-line",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.an-external-question-quotes-its-text-not-the-prompt",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.dispatch-external-push-format",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.dispatch-push-format",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.dispatch-digest-format",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.render.dispatch-digest-cuts-a-long-first-line",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.task-held-without-live-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.direct-mail-pushes-to-the-live-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.channel-mail-notifies-the-live-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.urgent-channel-mail-is-pushed",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.direct-beats-channel",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.human-mail-is-notified",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.agent-mail-is-held",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.never-delivers-to-the-senders-own-work-item",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.a-session-that-is-not-live-is-invalid",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.an-ended-session-error-names-the-callers-own-slot",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.unknown-channel-is-not-found",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.unknown-channel-names-the-callers-own-slot",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.a-failed-push-returns-to-held",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.a-failed-notify-returns-to-held",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.only-approved-agents-send",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.send.an-ended-session-reached-through-a-channel-gets-nothing",
+      "class": "host-core",
+      "level": "MAY",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.session-start.claims-held-mail-for-the-work-item",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.session-start.claims-mail-left-on-an-earlier-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.session-start.claims-only-held-mail",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.allow-wakes-the-held-work-item",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.a-failed-wake-never-fails-the-send",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.a-failed-wake-tells-the-sender",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.a-failed-wake-notice-names-the-reason",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.a-notice-to-an-ended-sender-goes-to-its-work-item",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.deny-leaves-the-message-held",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.deny-tells-the-sender",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.deny-notice-says-waking-was-not-allowed",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.ask-raises-a-wake-gate-to-the-owner",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.the-wake-gate-quotes-the-first-line",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.the-wake-gate-quote-ends-at-any-line-break",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.a-first-line-at-the-body-cap-still-raises-the-gate",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.only-held-work-items-of-a-wake-request-are-considered",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.approve-applies-before-publishing",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.a-humans-wake-holds-mail-for-an-ended-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.an-ended-session-that-cannot-continue-tells-the-human",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.an-ended-session-notice-names-the-reason",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "dispatch",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.only-a-humans-wake-reaches-an-ended-session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    },
+    {
+      "id": "core.wake.a-humans-wake-to-a-session-of-no-work-item-fails",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "outcome": "pass",
+      "reasons": []
+    }
+  ],
+  "declaredDeviations": [
+    {
+      "section": "9.3",
+      "summary": "GET /api/decisions shows any request-tier credential a one-line summary of each open gate addressed to a human, and POST /api/deliveries/:id/read answers a foreign delivery with 403 but an absent one with 404"
+    }
+  ],
+  "runner": "@dispatch/protocol-spec@1.0.0-draft.2",
+  "date": "2026-10-04T22:51:46.334Z"
+}

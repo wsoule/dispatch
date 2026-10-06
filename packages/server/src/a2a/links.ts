@@ -1,0 +1,247 @@
+import { handleA2A, IpLimiter, loadOrCreateLinkKeys } from '@dispatch-foo/a2a';
+import type {
+  A2APolicy,
+  A2AStore,
+  AuthResult,
+  BridgePort,
+  Caller,
+  LinkPayload,
+  PeerRow,
+} from '@dispatch-foo/a2a';
+import { readA2ALinkKeys } from '@dispatch-foo/core';
+import type { A2ALinkKeys } from '@dispatch-foo/core';
+import type { AgentRecord } from '@dispatch-foo/protocol';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+
+import { runsDir } from '../orchestrator/paths.js';
+import { LinkPeerClient } from '../team/links/client.js';
+import { LinkHub } from '../team/links/hub.js';
+import { authenticateSignedAgent } from './auth.js';
+import { checkLinkProof } from './linkPairing.js';
+import type { OutboundClient } from './outbound.js';
+import type { PairingDeps } from './pairing.js';
+
+export interface LinkWiringDeps {
+  rootDir: string;
+  store: A2AStore;
+  messages: { getAgent(address: string): AgentRecord | null };
+  port: () => BridgePort | null;
+  policy: () => A2APolicy;
+  unpaired: (pairedId: string) => void;
+  keyChange: (pairedId: string, statement: unknown) => void;
+  changed: () => void;
+  // What link pairing needs to complete an offer (T55).
+  pairing: () => PairingDeps | null;
+  now?: () => Date;
+  intervalMs?: number;
+}
+
+const REFUSED: AuthResult = {
+  ok: false,
+  status: 401,
+  reason: 'AUTH_INVALID_TOKEN',
+  message: 'unknown token',
+};
+
+// The port as the paired client of one link sees it: a one-request token in
+// place of a signature, and no extension routes. Everything else is the
+// port's own, so every inbound policy applies to link requests unchanged.
+function asLinkClient(
+  port: BridgePort,
+  caller: Caller,
+  token: string
+): BridgePort {
+  const view = Object.create(port) as BridgePort;
+  Object.assign(view, {
+    authenticate: (bearer: string) =>
+      Promise.resolve(bearer === token ? { ok: true, caller } : REFUSED),
+    authenticateSigned: undefined,
+    signResponse: undefined,
+    extension: undefined,
+    revalidate: () => Promise.resolve(false),
+  });
+  return view;
+}
+
+/** A link's pairing tier: operator only when its row says so; a missing
+ *  row is the decide tier, so the stricter rules apply (fail closed). */
+export function linkTierOf(
+  store: { pairing(id: string): { createdTier: string } | null },
+  pairedId: string
+): 'operator' | 'decide' {
+  return store.pairing(pairedId)?.createdTier === 'operator'
+    ? 'operator'
+    : 'decide';
+}
+
+// Teammate links in the daemon (T54): the hub once the link keys load, the
+// worker's link clients, and the receiver's A2A requests as the paired client.
+export class LinkWiring {
+  private hub: LinkHub | null = null;
+  private readonly limiter = new IpLimiter();
+
+  constructor(private readonly d: LinkWiringDeps) {}
+
+  get links(): LinkHub | null {
+    return this.hub;
+  }
+
+  /**
+   * At boot: starts the hub only when this project already has link keys.
+   * Keys are made only when a link is offered or accepted (ensure()), so a
+   * project that never links keeps none in its credentials slot.
+   */
+  start(): void {
+    if (this.hub !== null) return;
+    const read = readA2ALinkKeys(this.d.rootDir);
+    if (read.status === 'ok') this.open(read.keys);
+    else if (read.status === 'malformed')
+      console.warn(
+        'a2a: the stored teammate-link keys are malformed; links stay off until the slot is fixed'
+      );
+  }
+
+  /** The hub, making this project's link keys first if it has none. */
+  async ensure(): Promise<LinkHub | null> {
+    if (this.hub !== null) return this.hub;
+    const keys = await loadOrCreateLinkKeys(this.d.rootDir);
+    if (keys === null || this.hub !== null) return this.hub;
+    this.open(keys);
+    return this.hub;
+  }
+
+  private open(keys: A2ALinkKeys): void {
+    const now = this.d.now ?? (() => new Date());
+    this.hub = new LinkHub({
+      dir: join(runsDir(this.d.rootDir), 'a2a-links'),
+      keys,
+      paired: (alias) => this.pairedId(alias) !== null,
+      serve: (alias, req) => this.serve(alias, req),
+      watch: (alias, taskId, onChange) => {
+        const caller = this.callerOf(alias);
+        const port = this.d.port();
+        if (caller === null || port === null) return () => {};
+        return port.watch(caller, taskId, onChange);
+      },
+      unpaired: (_alias, pairedId) => this.d.unpaired(pairedId),
+      tierOf: (id) => linkTierOf(this.d.store, id),
+      keyChange: (alias, statement) => {
+        const id = this.pairedId(alias);
+        if (id !== null) this.d.keyChange(id, statement);
+      },
+      now,
+      changed: this.d.changed,
+      offerState: (id) => {
+        const row = this.d.store.pairing(id);
+        if (row === null) return null;
+        return row.state === 'offered' &&
+          Date.parse(row.expiresAt) > now().getTime()
+          ? 'offered'
+          : 'closed';
+      },
+      offerProof: (id, proof) => {
+        const d = this.d.pairing();
+        return d === null
+          ? { ok: false, why: 'the A2A bridge is unavailable' }
+          : checkLinkProof(d, id, proof);
+      },
+      ...(this.d.intervalMs === undefined
+        ? {}
+        : { intervalMs: this.d.intervalMs }),
+    });
+    this.hub.start();
+  }
+
+  async stop(): Promise<void> {
+    const hub = this.hub;
+    this.hub = null;
+    await hub?.stop();
+  }
+
+  clientFor(row: PeerRow): OutboundClient | null {
+    if (this.hub === null || this.hub.get(row.alias) === null) return null;
+    return new LinkPeerClient(
+      this.hub,
+      row.alias,
+      this.d.now ?? (() => new Date())
+    );
+  }
+
+  /** Publishes the unpair notice and pushes it; true once on the branch. */
+  async unpair(alias: string, pairedId: string): Promise<boolean> {
+    const hub = this.hub;
+    if (hub === null) return false;
+    const r = hub.publish(alias, {
+      kind: 'unpair',
+      id: pairedId,
+      at: (this.d.now?.() ?? new Date()).toISOString(),
+    });
+    if (r !== 'published') return false;
+    await hub.settle();
+    return true;
+  }
+
+  statement(alias: string, statement: unknown): boolean {
+    const r = this.hub?.publish(alias, {
+      kind: 'key-change',
+      statement,
+    } as LinkPayload);
+    return r === 'published' || r === 'waiting';
+  }
+
+  /** The peer gone for good: the link is forgotten too. */
+  removed(alias: string): void {
+    this.hub?.remove(alias);
+  }
+
+  // The pairing of a link peer still standing (not unpaired), or null.
+  private pairedId(alias: string): string | null {
+    const peer = this.d.store.getPeer(alias);
+    if (peer?.auth !== 'link' || peer.pairedId == null) return null;
+    const state = this.d.store.pairing(peer.pairedId)?.state;
+    return state === 'unpaired' || state === 'canceled' ? null : peer.pairedId;
+  }
+
+  // The paired client of a link, as its pinned key authenticates it now.
+  private callerOf(alias: string): Caller | null {
+    const id = this.pairedId(alias);
+    if (id === null) return null;
+    const client = this.d.store.clients().find((c) => c.pairedId === id);
+    if (client === undefined) return null;
+    const auth = authenticateSignedAgent(
+      this.d.messages.getAgent(client.address),
+      client.auth ?? null,
+      'link'
+    );
+    return auth.ok ? auth.caller : null;
+  }
+
+  private async serve(alias: string, req: Request): Promise<Response> {
+    const port = this.d.port();
+    const caller = this.callerOf(alias);
+    if (port === null || caller === null)
+      return Response.json(
+        { error: { code: 401, message: 'this pairing no longer stands' } },
+        { status: 401 }
+      );
+    const token = randomUUID();
+    const headers = new Headers(req.headers);
+    headers.set('authorization', `Bearer ${token}`);
+    const body = req.method === 'GET' ? undefined : await req.text();
+    return handleA2A(
+      new Request(req.url, {
+        method: req.method,
+        headers,
+        ...(body === undefined ? {} : { body }),
+      }),
+      asLinkClient(port, caller, token),
+      {
+        basePath: '/a2a/v1',
+        policy: this.d.policy(),
+        clientIp: null,
+        limiter: this.limiter,
+      }
+    );
+  }
+}

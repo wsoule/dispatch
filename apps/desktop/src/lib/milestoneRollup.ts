@@ -1,11 +1,11 @@
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
 import {
   hasStatusDefinition,
   hasStatusRole,
   isBacklogStatus,
   isDoneStatus,
   statusesOfType,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 
 import { activeStatusModel } from './statusModel';
 

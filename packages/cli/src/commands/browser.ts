@@ -2,10 +2,9 @@ import type { Command } from 'commander';
 import { writeFileSync } from 'node:fs';
 
 import type { ApiClient, PickOutcome } from '../apiClient.js';
-import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenClient } from './appToken.js';
 
 /**
  * `dispatch browser` — script the Chromium the daemon drives.
@@ -19,16 +18,6 @@ import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 // How long `pick` waits for the user to click something before giving up.
 const PICK_TIMEOUT_MS = 120_000;
 const PICK_POLL_MS = 250;
-
-async function client(
-  ctx: CliContext,
-  token: string | undefined,
-  command: string
-): Promise<ApiClient> {
-  const appToken = resolveAppToken(token, command);
-  const { baseUrl } = await attachToRunningDaemon(ctx);
-  return createApiClient(baseUrl, appToken);
-}
 
 // `--token` is on every subcommand rather than the group, because commander
 // does not pass a group-level option down to an action handler.
@@ -80,7 +69,11 @@ export function registerBrowserCommands(
         token?: string;
       }
     ) => {
-      const api = await client(ctx, opts.token, 'dispatch browser open');
+      const api = await appTokenClient(
+        ctx,
+        opts.token,
+        'dispatch browser open'
+      );
       const info = await api.launchBrowser({
         ...(url === undefined ? {} : { url }),
         ...(opts.headless === true ? { headless: true } : {}),
@@ -98,7 +91,7 @@ export function registerBrowserCommands(
   withTokenOption(
     browser.command('list').description('Every open browser').option('--json')
   ).action(async (opts: { json?: boolean; token?: string }) => {
-    const api = await client(ctx, opts.token, 'dispatch browser list');
+    const api = await appTokenClient(ctx, opts.token, 'dispatch browser list');
     const browsers = await api.listBrowsers();
     if (opts.json === true) {
       ctx.log(JSON.stringify(browsers, null, 2));
@@ -124,7 +117,11 @@ export function registerBrowserCommands(
       url: string,
       opts: { json?: boolean; token?: string }
     ) => {
-      const api = await client(ctx, opts.token, 'dispatch browser goto');
+      const api = await appTokenClient(
+        ctx,
+        opts.token,
+        'dispatch browser goto'
+      );
       const info = await api.navigateBrowser(id, url);
       ctx.log(opts.json === true ? JSON.stringify(info, null, 2) : info.url);
     }
@@ -136,7 +133,11 @@ export function registerBrowserCommands(
       .description('Capture the page as a PNG')
       .option('--out <file>', 'write the PNG here instead of printing base64')
   ).action(async (id: string, opts: { out?: string; token?: string }) => {
-    const api = await client(ctx, opts.token, 'dispatch browser snapshot');
+    const api = await appTokenClient(
+      ctx,
+      opts.token,
+      'dispatch browser snapshot'
+    );
     const { screenshot } = await api.browserScreenshot(id);
     emitScreenshot(ctx, screenshot, opts.out);
   });
@@ -144,7 +145,7 @@ export function registerBrowserCommands(
   withTokenOption(
     browser.command('click <id> <selector>').description('Click an element')
   ).action(async (id: string, selector: string, opts: { token?: string }) => {
-    const api = await client(ctx, opts.token, 'dispatch browser click');
+    const api = await appTokenClient(ctx, opts.token, 'dispatch browser click');
     await api.browserClick(id, selector);
     ctx.log(`clicked ${selector}`);
   });
@@ -160,7 +161,11 @@ export function registerBrowserCommands(
       value: string,
       opts: { token?: string }
     ) => {
-      const api = await client(ctx, opts.token, 'dispatch browser fill');
+      const api = await appTokenClient(
+        ctx,
+        opts.token,
+        'dispatch browser fill'
+      );
       await api.browserFill(id, selector, value);
       ctx.log(`filled ${selector}`);
     }
@@ -177,7 +182,11 @@ export function registerBrowserCommands(
       selector: string,
       opts: { json?: boolean; token?: string }
     ) => {
-      const api = await client(ctx, opts.token, 'dispatch browser text');
+      const api = await appTokenClient(
+        ctx,
+        opts.token,
+        'dispatch browser text'
+      );
       const result = await api.browserText(id, selector);
       ctx.log(
         opts.json === true ? JSON.stringify(result, null, 2) : result.text
@@ -196,7 +205,11 @@ export function registerBrowserCommands(
       expression: string,
       opts: { json?: boolean; token?: string }
     ) => {
-      const api = await client(ctx, opts.token, 'dispatch browser eval');
+      const api = await appTokenClient(
+        ctx,
+        opts.token,
+        'dispatch browser eval'
+      );
       const { value } = await api.browserEvaluate(id, expression);
       // An expression can evaluate to anything; a bare `String()` on an
       // object prints `[object Object]`, which is never what anyone wanted to
@@ -221,7 +234,11 @@ export function registerBrowserCommands(
       id: string,
       opts: { out?: string; json?: boolean; token?: string }
     ) => {
-      const api = await client(ctx, opts.token, 'dispatch browser pick');
+      const api = await appTokenClient(
+        ctx,
+        opts.token,
+        'dispatch browser pick'
+      );
       await api.browserStartPick(id);
       ctx.log('click an element in the browser (Esc to cancel)…');
       const outcome = await pollForPick(api, id);
@@ -249,7 +266,7 @@ export function registerBrowserCommands(
   withTokenOption(
     browser.command('close <id>').description('Close a browser')
   ).action(async (id: string, opts: { token?: string }) => {
-    const api = await client(ctx, opts.token, 'dispatch browser close');
+    const api = await appTokenClient(ctx, opts.token, 'dispatch browser close');
     await api.closeBrowser(id);
     ctx.log(`closed ${id}`);
   });

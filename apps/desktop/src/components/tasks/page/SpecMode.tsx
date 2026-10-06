@@ -1,4 +1,4 @@
-import { isDoneStatus } from '@dispatch/core/browser';
+import { isDoneStatus } from '@dispatch-foo/core/browser';
 import { Waypoints } from 'lucide-react';
 import { useRef, useState } from 'react';
 
@@ -18,6 +18,7 @@ import { DispatchCard } from './DispatchCard';
 import type { TaskPageModel } from './pageModel';
 import { RelationsEditor } from './RelationsEditor';
 import { SubtasksBlock } from './SubtasksBlock';
+import { TaskDocsBlock } from './TaskDocsBlock';
 import { Button } from '@/ui/button';
 
 /** A container's call to action: it goes out as waves of its sub-issues from its plan,
@@ -55,8 +56,8 @@ function FanoutCard({ page }: { page: TaskPageModel }) {
 /**
  * Spec mode — what a task is and whether it can go: the dispatch card with its readiness
  * checks up top (a container's points at its plan instead), then the spec itself
- * (TaskSpecView, editable in place), its dependencies, attachments and amendments, and a
- * container's sub-issues. The AI "Add detail" pass for a thin spec reviews its draft here
+ * (TaskSpecView, editable in place), its dependencies, attachments, linked docs and
+ * amendments, and a container's sub-issues. The AI "Add detail" pass for a thin spec reviews its draft here
  * before anything is written.
  */
 export function SpecMode({ page }: { page: TaskPageModel }) {
@@ -107,6 +108,7 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
   const archived = meta.archivedAt !== undefined;
   const client = project.client;
   const config = project.config;
+  const { openDoc } = page.host;
 
   // Files dropped or pasted anywhere on the spec attach to the task; a text paste is left
   // to whatever field has focus.
@@ -233,6 +235,17 @@ export function SpecMode({ page }: { page: TaskPageModel }) {
               uploading={upload.uploading}
             />
           </SpecSection>
+          {client !== null && openDoc !== undefined && (
+            <div className="shadow-hairline-top px-4 py-1.5">
+              <TaskDocsBlock
+                client={client}
+                port={project.port}
+                taskId={meta.id}
+                canLink
+                onOpenDoc={(id) => openDoc(id, null)}
+              />
+            </div>
+          )}
           {page.amendments !== '' && (
             <SpecSection label="Amendments">
               <p className="text-muted-foreground font-book text-[13px] whitespace-pre-wrap">

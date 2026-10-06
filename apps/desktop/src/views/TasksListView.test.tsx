@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core/browser';
-import { statusModelOf } from '@dispatch/core/browser';
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import {
   act,
   cleanup,
@@ -123,6 +123,7 @@ function shellWith(log: ShellLog) {
   const noop = () => {};
   const actions = {
     openTask: noop,
+    openThread: noop,
     peekTask: (id: string) => log.peeked.push(id),
     openCreateTask: (preset?: CreateTaskPreset) =>
       log.presets.push(preset ?? {}),

@@ -1,5 +1,28 @@
 import type {
+  CreateInput,
+  DispatchConfig,
+  EffortLevel,
+  EscalationStep,
+  ModelConfig,
+  NotificationKind,
+  Person,
+  PolicyGate,
+  PolicyGateMode,
+  StatusRoles,
+  TaskDoc,
+  TaskListItem,
+  UpdatePatch,
+} from '@dispatch-foo/core/browser';
+import {
+  isContainer,
+  isUnstartedStatus,
+  parentIdsOf,
+  readyTasks,
+  statusModelOf,
+} from '@dispatch-foo/core/browser';
+import type {
   AgentSessionMeta,
+  AgentSummary,
   ApiClient,
   AuthTier,
   ConfirmResult,
@@ -15,6 +38,7 @@ import type {
   LinearTeam,
   LinearViewer,
   MergeQueueSnapshot,
+  Message,
   PlanProposal,
   PlanRecord,
   PresenceEntry,
@@ -23,33 +47,10 @@ import type {
   ReviewComment,
   RunDetail,
   RunMeta,
-  RunQuestion,
   RunState,
   SyncStatus,
 } from '@dispatch/client';
 import { ApiError, createApiClient } from '@dispatch/client';
-import type {
-  CreateInput,
-  DispatchConfig,
-  EffortLevel,
-  EscalationStep,
-  ModelConfig,
-  NotificationKind,
-  Person,
-  PolicyGate,
-  PolicyGateMode,
-  StatusRoles,
-  TaskDoc,
-  TaskListItem,
-  UpdatePatch,
-} from '@dispatch/core/browser';
-import {
-  isContainer,
-  isUnstartedStatus,
-  parentIdsOf,
-  readyTasks,
-  statusModelOf,
-} from '@dispatch/core/browser';
 import {
   type QueryClient,
   useQuery,
@@ -64,6 +65,11 @@ import {
   useState,
 } from 'react';
 
+import {
+  agentRosterKey,
+  mayChangeAgentRoster,
+  mutedAddresses,
+} from '../lib/agentRoster';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
   configChangedQueryKeys,
@@ -72,12 +78,18 @@ import {
   peopleKey,
   syncStatusKey,
 } from '../lib/configEvents';
-import type { DaemonConnection, DecideAvailability } from '../lib/daemonAuth';
+import type {
+  DaemonConnection,
+  DecideAvailability,
+  MessageAccess,
+} from '../lib/daemonAuth';
 import {
   assertCanDecide,
+  assertCanMessage,
   credentialTier,
   daemonBaseUrl,
   decideAvailability,
+  messageAccess,
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
@@ -86,6 +98,18 @@ import { isFakeExecutorDevToolEnabled } from '../lib/devTools';
 import type { WorkEpicOptions } from '../lib/epicSession';
 import { epicPausedNotice } from '../lib/epicSession';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
+import type { RunQuestion, RunScopeRequest } from '../lib/gates';
+import {
+  approvalReply,
+  findToolApprovalGate,
+  foldsIntoOpenApproval,
+  gateNotification,
+  openGatesAfter,
+  openGatesKey,
+  questionsByRun,
+  runsAskingMe,
+  scopeRequestsByRun,
+} from '../lib/gates';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import {
   addEntries,
@@ -95,6 +119,7 @@ import {
   saveInbox,
 } from '../lib/inbox';
 import { applyLabelColors } from '../lib/labelColor';
+import { memoryQueryRootKey } from '../lib/memory';
 import { resolveExecuteModel } from '../lib/models';
 import { notify, setNotificationKinds } from '../lib/notifications';
 import {
@@ -104,10 +129,11 @@ import {
   touchesMeta,
 } from '../lib/optimisticPatch';
 import type { PendingApproval } from '../lib/pendingApprovals';
-import { mergePendingApprovals } from '../lib/pendingApprovals';
+import { pendingApprovalsFromGates } from '../lib/pendingApprovals';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
 import { runStepFromRecord, runSteps } from '../lib/runStep';
 import { setActiveStatusModel } from '../lib/statusModel';
+import { taskIdsWithOpenAsks } from '../lib/taskAsks';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
@@ -119,6 +145,7 @@ import {
   withDispatching,
 } from '../lib/taskListCache';
 import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
+import { applyDocsEvent } from './useDocs';
 import { gitQueryRootKey } from './useGit';
 import { useOptimisticDispatch } from './useOptimisticDispatch';
 import {
@@ -134,7 +161,12 @@ import { readinessKey, useReadiness } from './useReadiness';
 import { runDiffKey, runReviewKey } from './useRunData';
 import { commentsRootKey, taskCommentsKey } from './useTaskComments';
 import { taskDocKey, tasksKey } from './useTaskDoc';
+import { applyThreadEvent } from './useThreads';
 import { useTransitionNotifications } from './useTransitionNotifications';
+
+// Shared empty list, so the maps derived from the open gates keep their
+// identity while the query is loading or disabled.
+const NO_GATES: Message[] = [];
 
 // A `task.changed` naming more tasks than this refetches the list instead.
 const MAX_PATCHED_TASKS = 20;
@@ -143,16 +175,42 @@ const TASK_REFRESH_DEBOUNCE_MS = 250;
 // Coalesces the run, epic and task events that move fan-out progress into one refetch.
 const EPIC_REFRESH_DEBOUNCE_MS = 250;
 
-// The approvals this window has seen live via the `approval.requested` WS
-// event. Not the whole picture on its own: the daemon also attaches a parked
-// run's request to `GET /api/runs`, and `mergePendingApprovals` folds the two
-// together below so a reload or a relaunch can still answer a run that paused
-// before this window connected.
+// Drops an answered gate from the cached open list at once, so its card goes
+// before the refetch lands and cannot send a second answer to a closed gate.
+function dropOpenGate(
+  queryClient: QueryClient,
+  port: number | undefined,
+  gateId: string
+): void {
+  queryClient.setQueryData<{ items: Message[] }>(openGatesKey(port), (prev) =>
+    prev === undefined
+      ? prev
+      : { items: prev.items.filter((m) => m.id !== gateId) }
+  );
+}
 
-// Same shape/reason as `PendingApproval`, for `scope.requested`. Seeded from
-// the live WS event, and re-read from `GET /api/runs/:id/scope-requests` for
-// every live run so a request that outlived a daemon restart is found too.
-type PendingScopeRequest = { requestId: string };
+// The daemon's notice saying why a wake-requesting message woke nothing, read
+// from the sender's unread mail; null when there is none or it cannot be read.
+async function wakeNoticeFor(
+  client: ApiClient,
+  messageId: string
+): Promise<string | null> {
+  try {
+    const { items } = await client.getMailbox(undefined, [
+      'held',
+      'notified',
+      'pushed',
+    ]);
+    const notice = items.findLast(
+      ({ message }) =>
+        message.kind === 'notice' &&
+        message.refs.some((r) => r.type === 'message' && r.id === messageId)
+    );
+    return notice?.message.body ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
 // own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
@@ -160,8 +218,6 @@ type PendingScopeRequest = { requestId: string };
 // shouldn't throw on a missing `localStorage`).
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
-// task.changed is handled in the socket's onEvent, where its ids are.
-const ignoreChange = () => {};
 // An in-place dispatch's failure reaches its caller as a rejection instead.
 const ignoreDispatchFailure = () => {};
 
@@ -355,6 +411,11 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
+  /** Why the daemon has not said who this window is, while its last answer failed;
+   *  `null` once it has, or while it is still asked. */
+  whoamiError: Error | null;
+  /** Asks the daemon who this window is again, after `whoamiError`. */
+  retryWhoami: () => void;
   /** The daemon's own human, whom a fan-out takes a legacy bare `human`
    *  assignee to mean; `null` until the daemon has said (or an older one). */
   localHuman: string | null;
@@ -369,6 +430,9 @@ export interface DispatchProjectData {
   /** Whether this window attached to a daemon it did not start, and so holds
    *  only the request-tier agent token even for the machine's owner. */
   attachedWithoutAppToken: boolean;
+  /** Whether this window holds the owner's app token: only the owner may turn
+   *  their revoked Overseer back on. */
+  ownerCredential: boolean;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -606,10 +670,10 @@ export interface DispatchProjectData {
   notePlanId: string | null;
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
-  pendingApprovals: Map<string, PendingApproval>;
-  /** Run id -> the scope request its agent is blocked on, seen live via
-   * `scope.requested` — see `pendingApprovals` for why. */
-  pendingScopeRequests: Map<string, PendingScopeRequest>;
+  /** Run id -> each tool call it is parked on, oldest first, from the open gates. */
+  pendingApprovals: Map<string, PendingApproval[]>;
+  /** Run id -> the newest open scope gate its agent raised, live or ended. */
+  pendingScopeRequests: Map<string, RunScopeRequest>;
   handleDecideScopeRequest: (
     runId: string,
     requestId: string,
@@ -619,15 +683,18 @@ export interface DispatchProjectData {
   /** Whether this window holds the app token that scope decisions require, plus the notice
    * and restart affordance to show when it does not. */
   scopeDecide: DecideAvailability;
+  /** What this window may do on the message bus (send; answer gates), and why not. */
+  messageAccess: MessageAccess;
   /** Replaces an attached daemon with one this app spawns, to regain decide tier. Ends any
    * run in flight — gate on `scopeDecide.restart.safe`. */
   handleRestartDaemon: () => Promise<void>;
-  /** Run id -> every question that run's agent is blocked on, oldest first. Usually one, but
-   * an agent can dispatch several `ask_user` calls in the same turn. */
+  /** Run id -> every blocking question that run's agent sent a human, oldest first. */
   openQuestions: Map<string, RunQuestion[]>;
+  /** Runs with an open gate or question addressed to this window's human
+   *  (XH-R9): theirs to answer, whoever the run acts for. */
+  asksMe: ReadonlySet<string>;
   /** The daemon's decision feed: everything awaiting a human plus the
-   * just-resolved tail, in the server's order (open longest-waiting first).
-   * Feeds the titlebar notification center and its badge. */
+   * just-resolved tail, in the server's order (open longest-waiting first). */
   decisions: DecisionItem[];
   handleAnswerQuestion: (
     runId: string,
@@ -680,6 +747,13 @@ export interface DispatchProjectData {
     allow: boolean,
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
+  /** The full input of a call a run is parked on, which its gate may only preview. */
+  fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
+  /** The same for a call an Assistant conversation is parked on. */
+  fetchOverseerApprovalInput: (
+    conversation: string,
+    requestId: string
+  ) => Promise<unknown>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
   handleCancelRun: (runId: string) => Promise<void>;
   /** Asks a live run to wind down: it finishes its current operation, then stops,
@@ -779,12 +853,6 @@ export function useDispatchProject(
   { selectedRunId, onRunDispatched }: UseDispatchProjectOptions
 ): DispatchProjectData {
   const queryClient = useQueryClient();
-  const [livePendingApprovals, setLivePendingApprovals] = useState<
-    Map<string, PendingApproval>
-  >(new Map());
-  const [pendingScopeRequests, setPendingScopeRequests] = useState<
-    Map<string, PendingScopeRequest>
-  >(new Map());
   const [planId, setPlanId] = useState<string | null>(null);
   // The Notes hub's own plan slot: the AI task draft started off a single note, kept apart
   // from `planId` so the two views never overwrite each other's in-flight proposal.
@@ -942,7 +1010,6 @@ export function useDispatchProject(
   const repoPrsQueryKey = useMemo(() => repoPrsKey(port), [port]);
   const landingQueryKey = useMemo(() => landingKey(port), [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
-  const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   const decisionsQueryKey = useMemo(() => ['dispatch-decisions', port], [port]);
   const linearStatusQueryKey = useMemo(() => linearStatusKey(port), [port]);
   const linearTeamsQueryKey = useMemo(
@@ -1065,7 +1132,11 @@ export function useDispatchProject(
   // Who this window is, as the daemon sees its credential. Fetched once per
   // connection — a credential does not change identity mid-session — and read
   // wherever the app has to tell "mine" from "a teammate's".
-  const { data: whoami } = useQuery({
+  const {
+    data: whoami,
+    error: whoamiError,
+    refetch: refetchWhoami,
+  } = useQuery({
     queryKey: whoamiQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
@@ -1107,6 +1178,19 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
+  // The open gates the approval, scope and question cards read. Listed to
+  // deciding humans only, so a window that cannot decide never asks.
+  const openGatesQuery = useQuery({
+    queryKey: openGatesKey(port),
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.openDecisions();
+    },
+    enabled: client !== null && auth.canDecide,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const openGates = openGatesQuery.data?.items ?? NO_GATES;
 
   // The list's and board's dispatch (`DispatchOptions.optimistic`): the Cockpit's pending
   // map, shown as the dispatched status over the listed tasks until the daemon's own
@@ -1168,12 +1252,18 @@ export function useDispatchProject(
       allTasksIncludingArchived?.filter((t) => t.meta.archivedAt === undefined),
     [allTasksIncludingArchived]
   );
-  // What the Approve buttons act on: the daemon's own record of each parked
-  // run's request, with the live events covering the moment before a refetch.
   const pendingApprovals = useMemo(
-    () => mergePendingApprovals(runs, livePendingApprovals),
-    [runs, livePendingApprovals]
+    () => pendingApprovalsFromGates(openGates, runs),
+    [openGates, runs]
   );
+  const pendingScopeRequests = useMemo(
+    () => scopeRequestsByRun(openGates),
+    [openGates]
+  );
+  // Keyed by run so a view holding one run finds its questions in one lookup.
+  const openQuestions = useMemo(() => questionsByRun(openGates), [openGates]);
+  const me = whoami?.ref ?? null;
+  const asksMe = useMemo(() => runsAskingMe(openGates, me), [openGates, me]);
   // `retry: false` on both the run detail and diff queries below: `selectedRunId` comes from
   // nav state and can — for one render, e.g. mid project-switch — point at an id that belongs
   // to a different project's daemon (a stale `activeRunId` briefly surviving until
@@ -1224,17 +1314,6 @@ export function useDispatchProject(
   });
   const diffError =
     diffErrorDetail instanceof Error ? diffErrorDetail.message : null;
-
-  // Every unanswered agent question across every run, refetched on the
-  // `question.*` events below so one asked in a closed view still surfaces.
-  const { data: openQuestionList } = useQuery({
-    queryKey: questionsQueryKey,
-    queryFn: () => {
-      if (client === null) throw new Error('dispatchd client not ready');
-      return client.fetchOpenQuestions();
-    },
-    enabled: client !== null,
-  });
 
   // The daemon's decision feed — everything awaiting a human, resolved tail
   // included (see lib/decisionFeed.ts). Event-driven via `decisions.changed`,
@@ -1571,8 +1650,16 @@ export function useDispatchProject(
         );
       }
     };
-    const disconnect = client.connectEvents(ignoreChange, {
+    // task.changed is patched in onEvent below; onChange only re-reads the
+    // team, since a teammate's change may come with roster ops (Settings →
+    // Machines).
+    const refreshTeamKeys = () => {
+      void queryClient.invalidateQueries({ queryKey: ['team-keys'] });
+    };
+    const disconnect = client.connectEvents(refreshTeamKeys, {
       onEvent: (event) => {
+        applyThreadEvent(queryClient, port, event);
+        applyDocsEvent(queryClient, port, event);
         // Checked structurally (see isDecisionsChanged): the client's
         // ServerEvent union predates this broadcast, so a literal comparison
         // here would not typecheck. First in the chain because no later
@@ -1618,6 +1705,9 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: overseerKeyPrefix(port),
           });
+          // Who this window is: the answer never goes stale, so a whoami that
+          // failed while the daemon was coming up is asked again here.
+          void queryClient.invalidateQueries({ queryKey: whoamiQueryKey });
           // Presence too, and for a reason of its own: the daemon announces
           // this socket's arrival before the socket joins the event bus, so
           // the one event saying "you are here now" never reaches the window
@@ -1665,64 +1755,52 @@ export function useDispatchProject(
                 ? { ...prev, entries: [...prev.entries, event.entry] }
                 : prev
           );
-        } else if (event.type === 'approval.requested') {
-          setLivePendingApprovals((prev) => {
-            const next = new Map(prev);
-            next.set(event.runId, {
-              requestId: event.requestId,
-              toolName: event.toolName,
+        } else if (event.type === 'message.new') {
+          const message = event.message;
+          const openGatesKeyNow = openGatesKey(port);
+          // The cached list follows the event at once, so the fold below sees
+          // gates answered elsewhere and gates the refetch has not brought.
+          const openNow =
+            queryClient.setQueryData<{ items: Message[] }>(
+              openGatesKeyNow,
+              (prev) => {
+                if (prev === undefined) return prev;
+                const items = openGatesAfter(prev.items, message);
+                return items === prev.items ? prev : { items };
+              }
+            )?.items ?? NO_GATES;
+          // Only a new blocking question or an answer opens or closes a gate.
+          if (message.blocking || message.kind === 'answer') {
+            void queryClient.invalidateQueries({ queryKey: openGatesKeyNow });
+          }
+          // A window that cannot decide is not told about gates it cannot see,
+          // nor anyone about a muted agent; runs and roster come from the cache.
+          const muted = mutedAddresses(
+            queryClient.getQueryData<{ agents: AgentSummary[] }>(
+              agentRosterKey(port)
+            )?.agents ?? []
+          );
+          const note =
+            auth.canDecide && !muted.has(message.from)
+              ? gateNotification(
+                  message,
+                  (runId) =>
+                    queryClient
+                      .getQueryData<RunMeta[]>(runsQueryKey)
+                      ?.find((r) => r.id === runId)?.taskTitle,
+                  queryClient.getQueryData<{ ref: string }>(whoamiQueryKey)
+                    ?.ref ?? null
+                )
+              : null;
+          if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
+            void notify(note.title, note.body, note.kind);
+          }
+          // A registration gate adds a pending agent; any answer may settle one.
+          if (mayChangeAgentRoster(message)) {
+            void queryClient.invalidateQueries({
+              queryKey: agentRosterKey(port),
             });
-            return next;
-          });
-          // Read the run list straight from the query cache rather than this
-          // effect's own `runs` variable — that variable is captured once when
-          // this effect's dependency array last changed, so it would otherwise
-          // go stale between reconnects and name the wrong task (or none).
-          const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
-          const taskTitle =
-            liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
-            event.runId;
-          void notify(
-            'Approval needed',
-            `${event.toolName} · ${taskTitle}`,
-            'approval'
-          );
-        } else if (event.type === 'question.asked') {
-          void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
-          // Same cache-read reason as approval.requested above: this effect's
-          // captured `runs` can be stale, so the title comes from the query cache.
-          const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
-          const taskTitle =
-            liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
-            event.runId;
-          void notify('An agent has a question', taskTitle, 'question');
-        } else if (
-          event.type === 'question.answered' ||
-          event.type === 'question.closed'
-        ) {
-          void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
-        } else if (event.type === 'scope.requested') {
-          setPendingScopeRequests((prev) => {
-            const next = new Map(prev);
-            next.set(event.runId, { requestId: event.requestId });
-            return next;
-          });
-          const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
-          const taskTitle =
-            liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
-            event.runId;
-          void notify(
-            'An agent needs scope approval',
-            taskTitle,
-            'scope-request'
-          );
-        } else if (event.type === 'scope.decided') {
-          setPendingScopeRequests((prev) => {
-            if (!prev.has(event.runId)) return prev;
-            const next = new Map(prev);
-            next.delete(event.runId);
-            return next;
-          });
+          }
         } else if (event.type === 'plan.changed') {
           void queryClient.invalidateQueries({
             queryKey: ['dispatch-plan', port, event.planId],
@@ -1804,6 +1882,11 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: ledgerQueryRootKey(port),
           });
+        } else if (event.type === 'memory.changed') {
+          // A personal change names no entry, so every memory query refetches.
+          void queryClient.invalidateQueries({
+            queryKey: memoryQueryRootKey(port),
+          });
         } else if (event.type === 'fixloop.changed') {
           // The root covers the per-task query and the bulk by-task map.
           void queryClient.invalidateQueries({
@@ -1863,7 +1946,7 @@ export function useDispatchProject(
           // all write config; without this branch they sit stale here.
           refetchConfig();
         } else if (event.type === 'run.survey') {
-          // Same cache-read reason as approval.requested above. This is the
+          // Same cache-read reason as message.new above. This is the
           // only signal that a terminal run left uncommitted work behind.
           const liveRuns = queryClient.getQueryData<RunMeta[]>(runsQueryKey);
           const taskTitle =
@@ -1881,6 +1964,9 @@ export function useDispatchProject(
               },
             ]);
           }
+        } else if (event.type === 'a2a.changed') {
+          // Every Settings → A2A query shares this prefix (lib/a2a.ts).
+          void queryClient.invalidateQueries({ queryKey: ['dispatch-a2a'] });
         } else if (event.type === 'verification.changed') {
           void queryClient.invalidateQueries({
             queryKey: taskVerificationKey(port, event.taskId),
@@ -1994,6 +2080,7 @@ export function useDispatchProject(
     configQueryKey,
     runsQueryKey,
     presenceQueryKey,
+    whoamiQueryKey,
     notesQueryKey,
     draftsQueryKey,
     agentSessionsQueryKey,
@@ -2003,90 +2090,14 @@ export function useDispatchProject(
     mergeQueueQueryKey,
     landingQueryKey,
     branchesQueryKey,
-    questionsQueryKey,
     decisionsQueryKey,
     linearStatusQueryKey,
     linearLinksQueryKey,
     syncStatusQueryKey,
     port,
     onRecordInbox,
+    auth,
   ]);
-
-  useEffect(() => {
-    if (runs === undefined) return;
-    setLivePendingApprovals((prev) => {
-      let changed = false;
-      const next = new Map(prev);
-      for (const runId of next.keys()) {
-        const meta = runs.find((r) => r.id === runId);
-        if (meta === undefined || meta.state !== 'awaiting-approval') {
-          next.delete(runId);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [runs]);
-
-  // The restart case: dispatchd persists a scope request a human has not
-  // decided, and a resume carries it onto the successor run — but this window
-  // only hears about a request from the live `scope.requested` event, which an
-  // app opened after the restart (or after the resume) never received. So
-  // whenever the set of live runs changes, their open requests are read back
-  // and folded in. Keyed on the sorted live-id string rather than `runs`, so an
-  // ordinary run.changed refetch with the same live set issues no requests.
-  const liveRunIdsKey = useMemo(
-    () =>
-      (runs ?? [])
-        .filter((r) => !isTerminalRunState(r.state))
-        .map((r) => r.id)
-        .sort()
-        .join(','),
-    [runs]
-  );
-  useEffect(() => {
-    if (client === null || liveRunIdsKey === '') return;
-    let cancelled = false;
-    for (const runId of liveRunIdsKey.split(',')) {
-      client.listScopeRequests(runId).then(
-        (open) => {
-          const first = open[0];
-          if (cancelled || first === undefined) return;
-          setPendingScopeRequests((prev) => {
-            if (prev.get(runId)?.requestId === first.id) return prev;
-            const next = new Map(prev);
-            next.set(runId, { requestId: first.id });
-            return next;
-          });
-        },
-        () => {
-          // A failed read leaves the live event as the only source, which is
-          // exactly what this window had before — nothing to surface.
-        }
-      );
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [client, liveRunIdsKey]);
-
-  // Same cleanup as pendingApprovals above, but keyed on the run going
-  // terminal — a scope request doesn't move `meta.state` like an approval.
-  useEffect(() => {
-    if (runs === undefined) return;
-    setPendingScopeRequests((prev) => {
-      let changed = false;
-      const next = new Map(prev);
-      for (const runId of next.keys()) {
-        const meta = runs.find((r) => r.id === runId);
-        if (meta === undefined || isTerminalRunState(meta.state)) {
-          next.delete(runId);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [runs]);
 
   const blockedIds = useMemo(
     () => computeBlockedIds(tasks ?? [], statusModel),
@@ -2111,17 +2122,6 @@ export function useDispatchProject(
     return map;
   }, [runs]);
 
-  // Keyed by run so a view holding one run finds its questions in one lookup.
-  const openQuestions = useMemo(() => {
-    const map = new Map<string, RunQuestion[]>();
-    for (const question of openQuestionList ?? []) {
-      const existing = map.get(question.runId);
-      if (existing === undefined) map.set(question.runId, [question]);
-      else existing.push(question);
-    }
-    return map;
-  }, [openQuestionList]);
-
   const latestRunByTaskId = useMemo(() => {
     const map = new Map<string, RunMeta>();
     for (const run of runs ?? []) {
@@ -2134,10 +2134,10 @@ export function useDispatchProject(
     () =>
       deriveTaskAttentionById(
         latestRunByTaskId,
-        openQuestions,
+        taskIdsWithOpenAsks(runs ?? [], openQuestions, pendingScopeRequests),
         mergeQueue ?? null
       ),
-    [latestRunByTaskId, openQuestions, mergeQueue]
+    [latestRunByTaskId, runs, openQuestions, pendingScopeRequests, mergeQueue]
   );
 
   // Optimistic like the board's status drag: the list row and the open task's body show
@@ -2440,40 +2440,66 @@ export function useDispatchProject(
       opts?: { scope?: 'once' | 'session'; reason?: string }
     ): Promise<void> => {
       if (client === null) return;
-      // Approving a tool call is an adjudication like deciding a scope
-      // request: the daemon takes it on the app token only, so an attached
-      // window fails here with the actionable sentence rather than a 403.
+      // Answering a gate needs a deciding human, so an attached window fails
+      // here with the actionable sentence rather than a 403.
       assertCanDecide(auth);
-      await client.approveRun(runId, requestId, allow, opts);
-      setLivePendingApprovals((prev) => {
-        const next = new Map(prev);
-        next.delete(runId);
-        return next;
-      });
+      const gates =
+        queryClient.getQueryData<{ items: Message[] }>(openGatesKey(port))
+          ?.items ?? NO_GATES;
+      const gate = findToolApprovalGate(gates, runId, requestId);
+      if (gate === null) {
+        throw new Error('This approval is no longer waiting for you.');
+      }
+      await client.replyToMessage(gate.id, approvalReply(allow, opts));
+      dropOpenGate(queryClient, port, gate.id);
+      void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, runsQueryKey, port, auth]
   );
 
+  const fetchApprovalInput = useCallback(
+    async (runId: string, requestId: string): Promise<unknown> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      // The full input is decide-tier, like the gate it belongs to.
+      assertCanDecide(auth);
+      return (await client.fetchRunApproval(runId, requestId)).input;
+    },
+    [client, auth]
+  );
+
+  const fetchOverseerApprovalInput = useCallback(
+    async (conversation: string, requestId: string): Promise<unknown> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      assertCanDecide(auth);
+      const { pendingApprovals } = await client.getOverseer(conversation);
+      const parked = pendingApprovals.find((a) => a.requestId === requestId);
+      if (parked === undefined) {
+        throw new Error('The Assistant is no longer waiting on this call.');
+      }
+      return parked.input;
+    },
+    [client, auth]
+  );
+
   const handleDecideScopeRequest = useCallback(
     async (
-      runId: string,
+      _runId: string,
       requestId: string,
       granted: boolean,
       reason?: string
     ): Promise<void> => {
       if (client === null) return;
-      // Deciding is the one thing an attached session cannot do; the daemon
-      // would 403 it. Fail here with the actionable sentence rather than
-      // letting a raw auth error reach the card.
+      // Deciding is a gate answer, which an attached session cannot give; the
+      // daemon would 403 it, so fail here with the actionable sentence.
       assertCanDecide(auth);
-      await client.decideScopeRequest(runId, requestId, granted, reason);
-      setPendingScopeRequests((prev) => {
-        const next = new Map(prev);
-        next.delete(runId);
-        return next;
+      await client.replyToMessage(requestId, {
+        body: reason ?? '',
+        choice: granted ? 'grant' : 'deny',
       });
+      dropOpenGate(queryClient, port, requestId);
+      void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, port, auth]
@@ -2491,25 +2517,41 @@ export function useDispatchProject(
 
   const handleAnswerQuestion = useCallback(
     async (
-      runId: string,
+      _runId: string,
       questionId: string,
       answer: string
     ): Promise<void> => {
       if (client === null) return;
-      await client.answerQuestion(runId, questionId, answer);
-      void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
+      // Questions go to the owner, so only a deciding human takes part.
+      assertCanDecide(auth);
+      const choices = queryClient
+        .getQueryData<{ items: Message[] }>(openGatesKey(port))
+        ?.items.find((m) => m.id === questionId)?.choices;
+      await client.replyToMessage(
+        questionId,
+        choices?.includes(answer) === true
+          ? { body: answer, choice: answer }
+          : { body: answer }
+      );
+      dropOpenGate(queryClient, port, questionId);
+      void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
-    [client, queryClient, questionsQueryKey, port]
+    [client, queryClient, port, auth]
   );
 
   const handleSendMessage = useCallback(
     async (runId: string, text: string): Promise<void> => {
       if (client === null) return;
-      await client.sendRunMessage(runId, text);
+      assertCanMessage(auth);
+      // One conversation per run: continue its newest open root.
+      await client.sendMessage(
+        { to: [`run:${runId}`], kind: 'message', body: text },
+        { continueThread: true }
+      );
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
-    [client, queryClient, port]
+    [client, queryClient, port, auth]
   );
 
   const handleCancelRun = useCallback(
@@ -2557,13 +2599,39 @@ export function useDispatchProject(
   const handleRequestChanges = useCallback(
     async (runId: string, text: string): Promise<void> => {
       if (client === null) return;
-      const meta = await client.sendRunMessage(runId, text, { resume: true });
-      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
-      // request-changes re-dispatches under a fresh run id — follow it so the caller keeps
-      // showing the run that's now actually live.
-      onRunDispatched?.(meta.id, meta.taskId);
+      assertCanMessage(auth);
+      const before = new Set((await client.fetchRuns()).map((r) => r.id));
+      // A human's wake of an ended run continues exactly that run, inside the
+      // send, so its continuation is already listed below.
+      const sent = await client.sendMessage(
+        { to: [`run:${runId}`], kind: 'message', body: text, wake: 'request' },
+        { continueThread: true }
+      );
+      const runs = await client.fetchRuns();
+      // Task changes arrive over `task.changed`.
+      queryClient.setQueryData(runsQueryKey, runs);
+      const continued = runs.find(
+        (r) => r.resumedFrom === runId && !before.has(r.id)
+      );
+      if (continued !== undefined) {
+        // Follow the continuation so the caller keeps showing the live run.
+        onRunDispatched?.(continued.id, continued.taskId);
+        return;
+      }
+      // A live run that took the message into its conversation simply got it.
+      if (
+        sent.deliveries.some(
+          (d) => d.recipient === `run:${runId}` && d.state === 'pushed'
+        )
+      ) {
+        return;
+      }
+      throw new Error(
+        (await wakeNoticeFor(client, sent.message.id)) ??
+          'The run did not continue. Your message is waiting for it.'
+      );
     },
-    [client, queryClient, runsQueryKey, onRunDispatched]
+    [client, queryClient, runsQueryKey, onRunDispatched, auth]
   );
 
   const handleOpenPr = useCallback(
@@ -3074,6 +3142,7 @@ export function useDispatchProject(
     () => decideAvailability(auth, runs ?? []),
     [auth, runs]
   );
+  const access = useMemo(() => messageAccess(auth), [auth]);
 
   // Memoized so consumers holding `data` (and memo'd rows reading from it) only
   // re-render when something they could read actually changed.
@@ -3085,6 +3154,8 @@ export function useDispatchProject(
         connection === undefined ? null : daemonBaseUrl(connection),
       presence: presence ?? [],
       me: whoami?.ref ?? null,
+      whoamiError,
+      retryWhoami: () => void refetchWhoami(),
       localHuman: peopleSnapshot?.local ?? null,
       people: peopleSnapshot?.people ?? NO_PEOPLE,
       myTier: whoami?.tier ?? credentialTier(connection),
@@ -3092,6 +3163,11 @@ export function useDispatchProject(
         connection !== undefined &&
         connection.session === undefined &&
         (connection.appToken === null || connection.appToken === ''),
+      ownerCredential:
+        connection !== undefined &&
+        connection.session === undefined &&
+        connection.appToken !== null &&
+        connection.appToken !== '',
       portLoading,
       portError,
       portErrorDetail,
@@ -3146,8 +3222,10 @@ export function useDispatchProject(
       pendingScopeRequests,
       handleDecideScopeRequest,
       scopeDecide,
+      messageAccess: access,
       handleRestartDaemon,
       openQuestions,
+      asksMe,
       decisions: decisionList ?? [],
       handleAnswerQuestion,
 
@@ -3166,6 +3244,8 @@ export function useDispatchProject(
       handleSendDraftMessage,
       handleDispatch,
       handleApprove,
+      fetchApprovalInput,
+      fetchOverseerApprovalInput,
       handleSendMessage,
       handleCancelRun,
       handleStopRun,
@@ -3233,6 +3313,8 @@ export function useDispatchProject(
       connection,
       presence,
       whoami,
+      whoamiError,
+      refetchWhoami,
       peopleSnapshot,
       portLoading,
       portError,
@@ -3286,8 +3368,10 @@ export function useDispatchProject(
       pendingScopeRequests,
       handleDecideScopeRequest,
       scopeDecide,
+      access,
       handleRestartDaemon,
       openQuestions,
+      asksMe,
       decisionList,
       handleAnswerQuestion,
       planId,
@@ -3304,6 +3388,8 @@ export function useDispatchProject(
       handleSendDraftMessage,
       handleDispatch,
       handleApprove,
+      fetchApprovalInput,
+      fetchOverseerApprovalInput,
       handleSendMessage,
       handleCancelRun,
       handleStopRun,

@@ -1,4 +1,5 @@
-import type { TaskDoc } from '@dispatch/core';
+import { getSection } from '@dispatch-foo/core';
+import type { TaskDoc } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import {
@@ -9,7 +10,9 @@ import {
   variantTaskInput,
 } from '../fanout.js';
 import type { RunMeta } from '../orchestrator/types.js';
+import { humanOperator } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
+import { decidingHuman } from './proposalFence.js';
 
 /**
  * `POST /api/tasks/:id/fanout` — run the same work on several agents at once.
@@ -22,7 +25,15 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 type FanoutRouteContext = Pick<
   ApiContext,
-  'store' | 'cache' | 'events' | 'orchestrator'
+  | 'store'
+  | 'cache'
+  | 'events'
+  | 'orchestrator'
+  | 'caller'
+  | 'viaAgentToken'
+  | 'ownerCredential'
+  | 'actorContext'
+  | 'a2a'
 >;
 
 interface FanoutResult {
@@ -45,6 +56,22 @@ export async function fanoutTask(
 ): Promise<Response> {
   const source = ctx.store.get(taskId);
   if (source === null) return errorResponse(404, `task not found: ${taskId}`);
+  // Clones of a gated draft would run its client-written text; the dispatch
+  // guard alone sees only the clones.
+  if (ctx.a2a?.proposalOpen(taskId) === true) {
+    return errorResponse(
+      409,
+      `${taskId} is an A2A proposal awaiting the owner; answer it in Needs you`
+    );
+  }
+
+  // Clones run the client's text: only a deciding human fans one out.
+  const a2a = ctx.a2a?.taskOrigin(taskId) === 'a2a';
+  if (a2a && !decidingHuman(ctx))
+    return errorResponse(
+      403,
+      `${taskId} came in over A2A; fanning it out needs the decide tier`
+    );
 
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -66,7 +93,15 @@ export async function fanoutTask(
   };
 
   for (const variant of variants) {
-    const task = ctx.store.create(variantTaskInput(source, variant));
+    const created = ctx.store.create(variantTaskInput(source, variant));
+    // The Description went in at create; the criteria follow as their section.
+    const criteria = getSection(source.body, 'Acceptance Criteria');
+    const task =
+      criteria === ''
+        ? created
+        : ctx.store.update(created.meta.id, { acceptanceCriteria: criteria });
+    // Before dispatch, so the clone's run gets an A2A task's fences.
+    if (a2a) ctx.a2a?.markDerived(task.meta.id, taskId);
     // Refreshed per variant rather than once at the end: `dispatch` reads the
     // task back through the store, and a cache that has not caught up would
     // make the second variant fail to find the task the first just created.
@@ -77,6 +112,9 @@ export async function fanoutTask(
         variant.executor,
         {
           ...(variant.model === undefined ? {} : { model: variant.model }),
+          // Each variant acts for whoever the caller's credential names, as a
+          // dispatch does.
+          operator: humanOperator(ctx),
         }
       );
       result.variants.push({

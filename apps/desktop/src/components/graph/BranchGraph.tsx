@@ -1,5 +1,5 @@
-import type { StatusModel } from '@dispatch/core/browser';
-import { isDoneStatus, isStartedStatus } from '@dispatch/core/browser';
+import type { StatusModel } from '@dispatch-foo/core/browser';
+import { isDoneStatus, isStartedStatus } from '@dispatch-foo/core/browser';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 

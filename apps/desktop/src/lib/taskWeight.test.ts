@@ -1,8 +1,8 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskDoc } from '@dispatch-foo/core/browser';
 import {
   DEFAULT_STATUS_MODEL,
   defaultTaskFields,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import { computeTaskWeights, describeWeight } from './taskWeight';

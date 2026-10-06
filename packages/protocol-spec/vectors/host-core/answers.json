@@ -1,0 +1,1399 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "answers",
+  "vectors": [
+    {
+      "id": "core.answers.a-reply-answers-and-closes-the-question",
+      "title": "A reply to a question is an answer in its thread to the asker, and moves the question to answered and out of the open list",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "4.7", "6.1", "7.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "blocking": true,
+            "choices": ["a", "b"]
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "a" }
+        },
+        { "op": "openBlocking" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true, "result": { "message": "$s2", "downgraded": false } },
+          { "ok": true, "result": { "messages": [] } }
+        ],
+        "messages": [
+          { "id": "$s1" },
+          {
+            "id": "$s2",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "thread": "$s1",
+            "to": ["run:r-000001"],
+            "choice": "a"
+          }
+        ],
+        "noOtherMessages": true,
+        "deliveries": [
+          { "message": "$s1", "recipient": "human:wyat", "state": "answered" },
+          {
+            "message": "$s2",
+            "recipient": "run:r-000001",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-000001"
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "published", "message": "$s2" },
+          { "hook": "push", "session": "run:r-000001", "message": "$s2" }
+        ],
+        "gateEffects": []
+      }
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-session-goes-to-its-work-item",
+      "title": "A reply to a session that has ended goes to its work item and waits there",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "blocking": true
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "b" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, { "ok": true }],
+        "messages": [
+          { "id": "$s3", "kind": "answer", "to": ["task:t-000001"] }
+        ],
+        "deliveries": [
+          {
+            "message": "$s3",
+            "recipient": "task:t-000001",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-reaches-the-successor-session",
+      "title": "A reply to an ended session reaches its work item's live successor session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "blocking": true
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000001",
+              "session": "run:r-000002"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "b" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }],
+        "messages": [{ "id": "$s4", "to": ["task:t-000001"] }],
+        "deliveries": [
+          {
+            "message": "$s4",
+            "recipient": "task:t-000001",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-rewrites-and-collapses-an-ended-session",
+      "title": "A send replying to an ended session is stored and delivered to its work item, and the equal entries collapse",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "3.7"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "started"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000001",
+              "session": "run:r-000002"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001", "task:t-000001"],
+            "kind": "message",
+            "body": "noted",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }],
+        "messages": [{ "id": "$s4", "to": ["task:t-000001"] }],
+        "deliveries": [
+          {
+            "message": "$s4",
+            "recipient": "task:t-000001",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ],
+        "callsInclude": [
+          { "hook": "push", "session": "run:r-000002", "message": "$s4" }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-auxiliary-session-is-held-on-it",
+      "title": "A reply to an ended session that stands for no work item is held on that session, while a plain message to it is refused",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "store": {
+          "messages": [
+            {
+              "id": "m-seed-q",
+              "from": "run:r-0000a1",
+              "to": ["human:wyat"],
+              "kind": "question",
+              "body": "ship it?",
+              "blocking": true
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-seed-q",
+              "message": "m-seed-q",
+              "recipient": "human:wyat",
+              "session": null,
+              "via": "direct",
+              "state": "notified"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "m-seed-q",
+          "input": { "body": "yes" }
+        },
+        { "op": "openBlocking" },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": { "to": ["run:r-0000a1"], "kind": "message", "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true, "result": { "messages": [] } },
+          { "ok": false, "error": { "code": "invalid", "field": "to[0]" } }
+        ],
+        "messages": [
+          {
+            "id": "$s1",
+            "kind": "answer",
+            "replyTo": "m-seed-q",
+            "to": ["run:r-0000a1"]
+          }
+        ],
+        "noOtherMessages": true,
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "run:r-0000a1",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          },
+          {
+            "message": "m-seed-q",
+            "recipient": "human:wyat",
+            "state": "answered"
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-recipient-goes-to-its-work-item",
+      "title": "A reply naming an ended session its target was sent to goes to that session's work item and waits there",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "try the cart first"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "still there?",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, { "ok": true }],
+        "messages": [{ "id": "$s3", "to": ["task:t-000001"] }],
+        "deliveries": [
+          {
+            "message": "$s3",
+            "recipient": "task:t-000001",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-recipient-reaches-the-successor-session",
+      "title": "A reply naming an ended session its target was sent to reaches that work item's live successor session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "try the cart first"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000001",
+              "session": "run:r-000002"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "still there?",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }],
+        "messages": [{ "id": "$s4", "to": ["task:t-000001"] }],
+        "deliveries": [
+          {
+            "message": "$s4",
+            "recipient": "task:t-000001",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ],
+        "callsInclude": [
+          { "hook": "push", "session": "run:r-000002", "message": "$s4" }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-naming-an-ended-session-its-target-never-reached-fails",
+      "title": "A reply naming an ended session that is neither its target's sender nor one of its recipients fails invalid on its to[] slot",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "try the cart first"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000002" } }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000002"],
+            "kind": "message",
+            "body": "still there?",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          null,
+          { "ok": false, "error": { "code": "invalid", "field": "to[0]" } }
+        ],
+        "messages": [{ "id": "$s1", "to": ["run:r-000001"] }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.answers.only-a-deciding-principal-answers-a-gate",
+      "title": "An answer to a gate from a principal that cannot decide is forbidden on replyTo; a deciding human answer applies the effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["5.2", "5.4", "5.5"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": false, "error": { "code": "forbidden", "field": "replyTo" } },
+          { "ok": true }
+        ],
+        "messages": [
+          { "id": "$s1" },
+          {
+            "id": "$s3",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "choice": "approve"
+          }
+        ],
+        "noOtherMessages": true,
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s3" },
+          { "hook": "published", "message": "$s3" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    },
+    {
+      "id": "core.answers.a-plain-question-has-no-effect",
+      "title": "Answering a question without gate data runs no effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.7", "5.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "question", "body": "x?" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "y" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "published", "message": "$s2" },
+          { "hook": "push", "session": "run:r-000001", "message": "$s2" }
+        ],
+        "gateEffects": []
+      }
+    },
+    {
+      "id": "core.answers.a-reply-to-a-non-question-is-a-message",
+      "title": "Replying to a message that is not a question or handoff sends a message in its thread",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "notice", "body": "fyi" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "thanks" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          { "id": "$s1" },
+          {
+            "id": "$s2",
+            "kind": "message",
+            "replyTo": "$s1",
+            "thread": "$s1",
+            "to": ["run:r-000001"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-question-takes-one-answer",
+      "title": "A second answer to a question fails conflict on replyTo and stores nothing",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.5", "4.7"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "blocking": true,
+            "choices": ["a", "b"]
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "a" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "b" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "conflict", "field": "replyTo" } }
+        ],
+        "messages": [{ "id": "$s1" }, { "id": "$s2", "choice": "a" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.answers.a-failing-effect-still-commits-the-answer",
+      "title": "When a gate effect fails the answer is still committed and published, and the effect is left unrecorded",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["5.5"],
+      "given": {
+        "owner": "human:wyat",
+        "failOnAnswered": true,
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          { "id": "$s1" },
+          { "id": "$s2", "kind": "answer", "replyTo": "$s1" }
+        ],
+        "deliveries": [
+          { "message": "$s1", "recipient": "human:wyat", "state": "answered" }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" },
+          { "hook": "published", "message": "$s2" }
+        ],
+        "gateEffects": []
+      }
+    },
+    {
+      "id": "core.answers.an-answer-to-a-system-gate-has-no-delivery",
+      "title": "An answer to a gate the system raised is stored with no delivery, since the system address is never a recipient",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.5"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "deny" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [{ "id": "$s2", "to": ["$system"] }],
+        "noDeliveries": ["$s2"]
+      }
+    },
+    {
+      "id": "core.answers.a-gate-effect-runs-before-the-answer-is-published",
+      "title": "A deciding answer to a tool-approval gate runs the effect before the answer is published",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.5", "C.3"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "Run Bash?",
+            "blocking": true,
+            "choices": ["approve", "approve-session", "deny"],
+            "data": {
+              "type": "tool-approval",
+              "requestId": "req-1",
+              "runId": "r-000001",
+              "tool": "Bash",
+              "input": {},
+              "floor": false
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" },
+          { "hook": "published", "message": "$s2" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    },
+    {
+      "id": "core.answers.a-human-decides-an-agent-registration-gate",
+      "title": "The system raises an agent-registration gate and a deciding human answer applies its effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "5.5", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "Register agent:wyat/claude-code.macbook?",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "data": {
+              "type": "agent-registration",
+              "agent": "agent:wyat/claude-code.macbook",
+              "client": "claude-code",
+              "requestedBy": "human:wyat"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "$system",
+            "data": { "type": "agent-registration" }
+          },
+          { "id": "$s2", "choice": "approve" }
+        ],
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" },
+          { "hook": "published", "message": "$s2" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    },
+    {
+      "id": "core.answers.a-human-decides-an-overseer-action-gate",
+      "title": "The system raises an overseer-action gate and a deciding human answer applies its effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "5.5", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "Archive three finished tasks?",
+            "blocking": true,
+            "choices": ["confirm", "cancel"],
+            "data": {
+              "type": "overseer-action",
+              "conversation": "c-1",
+              "actionId": "a-1",
+              "summary": "Archive three finished tasks"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "confirm" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "$system",
+            "data": { "type": "overseer-action" }
+          },
+          { "id": "$s2", "choice": "confirm" }
+        ],
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" },
+          { "hook": "published", "message": "$s2" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    },
+    {
+      "id": "core.answers.a-handoff-defaults-to-accept-or-decline",
+      "title": "A handoff sent without choices gets the choices accept and decline",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.7"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "handoff",
+            "body": "take it"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "messages": [
+          { "id": "$s1", "kind": "handoff", "choices": ["accept", "decline"] }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.the-addressed-work-items-session-answers",
+      "title": "The live session of the work item a question was sent to may answer it",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["2.2", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000002", "liveSession": "run:r-000002" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "question",
+            "body": "which?"
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000002", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "this one" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          {
+            "id": "$s2",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "from": "run:r-000002"
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-deciding-human-answers-any-question",
+      "title": "A deciding human may answer a question sent to another human",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "5.2"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?"
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:ana", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "b" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [{ "id": "$s2", "kind": "answer", "from": "human:ana" }]
+      }
+    },
+    {
+      "id": "core.answers.a-session-bound-by-redelivery-answers",
+      "title": "A later session that claimed a question left on an earlier session of its work item may answer it",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.4"],
+      "given": {
+        "workItems": [{ "id": "t-000003", "liveSession": "run:r-000003" }],
+        "failPush": ["run:r-000003"],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000003"],
+            "kind": "question",
+            "body": "which?"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000003" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000003",
+              "session": "run:r-000004"
+            }
+          }
+        },
+        {
+          "op": "deliverHeld",
+          "session": "run:r-000004",
+          "workItem": "t-000003"
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000004", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "mine" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }, { "ok": true }],
+        "messages": [
+          { "id": "$s1" },
+          { "id": "$s5", "kind": "answer", "from": "run:r-000004" }
+        ],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "run:r-000003",
+            "state": "answered",
+            "session": "run:r-000004"
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-successor-session-answers",
+      "title": "A successor session of the work item may answer a question sent to its predecessor",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["2.2", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000003", "liveSession": "run:r-000003" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000003"],
+            "kind": "question",
+            "body": "which?"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000003" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000003",
+              "session": "run:r-000005"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000005", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "mine" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }],
+        "messages": [{ "id": "$s4", "kind": "answer", "from": "run:r-000005" }]
+      }
+    },
+    {
+      "id": "core.answers.the-sender-replies-in-its-thread",
+      "title": "The sender of a message may reply in its thread",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "hello" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "following up" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [{ "id": "$s2", "replyTo": "$s1", "thread": "$s1" }]
+      }
+    },
+    {
+      "id": "core.answers.a-recipient-replies",
+      "title": "A recipient of a message may reply to it",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "hello" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "got it" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [{ "id": "$s2", "replyTo": "$s1", "from": "human:wyat" }]
+      }
+    },
+    {
+      "id": "core.answers.the-addressed-work-items-session-replies",
+      "title": "The live session of the work item a message was sent to may reply to it",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["2.2", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000002", "liveSession": "run:r-000002" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "message",
+            "body": "hello"
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000002", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "on it" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [{ "id": "$s2", "replyTo": "$s1" }]
+      }
+    },
+    {
+      "id": "core.answers.a-successor-session-replies",
+      "title": "A successor session of the work item may reply to a message sent to its predecessor",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["2.2", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000003", "liveSession": "run:r-000003" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000003"],
+            "kind": "message",
+            "body": "hello"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000003" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000003",
+              "session": "run:r-000005"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000005", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "taking over" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }],
+        "messages": [{ "id": "$s4", "replyTo": "$s1" }]
+      }
+    },
+    {
+      "id": "core.answers.a-later-session-replies-to-its-predecessors-message",
+      "title": "A later session of a work item may reply to a message its predecessor sent",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["2.2", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000003", "liveSession": "run:r-000003" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000003", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "started the migration"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000003" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000003",
+              "session": "run:r-000005"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000005", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "migration finished" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }],
+        "messages": [{ "id": "$s4", "replyTo": "$s1" }]
+      }
+    },
+    {
+      "id": "core.answers.a-deciding-human-replies-anywhere",
+      "title": "A deciding human may reply in a thread it does not participate in",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "5.2"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "hello" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:ana", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "stepping in" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [{ "id": "$s2", "replyTo": "$s1", "from": "human:ana" }]
+      }
+    },
+    {
+      "id": "core.answers.an-agent-registration-gate-names-its-key",
+      "title": "An agent-registration gate may name the registration it decides by key; the key is stored with the gate and a deciding answer applies its effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "5.5", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "Register agent:wyat/claude-code.macbook?",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "data": {
+              "type": "agent-registration",
+              "agent": "agent:wyat/claude-code.macbook",
+              "client": "claude-code",
+              "requestedBy": "human:wyat",
+              "key": "3f9a0c1e7b24d58a"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "deny" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "$system",
+            "data": {
+              "type": "agent-registration",
+              "agent": "agent:wyat/claude-code.macbook",
+              "client": "claude-code",
+              "requestedBy": "human:wyat",
+              "key": "3f9a0c1e7b24d58a"
+            }
+          },
+          { "id": "$s2", "choice": "deny" }
+        ],
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    }
+  ]
+}

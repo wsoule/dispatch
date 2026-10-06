@@ -1,5 +1,5 @@
-import type { CreateInput, TaskMeta } from '@dispatch/core';
-import { untrustedFenced } from '@dispatch/core';
+import type { CreateInput, TaskMeta } from '@dispatch-foo/core';
+import { untrustedFenced } from '@dispatch-foo/core';
 
 import type { RepoPr } from './pr.js';
 

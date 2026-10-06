@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { DaemonStarter } from './daemon.js';
 import { setDaemonStarter } from './daemon.js';
 import { ONBOARDING_MARKDOWN } from './onboarding.js';
-import type { QuestionTiming, ScopeTiming } from './tools.js';
+import type { MessageBlockingTiming } from './toolKit.js';
 import { registerDispatchTools } from './tools.js';
 
 export const MCP_SERVER_NAME = 'dispatch';
@@ -17,7 +17,7 @@ export const MCP_SERVER_VERSION = '0.24.0';
 // proxy; see the Phase 3 plan for why direct file access is the sync point).
 export function createDispatchMcpServer(
   rootDir: string,
-  opts: { questionTiming?: QuestionTiming; scopeTiming?: ScopeTiming } = {}
+  opts: { blockingTiming?: MessageBlockingTiming } = {}
 ): McpServer {
   const server = new McpServer({
     name: MCP_SERVER_NAME,
@@ -31,7 +31,8 @@ export function createDispatchMcpServer(
     'workflow://onboarding',
     {
       title: 'Dispatch onboarding',
-      description: 'How an agent should use the task_* tools in this server.',
+      description:
+        "How an agent should use this server's task and messaging tools.",
       mimeType: 'text/markdown',
     },
     (uri) => ({

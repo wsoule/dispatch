@@ -4,8 +4,8 @@ import {
   attachmentsDir,
   ensureProjectGitignore,
   sanitizeAttachmentName,
-} from '@dispatch/core';
-import type { TaskAttachment, TaskDoc } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { TaskAttachment, TaskDoc } from '@dispatch-foo/core';
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 

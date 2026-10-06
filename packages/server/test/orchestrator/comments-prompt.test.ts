@@ -1,4 +1,4 @@
-import { FileCommentStore, TaskStore } from '@dispatch/core';
+import { FileCommentStore, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,6 @@ import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import type {
   ExecutorEvents,
-  ExecutorRun,
   ExecutorStartOptions,
 } from '../../src/orchestrator/types.js';
 import { initGitRepo } from './helpers.js';
@@ -41,7 +40,7 @@ class CapturingExecutor extends FakeExecutor {
   override start(
     opts: ExecutorStartOptions,
     events: ExecutorEvents
-  ): ExecutorRun {
+  ): ReturnType<FakeExecutor['start']> {
     this.starts.push(opts);
     return super.start(opts, events);
   }

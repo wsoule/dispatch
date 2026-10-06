@@ -1,9 +1,9 @@
+import type { TaskDoc } from '@dispatch-foo/core/browser';
 import type {
   EpicProgress,
   EpicSession,
   ReadinessReading,
 } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
@@ -194,6 +194,7 @@ function progress(sessionState: EpicSession['state'] | null): EpicProgress {
 const noop = () => {};
 const shellActions = {
   openTask: noop,
+  openThread: noop,
   peekTask: noop,
   openCreateTask: noop,
   createPreset: null,

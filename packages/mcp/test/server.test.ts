@@ -1,13 +1,19 @@
-import { FileCommentStore, TaskStore } from '@dispatch/core';
+import {
+  DISPATCH_MCP_TOOLS,
+  DISPATCH_MESSAGING_TOOLS,
+  FileCommentStore,
+  TaskStore,
+} from '@dispatch-foo/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDispatchMcpServer } from '../src/index.js';
+import { registerMessagingTools } from '../src/messaging.js';
 import { ONBOARDING_MARKDOWN } from '../src/onboarding.js';
 
 let root: string;
@@ -49,17 +55,28 @@ describe('server identity', () => {
     expect(server.server.constructor.name).toBe('Server');
   });
 
-  it('lists all six task tools plus run_list, agent_message, message_user, ask_user, request_scope, dispatch_note, record_decision, record_evidence, and record_mutation', async () => {
+  it('lists every dispatch tool', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'agent_message',
-      'ask_user',
+      'channel_join',
+      'channel_leave',
+      'channel_list',
       'dispatch_note',
-      'message_user',
-      'record_decision',
+      'doc_link',
+      'doc_list',
+      'doc_read',
+      'doc_save',
+      'doc_search',
+      'inbox_read',
+      'memory_forget',
+      'memory_read',
+      'memory_save',
+      'memory_search',
+      'msg_reply',
+      'msg_send',
+      'peer_list',
       'record_evidence',
       'record_mutation',
-      'request_scope',
       'run_list',
       'task_comment',
       'task_comments',
@@ -67,7 +84,33 @@ describe('server identity', () => {
       'task_list',
       'task_next',
       'task_save',
+      'thread_read',
     ]);
+  });
+
+  // Codex pre-approves DISPATCH_MCP_TOOLS by name and rejects any other tool.
+  it('registers exactly the tools core names in DISPATCH_MCP_TOOLS', async () => {
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...DISPATCH_MCP_TOOLS].sort()
+    );
+  });
+
+  // Executors auto-allow DISPATCH_MESSAGING_TOOLS by name.
+  it('registers exactly the messaging tools core names in DISPATCH_MESSAGING_TOOLS', async () => {
+    const bare = new McpServer({ name: 'messaging-only', version: '0' });
+    registerMessagingTools(bare, root);
+    const c = new Client({ name: 'test-client', version: '1.0' });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      c.connect(clientTransport),
+      bare.connect(serverTransport),
+    ]);
+    const { tools } = await c.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...DISPATCH_MESSAGING_TOOLS].sort()
+    );
   });
 
   it('does not claim task_save is idempotent (create makes a new task every call)', async () => {

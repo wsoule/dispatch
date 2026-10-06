@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -15,24 +15,13 @@ import { dirname, join } from 'node:path';
 
 import { daemonFilePath } from '../src/daemon.js';
 import { createDispatchMcpServer } from '../src/index.js';
-import type { ScopeTiming } from '../src/index.js';
 
 const AGENT_TOKEN = 'agent-token-from-the-daemon-file';
 const APP_TOKEN = 'app-token-mcp-must-never-reach';
-
-// Milliseconds instead of the production minutes, so the scope loop reaches
-// its expiry path in test time.
-const FAST_SCOPE_TIMING: ScopeTiming = {
-  totalWaitMs: 300,
-  requestTimeoutMs: 200,
-  retryDelayMs: 10,
-  errorDelayMs: 10,
-};
+const RUN_TOKEN = 'this-runs-own-token';
 
 async function connectClient(rootDir: string): Promise<Client> {
-  const server = createDispatchMcpServer(rootDir, {
-    scopeTiming: FAST_SCOPE_TIMING,
-  });
+  const server = createDispatchMcpServer(rootDir);
   const client = new Client({ name: 'test-client', version: '1.0' });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -64,35 +53,20 @@ class FakeDaemon {
         const auth = req.headers.get('authorization');
         this.seen.push({ path: url.pathname, method: req.method, auth });
         if (url.pathname === '/api/health') return Response.json({ ok: true });
-        if (auth !== `Bearer ${AGENT_TOKEN}`) {
+        if (
+          auth !== `Bearer ${AGENT_TOKEN}` &&
+          auth !== `Bearer ${RUN_TOKEN}`
+        ) {
           return Response.json(
             { error: 'missing daemon token', code: 'auth_missing_token' },
             { status: 401 }
-          );
-        }
-        if (url.pathname.endsWith('/decide')) {
-          return Response.json(
-            { error: 'needs the app token', code: 'auth_insufficient_tier' },
-            { status: 403 }
           );
         }
         if (url.pathname === '/api/runs') return Response.json([]);
         if (url.pathname === '/api/inbox') {
           return Response.json([{ id: 'i-1' }], { status: 201 });
         }
-        if (url.pathname.endsWith('/scope-requests')) {
-          return Response.json({
-            id: 'sr-1',
-            granted: null,
-            decisionReason: null,
-          });
-        }
-        // A scope-request read-back: still undecided.
-        return Response.json({
-          id: 'sr-1',
-          granted: null,
-          decisionReason: null,
-        });
+        return Response.json({ error: 'not found' }, { status: 404 });
       },
     });
     return this.server.port ?? 0;
@@ -109,6 +83,7 @@ let daemon: FakeDaemon;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 const originalRunId = process.env.DISPATCH_RUN_ID;
 const originalAppToken = process.env.DISPATCH_APP_TOKEN;
+const originalRunTokenFile = process.env.DISPATCH_RUN_TOKEN_FILE;
 
 // The daemon file carries an `appToken` a real daemon never writes, so a tool
 // that reached for one would be caught rather than silently finding nothing.
@@ -145,6 +120,9 @@ afterEach(() => {
   else process.env.DISPATCH_RUN_ID = originalRunId;
   if (originalAppToken === undefined) delete process.env.DISPATCH_APP_TOKEN;
   else process.env.DISPATCH_APP_TOKEN = originalAppToken;
+  if (originalRunTokenFile === undefined)
+    delete process.env.DISPATCH_RUN_TOKEN_FILE;
+  else process.env.DISPATCH_RUN_TOKEN_FILE = originalRunTokenFile;
   rmSync(fakeHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
 });
@@ -186,6 +164,24 @@ describe('the token MCP tools present', () => {
     );
   });
 
+  // XH-R2: inside a run the daemon must know which run wrote, so every tool
+  // presents the run's own token rather than the shared agent token.
+  it("is the run's own token inside a run", async () => {
+    const file = join(fakeHome, 'run.token');
+    writeFileSync(file, `${RUN_TOKEN}\n`, { mode: 0o600 });
+    process.env.DISPATCH_RUN_TOKEN_FILE = file;
+    process.env.DISPATCH_RUN_ID = 'r-self1';
+    const client = await connectClient(root);
+    await client.callTool({ name: 'run_list', arguments: {} });
+    await client.callTool({
+      name: 'dispatch_note',
+      arguments: { kind: 'note', title: 'something to look at' },
+    });
+    const authed = daemon.seen.filter((r) => r.path !== '/api/health');
+    expect(authed.length).toBeGreaterThan(0);
+    expect(authed.every((r) => r.auth === `Bearer ${RUN_TOKEN}`)).toBe(true);
+  });
+
   it('is absent from the open health probe', async () => {
     const client = await connectClient(root);
     await client.callTool({ name: 'run_list', arguments: {} });
@@ -212,19 +208,4 @@ describe('no path from this package to an app token', () => {
     );
     expect(offenders).toEqual([]);
   });
-});
-
-describe('an expired scope request', () => {
-  it('denies locally when the daemon refuses its self-denial', async () => {
-    process.env.DISPATCH_RUN_ID = 'r-self1';
-    const client = await connectClient(root);
-    const result = (await client.callTool({
-      name: 'request_scope',
-      arguments: { paths: ['src/a.ts'], reason: 'needed for the fix' },
-    })) as ToolCallResult;
-    // The daemon refused to record the denial; the agent is still denied.
-    expect(result.structuredContent?.granted).toBe(false);
-    const decide = daemon.seen.find((r) => r.path.endsWith('/decide'));
-    expect(decide?.auth).toBe(`Bearer ${AGENT_TOKEN}`);
-  }, 20_000);
 });

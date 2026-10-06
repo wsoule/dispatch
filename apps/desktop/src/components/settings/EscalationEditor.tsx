@@ -1,4 +1,4 @@
-import type { EscalationStep } from '@dispatch/core/browser';
+import type { EscalationStep } from '@dispatch-foo/core/browser';
 
 import { SettingsSearchable } from './search';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';

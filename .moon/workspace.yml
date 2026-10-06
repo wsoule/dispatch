@@ -2,7 +2,7 @@ $schema: 'https://moonrepo.dev/schemas/workspace.json'
 
 # Fail fast when a developer's proto-installed moon drifts from the repo pin
 # in .prototools; both must move together.
-versionConstraint: '2.3.3'
+versionConstraint: '2.5.4'
 
 projects:
   globs:

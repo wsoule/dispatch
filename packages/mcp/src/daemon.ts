@@ -27,9 +27,8 @@ export interface DaemonFileInfo {
   pid: number;
   rootDir: string;
   startedAt: string;
-  // Request tier, and the only credential this package ever holds. The app
-  // token that decides scope requests is never written to disk, so there is
-  // nothing here for an MCP tool to pick up.
+  // The shared request-tier token. The app token, which can answer gates, is
+  // never written to disk, so no MCP tool can pick it up.
   agentToken?: string;
 }
 
@@ -75,11 +74,8 @@ export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
 // check is the one request that must never be the slow thing.
 const HEALTH_TIMEOUT_MS = 2000;
 
-// The ceiling on any one ordinary daemon request from this process. Every
-// tool here is a loopback call the daemon answers from memory or SQLite;
-// the long-polls (ask_user, request_scope) bring their own signal. Anything
-// slower than this is a daemon that has stopped serving, and the answer the
-// agent needs is "unreachable", not a silent wait.
+// The ceiling on one ordinary daemon request; msg_send's blocking long-poll
+// brings its own signal. Anything slower is a daemon that stopped serving.
 export const REQUEST_TIMEOUT_MS = 30_000;
 
 /** The abort signal every bare daemon `fetch` in this package should carry. */
@@ -100,11 +96,25 @@ export async function isDaemonHealthy(port: number): Promise<boolean> {
   }
 }
 
-// The request-tier bearer header every tool call carries. A daemon file
-// written before token auth has no token to send; the daemon's own 401 then
-// names the fix, so there is nothing better to say from here.
+// The token in DISPATCH_RUN_TOKEN_FILE when this process serves a dispatched
+// run, else null. An unreadable or empty file reads as no run token.
+function runToken(): string | null {
+  const file = process.env.DISPATCH_RUN_TOKEN_FILE;
+  if (file === undefined || file === '') return null;
+  try {
+    const token = readFileSync(file, 'utf8').trim();
+    return token === '' ? null : token;
+  } catch {
+    return null;
+  }
+}
+
+// The request-tier bearer header every tool call carries: inside a run, the
+// run's own token, so the daemon knows which run wrote (XH-R2); elsewhere the
+// shared agent token. A daemon file written before token auth has no token to
+// send; the daemon's own 401 then names the fix.
 export function daemonAuth(daemon: DaemonFileInfo): Record<string, string> {
-  const token = daemon.agentToken;
+  const token = runToken() ?? daemon.agentToken;
   return token === undefined || token === ''
     ? {}
     : { authorization: `Bearer ${token}` };

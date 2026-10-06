@@ -1,4 +1,4 @@
-import type { DispatchConfig } from '@dispatch/core';
+import type { DispatchConfig } from '@dispatch-foo/core';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

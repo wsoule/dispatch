@@ -4,3 +4,19 @@ language: 'typescript'
 # Imported by cli/mcp/demo (library-layer packages), so graph-wise this is a
 # library despite running standalone under bun.
 layer: 'library'
+
+tasks:
+  # Builds every dependency this package loads from dist, for the tests that
+  # spawn its bin (mcp's and cli's). Not named `build`: mcp is one of those
+  # dependencies, so a `build` here would make mcp:build depend on itself.
+  build-deps:
+    command: 'noop'
+    deps:
+      - '^:build'
+
+  # **/* is written out: an override that listed only the appendix would
+  # replace the inherited default inputs.
+  test:
+    inputs:
+      - '**/*'
+      - '/packages/protocol-spec/spec/appendix-a-daemon-api.md'

@@ -43,6 +43,7 @@ const SHELL_GROUPS: ShortcutGroup[] = [
     rows: [
       { label: 'Home', keys: ['G', 'H'], chord: true },
       { label: 'Inbox', keys: ['G', 'I'], chord: true },
+      { label: 'Threads', keys: ['G', 'M'], chord: true },
       { label: 'Tasks', keys: ['G', 'T'], chord: true },
       { label: 'Projects', keys: ['G', 'R'], chord: true },
       { label: 'Live', keys: ['G', 'F'], chord: true },

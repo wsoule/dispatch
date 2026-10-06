@@ -1,4 +1,4 @@
-import type { CreateInput, TaskDoc } from '@dispatch/core/browser';
+import type { CreateInput, TaskDoc } from '@dispatch-foo/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 
@@ -44,6 +44,7 @@ function shellActions(createPreset: CreateTaskPreset | null): ShellActions {
   };
   return {
     openTask: unexpected,
+    openThread: unexpected,
     peekTask: unexpected,
     openCreateTask: unexpected,
     createPreset,

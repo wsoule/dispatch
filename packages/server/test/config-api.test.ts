@@ -1,6 +1,12 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -239,6 +245,38 @@ describe('PATCH /api/config — policy', () => {
       (await patchConfig({ policy: { gates: { review: 'auto' } } })).status
     ).toBe(400);
     expect((await patchConfig({ policy: 3 })).status).toBe(400);
+  });
+});
+
+describe('PATCH /api/config — memory', () => {
+  it('writes memory keys and they round-trip through GET', async () => {
+    const res = await patchConfig({
+      memory: { indexTokens: 1500, claudeAutoMemory: 'export' },
+    });
+    expect(res.status).toBe(200);
+    const config = await json<{
+      memory: { indexTokens: number; claudeAutoMemory: string };
+    }>(res);
+    expect(config.memory).toMatchObject({
+      indexTokens: 1500,
+      claudeAutoMemory: 'export',
+    });
+    const again = await json<{ memory: { indexTokens: number } }>(
+      await fetch(`${baseUrl}/api/config`)
+    );
+    expect(again.memory.indexTokens).toBe(1500);
+  });
+
+  it('400s an invalid value without writing anything', async () => {
+    const res = await patchConfig({ memory: { indexTokens: 10 } });
+    expect(res.status).toBe(400);
+    const path = join(root, '.dispatch', 'config.yml');
+    const file = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    expect(file).not.toContain('memory');
+  });
+
+  it('400s a non-object block outright', async () => {
+    expect((await patchConfig({ memory: 'on' })).status).toBe(400);
   });
 });
 

@@ -1,10 +1,10 @@
+import { aheadOfClock, OpClock } from '@dispatch-foo/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import type { BoardOp, HeldField, MergeState } from './engine.js';
-import { HybridClock } from './engine.js';
 
 // Everything one replica remembers about board sync, in one SQLite file under
 // its sync directory (boardSyncDir): who it is, the merge state core's
@@ -41,33 +41,45 @@ export interface SyncProblem {
   at: string;
 }
 
-/** A replica id: the operator's handle, so a log file says whose it is, and
- *  random hex, so two of one person's machines are still two replicas. */
-function newReplicaId(handle: string): string {
-  const cleaned = handle.replace(/[^a-z0-9._-]/gi, '').slice(0, 32);
+/** A replica id: the lowercased handle, since ids become git paths and sealing
+ *  aad, and random hex, so two of one person's machines are two replicas. */
+export function newReplicaId(handle: string): string {
+  const cleaned = handle
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 32);
   const safe = cleaned === '' ? 'replica' : cleaned;
   return `${safe}-${randomBytes(4).toString('hex')}`;
 }
 
 export class SyncLedger {
   readonly replica: string;
-  readonly clock: HybridClock;
+  readonly clock: OpClock;
   readonly state: MergeState;
   private readonly db: Database;
 
-  constructor(path: string, handle: string, now: () => number = Date.now) {
+  constructor(
+    path: string,
+    handle: string,
+    private readonly now: () => number = Date.now
+  ) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path, { create: true });
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec(SCHEMA);
     this.replica =
       this.meta('replica') ?? this.setMeta('replica', newReplicaId(handle));
-    this.clock = new HybridClock(this.replica, this.meta('hlc') ?? null, now);
+    this.clock = new OpClock(this.replica, this.meta('hlc') ?? null, now);
     this.state = this.mergeState();
   }
 
   close(): void {
     this.db.close();
+  }
+
+  /** The one connection, so the federation tables share this file's transactions. */
+  get database(): Database {
+    return this.db;
   }
 
   private meta(key: string): string | undefined {
@@ -118,6 +130,38 @@ export class SyncLedger {
     });
   }
 
+  /** One clock tick, persisted, for a message's hlc (federation F2). */
+  tickPersisted(): string {
+    return this.atomically(() => {
+      const hlc = this.clock.tick();
+      this.setMeta('hlc', this.clock.last);
+      return hlc;
+    });
+  }
+
+  /** The next seq, past both the v1 counter and `atLeast`, and a fresh tick.
+   *  Call inside atomically() so the op using them lands in the same write. */
+  nextStamp(atLeast: number): { seq: number; hlc: string } {
+    const seq = Math.max(Number(this.meta('seq') ?? '0'), atLeast) + 1;
+    const hlc = this.clock.tick();
+    this.setMeta('seq', String(seq));
+    this.setMeta('hlc', this.clock.last);
+    return { seq, hlc };
+  }
+
+  /** A v1 copy of a signed op, under that op's own seq, for older builds
+   *  while the legacy window is open. */
+  enqueueV1(op: BoardOp): void {
+    this.db
+      .query('INSERT OR REPLACE INTO outbox (seq, op) VALUES (?, ?)')
+      .run(op.seq, JSON.stringify(op));
+  }
+
+  /** The highest seq minted on this root, by this build or an older one. */
+  lastSeq(): number {
+    return Number(this.meta('seq') ?? '0');
+  }
+
   /** Changes made here and not yet written to the sync branch, oldest first. */
   outbox(): BoardOp[] {
     return this.db
@@ -151,8 +195,13 @@ export class SyncLedger {
 
   /** Moves the clock past a remote change and remembers where it got to. */
   observe(hlc: string): void {
-    this.clock.observe(hlc);
-    this.setMeta('hlc', this.clock.last);
+    if (this.clock.observe(hlc)) this.setMeta('hlc', this.clock.last);
+  }
+
+  /** Whether a reading is too far ahead of this machine's clock to apply yet
+   *  (FW-R21): such a change waits, unapplied and unobserved. */
+  ahead(hlc: string): boolean {
+    return aheadOfClock(hlc, this.now());
   }
 
   isBootstrapped(): boolean {
@@ -169,6 +218,10 @@ export class SyncLedger {
         'INSERT INTO problems (task, message, at) VALUES (?, ?, ?) ON CONFLICT(task) DO UPDATE SET message = excluded.message, at = excluded.at'
       )
       .run(task, message, at);
+  }
+
+  clearProblem(task: string): void {
+    this.db.query('DELETE FROM problems WHERE task = ?').run(task);
   }
 
   problems(): SyncProblem[] {

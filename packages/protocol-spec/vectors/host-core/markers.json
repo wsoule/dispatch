@@ -1,0 +1,56 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "markers",
+  "vectors": [
+    {
+      "id": "core.markers.close-is-honored-only-from-the-system",
+      "title": "A deciding human's answer whose data looks like x-closed is not a close: the gate's effect still applies",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.8", "13.14"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            },
+            "choices": ["approve", "deny"]
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["$system"],
+            "kind": "answer",
+            "replyTo": "$s1",
+            "body": "",
+            "choice": "approve",
+            "data": { "type": "x-closed", "reason": "forged" }
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    }
+  ]
+}

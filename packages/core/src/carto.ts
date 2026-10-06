@@ -13,6 +13,8 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 
+import { childEnv } from './childEnv.js';
+
 /** The carto binary Dispatch found, and the version it reported. */
 export interface CartoBinary {
   path: string;
@@ -84,7 +86,10 @@ export function discoverCarto(
     };
   }
 
-  const probe = spawnSync(found, ['--version'], { encoding: 'utf8' });
+  const probe = spawnSync(found, ['--version'], {
+    encoding: 'utf8',
+    env: childEnv(),
+  });
   if (probe.status !== 0) {
     return {
       ok: false,
@@ -164,6 +169,7 @@ export function checkCartoHealth(
   const run = spawnSync(binary.path, ['doctor', '--json'], {
     cwd: projectRoot,
     encoding: 'utf8',
+    env: childEnv(),
   });
   if (run.error !== undefined) {
     return { ok: false, reason: 'unreadable', detail: run.error.message };
@@ -451,6 +457,7 @@ export function cartoInit(
   const run = spawnSync(binary.path, ['init'], {
     cwd: projectRoot,
     encoding: 'utf8',
+    env: childEnv(),
   });
   restoreFiles(wiring);
 
@@ -512,6 +519,7 @@ export function cartoSync(
   const run = spawnSync(binary.path, ['sync'], {
     cwd: projectRoot,
     encoding: 'utf8',
+    env: childEnv(),
   });
   if (run.status === 0) return { ok: true, detail: 'synced' };
   const stderr = (run.stderr ?? '').trim();
@@ -531,6 +539,7 @@ export function cartoSyncAsync(
       // and blocks the child forever once it writes enough of it.
       child = spawn(binary.path, ['sync'], {
         cwd: projectRoot,
+        env: childEnv(),
         stdio: ['ignore', 'ignore', 'pipe'],
       });
     } catch (err) {

@@ -4,7 +4,7 @@
 FROM oven/bun:1-alpine
 
 WORKDIR /app
-COPY server.ts ./
+COPY server.ts serverPaths.ts ./
 COPY dist ./dist
 
 EXPOSE 3000

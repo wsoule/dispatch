@@ -1,4 +1,4 @@
-import type { ModelConfig, TaskDoc, TaskRisk } from '@dispatch/core';
+import type { ModelConfig, TaskDoc, TaskRisk } from '@dispatch-foo/core';
 import { choice } from '@typesafe-ai/sdk';
 import type { ChoiceResponse, EntryType } from '@typesafe-ai/sdk';
 

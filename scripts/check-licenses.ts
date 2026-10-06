@@ -16,10 +16,16 @@ import { fileURLToPath } from 'node:url';
 // Expected license per workspace package; the CI guard for the hybrid
 // open-core decision (2026-08-23). UNLICENSED packages need no LICENSE file.
 const EXPECTED: Record<string, string> = {
-  '@dispatch/core': 'MIT',
+  '@dispatch-foo/core': 'MIT',
   '@dispatch/client': 'MIT',
   '@dispatch/cli': 'MIT',
   '@dispatch/mcp': 'MIT',
+  '@dispatch-foo/protocol': 'MIT',
+  '@dispatch/memory': 'MIT',
+  '@dispatch-foo/protocol-spec': 'Apache-2.0',
+  '@dispatch-foo/a2a': 'MIT',
+  // Shared with the relay: log verification and the license check.
+  '@dispatch-foo/federation': 'Elastic-2.0',
   // The daemon is FSL, except its team features (see LICENSED_DIRS).
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
@@ -98,10 +104,20 @@ function isElasticLicense(text: string): boolean {
   );
 }
 
+// True when the text is the Apache License 2.0 (the published protocol's
+// text and kit, packages/protocol-spec).
+function isApacheLicense(text: string): boolean {
+  return (
+    text.includes('Apache License') &&
+    text.includes('Version 2.0, January 2004')
+  );
+}
+
 const LICENSE_VALIDATORS: Record<string, (text: string) => boolean> = {
   MIT: isMitLicense,
   'FSL-1.1-ALv2': isFslLicense,
   'Elastic-2.0': isElasticLicense,
+  'Apache-2.0': isApacheLicense,
 };
 
 const problems: string[] = [];

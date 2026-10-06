@@ -1,7 +1,8 @@
-import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskDoc } from '@dispatch-foo/core/browser';
+import type { DocSummary, RepoPr, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
+import type { RunQuestion } from './gates';
 import type { InboxEntry } from './inbox';
 import type { InboxData, InboxInput } from './inboxQueue';
 import {
@@ -58,6 +59,7 @@ function input(over: Partial<InboxInput> = {}): InboxInput {
     mergeQueue: null,
     pendingApprovals: new Map(),
     openQuestions: new Map(),
+    openScopeRequests: new Map(),
     fixLoops: new Map(),
     ...over,
   };
@@ -87,6 +89,26 @@ describe('buildInbox', () => {
       input({
         runs: [run({ state: 'running' })],
         openQuestions: new Map([['r-1', [question()]]]),
+      })
+    );
+    expect(sectionStates(data)).toEqual(['answer']);
+  });
+
+  test("an ended run's open question still lands in answer", () => {
+    const data = buildInbox(
+      input({
+        runs: [run({ state: 'failed' })],
+        openQuestions: new Map([['r-1', [question()]]]),
+      })
+    );
+    expect(sectionStates(data)).toEqual(['answer']);
+  });
+
+  test("an ended run's open scope gate lands in answer", () => {
+    const data = buildInbox(
+      input({
+        runs: [run()],
+        openScopeRequests: new Map([['r-1', { paths: ['a.ts'] }]]),
       })
     );
     expect(sectionStates(data)).toEqual(['answer']);
@@ -221,6 +243,82 @@ describe('readyToLand', () => {
 });
 
 describe('inbox items', () => {
+  test('derives one Inbox item per conflicted team doc, counted in the badge', () => {
+    const doc = {
+      id: 'doc-1',
+      handle: 'auth',
+      title: 'Auth refactor',
+      scope: 'team',
+      conflicted: true,
+      updatedAt: '2026-09-26T10:00:00.000Z',
+    } as unknown as DocSummary;
+    const data = buildInbox(input({ conflictedDocs: [doc] }));
+    expect(data.total).toBe(1);
+    const items = buildInboxItems(data, []);
+    expect(items).toEqual([
+      { kind: 'doc', key: 'doc:doc-1', ts: '2026-09-26T10:00:00.000Z', doc },
+    ]);
+    expect(filterInboxItems(items, 'needs-you')).toHaveLength(1);
+    expect(inboxItemText(items[0])).toEqual({
+      id: 'auth',
+      title: 'Conflict markers in Auth refactor',
+      subtitle: 'Resolve them in the doc',
+    });
+    expect(buildInbox(input()).docs ?? []).toEqual([]);
+  });
+
+  test('titles a doc with a Linear sync problem as one, and keeps markers first', () => {
+    const problem =
+      "Linear sync problem: a Linear edit by lin-wyat at 2026-09-26T10:00:00.000Z was overwritten; see Linear's version history";
+    const doc = {
+      id: 'doc-2',
+      handle: 'spec',
+      title: 'Spec',
+      scope: 'team',
+      conflicted: false,
+      problem,
+      updatedAt: '2026-09-26T10:00:00.000Z',
+    } as unknown as DocSummary;
+    const [item] = buildInboxItems(
+      buildInbox(input({ conflictedDocs: [doc] })),
+      []
+    );
+    expect(inboxItemText(item)).toEqual({
+      id: 'spec',
+      title: 'Linear sync problem in Spec',
+      subtitle: problem,
+    });
+    const both = { ...doc, conflicted: true } as DocSummary;
+    const [marked] = buildInboxItems(
+      buildInbox(input({ conflictedDocs: [both] })),
+      []
+    );
+    expect(inboxItemText(marked).title).toBe('Conflict markers in Spec');
+  });
+
+  test('titles a held Linear push as held, with its reason', () => {
+    const held =
+      'Linear sync held: it carries text no human has reviewed; mark it reviewed to push';
+    const doc = {
+      id: 'doc-3',
+      handle: 'plan',
+      title: 'Plan',
+      scope: 'team',
+      conflicted: false,
+      problem: held,
+      updatedAt: '2026-09-26T10:00:00.000Z',
+    } as unknown as DocSummary;
+    const [item] = buildInboxItems(
+      buildInbox(input({ conflictedDocs: [doc] })),
+      []
+    );
+    expect(inboxItemText(item)).toEqual({
+      id: 'plan',
+      title: 'Linear sync held in Plan',
+      subtitle: held,
+    });
+  });
+
   const reviewRow = () => ({
     runId: 'r-1',
     taskId: 't-1',
@@ -450,6 +548,31 @@ describe('whose attention', () => {
     expect(filterInboxItems(buildInboxItems(data, []), 'teammates')).toEqual(
       []
     );
+  });
+
+  test('a run is the human it acts for, not who dispatched it (XH-R9)', () => {
+    const forAda = run({
+      id: 'r-for-ada',
+      taskId: 't-4',
+      dispatchedBy: 'human:wyat',
+      operator: 'human:ada',
+    });
+    const data = buildInbox(input({ runs: [forAda], me: 'human:wyat' }));
+    expect(data.total).toBe(0);
+    expect(data.teammateOwners?.get('r-for-ada')).toBe('human:ada');
+  });
+
+  test("a gate a teammate's run addressed to you is yours", () => {
+    const data = buildInbox(
+      input({
+        runs: [mine, adas],
+        me: 'human:wyat',
+        asksMe: new Set(['r-ada']),
+      })
+    );
+    expect(data.total).toBe(2);
+    const items = buildInboxItems(data, []);
+    expect(filterInboxItems(items, 'teammates')).toEqual([]);
   });
 
   test("a run nobody dispatched by hand is everyone's, so yours", () => {

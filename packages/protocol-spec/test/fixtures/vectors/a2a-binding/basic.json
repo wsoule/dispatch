@@ -1,0 +1,29 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "a2a-binding",
+  "area": "basic",
+  "vectors": [
+    {
+      "id": "a2a.basic.must",
+      "title": "An a2a-binding MUST that parses",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.2"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:wyat" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
+    },
+    {
+      "id": "a2a.basic.dispatch-must",
+      "title": "A dispatch-profile a2a-binding MUST",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["8.2"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:di" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
+    }
+  ]
+}

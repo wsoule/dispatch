@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -72,7 +72,7 @@ describe('IdleShutdown', () => {
       () => (fired += 1)
     );
 
-    // A long-poll like ask_user: in flight for three timeouts' worth.
+    // A blocking msg_send's long-poll: in flight for three timeouts' worth.
     await idle.track(() => sleep(120));
     expect(fired).toBe(0);
 

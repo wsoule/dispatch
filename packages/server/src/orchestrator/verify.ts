@@ -1,12 +1,17 @@
-import { executorModels, loadConfig } from '@dispatch/core';
-import type { TaskDoc, TaskStorePort, VerifyConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch-foo/core';
+import type { TaskDoc, TaskStorePort, VerifyConfig } from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import type { Orchestrator } from './orchestrator.js';
 import { verifyDir, verifyOutputPath, verifyResultPath } from './paths.js';
-import { untrustedFenced, untrustedInline } from './prompt.js';
+import {
+  specLineOf,
+  specSection,
+  untrustedFenced,
+  untrustedInline,
+} from './prompt.js';
 import type { RunMeta } from './types.js';
 import { OrchestratorNotFoundError, runKind } from './types.js';
 
@@ -127,6 +132,8 @@ export interface VerificationPromptInput {
   worktreePath: string;
   outputPath: string;
   artifactsDir: string;
+  // The task's own team spec as one docs index line, when it has one.
+  specLine?: string | null;
 }
 
 // The label on the fence quoting the task body verbatim; the delimiter itself
@@ -193,6 +200,7 @@ export function buildVerificationPrompt(
       'Turn each acceptance criterion into one or more checks you actually run' +
         ' against the live app.',
     ].join('\n'),
+    ...[specSection(input.specLine)].filter((s): s is string => s !== null),
     [
       '## Artifacts',
       `Save anything that backs a check — a screenshot, a log, captured output — under: ${input.artifactsDir}`,
@@ -209,6 +217,8 @@ export interface VerificationRunnerContext {
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
+  // The task's own team spec as one docs index line (docs' specLine).
+  specLine?: (taskId: string) => string | null;
 }
 
 export type StartVerificationResult =
@@ -230,9 +240,11 @@ export class VerificationRunner {
     });
   }
 
+  // `operator` is who the verify run acts for (see dispatchAuxRun).
   async startVerification(opts: {
     taskId: string;
     head: string;
+    operator: string | null;
   }): Promise<StartVerificationResult> {
     const task = this.ctx.store.get(opts.taskId);
     if (task === null) {
@@ -253,6 +265,7 @@ export class VerificationRunner {
       head: opts.head,
       executor,
       model: executorModels(config, executor).execute,
+      operator: opts.operator,
       buildPrompt: ({ runId, worktreePath }) => {
         const artifactsDir = verifyDir(this.ctx.rootDir, runId);
         mkdirSync(artifactsDir, { recursive: true });
@@ -263,6 +276,7 @@ export class VerificationRunner {
           worktreePath,
           outputPath: verifyOutputPath(this.ctx.rootDir, runId),
           artifactsDir,
+          specLine: specLineOf(this.ctx.specLine, opts.taskId),
         });
       },
     });

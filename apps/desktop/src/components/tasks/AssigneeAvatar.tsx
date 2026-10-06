@@ -1,4 +1,5 @@
-import type { Assignee } from '@dispatch/core/browser';
+import type { Assignee } from '@dispatch-foo/core/browser';
+import { useState } from 'react';
 
 import { colorForProject } from '../../lib/projectColor';
 import { assigneeLabel, assigneeRef } from '../../lib/taskDisplay';
@@ -38,6 +39,8 @@ export function AssigneeAvatar({
   const kind = assigneeRef(assignee)?.kind ?? 'none';
   const sizeClass = SIZE_CLASS[size];
   const person = usePeople().personFor(assignee);
+  // The photo that failed to load (a host the CSP refuses, a dead link).
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
 
   if (kind === 'none') {
     const label = assigneeLabel(assignee);
@@ -70,10 +73,11 @@ export function AssigneeAvatar({
 
   const displayName = name ?? person?.name ?? assigneeLabel(assignee);
   const avatarUrl = person?.avatarUrl ?? null;
-  if (avatarUrl !== null && avatarUrl !== '') {
+  if (avatarUrl !== null && avatarUrl !== '' && avatarUrl !== brokenUrl) {
     return (
       <img
         src={avatarUrl}
+        onError={() => setBrokenUrl(avatarUrl)}
         alt={displayName}
         title={displayName}
         data-slot="assignee-avatar"

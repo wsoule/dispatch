@@ -1,11 +1,11 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
 import type {
   EpicProgress,
   MergeQueueEntry,
   MergeQueueEntryState,
   RunMeta,
 } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import {
@@ -309,6 +309,23 @@ describe('buildCockpit: In flight', () => {
   test('someone else’s run stays out of my scope', () => {
     const tasks = [task('t-1', { status: 'working' })];
     const runs = [run('r-1', 't-1', { dispatchedBy: 'human:maya' })];
+    expect(buildCockpit(input({ tasks, runs })).flight).toEqual([]);
+    expect(
+      keys(
+        buildCockpit(
+          input({ tasks, runs, scope: { kind: 'person', ref: 'human:maya' } })
+        ).flight
+      )
+    ).toEqual(['run:r-1']);
+  });
+});
+
+describe('buildCockpit: whose run it is (XH-R9)', () => {
+  test('a run is the human it acts for, not who dispatched it', () => {
+    const tasks = [task('t-1', { status: 'working' })];
+    const runs = [
+      run('r-1', 't-1', { dispatchedBy: ME, operator: 'human:maya' }),
+    ];
     expect(buildCockpit(input({ tasks, runs })).flight).toEqual([]);
     expect(
       keys(

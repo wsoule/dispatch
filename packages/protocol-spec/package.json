@@ -1,0 +1,55 @@
+{
+  "name": "@dispatch-foo/protocol-spec",
+  "version": "1.0.0-draft.2",
+  "description": "The Dispatch Messaging Protocol: its text, registries, schemas, conformance vectors and runner.",
+  "homepage": "https://dispatch.foo/protocol/",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wsoule/dispatch.git",
+    "directory": "packages/protocol-spec"
+  },
+  "bin": {
+    "dmp-conformance": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "spec",
+    "registries",
+    "schemas",
+    "vectors",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./vectors/*": "./vectors/*",
+    "./schemas/*": "./schemas/*",
+    "./registries.json": "./registries/registries.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown --clean",
+    "registries": "bun scripts/registries.ts",
+    "snapshot": "bun scripts/snapshot.ts",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty",
+    "prepublishOnly": "moon run protocol-spec:prepublish"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "ajv": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -1,4 +1,4 @@
-import { getSection, TaskStore } from '@dispatch/core';
+import { getSection, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,10 +7,60 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { runGitSync } from './orchestrator/helpers.js';
-import { useTestAuth } from './testAuth.js';
+import { rawFetch, useTestAuth } from './testAuth.js';
 
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
+}
+
+async function createTask(
+  title: string,
+  extra: Record<string, unknown> = {}
+): Promise<string> {
+  const res = await fetch(`${baseUrl}/api/tasks`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title, ...extra }),
+  });
+  return (await json<{ meta: { id: string } }>(res)).meta.id;
+}
+
+// The app token by default; `bearer` sends another credential (the shared agentToken).
+function amend(
+  id: string,
+  body: { overrides: string; reason: string },
+  bearer?: string
+): Promise<Response> {
+  const headers = {
+    'content-type': 'application/json',
+    ...(bearer === undefined ? {} : { authorization: `Bearer ${bearer}` }),
+  };
+  const init = { method: 'POST', headers, body: JSON.stringify(body) };
+  return bearer === undefined
+    ? fetch(`${baseUrl}/api/tasks/${id}/amend`, init)
+    : rawFetch(`${baseUrl}/api/tasks/${id}/amend`, init);
+}
+
+interface MemoryEntryBody {
+  kind: string;
+  title: string;
+  trust: string;
+  body: string;
+  epic: string | null;
+  appliesTo: string[];
+  origin: string;
+}
+
+// The memory entry an amendment's `memory` result points at.
+async function memoryEntry(id: string): Promise<MemoryEntryBody> {
+  const res = await fetch(`${baseUrl}/api/memory/${id}`);
+  return (await json<{ entry: MemoryEntryBody }>(res)).entry;
+}
+
+// The memory entry an amendment response points at.
+async function memoryOf(res: Response): Promise<MemoryEntryBody> {
+  const { memory } = await json<{ memory: { id: string } }>(res);
+  return memoryEntry(memory.id);
 }
 
 function initDispatchGitRepo(): string {
@@ -104,21 +154,51 @@ describe('POST /api/tasks/:id/amend', () => {
     expect(doc.body).toContain('second fix');
   });
 
-  it('writes a constraint ledger entry so a dependent task inherits it', async () => {
-    await fetch(`${baseUrl}/api/tasks/${taskId}/amend`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+  it('carries the amendment into memory as a human constraint that reaches its dependents, and writes no ledger row', async () => {
+    const dependent = await createTask('depends on it', {
+      blockedBy: [taskId],
+    });
+    const entry = await memoryOf(
+      await amend(taskId, {
         overrides: 'join on the issue UUID',
         reason: 'display keys are not stable',
-      }),
-    });
-    const entries = await json<{ kind: string; detail: string }[]>(
-      await fetch(`${baseUrl}/api/ledger`)
+      })
     );
-    expect(entries).toHaveLength(1);
-    expect(entries[0].kind).toBe('constraint');
-    expect(entries[0].detail).toContain('join on the issue UUID');
+    expect(entry).toMatchObject({
+      kind: 'constraint',
+      trust: 'human',
+      appliesTo: [dependent],
+      epic: null,
+    });
+    // The index shows titles only, so the title carries the override itself.
+    expect(entry.title).toBe(`Amended ${taskId}: join on the issue UUID`);
+    expect(entry.body).toContain('display keys are not stable');
+    expect(entry.origin).toMatch(new RegExp(`^amendment:${taskId}@`));
+    expect(await json<unknown[]>(await fetch(`${baseUrl}/api/ledger`))).toEqual(
+      []
+    );
+  });
+
+  it('the shared agent token proposes the amendment’s constraint instead', async () => {
+    const res = await json<{ memory: { status: string } }>(
+      await amend(
+        taskId,
+        { overrides: 'x', reason: 'y' },
+        handle.tokens.agentToken
+      )
+    );
+    expect(res.memory.status).toBe('proposed');
+  });
+
+  it('with no dependents, reach falls back to the parent epic, then to the whole project', async () => {
+    const epic = await createTask('the epic', { kind: 'epic' });
+    const child = await createTask('child of the epic', { parent: epic });
+    expect(
+      await memoryOf(await amend(child, { overrides: 'a', reason: 'b' }))
+    ).toMatchObject({ epic, appliesTo: [] });
+    expect(
+      await memoryOf(await amend(taskId, { overrides: 'c', reason: 'd' }))
+    ).toMatchObject({ epic: null, appliesTo: [] });
   });
 
   it('400s an empty reason', async () => {
@@ -161,7 +241,7 @@ describe('POST /api/tasks/:id/amend', () => {
       body: JSON.stringify({ overrides, reason }),
     });
     expect(res.status).toBe(200);
-    const doc = await json<{ body: string }>(res);
+    const doc = await json<{ body: string; memory: { id: string } }>(res);
     // Exactly one real Activity heading — nothing got split into a second
     // one — and no fake bullet landed in the genuine Activity section.
     expect(doc.body.match(/^## Activity/gm)).toHaveLength(1);
@@ -172,9 +252,6 @@ describe('POST /api/tasks/:id/amend', () => {
     expect(amendments).toContain(overrides);
     expect(amendments).toContain(reason);
 
-    const entries = await json<{ detail: string }[]>(
-      await fetch(`${baseUrl}/api/ledger`)
-    );
-    expect(entries[0].detail).toContain(reason);
+    expect((await memoryEntry(doc.memory.id)).body).toContain(reason);
   });
 });

@@ -13,9 +13,8 @@ import {
   TASK_RISKS,
   TaskParseError,
   TaskStore,
-  untrustedInline,
-} from '@dispatch/core';
-import type { ListSafeError, TaskComment, TaskDoc } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { ListSafeError, TaskComment, TaskDoc } from '@dispatch-foo/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { basename } from 'node:path';
 import { z } from 'zod';
@@ -34,6 +33,11 @@ import {
   requestDeadline,
   startDaemon,
 } from './daemon.js';
+import { registerDocTools, taskDocLines } from './docs.js';
+import { registerMemoryTools } from './memory.js';
+import { registerMessagingTools } from './messaging.js';
+import type { MessageBlockingTiming, ToolOutcome } from './toolKit.js';
+import { callingRunId, projectRoot, toolError, toolResult } from './toolKit.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
 // (and core's ConfigError) via wrap() and turns it into an MCP tool-error
@@ -42,30 +46,6 @@ import {
 // see the message and self-correct, per the MCP spec's tool error-handling
 // guidance.
 class ToolError extends Error {}
-
-// Bug fix (fix/executor-mcp-wiring): when this server is launched by a
-// dispatch run's own ClaudeExecutor (see packages/server/src/orchestrator/
-// executors/claude.ts), `rootDir` is the run's git WORKTREE — a different
-// directory than the dispatch PROJECT it was cut from — so task_list/
-// task_get/task_save/task_next keep reading and writing the exact task files
-// the run's own repo checkout sees. Two things must NOT resolve against that
-// worktree, though:
-//  - daemon discovery (run_list, agent_message): dispatchd's daemon file is
-//    keyed by a hash of the PROJECT root (see daemon.ts), not the worktree —
-//    a worktree path hashes to a different, nonexistent file, so these tools
-//    would always report "dispatchd not running" for a project whose daemon
-//    is, in fact, running.
-//  - task_comment's write: a comment written into the worktree lives on the
-//    run's own branch and is discarded the moment that branch is
-//    squash-merged or the worktree is torn down — comments need to land in
-//    the PROJECT's .dispatch, the one copy that outlives any single run.
-// The executor sets DISPATCH_PROJECT_ROOT to the project root whenever it
-// differs from the worktree `--root` it passes; every other tool in this
-// file keeps resolving against the raw `rootDir` argument.
-function projectRoot(rootDir: string): string {
-  const override = process.env.DISPATCH_PROJECT_ROOT;
-  return override !== undefined && override !== '' ? override : rootDir;
-}
 
 // Same "not initialized" gate as the CLI's requireStore() (packages/cli/src/
 // commands/task.ts) — same message, so a client rendering either surface
@@ -194,27 +174,6 @@ function toSummary(doc: TaskDoc) {
     created,
     updated,
   };
-}
-
-// Index signature matches the SDK's CallToolResult shape (an open record
-// with a few known fields) so this satisfies ToolCallback's return type
-// without pulling in the SDK's own (deeply generic) result type here.
-interface ToolOutcome {
-  [key: string]: unknown;
-  content: { type: 'text'; text: string }[];
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}
-
-function toolResult(structuredContent: Record<string, unknown>): ToolOutcome {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
-    structuredContent,
-  };
-}
-
-function toolError(message: string): ToolOutcome {
-  return { content: [{ type: 'text', text: message }], isError: true };
 }
 
 // Turns listSafe()'s per-file parse failures into the same doctor-pointing
@@ -368,84 +327,6 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
   }
 }
 
-// A local copy of @dispatch/server's TERMINAL_RUN_STATES, since @dispatch/mcp
-// can't depend on that Bun-only package. `interrupted-dirty` counts as dead.
-const TERMINAL_RUN_STATES = new Set([
-  'finished',
-  'failed',
-  'cancelled',
-  'interrupted-dirty',
-]);
-
-interface LiveRunLike {
-  id: string;
-  taskId: string;
-  taskTitle: string;
-  state: string;
-}
-
-// Fetches `GET /api/runs` from the live daemon and narrows it to runs that
-// are not yet terminal — the only ones agent_message can actually reach.
-// Returns null when there is nothing to report at all (no daemon, unhealthy,
-// bad response shape) so the caller can fall back to a single "not running"
-// message instead of duplicating run_list's daemon-plumbing tolerance here.
-async function fetchLiveRuns(
-  rootDir: string
-): Promise<{ daemon: DaemonFileInfo; runs: LiveRunLike[] } | null> {
-  const daemon = readDaemonFile(projectRoot(rootDir));
-  if (daemon === null || !(await isDaemonHealthy(daemon.port))) return null;
-  try {
-    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`, {
-      headers: daemonAuth(daemon),
-      signal: requestDeadline(),
-    });
-    if (!res.ok) return null;
-    const runs = await res.json();
-    if (!Array.isArray(runs)) return null;
-    return {
-      daemon,
-      runs: (runs as LiveRunLike[]).filter(
-        (r) => !TERMINAL_RUN_STATES.has(r.state)
-      ),
-    };
-  } catch {
-    return null;
-  }
-}
-
-// Builds the "nothing to message" error text agent_message returns when its
-// target (a runId or taskId) doesn't match any currently-live run — always
-// lists every other live run (id + task title) so the calling agent can
-// self-correct by picking one of those instead, or learn there simply are
-// none right now.
-function noLiveTargetMessage(target: string, live: LiveRunLike[]): string {
-  if (live.length === 0) {
-    return `no live run for ${target} — there are no live runs at all right now`;
-  }
-  // Task titles are agent-writable and land in the caller's context, so they
-  // are folded onto one line rather than quoted raw.
-  const listing = live
-    .map((r) => `${r.id} (${untrustedInline(r.taskTitle)})`)
-    .join(', ');
-  return `no live run for ${target} — live runs: ${listing}`;
-}
-
-// The calling agent's own run id, as set by ClaudeExecutor's
-// buildDispatchMcpServerConfig (see packages/server/src/orchestrator/
-// executors/claude.ts) into this MCP server's own process env — this is how
-// `agent_message`/`message_user` know *whose* message they're forwarding
-// without the calling model having to know or supply its own run id.
-// `undefined` when this server wasn't launched by a real dispatch run (a
-// manually-started server, or a test) — every caller below treats that as
-// "sender identity unknown" rather than a hard error, so agent_message still
-// works (falling back to the generic label dispatchd's own inject() already
-// has) and only message_user, which has no meaning without an owning run,
-// treats it as fatal.
-function callingRunId(): string | undefined {
-  const id = process.env.DISPATCH_RUN_ID;
-  return id !== undefined && id !== '' ? id : undefined;
-}
-
 // The daemon's task-list response, plus the health call that carries the
 // store problems `task_list`/`task_next` promise. Fetched together rather
 // than in sequence: they are two independent localhost GETs, so paying for
@@ -547,7 +428,11 @@ async function taskComments(rootDir: string, id: string): Promise<ToolOutcome> {
   return toolResult({ comments: new FileCommentStore(rootDir).list(id) });
 }
 
-async function taskGet(rootDir: string, id: string): Promise<ToolOutcome> {
+async function taskGet(
+  rootDir: string,
+  server: McpServer,
+  id: string
+): Promise<ToolOutcome> {
   const route = await resolveStoreRoute(rootDir);
   if (route.via === 'refused') return toolError(route.message);
 
@@ -557,7 +442,12 @@ async function taskGet(rootDir: string, id: string): Promise<ToolOutcome> {
         route.daemon,
         `/api/tasks/${encodeURIComponent(id)}`
       );
-      return toolResult({ meta: doc.meta, body: doc.body });
+      const docs = await taskDocLines(rootDir, server, id);
+      return toolResult({
+        meta: doc.meta,
+        body: doc.body,
+        ...(docs === undefined ? {} : { docs }),
+      });
     } catch (err) {
       // A 404 has two very different causes on the file backend, and the
       // daemon cannot tell them apart in this response: the task really does
@@ -867,443 +757,12 @@ async function taskComment(
   return toolResult({ comment });
 }
 
-// Proxies `POST /api/runs/:id/inject` — the messaging half of agent
-// collaboration (spec §5). Exactly one of `runId`/`taskId` must be given;
-// `taskId` is resolved to that task's one live run via the same `GET
-// /api/runs` fetch run_list already uses (no live run for that task is the
-// same "clean error" as an unrecognized runId, not a protocol-level
-// failure). The calling agent's identity comes from `DISPATCH_RUN_ID` (see
-// `callingRunId` above) and rides along as `fromRunId` so dispatchd's own
-// `inject()` can resolve a real sender label (task title + id) instead of
-// the generic "another agent" fallback — this tool itself never builds the
-// prefixed text, that's still entirely dispatchd's job.
-async function agentMessage(
-  rootDir: string,
-  args: { runId?: string; taskId?: string; text: string }
-): Promise<ToolOutcome> {
-  if (args.text.trim() === '') {
-    return toolError('text must not be empty');
-  }
-  if ((args.runId === undefined) === (args.taskId === undefined)) {
-    return toolError('exactly one of runId or taskId is required');
-  }
-
-  const live = await fetchLiveRuns(rootDir);
-  if (live === null) {
-    return toolError('dispatchd not running — no live runs to message');
-  }
-
-  const target = args.runId ?? args.taskId!;
-  const match =
-    args.runId !== undefined
-      ? live.runs.find((r) => r.id === args.runId)
-      : live.runs.find((r) => r.taskId === args.taskId);
-  if (match === undefined) {
-    return toolError(noLiveTargetMessage(target, live.runs));
-  }
-
-  try {
-    const fromRunId = callingRunId();
-    const res = await fetch(
-      `http://127.0.0.1:${live.daemon.port}/api/runs/${match.id}/inject`,
-      {
-        signal: requestDeadline(),
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...daemonAuth(live.daemon),
-        },
-        body: JSON.stringify(
-          fromRunId !== undefined
-            ? { text: args.text, fromRunId }
-            : { text: args.text }
-        ),
-      }
-    );
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      return toolError(`inject failed: ${body.error ?? `HTTP ${res.status}`}`);
-    }
-    return toolResult({ ok: true, runId: match.id });
-  } catch (err) {
-    return toolError(`inject failed: ${(err as Error).message}`);
-  }
-}
-
-// Proxies `POST /api/runs/:id/message-user` — the agent->human channel
-// (spec §8, `message_user`). Unlike `agent_message` there is no target to
-// pick: the message always lands on the CALLING agent's own run (from
-// `DISPATCH_RUN_ID`), which is also why a server not launched by a real
-// dispatch run (no DISPATCH_RUN_ID at all) can't use this tool — there is
-// no run for the message to belong to.
-async function messageUser(
-  rootDir: string,
-  args: { text: string }
-): Promise<ToolOutcome> {
-  if (args.text.trim() === '') {
-    return toolError('text must not be empty');
-  }
-  const runId = callingRunId();
-  if (runId === undefined) {
-    return toolError(
-      'message_user requires a live dispatch run context (DISPATCH_RUN_ID not set)'
-    );
-  }
-
-  const daemon = readDaemonFile(projectRoot(rootDir));
-  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — no live run to message from');
-  }
-
-  try {
-    const res = await fetch(
-      `http://127.0.0.1:${daemon.port}/api/runs/${runId}/message-user`,
-      {
-        signal: requestDeadline(),
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
-        body: JSON.stringify({ text: args.text }),
-      }
-    );
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      return toolError(
-        `message_user failed: ${body.error ?? `HTTP ${res.status}`}`
-      );
-    }
-    return toolResult({ ok: true, runId });
-  } catch (err) {
-    return toolError(`message_user failed: ${(err as Error).message}`);
-  }
-}
-
-/** How long `ask_user` waits, and how hard it polls while waiting. */
-export interface QuestionTiming {
-  /** Total budget across every poll before giving up on an answer. */
-  totalWaitMs: number;
-  /** Per-request timeout; longer than the daemon's own 30s poll window. */
-  requestTimeoutMs: number;
-  /** Pause after a clean unanswered poll, and after a failed one. */
-  retryDelayMs: number;
-  errorDelayMs: number;
-}
-
-// The MCP client aborts a tool call at its own tool timeout, so the executor
-// sets that ceiling above `totalWaitMs` for this server — see claude.ts.
-export const DEFAULT_QUESTION_TIMING: QuestionTiming = {
-  totalWaitMs: 30 * 60_000,
-  requestTimeoutMs: 45_000,
-  retryDelayMs: 250,
-  errorDelayMs: 2000,
-};
-
-interface QuestionRecord {
-  id: string;
-  answer: string | null;
-}
-
-const UNANSWERED_NOTE =
-  'No one answered in time. Proceed on your best judgement, and state the ' +
-  'assumption you made in your final summary and in a task_comment.';
-
-// One poll's abort signal: its own timeout, plus the client's cancellation
-// when there is one, so a cancelled tool call doesn't sit out the full poll.
-function pollSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
-}
-
-// Best-effort DELETE of a question this tool has stopped waiting on, so the
-// app stops offering an answer box nothing is listening to.
-async function withdrawQuestion(
-  base: string,
-  id: string,
-  auth: Record<string, string>
-): Promise<void> {
-  try {
-    await fetch(`${base}/${id}`, {
-      signal: requestDeadline(),
-      method: 'DELETE',
-      headers: { ...auth, 'content-type': 'application/json' },
-    });
-  } catch {
-    // The daemon being unreachable is exactly one of the reasons we gave up.
-  }
-}
-
-// Posts the question, then long-polls `?wait=1` until a human answers. An
-// unanswered poll is normal; a 404 means the daemon forgot the question.
-async function askUser(
-  rootDir: string,
-  args: { question: string; options?: string[] },
-  timing: QuestionTiming,
-  signal?: AbortSignal
-): Promise<ToolOutcome> {
-  if (args.question.trim() === '') {
-    return toolError('question must not be empty');
-  }
-  const runId = callingRunId();
-  if (runId === undefined) {
-    return toolError(
-      'ask_user requires a live dispatch run context (DISPATCH_RUN_ID not set)'
-    );
-  }
-
-  const daemon = readDaemonFile(projectRoot(rootDir));
-  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — no one to ask');
-  }
-  const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/questions`;
-  const auth = daemonAuth(daemon);
-
-  let question: QuestionRecord;
-  try {
-    const res = await fetch(base, {
-      signal: requestDeadline(),
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
-      body: JSON.stringify({
-        question: args.question,
-        options: args.options ?? [],
-      }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return toolError(
-        `ask_user failed: ${body.error ?? `HTTP ${res.status}`}`
-      );
-    }
-    question = (await res.json()) as QuestionRecord;
-  } catch (err) {
-    return toolError(`ask_user failed: ${(err as Error).message}`);
-  }
-
-  const deadline = Date.now() + timing.totalWaitMs;
-  // Set when the daemon has already forgotten the question, so the give-up
-  // path below knows there is nothing left to retract.
-  let gone = false;
-  while (Date.now() < deadline && signal?.aborted !== true) {
-    let polled: QuestionRecord | null = null;
-    try {
-      const res = await fetch(`${base}/${question.id}?wait=1`, {
-        headers: auth,
-        signal: pollSignal(timing.requestTimeoutMs, signal),
-      });
-      if (res.status === 404) {
-        gone = true;
-        break;
-      }
-      if (res.ok) polled = (await res.json()) as QuestionRecord;
-    } catch {
-      // A dropped or timed-out poll says nothing about the answer; ask again.
-    }
-    const answer = polled?.answer ?? null;
-    if (answer !== null) return toolResult({ answer });
-    if (signal !== undefined && signal.aborted) break;
-    // A clean poll can be repeated at once; a failed one backs off so a
-    // down daemon isn't hammered for the rest of the budget.
-    await new Promise((resolve) =>
-      setTimeout(
-        resolve,
-        polled !== null ? timing.retryDelayMs : timing.errorDelayMs
-      )
-    );
-  }
-
-  // Nobody is listening for an answer any more — whether the budget ran out
-  // or the client cancelled the call — so retract the question.
-  if (!gone) await withdrawQuestion(base, question.id, auth);
-  return {
-    content: [{ type: 'text', text: UNANSWERED_NOTE }],
-    structuredContent: { answer: '' },
-  };
-}
-
-/** How long `request_scope` waits, and how hard it polls while waiting. */
-export interface ScopeTiming {
-  /** Total budget across every poll before self-denying. */
-  totalWaitMs: number;
-  /** Per-request timeout; longer than the daemon's own 30s poll window. */
-  requestTimeoutMs: number;
-  /** Pause after a clean undecided poll, and after a failed one. */
-  retryDelayMs: number;
-  errorDelayMs: number;
-}
-
-// Same numbers as DEFAULT_QUESTION_TIMING, and the same reasoning: the
-// executor's MCP client timeout sits above totalWaitMs (see claude.ts).
-export const DEFAULT_SCOPE_TIMING: ScopeTiming = {
-  totalWaitMs: 30 * 60_000,
-  requestTimeoutMs: 45_000,
-  retryDelayMs: 250,
-  errorDelayMs: 2000,
-};
-
-interface ScopeRequestRecord {
-  id: string;
-  granted: boolean | null;
-  decisionReason: string | null;
-}
-
-const EXPIRED_SCOPE_REASON =
-  'No one decided in time. Treat this as denied: proceed within your ' +
-  'original fence, and report the blocker in your final summary and in a ' +
-  'task_comment.';
-
-// Reached the total budget with no decision — denies on the agent's behalf,
-// unless a decision landed in the instant before this call, which wins instead.
-//
-// The decide route is decide-tier, and this package only ever holds the agent
-// token, so against a token-guarded daemon the POST is refused and the denial
-// is local to the tool's return value. That is the intended shape: an agent
-// must not be able to write a decision into the ledger, not even its own
-// denial. Any refusal therefore falls through to the read-back below, which is
-// also what catches a real decision that landed at the last instant.
-async function selfDenyExpiredScope(
-  base: string,
-  id: string,
-  timing: ScopeTiming,
-  auth: Record<string, string>
-): Promise<{ granted: boolean; reason: string }> {
-  try {
-    const res = await fetch(`${base}/${id}/decide`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...auth },
-      body: JSON.stringify({
-        granted: false,
-        reason: EXPIRED_SCOPE_REASON,
-      }),
-      signal: AbortSignal.timeout(timing.requestTimeoutMs),
-    });
-    if (res.ok) {
-      const record = (await res.json()) as ScopeRequestRecord;
-      return {
-        granted: record.granted ?? false,
-        reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
-      };
-    }
-    const current = await fetch(`${base}/${id}`, {
-      headers: auth,
-      signal: AbortSignal.timeout(timing.requestTimeoutMs),
-    });
-    if (current.ok) {
-      const record = (await current.json()) as ScopeRequestRecord;
-      return {
-        granted: record.granted ?? false,
-        reason: record.decisionReason ?? EXPIRED_SCOPE_REASON,
-      };
-    }
-  } catch {
-    // The daemon is unreachable at the very end of the budget — deny locally.
-  }
-  return { granted: false, reason: EXPIRED_SCOPE_REASON };
-}
-
-// Posts the scope request, then long-polls `?wait=1` until it is decided. An
-// undecided poll is normal; a 404 means the daemon forgot the request.
-async function requestScope(
-  rootDir: string,
-  args: { paths: string[]; reason: string },
-  timing: ScopeTiming,
-  signal?: AbortSignal
-): Promise<ToolOutcome> {
-  if (args.paths.length === 0) {
-    return toolError('paths must not be empty');
-  }
-  if (args.reason.trim() === '') {
-    return toolError('reason must not be empty');
-  }
-  const runId = callingRunId();
-  if (runId === undefined) {
-    return toolError(
-      'request_scope requires a live dispatch run context (DISPATCH_RUN_ID not set)'
-    );
-  }
-
-  const daemon = readDaemonFile(projectRoot(rootDir));
-  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — no one to ask');
-  }
-  const base = `http://127.0.0.1:${daemon.port}/api/runs/${runId}/scope-requests`;
-  const auth = daemonAuth(daemon);
-
-  let request: ScopeRequestRecord;
-  try {
-    const res = await fetch(base, {
-      signal: requestDeadline(),
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...auth },
-      body: JSON.stringify({ paths: args.paths, reason: args.reason }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return toolError(
-        `request_scope failed: ${body.error ?? `HTTP ${res.status}`}`
-      );
-    }
-    request = (await res.json()) as ScopeRequestRecord;
-  } catch (err) {
-    return toolError(`request_scope failed: ${(err as Error).message}`);
-  }
-
-  const deadline = Date.now() + timing.totalWaitMs;
-  // Set when the daemon has already forgotten the request (its run closed),
-  // so the give-up path below knows there is nothing left to decide.
-  let gone = false;
-  while (Date.now() < deadline && signal?.aborted !== true) {
-    let polled: ScopeRequestRecord | null = null;
-    try {
-      const res = await fetch(`${base}/${request.id}?wait=1`, {
-        headers: auth,
-        signal: pollSignal(timing.requestTimeoutMs, signal),
-      });
-      if (res.status === 404) {
-        gone = true;
-        break;
-      }
-      if (res.ok) polled = (await res.json()) as ScopeRequestRecord;
-    } catch {
-      // A dropped or timed-out poll says nothing about the decision; ask again.
-    }
-    // `typeof`, not a not-null check: anything that isn't a boolean must keep
-    // waiting and end at the self-deny rather than escape as a grant.
-    if (polled !== null && typeof polled.granted === 'boolean') {
-      return toolResult({
-        granted: polled.granted,
-        reason: polled.decisionReason ?? '',
-      });
-    }
-    if (signal !== undefined && signal.aborted) break;
-    await new Promise((resolve) =>
-      setTimeout(
-        resolve,
-        polled !== null ? timing.retryDelayMs : timing.errorDelayMs
-      )
-    );
-  }
-
-  // Budget exhausted (or the client cancelled): a timeout must never read as
-  // permission, so this denies rather than leaving the agent blocked forever.
-  const outcome = gone
-    ? { granted: false, reason: EXPIRED_SCOPE_REASON }
-    : await selfDenyExpiredScope(base, request.id, timing, auth);
-  return {
-    content: [{ type: 'text', text: outcome.reason }],
-    structuredContent: outcome,
-  };
-}
-
 // Proxies `POST /api/notes` — the agent side of the notes/triage hub. Lets an
 // agent capture triage it finds mid-run ("this file is huge, refactor it"), a
 // follow-up to do after merge, or a plain note, without derailing to file a
 // full task. Records the calling run id (if any) so the app can show "an agent
-// flagged this". Works whenever dispatchd is running — unlike message_user it
-// doesn't require a live run context, so a manually-started server can still
-// jot a note.
+// flagged this". Works whenever dispatchd is running, inside a run or not, so a
+// manually-started server can still jot a note.
 async function dispatchNote(
   rootDir: string,
   args: { kind: string; title: string; body?: string }
@@ -1365,90 +824,6 @@ async function dispatchNote(
     return toolResult({ ok: true, id });
   } catch (err) {
     return toolError(`dispatch_note failed: ${(err as Error).message}`);
-  }
-}
-
-// Looks up the calling run's task and that task's parent epic — best-effort,
-// since an unresolved one just makes the ledger entry project-wide instead.
-async function callingTaskAndEpic(
-  daemon: DaemonFileInfo,
-  runId: string
-): Promise<{ taskId: string | null; epicId: string | null }> {
-  const port = daemon.port;
-  const headers = daemonAuth(daemon);
-  try {
-    const runRes = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}`, {
-      signal: requestDeadline(),
-      headers,
-    });
-    if (!runRes.ok) return { taskId: null, epicId: null };
-    const run = (await runRes.json()) as { taskId?: string };
-    if (typeof run.taskId !== 'string') return { taskId: null, epicId: null };
-    const taskRes = await fetch(
-      `http://127.0.0.1:${port}/api/tasks/${run.taskId}`,
-      { headers, signal: requestDeadline() }
-    );
-    if (!taskRes.ok) return { taskId: run.taskId, epicId: null };
-    const task = (await taskRes.json()) as {
-      meta?: { parent?: string | null };
-    };
-    return { taskId: run.taskId, epicId: task.meta?.parent ?? null };
-  } catch {
-    return { taskId: null, epicId: null };
-  }
-}
-
-// Proxies `POST /api/ledger` so a discovery an agent makes mid-run reaches
-// every later task in the epic without a human relaying it by hand.
-async function recordDecision(
-  rootDir: string,
-  args: {
-    kind: 'decision' | 'hazard';
-    title: string;
-    detail: string;
-    appliesTo?: string[];
-  }
-): Promise<ToolOutcome> {
-  if (args.title.trim() === '') return toolError('title must not be empty');
-  if (args.detail.trim() === '') return toolError('detail must not be empty');
-  const runId = callingRunId();
-  if (runId === undefined) {
-    return toolError(
-      'record_decision requires a live dispatch run context (DISPATCH_RUN_ID not set)'
-    );
-  }
-  const daemon = readDaemonFile(projectRoot(rootDir));
-  if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — cannot record a decision');
-  }
-  const { taskId, epicId } = await callingTaskAndEpic(daemon, runId);
-  try {
-    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/ledger`, {
-      signal: requestDeadline(),
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
-      body: JSON.stringify({
-        epicId,
-        sourceTaskId: taskId,
-        kind: args.kind,
-        title: args.title,
-        detail: args.detail,
-        appliesTo: args.appliesTo ?? [],
-        // Lets the daemon credit the agent actually running this call
-        // instead of the human operating the daemon.
-        runId,
-      }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return toolError(
-        `record_decision failed: ${body.error ?? `HTTP ${res.status}`}`
-      );
-    }
-    const created = (await res.json()) as { id: string };
-    return toolResult({ ok: true, id: created.id });
-  } catch (err) {
-    return toolError(`record_decision failed: ${(err as Error).message}`);
   }
 }
 
@@ -1545,19 +920,18 @@ const STATUS_PARAM_DOC =
   'dropped. A project may define its own set in .dispatch/config.yml, and ' +
   'that set is what this is checked against.';
 
-// Registers the five task_* tools plus run_list against a fixed root
-// directory. Each task_* tool re-resolves the TaskStore/config on every call
-// (rather than caching it at registration time) so a `dispatch init` that
-// happens after the server started is picked up without a restart; run_list
-// re-resolves the daemon file for the same reason (a `dispatch serve`/`ui`
-// that starts or stops after this MCP server started is picked up too).
+// Registers every dispatch tool against a fixed root. Each call re-resolves the
+// store, config and daemon file, so a later init or daemon start is picked up.
 export function registerDispatchTools(
   server: McpServer,
   rootDir: string,
-  opts: { questionTiming?: QuestionTiming; scopeTiming?: ScopeTiming } = {}
+  opts: { blockingTiming?: MessageBlockingTiming } = {}
 ): void {
-  const questionTiming = opts.questionTiming ?? DEFAULT_QUESTION_TIMING;
-  const scopeTiming = opts.scopeTiming ?? DEFAULT_SCOPE_TIMING;
+  registerMessagingTools(server, rootDir, {
+    blockingTiming: opts.blockingTiming,
+  });
+  registerMemoryTools(server, rootDir);
+  registerDocTools(server, rootDir);
   server.registerTool(
     'task_list',
     {
@@ -1589,10 +963,14 @@ export function registerDispatchTools(
       description:
         'Fetch a single task by id, including its full markdown body.',
       inputSchema: { id: z.string() },
-      outputSchema: { meta: z.object(taskMetaShape), body: z.string() },
+      outputSchema: {
+        meta: z.object(taskMetaShape),
+        body: z.string(),
+        docs: z.array(z.string()).optional(),
+      },
       annotations: { readOnlyHint: true },
     },
-    ({ id }) => wrapAsync(() => taskGet(rootDir, id))
+    ({ id }) => wrapAsync(() => taskGet(rootDir, server, id))
   );
 
   server.registerTool(
@@ -1766,113 +1144,6 @@ export function registerDispatchTools(
   );
 
   server.registerTool(
-    'agent_message',
-    {
-      title: 'Message a live run',
-      description:
-        'Send a message into another live dispatch run — the agent->agent ' +
-        'half of agent collaboration. Target it with exactly one of runId ' +
-        "(a specific run) or taskId (that task's current live run); the " +
-        'message is delivered prefixed "[message from <sender>]" (your own ' +
-        'task title + run id when known, otherwise a generic "another ' +
-        'agent" label) so the receiving agent can tell who is talking and ' +
-        "tell it apart from its own task prompt. Both sides' Session tabs " +
-        'show it. Fails with a clear error (and a list of what IS live ' +
-        'right now) when the target has no live run, or when dispatchd ' +
-        'itself is not running.',
-      inputSchema: {
-        runId: z.string().optional(),
-        taskId: z.string().optional(),
-        text: z.string(),
-      },
-      outputSchema: {
-        ok: z.boolean(),
-        runId: z.string(),
-      },
-    },
-    ({ runId, taskId, text }) => agentMessage(rootDir, { runId, taskId, text })
-  );
-
-  server.registerTool(
-    'message_user',
-    {
-      title: 'Message the human',
-      description:
-        'Raise a message to the human running this task — the agent->user ' +
-        'channel of agent collaboration. Use it for a blocker or a notable ' +
-        'update that should surface beyond your own assistant output. It does ' +
-        'not wait and returns no reply; for a question you need answered, use ' +
-        "ask_user instead. Lands on this run's own Session tab, badged as " +
-        'coming from you. ' +
-        'Requires a live dispatch run context; fails with a clear error ' +
-        'outside one (a manually-started MCP server, or dispatchd not ' +
-        'running).',
-      inputSchema: { text: z.string() },
-      outputSchema: {
-        ok: z.boolean(),
-        runId: z.string(),
-      },
-      annotations: { readOnlyHint: false },
-    },
-    ({ text }) => messageUser(rootDir, { text })
-  );
-
-  server.registerTool(
-    'ask_user',
-    {
-      title: 'Ask the human a question and wait',
-      description:
-        'Ask the human running this task a question and block until they ' +
-        'answer — use this whenever a decision would change the shape of ' +
-        'the result and the task does not specify it (ambiguous ' +
-        'requirements, several valid approaches, missing acceptance ' +
-        'criteria). Prefer asking once with several bundled questions over ' +
-        'many round trips. Do not use it for anything you can determine by ' +
-        'reading the repo. Pass `options` for the answers you consider ' +
-        'likely; the human can still reply with anything. Returns their ' +
-        'answer, or an empty answer if nobody responds in time, in which ' +
-        'case proceed on your best judgement and note the assumption. ' +
-        'Requires a live dispatch run context.',
-      inputSchema: {
-        question: z.string(),
-        options: z.array(z.string()).optional(),
-      },
-      outputSchema: { answer: z.string() },
-      annotations: { readOnlyHint: false },
-    },
-    ({ question, options }, extra) =>
-      askUser(rootDir, { question, options }, questionTiming, extra.signal)
-  );
-
-  server.registerTool(
-    'request_scope',
-    {
-      title: 'Ask to edit outside your fence, and wait',
-      description:
-        'Ask to make a specific out-of-scope edit and block until it is ' +
-        'granted or denied — use this when your assigned scope cannot ' +
-        'compile or complete correctly without touching a file outside it ' +
-        '(e.g. a shared barrel that never re-exported a type your own code ' +
-        'needs). Do not use it to expand scope for convenience; only for a ' +
-        'genuine dead end. List every path you need in `paths` and explain ' +
-        'why in `reason`. If nobody decides in time, this returns denied — ' +
-        'proceed within your original fence and report the blocker in your ' +
-        'final summary and in a task_comment. Calling it again with the same ' +
-        'paths re-attaches to a request that is still pending (after a ' +
-        'dispatchd restart, say) rather than filing a second one. Requires a ' +
-        'live dispatch run context.',
-      inputSchema: {
-        paths: z.array(z.string()),
-        reason: z.string(),
-      },
-      outputSchema: { granted: z.boolean(), reason: z.string() },
-      annotations: { readOnlyHint: false },
-    },
-    ({ paths, reason }, extra) =>
-      requestScope(rootDir, { paths, reason }, scopeTiming, extra.signal)
-  );
-
-  server.registerTool(
     'dispatch_note',
     {
       title: 'Add a note or triage item',
@@ -1892,34 +1163,6 @@ export function registerDispatchTools(
       annotations: { readOnlyHint: false },
     },
     ({ kind, title, body }) => dispatchNote(rootDir, { kind, title, body })
-  );
-
-  server.registerTool(
-    'record_decision',
-    {
-      title: 'Record a decision or hazard for later tasks',
-      description:
-        'Write a decision or hazard to the project ledger so later tasks ' +
-        'in this epic see it in their own dispatch prompt — the fix for a ' +
-        'shared trap other tasks would otherwise walk into blind (a ' +
-        'wrapper that swallows rejections, a flaky command, a required env ' +
-        'var), or a call you made that others should follow. Use `hazard` ' +
-        'for something that will bite another task; `decision` for a ' +
-        'choice made that others should stay consistent with. Omit ' +
-        '`appliesTo` to apply it to every task in this epic (or the whole ' +
-        'project, if this task has none); pass specific task ids to target ' +
-        'only them.',
-      inputSchema: {
-        kind: z.enum(['decision', 'hazard']),
-        title: z.string(),
-        detail: z.string(),
-        appliesTo: z.array(z.string()).optional(),
-      },
-      outputSchema: { ok: z.boolean(), id: z.string() },
-      annotations: { readOnlyHint: false },
-    },
-    ({ kind, title, detail, appliesTo }) =>
-      recordDecision(rootDir, { kind, title, detail, appliesTo })
   );
 
   server.registerTool(

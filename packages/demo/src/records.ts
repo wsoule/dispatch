@@ -1,5 +1,5 @@
-import { formatActorRef } from '@dispatch/core';
-import type { Finding, LedgerEntry } from '@dispatch/core';
+import { formatActorRef } from '@dispatch-foo/core';
+import type { Finding, LedgerEntry } from '@dispatch-foo/core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -159,7 +159,7 @@ export const FINDINGS: Finding[] = [
   },
 ];
 
-// One of each ledger kind, scoped a mix of per-epic and project-wide.
+// One of each writable ledger kind, scoped a mix of per-epic and project-wide.
 const LEDGER: LedgerEntry[] = [
   {
     id: 'l-1a2b3c',
@@ -204,22 +204,6 @@ const LEDGER: LedgerEntry[] = [
       kind: 'human',
       handle: OWNER.handle,
       operator: null,
-    }),
-  },
-  {
-    id: 'l-d4e5f6',
-    epicId: 'e-4a19c2',
-    sourceTaskId: 't-2e91aa',
-    kind: 'handoff',
-    title: 'Cart session schema handed off to t-6c40de',
-    detail:
-      't-2e91aa lands CartLine{sku,qty} keyed by sessionId in the session store; t-6c40de can build cross-device persistence directly on top of loadCart/saveCart without touching the schema again.',
-    appliesTo: ['t-6c40de'],
-    createdAt: ago(3, 0),
-    authoredBy: formatActorRef({
-      kind: 'agent',
-      handle: 'claude',
-      operator: 'dokafor',
     }),
   },
 ];

@@ -1,7 +1,9 @@
 import {
   type ApiClient,
   ApiError,
+  type Message,
   type OverseerRecord,
+  type ReplyInput,
 } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -38,6 +40,46 @@ function overseerRecord(): OverseerRecord {
     createdAt: '2026-08-10T00:00:00Z',
     updatedAt: '2026-08-10T00:00:05Z',
   };
+}
+
+// An open gate as `GET /api/decisions/open` lists it.
+function gate(id: string, data: Message['data']): Message {
+  return {
+    id,
+    thread: id,
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'q',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    createdAt: '2026-08-10T00:00:03Z',
+    data,
+  };
+}
+
+// The overseer-action gate for one of w-1's queued actions.
+function actionGate(actionId: string): Message {
+  return gate(`m-${actionId}`, {
+    type: 'overseer-action',
+    conversation: 'w-1',
+    actionId,
+    summary: `Do ${actionId}`,
+  });
+}
+
+// The tool-approval gate for one of w-1's parked built-in calls.
+function approvalGate(requestId: string): Message {
+  return gate(`m-${requestId}`, {
+    type: 'tool-approval',
+    requestId,
+    conversation: 'w-1',
+    tool: 'Bash',
+    input: { command: 'ls' },
+  });
 }
 
 // Only the two calls this hook makes on the path under test: `start` seeds the
@@ -110,13 +152,14 @@ test('a network failure keeps the cached record', async () => {
 // that renders a confirm card is unmounted by an ordinary tab flip — so the
 // flag has to be raised for the whole call, on state that outlives the chat.
 test('the deciding action is exposed while a confirm is in flight', async () => {
-  let settle: ((rec: OverseerRecord) => void) | undefined;
+  let settle: (() => void) | undefined;
   const client = {
     baseUrl: `http://127.0.0.1:${PORT}`,
     startOverseer: () => Promise.resolve(overseerRecord()),
     getOverseer: () => Promise.resolve(overseerRecord()),
-    confirmOverseerAction: () =>
-      new Promise<OverseerRecord>((resolve) => {
+    openDecisions: () => Promise.resolve({ items: [actionGate('act-1')] }),
+    replyToMessage: () =>
+      new Promise<void>((resolve) => {
         settle = resolve;
       }),
   } as unknown as ApiClient;
@@ -140,8 +183,11 @@ test('the deciding action is exposed while a confirm is in flight', async () => 
   // locked no matter how many times the chat around it has been remounted.
   expect(result.current.decidingActionId).toBe('act-1');
 
+  await waitFor(() => {
+    expect(settle).toBeDefined();
+  });
   await act(async () => {
-    settle?.(overseerRecord());
+    settle?.();
     await decided;
   });
   expect(result.current.decidingActionId).toBeNull();
@@ -369,6 +415,48 @@ test('a failed submit leaves a newly typed draft alone', async () => {
   expect(result.current.sendError).toBe('daemon unreachable');
 });
 
+// A Threads reply keeps its own draft: the session raises `sending` so the
+// Assistant composer locks too, but the failure goes back to the caller.
+test('a reply from another surface rejects on failure and leaves the draft alone', async () => {
+  let reject: ((err: Error) => void) | undefined;
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: () => Promise.resolve(overseerRecord()),
+    getOverseer: () => Promise.resolve(overseerRecord()),
+    sendOverseerMessage: () =>
+      new Promise<OverseerRecord>((_resolve, rej) => {
+        reject = rej;
+      }),
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  await act(async () => {
+    await result.current.submit('what is going on?');
+  });
+  act(() => {
+    result.current.setDraft('half typed');
+  });
+
+  let replied: Promise<string> | undefined;
+  act(() => {
+    replied = result.current.reply('from a thread').then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+  });
+  expect(result.current.sending).toBe(true);
+  await act(async () => {
+    reject?.(new ApiError('overseer w-1 is still answering', 409));
+    expect(await replied).toBe('overseer w-1 is still answering');
+  });
+
+  expect(result.current.sending).toBe(false);
+  expect(result.current.sendError).toBeNull();
+  expect(result.current.draft).toBe('half typed');
+});
+
 // The decide failure belongs to the session for exactly the reason the send
 // failure does. While an approval is queued the Runs tab shows a waiting
 // overseer row, so flipping there is the path the rail encourages — and the rail
@@ -380,8 +468,8 @@ test('a failed decision leaves its error on the session', async () => {
     baseUrl: `http://127.0.0.1:${PORT}`,
     startOverseer: () => Promise.resolve(overseerRecord()),
     getOverseer: () => Promise.resolve(overseerRecord()),
-    confirmOverseerAction: () =>
-      Promise.reject(new Error('daemon unreachable')),
+    openDecisions: () => Promise.resolve({ items: [actionGate('act-1')] }),
+    replyToMessage: () => Promise.reject(new Error('daemon unreachable')),
   } as unknown as ApiClient;
 
   const { result } = renderHook(
@@ -412,14 +500,16 @@ test('a failed decision leaves its error on the session', async () => {
 // an ordinary tab flip, which would reset a component-local one.
 test('a second decision while one is in flight is a no-op', async () => {
   const calls: string[] = [];
-  let settle: ((rec: OverseerRecord) => void) | undefined;
+  let settle: (() => void) | undefined;
   const client = {
     baseUrl: `http://127.0.0.1:${PORT}`,
     startOverseer: () => Promise.resolve(overseerRecord()),
     getOverseer: () => Promise.resolve(overseerRecord()),
-    confirmOverseerAction: (_id: string, actionId: string) => {
-      calls.push(actionId);
-      return new Promise<OverseerRecord>((resolve) => {
+    openDecisions: () =>
+      Promise.resolve({ items: [actionGate('act-1'), actionGate('act-2')] }),
+    replyToMessage: (gateId: string) => {
+      calls.push(gateId);
+      return new Promise<void>((resolve) => {
         settle = resolve;
       });
     },
@@ -444,13 +534,16 @@ test('a second decision while one is in flight is a no-op', async () => {
   await act(async () => {
     await result.current.confirmAction('act-2', true);
   });
-  expect(calls).toEqual(['act-1']);
+  await waitFor(() => {
+    expect(calls).toEqual(['m-act-1']);
+  });
 
   await act(async () => {
-    settle?.(overseerRecord());
+    settle?.();
     await first;
   });
   expect(result.current.decidingActionId).toBeNull();
+  expect(calls).toEqual(['m-act-1']);
 });
 
 // reset() drops the conversation, so a failure banner from a decision on it
@@ -461,8 +554,8 @@ test('reset clears the last decide error', async () => {
     baseUrl: `http://127.0.0.1:${PORT}`,
     startOverseer: () => Promise.resolve(overseerRecord()),
     getOverseer: () => Promise.resolve(overseerRecord()),
-    confirmOverseerAction: () =>
-      Promise.reject(new Error('daemon unreachable')),
+    openDecisions: () => Promise.resolve({ items: [actionGate('act-1')] }),
+    replyToMessage: () => Promise.reject(new Error('daemon unreachable')),
   } as unknown as ApiClient;
 
   const { result } = renderHook(
@@ -483,4 +576,109 @@ test('reset clears the last decide error', async () => {
     result.current.reset();
   });
   expect(result.current.decideError).toBeNull();
+});
+
+// A client whose open gates are `items`, recording every gate answer.
+function gateClient(items: Message[]) {
+  const replies: [string, ReplyInput][] = [];
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: () => Promise.resolve(overseerRecord()),
+    getOverseer: () => Promise.resolve(overseerRecord()),
+    openDecisions: () => Promise.resolve({ items }),
+    replyToMessage: (id: string, input: ReplyInput) => {
+      replies.push([id, input]);
+      return Promise.resolve({});
+    },
+  } as unknown as ApiClient;
+  return { client, replies };
+}
+
+async function openedSession(client: ApiClient) {
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  await act(async () => {
+    await result.current.submit('what is going on?');
+  });
+  return result;
+}
+
+// Deciding an action or a parked call answers its gate on the bus: the
+// conversation and action (or request) name the gate, the choice is the answer.
+test('confirmAction answers the action gate with confirm or cancel', async () => {
+  const { client, replies } = gateClient([
+    actionGate('act-1'),
+    actionGate('act-2'),
+  ]);
+  const result = await openedSession(client);
+
+  await act(async () => {
+    await result.current.confirmAction('act-1', true);
+  });
+  await act(async () => {
+    await result.current.confirmAction('act-2', false);
+  });
+
+  expect(replies).toEqual([
+    ['m-act-1', { body: '', choice: 'confirm' }],
+    ['m-act-2', { body: '', choice: 'cancel' }],
+  ]);
+  expect(result.current.decideError).toBeNull();
+});
+
+test('decideApproval answers the tool-approval gate with approve, approve-session or deny', async () => {
+  const { client, replies } = gateClient([
+    approvalGate('rq-1'),
+    approvalGate('rq-2'),
+    approvalGate('rq-3'),
+  ]);
+  const result = await openedSession(client);
+
+  await act(async () => {
+    await result.current.decideApproval('rq-1', { allow: true });
+  });
+  await act(async () => {
+    await result.current.decideApproval('rq-2', {
+      allow: true,
+      scope: 'session',
+    });
+  });
+  await act(async () => {
+    await result.current.decideApproval('rq-3', {
+      allow: false,
+      reason: 'not now',
+    });
+  });
+
+  expect(replies).toEqual([
+    ['m-rq-1', { body: '', choice: 'approve' }],
+    ['m-rq-2', { body: '', choice: 'approve-session' }],
+    ['m-rq-3', { body: 'not now', choice: 'deny' }],
+  ]);
+  expect(result.current.decidingRequestId).toBeNull();
+});
+
+// A gate already answered elsewhere (another window, the CLI) is gone from the
+// open list, so the decision reports that instead of answering anything.
+test('a decision whose gate is no longer open surfaces decideError', async () => {
+  const { client, replies } = gateClient([]);
+  const result = await openedSession(client);
+
+  await act(async () => {
+    await result.current.confirmAction('act-1', true);
+  });
+  expect(result.current.decideError).toBe(
+    'This action is no longer waiting for you.'
+  );
+
+  await act(async () => {
+    await result.current.decideApproval('rq-1', { allow: true });
+  });
+  expect(result.current.decideError).toBe(
+    'This approval is no longer waiting for you.'
+  );
+  expect(replies).toEqual([]);
+  expect(result.current.decidingActionId).toBeNull();
 });

@@ -1,5 +1,9 @@
-import type { Assignee, Priority, TaskListItem } from '@dispatch/core/browser';
-import { PRIORITY_ORDER } from '@dispatch/core/browser';
+import type {
+  Assignee,
+  Priority,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
+import { PRIORITY_ORDER } from '@dispatch-foo/core/browser';
 import {
   Archive,
   ArrowUpRight,

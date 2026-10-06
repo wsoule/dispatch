@@ -1,5 +1,5 @@
+import { claimConflictsWithWrites } from '@dispatch-foo/core/browser';
 import type { RunClaim } from '@dispatch/client';
-import { claimConflictsWithWrites } from '@dispatch/core/browser';
 
 /** Two live runs whose claimed write sets collide, with the specific claims of `a` that
  * overlap `b`'s set — the detail line the warning strip prints. */

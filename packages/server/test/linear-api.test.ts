@@ -1,11 +1,12 @@
 import {
+  ensureA2ALinkKeys,
   normalizeProjectPath,
   readCredentials,
   TaskStore,
   writeCredential,
   writeProjectCredential,
-} from '@dispatch/core';
-import type { LinearWorkflowState } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { LinearWorkflowState } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -228,10 +229,28 @@ describe('POST /api/linear/disconnect', () => {
     await fetch(`${baseUrl}/api/linear/disconnect`, { method: 'POST' });
 
     expect(
-      readCredentials().projects?.[normalizeProjectPath(root)]
+      readCredentials().projects?.[normalizeProjectPath(root)]?.linear
     ).toBeUndefined();
     const status = await json(await fetch(`${baseUrl}/api/linear/status`));
     expect(status.keySource).toBeNull();
+  });
+
+  it('clears only the Linear key, never the A2A keys beside it', async () => {
+    await ensureA2ALinkKeys(root, () => ({
+      signPriv: 'sign-private',
+      signPub: 'sign-public',
+      sealPriv: 'seal-private',
+      sealPub: 'seal-public',
+    }));
+    writeProjectCredential(root, 'linear', { apiKey: 'lin_api_project_key' });
+    const before =
+      readCredentials().projects?.[normalizeProjectPath(root)]?.a2a;
+    expect(before?.linkKeys).toBeDefined();
+    await fetch(`${baseUrl}/api/linear/disconnect`, { method: 'POST' });
+
+    const after = readCredentials().projects?.[normalizeProjectPath(root)];
+    expect(after?.linear).toBeUndefined();
+    expect(after?.a2a).toEqual(before);
   });
 
   it('leaves a machine-wide key intact and reports it as the fallback', async () => {
@@ -242,5 +261,40 @@ describe('POST /api/linear/disconnect', () => {
     const status = await json(await fetch(`${baseUrl}/api/linear/status`));
     expect(status.keySource).toBe('global');
     expect(status.connected).toBe(true);
+  });
+});
+
+describe('POST /api/docs/:ref/share-linear', () => {
+  it("creates a Linear document under the doc's task's issue for the owner, and refuses a doc with no synced task", async () => {
+    const tasks = TaskStore.init(root);
+    const task = tasks.create({ title: 'Linked' });
+    tasks.update(task.meta.id, { external: 'linear:iss-1' });
+    const post = (path: string, body: unknown) =>
+      fetch(`${baseUrl}/api${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const made = await post('/docs', {
+      title: 'Design',
+      body: 'x\n',
+      links: [{ target: `task:${task.meta.id}`, rel: 'spec' }],
+    });
+    expect(made.status).toBe(201);
+    expect((await post('/docs', { title: 'Loose', body: 'l\n' })).status).toBe(
+      201
+    );
+    const loose = await post('/docs/loose/share-linear', {});
+    expect(loose.status).toBe(400);
+    expect(stub.documentCreates).toEqual([]);
+
+    const res = await post('/docs/design/share-linear', {});
+    expect(res.status).toBe(201);
+    const { documentId } = await json(res);
+    expect(stub.documentCreates).toEqual([
+      { title: 'Design', content: 'x\n', issueId: 'iss-1' },
+    ]);
+    const doc = await json(await fetch(`${baseUrl}/api/docs/design`));
+    expect(doc.doc.origin).toBe(`linear:${documentId}`);
   });
 });

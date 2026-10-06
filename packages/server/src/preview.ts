@@ -1,10 +1,11 @@
-import type { DispatchConfig, PackageManager } from '@dispatch/core';
+import type { DispatchConfig, PackageManager } from '@dispatch-foo/core';
 import {
+  childEnv,
   detectPackageManager,
   detectPreviewCommand,
   previewEnv,
   previewSettings,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -125,7 +126,7 @@ function spawnDetached(input: {
 }): PreviewProcess {
   const child = spawn('bash', ['-lc', input.command], {
     cwd: input.cwd,
-    env: { ...process.env, ...input.env },
+    env: childEnv(input.env),
     detached: true,
     stdio: 'ignore',
   });

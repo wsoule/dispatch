@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch-foo/core';
 import {
   existsSync,
   mkdirSync,
@@ -295,7 +296,7 @@ export function rawFile(
 async function listSearchCandidates(base: string): Promise<string[]> {
   const proc = Bun.spawn(
     ['git', 'ls-files', '-c', '-o', '--exclude-standard', '-z'],
-    { cwd: base, stdout: 'pipe', stderr: 'pipe' }
+    { cwd: base, env: childEnv(), stdout: 'pipe', stderr: 'pipe' }
   );
   const [stdout, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),

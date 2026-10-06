@@ -205,6 +205,14 @@ export interface DispatchConfig {
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
   notifications: NotificationsConfig;
+  messaging: MessagingConfig;
+  /** Optional only so hand-built fixtures stay valid; `loadConfig` always
+   *  sets it. */
+  memory?: MemoryConfig;
+  /** The A2A bridge's policy; `loadConfig` always sets it, optional for hand-built fixtures. */
+  a2a?: A2AConfig;
+  /** One line per `a2a:` key that fell back to its default. */
+  a2aWarnings?: string[];
   /**
    * The git receipt log. `loadConfig` always populates this, so a config it
    * returns can be read without a fallback; it is optional only so callers
@@ -353,22 +361,56 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
  *
  * - `approval`        a run is parked on a permission gate.
  * - `scope-request`   an agent asked to edit outside its declared writes.
- * - `question`        an agent called `ask_user` and is blocked on the answer.
+ * - `memory`          an agent proposes a lesson for shared memory.
+ * - `doc`             an agent proposes an edit to an accepted doc.
+ * - `question`        an agent sent a blocking question (msg_send) and waits
+ *                     on the answer.
  * - `fix-loop-capped` a review/fix loop exhausted its rounds and wants a ruling.
  * - `run-stalled`     a run failed or dead-ended and nobody has dealt with it.
  */
 export type NotificationKind =
   | 'approval'
   | 'scope-request'
+  | 'memory'
+  | 'doc'
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
+
+const APPROVAL_GATES: ReadonlySet<string> = new Set([
+  'tool-approval',
+  'wake',
+  'agent-registration',
+  'overseer-action',
+  'task-proposal',
+]);
+
+/** The toggle a message notifies under; null when no human is being asked. */
+export function notificationKindForMessage(message: {
+  kind: string;
+  blocking: boolean;
+  data?: unknown;
+}): NotificationKind | null {
+  if (message.kind !== 'question' || !message.blocking) return null;
+  const data = message.data;
+  const type =
+    typeof data === 'object' && data !== null && !Array.isArray(data)
+      ? (data as { type?: unknown }).type
+      : undefined;
+  if (type === 'scope') return 'scope-request';
+  if (type === 'memory') return 'memory';
+  if (type === 'doc') return 'doc';
+  if (typeof type === 'string' && APPROVAL_GATES.has(type)) return 'approval';
+  return 'question';
+}
 
 /** Every kind, in the order the Settings UI renders them. */
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'question',
   'approval',
   'scope-request',
+  'memory',
+  'doc',
   'fix-loop-capped',
   'run-stalled',
 ];
@@ -407,9 +449,89 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
     question: true,
     approval: true,
     'scope-request': true,
+    memory: true,
+    doc: true,
     'fix-loop-capped': true,
     'run-stalled': true,
   },
+};
+
+/** Rate and timeout limits for the messaging system. */
+export interface MessagingConfig {
+  urgentPerHour: number;
+  agentTurnsPerThreadPerHour: number;
+  agentBlockingTimeoutSec: number;
+  /** Mail ops applied per clock hour from any one teammate's machine (federation). */
+  remoteMailPerReplicaPerHour: number;
+}
+
+export const DEFAULT_MESSAGING: MessagingConfig = {
+  urgentPerHour: 10,
+  agentTurnsPerThreadPerHour: 20,
+  agentBlockingTimeoutSec: 600,
+  remoteMailPerReplicaPerHour: 600,
+};
+
+/** Memory's prompt budget, write limits and decay clock. */
+export interface MemoryConfig {
+  indexTokens: number;
+  personalWritesPerHour: number;
+  proposalsPerHour: number;
+  maxOpenProposals: number;
+  proposalTtlDays: number;
+  staleAfterDays: number;
+  retireAfterDays: number;
+  claudeAutoMemory: 'export' | 'off';
+}
+
+export const DEFAULT_MEMORY: MemoryConfig = {
+  indexTokens: 1000,
+  personalWritesPerHour: 50,
+  proposalsPerHour: 10,
+  maxOpenProposals: 50,
+  proposalTtlDays: 14,
+  staleAfterDays: 60,
+  retireAfterDays: 180,
+  claudeAutoMemory: 'export',
+};
+
+/** The skills an A2A agent card may offer. */
+export const A2A_SKILLS = ['ask', 'handoff', 'status'] as const;
+export type A2ASkill = (typeof A2A_SKILLS)[number];
+
+/** Project policy for the A2A bridge. Holds no listener setting: those are machine-local. */
+export interface A2AConfig {
+  /** The card's name; null means the basename of the project root. */
+  name: string | null;
+  /** The card's description; null means the default description. */
+  description: string | null;
+  /** The skills the card offers; null means every skill built. */
+  skills: A2ASkill[] | null;
+  /** How long a blocking send waits for its answer, 1 to 600 seconds. */
+  blockingWaitSec: number;
+  requestsPerMinute: number;
+  sendsPerHour: number;
+  handoffsPerDay: number;
+  openTasksPerClient: number;
+  streamsPerClient: number;
+  outboundPerHour: number;
+  /** Refuse bearer tokens from a client whose agent ever presented the
+   *  signature extension, so a paired Dispatch peer must sign (OD-11). */
+  requireSignedDispatchPeers: boolean;
+}
+
+export const DEFAULT_A2A: A2AConfig = {
+  name: null,
+  description: null,
+  skills: null,
+  blockingWaitSec: 60,
+  requestsPerMinute: 120,
+  sendsPerHour: 60,
+  handoffsPerDay: 10,
+  openTasksPerClient: 20,
+  streamsPerClient: 5,
+  outboundPerHour: 60,
+  requireSignedDispatchPeers: false,
 };
 
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
@@ -693,4 +815,6 @@ export interface ConfigPatch {
     readyTimeoutSec?: number | null;
     idleTimeoutSec?: number | null;
   };
+  /** A value sets the key, `null` removes it (its default applies again). */
+  memory?: { [K in keyof MemoryConfig]?: MemoryConfig[K] | null };
 }

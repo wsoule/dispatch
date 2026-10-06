@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import {
   defaultAsyncGitRunner,
+  defaultGitRunner,
   spawnWithDeadline,
 } from '../../src/sync/worktree.js';
 
@@ -30,6 +31,21 @@ describe('spawnWithDeadline', () => {
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(result.status).toBe(-1);
     expect(result.stderr).toContain('killed after 300ms');
+  });
+
+  it('kills a command whose stdout passes the output cap', async () => {
+    const started = Date.now();
+    const result = await spawnWithDeadline(
+      ['sh', '-c', 'yes xxxxxxxxxxxxxxx'],
+      tmpdir(),
+      20_000,
+      undefined,
+      1024 * 1024
+    );
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result.status).toBe(-1);
+    expect(result.stdout.length).toBeLessThanOrEqual(1024 * 1024);
+    expect(result.stderr).toContain('output over 1048576 bytes');
   });
 
   it('does not hold the event loop while the command runs', async () => {
@@ -114,6 +130,35 @@ describe('defaultAsyncGitRunner', () => {
     } finally {
       serverProc.kill();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// A git alias that runs `env` shows exactly what a git child receives.
+const DUMP_ENV = ['-c', 'alias.dumpenv=!env', 'dumpenv'];
+
+describe('the git runners’ child environment', () => {
+  it('never hands a git child a preset DISPATCH_*TOKEN*, and keeps a caller’s env on top', async () => {
+    const saved = process.env.DISPATCH_PROBE_TOKEN;
+    process.env.DISPATCH_PROBE_TOKEN = 'leaked-secret';
+    try {
+      const sync = defaultGitRunner(tmpdir(), DUMP_ENV);
+      expect(sync.status).toBe(0);
+      expect(sync.stdout).not.toContain('leaked-secret');
+      expect(sync.stdout).toContain('GIT_TERMINAL_PROMPT=0');
+
+      const async = await defaultAsyncGitRunner(tmpdir(), DUMP_ENV, {
+        GIT_CONFIG_NOSYSTEM: '1',
+      });
+      expect(async.status).toBe(0);
+      expect(async.stdout).not.toContain('leaked-secret');
+      expect(async.stdout).toContain('GIT_TERMINAL_PROMPT=0');
+      expect(async.stdout).toContain('GIT_CONFIG_NOSYSTEM=1');
+      // The base is still the daemon's own env, less its secrets.
+      expect(async.stdout).toContain(process.env.PATH ?? '');
+    } finally {
+      if (saved === undefined) delete process.env.DISPATCH_PROBE_TOKEN;
+      else process.env.DISPATCH_PROBE_TOKEN = saved;
     }
   });
 });

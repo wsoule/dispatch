@@ -1,5 +1,5 @@
-import { DEFAULT_FIX_LOOP, TaskStore, updateConfig } from '@dispatch/core';
-import type { Finding, TaskDoc } from '@dispatch/core';
+import { DEFAULT_FIX_LOOP, TaskStore, updateConfig } from '@dispatch-foo/core';
+import type { Finding, TaskDoc } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   appendFileSync,
@@ -75,6 +75,7 @@ class ScriptedAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 
@@ -119,6 +120,7 @@ class GatedAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 
@@ -169,6 +171,7 @@ class ConvergingAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }
@@ -190,6 +193,7 @@ class CleanAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }
@@ -216,6 +220,7 @@ class UndeclaredWriteAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }

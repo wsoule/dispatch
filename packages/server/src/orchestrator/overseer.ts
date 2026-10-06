@@ -1,9 +1,12 @@
-import { loadConfig, untrustedInline } from '@dispatch/core';
-import type { EffortLevel } from '@dispatch/core';
+import { loadConfig, untrustedInline } from '@dispatch-foo/core';
+import type { EffortLevel } from '@dispatch-foo/core';
+import type { Message, Sender } from '@dispatch-foo/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { EventBus } from '../events.js';
 import { floorCheckForToolInput } from '../floor.js';
+import type { OverseerBus } from '../messaging/overseerBus.js';
 import type {
   OverseerBackend,
   OverseerToolDescriptor,
@@ -66,6 +69,8 @@ export interface OverseerMessage {
    * can be retried. `allowed` is an approval's yes; `applied` an action's.
    */
   outcome?: 'pending' | 'applied' | 'allowed' | 'denied' | 'failed';
+  /** `user` and `assistant` entries posted to the bus: the message there. */
+  messageId?: string;
 }
 
 /**
@@ -77,7 +82,7 @@ export interface OverseerMessage {
  * once rather than queueing anything.
  */
 interface OverseerApproval {
-  /** The backend's handle for the call; what the decision endpoint names. */
+  /** The backend's handle for the call; what its gate's `requestId` names. */
   requestId: string;
   toolName: string;
   /** The call's input, exactly as the tool will receive it if allowed. */
@@ -127,6 +132,8 @@ export interface OverseerRecord {
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
   sessionId?: string;
+  /** The bus thread this conversation's lines are posted to, once one is. */
+  thread?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -136,6 +143,8 @@ export interface OverseerManagerContext {
   rootDir: string;
   registry: OverseerToolRegistry;
   events: EventBus;
+  /** Where conversation lines are posted and decisions raised as gates. */
+  bus?: OverseerBus;
 }
 
 // What a mutating tool call returns to the model. Deliberately explicit that
@@ -242,6 +251,10 @@ export class OverseerManager {
   // conversation. Kept off the record on purpose: it is a permission grant,
   // not transcript, and it must not survive the conversation it was given in.
   private readonly sessionAllowed = new Map<string, Set<string>>();
+  // Each conversation's bus posts, chained so its lines land in order.
+  private readonly posts = new Map<string, Promise<void>>();
+  // Conversations already logged as having a turn no human spoke.
+  private readonly loggedOffBus = new Set<string>();
 
   constructor(private readonly ctx: OverseerManagerContext) {}
 
@@ -296,18 +309,33 @@ export class OverseerManager {
     return backend;
   }
 
+  // A revoked overseer takes no new turns until a human approves it again.
+  private refuseIfRevoked(): void {
+    const bus = this.ctx.bus;
+    if (bus?.revoked() === true) {
+      throw new OrchestratorConflictError(
+        'the overseer is revoked',
+        'overseer_revoked',
+        `approve ${bus.overseer} in Settings → Connected agents to use it again`
+      );
+    }
+  }
+
   /**
    * Opens a conversation and returns its record immediately at `running`; the
    * backend turn is fire-and-forget, landing via runTurn's broadcast — same
-   * contract as PlanManager.startPlan.
+   * contract as PlanManager.startPlan. A human `speaker`'s turn is posted to
+   * the bus; a null one (the shared agent token) is not.
    */
   start(
     prompt: string,
     backendName = 'claude',
     model?: string,
-    effort?: EffortLevel
+    effort?: EffortLevel,
+    speaker: Sender | null = null
   ): OverseerRecord {
     const backend = this.requireBackend(backendName);
+    this.refuseIfRevoked();
     const now = new Date().toISOString();
     const record: OverseerRecord = {
       id: generateOverseerId(now),
@@ -324,9 +352,15 @@ export class OverseerManager {
       updatedAt: now,
     };
     this.conversations.set(record.id, record);
+    this.postEntry(record.id, 0, speaker);
     const options = this.turnOptionsFor(record.id);
     const toolset = this.toolsetFor(record.id);
-    void this.runTurn(record.id, () => backend.start(prompt, toolset, options));
+    void this.runTurn(
+      record.id,
+      () => backend.start(prompt, toolset, options),
+      [],
+      { speaker, line: 0 }
+    );
     return record;
   }
 
@@ -336,8 +370,13 @@ export class OverseerManager {
    * reply lands fire-and-forget. The conversation must be idle — a `running`
    * one has a turn in flight to finish first.
    */
-  sendMessage(conversationId: string, message: string): OverseerRecord {
+  sendMessage(
+    conversationId: string,
+    message: string,
+    speaker: Sender | null = null
+  ): OverseerRecord {
     const record = this.get(conversationId);
+    this.refuseIfRevoked();
     if (record.state === 'running') {
       throw new OrchestratorConflictError(
         `overseer conversation is busy: a turn is already in progress: ${conversationId}`
@@ -357,6 +396,8 @@ export class OverseerManager {
     };
     this.conversations.set(conversationId, updated);
     this.ctx.events.broadcast({ type: 'overseer.changed', conversationId });
+    const line = record.messages.length;
+    this.postEntry(conversationId, line, speaker);
 
     // The transcript keeps what the human actually typed; the model gets that
     // plus the decisions it hasn't been told about yet.
@@ -367,7 +408,8 @@ export class OverseerManager {
     void this.runTurn(
       conversationId,
       () => backend.sendMessage(sessionId, outgoing, toolset, options),
-      record.undeliveredDecisions
+      record.undeliveredDecisions,
+      { speaker, line }
     );
     return updated;
   }
@@ -377,11 +419,13 @@ export class OverseerManager {
   // whatever decisions this turn's prompt carried: a turn that failed may never
   // have reached the model at all, so they go back on the record rather than
   // being silently lost — the point of those notices is that the assistant
-  // never contradicts what the human actually decided.
+  // never contradicts what the human actually decided. `from` is who spoke the
+  // turn and the index of their line, which the reply answers on the bus.
   private async runTurn(
     conversationId: string,
     run: () => Promise<OverseerTurn>,
-    drained: string[] = []
+    drained: string[],
+    from: { speaker: Sender | null; line: number }
   ): Promise<void> {
     try {
       const turn = await run();
@@ -395,6 +439,12 @@ export class OverseerManager {
           { role: 'assistant', text: turn.reply, at: new Date().toISOString() },
         ],
       });
+      this.postEntry(
+        conversationId,
+        current.messages.length,
+        from.speaker,
+        from.line
+      );
     } catch (err) {
       const current = this.conversations.get(conversationId);
       this.updateRecord(conversationId, {
@@ -432,13 +482,14 @@ export class OverseerManager {
   }
 
   /**
-   * Decides one queued action.
+   * Decides one queued action, as `actor` (the daemon itself when omitted);
+   * `ownerCredential` says whether they answered with the owner's app token.
    *
    * `approve: true` calls the registry's `applyAction` — the only call to it
    * in this class — and folds its real outcome into the transcript: `applied`
-   * when the effect ran, `failed` (with the thrown message, and the action
-   * left pending to retry) when it didn't. `approve: false` never calls it and
-   * records a denial.
+   * when the effect ran, `failed` (with the thrown message, the action left
+   * pending to retry, and its gate raised again with the error) when it
+   * didn't. `approve: false` never calls it and records a denial.
    *
    * Deliberately allowed while a turn is `running`: the action was queued by
    * an earlier turn, and making a human wait for the assistant to stop talking
@@ -447,7 +498,9 @@ export class OverseerManager {
   async confirmAction(
     conversationId: string,
     actionId: string,
-    approve: boolean
+    approve: boolean,
+    actor: string = SYSTEM_ADDRESS,
+    ownerCredential = false
   ): Promise<OverseerRecord> {
     const record = this.get(conversationId);
     // Membership check, not just "is this action pending anywhere": one
@@ -470,7 +523,12 @@ export class OverseerManager {
     // guard: two confirmations racing each other must not both reach apply.
     this.dropPendingAction(conversationId, actionId);
     try {
-      const applied = await this.ctx.registry.applyAction(actionId);
+      // Only a decide-tier human (or the system) can answer the action's gate.
+      const applied = await this.ctx.registry.applyAction(actionId, {
+        actor,
+        ownerCredential,
+        canDecide: true,
+      });
       this.settleAction(conversationId, applied, 'applied');
     } catch (err) {
       const message = (err as Error).message;
@@ -488,6 +546,7 @@ export class OverseerManager {
         conversationId,
         `${action.summary} — the human approved it, but it failed: ${message}`
       );
+      await this.raiseActionGate(conversationId, action, message);
       throw err;
     }
     return this.get(conversationId);
@@ -538,6 +597,11 @@ export class OverseerManager {
         ? `Allowed${decision.scope === 'session' ? ' for this conversation' : ''}: ${approval.summary}`
         : `Denied: ${approval.summary}${reason !== undefined && reason !== '' ? ` — ${reason}` : ''}`,
     });
+    this.ctx.bus?.closeGate(
+      conversationId,
+      { requestId },
+      'the call was decided'
+    );
     resolve(decision);
     return this.get(conversationId);
   }
@@ -593,7 +657,49 @@ export class OverseerManager {
         outcome: 'pending',
         text: approval.summary,
       });
+      void this.raiseApprovalGate(conversationId, approval);
     });
+  }
+
+  // Asks the owner about a parked call through a gate. A call settled while the
+  // gate was written closes it; one nobody can be asked about is denied.
+  private async raiseApprovalGate(
+    conversationId: string,
+    approval: OverseerApproval
+  ): Promise<void> {
+    const bus = this.ctx.bus;
+    if (bus === undefined) return;
+    const { requestId } = approval;
+    try {
+      await bus.raiseToolApproval(conversationId, approval);
+    } catch (err) {
+      console.error(
+        `overseer: could not raise a tool-approval gate for ${conversationId}`,
+        err
+      );
+      if (!this.isParked(conversationId, requestId)) return;
+      const why = err instanceof Error ? err.message : String(err);
+      this.decideApproval(conversationId, requestId, {
+        allow: false,
+        reason: `Dispatch could not ask a human: ${why}`,
+      });
+      return;
+    }
+    if (!this.isParked(conversationId, requestId))
+      bus.closeGate(
+        conversationId,
+        { requestId },
+        'the call was already settled'
+      );
+  }
+
+  private isParked(conversationId: string, requestId: string): boolean {
+    return (
+      this.approvalResolvers.has(requestId) &&
+      this.conversations
+        .get(conversationId)
+        ?.pendingApprovals.some((a) => a.requestId === requestId) === true
+    );
   }
 
   // Denies every call still parked on a conversation whose turn is over.
@@ -611,6 +717,11 @@ export class OverseerManager {
         outcome: 'denied',
         text: `Denied: ${approval.summary} — ${TURN_ENDED_DENIAL}`,
       });
+      this.ctx.bus?.closeGate(
+        conversationId,
+        { requestId: approval.requestId },
+        TURN_ENDED_DENIAL
+      );
     }
     this.updateRecord(conversationId, { pendingApprovals: [] });
   }
@@ -696,7 +807,8 @@ export class OverseerManager {
   // Record bookkeeping
   // ---------------------------------------------------------------------
 
-  // Records a queued action on both the confirmation list and the transcript.
+  // Records a queued action on the confirmation list and the transcript, and
+  // asks the owner to confirm it through a gate.
   private queueAction(conversationId: string, action: OverseerAction): void {
     const record = this.conversations.get(conversationId);
     if (record === undefined) return;
@@ -710,6 +822,46 @@ export class OverseerManager {
       outcome: 'pending',
       text: action.summary,
     });
+    void this.raiseActionGate(conversationId, action);
+  }
+
+  // Raises an action's gate, replacing an open one with the last error if any;
+  // a gate written after its action was decided closes at once. Never rejects.
+  private async raiseActionGate(
+    conversationId: string,
+    action: OverseerAction,
+    lastError?: string
+  ): Promise<void> {
+    const bus = this.ctx.bus;
+    if (bus === undefined) return;
+    if (lastError !== undefined)
+      bus.closeGate(
+        conversationId,
+        { actionId: action.id },
+        'the action is asked about again'
+      );
+    try {
+      await bus.raiseAction(conversationId, {
+        id: action.id,
+        summary: action.summary,
+        ...(lastError !== undefined ? { lastError } : {}),
+      });
+    } catch (err) {
+      console.error(
+        `overseer: could not raise a gate for action ${action.id}`,
+        err
+      );
+      return;
+    }
+    const pending = this.conversations
+      .get(conversationId)
+      ?.pendingActions.some((a) => a.id === action.id);
+    if (pending !== true)
+      bus.closeGate(
+        conversationId,
+        { actionId: action.id },
+        'the action was already decided'
+      );
   }
 
   // Drops a decided action off the confirmation list, appends the transcript
@@ -721,6 +873,11 @@ export class OverseerManager {
     outcome: 'applied' | 'denied'
   ): void {
     this.dropPendingAction(conversationId, action.id);
+    this.ctx.bus?.closeGate(
+      conversationId,
+      { actionId: action.id },
+      `the action was ${outcome}`
+    );
     const verb = outcome === 'applied' ? 'Applied' : 'Denied';
     this.appendMessage(conversationId, {
       role: 'action',
@@ -762,6 +919,77 @@ export class OverseerManager {
     if (record === undefined) return;
     this.updateRecord(conversationId, {
       undeliveredDecisions: [...record.undeliveredDecisions, note],
+    });
+  }
+
+  // Posts entry `index` to the thread: `speaker`'s line, or the reply to their
+  // line at `answers`. A turn no human spoke stays off the bus.
+  private postEntry(
+    conversationId: string,
+    index: number,
+    speaker: Sender | null,
+    answers?: number
+  ): void {
+    const bus = this.ctx.bus;
+    if (bus === undefined) return;
+    if (speaker === null) {
+      if (!this.loggedOffBus.has(conversationId)) {
+        this.loggedOffBus.add(conversationId);
+        console.log(
+          `overseer: ${conversationId} has turns from no human speaker; they stay off the bus`
+        );
+      }
+      return;
+    }
+    const previous = this.posts.get(conversationId) ?? Promise.resolve();
+    const next = previous
+      .then(async () => {
+        const record = this.conversations.get(conversationId);
+        const entry = record?.messages[index];
+        if (record === undefined || entry === undefined) return;
+        if (answers !== undefined) {
+          // A line the bus refused gets no reply there either.
+          const line = record.messages[answers]?.messageId;
+          if (line === undefined) return;
+          const posted = await bus.post({
+            overseerTo: speaker.address,
+            text: entry.text,
+            replyTo: line,
+          });
+          this.tagEntry(conversationId, index, posted);
+          return;
+        }
+        const replyTo =
+          record.messages.findLast((m) => m.messageId !== undefined)
+            ?.messageId ?? null;
+        const posted = await bus.post({ speaker, text: entry.text, replyTo });
+        this.tagEntry(conversationId, index, posted);
+      })
+      .catch((err: unknown) => {
+        // Refused (breaker, size, revoked, not a participant): the record
+        // keeps the line without a messageId.
+        console.error(
+          `overseer: could not post a line of ${conversationId} to the bus`,
+          err
+        );
+      });
+    this.posts.set(conversationId, next);
+  }
+
+  // Records where a posted entry landed; the first one's thread is the
+  // conversation's.
+  private tagEntry(
+    conversationId: string,
+    index: number,
+    posted: Message
+  ): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined) return;
+    this.updateRecord(conversationId, {
+      thread: record.thread ?? posted.thread,
+      messages: record.messages.map((m, i) =>
+        i === index ? { ...m, messageId: posted.id } : m
+      ),
     });
   }
 

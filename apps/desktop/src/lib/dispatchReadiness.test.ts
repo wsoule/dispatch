@@ -1,6 +1,6 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { DEFAULT_STATUS_MODEL, readyTasks } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
-import { DEFAULT_STATUS_MODEL, readyTasks } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import type { ReadinessInput } from './dispatchReadiness';

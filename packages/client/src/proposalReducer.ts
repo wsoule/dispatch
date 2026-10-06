@@ -1,4 +1,4 @@
-import type { Priority } from '@dispatch/core';
+import type { Priority } from '@dispatch-foo/core';
 
 import type { PlanProposal } from './api';
 

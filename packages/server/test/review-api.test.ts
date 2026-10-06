@@ -1,5 +1,5 @@
-import { TaskStore } from '@dispatch/core';
-import type { Finding } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
+import type { Finding } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,6 +41,7 @@ class ScriptedReviewer implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }

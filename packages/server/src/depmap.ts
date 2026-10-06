@@ -1,17 +1,17 @@
-import type { CartoMode } from '@dispatch/core';
+import type { CartoMode } from '@dispatch-foo/core';
 import {
   cartoInit,
   cartoSyncAsync,
   discoverCarto,
   openCartoReader,
-} from '@dispatch/core/carto';
+} from '@dispatch-foo/core/carto';
 import type {
   CartoBinary,
   CartoBlastRadius,
   CartoDiscovery,
   CartoReader,
   CartoRunResult,
-} from '@dispatch/core/carto';
+} from '@dispatch-foo/core/carto';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 

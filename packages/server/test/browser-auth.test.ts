@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -117,6 +117,24 @@ describe('the CORS preflight a browser sends before a bearer request', () => {
         ?.toLowerCase()
         .split(/,\s*/)
     ).toContain('authorization');
+  });
+
+  it('allows the idempotency key a message send carries', async () => {
+    const res = await rawFetch(`${baseUrl}/api/messages`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers':
+          'authorization,content-type,idempotency-key',
+      },
+    });
+    expect(
+      res.headers
+        .get('access-control-allow-headers')
+        ?.toLowerCase()
+        .split(/,\s*/)
+    ).toContain('idempotency-key');
   });
 
   it('allows nothing at all for an untrusted origin', async () => {

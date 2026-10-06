@@ -2,7 +2,7 @@ import type {
   CartoBlastRadius,
   CartoReader,
   CartoRunResult,
-} from '@dispatch/core/carto';
+} from '@dispatch-foo/core/carto';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,

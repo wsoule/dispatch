@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatch.foo/protocol/1.0.0-draft.2/schemas/gate-data.schema.json",
+  "title": "DMP gate data",
+  "description": "The `data` of a gate of each permanent gate type (sections 5.1 and 11.6): `wake` from Core, and the Dispatch profile's types (Appendix C.3). Provisional types join when they become permanent.",
+  "oneOf": [
+    { "$ref": "#/$defs/wake" },
+    { "$ref": "#/$defs/tool-approval" },
+    { "$ref": "#/$defs/scope" },
+    { "$ref": "#/$defs/agent-registration" },
+    { "$ref": "#/$defs/overseer-action" }
+  ],
+  "$defs": {
+    "wake": {
+      "description": "Asks the owner whether to wake a target (section 5.9).",
+      "type": "object",
+      "properties": {
+        "type": { "const": "wake" },
+        "target": { "$ref": "message.schema.json#/$defs/address" },
+        "message": {
+          "description": "The id of the message that asked for the wake.",
+          "$ref": "message.schema.json#/$defs/identifier"
+        }
+      },
+      "required": ["type", "target", "message"],
+      "additionalProperties": false
+    },
+    "tool-approval": {
+      "description": "Asks whether a session may make a parked tool call.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "tool-approval" },
+        "requestId": { "type": "string" },
+        "runId": { "type": "string" },
+        "conversation": { "type": "string" },
+        "tool": { "type": "string" },
+        "input": {
+          "description": "A preview of the call's input, at most 8 KiB; the host holds the full input."
+        },
+        "truncated": {
+          "description": "Present when `input` was cut to fit.",
+          "const": true
+        },
+        "floor": {
+          "description": "Whether the host's irreversibility floor holds the call, judged on its full input.",
+          "type": "boolean"
+        }
+      },
+      "required": ["type", "requestId", "tool", "input", "floor"],
+      "additionalProperties": false
+    },
+    "scope": {
+      "description": "A session asks to write outside its declared paths.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "scope" },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "reason": { "type": "string" }
+      },
+      "required": ["type", "paths", "reason"],
+      "additionalProperties": false
+    },
+    "agent-registration": {
+      "description": "Asks whether an agent install may register.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "agent-registration" },
+        "agent": { "$ref": "message.schema.json#/$defs/address" },
+        "client": { "type": "string" },
+        "requestedBy": { "$ref": "message.schema.json#/$defs/address" },
+        "key": { "type": "string", "pattern": "^[0-9a-f]{16}$" }
+      },
+      "required": ["type", "agent", "client"],
+      "additionalProperties": false
+    },
+    "overseer-action": {
+      "description": "Asks whether the overseer may take an action.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "overseer-action" },
+        "conversation": { "type": "string" },
+        "actionId": { "type": "string" },
+        "summary": { "type": "string" }
+      },
+      "required": ["type", "conversation", "actionId", "summary"],
+      "additionalProperties": false
+    }
+  }
+}

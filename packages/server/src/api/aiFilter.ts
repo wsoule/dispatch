@@ -1,4 +1,4 @@
-import { isContainer, loadConfig, parentIdsOf } from '@dispatch/core';
+import { isContainer, loadConfig, parentIdsOf } from '@dispatch-foo/core';
 
 import {
   type AiFilterVocabulary,

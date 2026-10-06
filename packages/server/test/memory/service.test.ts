@@ -1,0 +1,446 @@
+import { TaskStore } from '@dispatch-foo/core';
+import type { DeliveryEngine } from '@dispatch-foo/protocol';
+import type { Principal } from '@dispatch/memory';
+import {
+  createMemoryIds,
+  newMemoryEntry,
+  renderReceiptFile,
+} from '@dispatch/memory';
+import { describe, expect, it } from 'bun:test';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { EventBus } from '../../src/events.js';
+import type { ServerEvent } from '../../src/events.js';
+import { LedgerStore } from '../../src/ledger.js';
+import { PROBED_CLAUDE_CODE_VERSION } from '../../src/memory/claudeModes.js';
+import { memoryRestoreDir } from '../../src/memory/receipts.js';
+import { openMemory, overseerMemory } from '../../src/memory/service.js';
+import type { OpenMemoryDeps } from '../../src/memory/service.js';
+import { GateHandlers } from '../../src/messaging/gates.js';
+import { waitFor } from '../messaging/harness.js';
+import { BEFORE_CUTOVER, quietDaemon, seedLedger } from './fixtures.js';
+
+const pause = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+// Messaging with no gate open, enough for recover()'s stray-gate check.
+function noOpenGates(): OpenMemoryDeps['messaging'] {
+  const engine = new Proxy(
+    {},
+    {
+      get: (_, prop) => {
+        if (prop === 'openBlocking') return () => [];
+        throw new Error('this test raises no gates');
+      },
+    }
+  ) as DeliveryEngine;
+  return { engine, gates: new GateHandlers(), store: { getAgent: () => null } };
+}
+
+function setup(over: Partial<OpenMemoryDeps> = {}) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'memory-service-')));
+  const store = TaskStore.init(root);
+  const events = new EventBus();
+  const seen: ServerEvent[] = [];
+  events.subscribe((e) => seen.push(e));
+  const ledgerStore = new LedgerStore(root);
+  const memory = openMemory({
+    rootDir: root,
+    store,
+    events,
+    ledgerStore,
+    ...quietDaemon(root),
+    dbPath: join(root, 'memory.db'),
+    ...over,
+  });
+  return { root, memory, ledgerStore, events, seen };
+}
+
+describe('restoring staged team memory', () => {
+  it('drains files past the per-pass limit on a timer, not only at the next boot', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-drain-home-'))
+    );
+    const t = setup({ restoreBatch: 1, restoreDrainMs: 10 });
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const ids = createMemoryIds();
+    for (const title of ['one', 'two', 'three']) {
+      const e = newMemoryEntry(
+        {
+          scope: 'team',
+          kind: 'fact',
+          title,
+          body: `${title} body`,
+          author: 'human:wyat',
+          trust: 'human',
+        },
+        ids.entry(Date.now()),
+        new Date().toISOString()
+      );
+      writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    }
+    const first = await t.memory.restoreStaged();
+    expect(first).toMatchObject({ restored: 1, deferred: 2 });
+    expect(first?.pending).not.toContain('restart');
+    await waitFor(() => !existsSync(staging));
+    expect(t.memory.shared?.listProposals()).toHaveLength(3);
+    // Health counts every pass, not just the last one.
+    expect(t.memory.health(null).restore).toMatchObject({
+      restored: 3,
+      deferred: 0,
+      problems: [],
+    });
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore problems', () => {
+  it('names each staged file a restore could not take, for /api/health', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-problem-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, 'notes.md'), 'stray\n');
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toEqual([
+      'memory restore: notes.md: not a memory receipt file name',
+    ]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore health over several passes', () => {
+  it('counts each file once and clears a problem once its file is gone', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-dedupe-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(join(staging, 'notes.md'), 'stray\n');
+    const e = newMemoryEntry(
+      {
+        scope: 'team',
+        kind: 'fact',
+        title: 'kept',
+        body: 'kept body',
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      createMemoryIds().entry(Date.now()),
+      new Date().toISOString()
+    );
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    await t.memory.restoreStaged();
+    // A second pass meets the same stray file: one problem line, not two.
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toHaveLength(1);
+    expect(t.memory.health(null).restore).toMatchObject({
+      restored: 1,
+      skipped: 0,
+    });
+    rmSync(join(staging, 'notes.md'));
+    await t.memory.restoreStaged();
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('restore retries and restarts', () => {
+  const lesson = (title: string) =>
+    newMemoryEntry(
+      {
+        scope: 'team',
+        kind: 'fact',
+        title,
+        body: `${title} body`,
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      createMemoryIds().entry(Date.now()),
+      new Date().toISOString()
+    );
+
+  it('keeps retrying a staging dir it could not empty until it can', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-retry-home-'))
+    );
+    const t = setup({ restoreDrainMs: 10 });
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const e = lesson('stuck');
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    chmodSync(staging, 0o500);
+    try {
+      await t.memory.restoreStaged();
+      expect(t.memory.restoreProblems()[0]).toContain('could not remove');
+    } finally {
+      chmodSync(staging, 0o700);
+    }
+    await waitFor(() => !existsSync(staging));
+    expect(t.memory.restoreProblems()).toEqual([]);
+    t.memory.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+
+  it('shows the restore totals again after a restart', async () => {
+    const home = process.env.DISPATCH_HOME;
+    process.env.DISPATCH_HOME = realpathSync(
+      mkdtempSync(join(tmpdir(), 'memory-restart-home-'))
+    );
+    const t = setup();
+    const staging = memoryRestoreDir(t.root);
+    mkdirSync(staging, { recursive: true });
+    const e = lesson('kept');
+    writeFileSync(join(staging, `${e.id}.md`), renderReceiptFile(e));
+    await t.memory.restoreStaged();
+    t.memory.close();
+    const reopened = openMemory({
+      rootDir: t.root,
+      store: TaskStore.init(t.root),
+      events: new EventBus(),
+      ledgerStore: t.ledgerStore,
+      ...quietDaemon(t.root),
+      dbPath: join(t.root, 'memory.db'),
+    });
+    expect(reopened.health(null).restore).toMatchObject({ restored: 1 });
+    reopened.close();
+    if (home === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = home;
+  });
+});
+
+describe('openMemory', () => {
+  it('imports at boot and again on ledger.changed, announcing a team change', () => {
+    const t = setup();
+    expect(t.memory.importLedger()?.outcome).toBe('ok');
+    seedLedger(
+      t.root,
+      {
+        kind: 'hazard',
+        title: 'lesson',
+        detail: 'd',
+        authoredBy: 'human:wyat',
+      },
+      BEFORE_CUTOVER
+    );
+    t.events.broadcast({ type: 'ledger.changed' });
+    // After the first import, a row that arrives waits for a human.
+    expect(t.memory.shared?.countOpenProposals()).toBe(1);
+    expect(t.seen).toContainEqual({ type: 'memory.changed', scope: 'team' });
+    t.memory.close();
+  });
+
+  it('keeps the last import across a reopen, and a dry run never replaces it', () => {
+    const t = setup();
+    seedLedger(
+      t.root,
+      {
+        kind: 'hazard',
+        title: 'lesson',
+        detail: 'd',
+        authoredBy: 'human:wyat',
+      },
+      BEFORE_CUTOVER
+    );
+    expect(t.memory.importLedger()?.memory.imported).toBe(1);
+    expect(t.memory.importLedger({ dryRun: true })?.outcome).toBe('dry-run');
+    expect(t.memory.lastLedgerImport()?.outcome).toBe('ok');
+    t.memory.close();
+    const reopened = openMemory({
+      rootDir: t.root,
+      store: TaskStore.init(t.root),
+      events: new EventBus(),
+      ledgerStore: t.ledgerStore,
+      ...quietDaemon(t.root),
+      dbPath: join(t.root, 'memory.db'),
+    });
+    expect(reopened.lastLedgerImport()).toMatchObject({
+      outcome: 'ok',
+      memory: { imported: 1 },
+    });
+    expect(reopened.health(null)).toMatchObject({
+      available: true,
+      entries: 1,
+      openProposals: 0,
+      ledgerImport: { outcome: 'ok' },
+    });
+    reopened.close();
+  });
+
+  it('reports memory unavailable, and never throws, when memory.db will not open', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'memory-service-')));
+    const dbPath = join(root, 'memory.db');
+    mkdirSync(dbPath); // a directory where the database file should be cannot be opened
+    const memory = openMemory({
+      rootDir: root,
+      store: TaskStore.init(root),
+      events: new EventBus(),
+      ledgerStore: new LedgerStore(root),
+      ...quietDaemon(root),
+      dbPath,
+    });
+    expect(memory.engine).toBeNull();
+    expect(memory.health(null)).toMatchObject({ available: false });
+    expect(() => memory.requireEngine()).toThrow(/unavailable|will not open/);
+    expect(memory.importLedger()).toBeNull();
+    memory.close();
+  });
+
+  // The first pass follows recover(), so it never races the gate recovery
+  // and messaging replay that boot runs before it.
+  it('sweeps memory.db once recover() has run, never before', async () => {
+    const t = setup({ messaging: noOpenGates() });
+    const bak = join(t.root, 'memory.db.bak');
+    await pause(30);
+    expect(existsSync(bak)).toBe(false);
+    expect(t.memory.health(null).lastDecayAt).toBeNull();
+    await t.memory.recover();
+    await waitFor(() => existsSync(bak));
+    expect(t.memory.health(null).lastDecayAt).not.toBeNull();
+    t.memory.close();
+  });
+
+  it('sweeps nothing once closed', async () => {
+    const t = setup();
+    t.memory.close();
+    const reopened = t.memory.personal.personal('self');
+    await pause(30);
+    expect(reopened.meta('last_decay_at')).toBeNull();
+    expect(existsSync(join(t.root, 'personal', 'self.db.bak'))).toBe(false);
+    t.memory.personal.close();
+  });
+
+  it('records the probed Claude Code version at boot, replacing an older one', () => {
+    const t = setup();
+    expect(t.memory.shared?.meta('claude-probe-passed')).toBe(
+      PROBED_CLAUDE_CODE_VERSION
+    );
+    t.memory.shared?.setMeta('claude-probe-passed', '0.0.1');
+    t.memory.close();
+    const reopened = setup({ dbPath: join(t.root, 'memory.db') });
+    expect(reopened.memory.shared?.meta('claude-probe-passed')).toBe(
+      PROBED_CLAUDE_CODE_VERSION
+    );
+    reopened.memory.close();
+  });
+
+  it('forgets a recorded probe when this build has none, so export is never chosen', () => {
+    const t = setup();
+    t.memory.close();
+    const reopened = setup({
+      dbPath: join(t.root, 'memory.db'),
+      probedClaudeVersion: null,
+    });
+    expect(reopened.memory.shared?.meta('claude-probe-passed')).toBeNull();
+    reopened.memory.close();
+  });
+
+  it('never announces personal ids', () => {
+    const t = setup();
+    t.memory.host.changed({ scope: 'personal', id: 'mem-secret' });
+    expect(t.seen).toContainEqual({
+      type: 'memory.changed',
+      scope: 'personal',
+    });
+    expect(JSON.stringify(t.seen)).not.toContain('mem-secret');
+    t.memory.close();
+  });
+});
+
+describe('overseerMemory', () => {
+  it('reads project and team memory, never its owner’s personal entries', async () => {
+    const t = setup();
+    const engine = t.memory.requireEngine();
+    const owner: Principal = {
+      address: 'human:wyat',
+      canDecide: true,
+      kind: 'human',
+      ownerCredential: true,
+    };
+    const personal = await engine.save(owner, {
+      scope: 'personal',
+      kind: 'fact',
+      title: 'SECRET-OVERSEER-title',
+      body: 'SECRET-OVERSEER-body',
+    });
+    if (personal.status !== 'active') throw new Error('expected an entry');
+    await engine.save(owner, {
+      scope: 'project',
+      kind: 'convention',
+      title: 'overseer-visible convention',
+      body: 'b',
+    });
+    const port = overseerMemory(t.memory);
+    const all = JSON.stringify(port.search({ query: '' }));
+    expect(all).toContain('overseer-visible convention');
+    expect(all).not.toContain('SECRET-OVERSEER-title');
+    expect(JSON.stringify(port.search({ query: 'SECRET' }))).not.toContain(
+      personal.id
+    );
+    for (const ref of [personal.id, personal.handle])
+      expect(() => port.read(ref)).toThrow(/you can see/);
+    t.memory.close();
+  });
+
+  // The same shape the MCP's memory_read returns: no revision snapshots, and
+  // the body fenced as untrusted text.
+  it('reads an entry without revision snapshots, its body fenced', async () => {
+    const t = setup();
+    const owner: Principal = {
+      address: 'human:wyat',
+      canDecide: true,
+      kind: 'human',
+      ownerCredential: true,
+    };
+    const saved = await t.memory.requireEngine().save(owner, {
+      scope: 'team',
+      kind: 'hazard',
+      title: 'watch the lockfile',
+      body: 'RAW-BODY-text',
+    });
+    if (saved.status !== 'active') throw new Error('expected an entry');
+    const read = overseerMemory(t.memory).read(saved.handle) as {
+      entry: Record<string, unknown>;
+      body: string;
+      revisions: Record<string, unknown>[];
+    };
+    expect(read.entry.body).toBeUndefined();
+    expect(read.body).toContain('RAW-BODY-text');
+    expect(read.body).not.toBe('RAW-BODY-text');
+    expect(Object.keys(read.revisions[0]).sort()).toEqual([
+      'at',
+      'by',
+      'cause',
+      'rev',
+    ]);
+    t.memory.close();
+  });
+});

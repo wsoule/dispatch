@@ -22,7 +22,7 @@ import type { TaskStoreBackend } from './storeBackend.js';
 // because it booted there — only a project deliberately moved to the database
 // gets a marker, written once when that move happens.
 //
-// This lives in `@dispatch/core` because three packages need it and only core
+// This lives in `@dispatch-foo/core` because three packages need it and only core
 // is depended on by all of them: `@dispatch/server` re-exports these two
 // (packages/server/src/storage.ts) and the CLI calls them directly. The MCP
 // server still carries its own copy in packages/mcp/src/daemon.ts, alongside

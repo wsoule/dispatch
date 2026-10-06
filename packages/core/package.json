@@ -1,8 +1,19 @@
 {
-  "name": "@dispatch/core",
+  "name": "@dispatch-foo/core",
   "version": "0.24.0",
-  "private": true,
+  "description": "Shared model and helpers for Dispatch: tasks, runs, git and SQLite, used by the daemon, the CLI and the protocol engine.",
+  "homepage": "https://dispatch.foo/",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wsoule/dispatch.git",
+    "directory": "packages/core"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -22,6 +33,9 @@
       "import": "./dist/browser.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsdown --clean",
     "test": "bun test",
@@ -35,5 +49,8 @@
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

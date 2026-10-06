@@ -1,4 +1,4 @@
-import { loadConfig, resolveTypesafeApiKey } from '@dispatch/core';
+import { loadConfig, resolveTypesafeApiKey } from '@dispatch-foo/core';
 import { TypeSafeClient } from '@typesafe-ai/sdk';
 import type {
   EntryType,

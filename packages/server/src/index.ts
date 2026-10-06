@@ -1,19 +1,23 @@
 import {
   ActorContext,
+  DEFAULT_MESSAGING,
+  describeDroppedEntry,
   FileCommentStore,
   formatMigrationReport,
+  generateSyncedRunId,
   generateSyncedTaskId,
   hasLegacyState,
   importLegacyProject,
   initProjectStores,
   isMergeDriverResolvable,
   loadConfig,
+  MAX_HANDLE_BYTES,
   openProjectStores,
   SqliteTaskStore,
   syncSettings,
   TaskStore,
   totalImported,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CartoMode,
   CommentStorePort,
@@ -23,22 +27,32 @@ import type {
   SyncConfig,
   TaskStoreBackend,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
+import { printable } from '@dispatch-foo/federation';
+import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
+import type { A2ABridge } from './a2a/bridge.js';
+import { openA2ABridge } from './a2a/bridge.js';
+import type { WatchLimits } from './a2a/portRoutes.js';
+import type { ListenerOverrides } from './a2a/settings.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
   bearerToken,
+  createTaskChecked,
   handleApi,
   isTrustedOrigin,
   mintDaemonTokens,
   rejectUnauthorized,
+  validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
@@ -56,13 +70,20 @@ import {
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
+import { docGateHandler, docGatePort } from './docs/gate.js';
+import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
+import { LinearDocsAdapter } from './docs/linear.js';
+import { docsRestoreDir, openDocs } from './docs/open.js';
+import { docsReceiptsStep } from './docs/receipts.js';
+import { redispatchPublishes } from './docs/routes.js';
 import { EventBus } from './events.js';
+import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
 import { resolvePushTarget } from './gitTarget.js';
-import { TokenRegistry } from './identity.js';
+import { sha256, TokenRegistry } from './identity.js';
 import { IdleShutdown } from './idleShutdown.js';
 import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
@@ -75,11 +96,31 @@ import {
   triageInbox,
 } from './judgments/inboxTriage.js';
 import { computeChecklist } from './judgments/landingChecklist.js';
-import { LedgerStore } from './ledger.js';
+import { DEP_MAP_DEGRADED_TITLE, LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
+import type { PreflightResult } from './memory/claudeModes.js';
+import { docsOverflowPort } from './memory/overflow.js';
+import { memoryReceiptsStep, memoryRestoreDir } from './memory/receipts.js';
+import { openMemory, overseerMemory } from './memory/service.js';
+import type { MemoryService } from './memory/service.js';
+import { newestOpenRoot } from './messaging/conversations.js';
+import {
+  closeOrphanedGates,
+  openHumanDecisions,
+  SYSTEM_SENDER,
+} from './messaging/gates.js';
+import { implicitEpicMembers } from './messaging/host.js';
+import { teamDeciders } from './messaging/operatorRouting.js';
+import {
+  createOverseerBus,
+  ensureOverseerActor,
+  overseerToolMessaging,
+} from './messaging/overseerBus.js';
+import type { Messaging } from './messaging/service.js';
+import { openMessaging } from './messaging/service.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
@@ -93,7 +134,7 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { boardSyncDir, scopeRequestsPath } from './orchestrator/paths.js';
+import { boardSyncDir, taskAuthorshipPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -104,13 +145,12 @@ import {
 } from './orchestrator/pr.js';
 import { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import type { PrWorktreeManagerCtx } from './orchestrator/prWorktree.js';
-import { QuestionRegistry } from './orchestrator/questions.js';
 import {
   generateRepoDigest,
   RepoDigestCache,
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
-import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
+import { TaskAuthorship } from './orchestrator/taskAuthorship.js';
 import { runKind, TERMINAL_RUN_STATES } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import {
@@ -127,6 +167,7 @@ import {
   previewResponseHeaders,
   previewUpstreamUrl,
 } from './previewHeaders.js';
+import type { ReceiptsStep } from './receipts/exporter.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { sessionOrigins, sessionToken } from './session.js';
@@ -140,11 +181,22 @@ import {
   SyncWorktree,
 } from './sync/worktree.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
-import { SyncRepo } from './team/boardSync/repo.js';
-import { BoardSyncService } from './team/boardSync/service.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
+import { appendAuditToReceipts } from './team/federation/audit.js';
+import type { Federation } from './team/federation/daemon.js';
+import {
+  buildFederation,
+  wireAgentsAndChannels,
+  wireDocSync,
+  wireMessagingFederation,
+  wireTeamMemory,
+} from './team/federation/daemon.js';
+import { rekeyIfKeysLost } from './team/federation/keys.js';
+import type { FederationContext } from './team/federation/routes.js';
+import type { FederationService } from './team/federation/service.js';
 import type { Team } from './team/index.js';
-import { createTeam, syncSeats } from './team/index.js';
+import { createTeam } from './team/index.js';
+import { hostSpawner } from './terminalHost.js';
 import { TerminalRegistry } from './terminals.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
@@ -169,6 +221,10 @@ export interface ServerHandle {
   // store is the backend-selected one the API writes through, which is what
   // its blocked-finding merge gate reads.
   orchestrator: Orchestrator;
+  // Exposed the same way, so a test can mint a run token or seed a message.
+  messaging: Messaging;
+  // The A2A bridge: its listener status, store and port.
+  a2a: A2ABridge;
   // Exposed for introspection/tests — e.g. calling pollOnce() directly to
   // populate cachedPrs() deterministically instead of racing its internal
   // poll timer (started/stopped by startServer itself below).
@@ -176,6 +232,8 @@ export interface ServerHandle {
   // Task 7: exposed the same way prManager is — tests assert against real
   // git state (create/sync/removeIfClean/list) without going through HTTP.
   prWorktrees: PrWorktreeManager;
+  // Exposed for tests, as mergeQueue is: they reach the memory store directly.
+  memory: MemoryService;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
@@ -279,6 +337,13 @@ export interface StartServerOptions {
   // autoCommit: true and every startServer()-based test would otherwise boot
   // a live interval.
   boardSyncPeriodicMs?: number;
+  // The clock board sync reads (the ledger's hybrid clock, the clock guard,
+  // license expiry); test-only, like boardSyncDebounceMs.
+  federationNow?: () => number;
+  // Debounce for a board sync pass after a local change; test-only.
+  federationDebounceMs?: number;
+  // Lets a test follow the fake relay on ws://127.0.0.1; test-only.
+  federationAllowLoopbackRelay?: boolean;
   // Debounce for the receipts exporter's response to a task change. Defaults
   // to ReceiptsScheduler's own multi-second default; tests pass something much
   // shorter. There is no periodic counterpart: the export has no remote to
@@ -292,6 +357,9 @@ export interface StartServerOptions {
   // A main-thread heartbeat gap longer than this is logged as a stall, with
   // the section the daemon was in (see EventLoopWatchdog). Defaults to 5s.
   watchdogStallMs?: number;
+  // Replaces the Claude export preflight (CLI version, env, managed settings),
+  // so a test can choose export mode without a real Claude Code install.
+  memoryPreflight?: () => Promise<PreflightResult>;
   // Exit on its own after this long with no requests, no connected client
   // and no live work (see IdleShutdown for the full rule). Unset means never:
   // only a daemon the CLI spawned in the background sets it, since a
@@ -301,6 +369,17 @@ export interface StartServerOptions {
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   onIdle?: () => void;
+  // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
+  a2a?: ListenerOverrides;
+  // Standalone hosts' watch-stream limits; tests shorten the keepalive.
+  a2aWatchLimits?: Partial<WatchLimits>;
+  // How long a signature peer must answer unverifiably before it is
+  // auth-failed (an hour); tests shorten it.
+  a2aUnverifiedWindowMs?: number;
+  // Unpair notices' and key pushes' retry delays; tests shorten them.
+  a2aNoticeBackoffMs?: number[];
+  // How often teammate links exchange (15 s); tests shorten it.
+  a2aLinkIntervalMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -344,7 +423,7 @@ const DESKTOP_DIST_DIR = join(
  * recorded a choice yet; once it has, the marker is the answer. No marker and
  * no variable means `sqlite`: the database is the default, and a project that
  * still has a markdown board is moved across by the one-time import in
- * `@dispatch/core`'s migrate.ts, which `startServer` runs before it serves
+ * `@dispatch-foo/core`'s migrate.ts, which `startServer` runs before it serves
  * anything — the board is copied in one transaction, or the daemon refuses
  * to come up, so a boot never leaves a repo with two half-states. The marker
  * is written only after that import has committed.
@@ -497,10 +576,11 @@ function withCors(
     // `authorization` must stay listed: every guarded route needs the bearer
     // header, and the desktop webview and dev harness are both cross-origin to
     // this daemon, so dropping it makes the browser discard their requests at
-    // the preflight before the daemon ever sees them.
+    // the preflight before the daemon ever sees them. The same holds for the
+    // `idempotency-key` a message send carries.
     res.headers.set(
       'access-control-allow-headers',
-      'content-type, authorization'
+      'content-type, authorization, idempotency-key'
     );
     // The allowed origin is request-dependent, so caches must key on it.
     // Appended: a gzipped reply already varies by accept-encoding.
@@ -571,10 +651,18 @@ async function serveIndexHtml(
  *  leaving. `handle` is null only for a socket whose credential resolved to
  *  nobody, which the upgrade guard already refuses — kept nullable so the
  *  type does not promise more than the guard does. */
-interface SocketData {
+interface SocketData extends SocketAudience {
   handle: string | null;
-  ref: string | null;
   release?: () => boolean;
+  /** The credential the socket opened with, re-resolved on every event (M2). */
+  token?: string;
+}
+
+// Constant-time, like principal.ts: /ws must tell the shared agent token
+// apart from the owner's app token, since both resolve to the owner.
+function isAgentToken(presented: string | null, agentToken: string): boolean {
+  if (presented === null) return false;
+  return timingSafeEqual(sha256(presented), sha256(agentToken));
 }
 
 // How often the idle sweep runs. Well under the shortest sensible
@@ -868,6 +956,15 @@ async function bootServer(
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
+  for (const entry of actorContext.droppedEntries) {
+    const fix =
+      entry.problem === 'too-long'
+        ? `its handle is too long: shorten it to at most ${MAX_HANDLE_BYTES} bytes`
+        : `it is malformed: fix it so it has an email and a handle of at most ${MAX_HANDLE_BYTES} bytes, made of lowercase letters, digits, '.', '_' and '-' and starting with a letter or digit`;
+    console.warn(
+      `team.yml: skipped ${describeDroppedEntry(entry)}: ${fix}; until it is fixed, dispatchd will not write team.yml or add any new teammate to it`
+    );
+  }
 
   // Credentials, once there is someone for them to speak for. The pair may be
   // supplied (a harness presetting the decide-tier token); the registry is
@@ -877,7 +974,7 @@ async function bootServer(
   // Elastic License 2.0); the registry asks it about any token that is not
   // one of the daemon's own two.
   const tokenPair = opts.tokens ?? mintDaemonTokens();
-  const team = createTeam(rootDir);
+  const team = createTeam(rootDir, actorContext.member.handle);
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
@@ -950,7 +1047,23 @@ async function bootServer(
   }
   // With sync on, everything gets the store that records each write as a
   // change for the other replicas; the board it writes to is the same one.
-  let boardSync: BoardSyncService | null = null;
+  let boardSync: FederationService | null = null;
+  let federation: Federation | null = null;
+  let federationContext: FederationContext | null = null;
+  const federationNow = (): Date =>
+    new Date(opts.federationNow?.() ?? Date.now());
+  // A key file lost with state.db kept: start over as a new replica id (F-D35).
+  if (syncConfig !== null) {
+    const rekeyed = rekeyIfKeysLost(
+      boardSyncDir(rootDir),
+      join(boardSyncDir(rootDir), 'state.db'),
+      actorContext.member.handle
+    );
+    if (rekeyed !== null)
+      console.warn(
+        `dispatchd: keys/replica.json was missing; this machine is a new replica and must be admitted again (was ${rekeyed})`
+      );
+  }
   const syncLedger =
     syncConfig === null
       ? null
@@ -960,7 +1073,8 @@ async function bootServer(
           // every write is attributed to — not the OS login, which two
           // people on stock cloud machines share and one person can have
           // two of. The license counts sync seats by it.
-          actorContext.member.handle
+          actorContext.member.handle,
+          () => federationNow().getTime()
         );
   const syncedStore =
     syncLedger === null || !(stores.tasks instanceof SqliteTaskStore)
@@ -971,6 +1085,24 @@ async function bootServer(
   const store: TaskStorePort = syncedStore ?? stores.tasks;
   const cache = new TaskCache();
   const events = new EventBus();
+  // M2: a socket's tier is what its credential holds now, not at upgrade; one
+  // whose credential was revoked or expired is closed on the next event.
+  // A detached socket's person is no longer present.
+  events.setAudienceCheck(
+    (client) => {
+      const data = client.data as SocketData | undefined;
+      if (data === undefined || data.token === undefined) return data ?? null;
+      const who = tokens.registry.resolve(data.token);
+      return who === null ? null : { ...data, ref: who.ref, tier: who.tier };
+    },
+    (client) => {
+      const data = client.data as SocketData | undefined;
+      const release = data?.release;
+      if (data === undefined || release === undefined) return;
+      data.release = undefined;
+      if (release()) events.broadcast({ type: 'presence.changed' });
+    }
+  );
 
   // Refresh + broadcast on any on-disk change, regardless of who made it:
   // the watcher names the tasks whose files changed, the cache re-reads just
@@ -1033,6 +1165,21 @@ async function bootServer(
       `dispatchd: no main branch for ${rootDir}; task files won't be committed`
     );
   }
+  // Docs open before the boot receipt export and need nothing from messaging;
+  // a docs.db this build cannot open leaves docs unavailable, never the daemon down.
+  const docsHost = new DaemonDocsHost({
+    store,
+    events,
+    rootDir,
+    // Revision times and op clocks read one clock (the tests inject it).
+    now: federationNow,
+    refreshTask: (taskId) => cache.refresh(store, [taskId]),
+  });
+  const docs = openDocs({
+    rootDir,
+    host: docsHost,
+    ownerRef: actorContext.humanRef,
+  });
   // The receipts exporter: the database backend's counterpart to the board
   // syncer above, and the other half of the split that comment describes. A
   // file-backed project's task files are already committed into the user's own
@@ -1044,6 +1191,8 @@ async function bootServer(
   // because nothing resolvable" case to log. Whether it runs at all is
   // config.yml's `receipts.enabled`, re-read on every pass rather than latched
   // here.
+  // Memory opens further down; until it does, its step writes nothing.
+  let memoryReceipts: ReceiptsStep | null = null;
   const receiptsScheduler =
     store instanceof TaskStore
       ? null
@@ -1055,7 +1204,25 @@ async function bootServer(
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
+          steps: [
+            docsReceiptsStep(docs.service, docsRestoreDir(rootDir)),
+            (dir) =>
+              memoryReceipts?.(dir) ?? { changed: 0, removed: 0, problems: [] },
+          ],
+          // The federation audit log, once board sync built it (Task 24).
+          appendices: [
+            (dir) => {
+              if (federation !== null)
+                appendAuditToReceipts(federation.fed, dir);
+            },
+          ],
         });
+  // Team doc changes that reach a sealed head (seals, reviews, status, links,
+  // renames, deletes) export; open-revision amends and new heads wait for the seal.
+  docsHost.onChange((c) => {
+    if (c.scope === 'team' && c.kind !== 'amended' && c.kind !== 'revised')
+      receiptsScheduler?.notifyChanged();
+  });
   // One full export as the daemon comes up: it creates the log on a project
   // turning receipts on for the first time, and reconciles one left dirty by a
   // daemon that died mid-burst. In the background, in slices, so the server
@@ -1082,20 +1249,19 @@ async function bootServer(
         `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
-      boardSync = new BoardSyncService({
-        store: syncedStore,
+      // Only here are the federation's store and roster built; the team
+      // routes read them from `federation`.
+      federation = buildFederation({
+        syncDir: boardSyncDir(rootDir),
         ledger: syncLedger,
-        repo: new SyncRepo(
-          join(boardSyncDir(rootDir), 'repo'),
-          remoteUrl,
-          syncConfig.branch,
-          syncLedger.replica,
-          defaultAsyncGitRunner
-        ),
-        remote: remoteUrl,
+        store: syncedStore,
+        team,
+        handle: actorContext.member.handle,
+        build: packageJson.version,
+        remoteUrl,
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
-        ...syncSeats(team),
+        git: defaultAsyncGitRunner,
         // A teammate's change lands like a local edit: the cache is resynced
         // and every client told which tasks moved, so boards refresh without
         // anyone reloading.
@@ -1105,7 +1271,39 @@ async function bootServer(
             events.broadcast({ type: 'task.changed', ids: changed });
           }
         },
+        now: federationNow,
+        ...(opts.federationDebounceMs === undefined
+          ? {}
+          : { debounceMs: opts.federationDebounceMs }),
+        ...(opts.federationAllowLoopbackRelay === true
+          ? { allowLoopbackRelay: true }
+          : {}),
       });
+      boardSync = federation.service;
+      const { roster, fed } = federation;
+      federationContext = {
+        roster,
+        fed,
+        handle: actorContext.member.handle,
+        device: hostname().split('.')[0] ?? 'machine',
+        now: federationNow,
+        // The origin warning names the code remote only when sync.repo is unset.
+        remote: syncConfig.repo === undefined ? remoteUrl : null,
+        label: (replica) => roster.label(replica),
+        ...(opts.federationAllowLoopbackRelay === true
+          ? { allowLoopbackRelay: true }
+          : {}),
+        observer: () => {
+          const watcher = [...(roster.view()?.members.values() ?? [])].find(
+            (m) => m.observer
+          );
+          if (watcher === undefined) return null;
+          const device = printable(
+            fed.pinned(watcher.replica)?.device ?? watcher.replica
+          );
+          return `${watcher.handle}'s ${device}`;
+        },
+      };
       const published = syncedStore.bootstrap();
       if (published > 0) {
         console.log(
@@ -1146,12 +1344,9 @@ async function bootServer(
   // probed jj through that seam would decide a demo repo was jj-colocated and
   // take the jj rebase path against a repo with no jj at all.
   const jj = new JjManager(rootDir);
-  // Shared with apiCtx below so a decision an agent records mid-run is
-  // visible to buildTaskPrompt on the very next dispatch, no restart needed.
-  //
-  // Backed by the same store the tasks came from: the database's ledger table
-  // when this project has one, and `.dispatch/ledger.jsonl` otherwise. Both
-  // satisfy `LedgerStorePort`, so nothing downstream branches on which.
+  // The audit ledger: the daemon's receipts, plus lesson rows memory imports.
+  // Backed by the same store the tasks came from (the database's ledger table,
+  // or `.dispatch/ledger.jsonl`); both satisfy `LedgerStorePort`.
   const ledgerStore: LedgerStorePort =
     stores.records?.ledger ?? new LedgerStore(rootDir);
   // Built here, above the Orchestrator, rather than beside ReviewRunner where
@@ -1186,7 +1381,7 @@ async function bootServer(
     onDegrade: ({ detail }) => {
       ledgerStore.add({
         kind: 'hazard',
-        title: 'dependency map degraded',
+        title: DEP_MAP_DEGRADED_TITLE,
         detail: `carto unavailable, using the built-in scanner: ${detail}`,
         // Detected by the dep-map cache itself, not raised by a teammate.
         authoredBy: 'none',
@@ -1227,13 +1422,6 @@ async function bootServer(
           readDigestConfig
         )
       : new RepoDigestCache(rootDir);
-  // Out-of-scope edit requests from run agents. Built ahead of the
-  // orchestrator because resumeRun hands a restarted run's requests to its
-  // successor; persisted so the card a human had not decided when dispatchd
-  // restarted comes back instead of vanishing with the process.
-  const scopeRequests = new ScopeRequestRegistry({
-    path: scopeRequestsPath(rootDir),
-  });
   // The TypeSafe judgment client, resolved once at boot: a key added later
   // needs a restart, same as the executors. Tests pass `judgments`
   // explicitly (null disables).
@@ -1245,11 +1433,9 @@ async function bootServer(
     rootDir,
     store,
     cache,
-    scopeRequests,
     judgments,
     events,
     jj,
-    ledgerStore,
     findingStore,
     comments: commentStore,
     // `null` on the file backend, where the run transcript is evidence's only
@@ -1263,7 +1449,20 @@ async function bootServer(
     // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
+    // Docs' answer: the bridge's evidence once it has opened (see bindA2AOrigin).
+    isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
   });
+  orchestrator.setDocsPort(docs.service);
+  // A publish task's run starts with the doc's recorded revision in its worktree.
+  orchestrator.setWorktreeSeed((taskId, wt) =>
+    docs.service.seedFor(taskId, wt)
+  );
+  // A teammate's synced change never moves a publishing task's risk.
+  syncedStore?.setRiskGuard({
+    publishing: (taskId) => docs.service.publishing(taskId),
+    riskChanged: (taskId) => docs.service.riskChangedDuringPublish(taskId),
+  });
+  if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
@@ -1271,14 +1470,171 @@ async function bootServer(
     registerCodexIfInstalled(orchestrator);
     registerCliExecutors(orchestrator, rootDir);
   }
-  // Questions an agent raised mid-run. A run going terminal drops its own, so
-  // the app never shows a card whose answer nobody is listening for.
-  const questions = new QuestionRegistry();
-  orchestrator.onRunTerminal((meta) => {
-    if (questions.closeRun(meta.id) > 0) {
-      events.broadcast({ type: 'question.closed', runId: meta.id });
-    }
+  // Federated mail (F2): homes, run presence and the engine's hooks. The
+  // presence hooks go in before messaging's own, so a run's live op is
+  // queued before held mail reaches it.
+  const messagesRef: { current: Messaging | null } = { current: null };
+  const mailFederation =
+    federation === null || syncLedger === null
+      ? null
+      : wireMessagingFederation(federation, {
+          ledger: syncLedger,
+          tasks: store,
+          build: packageJson.version,
+          device: hostname().split('.')[0] ?? 'machine',
+          knowsRun: (id) => orchestrator.getRun(id) !== null,
+          isLive: (id) => orchestrator.isRunLive(id),
+          messages: () => messagesRef.current?.store ?? null,
+          now: federationNow,
+        });
+  if (mailFederation !== null) {
+    const { presence } = mailFederation;
+    orchestrator.onRunStarted((meta) => {
+      presence.runStarted({
+        id: meta.id,
+        taskId: meta.taskId,
+        kind: runKind(meta),
+      });
+    });
+    orchestrator.onRunTerminal((meta) => {
+      presence.runEnded({
+        id: meta.id,
+        taskId: meta.taskId,
+        kind: runKind(meta),
+      });
+    });
+  }
+  // Messaging opens once the orchestrator exists (it mints run tokens and
+  // hears onRunStarted); its recover() waits for reconcileOnBoot() below.
+  const appendPolicyActivity = policyActivityAppender({ store, cache, events });
+  const messaging = openMessaging({
+    rootDir,
+    orchestrator,
+    store,
+    events,
+    ownerRef: actorContext.humanRef,
+    ledgerStore,
+    appendPolicyActivity,
+    deciders: teamDeciders(team.teammates),
+    ...(mailFederation === null
+      ? {}
+      : {
+          federation: mailFederation.hooks,
+          onFederatedMessage: () => boardSync?.notifyLocalChange(),
+        }),
   });
+  messagesRef.current = messaging;
+  if (federationContext !== null && mailFederation !== null) {
+    const { presence } = mailFederation;
+    federationContext.resolveRun = (run, replica) => {
+      presence.resolve(run, replica);
+    };
+    const { homes } = mailFederation;
+    federationContext.presenceOf = (task) => presence.presenceOf(task, homes);
+  }
+  if (federation !== null && mailFederation !== null)
+    wireAgentsAndChannels(federation, {
+      homes: mailFederation.homes,
+      presence: mailFederation.presence,
+      agentWaitSec: messaging.agentWaitSec,
+      messages: messaging.store,
+      engine: messaging.engine,
+      perReplicaPerHour: remoteMailQuota(rootDir),
+      now: federationNow,
+      implicit: (channel) =>
+        implicitEpicMembers(
+          (epicId) => store.list({ parent: epicId }),
+          channel
+        ),
+    });
+  // Memory opens before messaging.recover() because it registers the memory
+  // gate's handler: an answer replayed with no handler is marked applied and lost.
+  const unsubscribeRevokedAsks = closeAsksOfRevoked(
+    messaging.engine,
+    (address) =>
+      speaksForRevoked(address, actorContext.member.handle, (handle) =>
+        team.teammates.hasAccess(handle)
+      )
+  );
+  const memory = openMemory({
+    rootDir,
+    store,
+    orchestrator,
+    events,
+    ledgerStore,
+    messaging,
+    ownerRef: actorContext.humanRef,
+    hasAccess: (human) =>
+      team.teammates.hasAccess(human.slice('human:'.length)),
+    appendPolicyActivity,
+    watchLedgerFile:
+      stores.records === null
+        ? join(rootDir, '.dispatch', 'ledger.jsonl')
+        : null,
+    ...(opts.memoryPreflight === undefined
+      ? {}
+      : { preflight: opts.memoryPreflight }),
+  });
+  // Team memory rides signed ops once memory.db is open (F3).
+  if (federation !== null && memory.teamPort !== null)
+    wireTeamMemory(federation, memory.teamPort);
+  memoryReceipts = memoryReceiptsStep(
+    () => memory.shared,
+    memoryRestoreDir(rootDir)
+  );
+  docsHost.bindRuns(orchestrator);
+  // A publish lands once its task does (on a merged run); task.changed is the signal.
+  const syncDocPublishes = (): void => {
+    try {
+      docs.service.syncPublishes();
+    } catch (err) {
+      console.error('docs: recording publishes failed', err);
+    }
+  };
+  // A publish a crash cut short closes its orphan task before anything runs.
+  try {
+    docs.service.recoverPublishes();
+  } catch (err) {
+    console.error('docs: recovering publishes failed', err);
+  }
+  syncDocPublishes();
+  const unsubscribeDocPublishes = events.subscribe((event) => {
+    if (event.type === 'task.changed') syncDocPublishes();
+  });
+  docsHost.bindMessaging(messaging.store);
+  docsHost.bindMemory(docsMemoryPort(memory));
+  // The doc gate's handler registers before messaging.recover(), even with
+  // docs.db closed: an answer replayed with no handler would be lost.
+  docsHost.bindGates(
+    docGatePort({
+      rootDir,
+      engine: messaging.engine,
+      ownerRef: actorContext.humanRef,
+      issuedTier: (handle) => team.teammates.issuedTier(handle),
+      routing: messaging.routing,
+      ledgerStore,
+      events,
+      appendPolicyActivity,
+      epicOf: (taskId) => store.get(taskId)?.meta.parent ?? null,
+    })
+  );
+  messaging.gates.register('doc', docGateHandler(docs.service, docsHost));
+  if (federation !== null && docs.service.available) {
+    const fedService = federation.service;
+    wireDocSync(federation, { docs: docs.service });
+    // A team doc change here goes out soon, as a task edit does.
+    docsHost.onChange((change) => {
+      if (change.scope === 'team') fedService.notifyLocalChange();
+    });
+  }
+  // Before messaging.recover() too: a replayed wake or dispatch starts runs,
+  // and a run with no memory mode would load the host's native Claude memory.
+  orchestrator.setMemoryPort(memory);
+  // Before any run starts: the owner's runs stay in native mode until their
+  // Claude notes are imported, once per project.
+  // Before the first import, so long personal notes go straight to a doc.
+  await memory.bindDocsOverflow(docsOverflowPort(docs.service));
+  await memory.importClaudeOnce();
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
@@ -1301,40 +1657,119 @@ async function bootServer(
       }
     );
   });
-  // Same lifecycle for out-of-scope edit requests: a run that ends still
-  // holding one open should not leave it dangling for a human to find later.
-  // A boot force-fail is deliberately NOT a terminal transition here (see
-  // reconcileOnBoot) — that is the one ending a request must outlive.
-  orchestrator.onRunTerminal((meta) => {
-    scopeRequests.closeRun(meta.id);
-  });
-  // A force-failed run a human reviews instead of resuming has no successor
-  // for its request to follow; the review is where the card should go. The
-  // run's own review event is what refreshes an open app's view of it.
-  orchestrator.onRunReviewed((meta) => {
-    scopeRequests.closeRun(meta.id);
-  });
 
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
   orchestrator.reconcileOnBoot();
-  // The requests hydrated from the previous process: kept while their run is
-  // still live (a restart-with-nothing-in-flight reload) or is one this boot
-  // force-failed and can still resume — those re-surface to the human and
-  // follow the run into its successor. Anything else has nobody left to act
-  // on a decision, so it is withdrawn rather than shown.
-  const withdrawn = scopeRequests.reconcile((runId) => {
-    const run = orchestrator.getRun(runId);
-    if (run === null) return false;
-    if (!TERMINAL_RUN_STATES.has(run.meta.state)) return true;
-    return orchestrator.resumeBlockReason(run.meta) === null;
-  });
-  if (withdrawn.length > 0) {
-    console.log(
-      `dispatchd: withdrew ${withdrawn.length} stale scope request(s) at boot: ${withdrawn.join(', ')}`
-    );
+  // Only after reconcileOnBoot: run earlier, a replayed wake's new run would be
+  // force-failed as an orphan. Still before HTTP serves or auto-resume fires.
+  await messaging.recover();
+  // Runs force-failed above left their gates open; nobody can act on them now.
+  closeOrphanedGates(messaging.engine, orchestrator);
+  // Open proposals a crash left without a gate get one; stray doc gates close.
+  try {
+    await docs.service.reconcileGates();
+  } catch (err) {
+    console.error('dispatchd: doc gate reconcile failed', err);
   }
+  // Open publishes a crash left with no run start now.
+  try {
+    await redispatchPublishes(docs.service, orchestrator);
+  } catch (err) {
+    console.error('dispatchd: publish redispatch failed', err);
+  }
+  // Before HTTP serves: the boot import carries every ledger lesson in before
+  // the first dispatch, then proposals a crash left without a gate get one.
+  try {
+    memory.importLedger();
+  } catch (err) {
+    console.error('dispatchd: boot ledger import failed', err);
+  }
+  // Team memory staged by `dispatch receipts restore` returns as proposals,
+  // then the log is written again with memory in it.
+  try {
+    const restored = await memory.restoreStaged();
+    for (const p of restored?.problems ?? [])
+      console.error(`dispatchd: memory restore: ${p.file}: ${p.detail}`);
+    if (restored !== null && restored.deferred > 0)
+      console.error(
+        `dispatchd: memory restore: ${restored.deferred} staged file(s) are proposed in batches over the next minutes`
+      );
+  } catch (err) {
+    console.error('dispatchd: memory restore failed', err);
+  }
+  receiptsScheduler?.notifyChanged();
+  try {
+    await memory.recover();
+  } catch (err) {
+    console.error('dispatchd: memory gate recovery failed', err);
+  }
+  // After recovery, so the bridge reconciles against settled messaging state;
+  // its listener opens only once the daemon's own ports are known (below).
+  // PrManager is built further down; until it is, no PR counts as open.
+  let prLookup: PrManager | null = null;
+  const a2a = openA2ABridge({
+    rootDir,
+    messaging,
+    tasks: store,
+    validateTask: (input) => validateTaskInput(rootDir, { ...input }),
+    // Validated by validateTask first, so a refusal here is a bug.
+    createTask: (input) => {
+      const created = createTaskChecked(
+        { rootDir, store, cache, events },
+        input
+      );
+      if (!created.ok) throw new Error(created.error);
+      return created.doc;
+    },
+    updateTask: (id, patch) => {
+      const doc = store.update(id, patch);
+      cache.rebuild(store);
+      events.broadcast({ type: 'task.changed' });
+      return doc;
+    },
+    prOpen: (url) => prLookup?.cachedPrByUrl(url) !== undefined,
+    orchestrator,
+    events,
+    ownerRef: actorContext.humanRef,
+    // XH-R3: who a pairing offer was made by must still stand when it completes.
+    creatorTier: (ref) => {
+      if (ref === actorContext.humanRef) return 'operator';
+      const handle = ref.startsWith('human:')
+        ? ref.slice('human:'.length)
+        : null;
+      return handle !== null && team.teammates.hasAccess(handle)
+        ? team.teammates.issuedTier(handle)
+        : null;
+    },
+    version: packageJson.version,
+    daemonPorts: () => [
+      server.port ?? 0,
+      ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
+    ],
+    ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    ...(opts.a2aWatchLimits === undefined
+      ? {}
+      : { watchLimits: opts.a2aWatchLimits }),
+    ...(opts.a2aUnverifiedWindowMs === undefined
+      ? {}
+      : { unverifiedWindowMs: opts.a2aUnverifiedWindowMs }),
+    ...(opts.a2aLinkIntervalMs === undefined
+      ? {}
+      : { linkIntervalMs: opts.a2aLinkIntervalMs }),
+    ...(opts.a2aNoticeBackoffMs === undefined
+      ? {}
+      : { noticeBackoffMs: opts.a2aNoticeBackoffMs }),
+    ...(opts.tls === undefined
+      ? {}
+      : {
+          teamTls: { certPath: opts.tls.certPath, keyPath: opts.tls.keyPath },
+        }),
+    mark: (label) => watchdog.mark(label),
+    track: (fn) => (idle === null ? fn() : idle.track(fn)),
+  });
+  docsHost.bindA2AOrigin((taskId) => a2a.taskOrigin(taskId) === 'a2a');
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -1353,6 +1788,7 @@ async function bootServer(
   } else {
     planManager.registerPlanner('claude', new ClaudePlanner(rootDir));
   }
+  const taskAuthorship = new TaskAuthorship(taskAuthorshipPath(rootDir));
   const epicEngine = new EpicEngine({
     rootDir,
     store,
@@ -1361,6 +1797,7 @@ async function bootServer(
     orchestrator,
     findingStore,
     actorContext,
+    authorship: taskAuthorship,
   });
 
   // Same one-time-at-boot treatment as prCapability below: whether the task
@@ -1442,6 +1879,7 @@ async function bootServer(
     prCapability,
     opts.prCommandRunner
   );
+  prLookup = prManager;
 
   // Hand-merged run branches (a git merge/squash done in a plain checkout,
   // outside review() and outside any PR) never get their reviewedAt set by
@@ -1480,9 +1918,15 @@ async function bootServer(
   // The overseer chat assistant (see orchestrator/overseer.ts), assembled here
   // alongside PlanManager against the same shared peers. Its tool registry is
   // the confirmation gate: mutating tool calls queue as pending actions, and
-  // only POST /api/overseer/:id/actions/:actionId/confirm reaches a real
+  // only a human's answer to an action's overseer-action gate reaches a real
   // orchestrator/merge-queue mutation. `defaultExecutor` is left unset — the
   // registry's own fallback is the same 'claude' api.ts defaults to.
+  const overseerAddress = actorContext.agentRef('overseer');
+  ensureOverseerActor(
+    messaging.store,
+    overseerAddress,
+    new Date().toISOString()
+  );
   const overseerManager = new OverseerManager({
     rootDir,
     registry: new OverseerToolRegistry({
@@ -1490,16 +1934,32 @@ async function bootServer(
       cache,
       orchestrator,
       mergeQueue,
-      questions,
+      openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
+      memory: overseerMemory(memory),
+      messaging: overseerToolMessaging(messaging.engine, (sender, to) =>
+        newestOpenRoot(
+          { engine: messaging.engine, store: messaging.store, orchestrator },
+          sender,
+          to
+        )
+      ),
+      ownerRef: actorContext.humanRef,
+      overseer: overseerAddress,
+      docs: docs.service,
     }),
     events,
+    bus: createOverseerBus(messaging.engine, messaging.store, {
+      owner: actorContext.humanRef,
+      overseer: overseerAddress,
+    }),
   });
   if (opts.registerOverseers !== undefined) {
     opts.registerOverseers(overseerManager);
   } else {
     overseerManager.registerBackend('claude', new ClaudeOverseer(rootDir));
   }
+  messaging.bindOverseer(overseerManager);
 
   // The brain-dump inbox, scoped to this daemon's own actor, plus the one-time folds of older
   // storage shapes into it: the legacy single shared `inbox.md` (pre-dating per-actor files) and,
@@ -1557,6 +2017,11 @@ async function bootServer(
     localHumanRef: actorContext.humanRef,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
+    documents: {
+      adapter: (link) =>
+        new LinearDocsAdapter({ ...link, service: docs.service }),
+      outstanding: () => docs.service.linearOutstanding(),
+    },
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
@@ -1586,6 +2051,7 @@ async function bootServer(
     orchestrator,
     actorContext,
     reviewComments,
+    specLine: (taskId) => docs.service.specLine(taskId),
   });
 
   // Verification as its own dispatched run kind, exercising finished work
@@ -1596,6 +2062,7 @@ async function bootServer(
     cache,
     events,
     orchestrator,
+    specLine: (taskId) => docs.service.specLine(taskId),
   });
 
   // Constructed after ReviewRunner on purpose: terminal hooks fire in
@@ -1646,7 +2113,11 @@ async function bootServer(
   // readable the moment the app reconnects. Output is announced rather than
   // streamed: a client holds a byte cursor and pulls the increment, so a
   // dropped event costs a round trip and never a gap.
+  // Children spawn in a helper process, started on the first terminal: a pty
+  // spawn blocked the event loop for seconds under load.
+  const terminalHost = hostSpawner();
   const terminals = new TerminalRegistry(rootDir, {
+    spawn: terminalHost.spawn,
     onOutput: (terminalId) =>
       events.broadcast({ type: 'terminal.output', terminalId }),
     onExit: (terminalId) =>
@@ -1655,11 +2126,15 @@ async function bootServer(
 
   const decisionFeed = new DecisionFeed({
     orchestrator,
-    questions,
-    scopeRequests,
+    openGates: () => openHumanDecisions(messaging.engine),
     fixLoopStore,
     cache,
     events,
+    conversationApprovalInput: (conversation, requestId) =>
+      overseerManager
+        .list()
+        .find((record) => record.id === conversation)
+        ?.pendingApprovals.find((a) => a.requestId === requestId)?.input,
     // The policy engine's classifier: a gate the project's rung auto-decides
     // shows up as `recorded` rather than `blocking`.
     policy: policyDecisionClassifier(rootDir, {
@@ -1681,8 +2156,8 @@ async function bootServer(
   const stopWebhookDelivery = webhookDelivery.start();
 
   // The gate hooks themselves — verify-retry and merge consult the project's
-  // policy off the daemon's own signals; the scope gate consults inline in
-  // api/scopeRequests.ts. See policyEngine.ts.
+  // policy off the daemon's own signals; the scope gate consults it in
+  // messaging/scopePolicy.ts. See policyEngine.ts.
   const policyEngine = new PolicyEngine({
     rootDir,
     store,
@@ -1696,6 +2171,9 @@ async function bootServer(
     approvalFloor,
     // The Activity half of each receipt; the ledger half is the engine's own.
     appendActivity: policyActivityAppender({ store, cache, events }),
+    answerGate: async (messageId, answer) => {
+      await messaging.engine.reply(messageId, answer, SYSTEM_SENDER);
+    },
   });
   const stopPolicyEngine = policyEngine.start();
 
@@ -1745,6 +2223,11 @@ async function bootServer(
     planManager,
     overseerManager,
     epicEngine,
+    taskAuthorship,
+    messaging,
+    docs: docs.service,
+    memory,
+    a2a,
     prManager,
     prWorktrees,
     mergeQueue,
@@ -1763,10 +2246,8 @@ async function bootServer(
     trackedFilesCache,
     reviewComments,
     conversations,
-    questions,
     browsers,
     terminals,
-    scopeRequests,
     decisionFeed,
     linearSync,
     gitRepo,
@@ -1781,6 +2262,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    federation: federationContext,
     team,
     presence: presenceTracker,
     ownOrigins: ownOriginSet,
@@ -1813,7 +2295,9 @@ async function bootServer(
             planManager.listDrafts().some((d) => d.state === 'running') ||
             overseerManager.list().some((o) => o.state === 'running') ||
             terminals.list().some((t) => t.state === 'running') ||
-            browsers.list().length > 0,
+            browsers.list().length > 0 ||
+            // An exposed agent must stay up to answer.
+            a2a.listening(),
         })
       : null;
 
@@ -1868,11 +2352,18 @@ async function bootServer(
             return withCors(unauthorized, origin, ownOriginSet);
           // Carry who connected onto the socket: presence is read off open
           // sockets, and the credential was just checked above, so resolving it
-          // again cannot fail here.
+          // again cannot fail here. The tier and the agent-token flag scope
+          // which sockets hear message events.
           const who = tokens.registry.resolve(wsToken);
           if (
             srv.upgrade(req, {
-              data: { handle: who?.handle ?? null, ref: who?.ref ?? null },
+              data: {
+                handle: who?.handle ?? null,
+                ref: who?.ref ?? null,
+                tier: who?.tier ?? null,
+                agentToken: isAgentToken(wsToken, tokens.agentToken),
+                ...(wsToken === null ? {} : { token: wsToken }),
+              },
             })
           ) {
             return undefined;
@@ -1961,6 +2452,8 @@ async function bootServer(
       // never carry stack traces — log server-side, return opaque JSON.
       error(err) {
         console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
+        const storage = storageErrorResponse(err);
+        if (storage !== null) return storage;
         return new Response(JSON.stringify({ error: 'internal error' }), {
           status: 500,
           headers: {
@@ -2015,6 +2508,7 @@ async function bootServer(
   // assertion.
   const port = server.port ?? 0;
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
+  await a2a.start();
   if (shared) {
     for (const origin of tlsPort === undefined
       ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)
@@ -2046,8 +2540,11 @@ async function bootServer(
     team,
     mergeQueue,
     orchestrator,
+    messaging,
+    a2a,
     prManager,
     prWorktrees,
+    memory,
     async stop() {
       watchdog.stop();
       idle?.stop();
@@ -2067,14 +2564,17 @@ async function bootServer(
       clearInterval(externalMergeTimer);
       mergeQueue.stop();
       unsubscribeLinear();
+      unsubscribeRevokedAsks();
       await linearSync.stop();
       unsubscribeBoardSync();
+      unsubscribeDocPublishes();
       stopWebhookDelivery();
       stopDecisionFeed();
       stopPolicyEngine();
       // Kills every child and flushes scrollback; the sessions stay in the
       // index so the next daemon hydrates them as `orphaned`.
       terminals.shutdown();
+      terminalHost.close();
       // Otherwise every session leaks a Chromium process.
       browsers.shutdown();
       boardSyncScheduler?.stop();
@@ -2086,12 +2586,19 @@ async function bootServer(
       // EventBus for why we don't also close each socket ourselves first.
       await server.stop(true);
       await tlsServer?.stop(true);
+      await a2a.close();
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather
       // than let it finish. A no-op on the file backend.
-      boardSync?.stop();
+      // The pass in flight finishes before its ledger closes (B2).
+      await boardSync?.stop();
       syncLedger?.close();
+      orchestrator.setMemoryPort(null);
+      memory.close();
+      messaging.close();
+      orchestrator.setDocsPort(null);
+      docs.stop();
       stores.close();
     },
   };
@@ -2099,3 +2606,13 @@ async function bootServer(
 
 export type { ApiContext } from './api.js';
 export { Orchestrator } from './orchestrator/orchestrator.js';
+
+// A teammate's hourly mail quota; a malformed config.yml keeps the default,
+// as messaging's own limits do.
+function remoteMailQuota(rootDir: string): number {
+  try {
+    return loadConfig(rootDir).messaging.remoteMailPerReplicaPerHour;
+  } catch {
+    return DEFAULT_MESSAGING.remoteMailPerReplicaPerHour;
+  }
+}

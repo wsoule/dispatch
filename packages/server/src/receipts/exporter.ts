@@ -3,14 +3,15 @@ import type {
   DispatchConfig,
   ReceiptsExport,
   ReceiptsScope,
-} from '@dispatch/core';
-import { DEFAULT_RECEIPTS, receiptSteps } from '@dispatch/core';
-import type { ProjectStores } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import { DEFAULT_RECEIPTS, receiptSteps } from '@dispatch-foo/core';
+import type { ProjectStores } from '@dispatch-foo/core';
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -19,7 +20,7 @@ import { receiptsDir as defaultReceiptsDir } from '../orchestrator/paths.js';
 import type { AsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';
 
-// The git half of the receipt log. `materializeReceipts` in @dispatch/core owns
+// The git half of the receipt log. `materializeReceipts` in @dispatch-foo/core owns
 // the FORMAT — which files exist and what is in them; this owns the REPOSITORY
 // — where the log lives, that it is a git repo at all, and when a commit
 // happens.
@@ -120,11 +121,47 @@ function isPathInside(parent: string, child: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
+// Removes the *.lock files under a log's .git (objects aside). The exporter is
+// the log's only writer and passes never overlap, so any lock is a killed pass's.
+function clearStaleLocks(dir: string): string[] {
+  const removed: string[] = [];
+  const walk = (at: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(at, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const path = join(at, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'objects') walk(path);
+      } else if (e.name.endsWith('.lock')) {
+        rmSync(path, { force: true });
+        removed.push(relative(dir, path));
+      }
+    }
+  };
+  walk(join(dir, '.git'));
+  return removed;
+}
+
+/** A step that writes more of the log after the core records (docs), before staging. */
+export type ReceiptsStep = (dir: string) => {
+  changed: number;
+  removed: number;
+  problems: string[];
+};
+
 export class ReceiptsExporter {
   constructor(
     private readonly stores: ProjectStores,
     private readonly actor: ActorContext,
-    private readonly run: AsyncGitRunner
+    private readonly run: AsyncGitRunner,
+    private readonly steps: readonly ReceiptsStep[] = [],
+    /** Writers run after materializing and before `git add -A`, for files
+     *  outside the materialized set (the federation audit log, Task 24). */
+    private readonly appendices: readonly ((dir: string) => void)[] = []
   ) {}
 
   /**
@@ -175,6 +212,8 @@ export class ReceiptsExporter {
     markBlockingSection('receipts export');
     // A log created just now holds nothing yet, so a scoped pass writes it all.
     const created = await this.ensureRepo(dir);
+    for (const lock of clearStaleLocks(dir))
+      console.error(`receipts: removed a stale ${lock} a killed pass left`);
     const materialized = await runSliced(
       receiptSteps(this.stores, dir, created ? {} : scope),
       stopped
@@ -198,6 +237,22 @@ export class ReceiptsExporter {
     for (const problem of materialized.problems) {
       console.error(`receipts: ${problem.source} — ${problem.detail}`);
     }
+    for (const step of this.steps) {
+      try {
+        const out = step(dir);
+        counts.changed += out.changed;
+        counts.removed += out.removed;
+        counts.problems += out.problems.length;
+        for (const problem of out.problems)
+          console.error(`receipts: ${problem}`);
+      } catch (err) {
+        counts.problems += 1;
+        console.error(
+          `receipts: a receipts step failed: ${(err as Error).message}`
+        );
+      }
+    }
+    for (const append of this.appendices) append(dir);
     const failed = (detail: string): ReceiptsResult => ({
       ...counts,
       state: 'failed',

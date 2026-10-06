@@ -433,6 +433,59 @@ stopped. `--from` takes a remote's name, a URL or a path:
     dispatch receipts restore --from origin
     dispatch receipts restore --from git@github.com:acme/dispatch-audit.git
 
+## Memory
+
+Runs keep what they learn as memory: short entries, a one-line title and a body
+of up to 8 KiB, that later runs are shown. Every dispatch prompt carries a
+budgeted index of the entries that reach the task (1,000 tokens by default,
+`memory.indexTokens`), best-ranked first, and the agent reads a body only when
+it needs one. The four `memory_*` tools below are how a run reaches it:
+`memory_search` and `memory_read` look things up, `memory_save` adds an entry,
+and `memory_forget` retires one. `dispatch memory` does the same for a person;
+**Settings → Memory** shows memory's health, the ledger import and your
+identity.
+
+An entry has one of three scopes:
+
+- **Personal** belongs to one human and follows them across projects unless it
+  is saved for one project only. A run writes its operator's personal memory
+  directly, and the Inbox can undo it. Nobody else sees it. A run's operator is
+  whoever started, continued or woke it; the owner only on the app token, and no
+  one when an agent, a run or policy did. An epic's auto-fill acts for whoever
+  last started or resumed the epic, and only on tasks that person created and
+  last edited. The desktop app and a signed-in browser present the app token;
+  the CLI presents the daemon file's agent token, so a run the owner starts from
+  the CLI acts for no one unless the CLI is given the app token (`--token` or
+  `DISPATCH_APP_TOKEN`). A teammate below `decide` cannot message a live run
+  that acts for someone else; they message its task or that person instead. An
+  agent registered in your name reads your personal memory only once you approve
+  it with the app token, so one approved before that rule must be approved
+  again.
+- **Team** is the default for a code lesson: the constraints, hazards and
+  decisions every run of this project should know. The ledger's old lessons were
+  imported here; the ledger keeps the audit receipts. Replicating team memory to
+  teammates' daemons comes later (see `docs/TEAM-SERVER.md`).
+- **Project** is for facts true only on this machine ("proto shims were missing
+  here"). It never leaves the machine.
+
+An agent's write to project or team memory is a proposal, never an entry, until
+someone decides on it. It raises the `memory` gate: a card in **Threads → Needs
+you** with the proposed entry, where it would reach and who asked, to approve or
+reject. At autonomy rung 4 (`policy.rung: 4`) policy approves a routine task's
+proposal instead and records a receipt. A proposal with no task, one from an
+elevated or critical task, and one that repeats a personal entry of the author's
+operator still wait for a human.
+
+For Claude runs, `memory.claudeAutoMemory: export` (the default) points Claude
+Code's own auto memory at a directory Dispatch writes for the run, with the
+index as its `MEMORY.md`; what the agent saves there comes back as memory
+writes. `off` disables Claude Code's auto memory and keeps the index in the
+prompt. The daemon imports your existing Claude Code notes for the project into
+your personal memory once, before its first run; `dispatch memory import-claude`
+runs it again. Memory lives in `memory.db` beside the project's run state, and
+personal memory under `~/.dispatch/memory`. See
+`docs/specs/2026-09-25-memory-design.md`.
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`
@@ -451,35 +504,62 @@ binary from `@dispatch/mcp`.
 On the file backend the five `task_*` tools operate directly on
 `.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
 file changes through its watcher like any other edit); on the database backend
-they go through the daemon like everything else. The other nine always talk to
-`dispatchd` over its local HTTP API, and return a clear error when it isn't
+they go through the daemon like everything else. The other fifteen always talk
+to `dispatchd` over its local HTTP API, and return a clear error when it isn't
 running.
 
 Tools (server name `dispatch`):
 
-| Tool              | Input                                                                                                        | Output                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| `task_list`       | `{ status?, kind?, parent? }`                                                                                | `{ tasks: TaskSummary[], problems: string[] }` |
-| `task_get`        | `{ id }`                                                                                                     | `{ meta, body }`                               |
-| `task_save`       | `{ id?, title?, status?, kind?, parent?, blockedBy?, labels?, priority?, assignee?, description?, writes? }` | `{ meta, body }`                               |
-| `task_comment`    | `{ id, text }`                                                                                               | `{ meta }`                                     |
-| `task_next`       | `{}`                                                                                                         | `{ tasks: TaskSummary[], problems: string[] }` |
-| `run_list`        | `{}`                                                                                                         | `{ runs, note? }`                              |
-| `agent_message`   | `{ runId? \| taskId?, text }`                                                                                | `{ ok, runId }`                                |
-| `message_user`    | `{ text }`                                                                                                   | `{ ok, runId }`                                |
-| `ask_user`        | `{ question, options? }`                                                                                     | `{ answer }`                                   |
-| `request_scope`   | `{ paths, reason }`                                                                                          | `{ granted, reason }`                          |
-| `dispatch_note`   | `{ kind, title, body? }`                                                                                     | `{ ok, id }`                                   |
-| `record_decision` | `{ kind, title, detail, appliesTo? }`                                                                        | `{ ok, id }`                                   |
-| `record_evidence` | `{ command, exitCode, durationMs, summary }`                                                                 | `{ ok }`                                       |
-| `record_mutation` | `{ guard, file, testsFailed }`                                                                               | `{ ok }`                                       |
+| Tool              | Input                                                                                                        | Output                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `task_list`       | `{ status?, kind?, parent? }`                                                                                | `{ tasks: TaskSummary[], problems: string[] }`          |
+| `task_get`        | `{ id }`                                                                                                     | `{ meta, body }`                                        |
+| `task_save`       | `{ id?, title?, status?, kind?, parent?, blockedBy?, labels?, priority?, assignee?, description?, writes? }` | `{ meta, body }`                                        |
+| `task_comment`    | `{ id, text }`                                                                                               | `{ meta }`                                              |
+| `task_next`       | `{}`                                                                                                         | `{ tasks: TaskSummary[], problems: string[] }`          |
+| `run_list`        | `{}`                                                                                                         | `{ runs, note? }`                                       |
+| `msg_send`        | `{ to, kind, body, refs?, data?, urgent?, blocking?, choices?, wake? }`                                      | `{ message, deliveries?, downgraded?, answer?, note? }` |
+| `msg_reply`       | `{ messageId, body, choice? }`                                                                               | `{ message, deliveries?, downgraded? }`                 |
+| `inbox_read`      | `{ state?, limit?, markRead? }`                                                                              | `{ items, marked, markReadErrors? }`                    |
+| `thread_read`     | `{ threadId }`                                                                                               | `{ messages, deliveries }`                              |
+| `channel_join`    | `{ name, member? }`                                                                                          | `{ ok }`                                                |
+| `channel_leave`   | `{ name, member? }`                                                                                          | `{ ok }`                                                |
+| `channel_list`    | `{}`                                                                                                         | `{ channels }`                                          |
+| `dispatch_note`   | `{ kind, title, body? }`                                                                                     | `{ ok, id }`                                            |
+| `memory_search`   | `{ query, scope?, kind?, includeStale?, limit? }`                                                            | `{ hits, search }`                                      |
+| `memory_read`     | `{ id }`                                                                                                     | `{ entry, body, provenance, revisions }`                |
+| `memory_save`     | `{ scope, kind, title, body, refs?, epic?, appliesTo?, supersedes?, projectOnly? }`                          | `{ status, id?, handle?, proposal?, gate? }`            |
+| `memory_forget`   | `{ id, reason }`                                                                                             | `{ status, id?, handle?, proposal?, gate? }`            |
+| `record_evidence` | `{ command, exitCode, durationMs, summary }`                                                                 | `{ ok }`                                                |
+| `record_mutation` | `{ guard, file, testsFailed }`                                                                               | `{ ok }`                                                |
 
 `task_save` creates when `id` is omitted (title required) and updates only the
 given fields otherwise; `kind` and `description` take effect on create only.
-`ask_user` and `request_scope` block until a human answers or the wait times
-out. A `workflow://onboarding` resource briefs a connecting agent on the same
-conventions. See `docs/archive/plans/2026-07-20-phase-3-mcp-server.md` for the
-original design.
+`msg_send` with `blocking: true` blocks until the recipient answers or the wait
+times out (30 minutes for a human). That is how an agent asks a person a
+question, and how a run asks to edit outside its declared `writes`: a blocking
+`question` with choices `grant`/`deny` and this `data`:
+`{ type: 'scope', paths, reason }`. A `workflow://onboarding` resource briefs a
+connecting agent on the same conventions. See
+`docs/archive/plans/2026-07-20-phase-3-mcp-server.md` for the original design,
+and `docs/specs/2026-09-23-messaging-core-design.md` for the messaging tools.
+
+### Answering from the CLI
+
+The desktop app shows a run's tool approvals, questions and scope requests as
+cards. From a terminal:
+
+    dispatch approve <runId> [requestId]  # --deny, or --session for the rest of the run
+    dispatch scope decide <messageId>     # --deny to refuse
+    dispatch message <runId> <text>       # --resume requests changes on a finished run
+
+A run can park several tool calls at once, each its own gate: name the one to
+answer by the request id `dispatch run show <runId>` lists. These act as a
+human, so each needs the daemon's app token: pass `--token` or set
+`DISPATCH_APP_TOKEN` to the value `dispatch serve` prints at startup. The agent
+token in the daemon file is refused. A daemon that another command started in
+the background printed its app token to `/dev/null`; stop it and run
+`dispatch serve` instead.
 
 ## Dependency graph with Carto (optional)
 
@@ -570,9 +650,10 @@ wrap this daemon for end users.
 Dispatch is open core — see [`LICENSING.md`](LICENSING.md) for the
 plain-language map:
 
-- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/client`,
-  `@dispatch/cli`, `@dispatch/mcp`. Build on the task model, drive the daemon,
-  or embed the MCP tools without a license review.
+- **MIT** — the integration surface: `@dispatch-foo/core`,
+  `@dispatch-foo/protocol`, `@dispatch/client`, `@dispatch/cli`,
+  `@dispatch/mcp`. Build on the task model, embed the message bus, drive the
+  daemon, or embed the MCP tools without a license review.
 - **[FSL-1.1-ALv2](LICENSE)** — the desktop app and the daemon/orchestrator.
   Source-available, not OSI open source: read, build, modify, self-host, and
   redistribute for any purpose except shipping a competing product or service.

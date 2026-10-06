@@ -1,5 +1,5 @@
+import type { EffortLevel } from '@dispatch-foo/core/browser';
 import type { ExecutorsResponse } from '@dispatch/client';
-import type { EffortLevel } from '@dispatch/core/browser';
 import {
   Check,
   CircleSlash,
@@ -151,8 +151,12 @@ export function DispatchCard({
   // Undefined sends no executor at all: the daemon's default, which a resumable run
   // never refuses for naming one.
   const [executor, setExecutor] = useState<string | undefined>(undefined);
+  // The daemon's test-only executors (`fake`, `fake-ask`, …) are never a real choice.
   const choices = useMemo(
-    () => (executors?.executors ?? []).filter((e) => e.name !== 'fake'),
+    () =>
+      (executors?.executors ?? []).filter(
+        (e) => e.name !== 'fake' && !e.name.startsWith('fake-')
+      ),
     [executors]
   );
   const runsOn = executor ?? executors?.default ?? 'claude';

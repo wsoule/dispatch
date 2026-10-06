@@ -18,6 +18,20 @@ export function errorResponse(status: number, message: string): Response {
   return jsonResponse({ error: message }, status);
 }
 
+/** A 409 for a coded conflict: its `code` when it has one, and its
+ *  operator hint only for a caller at the operator tier. */
+export function conflictResponse(
+  err: { message: string; code?: string; operatorHint?: string },
+  tier: 'request' | 'decide' | 'operator' | undefined
+): Response {
+  const hint = tier === 'operator' ? err.operatorHint : undefined;
+  const error = hint === undefined ? err.message : `${err.message}: ${hint}`;
+  return jsonResponse(
+    err.code === undefined ? { error } : { error, code: err.code },
+    409
+  );
+}
+
 function hasJsonContentType(req: Request): boolean {
   const contentType = req.headers.get('content-type');
   return (

@@ -1,11 +1,11 @@
-import { executorModels, loadConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch-foo/core';
 import type {
   ActorContext,
   EscalationStep,
   Finding,
   TaskDoc,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -20,11 +20,12 @@ import {
   OrchestratorClientError,
   OrchestratorNotFoundError,
   runKind,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './types.js';
 import { WorktreeManager } from './worktree.js';
 
-export type { EscalationStep } from '@dispatch/core';
+export type { EscalationStep } from '@dispatch-foo/core';
 
 /** The label a blocking ruling puts on the task, so it is visible on the board
  *  rather than only inside the finding that caused it. */
@@ -81,6 +82,9 @@ export interface FixLoopState {
   stopReason?: FixLoopStop;
   /** The failure text behind a `stopReason` of `error`. */
   stopDetail?: string;
+  /** Who the loop's latest round acts for: the human who last pressed it on,
+   *  else the operator of the run whose end moved it. Absent reads as no one. */
+  operator?: string | null;
   /** Open findings handed to each round's review, oldest first — `[9, 4, 1]`
    * is converging, `[9, 9]` is thrashing. Derived from the store's history on
    * API reads (see `findingsTrace`); never persisted on the record itself. */
@@ -338,7 +342,7 @@ export class FixLoop {
     // review's findings are already in the store when this fires for that run.
     ctx.orchestrator.onRunTerminal((meta) => {
       if (this.ctx.fixLoopStore.get(meta.taskId) !== null) {
-        this.advanceInBackground(meta.taskId);
+        this.advanceInBackground(meta.taskId, runOperator(meta));
         return;
       }
       // No loop yet: a finished implementer is the ignition that used to be
@@ -422,12 +426,13 @@ export class FixLoop {
         s.state === 'implementing' ||
         s.state === 'reviewing'
     );
-    for (const state of stalled) this.advanceInBackground(state.taskId);
+    for (const state of stalled)
+      this.advanceInBackground(state.taskId, state.operator ?? null);
     return stalled.length;
   }
 
-  private advanceInBackground(taskId: string): void {
-    void this.advance(taskId).catch((err: unknown) => {
+  private advanceInBackground(taskId: string, operator: string | null): void {
+    void this.advance(taskId, operator).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       console.error(
         `dispatchd: fix loop for ${taskId} failed to advance: ${message}`
@@ -463,15 +468,15 @@ export class FixLoop {
   }
 
   private autoStartInBackground(meta: RunMeta): void {
-    void this.enqueue(meta.taskId, () => this.igniteFrom(meta)).catch(
-      (err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(
-          `dispatchd: fix loop for ${meta.taskId} failed to auto-start: ${message}`
-        );
-        this.stopOnError(meta.taskId, message);
-      }
-    );
+    void this.enqueue(meta.taskId, () =>
+      this.igniteFrom(meta, runOperator(meta))
+    ).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `dispatchd: fix loop for ${meta.taskId} failed to auto-start: ${message}`
+      );
+      this.stopOnError(meta.taskId, message);
+    });
   }
 
   // The automatic ignition: opens the loop off a finished implementer and
@@ -480,11 +485,14 @@ export class FixLoop {
   // the run's fork point from its base — the commit before the implementer's
   // own work. Anything that makes ignition pointless (no commits, a standing
   // block, unresolvable refs) skips quietly; the manual route stays open.
-  private async igniteFrom(meta: RunMeta): Promise<void> {
+  private async igniteFrom(
+    meta: RunMeta,
+    operator: string | null
+  ): Promise<void> {
     if (this.ctx.fixLoopStore.get(meta.taskId) !== null) {
       // A loop appeared while this waited in the chain (a manual open won
       // the race) — advance it instead of opening a second one.
-      await this.step(meta.taskId);
+      await this.step(meta.taskId, operator);
       return;
     }
     if (this.stopReasonFor(meta.taskId) === 'standing-block') return;
@@ -493,7 +501,7 @@ export class FixLoop {
     // A run that committed nothing gives the first review an empty range,
     // which would read as clean — better not to open a loop at all.
     if (baseSha === null || head === null || head === baseSha) return;
-    const state = this.start(meta.taskId, { baseSha });
+    const state = this.start(meta.taskId, { baseSha, operator });
     await this.dispatchReview(state, {
       head,
       scope: 'full',
@@ -505,8 +513,9 @@ export class FixLoop {
   /** The manual ignition behind the task view's "Review & fix" button: opens
    *  the loop off the task's latest implementer exactly as auto-start would
    *  have, so the caller needs no `baseSha` of its own. An already-open loop is
-   *  advanced instead, which is what lets one button also resume a capped one. */
-  async ignite(taskId: string): Promise<FixLoopState> {
+   *  advanced instead, which is what lets one button also resume a capped one.
+   *  `operator` is who the rounds this press dispatches act for. */
+  async ignite(taskId: string, operator: string | null): Promise<FixLoopState> {
     const existing = this.ctx.fixLoopStore.get(taskId);
     if (existing !== null) {
       // A user-stopped loop resumes here — the same button that started it —
@@ -532,9 +541,11 @@ export class FixLoop {
       // against) needs an API path back — pressing Review & fix re-reviews
       // the branch rather than returning the settled state unchanged.
       if (existing.state === 'complete') {
-        return await this.enqueue(taskId, () => this.reopenComplete(taskId));
+        return await this.enqueue(taskId, () =>
+          this.reopenComplete(taskId, operator)
+        );
       }
-      return await this.advance(taskId);
+      return await this.advance(taskId, operator);
     }
     this.requireTask(taskId);
     const run = this.latestRun(taskId, 'execute');
@@ -550,7 +561,7 @@ export class FixLoop {
         `${taskId} is still being implemented — wait for run ${run.id} to finish`
       );
     }
-    await this.enqueue(taskId, () => this.igniteFrom(run));
+    await this.enqueue(taskId, () => this.igniteFrom(run, operator));
     const state = this.ctx.fixLoopStore.get(taskId);
     if (state === null) {
       // igniteFrom declines quietly when there is nothing to review (the run
@@ -566,7 +577,10 @@ export class FixLoop {
 
   // Opens the loop for a task. `baseSha` is supplied by the caller that knows
   // where the task's first implementer started, and never moves afterwards.
-  start(taskId: string, opts: { baseSha: string; cap?: number }): FixLoopState {
+  start(
+    taskId: string,
+    opts: { baseSha: string; cap?: number; operator: string | null }
+  ): FixLoopState {
     const existing = this.ctx.fixLoopStore.get(taskId);
     if (existing !== null) return existing;
     this.requireTask(taskId);
@@ -589,14 +603,19 @@ export class FixLoop {
       state: 'idle',
       baseSha,
       lastReviewedSha: null,
+      operator: opts.operator,
       updatedAt: '',
     });
   }
 
   // Drives the loop one step from whatever state it is in. Calls chain rather
   // than interleave, and a step with nothing to do returns the state unchanged.
-  async advance(taskId: string): Promise<FixLoopState> {
-    return await this.enqueue(taskId, () => this.step(taskId));
+  // `operator` is who any round the step dispatches acts for.
+  async advance(
+    taskId: string,
+    operator: string | null
+  ): Promise<FixLoopState> {
+    return await this.enqueue(taskId, () => this.step(taskId, operator));
   }
 
   // The per-task chain both advance() and auto-ignition run through, so an
@@ -638,14 +657,17 @@ export class FixLoop {
     return updated;
   }
 
-  private async step(taskId: string): Promise<FixLoopState> {
-    const state = this.ctx.fixLoopStore.get(taskId);
-    if (state === null) {
+  private async step(
+    taskId: string,
+    operator: string | null
+  ): Promise<FixLoopState> {
+    const stored = this.ctx.fixLoopStore.get(taskId);
+    if (stored === null) {
       throw new OrchestratorNotFoundError(`no fix loop for task: ${taskId}`);
     }
+    if (stored.state === 'complete') return stored;
+    const state: FixLoopState = { ...stored, operator };
     switch (state.state) {
-      case 'complete':
-        return state;
       case 'capped':
         return this.settleCapped(state);
       case 'implementing':
@@ -714,6 +736,7 @@ export class FixLoop {
       this.ctx.orchestrator.sendMessage(previous.id, prompt, {
         resume: true,
         actor: 'none',
+        operator: state.operator ?? null,
       });
       return;
     }
@@ -725,6 +748,7 @@ export class FixLoop {
       head: previous?.branch ?? state.baseSha,
       executor,
       model,
+      operator: state.operator ?? null,
       buildPrompt: () => prompt,
     });
   }
@@ -782,6 +806,7 @@ export class FixLoop {
       scope: opts.scope,
       openFindings: handed,
       runId: opts.runId,
+      operator: state.operator ?? null,
     });
     return this.save({
       ...state,
@@ -892,13 +917,17 @@ export class FixLoop {
   // fresh full review of the branch, because a reopened `complete` has no
   // open findings — going back to `idle` would only settle it again without
   // anyone reviewing anything.
-  private async reopenComplete(taskId: string): Promise<FixLoopState> {
-    const state = this.ctx.fixLoopStore.get(taskId);
-    if (state === null || state.state !== 'complete') {
+  private async reopenComplete(
+    taskId: string,
+    operator: string | null
+  ): Promise<FixLoopState> {
+    const stored = this.ctx.fixLoopStore.get(taskId);
+    if (stored === null || stored.state !== 'complete') {
       // Something ahead in the chain moved the loop first — fall in behind it
       // rather than dispatching a review on top of whatever it did.
-      return await this.step(taskId);
+      return await this.step(taskId, operator);
     }
+    const state: FixLoopState = { ...stored, operator };
     const latest = this.latestRun(taskId, 'execute');
     const head =
       (latest === null ? null : this.resolveHead(latest.branch)) ??

@@ -3,7 +3,7 @@ import {
   loadConfig,
   receiptLogDir,
   TaskStore,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,7 +14,7 @@ import type { CliContext } from '../src/context.js';
 
 // `dispatch migrate` is the opt-in half of the one-time import — the other is
 // a daemon booting with DISPATCH_STORE_BACKEND=sqlite. The import itself is
-// covered in @dispatch/core; what matters here is the terminal around it: a
+// covered in @dispatch-foo/core; what matters here is the terminal around it: a
 // dry run that writes literally nothing, and a real run that records the
 // project's new backend only once the rows are actually in.
 
@@ -101,7 +101,7 @@ describe('dispatch migrate', () => {
 });
 
 describe('dispatch migrate --retire', () => {
-  // The retirement logic and all its coverage guards live in @dispatch/core
+  // The retirement logic and all its coverage guards live in @dispatch-foo/core
   // (retire.test.ts). What matters here is the terminal around it: that the
   // flag reaches the right function, and that its refusals reach the user as
   // clean CliErrors rather than raw throws.

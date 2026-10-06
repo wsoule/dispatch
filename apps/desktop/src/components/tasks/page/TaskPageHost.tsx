@@ -1,4 +1,5 @@
-import type { EffortLevel } from '@dispatch/core/browser';
+import type { EffortLevel } from '@dispatch-foo/core/browser';
+import type { ReactNode } from 'react';
 import { createContext, useContext } from 'react';
 
 import type { DispatchProjectData } from '../../../hooks/useDispatchProject';
@@ -12,6 +13,7 @@ export type TaskPageProject = Pick<
   | 'port'
   | 'daemonBaseUrl'
   | 'me'
+  | 'messageAccess'
   | 'config'
   | 'executors'
   | 'health'
@@ -36,6 +38,7 @@ export type TaskPageProject = Pick<
   | 'handleEnrichTask'
   | 'handleDismissEnrich'
   | 'handleApprove'
+  | 'fetchApprovalInput'
   | 'handleSendMessage'
   | 'handleAnswerQuestion'
   | 'handleDecideScopeRequest'
@@ -75,6 +78,11 @@ export interface TaskPageHost {
   /** Opens a run's pull request on the PR review page. */
   openPr: (runId: string) => void;
   openImpact: (subject: ImpactSubjectRef) => void;
+  /** Opens a linked doc in the Docs view; absent hides the spec's Docs block, for a
+   * window that cannot read docs. */
+  openDoc?: (docId: string, anchor: string | null) => void;
+  /** The task's message threads, which the Thread toggle shows; absent hides it. */
+  threadView?: (taskId: string) => ReactNode;
 }
 
 export const TaskPageHostContext = createContext<TaskPageHost | null>(null);

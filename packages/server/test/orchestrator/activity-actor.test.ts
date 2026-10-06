@@ -1,4 +1,4 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -99,6 +99,7 @@ describe('Activity attribution', () => {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       }),
     });
     const task = store.create({ title: 'Cancel me' });

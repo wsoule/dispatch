@@ -14,6 +14,9 @@
     // Private business notes kept out of the public repo (gitignored); they
     // are not held to the house markdown style.
     "docs/business/**",
+    // Frozen protocol releases: byte-hashed (versions/manifest.json), so no
+    // tool may rewrite them.
+    "**/protocol-spec/versions/**",
   ],
   "config": {
     // Prose here is written to an 80-column ruler by hand, but tables and

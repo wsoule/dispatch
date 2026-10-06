@@ -1,5 +1,5 @@
-import { DEFAULT_FIX_LOOP, loadConfig } from '@dispatch/core';
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
+import { DEFAULT_FIX_LOOP, loadConfig } from '@dispatch-foo/core';
+import type { CommandEvidence, MutationEvidence } from '@dispatch-foo/core';
 import { expect, test } from 'bun:test';
 import {
   existsSync,
@@ -380,8 +380,8 @@ test("a fix round's injected prompt matches requestChanges's real shape — {kin
   // orchestrator.ts's requestChanges records the fix loop's prompt as
   // `{ ts, kind: 'message', from: 'user', text }` — no `fromLabel`, no
   // `toUser`. RunLogView.tsx renders that pair (`from:'agent', toUser:true`)
-  // as a "TO YOU" megaphone callout reserved for an agent's own
-  // messageUser() calls; using that shape here would make a fix round look
+  // as a "TO YOU" megaphone callout reserved for a run's own messages to a
+  // human; using that shape here would make a fix round look
   // like it is broadcasting instructions to the human instead of receiving
   // them from the loop.
   const { root, home } = build();

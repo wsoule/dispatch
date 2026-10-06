@@ -25,7 +25,10 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "img-src": "'self' blob: data: asset: http://asset.localhost http://127.0.0.1:* http://localhost:* https://public.linear.app"
+      },
+      "dangerousDisableAssetCspModification": ["script-src", "style-src"]
     }
   },
   "bundle": {

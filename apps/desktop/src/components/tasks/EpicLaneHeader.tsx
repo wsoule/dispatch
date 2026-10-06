@@ -1,6 +1,6 @@
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import { isCompletedStatus, isDoneStatus } from '@dispatch-foo/core/browser';
 import type { EpicProgress } from '@dispatch/client';
-import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
-import { isCompletedStatus, isDoneStatus } from '@dispatch/core/browser';
 import { Milestone, Waypoints } from 'lucide-react';
 import { useState } from 'react';
 

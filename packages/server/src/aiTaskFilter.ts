@@ -1,6 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
-import { loadConfig } from '@dispatch/core';
+import { loadConfig } from '@dispatch-foo/core';
 
 import { openClaudeQuery } from './orchestrator/claudeCli.js';
 

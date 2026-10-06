@@ -1,4 +1,4 @@
-import type { NotificationKind } from '@dispatch/core/browser';
+import type { NotificationKind } from '@dispatch-foo/core/browser';
 import {
   isPermissionGranted,
   requestPermission,

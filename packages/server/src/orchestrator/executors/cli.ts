@@ -1,4 +1,5 @@
-import type { ExecutorCommand } from '@dispatch/core';
+import type { ExecutorCommand } from '@dispatch-foo/core';
+import { childEnv } from '@dispatch-foo/core';
 
 import { FLOOR_COMMAND_ACTIONS } from '../../floor.js';
 import type {
@@ -147,6 +148,7 @@ export const CLI_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: false,
   reportsTurns: false,
   enforcesCaps: false,
+  acceptsMessages: false,
   permissionRefusal: (permissionMode) =>
     GATED_MODES.has(permissionMode)
       ? `this agent is a plain CLI with no approval protocol, so it cannot run under "${permissionMode}" — dispatch it with an ungated mode, or use claude/codex for gated runs`
@@ -190,10 +192,7 @@ export class CliExecutor implements Executor {
       child = this.spawn({
         command: argv,
         cwd: opts.cwd,
-        env: {
-          ...(process.env as Record<string, string>),
-          ...this.options.command.env,
-        },
+        env: childEnv(this.options.command.env),
         stdinPrompt,
       });
     } catch (err) {
@@ -206,6 +205,7 @@ export class CliExecutor implements Executor {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       };
     }
 
@@ -269,6 +269,8 @@ export class CliExecutor implements Executor {
         });
       },
       approve: () => {},
+      // No channel for a note either; silent, since a note is best-effort.
+      notify: () => {},
     };
   }
 }

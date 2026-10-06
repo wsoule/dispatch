@@ -11,38 +11,15 @@ import {
 } from '../../src/team/license.js';
 import { licenseFor, testKeys } from './licenseKeys.js';
 
-// Every way a license key can be wrong lands on the free plan with a reason —
-// never a crash, never a lockout — and only a key signed by the licensor
-// raises the seat count.
+// The key check itself is tested in @dispatch-foo/federation; here, the manager
+// that installs and reads keys, and the sentence a person sees at the limit.
 
 const NOW = new Date('2026-09-23T12:00:00Z');
 
-describe('readLicenseKey', () => {
+describe('seatLimitMessage', () => {
   const keys = testKeys();
 
-  test('a key signed by the licensor grants its seats', () => {
-    const state = readLicenseKey(
-      licenseFor(keys.privateKey, { org: 'Acme', seats: 12 }),
-      keys.publicKey,
-      NOW
-    );
-    expect(state).toMatchObject({
-      kind: 'licensed',
-      seats: 12,
-      license: { org: 'Acme' },
-    });
-  });
-
-  test('a key never covers fewer people than the free plan', () => {
-    const state = readLicenseKey(
-      licenseFor(keys.privateKey, { seats: 1 }),
-      keys.publicKey,
-      NOW
-    );
-    expect(state.seats).toBe(FREE_SEATS);
-  });
-
-  test('an expired key falls back to the free plan, saying so', () => {
+  test('an expired key says when it expired', () => {
     const state = readLicenseKey(
       licenseFor(keys.privateKey, {
         seats: 40,
@@ -55,45 +32,6 @@ describe('readLicenseKey', () => {
     expect(seatLimitMessage(state.seats, state)).toContain(
       'expired on 2026-09-01'
     );
-  });
-
-  test('a key signed by anyone else is not a license', () => {
-    const forged = licenseFor(testKeys().privateKey, { seats: 999 });
-    expect(readLicenseKey(forged, keys.publicKey, NOW)).toEqual({
-      kind: 'invalid',
-      seats: FREE_SEATS,
-      reason: 'the signature does not match',
-    });
-  });
-
-  test('editing the payload of a real key breaks its signature', () => {
-    const [prefix, , signature] = licenseFor(keys.privateKey, {
-      seats: 5,
-    }).split('.');
-    const inflated = Buffer.from(
-      JSON.stringify({
-        org: 'Acme',
-        seats: 5000,
-        issuedAt: '2026-09-01T00:00:00.000Z',
-        expiresAt: null,
-      })
-    ).toString('base64url');
-    expect(
-      readLicenseKey(`${prefix}.${inflated}.${signature}`, keys.publicKey, NOW)
-        .kind
-    ).toBe('invalid');
-  });
-
-  test('garbage, and a build with no public key, read as the free plan', () => {
-    for (const junk of ['', 'hello', 'dispatch1.a', 'dispatch1.!!.??']) {
-      expect(readLicenseKey(junk, keys.publicKey, NOW)).toMatchObject({
-        kind: 'invalid',
-        seats: FREE_SEATS,
-      });
-    }
-    expect(
-      readLicenseKey(licenseFor(keys.privateKey), null, NOW)
-    ).toMatchObject({ kind: 'invalid', seats: FREE_SEATS });
   });
 });
 

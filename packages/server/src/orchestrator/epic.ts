@@ -11,7 +11,7 @@ import {
   loadConfig,
   releasesFanoutDependents,
   schedulableBatch,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   ActorContext,
   FanoutBlocker,
@@ -19,7 +19,7 @@ import type {
   TaskDoc,
   TaskListItem,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
@@ -36,6 +36,7 @@ import type { EpicProgressChild, EpicSpend, EpicWave } from './epicPhase.js';
 import type { FixLoopState } from './fixLoop.js';
 import type { Orchestrator } from './orchestrator.js';
 import { epicSessionsPath, runsDir } from './paths.js';
+import type { TaskAuthorship } from './taskAuthorship.js';
 import type { RunMeta } from './types.js';
 import {
   OrchestratorClientError,
@@ -79,6 +80,9 @@ interface EpicSessionRecord {
   scope: EpicSessionScope;
   updatedAt: string;
   completedAt?: string;
+  /** The human its auto-fill runs act for; absent when the shared agentToken
+   *  started it. */
+  operator?: string;
   /** Critical-risk children already noted as held on the epic's Activity,
    *  so each is announced once per session rather than on every fill. */
   heldCritical: Set<string>;
@@ -111,6 +115,9 @@ export interface EpicSession {
   scope: EpicSessionScope;
   updatedAt: string;
   completedAt?: string;
+  /** The human its auto-fill runs act for; absent when the shared agentToken
+   *  started it. */
+  operator?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -162,6 +169,8 @@ export interface EpicEngineContext {
   // field — appendEpicActivity() below falls back to an unattributed
   // Activity line when it's absent.
   actorContext?: ActorContext;
+  // Who wrote each task; absent, every auto-fill run acts for no one.
+  authorship?: TaskAuthorship;
 }
 
 // How long a fill that failed outright waits before retrying itself, and how
@@ -365,7 +374,11 @@ export class EpicEngine {
   // throws (see the catch below), which a fire-and-forget `void` could not.
   async start(
     epicId: string,
-    opts: EpicSessionOptions & { executor?: string; startedBy?: string } = {}
+    opts: EpicSessionOptions & {
+      executor?: string;
+      startedBy?: string;
+      operator?: string;
+    } = {}
   ): Promise<EpicSession> {
     const epic = this.requireEpic(epicId);
     const existing = this.sessions.get(epicId);
@@ -409,6 +422,7 @@ export class EpicEngine {
       startedBy: opts.startedBy ?? this.ctx.actorContext?.humanRef ?? null,
       scope: 'plan',
       updatedAt: now,
+      ...(opts.operator === undefined ? {} : { operator: opts.operator }),
       heldCritical: new Set(),
     };
     this.sessions.set(epicId, session);
@@ -467,10 +481,10 @@ export class EpicEngine {
   // POST /api/epics/:id/resume. The mid-session throttle and "raise the
   // ceiling" verb: overrides are validated like start()'s, then the session
   // fills again. `startedAt` is untouched, so spend keeps counting the runs
-  // already made.
+  // already made. A given `operator` re-keys who the fills act for (null: no one).
   async resume(
     epicId: string,
-    opts: EpicSessionOptions = {}
+    opts: EpicSessionOptions & { operator?: string | null } = {}
   ): Promise<EpicSession> {
     this.requireEpic(epicId);
     const session = this.sessions.get(epicId);
@@ -497,6 +511,8 @@ export class EpicEngine {
     session.concurrency = concurrency;
     session.maxSpendUsd = maxSpendUsd;
     session.maxRuns = maxRuns;
+    if (opts.operator === null) delete session.operator;
+    else if (opts.operator !== undefined) session.operator = opts.operator;
     session.state = 'active';
     delete session.pausedReason;
     delete session.pausedDetail;
@@ -1018,6 +1034,13 @@ export class EpicEngine {
         : `status is now ${task.meta.status}`;
     };
     for (const taskId of batch) {
+      const task = clearOfLiveRuns.find((t) => t.meta.id === taskId);
+      // MEM-R8(b): the run acts for the session's operator only on a task
+      // that operator created and last wrote.
+      const operator =
+        task === undefined || this.ctx.authorship === undefined
+          ? null
+          : this.ctx.authorship.actsFor(task, session.operator ?? null);
       try {
         // The epic scheduler's own auto-fill decided this task was next —
         // no human pressed dispatch for it specifically, but the run is the
@@ -1028,6 +1051,7 @@ export class EpicEngine {
         await this.ctx.orchestrator.dispatchOrResume(taskId, {
           executor: session.executor,
           actor: 'none',
+          operator,
           dispatchedBy: dispatcher,
           guard,
         });
@@ -1448,6 +1472,9 @@ export class EpicEngine {
         ...(record.completedAt !== undefined
           ? { completedAt: record.completedAt }
           : {}),
+        ...(typeof record.operator === 'string'
+          ? { operator: record.operator }
+          : {}),
         heldCritical: new Set(
           Array.isArray(record.heldCritical)
             ? record.heldCritical.filter((id) => typeof id === 'string')
@@ -1481,6 +1508,7 @@ export class EpicEngine {
       ...(session.completedAt !== undefined
         ? { completedAt: session.completedAt }
         : {}),
+      ...(session.operator !== undefined ? { operator: session.operator } : {}),
       active: session.state === 'active',
     };
   }

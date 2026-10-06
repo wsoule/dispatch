@@ -1,5 +1,5 @@
-import { loadConfig } from '@dispatch/core';
-import type { RemoteConfig } from '@dispatch/core';
+import { childEnv, loadConfig } from '@dispatch-foo/core';
+import type { RemoteConfig } from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 
@@ -159,7 +159,10 @@ export function registerRemoteCommands(
       // Inherited stdio rather than captured: this is a passthrough, so the
       // remote's own output, exit code and any prompt it puts up belong to the
       // terminal the user is sitting at.
-      const result = spawnSync('ssh', args, { stdio: 'inherit' });
+      const result = spawnSync('ssh', args, {
+        stdio: 'inherit',
+        env: childEnv(),
+      });
       if (result.error !== undefined) {
         throw new CliError(`could not run ssh: ${result.error.message}`);
       }
@@ -184,7 +187,7 @@ export function registerRemoteCommands(
       const result = spawnSync(
         'ssh',
         forwardArgs(config, localPort, remotePort),
-        { stdio: 'inherit' }
+        { stdio: 'inherit', env: childEnv() }
       );
       if (result.error !== undefined) {
         throw new CliError(`could not run ssh: ${result.error.message}`);

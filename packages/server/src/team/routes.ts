@@ -1,16 +1,18 @@
-import type { TeamMember } from '@dispatch/core';
+import type { DroppedEntry, TeamMember } from '@dispatch-foo/core';
 import {
+  describeDroppedEntry,
   DISPATCH_DIR,
-  parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { ApiContext } from '../api.js';
 import { errorResponse, jsonResponse, readJsonBody } from '../api/http.js';
+import { revokeCascade } from '../api/revoke.js';
 import type { AuthTier } from '../tiers.js';
 import { AUTH_TIERS, isAuthTier, tierAllows } from '../tiers.js';
 import type { LicenseState } from './license.js';
@@ -24,14 +26,12 @@ import { SeatLimitError } from './teammates.js';
 // agent holding the on-disk agent token must not be able to mint itself a
 // second identity.
 //
-// Only the owner's app token re-issues an existing teammate's credential
-// (XH-R1): the new token comes back to the caller and replaces the old one, so
-// anyone else doing it could become that teammate. A teammate may replace only
-// their own, and a lead may still invite someone not yet on the roster.
-//
-// On top of that, nobody hands out more than they hold: a decide-tier lead can
-// invite reviewers but cannot mint an operator token, which would be a shell on
-// the host by another name. The same cap applies to revoking, so a lead cannot
+// Only the owner's app token re-issues an existing member's credential for
+// anyone but the caller (XH-R1): the new token comes back to the caller and
+// replaces the old one, so anyone else doing it could become that teammate. A
+// lead may still invite someone not yet on the roster. On top of that, nobody
+// hands out more than they hold: a decide-tier lead cannot mint an operator
+// token, which would be a shell on the host by another name. The same cap applies to revoking, so a lead cannot
 // lock the operator's own teammate-issued operator tokens out either.
 
 // How long an invite lasts when the inviter does not say. Long enough that a
@@ -83,20 +83,40 @@ function exceedsCaller(ctx: ApiContext, tier: AuthTier): Response | null {
   );
 }
 
+/** XH-R1: refuses re-issuing an existing member's credential to anyone but
+ *  the owner's app token or that member, or null to proceed. A re-issue hands
+ *  the caller a working token for `handle`, which would make them that person. */
+function reissueRefusal(
+  ctx: ApiContext,
+  handle: string,
+  existing: boolean
+): Response | null {
+  // The owner's own handle is refused for everyone further down, with why.
+  if (!existing || handle === ctx.actorContext.member.handle) return null;
+  if (ctx.caller?.appToken === true || ctx.caller?.handle === handle)
+    return null;
+  return errorResponse(
+    403,
+    `only the daemon owner can issue a token for "${handle}"; you can re-issue only your own`
+  );
+}
+
 function teamFile(rootDir: string): string {
   return join(rootDir, DISPATCH_DIR, 'team.yml');
 }
 
-/** The roster as it stands, or a reason it cannot be read. A conflicted
- *  team.yml is reported, never treated as empty — writing over it would wipe
- *  the team, the same rule ActorContext follows. */
+/** The roster as it stands, with the entries it skipped, or a reason it
+ *  cannot be read. A conflicted team.yml is reported, never treated as empty —
+ *  writing over it would wipe the team, the same rule ActorContext follows. */
 function readRoster(
   rootDir: string
-): { ok: true; members: TeamMember[] } | { ok: false; error: string } {
+):
+  | { ok: true; members: TeamMember[]; dropped: DroppedEntry[] }
+  | { ok: false; error: string } {
   const file = teamFile(rootDir);
   const raw = existsSync(file) ? readFileSync(file, 'utf8') : '';
   try {
-    return { ok: true, members: parseTeam(raw) };
+    return { ok: true, ...parseTeamReport(raw) };
   } catch (err) {
     if (!(err instanceof TeamParseError)) throw err;
     return { ok: false, error: err.message };
@@ -153,9 +173,6 @@ export async function issueTeamToken(
   }
 
   let handle: string;
-  // The roster with an email invite's new entry added, written only once the
-  // caller is allowed to issue for it.
-  let addedRoster: TeamMember[] | null = null;
   if (typeof body.email === 'string' && body.email.trim() !== '') {
     const email = body.email.trim();
     if (!email.includes('@')) {
@@ -166,7 +183,24 @@ export async function issueTeamToken(
         ? body.displayName.trim()
         : email.slice(0, email.indexOf('@'));
     const result = upsertMember(roster.members, email, displayName);
-    if (result.changed) addedRoster = result.members;
+    const existing = roster.members.some(
+      (m) => m.handle === result.member.handle
+    );
+    // Checked before team.yml is touched, so a refused call changes nothing.
+    const refused = reissueRefusal(ctx, result.member.handle, existing);
+    if (refused !== null) return refused;
+    if (result.changed) {
+      // Rewriting a roster with skipped entries would delete those teammates.
+      if (roster.dropped.length > 0) {
+        const named = roster.dropped.map(describeDroppedEntry).join('; ');
+        return errorResponse(
+          409,
+          `team.yml has entries this daemon skipped (${named}); fix them first, since this invite would rewrite team.yml and delete them`
+        );
+      }
+      mkdirSync(join(ctx.rootDir, DISPATCH_DIR), { recursive: true });
+      writeFileSync(teamFile(ctx.rootDir), serializeTeam(result.members));
+    }
     handle = result.member.handle;
   } else if (typeof body.handle === 'string') {
     const wanted = body.handle;
@@ -176,37 +210,28 @@ export async function issueTeamToken(
         `no roster member "${wanted}": pass their email instead to add them`
       );
     }
+    const refused = reissueRefusal(ctx, wanted, true);
+    if (refused !== null) return refused;
     handle = wanted;
   } else {
     return errorResponse(400, 'expected { handle } or { email }');
   }
 
-  // Whoever receives this token speaks as `handle`, so only the owner may
-  // issue one for an existing teammate other than the caller. A handle that
-  // still holds a token counts as existing even if it left the roster.
-  const current = ctx.team.teammates.issuedTier(handle);
-  const existing =
-    roster.members.some((m) => m.handle === handle) || current !== null;
-  if (
-    existing &&
-    ctx.caller?.appToken !== true &&
-    ctx.caller?.handle !== handle
-  ) {
+  // The operator speaks only through the daemon's own tokens; a teammate
+  // token for their handle would let its holder act as them.
+  if (handle === ctx.actorContext.member.handle) {
     return errorResponse(
-      403,
-      `only the daemon owner can re-issue ${handle}'s token; you can re-issue only your own`
+      400,
+      `${handle} runs this daemon and uses its own token; a teammate token cannot be issued for them`
     );
   }
 
   // Issuing replaces what they held, so replacing an operator token is as
   // privileged as revoking one.
+  const current = ctx.team.teammates.issuedTier(handle);
   if (current !== null) {
     const replacing = exceedsCaller(ctx, current);
     if (replacing !== null) return replacing;
-  }
-  if (addedRoster !== null) {
-    mkdirSync(join(ctx.rootDir, DISPATCH_DIR), { recursive: true });
-    writeFileSync(teamFile(ctx.rootDir), serializeTeam(addedRoster));
   }
   let token: string;
   try {
@@ -235,7 +260,11 @@ export async function issueTeamToken(
 // DELETE /api/team/tokens/:handle — revoke whatever that teammate holds. 404
 // rather than a silent 200 when there was nothing to revoke, so a typo in a
 // handle is visible instead of reading as success.
-export function revokeTeamToken(ctx: ApiContext, handle: string): Response {
+// Everything that acted for them goes with the token (XH-R3; api/revoke.ts).
+export async function revokeTeamToken(
+  ctx: ApiContext,
+  handle: string
+): Promise<Response> {
   const current = ctx.team.teammates.issuedTier(handle);
   if (current === null) {
     return errorResponse(404, `no issued token for "${handle}"`);
@@ -243,6 +272,7 @@ export function revokeTeamToken(ctx: ApiContext, handle: string): Response {
   const refused = exceedsCaller(ctx, current);
   if (refused !== null) return refused;
   ctx.team.teammates.revoke(handle);
+  await revokeCascade(ctx, handle);
   return jsonResponse({ ok: true, tier: current });
 }
 

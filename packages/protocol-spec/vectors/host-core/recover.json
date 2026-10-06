@@ -1,0 +1,301 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "recover",
+  "vectors": [
+    {
+      "id": "core.recover.dispatches-sending-rows-whose-session-is-live",
+      "title": "Recovery dispatches again a sending row whose session is live",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.3"],
+      "given": {
+        "workItems": [{ "id": "t-000002", "liveSession": "run:r-000002" }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-seed-1",
+              "from": "human:wyat",
+              "to": ["task:t-000002"],
+              "kind": "message",
+              "body": "x"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-seed-1",
+              "message": "m-seed-1",
+              "recipient": "task:t-000002",
+              "session": "run:r-000002",
+              "via": "direct",
+              "state": "sending"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [{ "op": "recover" }],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": { "retried": 1, "reverted": 0, "replayed": 0 }
+          }
+        ],
+        "deliveries": [
+          {
+            "message": "m-seed-1",
+            "recipient": "task:t-000002",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ],
+        "calls": [
+          { "hook": "push", "session": "run:r-000002", "message": "m-seed-1" }
+        ]
+      }
+    },
+    {
+      "id": "core.recover.returns-sending-rows-to-held",
+      "title": "Recovery returns a sending row whose session is gone to the mailbox",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.3"],
+      "given": {
+        "workItems": [{ "id": "t-4a8cce", "sessions": ["run:r-9f2c01"] }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-seed-1",
+              "from": "human:wyat",
+              "to": ["task:t-4a8cce"],
+              "kind": "message",
+              "body": "hi"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-seed-1",
+              "message": "m-seed-1",
+              "recipient": "task:t-4a8cce",
+              "session": "run:r-9f2c01",
+              "via": "direct",
+              "state": "sending"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [{ "op": "recover" }],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": { "retried": 0, "reverted": 1, "replayed": 0 }
+          }
+        ],
+        "deliveries": [
+          {
+            "message": "m-seed-1",
+            "recipient": "task:t-4a8cce",
+            "state": "held",
+            "session": null
+          }
+        ],
+        "calls": []
+      }
+    },
+    {
+      "id": "core.recover.leaves-settled-rows-alone",
+      "title": "Recovery leaves a delivery that is not sending alone",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.3"],
+      "given": {
+        "workItems": [{ "id": "t-000002", "liveSession": "run:r-000002" }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-seed-1",
+              "from": "human:wyat",
+              "to": ["task:t-000002"],
+              "kind": "message",
+              "body": "x"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-seed-1",
+              "message": "m-seed-1",
+              "recipient": "task:t-000002",
+              "session": "run:r-000002",
+              "via": "direct",
+              "state": "pushed"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [{ "op": "recover" }],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": { "retried": 0, "reverted": 0, "replayed": 0 }
+          }
+        ],
+        "deliveries": [
+          {
+            "message": "m-seed-1",
+            "recipient": "task:t-000002",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ],
+        "calls": []
+      }
+    },
+    {
+      "id": "core.recover.replays-an-unapplied-gate-effect",
+      "title": "Recovery applies again a deciding answer whose effect failed, records it, and does not apply it a third time",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["5.5", "6.3"],
+      "given": {
+        "owner": "human:wyat",
+        "failOnAnswered": true,
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        },
+        { "op": "world", "change": { "failOnAnswered": false } },
+        { "op": "recover" },
+        { "op": "recover" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          null,
+          {
+            "ok": true,
+            "result": { "retried": 0, "reverted": 0, "replayed": 1 }
+          },
+          {
+            "ok": true,
+            "result": { "retried": 0, "reverted": 0, "replayed": 0 }
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" },
+          { "hook": "published", "message": "$s2" },
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    },
+    {
+      "id": "core.recover.skips-applied-and-closed-gates",
+      "title": "Recovery applies no effect for a gate already applied or closed",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.8", "6.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake task:t-000002?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        },
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake task:t-000003?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000003",
+              "message": "m-elsewhere"
+            }
+          }
+        },
+        { "op": "close", "question": "$s3", "reason": "the run ended" },
+        { "op": "recover" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": true },
+          { "ok": true },
+          {
+            "ok": true,
+            "result": { "retried": 0, "reverted": 0, "replayed": 0 }
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" },
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s2" },
+          { "hook": "published", "message": "$s2" },
+          { "hook": "published", "message": "$s3" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s3" },
+          { "hook": "published", "message": "$s4" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    }
+  ]
+}

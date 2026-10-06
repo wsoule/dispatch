@@ -1,6 +1,19 @@
 import type { ApiClient, WorkspaceFile } from '@dispatch/client';
+import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+import { LinkedImage, MarkdownLink } from '../runs/LinkedImage';
+
+// A file a run wrote never loads an image on its own, not even a loopback one.
+const PREVIEW_COMPONENTS: Components = {
+  img: ({ src, alt }) => (
+    <LinkedImage src={typeof src === 'string' ? src : undefined} alt={alt} />
+  ),
+  a: ({ href, children }) => (
+    <MarkdownLink href={href}>{children}</MarkdownLink>
+  ),
+};
 
 /**
  * What to show for a file the editor cannot hold as text — and the rendered
@@ -30,7 +43,10 @@ export function FilePreview({ client, file, runId }: FilePreviewProps) {
   if (file.kind === 'text') {
     return (
       <div className="prose prose-sm dark:prose-invert h-full max-w-none overflow-auto p-4">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={PREVIEW_COMPONENTS}
+        >
           {file.text ?? ''}
         </ReactMarkdown>
       </div>

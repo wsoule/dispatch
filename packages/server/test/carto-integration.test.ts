@@ -1,4 +1,4 @@
-import { discoverCarto, openCartoReader } from '@dispatch/core/carto';
+import { discoverCarto, openCartoReader } from '@dispatch-foo/core/carto';
 import { describe, expect, it } from 'bun:test';
 import { join } from 'node:path';
 

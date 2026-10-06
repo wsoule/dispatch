@@ -3,8 +3,8 @@ import {
   loadConfig,
   updateConfig,
   withLabelColor,
-} from '@dispatch/core';
-import type { LabelDefinition } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { LabelDefinition } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 
-// `@dispatch/core/browser` is imported by the desktop webview, where a `node:`
+// `@dispatch-foo/core/browser` is imported by the desktop webview, where a `node:`
 // builtin is a build failure rather than a runtime one. Nothing enforced that
 // before: the entry point stayed pure by convention, and the SQLite backend
 // (node:sqlite) is exactly the kind of addition that could reach it by way of

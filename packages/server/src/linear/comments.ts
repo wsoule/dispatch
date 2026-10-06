@@ -2,12 +2,12 @@
 // in both directions. Each local comment's twin is remembered in sync state
 // with the body hash both sides agreed on, which is the base an edit on
 // either side is measured against.
-import { fieldHash, parseLinearExternal } from '@dispatch/core';
+import { fieldHash, parseLinearExternal } from '@dispatch-foo/core';
 import type {
   CommentStorePort,
   LinearComment,
   TaskComment,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type { LinearClient } from './client.js';
 import type { LinearPass } from './reconcile.js';

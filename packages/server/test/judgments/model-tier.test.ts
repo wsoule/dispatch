@@ -1,5 +1,5 @@
-import type { ModelConfig, TaskDoc } from '@dispatch/core';
-import { defaultTaskFields } from '@dispatch/core';
+import type { ModelConfig, TaskDoc } from '@dispatch-foo/core';
+import { defaultTaskFields } from '@dispatch-foo/core';
 import { describe, expect, test } from 'bun:test';
 
 import type { JudgmentClient } from '../../src/judgments/client';

@@ -17,6 +17,9 @@ tasks:
       # apps/desktop/moon.yml for why the workspace edge alone does not cover
       # it.
       - '/packages/tokens/tokens.css'
+      # The protocol and A2A extension pages render the frozen DMP versions,
+      # read by path at build time (no package dependency on the spec).
+      - '/packages/protocol-spec/versions/**/*'
     outputs:
       - 'dist'
 

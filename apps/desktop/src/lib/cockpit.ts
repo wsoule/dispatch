@@ -1,10 +1,8 @@
 import type {
-  EpicProgress,
-  MergeQueueEntry,
-  ReadinessReading,
-  RunMeta,
-} from '@dispatch/client';
-import type { Person, StatusModel, TaskListItem } from '@dispatch/core/browser';
+  Person,
+  StatusModel,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
 import {
   canonicalAssignee,
   hasStatusRole,
@@ -13,7 +11,13 @@ import {
   parentIdsOf,
   PRIORITY_ORDER,
   readyTasks,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type {
+  EpicProgress,
+  MergeQueueEntry,
+  ReadinessReading,
+  RunMeta,
+} from '@dispatch/client';
 
 import { isTerminalRunState } from './runState';
 import type { TaskAttention } from './taskAttention';
@@ -297,9 +301,11 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
     const starter = progress.session?.startedBy ?? input.local;
     return starter === null ? unsigned : ownerOf(starter);
   };
-  // A run belongs to whoever dispatched it, else to whoever started its fan-out.
+  // A run belongs to the human it acts for, else whoever dispatched it, else
+  // whoever started its fan-out (XH-R9).
   const runOwner = (run: RunMeta): string | null => {
-    if (run.dispatchedBy !== undefined) return ownerOf(run.dispatchedBy);
+    const human = run.operator ?? run.dispatchedBy;
+    if (human !== undefined) return ownerOf(human);
     const progress = sessionOf.get(run.taskId);
     return progress === undefined ? unsigned : starterOf(progress);
   };

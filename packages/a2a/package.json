@@ -1,0 +1,52 @@
+{
+  "name": "@dispatch-foo/a2a",
+  "version": "0.1.0",
+  "description": "The A2A binding of the Dispatch Messaging Protocol: codec, extensions, task-state projection and server handlers.",
+  "homepage": "https://dispatch.foo/protocol/",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wsoule/dispatch.git",
+    "directory": "packages/a2a"
+  },
+  "bin": {
+    "dmp-a2a-reference-adapter": "./dist/conformance-adapter.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown --clean",
+    "tck": "bun test/tck/run.ts",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty",
+    "prepublishOnly": "moon run a2a:prepublish"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "catalog:",
+    "@dispatch-foo/core": "workspace:*",
+    "@dispatch-foo/protocol": "workspace:*",
+    "jose": "catalog:"
+  },
+  "devDependencies": {
+    "@dispatch-foo/protocol-spec": "workspace:*",
+    "@types/bun": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

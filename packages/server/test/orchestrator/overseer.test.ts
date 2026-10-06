@@ -1,5 +1,6 @@
-import { TaskStore, updateConfig } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { TaskStore, updateConfig } from '@dispatch-foo/core';
+import type { JsonValue, Message, Sender } from '@dispatch-foo/protocol';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,13 @@ import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
+import { closeOrphanedGates } from '../../src/messaging/gates.js';
+import {
+  createOverseerBus,
+  ensureOverseerActor,
+  overseerToolMessaging,
+} from '../../src/messaging/overseerBus.js';
+import { openMessaging } from '../../src/messaging/service.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { MergeQueue } from '../../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
@@ -24,14 +32,13 @@ import type { FakeOverseerScript } from '../../src/orchestrator/overseers/fake.j
 import type { OverseerToolContext } from '../../src/orchestrator/overseerTools.js';
 import { OverseerToolRegistry } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
-import { QuestionRegistry } from '../../src/orchestrator/questions.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
 import type { ApprovalDecision } from '../../src/orchestrator/types.js';
-import { initGitRepo } from './helpers.js';
+import { initGitRepo, lateBoundOverseerMessaging } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
@@ -98,6 +105,7 @@ interface Harness extends OverseerToolContext {
   registry: OverseerToolRegistry;
   events: EventBus;
   seen: ServerEvent[];
+  lateMessaging: ReturnType<typeof lateBoundOverseerMessaging>;
 }
 
 // A whole project's wiring over a throwaway git repo, assembled the way
@@ -133,16 +141,25 @@ function makeHarness(): Harness {
     stubRunner
   );
   liveQueues.push(mergeQueue);
+  const lateMessaging = lateBoundOverseerMessaging();
   const ctx: OverseerToolContext = {
     store,
     cache,
     orchestrator,
     mergeQueue,
-    questions: new QuestionRegistry(),
+    openGates: () => [],
     ledgerStore: new LedgerStore(repo),
     defaultExecutor: 'fake',
+    messaging: lateMessaging.port,
+    ownerRef: 'human:test',
   };
-  return { ...ctx, registry: new OverseerToolRegistry(ctx), events, seen };
+  return {
+    ...ctx,
+    registry: new OverseerToolRegistry(ctx),
+    events,
+    seen,
+    lateMessaging,
+  };
 }
 
 interface ManagerHarness extends Harness {
@@ -930,5 +947,464 @@ describe('OverseerManager turn options', () => {
     expect(chosen.effort).toBe('max');
     await waitFor(() => h.manager.get(chosen.id).state === 'ready');
     expect(h.gated.options?.effort).toBe('max');
+  });
+});
+
+describe('overseer on the bus', () => {
+  const WYAT: Sender = { address: 'human:wyat', canDecide: true };
+
+  const gateOfType = (m: Message) =>
+    (m.data as { type?: string } | undefined)?.type;
+
+  // Messaging and an overseer manager on it, wired the way index.ts wires them.
+  async function openBus(base: Harness, backend: OverseerBackend) {
+    const messaging = openMessaging({
+      rootDir: repo,
+      orchestrator: base.orchestrator,
+      store: base.store,
+      events: base.events,
+      ownerRef: 'human:wyat',
+      dbPath: join(repo, 'messages.db'),
+    });
+    await messaging.recover();
+    base.lateMessaging.bind(overseerToolMessaging(messaging.engine));
+    ensureOverseerActor(
+      messaging.store,
+      'agent:wyat/overseer',
+      new Date().toISOString()
+    );
+    const manager = new OverseerManager({
+      rootDir: repo,
+      registry: base.registry,
+      events: base.events,
+      bus: createOverseerBus(messaging.engine, messaging.store, {
+        owner: 'human:wyat',
+        overseer: 'agent:wyat/overseer',
+      }),
+    });
+    manager.registerBackend('fake', backend);
+    messaging.bindOverseer(manager);
+    return { messaging, manager };
+  }
+
+  async function busHarness(
+    title = 'Ship the thing',
+    speaker: Sender | null = WYAT
+  ) {
+    const base = makeHarness();
+    const taskId = makeTask(base, title);
+    const backend = new FakeOverseer({
+      ok: true,
+      turns: [
+        {
+          calls: [{ tool: 'dispatch_task', input: { taskId } }],
+          reply: 'queued it for you',
+        },
+        { reply: 'anything else?' },
+      ],
+    });
+    const { messaging, manager } = await openBus(base, backend);
+    const started = manager.start(
+      'dispatch it',
+      'fake',
+      undefined,
+      undefined,
+      speaker
+    );
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    return {
+      base,
+      taskId,
+      messaging,
+      manager,
+      record: manager.get(started.id),
+    };
+  }
+
+  it('keeps the conversation as a thread and tags the record entries with message ids', async () => {
+    const { messaging, manager, record } = await busHarness();
+    await waitFor(() =>
+      manager
+        .get(record.id)
+        .messages.some(
+          (m) => m.role === 'assistant' && m.messageId !== undefined
+        )
+    );
+    const current = manager.get(record.id);
+    expect(current.thread).toBeDefined();
+    const thread = messaging.engine.thread(current.thread ?? '').messages;
+    expect(thread.map((m) => [m.from, m.body])).toEqual([
+      ['human:wyat', 'dispatch it'],
+      ['agent:wyat/overseer', 'queued it for you'],
+    ]);
+    expect(current.messages[0].messageId).toBe(thread[0].id);
+    // The manager consumed the human's line, so it never waits in a mailbox.
+    expect(
+      messaging.engine.inbox('agent:wyat/overseer').map((i) => i.delivery.state)
+    ).toEqual(['read']);
+    messaging.close();
+  });
+
+  it('turns a queued action into a gate, and confirming it applies the action once', async () => {
+    const { base, messaging, record } = await busHarness();
+    const gate = messaging.engine
+      .openBlocking()
+      .find((m) => gateOfType(m) === 'overseer-action');
+    expect(gate?.data).toMatchObject({
+      conversation: record.id,
+      actionId: record.pendingActions[0].id,
+    });
+    expect(gate?.choices).toEqual(['confirm', 'cancel']);
+    await messaging.engine.reply(
+      gate?.id ?? '',
+      { body: '', choice: 'confirm' },
+      { address: 'human:wyat', canDecide: true }
+    );
+    expect(base.orchestrator.list()).toHaveLength(1);
+    if (gate !== undefined) {
+      const answer = messaging.engine.answerOf(gate.id);
+      // A replay is a no-op.
+      if (answer !== null) await messaging.gates.handle(gate, answer);
+    }
+    expect(base.orchestrator.list()).toHaveLength(1);
+    for (const run of base.orchestrator.list())
+      await base.orchestrator.cancel(run.id).catch(() => {});
+    messaging.close();
+  });
+
+  it('closes the action gate when the action is decided another way', async () => {
+    const { messaging, manager, record } = await busHarness();
+    const gate = messaging.engine
+      .openBlocking()
+      .find((m) => gateOfType(m) === 'overseer-action');
+    if (gate === undefined) throw new Error('no overseer-action gate');
+    await manager.confirmAction(
+      record.id,
+      record.pendingActions[0].id,
+      false,
+      'human:wyat'
+    );
+    expect(messaging.engine.answerOf(gate.id)?.data).toMatchObject({
+      type: 'x-closed',
+    });
+    messaging.close();
+  });
+
+  // A queued cancel whose run is then cancelled out from under it, so applying
+  // the action conflicts.
+  async function failingCancel() {
+    const base = makeHarness();
+    const taskId = makeTask(base, 'Long one');
+    const meta = await base.orchestrator.dispatch(taskId, 'slow');
+    const { messaging, manager } = await openBus(
+      base,
+      new FakeOverseer({
+        ok: true,
+        calls: [{ tool: 'cancel_run', input: { runId: meta.id } }],
+        reply: 'queued a cancel',
+      })
+    );
+    const started = manager.start(
+      'cancel it',
+      'fake',
+      undefined,
+      undefined,
+      WYAT
+    );
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    await base.orchestrator.cancel(meta.id);
+    const gate = messaging.engine
+      .openBlocking()
+      .find((m) => gateOfType(m) === 'overseer-action');
+    if (gate === undefined) throw new Error('no overseer-action gate');
+    return { messaging, manager, record: manager.get(started.id), gate };
+  }
+
+  it('re-raises the action gate with the error when applying it fails', async () => {
+    const { messaging, manager, record, gate } = await failingCancel();
+
+    await messaging.engine.reply(
+      gate.id,
+      { body: '', choice: 'confirm' },
+      WYAT
+    );
+
+    const again = messaging.engine
+      .openBlocking()
+      .filter((m) => gateOfType(m) === 'overseer-action');
+    expect(again).toHaveLength(1);
+    expect(again[0].id).not.toBe(gate.id);
+    expect(again[0].body).toContain('(the last attempt failed: ');
+    expect(manager.get(record.id).pendingActions).toHaveLength(1);
+    messaging.close();
+  });
+
+  it('a failed confirm made directly replaces the open gate rather than adding one', async () => {
+    const { messaging, manager, record, gate } = await failingCancel();
+
+    await expect(
+      manager.confirmAction(
+        record.id,
+        record.pendingActions[0].id,
+        true,
+        'human:wyat'
+      )
+    ).rejects.toThrow();
+
+    const open = messaging.engine
+      .openBlocking()
+      .filter((m) => gateOfType(m) === 'overseer-action');
+    expect(open.map((m) => m.id)).not.toContain(gate.id);
+    expect(open).toHaveLength(1);
+    expect(open[0].body).toContain('(the last attempt failed: ');
+    messaging.close();
+  });
+
+  it('the boot sweep closes conversation gates, since conversations do not survive a restart', async () => {
+    const { messaging } = await busHarness();
+    expect(
+      closeOrphanedGates(messaging.engine, {
+        isRunLive: () => false,
+        taskIdOfRun: () => null,
+      })
+    ).toBeGreaterThan(0);
+    expect(
+      messaging.engine
+        .openBlocking()
+        .filter((m) => gateOfType(m) === 'overseer-action')
+    ).toEqual([]);
+    messaging.close();
+  });
+
+  it('a turn with no human speaker runs but puts nothing on the bus', async () => {
+    const { messaging, manager, record } = await busHarness(
+      'Ship the thing',
+      null
+    );
+    expect(
+      manager.get(record.id).messages.some((m) => m.role === 'assistant')
+    ).toBe(true);
+    expect(manager.get(record.id).thread).toBeUndefined();
+    expect(
+      messaging.engine
+        .inbox('human:wyat')
+        .filter((i) => i.message.from === 'agent:wyat/overseer')
+    ).toEqual([]);
+    messaging.close();
+  });
+
+  it('a revoked overseer refuses new messages until it is approved again', async () => {
+    const { messaging, manager, record } = await busHarness();
+    const agent = messaging.store.getAgent('agent:wyat/overseer');
+    if (agent !== null)
+      messaging.store.putAgent({
+        ...agent,
+        status: 'revoked',
+        approvedBy: null,
+      });
+    expect(() => manager.sendMessage(record.id, 'still there?', WYAT)).toThrow(
+      OrchestratorConflictError
+    );
+    let refused: OrchestratorConflictError | undefined;
+    try {
+      manager.sendMessage(record.id, 'still there?', WYAT);
+    } catch (err) {
+      refused = err as OrchestratorConflictError;
+    }
+    expect(refused?.message).toBe('the overseer is revoked');
+    expect(refused?.code).toBe('overseer_revoked');
+    // Only a caller who can turn it back on is told how (the router decides).
+    expect(refused?.operatorHint).toBe(
+      'approve agent:wyat/overseer in Settings → Connected agents to use it again'
+    );
+    ensureOverseerActor(
+      messaging.store,
+      'agent:wyat/overseer',
+      new Date().toISOString()
+    );
+    // A restart does not re-approve.
+    expect(messaging.store.getAgent('agent:wyat/overseer')?.status).toBe(
+      'revoked'
+    );
+    messaging.close();
+  });
+
+  it('an overseer whose record is pending, not approved, stays off', async () => {
+    const { messaging, manager, record } = await busHarness();
+    const agent = messaging.store.getAgent('agent:wyat/overseer');
+    if (agent === null) throw new Error('no overseer record');
+    messaging.store.putAgent({ ...agent, status: 'pending', approvedBy: null });
+    expect(() => manager.sendMessage(record.id, 'still there?', WYAT)).toThrow(
+      OrchestratorConflictError
+    );
+    expect(() =>
+      manager.start('hello', 'fake', undefined, undefined, WYAT)
+    ).toThrow(OrchestratorConflictError);
+    messaging.close();
+  });
+
+  it('a human line the bus refuses gets no reply on the bus either', async () => {
+    const base = makeHarness();
+    const { messaging, manager } = await openBus(
+      base,
+      new FakeOverseer({ ok: true, reply: 'hi' })
+    );
+    // The turn is over and its reply has landed on the bus.
+    const tagged = (id: string) =>
+      manager.get(id).state !== 'running' &&
+      manager.get(id).messages.at(-1)?.messageId !== undefined;
+    const started = manager.start('hello', 'fake', undefined, undefined, WYAT);
+    await waitFor(() => tagged(started.id));
+
+    // A request-tier teammate is no participant of the owner's thread.
+    const ALICE: Sender = { address: 'human:alice', canDecide: false };
+    manager.sendMessage(started.id, 'hello from alice', ALICE);
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    // Posts land in order, so once this turn is tagged alice's have settled.
+    manager.sendMessage(started.id, 'and now?', WYAT);
+    await waitFor(() => tagged(started.id));
+
+    const current = manager.get(started.id);
+    const thread = messaging.engine.thread(current.thread ?? '').messages;
+    expect(thread.map((m) => [m.from, m.to, m.body])).toEqual([
+      ['human:wyat', ['agent:wyat/overseer'], 'hello'],
+      ['agent:wyat/overseer', ['human:wyat'], 'hi'],
+      ['human:wyat', ['agent:wyat/overseer'], 'and now?'],
+      ['agent:wyat/overseer', ['human:wyat'], 'hi'],
+    ]);
+    expect(
+      current.messages.slice(2, 4).map((m) => [m.role, m.text, m.messageId])
+    ).toEqual([
+      ['user', 'hello from alice', undefined],
+      ['assistant', 'hi', undefined],
+    ]);
+    messaging.close();
+  });
+
+  it('an answer to a gate whose conversation is gone is marked applied and the answerer told', async () => {
+    const { messaging } = await busHarness();
+    const gate = messaging.engine
+      .openBlocking()
+      .find((m) => gateOfType(m) === 'overseer-action');
+    if (gate === undefined) throw new Error('no overseer-action gate');
+    const orphan: Message = {
+      ...gate,
+      data: { ...(gate.data as object), conversation: 'wc-gone' } as JsonValue,
+    };
+    const answer: Message = {
+      ...gate,
+      id: 'm-conf',
+      replyTo: gate.id,
+      kind: 'answer',
+      from: 'human:wyat',
+      to: ['agent:dispatch'],
+      blocking: false,
+      choice: 'confirm',
+    };
+    await expect(
+      messaging.gates.handle(orphan, answer)
+    ).resolves.toBeUndefined();
+    const notices = messaging.engine
+      .inbox('human:wyat')
+      .filter((i) => i.message.kind === 'notice');
+    expect(notices.map((i) => i.message.body)).toEqual([
+      'Not applied: overseer conversation wc-gone is gone (the daemon restarted).',
+    ]);
+    messaging.close();
+  });
+
+  it('asks about a parked built-in call through a tool-approval gate', async () => {
+    const base = makeHarness();
+    const gated = new GatedBackend([
+      { toolName: 'Bash', input: { command: 'git status' } },
+    ]);
+    const { messaging, manager } = await openBus(base, gated);
+    const started = manager.start(
+      'what changed?',
+      'fake',
+      undefined,
+      undefined,
+      WYAT
+    );
+    await waitFor(() =>
+      messaging.engine
+        .openBlocking()
+        .some((m) => gateOfType(m) === 'tool-approval')
+    );
+    const gate = messaging.engine
+      .openBlocking()
+      .find((m) => gateOfType(m) === 'tool-approval');
+    expect(gate?.data).toEqual({
+      type: 'tool-approval',
+      requestId: 'req-1',
+      conversation: started.id,
+      tool: 'Bash',
+      input: { command: 'git status' },
+      floor: false,
+    });
+    expect(gate?.choices).toEqual(['approve', 'approve-session', 'deny']);
+
+    await messaging.engine.reply(
+      gate?.id ?? '',
+      { body: '', choice: 'approve-session' },
+      WYAT
+    );
+    await waitFor(() => manager.get(started.id).state === 'ready');
+    expect(gated.decisions).toEqual([
+      { toolName: 'Bash', allow: true, scope: 'session' },
+    ]);
+    messaging.close();
+  });
+
+  it('denies a parked built-in call whose gate cannot be written', async () => {
+    const base = makeHarness();
+    const gated = new GatedBackend([
+      { toolName: 'Bash', input: { command: 'git status' } },
+    ]);
+    const { messaging, manager } = await openBus(base, gated);
+    const send = messaging.engine.send.bind(messaging.engine);
+    spyOn(messaging.engine, 'send').mockImplementation((input, sender) =>
+      (input.data as { type?: string } | undefined)?.type === 'tool-approval'
+        ? Promise.reject(new Error('disk full'))
+        : send(input, sender)
+    );
+    const started = manager.start('hi', 'fake', undefined, undefined, WYAT);
+    await waitFor(() => manager.get(started.id).state === 'ready');
+    expect(gated.decisions).toEqual([
+      {
+        toolName: 'Bash',
+        allow: false,
+        reason: 'Dispatch could not ask a human: disk full',
+      },
+    ]);
+    messaging.close();
+  });
+
+  it('closes the tool-approval gate of a call its turn stopped waiting on', async () => {
+    const base = makeHarness();
+    const dying: OverseerBackend = {
+      start: async (_prompt, _toolset, options) => {
+        void options?.authorizeTool?.({
+          requestId: 'req-x',
+          toolName: 'Bash',
+          input: { command: 'ls' },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        throw new Error('session crashed');
+      },
+      sendMessage: () => Promise.reject(new Error('unused')),
+    };
+    const { messaging, manager } = await openBus(base, dying);
+    const started = manager.start('hi', 'fake', undefined, undefined, WYAT);
+    await waitFor(() => manager.get(started.id).state === 'failed');
+    const gate = messaging.engine
+      .inbox('human:wyat')
+      .find((i) => gateOfType(i.message) === 'tool-approval')?.message;
+    if (gate === undefined) throw new Error('no tool-approval gate');
+    await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
+    expect(messaging.engine.answerOf(gate.id)?.data).toMatchObject({
+      type: 'x-closed',
+    });
+    messaging.close();
   });
 });

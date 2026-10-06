@@ -1,10 +1,10 @@
-import type { HealthPayload, SyncStatus } from '@dispatch/client';
 import type {
   CartoMode,
   ConfigPatch,
   DispatchConfig,
-} from '@dispatch/core/browser';
-import { DEFAULT_RECEIPTS_BRANCH } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { DEFAULT_RECEIPTS_BRANCH } from '@dispatch-foo/core/browser';
+import type { HealthPayload, SyncStatus } from '@dispatch/client';
 import { useEffect, useState } from 'react';
 
 import {

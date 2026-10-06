@@ -38,10 +38,18 @@ describe('groupPaletteSections', () => {
     ]);
   });
 
-  test('caps each section: inbox 3, tasks 8, views 4, navigation and actions unbounded', () => {
+  test('lists the Docs section after Tasks while browsing', () => {
+    const ranked = [entry('d1', 'docs', 'Auth spec'), entry('t1', 'tasks')];
+    expect(
+      groupPaletteSections(ranked, { query: '' }).map((s) => s.heading)
+    ).toEqual(['Tasks', 'Docs']);
+  });
+
+  test('caps each section: inbox 3, tasks 8, docs 6, views 4, navigation and actions unbounded', () => {
     const ranked = [
       ...many('inbox', 5),
       ...many('tasks', 12),
+      ...many('docs', 9),
       ...many('views', 6),
       ...many('navigation', 20),
       ...many('actions', 15),
@@ -53,6 +61,7 @@ describe('groupPaletteSections', () => {
     expect(sizes).toEqual({
       inbox: 3,
       tasks: 8,
+      docs: 6,
       views: 4,
       navigation: 20,
       actions: 15,

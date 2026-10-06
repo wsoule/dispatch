@@ -29,6 +29,9 @@
     // ever reported carto's and tauri's generated vocabulary and private notes.
     ".carto/**",
     "docs/business/**",
-    "**/src-tauri/gen/**"
+    "**/src-tauri/gen/**",
+    // Frozen protocol releases: byte-hashed (versions/manifest.json), so no
+    // tool may rewrite them.
+    "packages/protocol-spec/versions/**"
   ]
 }

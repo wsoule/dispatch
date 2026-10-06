@@ -26,17 +26,21 @@ at a rung keeps its previous behavior. Rungs are cumulative.
    escalations reach the feed. Rung 1 does not turn that off; it is the
    strictest _policy_ stop, not a change to the executor's permission mode.
 
-2. **`auto-scope`** — scope requests
-   (`packages/server/src/orchestrator/scopeRequests.ts`) auto-grant and record,
-   subject to the constraint below. Everything else still blocks.
+2. **`auto-scope`** — scope gates (a run's blocking `msg_send` question with
+   `data.type: 'scope'`, `packages/server/src/messaging/scopePolicy.ts`)
+   auto-grant and record, subject to the constraint below. Everything else still
+   blocks.
 
 3. **`auto-verify`** — the review → fix loop ignites on its own when an
    implementer finishes and retries through the round cap; non-floor tool
-   approval escalations also auto-allow. Merge still blocks.
+   approval escalations also auto-allow, and an agent may wake a sleeping task
+   without asking. Merge still blocks.
 
-4. **`auto-merge`** — a run whose fix loop completes green auto-enqueues to the
-   merge queue, which rebases, verifies, and lands it. Humans review receipts
-   after the fact.
+4. **`auto-merge`** ("Auto-merge on green and accept agents' team memory and doc
+   edits") — a run whose fix loop completes green auto-enqueues to the merge
+   queue, which rebases, verifies, and lands it; an agent's lesson for project
+   or team memory joins it, and agents' edits to accepted docs (the `doc` gate)
+   apply, without waiting in Needs you. Humans review receipts after the fact.
 
 The config key is `policy.rung: 1 | 2 | 3 | 4` in `.dispatch/config.yml`
 (committed, per-project, shared — same file as `fixLoop`, `verifySteps`,
@@ -45,11 +49,12 @@ one key.
 
 ### Rung 2 details — auto-scope
 
-- Mechanism: at rung ≥ 2 the daemon answers a new scope request itself via the
-  existing `ScopeRequestRegistry.decide()` with `granted: true`. Add `'policy'`
-  to the `ScopeDecider` union
-  (`packages/server/src/orchestrator/scopeRequests.ts:10`) so an auto-grant can
-  never read as a human's ruling — the same reason `decidedBy` exists at all.
+- Mechanism: at rung ≥ 2 the daemon answers a new scope gate itself.
+  `installScopePolicy` (`packages/server/src/messaging/scopePolicy.ts`) replies
+  `grant` as `agent:dispatch`, with `x-policy` data naming the gate and rung, so
+  an auto-grant can never read as a human's ruling. The gate's handler
+  (`applyScopeAnswer`) writes the ledger entry, which names who decided, and the
+  task's Activity line.
 - Constraint: auto-grant only paths inside the project root that do not match a
   floor pattern (below). A request touching `.git/`, paths outside the repo, or
   a floor surface blocks at every rung.
@@ -71,10 +76,19 @@ one key.
   finding still demands a written human ruling at this rung and every other (see
   the floor).
 - Tool-approval escalations (the SDK classifier's `safetyCheck` referrals,
-  `packages/server/src/orchestrator/executors/claude.ts:203-229`) auto-allow at
-  rung ≥ 3 unless they match a floor pattern. They are grouped here rather than
-  at rung 2 because rung 2 is deliberately narrow — the one known-noisy gate —
-  while rung 3 is "don't interrupt the loop."
+  `packages/server/src/orchestrator/executors/claude.ts`, `canUseTool`) each
+  raise a `tool-approval` gate
+  (`packages/server/src/messaging/toolApproval.ts`). At rung ≥ 3 the policy
+  engine (`packages/server/src/policyEngine.ts`, `onToolApprovalGate`) answers
+  that gate `approve` as `agent:dispatch`, unless the floor claims the call. The
+  floor is checked on the executor's full input, never on the gate's 8 KiB
+  preview. They are grouped here rather than at rung 2 because rung 2 is
+  deliberately narrow — the one known-noisy gate — while rung 3 is "don't
+  interrupt the loop."
+- An agent's `wake: 'request'` message to a task with no live run wakes it at
+  rung ≥ 3 (`packages/server/src/messaging/host.ts`, `decide`); below that it
+  raises a `wake` gate to the asking run's operator when they can decide, else
+  to the owner (XH-R9). A human's wake never asks.
 
 ### Rung 4 details — auto-merge
 
@@ -93,6 +107,17 @@ one key.
   `packages/server/src/orchestrator/orchestrator.ts:2583`). The epic land is the
   batch review point rung 4 preserves; a standalone task's run, whose base is
   main, does land on main automatically at rung 4.
+- The `memory` gate (an agent's proposal to add to, change or retire a project
+  or team memory entry, `packages/server/src/memory/gate.ts`) demotes here too,
+  not earlier: a bad team lesson reaches every teammate's runs. Policy applies
+  the proposal and records a receipt, unless it matches a personal entry of the
+  run's operator; that one still asks, so policy never publishes a private note.
+- The `doc` gate (an agent's edit to an accepted team doc, held as a proposal,
+  `packages/server/src/docs/gate.ts`) demotes here too: every run linking the
+  doc reads its head. Policy approves the proposal when it merges cleanly and
+  records a ledger decision and a `[policy]` Activity line; a conflicting one
+  fails and still needs a human, and an `elevated` or `critical` task's proposal
+  (or one with no task) always waits.
 
 ## Per-preset defaults: confirmed
 
@@ -179,25 +204,28 @@ to recording. "floor" = never demotes. "n/a" = not a policy gate (informational,
 environmental, or the human's own console) — listed so the inventory is
 verifiably complete, not because the ladder touches it.
 
-| #   | Gate                                                                            | Where                                                                   | Demotes at                                                                                                                                                                                                                                                |
-| --- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Routine tool calls (SDK classifier, `permissionMode: 'auto'`)                   | `packages/core/src/config.ts:67`; `executors/claude.ts:203-239`         | already auto at every rung (recorded in transcript)                                                                                                                                                                                                       |
-| 2   | Tool-approval escalations (`canUseTool` → `Orchestrator.approve()`)             | `executors/claude.ts:529`; `orchestrator.ts:1042`; feed kind `approval` | **3**, floor patterns never                                                                                                                                                                                                                               |
-| 3   | Scope requests (edit outside declared `writes`)                                 | `scopeRequests.ts`; feed kind `scope-request`                           | **2**, floor patterns never                                                                                                                                                                                                                               |
-| 4   | `ask_user` questions                                                            | `questions.ts`; feed kind `question`                                    | n/a — informational; an answer cannot be auto-fabricated. Unanswered questions already time out to agent judgment                                                                                                                                         |
-| 5   | Fix-loop ignition on implementer finish                                         | `configTypes.ts:167-192` (`fixLoop.auto`, default false)                | **3**                                                                                                                                                                                                                                                     |
-| 6   | Fix-loop rulings (`requiresRuling`, capped loops)                               | `fixLoop.ts:80-84`; feed kind `fix-loop-capped`                         | floor (#6)                                                                                                                                                                                                                                                |
-| 7   | Review verdict → merge (`review(id,'merge')`, `submitReview` approve → enqueue) | `orchestrator.ts:2126`; `api.ts:1713,1798,4979`                         | **4**                                                                                                                                                                                                                                                     |
-| 8   | Merge-queue processing once enqueued (rebase, `verifySteps`, merge)             | `mergeQueue.ts`                                                         | already autonomous; its `blocked-environment` / `waiting-github` holds are invariants and never demote                                                                                                                                                    |
-| 9   | Epic child auto-dispatch after `start()`                                        | `epic.ts` (EpicEngine)                                                  | already autonomous once a human starts the epic; `critical`-risk children and flagged undeclared-writes tasks (`plan.ts:674`) never auto-dispatch                                                                                                         |
-| 10  | Plan confirm (proposed graph dispatches on confirm)                             | planner/plan confirm path                                               | n/a — **never demotes.** Filing and first-dispatching work always has a human at the top of the chain; the ladder governs gates inside dispatched work. This is the anti-Lovable property the spec names                                                  |
-| 11  | Epic land onto main                                                             | `orchestrator.ts:2583`                                                  | n/a — stays human at every rung (rung 4 lands children onto the epic branch)                                                                                                                                                                              |
-| 12  | Branch deletion with unlanded commits (`?force=1`)                              | `api.ts:1897-1901`                                                      | floor (#2)                                                                                                                                                                                                                                                |
-| 13  | Overseer mutating-action confirmations and built-in tool-call approvals         | `overseerTools.ts:381-521`; `overseer.ts` (QUEUED_NOTE, authorizeTool)  | n/a — the overseer is the human's own console; its confirm protects against the chat model acting unilaterally, which no autonomy rung is a mandate for. Its built-in tools (Bash, Edit) run under the same permission mode and floor as a dispatched run |
-| 14  | `maxBudgetUsd` hard stop                                                        | `configTypes.ts:15`; `executors/claude.ts:574`                          | floor (#3)                                                                                                                                                                                                                                                |
-| 15  | Run stalled / interrupted-dirty handling                                        | feed kind `run-stalled`                                                 | n/a — an after-the-fact repair signal, not a permission                                                                                                                                                                                                   |
+| #   | Gate                                                                                                                | Where                                                                                                                             | Demotes at                                                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Routine tool calls (SDK classifier, `permissionMode: 'auto'`)                                                       | `packages/core/src/config.ts:67`; `executors/claude.ts:203-239`                                                                   | already auto at every rung (recorded in transcript)                                                                                                                                                                                                       |
+| 2   | Tool-approval escalations (`canUseTool` parks the run, a `tool-approval` gate asks the run's operator or the owner) | `executors/claude.ts` (`canUseTool`); `messaging/toolApproval.ts`; `policyEngine.ts` (`onToolApprovalGate`); feed kind `approval` | **3**, floor patterns never                                                                                                                                                                                                                               |
+| 3   | Scope gates (a run's request to edit outside declared `writes`)                                                     | `messaging/scopePolicy.ts`; feed kind `scope-request`                                                                             | **2**, floor patterns never                                                                                                                                                                                                                               |
+| 4   | Plain blocking questions (`msg_send`, `blocking: true`, no gate `data`)                                             | `packages/mcp/src/messaging.ts` (`msg_send`); feed kind `question`                                                                | n/a — informational; an answer cannot be auto-fabricated. Unanswered questions already time out to agent judgment                                                                                                                                         |
+| 5   | Fix-loop ignition on implementer finish                                                                             | `configTypes.ts:167-192` (`fixLoop.auto`, default false)                                                                          | **3**                                                                                                                                                                                                                                                     |
+| 6   | Fix-loop rulings (`requiresRuling`, capped loops)                                                                   | `fixLoop.ts:80-84`; feed kind `fix-loop-capped`                                                                                   | floor (#6)                                                                                                                                                                                                                                                |
+| 7   | Review verdict → merge (`review(id,'merge')`, `submitReview` approve → enqueue)                                     | `orchestrator.ts:2126`; `api.ts:1713,1798,4979`                                                                                   | **4**                                                                                                                                                                                                                                                     |
+| 8   | Merge-queue processing once enqueued (rebase, `verifySteps`, merge)                                                 | `mergeQueue.ts`                                                                                                                   | already autonomous; its `blocked-environment` / `waiting-github` holds are invariants and never demote                                                                                                                                                    |
+| 9   | Epic child auto-dispatch after `start()`                                                                            | `epic.ts` (EpicEngine)                                                                                                            | already autonomous once a human starts the epic; `critical`-risk children and flagged undeclared-writes tasks (`plan.ts:674`) never auto-dispatch                                                                                                         |
+| 10  | Plan confirm (proposed graph dispatches on confirm)                                                                 | planner/plan confirm path                                                                                                         | n/a — **never demotes.** Filing and first-dispatching work always has a human at the top of the chain; the ladder governs gates inside dispatched work. This is the anti-Lovable property the spec names                                                  |
+| 11  | Epic land onto main                                                                                                 | `orchestrator.ts:2583`                                                                                                            | n/a — stays human at every rung (rung 4 lands children onto the epic branch)                                                                                                                                                                              |
+| 12  | Branch deletion with unlanded commits (`?force=1`)                                                                  | `api.ts:1897-1901`                                                                                                                | floor (#2)                                                                                                                                                                                                                                                |
+| 13  | Overseer mutating-action confirmations and built-in tool-call approvals                                             | `overseerTools.ts:381-521`; `overseer.ts` (QUEUED_NOTE, authorizeTool); gates from `messaging/overseerBus.ts`                     | n/a — the overseer is the human's own console; its confirm protects against the chat model acting unilaterally, which no autonomy rung is a mandate for. Its built-in tools (Bash, Edit) run under the same permission mode and floor as a dispatched run |
+| 14  | `maxBudgetUsd` hard stop                                                                                            | `configTypes.ts:15`; `executors/claude.ts:574`                                                                                    | floor (#3)                                                                                                                                                                                                                                                |
+| 15  | Run stalled / interrupted-dirty handling                                                                            | feed kind `run-stalled`                                                                                                           | n/a — an after-the-fact repair signal, not a permission                                                                                                                                                                                                   |
+| 16  | Wake gates (an agent's `wake: 'request'` message to a task with no live run)                                        | `messaging/host.ts` (`decide`); feed kind `approval`                                                                              | **3**; a human's wake never raises one                                                                                                                                                                                                                    |
+| 17  | Memory gates (an agent's proposal to add to, change or retire project or team memory)                               | `memory/gate.ts`; `packages/memory/src/engine.ts` (`propose`); feed kind `memory`                                                 | **4**; a proposal matching the operator's personal entry never auto-applies                                                                                                                                                                               |
+| 18  | Doc gates (an agent's edit to an accepted team doc, held as a proposal)                                             | `docs/gate.ts`; `docs/service.ts` (`approveProposal`); feed kind `doc`                                                            | **4**; a conflicting proposal never auto-applies, and `elevated`/`critical` risk caps it below 4                                                                                                                                                          |
 
-## Mechanism: one seam, three switches
+## Mechanism: one seam, a switch per gate
 
 The decision feed already reserved the seam for exactly this epic:
 `DecisionPolicy` and `DecisionDisposition`
@@ -207,14 +235,20 @@ The decision feed already reserved the seam for exactly this epic:
 1. A `policy.rung` config key and a `DecisionPolicy` implementation that maps
    each `UnclassifiedDecisionItem` to `blocking`/`recorded` from the effective
    rung plus the floor-pattern list.
-2. Three behavior switches keyed off the effective rung: the scope auto-decider
-   (rung ≥ 2), fix-loop auto-ignition (rung ≥ 3), and auto-enqueue of green runs
-   (rung ≥ 4).
+2. Behavior switches keyed off the effective rung: the scope auto-grant
+   (`messaging/scopePolicy.ts`, rung ≥ 2), the tool-approval auto-answer
+   (`policyEngine.ts`, rung ≥ 3), an agent's wake without a gate
+   (`messaging/host.ts`, rung ≥ 3), fix-loop auto-ignition (rung ≥ 3),
+   auto-enqueue of green runs (rung ≥ 4), an agent's memory proposal applied
+   without a gate (`packages/memory/src/engine.ts`, rung ≥ 4), and an agent's
+   edit to an accepted doc approved without a gate
+   (`packages/server/src/docs/service.ts`, rung ≥ 4).
 3. Receipts for every auto-decision, all three of: a ledger entry, the
    decision-feed item kept with `disposition: 'recorded'` (the feed becomes the
    notification center's filter, per the audit amendment), and an Activity line
-   on the task. `decidedBy: 'policy'` wherever an existing record distinguishes
-   who decided.
+   on the task. A gate the policy answers is answered by `agent:dispatch` with
+   `x-policy` data naming the gate and rung, so it never reads as a human's
+   ruling.
 
 ## Explicitly out of scope for the ladder
 
@@ -222,6 +256,6 @@ The decision feed already reserved the seam for exactly this epic:
   above the executor's permission machinery, in the decision feed.
 - Mixed per-user policy (different members, different rungs) — same non-goal as
   mixed-lens teams in the direction doc.
-- Auto-answering `ask_user`, auto-ruling findings, auto-landing epics: all
+- Auto-answering plain questions, auto-ruling findings, auto-landing epics: all
   considered and rejected above; recorded here so they are re-litigated
   deliberately or not at all.

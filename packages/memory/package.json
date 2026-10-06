@@ -1,0 +1,28 @@
+{
+  "name": "@dispatch/memory",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --clean",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
+  },
+  "dependencies": {
+    "@dispatch-foo/core": "workspace:*",
+    "@dispatch-foo/protocol": "workspace:*",
+    "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,6 +1,6 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { statusModelOf } from '@dispatch-foo/core/browser';
 import type { EpicProgress, RunMeta } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
-import { statusModelOf } from '@dispatch/core/browser';
 import {
   act,
   cleanup,

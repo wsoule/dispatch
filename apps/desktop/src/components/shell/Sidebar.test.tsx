@@ -61,11 +61,13 @@ function navRows(): string[] {
 }
 
 test('the exported view order is the ⌘N order App.tsx indexes into', () => {
-  // Rail order, which is also ⌘N order: Home and Inbox, then Work, then the
-  // merge queue that leads Runs, then Code — the sections as they render.
+  // Rail order, which is also ⌘N order: Home, Inbox and Threads, then Work,
+  // then the merge queue that leads Runs, then Code — the sections as they
+  // render.
   expect(PROJECT_VIEW_ORDER).toEqual([
     'cockpit',
     'inbox',
+    'threads',
     'overview',
     'board',
     'projects',
@@ -75,6 +77,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'landing',
     'branches',
     'files',
+    'docs',
     'terminals',
     'design',
     'impact',
@@ -82,6 +85,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
   expect(PROJECT_NAV_VIEWS.map((v) => v.label)).toEqual([
     'Home',
     'Inbox',
+    'Threads',
     'Overview',
     'Tasks',
     'Projects',
@@ -91,6 +95,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'Merge queue',
     'Git',
     'Files',
+    'Docs',
     'Terminals',
     'Design',
     'Impact',
@@ -102,6 +107,7 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
   expect(navRows()).toEqual([
     'cockpit',
     'inbox',
+    'threads',
     'drafts',
     'overseer',
     'overview',
@@ -115,6 +121,7 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
     'all-agents',
     'branches',
     'files',
+    'docs',
     'terminals',
     'design',
     'impact',
@@ -133,14 +140,23 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
   expect(screen.queryByRole('button', { name: /^Settings/ })).toBeNull();
 });
 
+test('the Threads row carries what waits on me, with the attention state', () => {
+  mount(true, { threadsNeedsYouCount: 2 });
+  const row = document.querySelector('[data-nav-item="threads"]');
+  expect(row?.textContent).toContain('2');
+  // The attention dot, the same one the Inbox row earns.
+  expect(row?.querySelector('span.rounded-full')).not.toBeNull();
+});
+
 test('a teammate below operator is not shown the host-only rows', () => {
   mount(true, { hideHostViews: true });
   const rows = navRows();
   // A shell and a browser carrying the host's cookies are operator-tier; the
-  // rest of Code (reading files, git history, impact) stays.
+  // rest of Code (reading files and docs, git history, impact) stays.
   expect(rows).not.toContain('terminals');
   expect(rows).not.toContain('design');
   expect(rows).toContain('files');
+  expect(rows).toContain('docs');
   expect(rows).toContain('branches');
 });
 
@@ -338,9 +354,10 @@ test('Favorites lists starred views and tasks above Work and opens them', () => 
     },
   });
   const rows = navRows();
-  expect(rows.slice(0, 7)).toEqual([
+  expect(rows.slice(0, 8)).toEqual([
     'cockpit',
     'inbox',
+    'threads',
     'drafts',
     'overseer',
     'fav-view-v-1',

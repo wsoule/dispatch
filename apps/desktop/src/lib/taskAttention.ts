@@ -1,8 +1,4 @@
-import type {
-  MergeQueueSnapshot,
-  RunMeta,
-  RunQuestion,
-} from '@dispatch/client';
+import type { MergeQueueSnapshot, RunMeta } from '@dispatch/client';
 
 import { deriveFeedState, isUrgentState } from './feedState';
 
@@ -14,12 +10,12 @@ export type TaskAttention = 'waiting' | 'failed' | 'review';
 /**
  * Which tasks need a human right now, keyed by task id — the task screen's counterpart to
  * the Control room feed's grouping. Reuses `deriveFeedState` so a run the queue is landing
- * doesn't read as "needs review", and mirrors `buildFeed`'s question override: a run blocked
- * on an unanswered question still reads 'running' in its own metadata.
+ * doesn't read as "needs review", and mirrors `buildFeed`'s ask override: a task in
+ * `askingTaskIds` (see `taskIdsWithOpenAsks`) is waiting on an answer.
  */
 export function deriveTaskAttentionById(
   latestRunByTaskId: ReadonlyMap<string, RunMeta>,
-  openQuestions: ReadonlyMap<string, RunQuestion[]>,
+  askingTaskIds: ReadonlySet<string>,
   mergeQueue: MergeQueueSnapshot | null
 ): Map<string, TaskAttention> {
   const queueByRunId = new Map(
@@ -28,10 +24,10 @@ export function deriveTaskAttentionById(
   const result = new Map<string, TaskAttention>();
   for (const [taskId, run] of latestRunByTaskId) {
     const derived = deriveFeedState(run, queueByRunId.get(run.id));
-    if (derived === null) continue;
-    const asked = openQuestions.get(run.id) ?? [];
+    const asks = askingTaskIds.has(taskId);
+    if (derived === null && !asks) continue;
     const state =
-      derived === 'working' && asked.length > 0 ? 'answer' : derived;
+      asks && derived !== 'approve' ? 'answer' : (derived ?? 'answer');
     // TaskAttention keeps its own coarse trio: every your-move ask reads as
     // 'waiting' at this altitude, except review, which stays its softer self.
     if (state === 'review') result.set(taskId, 'review');

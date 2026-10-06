@@ -1,5 +1,5 @@
+import type { EscalationStep } from '@dispatch-foo/core/browser';
 import type { FixLoopState } from '@dispatch/client';
-import type { EscalationStep } from '@dispatch/core/browser';
 import { Loader2, ShieldAlert, Square, Wrench } from 'lucide-react';
 
 import type { FixLoopTone } from '../../../lib/fixLoopStatus';

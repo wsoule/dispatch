@@ -19,13 +19,18 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "catalog:",
-    "@dispatch/core": "workspace:*",
+    "@dispatch-foo/a2a": "workspace:*",
+    "@dispatch-foo/core": "workspace:*",
+    "@dispatch-foo/federation": "workspace:*",
+    "@dispatch-foo/protocol": "workspace:*",
     "@dispatch/mcp": "workspace:*",
+    "@dispatch/memory": "workspace:*",
     "@typesafe-ai/sdk": "catalog:",
     "yaml": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@a2a-js/sdk": "catalog:",
     "@types/bun": "catalog:",
     "typescript": "catalog:"
   }

@@ -1,6 +1,14 @@
+import type { ApiClient, DocSummary, MemoryEntryView } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { beforeEach, expect, mock, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
 
 import {
@@ -36,6 +44,7 @@ function projectWith(
     retryEnsureDispatchd: () => {},
     openQuestions: new Map(),
     pendingApprovals: new Map(),
+    pendingScopeRequests: new Map(),
     scopeDecide: {
       enabled: true,
       notice: null,
@@ -103,6 +112,7 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
   const noop = () => {};
   const shell = {
     openTask: (taskId: string) => log.opened.push(taskId),
+    openThread: noop,
     peekTask: noop,
     openCreateTask: noop,
     createPreset: null,
@@ -159,11 +169,13 @@ function renderInbox(
     project = projectWith(),
     entries = [],
     onOpenPr = () => {},
+    onOpenDoc,
     projectRoot = ROOT,
   }: {
     project?: DispatchProjectData;
     entries?: InboxEntry[];
     onOpenPr?: (n: number) => void;
+    onOpenDoc?: (id: string) => void;
     projectRoot?: string | null;
   } = {}
 ) {
@@ -182,6 +194,7 @@ function renderInbox(
         projectName="dispatch"
         projectRoot={projectRoot}
         onOpenPr={onOpenPr}
+        onOpenDoc={onOpenDoc}
       />
     </Providers>
   );
@@ -469,6 +482,115 @@ test('an answer row shows its question card with the indigo Answer button on the
   expect(screen.getByRole('button', { name: 'Answer' })).toBeDefined();
 });
 
+// An ended run's scope gate stays open for its task, so its row still decides it.
+test('an answer row with an open scope gate shows the scope card', async () => {
+  const decided: string[] = [];
+  renderInbox(
+    dataWith([
+      {
+        state: 'answer',
+        rows: [
+          row({ taskId: 't-a', runId: 'r-a', state: 'answer', title: 'Fence' }),
+        ],
+      },
+    ]),
+    {
+      project: projectWith({
+        pendingScopeRequests: new Map([
+          [
+            'r-a',
+            {
+              id: 'm-s',
+              runId: 'r-a',
+              paths: ['src/payments/cart.ts'],
+              reason: 'the cart lives there',
+              requestedAt: '2026-08-10T00:00:00.000Z',
+              granted: null,
+              decisionReason: null,
+              decidedAt: null,
+              decidedBy: null,
+            },
+          ],
+        ]),
+        handleDecideScopeRequest: (
+          runId: string,
+          requestId: string,
+          granted: boolean
+        ) => {
+          decided.push(`${runId}:${requestId}:${granted}`);
+          return Promise.resolve();
+        },
+      } as unknown as Partial<DispatchProjectData>),
+    }
+  );
+  fireEvent.click(rowOf('Fence'));
+  expect(screen.getByText('src/payments/cart.ts')).toBeDefined();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('radio', { name: /Deny/ }));
+    await Promise.resolve();
+  });
+  expect(decided).toEqual(['r-a:m-s:false']);
+});
+
+// Each parked call is its own gate, so the detail pane shows one card per call.
+test('an approve row shows a card per parked call, each answering its own', async () => {
+  const answered: string[] = [];
+  const { container } = renderInbox(
+    dataWith([
+      {
+        state: 'approve',
+        rows: [
+          row({
+            taskId: 't-a',
+            runId: 'r-a',
+            state: 'approve',
+            title: 'Parks',
+          }),
+        ],
+      },
+    ]),
+    {
+      project: projectWith({
+        pendingApprovals: new Map([
+          [
+            'r-a',
+            [
+              {
+                requestId: 'req-1',
+                toolName: 'Bash',
+                input: { command: 'ls' },
+                truncated: false,
+              },
+              {
+                requestId: 'req-2',
+                toolName: 'Write',
+                input: { file_path: 'a.ts' },
+                truncated: false,
+              },
+            ],
+          ],
+        ]),
+        handleApprove: (_run: string, requestId: string) => {
+          answered.push(requestId);
+          return Promise.resolve();
+        },
+      } as unknown as Partial<DispatchProjectData>),
+    }
+  );
+  fireEvent.click(rowOf('Parks'));
+  const cards = container.querySelectorAll('[data-slot="tool-approval-card"]');
+  expect(cards).toHaveLength(2);
+  await act(async () => {
+    fireEvent.click(
+      within(cards[0] as HTMLElement).getByRole('radio', {
+        name: /Approve once/,
+      })
+    );
+    await Promise.resolve();
+  });
+  expect(answered).toEqual(['req-1']);
+});
+
 function liveAndPast() {
   return renderInbox(
     dataWith([{ state: 'review', rows: [row({ title: 'Live' })] }]),
@@ -651,4 +773,109 @@ test('a review row whose latest queue attempt failed carries a Failed to land pi
   expect(
     pills[0]?.closest('[data-slot="label-pill"]')?.getAttribute('title')
   ).toBe('verify failed: tests exited 1');
+});
+
+// Personal memory writes are listed only here, from the caller's own activity.
+test('lists your memory activity under Your memory, each with its Undo', async () => {
+  const undoMemory = mock((_ref: string) =>
+    Promise.resolve({} as MemoryEntryView)
+  );
+  const project = projectWith({
+    port: 4321,
+    client: {
+      memoryActivity: () =>
+        Promise.resolve({
+          activity: [
+            {
+              id: 'ma-1',
+              at: '2026-09-25T10:00:00.000Z',
+              kind: 'saved',
+              memoryId: 'mem-1',
+              runId: 'r-9f2c01',
+              summary: 'run:r-9f2c01 saved to your memory: pnpm builds',
+            },
+          ],
+        }),
+      undoMemory,
+    } as unknown as ApiClient,
+  });
+  renderInbox(dataWith([]), { project });
+  const section = await screen.findByRole('region', { name: 'Your memory' });
+  expect(
+    within(section).getByText('run:r-9f2c01 saved to your memory: pnpm builds')
+  ).toBeTruthy();
+  fireEvent.click(within(section).getByRole('button', { name: 'Undo' }));
+  await waitFor(() => expect(undoMemory).toHaveBeenCalledWith('mem-1'));
+});
+
+// The list covers the last day; the CLI reverts an older entry's latest change.
+test('says the list covers the last day and how to undo an entry changed earlier', async () => {
+  const project = projectWith({
+    port: 4321,
+    client: {
+      memoryActivity: () =>
+        Promise.resolve({
+          activity: [
+            {
+              id: 'ma-1',
+              at: '2026-09-25T10:00:00.000Z',
+              kind: 'saved',
+              memoryId: 'mem-1',
+              runId: 'r-9f2c01',
+              summary: 'run:r-9f2c01 saved to your memory: pnpm builds',
+            },
+          ],
+        }),
+    } as unknown as ApiClient,
+  });
+  renderInbox(dataWith([]), { project });
+  const section = await screen.findByRole('region', { name: 'Your memory' });
+  expect(within(section).getByText(/last day/).textContent).toContain(
+    'Undo reverts an entry’s latest change'
+  );
+  expect(
+    within(section).getByText('dispatch memory undo <handle>')
+  ).toBeTruthy();
+  expect(
+    within(section).getByText(
+      'dispatch memory list --scope personal --state all'
+    )
+  ).toBeTruthy();
+});
+
+test('has no memory section while nothing was written to your memory', async () => {
+  const memoryActivity = mock(() => Promise.resolve({ activity: [] }));
+  renderInbox(dataWith([]), {
+    project: projectWith({
+      port: 4321,
+      client: { memoryActivity } as unknown as ApiClient,
+    }),
+  });
+  await waitFor(() => expect(memoryActivity).toHaveBeenCalled());
+  expect(screen.queryByRole('region', { name: 'Your memory' })).toBeNull();
+});
+
+const conflicted = (over: Record<string, unknown> = {}) =>
+  ({
+    id: 'doc-1',
+    handle: 'auth',
+    title: 'Auth refactor',
+    scope: 'team',
+    conflicted: true,
+    updatedAt: '2026-09-26T10:00:00.000Z',
+    ...over,
+  }) as unknown as DocSummary;
+
+test('a conflicted doc renders as a row and Open doc opens it', () => {
+  const opened: string[] = [];
+  const { container } = renderInbox(
+    { ...dataWith([]), docs: [conflicted()], total: 1 },
+    { onOpenDoc: (id) => opened.push(id) }
+  );
+  fireEvent.click(rowOf('Conflict markers in Auth refactor'));
+  const detail = container.querySelector('[data-slot="inbox-detail-pane"]');
+  fireEvent.click(
+    within(detail as HTMLElement).getByRole('button', { name: 'Open doc' })
+  );
+  expect(opened).toEqual(['doc-1']);
 });

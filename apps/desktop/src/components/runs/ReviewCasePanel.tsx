@@ -1,9 +1,9 @@
-import type { ApiClient, Finding } from '@dispatch/client';
 import type {
   CommandEvidence,
   LedgerEntry,
   MutationEvidence,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { ApiClient, Finding } from '@dispatch/client';
 import {
   Bot,
   Check,
@@ -67,8 +67,8 @@ interface ReviewCasePanelProps {
 /**
  * The agent's own account of the work, which the review opens on.
  *
- * Everything here was recorded by the agent *for a reviewer to read* — `record_evidence`,
- * `record_mutation` and `record_decision` in packages/mcp/src/tools.ts — and none of it was
+ * Everything here was recorded by the agent *for a reviewer to read* — `record_evidence` and
+ * `record_mutation` in packages/mcp/src/tools.ts, and its task's decisions — and none of it was
  * rendered anywhere in the app before this panel. Reviewing an agent's work starts with what it
  * claims it checked, not with file 1 of 10.
  */

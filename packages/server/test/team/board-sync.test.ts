@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -116,146 +116,179 @@ async function teammate(
   };
 }
 
+// Two or more real daemons syncing through git take seconds each.
+const SLOW = 60_000;
+
 describe('board sync', () => {
-  it('a task created on one machine appears on another', async () => {
-    const ada = await teammate('ada');
-    const grace = await teammate('grace');
+  it(
+    'a task created on one machine appears on another',
+    async () => {
+      const ada = await teammate('ada');
+      const grace = await teammate('grace');
 
-    const id = await ada.create('Fix the login redirect');
-    // A synced board mints the longer ids that make two machines picking the
-    // same one vanishingly unlikely.
-    expect(id).toMatch(/^t-[0-9a-f]{8}$/);
-    expect((await ada.sync()).body?.lastError).toBeNull();
-    await grace.sync();
+      const id = await ada.create('Fix the login redirect');
+      // A synced board mints the longer ids that make two machines picking the
+      // same one vanishingly unlikely.
+      expect(id).toMatch(/^t-[0-9a-f]{8}$/);
+      expect((await ada.sync()).body?.lastError).toBeNull();
+      await grace.sync();
 
-    expect((await grace.get(id))?.meta.title).toBe('Fix the login redirect');
-  });
+      expect((await grace.get(id))?.meta.title).toBe('Fix the login redirect');
+    },
+    SLOW
+  );
 
-  it('edits to different fields on both machines both survive', async () => {
-    const ada = await teammate('ada');
-    const grace = await teammate('grace');
-    const id = await ada.create('Fix the login redirect');
-    await ada.sync();
-    await grace.sync();
+  it(
+    'edits to different fields on both machines both survive',
+    async () => {
+      const ada = await teammate('ada');
+      const grace = await teammate('grace');
+      const id = await ada.create('Fix the login redirect');
+      await ada.sync();
+      await grace.sync();
 
-    await ada.patch(id, { labels: ['auth'] });
-    await grace.patch(id, { priority: 'high' });
-    await ada.sync();
-    await grace.sync();
-    await ada.sync();
+      await ada.patch(id, { labels: ['auth'] });
+      await grace.patch(id, { priority: 'high' });
+      await ada.sync();
+      await grace.sync();
+      await ada.sync();
 
-    for (const who of [ada, grace]) {
-      const task = await who.get(id);
-      expect(task?.meta.labels).toEqual(['auth']);
-      expect(task?.meta.priority).toBe('high');
-    }
-  });
-
-  it('the same field edited on both: the later edit wins on both', async () => {
-    const ada = await teammate('ada');
-    const grace = await teammate('grace');
-    const id = await ada.create('Draft');
-    await ada.sync();
-    await grace.sync();
-
-    await ada.patch(id, { title: 'Ada’s title' });
-    await Bun.sleep(5);
-    await grace.patch(id, { title: 'Grace’s title' });
-    await ada.sync();
-    await grace.sync();
-    await ada.sync();
-
-    expect((await ada.get(id))?.meta.title).toBe('Grace’s title');
-    expect((await grace.get(id))?.meta.title).toBe('Grace’s title');
-  });
-
-  it('a deletion reaches the other machine', async () => {
-    const ada = await teammate('ada');
-    const grace = await teammate('grace');
-    const id = await ada.create('Obsolete');
-    await ada.sync();
-    await grace.sync();
-    expect(await grace.get(id)).not.toBeNull();
-
-    // Removal has no public route (tasks are archived), so this goes through
-    // the orchestrator's store, which is the wrapped one every caller holds.
-    grace.handle.orchestrator['ctx'].store.remove(id);
-    await grace.sync();
-    await ada.sync();
-    expect(await ada.get(id)).toBeNull();
-  });
-
-  it('by default the board rides a branch of the project’s own origin, and nothing else there moves', async () => {
-    // The zero-config setup: `sync: { enabled: true }` and the origin every
-    // checkout of the project already has — here added as a relative path,
-    // which git would read against the wrong directory if left as it is.
-    const withOrigin = (root: string) =>
-      runGitSync(root, [
-        'remote',
-        'add',
-        'origin',
-        join('..', basename(remote)),
-      ]);
-    const ada = await teammate('ada', '', 3600, withOrigin);
-    const grace = await teammate('grace', '', 3600, withOrigin);
-
-    const id = await ada.create('Next to the code');
-    expect((await ada.sync()).body?.lastError).toBeNull();
-    await grace.sync();
-    expect((await grace.get(id))?.meta.title).toBe('Next to the code');
-
-    // Only the sync branch was pushed; the project's own branches are theirs.
-    const heads = runGitSync(remote, ['for-each-ref', '--format=%(refname)']);
-    expect(heads.trim().split('\n')).toEqual(['refs/heads/dispatch-sync']);
-  });
-
-  it('or a repository of its own, named by a path relative to the project', async () => {
-    const where = `repo: ${join('..', basename(remote))}`;
-    const ada = await teammate('ada', where);
-    const grace = await teammate('grace', where);
-
-    const id = await ada.create('In a repo of its own');
-    expect((await ada.sync()).body?.lastError).toBeNull();
-    await grace.sync();
-    expect((await grace.get(id))?.meta.title).toBe('In a repo of its own');
-  });
-
-  it('moving the board to a new place brings it across on the next sync', async () => {
-    const ada = await teammate('ada');
-    const id = await ada.create('Made before the move');
-    await ada.sync();
-
-    // Ada's project moves its board to a repository of its own: same
-    // checkout, same database, a new place in config.yml, a restart.
-    const moved = tempDir('dispatch-sync-moved-');
-    runGitSync(moved, ['init', '-q', '--bare', '-b', 'main']);
-    await ada.handle.stop();
-    handles.splice(handles.indexOf(ada.handle), 1);
-    writeFileSync(
-      join(ada.root, '.dispatch', 'config.yml'),
-      `sync:\n  enabled: true\n  repo: ${moved}\n  intervalSec: 3600\n`
-    );
-    const again = await startServer({
-      rootDir: ada.root,
-      port: 0,
-      webDistDir: null,
-      storeBackend: 'sqlite',
-    });
-    handles.push(again);
-    const res = await rawFetch(
-      `http://127.0.0.1:${again.port}/api/board-sync/now`,
-      {
-        method: 'POST',
-        headers: { authorization: `Bearer ${again.tokens.appToken}` },
+      for (const who of [ada, grace]) {
+        const task = await who.get(id);
+        expect(task?.meta.labels).toEqual(['auth']);
+        expect(task?.meta.priority).toBe('high');
       }
-    );
-    expect(((await res.json()) as { lastError: unknown }).lastError).toBeNull();
+    },
+    SLOW
+  );
 
-    // Someone who only ever knew the new place gets what was made before.
-    const grace = await teammate('grace', `repo: ${moved}`);
-    await grace.sync();
-    expect((await grace.get(id))?.meta.title).toBe('Made before the move');
-  });
+  it(
+    'the same field edited on both: the later edit wins on both',
+    async () => {
+      const ada = await teammate('ada');
+      const grace = await teammate('grace');
+      const id = await ada.create('Draft');
+      await ada.sync();
+      await grace.sync();
+
+      await ada.patch(id, { title: 'Ada’s title' });
+      await Bun.sleep(5);
+      await grace.patch(id, { title: 'Grace’s title' });
+      await ada.sync();
+      await grace.sync();
+      await ada.sync();
+
+      expect((await ada.get(id))?.meta.title).toBe('Grace’s title');
+      expect((await grace.get(id))?.meta.title).toBe('Grace’s title');
+    },
+    SLOW
+  );
+
+  it(
+    'a deletion reaches the other machine',
+    async () => {
+      const ada = await teammate('ada');
+      const grace = await teammate('grace');
+      const id = await ada.create('Obsolete');
+      await ada.sync();
+      await grace.sync();
+      expect(await grace.get(id)).not.toBeNull();
+
+      // Removal has no public route (tasks are archived), so this goes through
+      // the orchestrator's store, which is the wrapped one every caller holds.
+      grace.handle.orchestrator['ctx'].store.remove(id);
+      await grace.sync();
+      await ada.sync();
+      expect(await ada.get(id)).toBeNull();
+    },
+    SLOW
+  );
+
+  it(
+    'by default the board rides a branch of the project’s own origin, and nothing else there moves',
+    async () => {
+      // The zero-config setup: `sync: { enabled: true }` and the origin every
+      // checkout of the project already has — here added as a relative path,
+      // which git would read against the wrong directory if left as it is.
+      const withOrigin = (root: string) =>
+        runGitSync(root, [
+          'remote',
+          'add',
+          'origin',
+          join('..', basename(remote)),
+        ]);
+      const ada = await teammate('ada', '', 3600, withOrigin);
+      const grace = await teammate('grace', '', 3600, withOrigin);
+
+      const id = await ada.create('Next to the code');
+      expect((await ada.sync()).body?.lastError).toBeNull();
+      await grace.sync();
+      expect((await grace.get(id))?.meta.title).toBe('Next to the code');
+
+      // Only the sync branch was pushed; the project's own branches are theirs.
+      const heads = runGitSync(remote, ['for-each-ref', '--format=%(refname)']);
+      expect(heads.trim().split('\n')).toEqual(['refs/heads/dispatch-sync']);
+    },
+    SLOW
+  );
+
+  it(
+    'or a repository of its own, named by a path relative to the project',
+    async () => {
+      const where = `repo: ${join('..', basename(remote))}`;
+      const ada = await teammate('ada', where);
+      const grace = await teammate('grace', where);
+
+      const id = await ada.create('In a repo of its own');
+      expect((await ada.sync()).body?.lastError).toBeNull();
+      await grace.sync();
+      expect((await grace.get(id))?.meta.title).toBe('In a repo of its own');
+    },
+    SLOW
+  );
+
+  it(
+    'moving the board to a new place brings it across on the next sync',
+    async () => {
+      const ada = await teammate('ada');
+      const id = await ada.create('Made before the move');
+      await ada.sync();
+
+      // Ada's project moves its board to a repository of its own: same
+      // checkout, same database, a new place in config.yml, a restart.
+      const moved = tempDir('dispatch-sync-moved-');
+      runGitSync(moved, ['init', '-q', '--bare', '-b', 'main']);
+      await ada.handle.stop();
+      handles.splice(handles.indexOf(ada.handle), 1);
+      writeFileSync(
+        join(ada.root, '.dispatch', 'config.yml'),
+        `sync:\n  enabled: true\n  repo: ${moved}\n  intervalSec: 3600\n`
+      );
+      const again = await startServer({
+        rootDir: ada.root,
+        port: 0,
+        webDistDir: null,
+        storeBackend: 'sqlite',
+      });
+      handles.push(again);
+      const res = await rawFetch(
+        `http://127.0.0.1:${again.port}/api/board-sync/now`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${again.tokens.appToken}` },
+        }
+      );
+      expect(
+        ((await res.json()) as { lastError: unknown }).lastError
+      ).toBeNull();
+
+      // Someone who only ever knew the new place gets what was made before.
+      const grace = await teammate('grace', `repo: ${moved}`);
+      await grace.sync();
+      expect((await grace.get(id))?.meta.title).toBe('Made before the move');
+    },
+    SLOW
+  );
 
   it('past the free plan, the fourth person pauses and the first three sync on', async () => {
     const first = [
@@ -315,21 +348,25 @@ describe('board sync', () => {
     expect((await barbara.get(ids[0]))?.meta.title).toBe('From 0');
   }, 60_000);
 
-  it('a new machine with an empty database gets the whole board', async () => {
-    const ada = await teammate('ada');
-    const ids = [await ada.create('One'), await ada.create('Two')];
-    await ada.patch(ids[0], { status: 'done' });
-    await ada.sync();
+  it(
+    'a new machine with an empty database gets the whole board',
+    async () => {
+      const ada = await teammate('ada');
+      const ids = [await ada.create('One'), await ada.create('Two')];
+      await ada.patch(ids[0], { status: 'done' });
+      await ada.sync();
 
-    // Someone new clones the repo and turns sync on: nothing local at all.
-    const linus = await teammate('linus');
-    await linus.sync();
-    expect((await linus.get(ids[0]))?.meta.title).toBe('One');
-    expect((await linus.get(ids[1]))?.meta.title).toBe('Two');
-    expect((await linus.get(ids[0]))?.meta.status).toBe(
-      (await ada.get(ids[0]))?.meta.status
-    );
-  });
+      // Someone new clones the repo and turns sync on: nothing local at all.
+      const linus = await teammate('linus');
+      await linus.sync();
+      expect((await linus.get(ids[0]))?.meta.title).toBe('One');
+      expect((await linus.get(ids[1]))?.meta.title).toBe('Two');
+      expect((await linus.get(ids[0]))?.meta.status).toBe(
+        (await ada.get(ids[0]))?.meta.status
+      );
+    },
+    SLOW
+  );
 
   it('while the remote is unreachable, work goes on and waits to be sent', async () => {
     const ada = await teammate(

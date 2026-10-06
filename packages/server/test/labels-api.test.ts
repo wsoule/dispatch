@@ -1,5 +1,5 @@
-import { loadConfig, TaskStore } from '@dispatch/core';
-import type { LabelDefinition } from '@dispatch/core';
+import { loadConfig, TaskStore } from '@dispatch-foo/core';
+import type { LabelDefinition } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

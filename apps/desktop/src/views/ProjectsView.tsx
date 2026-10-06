@@ -1,5 +1,5 @@
-import type { TaskListItem } from '@dispatch/core/browser';
-import { canonicalKind, isContainerKind } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { canonicalKind, isContainerKind } from '@dispatch-foo/core/browser';
 import {
   Box,
   ChevronRight,

@@ -1,4 +1,5 @@
 import { licenseKeyPath, teamTokensPath } from '../orchestrator/paths.js';
+import type { RosterService } from './federation/roster.js';
 import {
   LicenseManager,
   seatLimitMessage,
@@ -21,18 +22,24 @@ export interface Team {
   license: LicenseManager;
 }
 
-/** What board sync needs to know about the license, read on every pass. */
-export function syncSeats(team: Team): {
+/** What board sync needs to know about the license, read on every pass: the
+ *  roster's seats once a team is founded, the installed license's before. */
+export function syncSeats(
+  team: Pick<Team, 'license'>,
+  roster?: RosterService
+): {
   seats: () => number;
   seatMessage: (seats: number) => string;
 } {
+  const founded = () => (roster?.founded() === true ? roster.view() : null);
   return {
-    seats: () => team.license.seats(),
-    seatMessage: (seats) => syncPausedMessage(seats, team.license.state()),
+    seats: () => founded()?.seats ?? team.license.seats(),
+    seatMessage: (seats) =>
+      syncPausedMessage(seats, founded()?.license ?? team.license.state()),
   };
 }
 
-export function createTeam(rootDir: string): Team {
+export function createTeam(rootDir: string, operatorHandle: string): Team {
   // The seat count is read through `team.license` on every check, not a
   // captured manager, so whichever license the team holds is the one that
   // counts. The closures run only after `team` below exists.
@@ -40,6 +47,7 @@ export function createTeam(rootDir: string): Team {
     store: fileTokenStore(teamTokensPath(rootDir)),
     seats: () => team.license.seats(),
     seatMessage: (seats) => seatLimitMessage(seats, team.license.state()),
+    operatorHandle,
   });
   const team: Team = {
     teammates,

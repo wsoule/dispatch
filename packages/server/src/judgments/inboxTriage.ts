@@ -1,5 +1,5 @@
-import type { TaskDoc } from '@dispatch/core';
-import { isContainer, isDone, parentIdsOf } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch-foo/core';
+import { isContainer, isDone, parentIdsOf } from '@dispatch-foo/core';
 import { choice, noul } from '@typesafe-ai/sdk';
 import type {
   ChoiceQuestion,

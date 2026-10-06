@@ -8,7 +8,7 @@ import type {
   LinearProject,
   LinearUser,
   LinearWorkflowState,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 export interface GraphqlWorld {
   viewer: LinearUser;
@@ -236,6 +236,7 @@ export function graphqlFetch(world: GraphqlWorld): {
           ),
           projectMilestones: hit(false),
           initiatives: hit(false),
+          documents: hit(false),
         };
       }
       default:

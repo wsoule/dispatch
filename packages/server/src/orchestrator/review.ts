@@ -1,4 +1,4 @@
-import { executorModels, loadConfig } from '@dispatch/core';
+import { executorModels, loadConfig } from '@dispatch-foo/core';
 import type {
   ActorContext,
   CommandEvidence,
@@ -10,7 +10,7 @@ import type {
   TaskDoc,
   TaskRisk,
   TaskStorePort,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -18,12 +18,19 @@ import { spawnGitSync } from '../blockingGit.js';
 import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
 import type { FindingStorePort } from '../findings.js';
+import { undeclaredWritesTitle } from '../ledger.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { ReviewCommentStore } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
 import { reviewDir, reviewOutputPath, reviewPackagePath } from './paths.js';
-import { untrustedBlock, untrustedFenced, untrustedInline } from './prompt.js';
+import {
+  specLineOf,
+  specSection,
+  untrustedBlock,
+  untrustedFenced,
+  untrustedInline,
+} from './prompt.js';
 import type { RunMeta } from './types.js';
 import { OrchestratorNotFoundError, runKind } from './types.js';
 
@@ -102,6 +109,8 @@ export interface StartReviewOptions {
   // Where findings should be filed as comments. Omitted falls back to the
   // reviewed run, matching every caller that predates PR-targeted reviews.
   target?: ReviewTarget;
+  // Who the review run acts for (see Orchestrator.dispatchAuxRun).
+  operator: string | null;
 }
 
 export interface ReviewPromptInput {
@@ -125,6 +134,8 @@ export interface ReviewPromptInput {
   dependentsTruncated: boolean;
   mirrors: string[];
   mirrorsTruncated: boolean;
+  // The task's own team spec as one docs index line, when it has one.
+  specLine?: string | null;
 }
 
 export interface ParsedReviewFinding {
@@ -216,10 +227,6 @@ export function undeclaredWrites(
 // so the title stays stable however many files the batch covers.
 export function undeclaredWriteBatchTitle(count: number): string {
   return `${count} file${count === 1 ? '' : 's'} changed outside declared writes`;
-}
-
-function undeclaredWriteBatchLedgerTitle(count: number): string {
-  return `changed ${count} file${count === 1 ? '' : 's'} outside its declared writes`;
 }
 
 export function undeclaredWriteBatchDetail(
@@ -666,6 +673,8 @@ export function buildReviewPrompt(input: ReviewPromptInput): string {
     ].join('\n'),
     evidenceSection(input),
   ];
+  const spec = specSection(input.specLine);
+  if (spec !== null) sections.push(spec);
 
   const dependencyScope = dependencyScopeSection(input);
   if (dependencyScope !== null) sections.push(dependencyScope);
@@ -790,6 +799,8 @@ export interface ReviewRunnerContext {
   orchestrator: Orchestrator;
   actorContext: ActorContext;
   reviewComments: ReviewCommentStore;
+  // The task's own team spec as one docs index line (docs' specLine).
+  specLine?: (taskId: string) => string | null;
 }
 
 interface PendingReview {
@@ -839,6 +850,7 @@ export class ReviewRunner {
       head: opts.head,
       executor,
       model: reviewModelForRisk(task.meta.risk, models),
+      operator: opts.operator,
       buildPrompt: ({ runId, worktreePath }) => {
         const changed = changedFiles(this.ctx.rootDir, opts.base, opts.head);
         this.recordUndeclaredWrites(task, changed, opts.round);
@@ -891,6 +903,7 @@ export class ReviewRunner {
           dependentsTruncated: dependents.truncated,
           mirrors: mirrors.list,
           mirrorsTruncated: mirrors.truncated,
+          specLine: specLineOf(this.ctx.specLine, task.meta.id),
         });
       },
     });
@@ -922,7 +935,7 @@ export class ReviewRunner {
     this.ctx.ledgerStore.add({
       sourceTaskId: task.meta.id,
       kind: 'hazard',
-      title: undeclaredWriteBatchLedgerTitle(batch.length),
+      title: undeclaredWritesTitle(batch.length),
       detail: `${detail} ${batch.join(', ')}`,
       appliesTo: [task.meta.id],
       // Mechanically detected by the review harness, not raised by anyone.

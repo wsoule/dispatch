@@ -4,8 +4,8 @@ import type {
   Priority,
   TaskKind,
   TaskListItem,
-} from '@dispatch/core/browser';
-import { isContainerKind, isValidParentKind } from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import { isContainerKind, isValidParentKind } from '@dispatch-foo/core/browser';
 import {
   Box,
   Check,

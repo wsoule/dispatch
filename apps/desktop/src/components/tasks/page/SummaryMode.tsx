@@ -1,9 +1,9 @@
-import type { RunMeta } from '@dispatch/client';
 import {
   isCanceledStatus,
   isDoneStatus,
   statusLabel,
-} from '@dispatch/core/browser';
+} from '@dispatch-foo/core/browser';
+import type { RunMeta } from '@dispatch/client';
 import { ArrowUpRight, GitCommitHorizontal } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
@@ -26,7 +26,8 @@ import { taskIndexOf } from '../../../lib/taskIndex';
 import { taskTimeline } from '../../../lib/taskTimeline';
 import { flightScope } from '../../flightplan/flightScope';
 import { RunStatePill } from '../../runs/RunStatePill';
-import { LedgerSection } from '../detail/LedgerSection';
+import { MemoryReachSection } from '../detail/MemoryReachSection';
+import { ReceiptsSection } from '../detail/ReceiptsSection';
 import { VerificationSection } from '../detail/VerificationSection';
 import { StatusIcon } from '../StatusIcon';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -269,7 +270,14 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
         result={verification}
         error={verificationError}
       />
-      <LedgerSection entries={ledger} />
+      {project.client !== null && (
+        <MemoryReachSection
+          client={project.client}
+          port={project.port}
+          taskId={meta.id}
+        />
+      )}
+      <ReceiptsSection entries={ledger} />
 
       <section className="flex flex-col gap-2">
         <h3 className="text-muted-foreground flex h-6 items-center text-[12px] font-medium">

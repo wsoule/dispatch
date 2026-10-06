@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,
@@ -120,6 +120,7 @@ async function auxRunWithEdit(
 ): Promise<{ runId: string; branch: string; worktreePath: string }> {
   const task = store.create({ title: 'exercise the app' });
   const meta = await orchestrator.dispatchAuxRun({
+    operator: null,
     taskId: task.meta.id,
     kind: 'verify',
     executor: 'fake',
@@ -161,6 +162,7 @@ describe('aux run cleanup keeps work that was never merged', () => {
     const { orchestrator, store } = makeOrchestrator();
     const task = store.create({ title: 'clean verify' });
     const meta = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'verify',
       executor: 'fake',
@@ -194,6 +196,7 @@ async function derivedReviewRun(
     derivedFrom: `github-pr:${number}`,
   });
   const meta = await orchestrator.dispatchAuxRun({
+    operator: null,
     taskId: task.meta.id,
     kind: 'review',
     executor: 'fake',
@@ -328,6 +331,7 @@ describe('a retiring PR review takes its head ref with it', () => {
       derivedFrom: 'linear-issue:ENG-4',
     });
     const meta = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       executor: 'fake',

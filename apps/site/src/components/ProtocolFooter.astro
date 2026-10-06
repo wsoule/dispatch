@@ -1,0 +1,23 @@
+---
+// The license line every protocol and extension page carries.
+interface Props {
+  version: string;
+  // The source path inside packages/protocol-spec/.
+  path: string;
+}
+const { version, path } = Astro.props;
+const line = `Dispatch Messaging Protocol ${version} · Apache-2.0 · source: packages/protocol-spec/${path}`;
+---
+
+<footer class="protocol-footer">
+  <p class="container">{line}</p>
+</footer>
+
+<style>
+  .protocol-footer {
+    padding: var(--space-8) 0;
+    border-top: 1px solid var(--border-default);
+    font-size: var(--site-text-sm);
+    color: var(--text-secondary);
+  }
+</style>

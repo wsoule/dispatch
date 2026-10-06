@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatch.foo/protocol/1.0.0-draft.2/schemas/send-input.schema.json",
+  "title": "DMP send input",
+  "description": "What a sender gives (section 4.1). Structural rules only: byte limits, the one-line rule, blank bodies, the address grammar, gate rules and every rule that depends on the kind or the reply target are left to section 4.5.",
+  "type": "object",
+  "properties": {
+    "to": {
+      "description": "The recipients' addresses (section 3).",
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "kind": { "$ref": "message.schema.json#/$defs/kind" },
+    "body": {
+      "description": "The text, in Markdown; at most 64 KiB.",
+      "type": "string"
+    },
+    "refs": {
+      "type": "array",
+      "items": { "$ref": "ref.schema.json" },
+      "maxItems": 50
+    },
+    "data": {
+      "description": "Any JSON value of at most 64 KiB as JCS: gate data (gate-data.schema.json), private data or a marker."
+    },
+    "urgent": { "type": "boolean" },
+    "blocking": { "type": "boolean" },
+    "choices": { "$ref": "message.schema.json#/$defs/choices" },
+    "choice": { "type": "string" },
+    "replyTo": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+    "wake": { "enum": ["none", "request"] },
+    "session": { "type": "string" },
+    "idempotencyKey": {
+      "description": "The sender's own key for replaying a send (section 4.9); not stored in the envelope.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": ["to", "kind", "body"],
+  "additionalProperties": false
+}

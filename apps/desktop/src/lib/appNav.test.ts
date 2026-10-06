@@ -42,6 +42,68 @@ describe('navReducer', () => {
     expect(next.activeRunId).toBeNull();
   });
 
+  test('Docs is a project view that back returns from', () => {
+    const docs = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'docs',
+    });
+    expect(docs.section).toBe('project');
+    expect(docs.projectView).toBe('docs');
+    expect(navReducer(docs, { type: 'back' }).projectView).toBe(
+      initialNavState.projectView
+    );
+  });
+
+  test('openDoc switches to the Docs view on that doc and section', () => {
+    const next = navReducer(initialNavState, {
+      type: 'openDoc',
+      docId: 'doc-1',
+      anchor: 'api',
+    });
+    expect(next).toMatchObject({
+      projectView: 'docs',
+      activeDocId: 'doc-1',
+      activeDocAnchor: 'api',
+      activeDocMerge: null,
+    });
+  });
+
+  test('openDoc can name a proposal whose merge the doc opens on', () => {
+    const next = navReducer(initialNavState, {
+      type: 'openDoc',
+      docId: 'doc-1',
+      anchor: null,
+      merge: 'rev-p',
+    });
+    expect(next).toMatchObject({
+      activeDocId: 'doc-1',
+      activeDocMerge: 'rev-p',
+    });
+    expect(
+      navReducer(next, { type: 'openDoc', docId: 'doc-2', anchor: null })
+        .activeDocMerge
+    ).toBeNull();
+  });
+
+  test('openDoc from a task peek closes the peek, and back returns to the task', () => {
+    const task = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    const peeked = { ...task, peekTaskId: 't-2' };
+    const next = navReducer(peeked, {
+      type: 'openDoc',
+      docId: 'doc-1',
+      anchor: null,
+    });
+    expect(next.section).toBe('project');
+    expect(next.peekTaskId).toBeNull();
+    expect(next.activeDocAnchor).toBeNull();
+    const back = navReducer(next, { type: 'back' });
+    expect(back.projectView).toBe('task');
+    expect(back.activeTaskId).toBe('t-1');
+  });
+
   test('setGlobalView switches section to global', () => {
     const next = navReducer(initialNavState, {
       type: 'setGlobalView',
@@ -659,5 +721,41 @@ describe('task view teardown', () => {
     });
     const escaped = navReducer(inSettings, { type: 'escape' });
     expect(escaped).toEqual(inSettings);
+  });
+});
+
+describe('threads navigation', () => {
+  test('openThread routes to Threads with that message in focus, and back returns', () => {
+    let state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'board',
+    });
+    state = navReducer(state, { type: 'openThread', messageId: 'm-01' });
+    expect(state.section).toBe('project');
+    expect(state.projectView).toBe('threads');
+    expect(state.threadFocus).toBe('m-01');
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('board');
+  });
+
+  test('picking another thread inside the view adds no history entry', () => {
+    let state = navReducer(initialNavState, {
+      type: 'openThread',
+      messageId: 'm-01',
+    });
+    const depth = state.history.length;
+    state = navReducer(state, { type: 'openThread', messageId: 'm-02' });
+    expect(state.threadFocus).toBe('m-02');
+    expect(state.history).toHaveLength(depth);
+  });
+
+  test("switching projects drops the open thread, which belongs to the old project's daemon", () => {
+    let state = navReducer(initialNavState, {
+      type: 'openThread',
+      messageId: 'm-01',
+    });
+    state = navReducer(state, { type: 'selectProject', projectId: 'other' });
+    state = navReducer(state, { type: 'setProjectView', view: 'threads' });
+    expect(state.threadFocus).toBeNull();
   });
 });

@@ -1,8 +1,8 @@
-import { migrateLegacyMilestones } from '@dispatch/core';
+import { migrateLegacyMilestones } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
 import { statusModelFor } from '../statuses.js';
-import { humanActor } from './caller.js';
+import { requestActor } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBodyOptional } from './http.js';
 
 // POST /api/migrations/milestones — `{ dryRun?: boolean }`. Turns every
@@ -28,7 +28,7 @@ export async function migrateMilestones(
   const report = migrateLegacyMilestones(ctx.store, {
     dryRun,
     status: statusModelFor(ctx.rootDir).roles.ready,
-    creator: humanActor(ctx),
+    creator: requestActor(ctx),
   });
   if (
     !dryRun &&

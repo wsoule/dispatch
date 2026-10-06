@@ -1,6 +1,6 @@
+import { ATTACHMENT_MAX_BYTES } from '@dispatch-foo/core/browser';
+import type { TaskAttachment } from '@dispatch-foo/core/browser';
 import type { ApiClient } from '@dispatch/client';
-import { ATTACHMENT_MAX_BYTES } from '@dispatch/core/browser';
-import type { TaskAttachment } from '@dispatch/core/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';

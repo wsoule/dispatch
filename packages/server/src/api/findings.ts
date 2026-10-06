@@ -1,14 +1,14 @@
-import { describeValue } from '@dispatch/core';
+import { describeValue } from '@dispatch-foo/core';
 import type {
   FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
-  LedgerKind,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
+import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import { ADJUDICATION_VERDICTS } from '../orchestrator/fixLoop.js';
-import { humanActor } from './caller.js';
+import { requestActor } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // Declared as `readonly string[]` (not the literal union) so a membership
@@ -21,12 +21,6 @@ const PATCHABLE_VERDICTS: readonly string[] = ['open', 'addressed'];
 const ADJUDICATED_ERROR =
   'through POST /api/tasks/:id/findings/:fid/adjudicate, which requires a ruling';
 const RECOMMENDATIONS: readonly string[] = ['blocks', 'park'];
-const LEDGER_KINDS: readonly string[] = [
-  'constraint',
-  'hazard',
-  'decision',
-  'handoff',
-];
 
 // GET /api/findings?taskId=&verdict=&severity=
 export function listFindings(ctx: ApiContext, url: URL): Response {
@@ -103,7 +97,7 @@ export async function createFinding(
     line: typeof body.line === 'number' ? body.line : null,
     round: typeof body.round === 'number' ? body.round : undefined,
     recommendation: body.recommendation as FindingRecommendation | undefined,
-    raisedBy: humanActor(ctx),
+    raisedBy: requestActor(ctx),
   });
   ctx.events.broadcast({ type: 'finding.changed' });
   return jsonResponse(finding, 201);
@@ -159,80 +153,17 @@ export async function updateFinding(
   }
 }
 
-// GET /api/ledger?epicId= — omit epicId for every entry; pass it (including
-// the empty string, rejected below) to see one epic's or the project-wide set.
+// GET /api/ledger?epicId=&class= — epicId (empty: project-wide) narrows to one
+// epic; class=audit keeps only receipts, since the lessons live in memory.
 export function listLedger(ctx: ApiContext, url: URL): Response {
-  const hasFilter = url.searchParams.has('epicId');
-  if (!hasFilter) return jsonResponse(ctx.ledgerStore.list());
   const epicId = url.searchParams.get('epicId');
-  return jsonResponse(
-    ctx.ledgerStore.list({ epicId: epicId === '' ? null : epicId })
+  const entries = ctx.ledgerStore.list(
+    epicId === null ? {} : { epicId: epicId === '' ? null : epicId }
   );
-}
-
-// Credits whoever actually authored the entry. `runId` is how
-// record_decision (an MCP tool an agent can only call mid-run) says "this
-// came from the run I'm in" — when it resolves, that run's own executor gets
-// the credit, not the person operating this daemon. An unresolvable runId
-// (stale, or made up) is credited to no one rather than guessed at, and a
-// request with no runId at all is a human calling the endpoint directly.
-function ledgerAuthorFor(ctx: ApiContext, runId: string | null): string {
-  if (runId === null) return humanActor(ctx);
-  const run = ctx.orchestrator.getRun(runId);
-  return run === null ? 'none' : ctx.actorContext.agentRef(run.meta.executor);
-}
-
-// POST /api/ledger — a decision or hazard worth carrying to later tasks.
-export async function createLedgerEntry(
-  req: Request,
-  ctx: ApiContext
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as {
-    epicId?: unknown;
-    sourceTaskId?: unknown;
-    kind?: unknown;
-    title?: unknown;
-    detail?: unknown;
-    appliesTo?: unknown;
-    runId?: unknown;
-  };
-  if (typeof body.kind !== 'string' || !LEDGER_KINDS.includes(body.kind)) {
-    return errorResponse(
-      400,
-      `invalid kind: ${String(body.kind)} (expected ${LEDGER_KINDS.join('|')})`
-    );
-  }
-  if (typeof body.title !== 'string' || body.title.trim() === '') {
-    return errorResponse(400, 'invalid title: title is required');
-  }
-  if (typeof body.detail !== 'string' || body.detail.trim() === '') {
-    return errorResponse(400, 'invalid detail: detail is required');
-  }
-  if (
-    body.appliesTo !== undefined &&
-    (!Array.isArray(body.appliesTo) ||
-      !body.appliesTo.every((v) => typeof v === 'string'))
-  ) {
-    return errorResponse(400, 'invalid appliesTo: expected a list of strings');
-  }
-  if (body.runId !== undefined && typeof body.runId !== 'string') {
-    return errorResponse(400, 'invalid runId: expected a string');
-  }
-  const entry = ctx.ledgerStore.add({
-    epicId: typeof body.epicId === 'string' ? body.epicId : null,
-    sourceTaskId:
-      typeof body.sourceTaskId === 'string' ? body.sourceTaskId : null,
-    kind: body.kind as LedgerKind,
-    title: body.title,
-    detail: body.detail,
-    appliesTo: body.appliesTo,
-    authoredBy: ledgerAuthorFor(
-      ctx,
-      typeof body.runId === 'string' ? body.runId : null
-    ),
-  });
-  ctx.events.broadcast({ type: 'ledger.changed' });
-  return jsonResponse(entry, 201);
+  const audit = url.searchParams.get('class') === 'audit';
+  return jsonResponse(
+    audit
+      ? entries.filter((e) => classifyLedgerEntry(e).to === 'audit')
+      : entries
+  );
 }

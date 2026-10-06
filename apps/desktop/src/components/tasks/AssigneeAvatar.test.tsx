@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
 import { PeopleProvider } from '../people/PeopleContext';
@@ -100,5 +100,17 @@ describe('AssigneeAvatar with the people registry', () => {
     const photo = screen.getByRole('img', { name: 'Lena Park' });
     expect(photo.tagName).toBe('IMG');
     expect(photo.getAttribute('src')).toBe('https://example.com/lena.png');
+  });
+
+  test('a photo that will not load (a host the CSP refuses) falls back to initials', () => {
+    render(
+      <PeopleProvider people={people} me={null}>
+        <AssigneeAvatar assignee="human:lena" />
+      </PeopleProvider>
+    );
+    fireEvent.error(screen.getByRole('img', { name: 'Lena Park' }));
+    const fallback = screen.getByRole('img', { name: 'Lena Park' });
+    expect(fallback.tagName).not.toBe('IMG');
+    expect(fallback.textContent).toBe('LP');
   });
 });

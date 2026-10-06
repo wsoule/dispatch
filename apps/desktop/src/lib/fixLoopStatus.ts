@@ -1,5 +1,5 @@
+import type { EscalationStep } from '@dispatch-foo/core/browser';
 import type { FixLoopState } from '@dispatch/client';
-import type { EscalationStep } from '@dispatch/core/browser';
 
 // `@dispatch/client` exports the state but not its stop-reason union, so name
 // it off the state rather than restating the members here.

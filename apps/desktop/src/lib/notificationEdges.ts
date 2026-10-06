@@ -1,3 +1,4 @@
+import type { NotificationKind } from '@dispatch-foo/core/browser';
 import type {
   DraftRecord,
   MergeQueueEntry,
@@ -5,11 +6,10 @@ import type {
   PlannerQuestion,
   PlanRecord,
   RunMeta,
-  RunQuestion,
   RunState,
 } from '@dispatch/client';
-import type { NotificationKind } from '@dispatch/core/browser';
 
+import type { RunQuestion } from './gates';
 import type { InboxTarget } from './inbox';
 import { questionsSignature } from './planQuestions';
 

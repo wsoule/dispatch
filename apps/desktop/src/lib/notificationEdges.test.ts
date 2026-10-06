@@ -4,10 +4,10 @@ import type {
   PlannerQuestion,
   PlanRecord,
   RunMeta,
-  RunQuestion,
 } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
+import type { RunQuestion } from './gates';
 import {
   diffQuestionNotifications,
   diffQueueNotifications,
@@ -298,7 +298,7 @@ describe('diffQuestionNotifications', () => {
     );
     expect(notifications).toHaveLength(1);
     // Planner questions are input requests too, so the `question` toggle
-    // covers them alongside a run agent's ask_user.
+    // covers them alongside a run agent's blocking question.
     expect(notifications[0].kind).toBe('question');
     expect(next.askers.has('draft:d-1')).toBe(true);
   });
@@ -479,6 +479,8 @@ describe('isKindEnabled', () => {
     question: true,
     approval: true,
     'scope-request': true,
+    memory: true,
+    doc: true,
     'fix-loop-capped': false,
     'run-stalled': false,
   };

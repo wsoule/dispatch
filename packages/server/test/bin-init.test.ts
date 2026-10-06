@@ -1,7 +1,7 @@
 import {
   checkMergeDriverSetup,
   checkTeamMergeDriverSetup,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {

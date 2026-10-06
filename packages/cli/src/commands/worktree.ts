@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch-foo/core';
 import type { Command } from 'commander';
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
@@ -38,7 +39,11 @@ function canonicalPath(path: string): string {
 
 function git(cwd: string, args: string[]): string {
   try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8' });
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: childEnv(),
+    });
   } catch (err) {
     const stderr = (err as { stderr?: Buffer | string }).stderr;
     const detail =

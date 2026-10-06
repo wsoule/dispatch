@@ -6,6 +6,7 @@ import type {
   EpicProgressChild,
   EpicSession,
   EpicSpend,
+  Message,
   NormalizedEntry,
   PlanProposal,
   PlanRecord,
@@ -20,7 +21,32 @@ import {
   formatPlanNeedsReply,
   formatProposal,
   formatRunsTable,
+  toolApprovalOf,
 } from '../src/orchestrateFormat.js';
+
+// An open tool-approval gate, as `message.new` and decisions/open carry it.
+const GATE: Message = {
+  id: 'm-gate01',
+  thread: 'm-gate01',
+  replyTo: null,
+  from: 'agent:dispatch',
+  to: ['human:wyat'],
+  kind: 'question',
+  body: 'Checkout wants to run run_shell',
+  refs: [],
+  urgent: false,
+  blocking: true,
+  choices: ['approve', 'approve-session', 'deny'],
+  wake: 'none',
+  createdAt: '2026-09-25T10:00:00Z',
+  data: {
+    type: 'tool-approval',
+    requestId: 'fake-approval-1',
+    runId: 'r-1',
+    tool: 'run_shell',
+    input: {},
+  },
+};
 
 describe('formatEntry', () => {
   it('renders an assistant entry', () => {
@@ -182,11 +208,58 @@ describe('formatEntry', () => {
 });
 
 describe('formatApprovalRequest', () => {
-  it('renders the exact approve/deny commands to copy', () => {
-    const text = formatApprovalRequest('r-abc123', 'req-1', 'run_shell');
+  it('prints the commands that answer the gate', () => {
+    const text = formatApprovalRequest({
+      runId: 'r-1',
+      requestId: 'fake-approval-1',
+      tool: 'run_shell',
+    });
     expect(text).toContain('tool:    run_shell');
-    expect(text).toContain('approve: dispatch approve r-abc123 req-1');
-    expect(text).toContain('deny:    dispatch approve r-abc123 req-1 --deny');
+    expect(text).toContain('approve: dispatch approve r-1 fake-approval-1');
+    expect(text).toContain(
+      'deny:    dispatch approve r-1 fake-approval-1 --deny'
+    );
+  });
+
+  it('without the gate, prints the commands that find it by run', () => {
+    const text = formatApprovalRequest({ runId: 'r-1' });
+    expect(text).toContain('=== approval requested ===');
+    expect(text).not.toContain('tool:');
+    expect(text).toContain('approve: dispatch approve r-1\n');
+    expect(text).toContain('deny:    dispatch approve r-1 --deny');
+  });
+
+  it('toolApprovalOf reads the run, request and tool off a run gate', () => {
+    expect(toolApprovalOf(GATE)).toEqual({
+      runId: 'r-1',
+      requestId: 'fake-approval-1',
+      tool: 'run_shell',
+    });
+  });
+
+  it('toolApprovalOf ignores anything that is not a tool-approval gate', () => {
+    expect(
+      toolApprovalOf({
+        ...GATE,
+        data: { type: 'scope', paths: ['a'], reason: 'r' },
+      })
+    ).toBeNull();
+    expect(toolApprovalOf({ ...GATE, data: undefined })).toBeNull();
+  });
+
+  it("toolApprovalOf ignores an overseer conversation's approval, which has no run", () => {
+    expect(
+      toolApprovalOf({
+        ...GATE,
+        data: {
+          type: 'tool-approval',
+          requestId: 'oa-1',
+          conversation: 'o-1',
+          tool: 'run_shell',
+          input: {},
+        },
+      })
+    ).toBeNull();
   });
 });
 

@@ -1,4 +1,9 @@
-import { DISPATCH_DIR, dispatchDbPath } from '@dispatch/core';
+import {
+  DISPATCH_DIR,
+  dispatchDbPath,
+  openDispatchDb,
+  SqliteLedgerStore,
+} from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,
@@ -226,20 +231,18 @@ describe('a daemon on the sqlite backend', () => {
     expect(existsSync(join(root, DISPATCH_DIR, 'tasks'))).toBe(false);
   });
 
-  it('keeps ledger entries in the database, not ledger.jsonl', async () => {
-    const created = await json(
-      await fetch(`${baseUrl}/api/ledger`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          kind: 'decision',
-          title: 'use the daemon store',
-          detail: 'single writer',
-        }),
-      })
-    );
-    expect(created.id).toMatch(/^l-/);
-
+  it('reads ledger entries from the database, and never writes ledger.jsonl', async () => {
+    const db = openDispatchDb(dispatchDbPath(root));
+    try {
+      new SqliteLedgerStore(db).add({
+        kind: 'decision',
+        title: 'use the daemon store',
+        detail: 'single writer',
+        authoredBy: 'human:test',
+      });
+    } finally {
+      db.close();
+    }
     const listed = await json(await fetch(`${baseUrl}/api/ledger`));
     expect(listed.map((e: { title: string }) => e.title)).toEqual([
       'use the daemon store',

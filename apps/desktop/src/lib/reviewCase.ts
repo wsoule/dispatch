@@ -1,4 +1,7 @@
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core/browser';
+import type {
+  CommandEvidence,
+  MutationEvidence,
+} from '@dispatch-foo/core/browser';
 
 /**
  * What the implementing agent's own record of its work adds up to.

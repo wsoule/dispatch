@@ -2,15 +2,15 @@ import type {
   ActorContext,
   ProjectStores,
   ReceiptsScope,
-} from '@dispatch/core';
-import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import { DEFAULT_RECEIPTS_BRANCH, loadConfig } from '@dispatch-foo/core';
 
 import type { EventBus, ServerEvent } from '../events.js';
 import type { PushTarget } from '../gitTarget.js';
 import { resolvePushTarget } from '../gitTarget.js';
 import type { AsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';
-import type { ReceiptsResult } from './exporter.js';
+import type { ReceiptsResult, ReceiptsStep } from './exporter.js';
 import {
   receiptsEnabled,
   ReceiptsExporter,
@@ -39,6 +39,12 @@ export interface ReceiptsSchedulerDeps {
    * DEFAULT_SWEEP_MS; tests pass something large enough never to fire.
    */
   sweepMs?: number;
+  /** Pauses before retrying a failed export, one per attempt; the last repeats. */
+  retryMs?: readonly number[];
+  /** Writers of more of the log (team docs), run after the core records. */
+  steps?: readonly ReceiptsStep[];
+  /** Passed to the exporter: writers of files beside the materialized ones. */
+  appendices?: readonly ((dir: string) => void)[];
 }
 
 // Matches BoardSyncScheduler's debounce, and for the same reason: long enough
@@ -67,14 +73,18 @@ const DEFAULT_SWEEP_MS = 300_000;
  * sweep exists at all rather than being the "recover from a network outage"
  * timer BoardSyncScheduler needs.
  */
+// Backoff between retries of a failed export.
+const DEFAULT_RETRY_MS: readonly number[] = [10_000, 30_000, 60_000];
+
 const RECEIPT_EVENTS: ReadonlySet<ServerEvent['type']> = new Set([
   'task.changed',
   'finding.changed',
   'ledger.changed',
 ]);
 
-/** Whether this event should schedule an export. */
+/** Whether this event should schedule an export; of memory, only team entries reach the log. */
 export function isReceiptEvent(event: ServerEvent): boolean {
+  if (event.type === 'memory.changed') return event.scope === 'team';
   return RECEIPT_EVENTS.has(event.type);
 }
 
@@ -121,9 +131,18 @@ export class ReceiptsScheduler {
   // The log the last pass wrote to: a scoped pass into any other would leave
   // every task it does not name missing or stale there.
   private lastDir: string | null = null;
+  // The pending retry after a failed export, and how many failed in a row.
+  private retry: ReturnType<typeof setTimeout> | null = null;
+  private failedInRow = 0;
 
   constructor(private readonly deps: ReceiptsSchedulerDeps) {
-    this.exporter = new ReceiptsExporter(deps.stores, deps.actor, deps.run);
+    this.exporter = new ReceiptsExporter(
+      deps.stores,
+      deps.actor,
+      deps.run,
+      deps.steps,
+      deps.appendices
+    );
     // Runs unconditionally; runPending re-reads the config, so a project with
     // receipts off generates no export traffic despite the timer ticking, and
     // switching it back on takes effect without a restart.
@@ -234,8 +253,12 @@ export class ReceiptsScheduler {
     this.lastExportedAtIso = new Date().toISOString();
     if (result.state === 'failed') {
       console.error(`receipts: export failed: ${result.detail}`);
-      // Whatever this pass was meant to write, the next full one writes.
+      // Whatever this pass was meant to write, the next full one writes, and
+      // it comes on a backoff rather than at the next sweep.
       this.pending.full = true;
+      this.scheduleRetry();
+    } else {
+      this.failedInRow = 0;
     }
     this.deps.events.broadcast({ type: 'receipts.export', result });
     // A log that changed goes to its remote, if it has one. The boot pass
@@ -245,6 +268,19 @@ export class ReceiptsScheduler {
       void this.push(dir);
     }
     return result;
+  }
+
+  // Queues a full pass after a failed one: 10 s, 30 s, then every 60 s.
+  private scheduleRetry(): void {
+    if (this.stopped || this.retry !== null) return;
+    const delays = this.deps.retryMs ?? DEFAULT_RETRY_MS;
+    const delay = delays[Math.min(this.failedInRow, delays.length - 1)];
+    this.failedInRow += 1;
+    this.retry = setTimeout(() => {
+      this.retry = null;
+      void this.enqueue();
+    }, delay);
+    this.retry.unref();
   }
 
   /**
@@ -335,6 +371,8 @@ export class ReceiptsScheduler {
     if (this.debounce !== null) clearTimeout(this.debounce);
     this.debounce = null;
     clearInterval(this.sweep);
+    if (this.retry !== null) clearTimeout(this.retry);
+    this.retry = null;
     await this.tail;
   }
 }

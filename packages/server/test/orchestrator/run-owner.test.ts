@@ -1,4 +1,4 @@
-import { ActorContext, TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -178,6 +178,7 @@ describe('a run that continues another', () => {
       executor: 'fake',
       head: failed.branch,
       buildPrompt: () => 'review it',
+      operator: null,
     });
     expect(review.dispatchedBy).toBe('human:ada');
 
@@ -188,6 +189,7 @@ describe('a run that continues another', () => {
       executor: 'fake',
       head: 'main',
       buildPrompt: () => 'verify it',
+      operator: null,
     });
     expect(orphan.dispatchedBy).toBeUndefined();
   });

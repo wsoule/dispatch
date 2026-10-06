@@ -6,9 +6,14 @@ language: 'typescript'
 # so the root project depends on every dist-producing project.
 dependsOn:
   - 'core'
+  - 'memory'
+  - 'federation'
   - 'client'
   - 'cli'
   - 'mcp'
+  - 'protocol'
+  - 'protocol-spec'
+  - 'a2a'
   - 'desktop'
 
 # Every repo-wide lane below scans from the root, and every one of them has to
@@ -237,6 +242,17 @@ tasks:
       # Shells out to `moon query`, which must not be cached against a stale
       # graph.
       cache: false
+      runInCI: 'always'
+
+  # Unit tests for the root scripts that guard CI and publishing. The root
+  # project excludes the inherited `test` task, so nothing else runs them.
+  test-scripts:
+    command:
+      'bun test scripts/check-ci-targets.test.ts scripts/publish-package.test.ts'
+    inputs:
+      - 'scripts/check-ci-targets*.ts'
+      - 'scripts/publish-package*.ts'
+    options:
       runInCI: 'always'
 
   # Guards the build graph against tests that spawn their own build output

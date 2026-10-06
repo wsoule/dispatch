@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatch.foo/protocol/1.0.0-draft.2/schemas/adapter.schema.json",
+  "title": "DMP adapter message",
+  "description": "One JSON line between the conformance runner and an adapter (section 12.4.7). Informative: the runner also checks that each render pattern compiles and that an observation names the vector it was sent.",
+  "oneOf": [
+    { "$ref": "#/$defs/runnerHello" },
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/run" },
+    { "$ref": "#/$defs/observation" },
+    { "$ref": "#/$defs/unsupported" },
+    { "$ref": "#/$defs/bye" }
+  ],
+  "$defs": {
+    "runnerHello": {
+      "description": "Runner to adapter: the first line, naming the kit version.",
+      "type": "object",
+      "properties": {
+        "dmp": { "const": "hello" },
+        "kit": { "type": "string" }
+      },
+      "required": ["dmp", "kit"],
+      "additionalProperties": false
+    },
+    "hello": {
+      "description": "Adapter to runner: what the implementation declares.",
+      "type": "object",
+      "properties": {
+        "dmp": { "const": "hello" },
+        "implementation": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" }
+          },
+          "required": ["name", "version"]
+        },
+        "classes": {
+          "type": "array",
+          "items": { "$ref": "vector.schema.json#/$defs/class" }
+        },
+        "profiles": {
+          "type": "array",
+          "items": { "enum": ["core", "dispatch"] }
+        },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "systemAddress": { "type": "string", "minLength": 1 },
+        "gateTypes": {
+          "description": "The gate types the host implements, `wake` among them (section 5.6).",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "render": {
+          "description": "The forms of a push and a digest (section 6.8); the three patterns are ECMAScript regular expressions, searched in a line.",
+          "type": "object",
+          "properties": {
+            "quotePrefix": { "type": "string", "minLength": 1 },
+            "header": { "type": "string" },
+            "hostLines": { "type": "array", "items": { "type": "string" } },
+            "digestLead": { "type": "string" }
+          },
+          "required": ["quotePrefix", "header", "hostLines", "digestLead"]
+        }
+      },
+      "required": [
+        "dmp",
+        "implementation",
+        "classes",
+        "profiles",
+        "capabilities",
+        "systemAddress",
+        "gateTypes",
+        "render"
+      ]
+    },
+    "run": {
+      "description": "Runner to adapter: one vector to run, without `then`.",
+      "type": "object",
+      "properties": {
+        "dmp": { "const": "run" },
+        "vector": { "$ref": "vector.schema.json#/$defs/runnable" }
+      },
+      "required": ["dmp", "vector"],
+      "additionalProperties": false
+    },
+    "observation": {
+      "description": "Adapter to runner: what happened after the vector's last step.",
+      "type": "object",
+      "properties": {
+        "dmp": { "const": "observation" },
+        "id": { "type": "string" },
+        "steps": {
+          "description": "One outcome per step.",
+          "type": "array",
+          "items": { "$ref": "vector.schema.json#/$defs/outcome" }
+        },
+        "messages": {
+          "description": "Every message, in creation order.",
+          "type": "array",
+          "items": { "$ref": "message.schema.json" }
+        },
+        "deliveries": {
+          "type": "array",
+          "items": { "$ref": "delivery.schema.json" }
+        },
+        "calls": {
+          "description": "The host's hook calls, in order.",
+          "type": "array",
+          "items": { "$ref": "vector.schema.json#/$defs/call" }
+        },
+        "gateEffects": { "type": "array", "items": { "type": "string" } },
+        "voided": { "type": "array", "items": { "type": "string" } },
+        "channels": {
+          "type": "array",
+          "items": { "$ref": "vector.schema.json#/$defs/channel" }
+        },
+        "render": {
+          "type": "array",
+          "items": { "$ref": "vector.schema.json#/$defs/renderRow" }
+        }
+      },
+      "required": [
+        "dmp",
+        "id",
+        "steps",
+        "messages",
+        "deliveries",
+        "calls",
+        "gateEffects",
+        "voided",
+        "channels",
+        "render"
+      ]
+    },
+    "unsupported": {
+      "description": "Adapter to runner: this vector cannot run here; it is skipped.",
+      "type": "object",
+      "properties": {
+        "dmp": { "const": "unsupported" },
+        "id": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["dmp", "id", "reason"],
+      "additionalProperties": false
+    },
+    "bye": {
+      "description": "Runner to adapter: the last line; the adapter exits 0.",
+      "type": "object",
+      "properties": { "dmp": { "const": "bye" } },
+      "required": ["dmp"],
+      "additionalProperties": false
+    }
+  }
+}

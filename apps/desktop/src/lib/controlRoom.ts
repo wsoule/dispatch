@@ -1,10 +1,10 @@
+import type { Priority, TaskListItem } from '@dispatch-foo/core/browser';
 import type {
   FixLoopState,
   MergeQueueSnapshot,
   RunKind,
   RunMeta,
 } from '@dispatch/client';
-import type { Priority, TaskListItem } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
 import { deriveFeedState, FEED_STATE_ORDER } from './feedState';
@@ -87,10 +87,12 @@ export interface BuildFeedInput {
   readyIds: ReadonlySet<string>;
   blockedIds: ReadonlySet<string>;
   mergeQueue: MergeQueueSnapshot | null;
-  /** Run id -> the tool name a run is paused on, when this window saw the request. */
-  pendingApprovals: ReadonlyMap<string, { toolName: string }>;
-  /** Run id -> the questions its agent is blocked on, oldest first. */
+  /** Run id -> each tool call the run is parked on, oldest first, from its open gates. */
+  pendingApprovals: ReadonlyMap<string, readonly { toolName: string }[]>;
+  /** Run id -> the open questions its agent asked, oldest first, live run or ended. */
   openQuestions: ReadonlyMap<string, readonly { question: string }[]>;
+  /** Run id -> its newest open scope gate, live run or ended. */
+  openScopeRequests: ReadonlyMap<string, { paths: readonly string[] }>;
   /** Task id -> its fix-loop state, for the per-row loop annotations. */
   fixLoops: ReadonlyMap<string, FixLoopState>;
   query: string;
@@ -164,10 +166,18 @@ function attentionFor(
   state: FeedState,
   run: RunMeta,
   pendingApprovals: BuildFeedInput['pendingApprovals'],
-  openQuestions: BuildFeedInput['openQuestions']
+  openQuestions: BuildFeedInput['openQuestions'],
+  openScopeRequests: BuildFeedInput['openScopeRequests']
 ): FeedRowModel['attention'] {
   if (state === 'answer') {
     const asked = openQuestions.get(run.id) ?? [];
+    const scope = openScopeRequests.get(run.id);
+    if (asked.length === 0 && scope !== undefined) {
+      return {
+        reason: 'Asks to edit outside its fence',
+        detail: scope.paths.join(', '),
+      };
+    }
     return {
       reason:
         asked.length <= 1
@@ -177,12 +187,19 @@ function attentionFor(
     };
   }
   if (state === 'approve') {
-    const pending = pendingApprovals.get(run.id);
+    const calls = pendingApprovals.get(run.id) ?? [];
+    if (calls.length <= 1) {
+      return {
+        reason:
+          calls[0] !== undefined
+            ? `Wants to run ${calls[0].toolName}`
+            : 'Waiting for your approval',
+        detail: null,
+      };
+    }
     return {
-      reason: pending
-        ? `Wants to run ${pending.toolName}`
-        : 'Waiting for your approval',
-      detail: null,
+      reason: `Wants to run ${calls.length} tool calls`,
+      detail: [...new Set(calls.map((c) => c.toolName))].join(', '),
     };
   }
   if (state === 'ruling') {
@@ -203,6 +220,14 @@ function attentionFor(
   return null;
 }
 
+// Row states of a run in flight: while a task has one, its older settled rounds stay hidden.
+const IN_FLIGHT = new Set<FeedState>([
+  'working',
+  'fixing',
+  'checking',
+  'approve',
+]);
+
 export function buildFeed(input: BuildFeedInput): FeedModel {
   const {
     runs,
@@ -213,6 +238,7 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     mergeQueue,
     pendingApprovals,
     openQuestions,
+    openScopeRequests,
     fixLoops,
     query,
     activeStates,
@@ -240,24 +266,28 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
       .map((r) => r.branch)
   );
 
-  // Every run that still has a place in the feed, with its state resolved once. `createdAt`
-  // and the kind travel alongside for the superseded-run pass below.
+  // Every run that still has a place in the feed, with its state resolved once. `createdAt`,
+  // the kind and whether the run is in flight travel along for the superseded-run pass below.
   const entries: {
     row: FeedRowModel;
     createdAt: string;
     isExecute: boolean;
+    live: boolean;
   }[] = [];
   for (const run of runs) {
     if (runKindOf(run) !== 'execute' && foldedInto.has(run.baseBranch))
       continue;
     const derived = deriveFeedState(run, queueByRunId.get(run.id));
-    if (derived === null) continue;
+    // An open question or scope gate asks for an answer whether or not its run is
+    // still live: an execute run's asks stay open for its task after it ends.
+    const asks =
+      (openQuestions.get(run.id)?.length ?? 0) > 0 ||
+      openScopeRequests.has(run.id);
+    if (derived === null && !asks) continue;
     const loop = fixLoops.get(run.taskId) ?? null;
-    // A run blocked on a question still reads as 'running' in its own metadata, so without
-    // this it would sit in the calm part of the feed looking busy. `answer` is its own ask.
-    const asked = openQuestions.get(run.id) ?? [];
+    // Only a parked approval outranks an ask: the run cannot move until it is answered.
     let state: FeedState =
-      derived === 'working' && asked.length > 0 ? 'answer' : derived;
+      asks && derived !== 'approve' ? 'answer' : (derived ?? 'answer');
 
     // A working run that is really a fix-loop round is the machine fixing, not
     // generic progress — the pass number is the point.
@@ -300,9 +330,12 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
                 subagentActivity(run.subagents)
               : null;
 
+    // An ask on an ended run waits for an answer; only the run's own state is in flight.
+    const flight = state === 'answer' ? derived : state;
     entries.push({
       createdAt: run.createdAt,
       isExecute: runKindOf(run) === 'execute',
+      live: flight !== null && IN_FLIGHT.has(flight),
       row: {
         runId: run.id,
         taskId: run.taskId,
@@ -319,7 +352,13 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
         attention:
           auxFailed !== null
             ? { reason: `The AI ${auxFailed} agent failed`, detail: null }
-            : attentionFor(state, run, pendingApprovals, openQuestions),
+            : attentionFor(
+                state,
+                run,
+                pendingApprovals,
+                openQuestions,
+                openScopeRequests
+              ),
         fixLoop: loop,
       },
     });
@@ -334,19 +373,10 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
   // come back only if it settles without replacing them. Queue-backed rows (landing) always
   // survive.
   const SETTLED = new Set<FeedState>(['review', 'ruling', 'failed']);
-  const LIVE = new Set<FeedState>([
-    'working',
-    'fixing',
-    'checking',
-    'answer',
-    'approve',
-  ]);
   const settled = (entry: (typeof entries)[number]): boolean =>
     SETTLED.has(entry.row.state);
   const liveTasks = new Set(
-    entries
-      .filter((entry) => LIVE.has(entry.row.state))
-      .map((entry) => entry.row.taskId)
+    entries.filter((entry) => entry.live).map((entry) => entry.row.taskId)
   );
   const latestSettledByTask = new Map<string, string>();
   for (const entry of entries) {

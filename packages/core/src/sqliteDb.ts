@@ -71,7 +71,7 @@ export function sqliteDriver(): SqliteDriver {
 /**
  * The driver is loaded on first use, not at module load.
  *
- * It has to be. This module is reachable from `@dispatch/core`'s barrel, which
+ * It has to be. This module is reachable from `@dispatch-foo/core`'s barrel, which
  * `@dispatch/cli` imports for every command — and `node:sqlite` only became
  * available unflagged in Node 22.13. On 22.0 through 22.12 a top-level
  * `import ... from 'node:sqlite'` throws ERR_UNKNOWN_BUILTIN_MODULE while the
@@ -418,15 +418,29 @@ export function attachDispatchDb(dbPath: string): SqliteDatabase | null {
   return openDispatchDb(dbPath);
 }
 
-export function openDispatchDb(dbPath: string): SqliteDatabase {
+/**
+ * Opens (creating if needed) a SQLite file with Dispatch's pragmas and no
+ * schema, for packages that own their own tables (e.g. @dispatch-foo/protocol).
+ */
+/** How long a statement waits on a locked database before SQLITE_BUSY. */
+const SQLITE_BUSY_TIMEOUT_MS = 100;
+
+export function openSqliteDb(dbPath: string): SqliteDatabase {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const DatabaseClass = databaseCtor();
   const db = new DatabaseClass(dbPath);
   // WAL lets the desktop read while the daemon writes; NORMAL syncing is the
-  // usual pairing — a crash can lose the last commit, and orchestration state
-  // is re-derivable, but corruption is not on the table.
+  // usual pairing — a crash can lose the last commit, never corrupt.
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA synchronous = NORMAL');
+  // A short wait rides out another writer's commit without stalling the event
+  // loop; past it SQLITE_BUSY surfaces, and the API answers 503 to retry.
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  return db;
+}
+
+export function openDispatchDb(dbPath: string): SqliteDatabase {
+  const db = openSqliteDb(dbPath);
   // A database a newer Dispatch wrote may hold columns and tables this build
   // knows nothing about. Applying the older DDL over it and stamping
   // user_version back down would leave it looking current while this build

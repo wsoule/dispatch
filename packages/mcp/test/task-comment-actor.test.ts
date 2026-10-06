@@ -1,4 +1,4 @@
-import { FileCommentStore, TaskStore } from '@dispatch/core';
+import { FileCommentStore, TaskStore } from '@dispatch-foo/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';

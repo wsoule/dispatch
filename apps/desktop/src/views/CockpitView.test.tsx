@@ -1,5 +1,5 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';

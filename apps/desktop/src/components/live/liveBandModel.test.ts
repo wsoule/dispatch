@@ -1,6 +1,6 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { DEFAULT_STATUS_MODEL } from '@dispatch-foo/core/browser';
 import type { EpicProgress } from '@dispatch/client';
-import type { TaskListItem } from '@dispatch/core/browser';
-import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { childrenByParent, flightScope } from '../flightplan/flightScope';

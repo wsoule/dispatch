@@ -1,5 +1,8 @@
+import type {
+  CommandEvidence,
+  MutationEvidence,
+} from '@dispatch-foo/core/browser';
 import type { Finding } from '@dispatch/client';
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core/browser';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 

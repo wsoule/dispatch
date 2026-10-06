@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -64,6 +64,273 @@ afterEach(async () => {
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
+});
+
+interface LoopWatch {
+  // The longest gap between ticks of a 5 ms timer.
+  worstGap: number;
+  // Time the loop spent stalled: each gap's excess over 20 ms, summed.
+  stalled: number;
+  // The slowest /api/health round trip.
+  worstHealth: number;
+}
+
+// Watches this process's event loop (the daemon's, in-process) while `during`
+// runs, with /api/health probes alongside.
+async function watchLoop(during: () => Promise<void>): Promise<LoopWatch> {
+  let last = performance.now();
+  const watch: LoopWatch = { worstGap: 0, stalled: 0, worstHealth: 0 };
+  const ticker = setInterval(() => {
+    const now = performance.now();
+    watch.worstGap = Math.max(watch.worstGap, now - last);
+    watch.stalled += Math.max(0, now - last - 20);
+    last = now;
+  }, 5);
+  let probing = true;
+  const probe = (async () => {
+    while (probing) {
+      const started = performance.now();
+      await apiFetch('/api/health');
+      watch.worstHealth = Math.max(
+        watch.worstHealth,
+        performance.now() - started
+      );
+    }
+  })();
+  await during();
+  probing = false;
+  await probe;
+  clearInterval(ticker);
+  return watch;
+}
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+describe('terminal spawn load', () => {
+  // A pty spawn on the event loop stalls it ~200 ms each: 20 stalled it 3.4 s
+  // in all. The daemon stalls some on its own, more on a busy runner, so the
+  // bounds are relative to its idle loop just before and just after.
+  it('spawns 20 sessions without blocking the event loop', async () => {
+    // The first terminal starts the helper process; measure the 20 after it.
+    const warm = await apiFetch('/api/terminals', {
+      method: 'POST',
+      body: JSON.stringify({ command: ['true'] }),
+    });
+    await waitForExit((await json(warm)).id as string);
+    // Long enough for every spawn and exit to happen inside the window; each
+    // idle window is half as long.
+    const WINDOW_MS = 6000;
+    const before = await watchLoop(() => sleep(WINDOW_MS / 2));
+    let created: Response[] = [];
+    const load = await watchLoop(async () => {
+      created = await Promise.all(
+        Array.from({ length: 20 }, () =>
+          apiFetch('/api/terminals', {
+            method: 'POST',
+            body: JSON.stringify({
+              command: ['sh', '-c', 'echo up; sleep 0.2'],
+            }),
+          })
+        )
+      );
+      await sleep(WINDOW_MS);
+    });
+    const after = await watchLoop(() => sleep(WINDOW_MS / 2));
+    expect(created.every((r) => r.status === 201)).toBe(true);
+    for (const r of created) {
+      const id = (await json(r)).id as string;
+      await waitForExit(id);
+      const out = await json(await apiFetch(`/api/terminals/${id}/output`));
+      expect(decode(out.data as string)).toContain('up');
+    }
+    const idle: LoopWatch = {
+      worstGap: Math.max(before.worstGap, after.worstGap),
+      stalled: 2 * Math.max(before.stalled, after.stalled),
+      worstHealth: Math.max(before.worstHealth, after.worstHealth),
+    };
+    const ms = (n: number) => Math.round(n);
+    const line = (w: LoopWatch) =>
+      `gap ${ms(w.worstGap)} ms, stalled ${ms(w.stalled)} ms, health ${ms(w.worstHealth)} ms`;
+    console.log(`idle: ${line(idle)}; load: ${line(load)}`);
+    // Stalls together stay under five spawns' worth beyond the idle loop's,
+    // and no single one stands far above its worst (a lone gap is noisy).
+    expect(load.stalled).toBeLessThan(1.5 * idle.stalled + 1000);
+    expect(load.worstGap).toBeLessThan(2 * idle.worstGap + 250);
+    expect(load.worstHealth).toBeLessThan(2 * idle.worstHealth + 500);
+  }, 60_000);
+});
+
+// The terminal helper this daemon started (a child of this test process).
+function helperPid(): number | null {
+  const out = Bun.spawnSync([
+    'pgrep',
+    '-P',
+    String(process.pid),
+    '-f',
+    'terminalHostMain',
+  ])
+    .stdout.toString()
+    .trim();
+  return out === '' ? null : Number(out.split('\n')[0]);
+}
+
+function rssMb(pid: number): number {
+  const kb = Bun.spawnSync([
+    'ps',
+    '-o',
+    'rss=',
+    '-p',
+    String(pid),
+  ]).stdout.toString();
+  return Number(kb.trim()) / 1024;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function outputOf(id: string): Promise<string> {
+  const out = await json(await apiFetch(`/api/terminals/${id}/output`));
+  return decode(out.data as string);
+}
+
+describe('terminal helper under floods', () => {
+  it('keeps its memory bounded across 40 floods that are deleted mid-stream', async () => {
+    // Eight at a time, so output arrives faster than the daemon takes it in.
+    for (let round = 0; round < 5; round++) {
+      const ids = await Promise.all(
+        Array.from({ length: 8 }, async () => {
+          const created = await apiFetch('/api/terminals', {
+            method: 'POST',
+            body: JSON.stringify({
+              command: [
+                'sh',
+                '-c',
+                'head -c 1600000 /dev/zero | tr "\\0" x; sleep 5',
+              ],
+            }),
+          });
+          return ((await json(created)) as { id: string }).id;
+        })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      for (const id of ids)
+        await apiFetch(`/api/terminals/${id}`, { method: 'DELETE' });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const pid = helperPid();
+    expect(pid).not.toBeNull();
+    const rss = rssMb(pid ?? 0);
+    console.log(`helper rss ${Math.round(rss)} MB`);
+    expect(rss).toBeLessThan(150);
+  }, 120_000);
+
+  // Before output was capped and taken in turns, a flood queued without bound
+  // and held a short session's output back 2-10 s. The bound scales from
+  // the same session's latency beside 3 sessions that burn CPU but print
+  // nothing, so a slow or busy runner moves the baseline, not the verdict.
+  it("delivers a short session's output within twice its quiet-load time plus 500 ms while 3 sessions flood", async () => {
+    const start = async (script: string): Promise<string> =>
+      (
+        (await json(
+          await apiFetch('/api/terminals', {
+            method: 'POST',
+            body: JSON.stringify({ command: ['sh', '-c', script] }),
+          })
+        )) as { id: string }
+      ).id;
+    // Spawns `echo quick-one` and returns how long its output took to arrive.
+    // The child outlives its output: on macOS a pty child exiting with output
+    // unread can wedge the helper in wait4, a separate bug this does not test.
+    const quickLatency = async (): Promise<number> => {
+      const started = performance.now();
+      const id = await start('echo quick-one; sleep 1');
+      let seen = '';
+      while (
+        !seen.includes('quick-one') &&
+        performance.now() - started < 10_000
+      ) {
+        seen = await outputOf(id);
+        await sleep(20);
+      }
+      expect(seen).toContain('quick-one');
+      return performance.now() - started;
+    };
+    // Starts three sessions running `script` and lets them run for 2 s: an
+    // unbounded queue grows with a flood's length, a fair one does not.
+    const three = async (script: string): Promise<string[]> => {
+      const ids = await Promise.all([1, 2, 3].map(() => start(script)));
+      await sleep(2000);
+      return ids;
+    };
+    const stop = async (ids: string[]): Promise<void> => {
+      for (const id of ids)
+        await apiFetch(`/api/terminals/${id}`, { method: 'DELETE' });
+    };
+    // The burners also start the helper; the better of two is the baseline.
+    const burners = await three('yes flood > /dev/null');
+    const quiet = Math.min(await quickLatency(), await quickLatency());
+    await stop(burners);
+    const floods = await three('yes flood');
+    const flooded = await quickLatency();
+    await stop(floods);
+    console.log(
+      `quick output: ${Math.round(quiet)} ms beside quiet load, ${Math.round(flooded)} ms beside floods`
+    );
+    expect(flooded).toBeLessThan(2 * quiet + 500);
+  }, 60_000);
+});
+
+describe('stubborn sessions', () => {
+  const stubborn = async (): Promise<{ id: string; pid: number }> => {
+    const created = await json(
+      await apiFetch('/api/terminals', {
+        method: 'POST',
+        body: JSON.stringify({
+          command: ['sh', '-c', 'trap "" TERM HUP; echo pid=$$; sleep 60'],
+        }),
+      })
+    );
+    let text = '';
+    for (let i = 0; i < 200 && !/pid=\d+/.test(text); i++) {
+      text = await outputOf(created.id as string);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return {
+      id: created.id as string,
+      pid: Number(/pid=(\d+)/.exec(text)?.[1]),
+    };
+  };
+  const goneWithin = async (pid: number, ms: number): Promise<boolean> => {
+    const deadline = performance.now() + ms;
+    while (performance.now() < deadline) {
+      if (!alive(pid)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return !alive(pid);
+  };
+
+  it('a DELETE kills a session that ignores TERM and HUP', async () => {
+    const { id, pid } = await stubborn();
+    expect(alive(pid)).toBe(true);
+    await apiFetch(`/api/terminals/${id}`, { method: 'DELETE' });
+    expect(await goneWithin(pid, 5000)).toBe(true);
+  }, 30_000);
+
+  it('a stopped daemon takes such a session down with it', async () => {
+    const { pid } = await stubborn();
+    await handle.stop();
+    handle = await startServer({ rootDir: root, port: 0 });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    expect(await goneWithin(pid, 5000)).toBe(true);
+  }, 30_000);
 });
 
 describe('terminal routes', () => {

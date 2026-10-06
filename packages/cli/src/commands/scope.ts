@@ -1,8 +1,35 @@
 import type { Command } from 'commander';
 
-import { createApiClient } from '../apiClient.js';
-import type { CliContext } from '../context.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import type { ApiClient, Message } from '../apiClient.js';
+import { type CliContext, CliError } from '../context.js';
+import { appTokenClient } from './appToken.js';
+
+interface ScopeGate {
+  message: Message;
+  paths: string[];
+  reason: string;
+}
+
+// Reads a scope gate a run raised; any other message is a CliError, so
+// `decide` never answers a question it was not meant for.
+async function readScopeGate(
+  client: ApiClient,
+  messageId: string
+): Promise<ScopeGate> {
+  const message = await client.getMessage(messageId);
+  const data = message.data as
+    | { type?: unknown; paths?: unknown; reason?: unknown }
+    | null
+    | undefined;
+  if (
+    data?.type !== 'scope' ||
+    !Array.isArray(data.paths) ||
+    typeof data.reason !== 'string'
+  ) {
+    throw new CliError(`${messageId} is not a scope request`);
+  }
+  return { message, paths: data.paths as string[], reason: data.reason };
+}
 
 export function registerScopeCommands(program: Command, ctx: CliContext): void {
   const scope = program
@@ -10,58 +37,69 @@ export function registerScopeCommands(program: Command, ctx: CliContext): void {
     .description("Inspect and decide an agent's out-of-fence edit requests");
 
   scope
-    .command('show <runId> <requestId>')
-    .description('Show one scope request and whether it has been decided')
+    .command('show <messageId>')
+    .description(
+      'Show one scope request and whether it has been decided (needs the daemon app token)'
+    )
     .option('--json')
+    .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(
-      async (runId: string, requestId: string, opts: { json?: boolean }) => {
-        const { baseUrl, agentToken } = await attachToRunningDaemon(ctx);
-        const client = createApiClient(baseUrl, agentToken);
-        const request = await client.getScopeRequest(runId, requestId);
+      async (messageId: string, opts: { json?: boolean; token?: string }) => {
+        const client = await appTokenClient(
+          ctx,
+          opts.token,
+          'dispatch scope show'
+        );
+        const gate = await readScopeGate(client, messageId);
+        const { answer } = await client.getAnswer(messageId);
         if (opts.json === true) {
-          ctx.log(JSON.stringify(request, null, 2));
+          ctx.log(JSON.stringify({ message: gate.message, answer }, null, 2));
           return;
         }
+        // An expiry or a closed gate answers without `grant`, so it reads as denied.
         const state =
-          request.granted === null
+          answer === null
             ? 'pending'
-            : request.granted
+            : answer.choice === 'grant'
               ? 'granted'
               : 'denied';
-        ctx.log(`${request.id}  run=${request.runId}  ${state}`);
-        ctx.log(`paths: ${request.paths.join(', ')}`);
-        ctx.log(`reason: ${request.reason}`);
-        if (request.decisionReason !== null) {
-          ctx.log(`decision: ${request.decisionReason}`);
+        const from = gate.message.from;
+        const run = from.startsWith('run:') ? from.slice('run:'.length) : from;
+        ctx.log(`${messageId}  run=${run}  ${state}`);
+        ctx.log(`paths: ${gate.paths.join(', ')}`);
+        ctx.log(`reason: ${gate.reason}`);
+        if (answer !== null && answer.body.trim() !== '') {
+          ctx.log(`decision: ${answer.body}`);
         }
       }
     );
 
   scope
-    .command('decide <runId> <requestId>')
+    .command('decide <messageId>')
     .description('Grant or deny a scope request (needs the daemon app token)')
     .option('--deny', 'deny the request instead of granting it')
     .option('--reason <text>', 'what to record as the justification')
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(
       async (
-        runId: string,
-        requestId: string,
+        messageId: string,
         opts: { deny?: boolean; reason?: string; token?: string }
       ) => {
-        const appToken = resolveAppToken(opts.token, 'dispatch scope decide');
-        const { baseUrl } = await attachToRunningDaemon(ctx);
+        const client = await appTokenClient(
+          ctx,
+          opts.token,
+          'dispatch scope decide'
+        );
+        const gate = await readScopeGate(client, messageId);
         const granted = opts.deny !== true;
         const reason =
           opts.reason ?? (granted ? 'granted at the CLI' : 'denied at the CLI');
-        // A client of its own, built on the app token: nothing else this CLI
-        // does gets to carry a decide-tier credential.
-        const decided = await createApiClient(
-          baseUrl,
-          appToken
-        ).decideScopeRequest(runId, requestId, granted, reason);
+        await client.replyToMessage(messageId, {
+          body: reason,
+          choice: granted ? 'grant' : 'deny',
+        });
         ctx.log(
-          `${decided.id} ${granted ? 'granted' : 'denied'} (${decided.paths.join(', ')})`
+          `${messageId} ${granted ? 'granted' : 'denied'} (${gate.paths.join(', ')})`
         );
       }
     );

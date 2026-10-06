@@ -3,6 +3,7 @@ import {
   ASSIGNEES,
   canonicalStatus,
   ConfigError,
+  CredentialsUnreadableError,
   describeValue,
   EFFORT_LEVELS,
   getSection,
@@ -12,8 +13,9 @@ import {
   loadConfig,
   PRIORITIES,
   TaskParseError,
+  untrustedFenced,
   updateConfig,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   CommentStorePort,
   ConfigPatch,
@@ -26,17 +28,30 @@ import type {
   TaskStoreBackend,
   UpdatePatch,
   VerifyConfig,
-} from '@dispatch/core';
+} from '@dispatch-foo/core';
 import type {
   ActorContext,
   EffortLevel,
   TaskDoc,
   TaskStorePort,
-} from '@dispatch/core';
-import { createHash, randomBytes } from 'node:crypto';
+} from '@dispatch-foo/core';
+import type { Sender } from '@dispatch-foo/protocol';
+import { gateOf, MessagingError } from '@dispatch-foo/protocol';
+import { MemoryBusyError, MemoryError } from '@dispatch/memory';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { isA2AClientToken } from './a2a/auth.js';
+import type { A2ABridge } from './a2a/bridge.js';
+import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
+import type { A2ARunScope } from './api/a2aRunScope.js';
+import {
+  a2aRunAllows,
+  a2aRunScope,
+  bodyTaskId,
+  lineageStore,
+} from './api/a2aRunScope.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
 import {
@@ -57,7 +72,12 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor } from './api/caller.js';
+import {
+  humanActor,
+  humanOperator,
+  requestActor,
+  runActorFor,
+} from './api/caller.js';
 import {
   addComment,
   addLegacyTaskNote,
@@ -75,7 +95,6 @@ import {
 } from './api/files.js';
 import {
   createFinding,
-  createLedgerEntry,
   listFindings,
   listLedger,
   updateFinding,
@@ -89,6 +108,7 @@ import {
   stopFixLoop,
 } from './api/fixLoop.js';
 import {
+  conflictResponse,
   errorResponse,
   jsonResponse,
   jsonTextResponse,
@@ -104,16 +124,17 @@ import {
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
 import { listPeople } from './api/people.js';
+import {
+  a2aParentRefusal,
+  decidingHuman,
+  markA2AChild,
+  proposalWriteRefusal,
+} from './api/proposalFence.js';
 import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
-import {
-  decideScopeRequest,
-  getScopeRequest,
-  listScopeRequests,
-  requestScope,
-} from './api/scopeRequests.js';
+import { storageErrorResponse } from './api/storageErrors.js';
 import {
   closeTerminal,
   createTerminal,
@@ -128,8 +149,14 @@ import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
 import { checkDaemonIdentity } from './daemonfile.js';
-import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
+import type {
+  DecisionDisposition,
+  DecisionFeed,
+  DecisionItem,
+} from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
+import { handleDocsRoute } from './docs/routes.js';
+import type { DocsService } from './docs/service.js';
 import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
 import {
@@ -145,6 +172,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
+import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
@@ -171,6 +199,54 @@ import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
+import {
+  acceptIngestProblemRoute,
+  completeLinkRoute,
+  deleteMemoryRoute,
+  getMemory,
+  getProposalRoute,
+  importClaudeRoute,
+  importLedgerRoute,
+  ingestProblemsRoute,
+  listMemory,
+  listProposalsRoute,
+  memoryActionRoute,
+  memoryActivityRoute,
+  memoryHealthRoute,
+  memoryIdentityRoute,
+  memoryIndexRoute,
+  memoryRecallsRoute,
+  memoryRehomeKeysRoute,
+  memoryRehomeRoute,
+  saveMemoryRoute,
+  searchMemory,
+  startLinkRoute,
+} from './memory/routes.js';
+import type { MemoryService } from './memory/service.js';
+import { listBusConversation } from './messaging/conversations.js';
+import type { Principal } from './messaging/principal.js';
+import { resolvePrincipal } from './messaging/principal.js';
+import {
+  approveAgent,
+  getMailbox,
+  getMessageById,
+  getThreadById,
+  joinChannel,
+  leaveChannel,
+  listAgentRoster,
+  listChannels,
+  listOpenDecisions,
+  listRecentThreads,
+  markDeliveryRead,
+  muteAgent,
+  registerAgent,
+  replyToMessage,
+  revokeAgent,
+  sendMessage,
+  unmuteAgent,
+  waitForAnswer,
+} from './messaging/routes.js';
+import type { Messaging } from './messaging/service.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import { buildAgentSessions } from './orchestrator/agentSessions.js';
@@ -192,17 +268,14 @@ import {
 } from './orchestrator/prReviewTask.js';
 import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import { toLandingWorktree } from './orchestrator/prWorktree.js';
-import type {
-  QuestionRegistry,
-  RunQuestion,
-} from './orchestrator/questions.js';
-import { QUESTION_POLL_MS } from './orchestrator/questions.js';
 import type { ReviewRunner } from './orchestrator/review.js';
-import type { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
+import type { TaskAuthorship } from './orchestrator/taskAuthorship.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  runMessageRefusal,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -228,7 +301,15 @@ import {
 import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
-import type { BoardSyncService } from './team/boardSync/service.js';
+import type { FederationContext } from './team/federation/routes.js';
+import {
+  boardSyncNow,
+  handleFederationRoute,
+  isFederationRoute,
+  statusFor,
+} from './team/federation/routes.js';
+import type { FederationService } from './team/federation/service.js';
+import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
   getLicense,
@@ -264,6 +345,17 @@ export interface ApiContext {
   // alongside PlanManager in index.ts against the same shared peers.
   overseerManager: OverseerManager;
   epicEngine: EpicEngine;
+  /** Who created and last wrote each task; absent in hand-built test contexts. */
+  taskAuthorship?: TaskAuthorship;
+  // dispatchd's own messaging engine host — messaging routes read/write
+  // through it directly.
+  messaging: Messaging;
+  // The docs service (docs/service.ts); unavailable when docs.db did not open.
+  docs: DocsService;
+  /** The memory store and engine (memory/service.ts). */
+  memory: MemoryService;
+  /** The A2A bridge; absent in hand-built test contexts. */
+  a2a?: A2ABridge;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by
   // PrManager's poll, listed here for GET /api/landing's worktree column.
@@ -297,8 +389,6 @@ export interface ApiContext {
   inboxTriage: InboxTriageScheduler;
   reviewComments: ReviewCommentStore;
   conversations: ConversationStore;
-  questions: QuestionRegistry;
-  scopeRequests: ScopeRequestRegistry;
   // The one feed of everything awaiting a human — see decisionFeed.ts.
   decisionFeed: DecisionFeed;
   linearSync: LinearSync;
@@ -364,7 +454,9 @@ export interface ApiContext {
   /** Teammates' way into previews, in team-local mode; null on loopback. */
   previewGateway: PreviewGateway | null;
   /** Board sync between replicas (team/boardSync/); null when it is off. */
-  boardSync: BoardSyncService | null;
+  boardSync: FederationService | null;
+  /** The signed roster and its store, once board sync is on (Task 10b). */
+  federation: FederationContext | null;
   /** Teammates' credentials and the license that says how many people may
    *  use this project together — team/, under the Elastic License 2.0. */
   team: Team;
@@ -381,6 +473,23 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
+  /** True when the request presented the shared agentToken: `caller` names
+   *  the owner, but no human is behind it. Set per request by handleApi. */
+  viaAgentToken?: boolean;
+  /** True when the request presented the owner's app token. Set per request
+   *  by handleApi. */
+  ownerCredential?: boolean;
+  /** The live run whose own token made this request (XH-R2). `caller` is then
+   *  the agent token's identity and `viaAgentToken` is true. */
+  viaRun?: string;
+  /** What `viaRun`'s writes are credited as (api/caller.ts runActorFor). */
+  runActor?: string;
+  /** Set when `viaRun` is A2A-origin: it reaches only the XH-R8 allowlist
+   *  (api/a2aRunScope.ts), and its task writes inherit its provenance. */
+  a2aRun?: A2ARunScope;
+  /** The messaging caller (run, agent or human) handleApi resolved; messaging
+   *  handlers read this, never `caller`. */
+  principal?: Principal;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -600,39 +709,67 @@ function validateTaskFields(
   return null;
 }
 
-async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const input = parsed.value as CreateInput;
-  if (typeof input.title !== 'string' || input.title.trim() === '') {
-    return errorResponse(400, 'invalid title: title is required');
-  }
-  const config = loadConfig(ctx.rootDir);
-  const fieldsError = validateTaskFields(
-    parsed.value as Record<string, unknown>,
-    config,
-    { includeKind: true, includeBody: false }
-  );
-  if (fieldsError) return errorResponse(400, fieldsError);
+/** XH-R2: a task a run dispatches through its own token inherits that run's
+ *  A2A provenance; creates and edits inherit it through lineageStore. */
+function inheritLineage(ctx: ApiContext, taskId: string): void {
+  if (ctx.viaRun !== undefined) ctx.a2a?.inherit(ctx.viaRun, taskId);
+}
+
+// The title and field checks POST /api/tasks runs, shared with A2A handoffs.
+export function validateTaskInput(
+  rootDir: string,
+  input: Record<string, unknown>
+): string | null {
+  if (typeof input.title !== 'string' || input.title.trim() === '')
+    return 'invalid title: title is required';
+  return validateTaskFields(input, loadConfig(rootDir), {
+    includeKind: true,
+    includeBody: false,
+  });
+}
+
+// Creates a task as POST /api/tasks does: checked, a legacy `milestone`
+// resolved to a parent, stored, cached and broadcast as task.changed.
+export function createTaskChecked(
+  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'> &
+    Partial<Pick<ApiContext, 'a2a'>>,
+  input: CreateInput
+): { ok: true; doc: TaskDoc } | { ok: false; error: string } {
+  const error = validateTaskInput(ctx.rootDir, { ...input });
+  if (error !== null) return { ok: false, error };
   const legacy = legacyMilestoneParent(
     ctx,
-    parsed.value as Record<string, unknown>,
+    { ...input } as Record<string, unknown>,
     input.kind ?? 'task'
   );
-  if (!legacy.ok) return errorResponse(400, legacy.error);
-
-  // Credit whoever made the request unless the caller names a creator (a
-  // sync importing someone else's issue).
+  if (!legacy.ok) return { ok: false, error: legacy.error };
   const doc = ctx.store.create({
     ...withoutLegacyMilestone(input),
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
     // Omitted, a task starts in the project's ready role.
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
-    creator: input.creator ?? humanActor(ctx),
   });
+  markA2AChild(ctx, doc.meta.id, doc.meta.parent);
   ctx.cache.refresh(ctx.store, [doc.meta.id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
-  return jsonResponse(doc, 201);
+  return { ok: true, doc };
+}
+
+async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const input = parsed.value as CreateInput;
+  const refused = a2aParentRefusal(ctx, input.parent);
+  if (refused !== null) return refused;
+  // Credited to whoever made the request; a body `creator` is ignored, since
+  // imports (Linear, A2A) write through the store in-process (XH-R2).
+  const created = createTaskChecked(ctx, {
+    ...input,
+    creator: requestActor(ctx),
+  });
+  if (!created.ok) return errorResponse(400, created.error);
+  ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
+  return jsonResponse(created.doc, 201);
 }
 
 // POST /api/tasks/draft — starts a background planner turn and returns the
@@ -741,15 +878,51 @@ async function updateTask(
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
   };
 
+  // A gated A2A draft moves only through its gate; a decide-tier status
+  // change answers it.
+  if (ctx.a2a !== undefined) {
+    const caller = ctx.caller ?? {
+      tier: 'request' as const,
+      ref: humanActor(ctx),
+    };
+    const guard = await ctx.a2a.guardTaskPatch(id, patch, {
+      tier: decidingHuman(ctx) ? caller.tier : 'request',
+      ref: caller.ref,
+    });
+    if (!guard.ok) return errorResponse(guard.status, guard.error);
+  }
+
+  // Moving a task under an A2A task makes it one: a decider's call.
+  if (patch.parent !== undefined && patch.parent !== existing.meta.parent) {
+    const refused = a2aParentRefusal(ctx, patch.parent);
+    if (refused !== null) return refused;
+  }
+
+  // A publish task's elevated risk is what keeps a human on its merge, so only
+  // decide tier (never the shared agent token) may change it while it publishes.
+  if (
+    patch.risk !== undefined &&
+    patch.risk !== existing.meta.risk &&
+    ctx.docs.publishing(id) &&
+    !decidingHuman(ctx)
+  ) {
+    return errorResponse(
+      403,
+      `${id} is publishing a doc; changing its risk needs the decide tier`
+    );
+  }
+
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
   // credited to the human whose credential made the call, never whatever the
   // client sent (an untrusted body must not be able to forge attribution).
   if (typeof patch.appendActivity === 'string' && patch.appendActivity !== '') {
-    patch.activityActor = humanActor(ctx);
+    patch.activityActor = requestActor(ctx);
   }
 
   const doc = ctx.store.update(id, patch);
+  markA2AChild(ctx, id, doc.meta.parent);
+  ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
@@ -816,6 +989,8 @@ async function createRun(
   if (freshField !== undefined && typeof freshField !== 'boolean') {
     return errorResponse(400, 'invalid fresh: expected a boolean');
   }
+  // Before dispatch, so a run an A2A run starts is A2A-origin from its start.
+  if (task !== null) inheritLineage(ctx, taskId);
   // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
   // the raw fields go through untouched; the orchestrator resolves the
   // executor's own default model for a fresh run.
@@ -826,7 +1001,10 @@ async function createRun(
     fresh: freshField === true,
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
-    actor: humanActor(ctx),
+    actor: requestActor(ctx),
+    // Who the run acts for: the credential's own human (the owner only on
+    // the app token), never the shared agentToken.
+    operator: humanOperator(ctx),
   });
   return jsonResponse(meta, 201);
 }
@@ -879,61 +1057,6 @@ async function handleRunPreview(
     return jsonResponse({ preview: null, reason: result.refusal.reason });
   }
   return jsonResponse({ preview: withRemote(result.preview) });
-}
-
-async function approveRun(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as {
-    requestId?: unknown;
-    allow?: unknown;
-    scope?: unknown;
-    reason?: unknown;
-  };
-  if (typeof body.requestId !== 'string' || body.requestId.trim() === '') {
-    return errorResponse(400, 'invalid requestId: requestId is required');
-  }
-  if (typeof body.allow !== 'boolean') {
-    return errorResponse(400, 'invalid allow: expected a boolean');
-  }
-  if (
-    body.scope !== undefined &&
-    body.scope !== 'once' &&
-    body.scope !== 'session'
-  ) {
-    return errorResponse(400, "invalid scope: expected 'once' or 'session'");
-  }
-  ctx.orchestrator.approve(runId, body.requestId, {
-    allow: body.allow,
-    scope: body.scope,
-    reason: typeof body.reason === 'string' ? body.reason : undefined,
-  });
-  return jsonResponse({ ok: true });
-}
-
-async function sendRunMessage(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown; resume?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  if (body.resume !== undefined && typeof body.resume !== 'boolean') {
-    return errorResponse(400, 'invalid resume: expected a boolean');
-  }
-  const meta = ctx.orchestrator.sendMessage(runId, body.text, {
-    resume: body.resume === true,
-    actor: humanActor(ctx),
-  });
-  return jsonResponse(meta);
 }
 
 // Phase 5 P1: `action: 'pr'` is routed to PrManager.openPr rather than
@@ -1314,6 +1437,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'receipts',
     'sync',
     'preview',
+    'memory',
   ] as const) {
     if (!(key in body)) continue;
     const field = objectField(body, key);
@@ -1381,6 +1505,14 @@ interface ReceiptsStatus {
   lastExportedAt: string | null;
   /** The last push to `receipts.remote`; absent or null when there is none. */
   lastPush?: ReceiptsPush | null;
+}
+
+// The last receipt export, as a health problem when it failed.
+function receiptsProblems(ctx: ApiContext): string[] {
+  const last = ctx.receiptsScheduler?.lastResult() ?? null;
+  return last?.state === 'failed'
+    ? [`receipt log export failed: ${last.detail}`]
+    : [];
 }
 
 // Reads the exporter's retained last result. Its own null-vs-result
@@ -1978,7 +2110,8 @@ function deleteChatMessage(
 // Sends the review back to the agent wherever the agent is. A run is
 // reviewed AFTER it finishes, so the normal case is terminal — and only
 // `{ resume: true }` re-dispatches one; without it sendMessage refuses with
-// "run is not live". A still-live run keeps the mid-run message path.
+// "run is not live". A still-live run keeps the mid-run message path. A
+// resumed run acts for the reviewer's own credential, never the shared token.
 function sendReviewToAgent(
   ctx: ApiContext,
   runId: string,
@@ -1989,7 +2122,25 @@ function sendReviewToAgent(
   return ctx.orchestrator.sendMessage(
     runId,
     message,
-    resume ? { resume: true, actor: humanActor(ctx) } : {}
+    resume
+      ? {
+          resume: true,
+          actor: requestActor(ctx),
+          operator: humanOperator(ctx),
+        }
+      : {}
+  );
+}
+
+// MEM-R8(c): a request-tier reviewer may not send into a live run that acts
+// for another human; resuming a finished one acts for the reviewer instead.
+function reviewSendRefusal(ctx: ApiContext, runId: string): string | null {
+  const meta = runMetaFor(ctx, runId);
+  if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return null;
+  return runMessageRefusal(
+    meta,
+    humanOperator(ctx),
+    tierAllows(ctx.caller?.tier ?? 'request', 'decide')
   );
 }
 
@@ -2305,6 +2456,11 @@ async function submitReview(
     );
   }
 
+  if (verdict === 'request-changes') {
+    const refusal = reviewSendRefusal(ctx, runId);
+    if (refusal !== null) return errorResponse(403, refusal);
+  }
+
   // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
   // run. The other two verdicts are meaningful on their own.
   const pendingBefore = ctx.reviewComments.pendingCount(target);
@@ -2402,6 +2558,8 @@ async function sendBackRun(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { note?: unknown };
   const note = typeof body.note === 'string' ? body.note.trim() : '';
+  const refusal = reviewSendRefusal(ctx, runId);
+  if (refusal !== null) return errorResponse(403, refusal);
   const threads = formatCommentsForAgent(
     ctx.reviewComments.list(commentTargetForRun(ctx, runId))
   );
@@ -3129,6 +3287,7 @@ async function dispatchPrAgentReview(
       // Findings belong on the PR, not on a run: this review has no run to
       // comment on — it reads the PR's head straight out of its own worktree.
       target: { kind: 'pr', number: pr.number },
+      operator: humanOperator(ctx),
     });
     ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
     return meta;
@@ -3420,177 +3579,6 @@ async function submitPrReview(
   return jsonResponse(result);
 }
 
-// `fromRunId` is optional and identifies the SENDER (a different run than
-// `runId`, the recipient) — the MCP `agent_message` tool passes its own
-// `DISPATCH_RUN_ID` here so Orchestrator.inject can resolve a real sender
-// label (task title + id) instead of falling back to the generic "another
-// agent". A `fromRunId` that doesn't resolve to a known run is not an
-// error here — inject()'s own resolveSenderLabel already tolerates an
-// unresolvable sender by falling back to the generic label, so this route
-// just passes the raw value through rather than pre-validating it.
-async function injectRunMessage(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown; fromRunId?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  if (body.fromRunId !== undefined && typeof body.fromRunId !== 'string') {
-    return errorResponse(400, 'invalid fromRunId: expected a string');
-  }
-  const meta = ctx.orchestrator.inject(
-    runId,
-    body.text,
-    body.fromRunId !== undefined ? { runId: body.fromRunId } : undefined
-  );
-  return jsonResponse(meta);
-}
-
-// POST /api/runs/:id/message-user — the agent→human channel (spec's
-// `message_user`): records a `from: 'agent'` message entry on the AGENT'S
-// OWN run, using that run's own task title + id as the label, so the human
-// sees "this agent flagged something" in the exact same Session tab as
-// everything else that run has said. Unlike `inject`, this never sends
-// anything back into the executor (there is no "recipient" to deliver
-// to) — it only needs the run to still be live so appending to its
-// transcript/broadcasting means something to a connected client, the same
-// liveness bar `inject` itself already enforces.
-async function messageUser(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  const meta = ctx.orchestrator.messageUser(runId, body.text);
-  return jsonResponse(meta);
-}
-
-// The transcript text a question lands as, so the session log records what
-// was asked without depending on a card the user may already have dismissed.
-function questionEntryText(question: string, options: string[]): string {
-  if (options.length === 0) return question;
-  return `${question}\n\n${options.map((o) => `- ${o}`).join('\n')}`;
-}
-
-// POST /api/runs/:id/questions — `ask_user` posts here, then long-polls the
-// GET below. `messageUser` writes the entry and gates this to a live run.
-async function askQuestion(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { question?: unknown; options?: unknown };
-  if (typeof body.question !== 'string' || body.question.trim() === '') {
-    return errorResponse(400, 'invalid question: question is required');
-  }
-  if (
-    body.options !== undefined &&
-    (!Array.isArray(body.options) ||
-      body.options.some((o) => typeof o !== 'string'))
-  ) {
-    return errorResponse(400, 'invalid options: expected an array of strings');
-  }
-  const question = body.question.trim();
-  const options = ((body.options as string[] | undefined) ?? [])
-    .map((o) => o.trim())
-    .filter((o) => o !== '');
-
-  ctx.orchestrator.messageUser(runId, questionEntryText(question, options));
-  const record = ctx.questions.ask(runId, question, options);
-  ctx.events.broadcast({
-    type: 'question.asked',
-    runId,
-    questionId: record.id,
-  });
-  return jsonResponse(record, 201);
-}
-
-// Resolves a question id against its own run, so one run can never read or
-// answer another run's question by guessing an id.
-function questionFor(
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): RunQuestion | null {
-  const record = ctx.questions.get(questionId);
-  return record !== undefined && record.runId === runId ? record : null;
-}
-
-// GET /api/runs/:id/questions/:qid — `?wait=1` parks for up to
-// QUESTION_POLL_MS. Coming back unanswered means "poll again", not an error.
-async function getQuestion(
-  req: Request,
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): Promise<Response> {
-  const record = questionFor(ctx, runId, questionId);
-  if (record === null) {
-    return errorResponse(404, `question not found: ${questionId}`);
-  }
-  const wait = new URL(req.url).searchParams.get('wait') === '1';
-  if (!wait) return jsonResponse(record);
-  return jsonResponse(
-    await ctx.questions.waitForAnswer(questionId, QUESTION_POLL_MS)
-  );
-}
-
-// POST /api/runs/:id/questions/:qid/answer — unblocks whatever is parked on
-// the long-poll above. 409s on a second answer: the first one already went.
-async function answerQuestion(
-  req: Request,
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { answer?: unknown };
-  if (typeof body.answer !== 'string' || body.answer.trim() === '') {
-    return errorResponse(400, 'invalid answer: answer is required');
-  }
-  if (questionFor(ctx, runId, questionId) === null) {
-    return errorResponse(404, `question not found: ${questionId}`);
-  }
-  const record = ctx.questions.answer(questionId, body.answer.trim());
-  // The agent already has the answer by this point, so a run that vanished
-  // out from under the transcript write must not turn this into a failure.
-  try {
-    ctx.orchestrator.recordAnswer(runId, body.answer.trim());
-  } catch (err) {
-    if (!(err instanceof OrchestratorNotFoundError)) throw err;
-  }
-  ctx.events.broadcast({ type: 'question.answered', runId, questionId });
-  ctx.events.broadcast({ type: 'run.changed' });
-  return jsonResponse(record);
-}
-
-// DELETE /api/runs/:id/questions/:qid — the asking agent stopped listening
-// (its tool call was cancelled or gave up), so the card must stop asking.
-function withdrawQuestion(
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): Response {
-  if (questionFor(ctx, runId, questionId) === null) {
-    return errorResponse(404, `question not found: ${questionId}`);
-  }
-  ctx.questions.withdraw(questionId);
-  ctx.events.broadcast({ type: 'question.closed', runId });
-  return new Response(null, { status: 204 });
-}
-
 // Validates an optional `model` body field the way createRun does: absent
 // means "the configured role's model"; present must be a non-empty string.
 // Returns the 400 to send, or the model (possibly undefined) to pass on.
@@ -3709,6 +3697,11 @@ async function confirmPlan(
   // promote a note whose task already exists.
   const sourceNoteId = ctx.planManager.get(planId).sourceNoteId;
   const result = ctx.planManager.confirm(planId, body.proposal);
+  // The confirm body is the human's own text, so they wrote these tasks.
+  for (const id of [result.epicId, ...result.taskIds]) {
+    const doc = id === undefined ? null : ctx.store.get(id);
+    if (doc !== null) ctx.taskAuthorship?.created(doc, humanOperator(ctx));
+  }
   if (sourceNoteId !== undefined && result.taskIds.length > 0) {
     linkNoteToTask(ctx, sourceNoteId, result.taskIds[0]);
   }
@@ -3723,8 +3716,13 @@ async function confirmPlan(
 // follows createRun's `executor` contract: optional, defaults to 'claude', and
 // a name outside what's registered is a 400 naming every valid option.
 // `model` is optional the same way: the composer's pick for this
-// conversation, over the configured `overseer` role's model.
-async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
+// conversation, over the configured `overseer` role's model. `speaker` is the
+// human whose lines the bus carries (see overseerSpeaker).
+async function startOverseer(
+  req: Request,
+  ctx: ApiContext,
+  speaker: Sender | null
+): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as {
@@ -3757,19 +3755,21 @@ async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
     body.prompt,
     backendName,
     model.model,
-    effort.effort
+    effort.effort,
+    speaker
   );
   return jsonResponse(record, 202);
 }
 
 // POST /api/overseer/:id/message — mirrors sendPlanMessage: 202 with the record
 // already flipped back to `running`; the reply lands via `overseer.changed`.
-// 404s an unknown conversation and 409s one mid-turn (both raised by
-// sendMessage and mapped by handleApi's outer catch).
+// 404s an unknown conversation and 409s one mid-turn or a revoked overseer
+// (raised by sendMessage and mapped by handleApi's outer catch).
 async function sendOverseerMessage(
   req: Request,
   ctx: ApiContext,
-  conversationId: string
+  conversationId: string,
+  speaker: Sender | null
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -3777,74 +3777,26 @@ async function sendOverseerMessage(
   if (typeof body.text !== 'string' || body.text.trim() === '') {
     return errorResponse(400, 'invalid text: text is required');
   }
-  const record = ctx.overseerManager.sendMessage(conversationId, body.text);
+  const record = ctx.overseerManager.sendMessage(
+    conversationId,
+    body.text,
+    speaker
+  );
   return jsonResponse(record, 202);
 }
 
-// POST /api/overseer/:id/actions/:actionId/confirm { approve } — decides one
-// queued mutating action. Approving runs the real effect before responding,
-// so the returned record already reflects the outcome; denying never runs it
-// at all. 404s an unknown conversation or an action that isn't pending on
-// that conversation, and a failed effect surfaces through the same typed
-// orchestrator errors as acting on the target directly would.
-async function confirmOverseerAction(
-  req: Request,
+// Who speaks on an overseer route: a human principal, whose lines the bus
+// carries. Any other credential, the shared agent token above all, is null.
+function overseerSpeaker(
   ctx: ApiContext,
-  conversationId: string,
-  actionId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { approve?: unknown };
-  if (typeof body.approve !== 'boolean') {
-    return errorResponse(400, 'invalid approve: expected a boolean');
-  }
-  const record = await ctx.overseerManager.confirmAction(
-    conversationId,
-    actionId,
-    body.approve
-  );
-  return jsonResponse(record);
-}
-
-// POST /api/overseer/:id/approvals/:requestId { allow, scope?, reason? } —
-// decides one built-in tool call the overseer's running turn is parked on.
-// Same body as a run's POST /api/runs/:id/approval: allowing runs the call
-// at once (`scope: 'session'` also pre-approves the tool for the rest of the
-// conversation), denying hands `reason` to the model. 404s an unknown
-// conversation or a request that isn't parked on it.
-async function decideOverseerApproval(
-  req: Request,
-  ctx: ApiContext,
-  conversationId: string,
-  requestId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as {
-    allow?: unknown;
-    scope?: unknown;
-    reason?: unknown;
+  presented: string | null
+): Sender | null {
+  const result = resolvePrincipal(ctx, presented);
+  if (!result.ok || result.principal.kind !== 'human') return null;
+  return {
+    address: result.principal.address,
+    canDecide: result.principal.canDecide,
   };
-  if (typeof body.allow !== 'boolean') {
-    return errorResponse(400, 'invalid allow: expected a boolean');
-  }
-  if (
-    body.scope !== undefined &&
-    body.scope !== 'once' &&
-    body.scope !== 'session'
-  ) {
-    return errorResponse(400, "invalid scope: expected 'once' or 'session'");
-  }
-  if (body.reason !== undefined && typeof body.reason !== 'string') {
-    return errorResponse(400, 'invalid reason: expected a string');
-  }
-  const record = ctx.overseerManager.decideApproval(conversationId, requestId, {
-    allow: body.allow,
-    ...(body.scope !== undefined ? { scope: body.scope } : {}),
-    ...(body.reason !== undefined ? { reason: body.reason } : {}),
-  });
-  return jsonResponse(record);
 }
 
 // The optional session body POST /api/epics/:id/dispatch and /resume share.
@@ -3911,10 +3863,14 @@ async function startEpic(
   if (!parsed.ok) return parsed.response;
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
-  // The caller, never the body: their teammates' tasks stay theirs.
+  // The caller, never the body: their teammates' tasks stay theirs. Only a
+  // human credential (the owner's only as the app token) gives the auto-fill
+  // runs someone to act for.
+  const operator = humanOperator(ctx);
   const session = await ctx.epicEngine.start(epicId, {
     ...checked.body,
-    startedBy: humanActor(ctx),
+    startedBy: requestActor(ctx),
+    ...(operator === null ? {} : { operator }),
   });
   return jsonResponse(session, 201);
 }
@@ -3927,7 +3883,7 @@ function pauseEpic(ctx: ApiContext, epicId: string): Response {
 
 // POST /api/epics/:id/resume — optionally re-ceilings the session on the way
 // back to `active`; `executor` is fixed for the session's life so it is
-// dropped here even when sent.
+// dropped here even when sent. The session now acts for whoever resumed it.
 async function resumeEpic(
   req: Request,
   ctx: ApiContext,
@@ -3942,6 +3898,7 @@ async function resumeEpic(
     concurrency,
     maxSpendUsd,
     maxRuns,
+    operator: humanOperator(ctx),
   });
   return jsonResponse(session);
 }
@@ -4283,6 +4240,7 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
         ...(description === '' ? {} : { description }),
         ...(parent === null ? {} : { parent }),
       });
+      markA2AChild(ctx, task.meta.id, parent);
       links.push({ id, taskId: task.meta.id });
       results.push({
         id,
@@ -4454,7 +4412,8 @@ function getInboxTriage(ctx: ApiContext): Response {
  * failure mode to avoid is an agent helpfully rewriting a carefully-worded acceptance criterion
  * into something vaguer.
  */
-function buildTaskEnrichPrompt(task: TaskDoc): string {
+// An A2A task's spec (a2a) is fenced as a client's words.
+export function buildTaskEnrichPrompt(task: TaskDoc, a2a = false): string {
   // The two spec sections only — `task.body` verbatim would carry the template's empty
   // headings (so no task ever looks empty) and the agent-written Activity log.
   const existing = [
@@ -4469,7 +4428,7 @@ function buildTaskEnrichPrompt(task: TaskDoc): string {
     `Title: ${task.meta.title}`,
     existing === ''
       ? 'It currently has no description at all.'
-      : `Its current description and criteria:\n\n${existing}`,
+      : `Its current description and criteria:\n\n${a2a ? untrustedFenced('an A2A client wrote this', existing) : existing}`,
     'Read enough of this repository to ground it: which files and functions are actually ' +
       'involved, what the code does today, and what would have to change. Then propose exactly ' +
       "ONE task, and no epic, keeping this task's title and intent. " +
@@ -4491,7 +4450,7 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     return errorResponse(404, `task not found: ${id}`);
   }
   const record = ctx.planManager.startPlan(
-    buildTaskEnrichPrompt(task),
+    buildTaskEnrichPrompt(task, ctx.a2a?.taskOrigin(id) === 'a2a'),
     'claude',
     undefined,
     'enrich',
@@ -4605,31 +4564,6 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   tier: Exclude<AuthTier, 'request'>;
 }> = [
   // ---- decide: adjudication -------------------------------------------------
-  {
-    method: 'POST',
-    segments: ['runs', '*', 'scope-requests', '*', 'decide'],
-    tier: 'decide',
-  },
-  // Confirming an assistant's queued mutating action is the human gate the
-  // whole assistant design hangs on — an agent token approving it would let
-  // the model approve its own mutations.
-  {
-    method: 'POST',
-    segments: ['overseer', '*', 'actions', '*', 'confirm'],
-    tier: 'decide',
-  },
-  // Allowing a built-in tool call the assistant is parked on is the same gate
-  // for the same reason: the model must not be able to wave its own Bash call
-  // through with the agent token.
-  {
-    method: 'POST',
-    segments: ['overseer', '*', 'approvals', '*'],
-    tier: 'decide',
-  },
-  // A run's tool-approval gate is an adjudication like the two above: with it
-  // on the request tier, any agent holding the on-disk agent token could wave
-  // its own parked tool call through.
-  { method: 'POST', segments: ['runs', '*', 'approval'], tier: 'decide' },
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the
   // request tier an agent holding the on-disk agent token could use this to
@@ -4640,11 +4574,21 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // run, not a command of the caller's choosing.
   { method: 'POST', segments: ['runs', '*', 'preview'], tier: 'decide' },
   { method: 'DELETE', segments: ['runs', '*', 'preview'], tier: 'decide' },
+  // A parked call's full input is what its approval gate previews; only a
+  // human who may answer that gate reads it whole.
+  {
+    method: 'GET',
+    segments: ['runs', '*', 'approvals', '*'],
+    tier: 'decide',
+  },
   // Handing out a credential is an adjudication: on the request tier an agent
   // holding the on-disk agent token could mint itself a second identity, and
   // listing holders tells it whose to go looking for. team/routes.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
+  { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
+  { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
@@ -4662,12 +4606,118 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
+  // Roster changes are signed with this machine's key, so they need its owner.
+  { method: 'POST', segments: ['team', 'found'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'trust'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'invite'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'join'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'recover'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'recovery-key'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'license'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'close-legacy'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'dismiss'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'abandon-invite'], tier: 'operator' },
+  // Moves the whole team's sync to another transport, after its disclosure.
+  { method: 'POST', segments: ['team', 'transport'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  // An admin's pick between two machines that each claim a run first.
+  {
+    method: 'POST',
+    segments: ['team', 'runs', '*', 'resolve'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'admit'],
+    tier: 'operator',
+  },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'revoke'],
+    tier: 'operator',
+  },
+  { method: 'POST', segments: ['team', 'keys', '*', 'role'], tier: 'operator' },
+  {
+    method: 'POST',
+    segments: ['team', 'keys', '*', 'hosts'],
+    tier: 'operator',
+  },
+  // Approving, revoking or (un)muting an agent is an adjudication: on the
+  // request tier the shared agentToken could approve itself onto the roster.
+  { method: 'POST', segments: ['agents', '*', 'approve'], tier: 'decide' },
+  { method: 'POST', segments: ['agents', '*', 'revoke'], tier: 'decide' },
+  { method: 'POST', segments: ['agents', '*', 'mute'], tier: 'decide' },
+  { method: 'POST', segments: ['agents', '*', 'unmute'], tier: 'decide' },
+  // A fresh A2A client token is a credential handed out; an A2A task list
+  // names every client's questions, and declining one answers it.
+  {
+    method: 'POST',
+    segments: ['a2a', 'clients', '*', 'rotate'],
+    tier: 'decide',
+  },
+  { method: 'GET', segments: ['a2a', 'tasks'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'tasks', '*', 'decline'],
+    tier: 'decide',
+  },
+  // Registering or changing a peer decides where this machine sends mail;
+  // private URLs and --allow-http/--allow-origin need the operator, checked in addPeer.
+  { method: 'POST', segments: ['a2a', 'peers'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'refresh'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'enable'],
+    tier: 'decide',
+  },
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'disable'],
+    tier: 'decide',
+  },
+  { method: 'DELETE', segments: ['a2a', 'peers', '*'], tier: 'decide' },
+  // Upgrading a bearer peer binds its key once the other side's owner agrees.
+  {
+    method: 'POST',
+    segments: ['a2a', 'peers', '*', 'upgrade'],
+    tier: 'decide',
+  },
+  // Pairing writes a peer and an approved client in one step (P5); a private
+  // card URL on either side needs the operator, checked as for peers.
+  { method: 'GET', segments: ['a2a', 'pairings'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'pairings'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'pairings', 'accept'], tier: 'decide' },
+  { method: 'DELETE', segments: ['a2a', 'pairings', '*'], tier: 'decide' },
+  { method: 'GET', segments: ['a2a', 'links'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
   // holds a run's edits to the task's declared `writes` and records them.
   // Reads stay on the request tier with the rest of the read surface.
   { method: 'POST', segments: ['files', 'write'], tier: 'operator' },
+  // Opening the A2A listener exposes this machine on a network port and
+  // points the daemon at TLS files on disk; closing it is paired.
+  { method: 'PUT', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Standalone A2A hosts put this project on another machine's network
+  // (spec:1656); minting, listing and revoking them is the owner's call.
+  { method: 'GET', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'POST', segments: ['a2a', 'hosts'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'hosts', '*'], tier: 'operator' },
+  {
+    method: 'PUT',
+    segments: ['a2a', 'listener', 'standalone'],
+    tier: 'operator',
+  },
+  { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
+  // Rotating the card key changes what every paired peer trusts.
+  { method: 'POST', segments: ['a2a', 'keys', 'rotate'], tier: 'operator' },
+  // Which relay this daemon dials as a tenant decides where it is served.
+  { method: 'PUT', segments: ['a2a', 'relay'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'relay'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
   // whose account, and which workspace, the board is sent to — the same call
@@ -4752,6 +4802,71 @@ function matchesRoute(
   );
 }
 
+// Routes that authenticate via resolvePrincipal instead of the request/
+// decide/operator ladder below; an entry here skips the tier check.
+const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
+  method: string;
+  segments: readonly string[];
+}> = [
+  { method: 'POST', segments: ['messages'] },
+  { method: 'GET', segments: ['messages', '*'] },
+  { method: 'POST', segments: ['messages', '*', 'reply'] },
+  { method: 'GET', segments: ['messages', '*', 'answer'] },
+  { method: 'GET', segments: ['threads'] },
+  { method: 'GET', segments: ['threads', '*'] },
+  { method: 'GET', segments: ['mailbox'] },
+  { method: 'POST', segments: ['deliveries', '*', 'read'] },
+  { method: 'GET', segments: ['channels'] },
+  { method: 'POST', segments: ['channels', '*', 'members'] },
+  { method: 'DELETE', segments: ['channels', '*', 'members'] },
+  { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
+  { method: 'GET', segments: ['decisions', 'open'] },
+  { method: 'GET', segments: ['memory'] },
+  { method: 'GET', segments: ['memory', '*'] },
+  { method: 'POST', segments: ['memory', 'import', 'ledger'] },
+  { method: 'POST', segments: ['memory', 'import', 'claude'] },
+  { method: 'POST', segments: ['memory'] },
+  { method: 'POST', segments: ['memory', 'link'] },
+  { method: 'POST', segments: ['memory', 'rehome'] },
+  { method: 'POST', segments: ['memory', 'link', '*'] },
+  { method: 'POST', segments: ['memory', '*', '*'] },
+  { method: 'DELETE', segments: ['memory', '*'] },
+  { method: 'GET', segments: ['memory', 'proposals', '*'] },
+  { method: 'POST', segments: ['memory', 'ingest-problems', '*', 'accept'] },
+];
+
+// Route families that authenticate by principal throughout, every method.
+const SELF_AUTHENTICATED_PREFIXES: ReadonlySet<string> = new Set(['docs']);
+
+// GET /api/conversations reads the bus (by principal) when it names with= or
+// about=; with subject= it is the review chat, on the tier ladder.
+function isBusConversationQuery(query: URLSearchParams): boolean {
+  return query.has('with') || query.has('about');
+}
+
+/** Whether `/api/<segments>` is a messaging route that authenticates by
+ *  principal, not tier: requiredTier skips it and handleApi resolves it. */
+export function isSelfAuthenticated(
+  segments: readonly string[],
+  method: string,
+  query?: URLSearchParams
+): boolean {
+  if (segments.length > 0 && SELF_AUTHENTICATED_PREFIXES.has(segments[0])) {
+    return true;
+  }
+  if (
+    method === 'GET' &&
+    segments.length === 1 &&
+    segments[0] === 'conversations' &&
+    query !== undefined &&
+    isBusConversationQuery(query)
+  )
+    return true;
+  return SELF_AUTHENTICATED_ROUTES.some(
+    (route) => route.method === method && matchesRoute(route.segments, segments)
+  );
+}
+
 /**
  * The tier a request to `/api/<segments>` must present, or null when open.
  * `GET /api/health` is the only open route, because the CLI, MCP and the
@@ -4759,7 +4874,8 @@ function matchesRoute(
  */
 function requiredTier(
   method: string,
-  segments: readonly string[]
+  segments: readonly string[],
+  query?: URLSearchParams
 ): AuthTier | null {
   if (
     (method === 'GET' || method === 'HEAD') &&
@@ -4777,6 +4893,12 @@ function requiredTier(
   ) {
     return null;
   }
+  // Self-authenticating routes check via resolvePrincipal in handleApi, not
+  // this ladder — returning null here just opens the gate for them.
+  if (isSelfAuthenticated(segments, method, query)) return null;
+  // A standalone host's routes accept its host token only, checked in
+  // a2a/portRoutes.ts; A2A client tokens were already refused above.
+  if (segments[0] === 'a2a' && segments[1] === 'port') return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
       return route.tier;
@@ -4854,7 +4976,7 @@ export function rejectUnauthorized(
   if (found.kind === 'expired') {
     return authErrorResponse(
       401,
-      `this token for ${found.handle} expired on ${found.expiredAt}. Ask whoever runs the daemon to invite you again (\`dispatch team invite ${found.handle}\`).`,
+      expiredTokenMessage(found.handle, found.expiredAt),
       'auth_token_expired'
     );
   }
@@ -4875,6 +4997,67 @@ export function rejectUnauthorized(
     );
   }
   return null;
+}
+
+/**
+ * XH-R4: which decision feed items the caller may see. A deciding human sees
+ * all of them; anyone else only the items they take part in: a gate whose
+ * message they can read or raised for a run they act for (XH-R9: one that went
+ * to the owner), a stalled run they are or act for, a capped fix loop on a
+ * task they created.
+ */
+function decisionVisibleTo(ctx: ApiContext): (item: DecisionItem) => boolean {
+  const agent = ctx.viaAgentToken === true;
+  if (!agent && tierAllows(ctx.caller?.tier ?? 'request', 'decide'))
+    return () => true;
+  const address =
+    ctx.viaRun !== undefined ? `run:${ctx.viaRun}` : requestActor(ctx);
+  // The bare agent token takes part in no conversation, so it reads none.
+  const reader =
+    agent && ctx.viaRun === undefined ? null : { address, canDecide: false };
+  const runs = new Map(ctx.orchestrator.list().map((r) => [r.id, r]));
+  // The human a run acts for, or null for no one or an unknown run.
+  const operatorOf = (runId: string | undefined) => {
+    const run = runId === undefined ? undefined : runs.get(runId);
+    return run === undefined ? null : runOperator(run);
+  };
+  return (item) => {
+    const source = item.id.slice(item.id.indexOf(':') + 1);
+    if (source.startsWith('m-')) {
+      if (reader === null) return false;
+      if (ctx.messaging.engine.canRead(source, reader)) return true;
+      const message = ctx.messaging.engine.getMessage(source);
+      return (
+        message !== null &&
+        gateOf(message) !== null &&
+        operatorOf(item.runId) === address
+      );
+    }
+    if (item.runId !== undefined) {
+      const run = runs.get(item.runId);
+      return (
+        address === `run:${item.runId}` ||
+        (run !== undefined &&
+          (runOperator(run) === address || run.dispatchedBy === address))
+      );
+    }
+    if (item.taskId !== undefined)
+      return ctx.cache.get(item.taskId)?.meta.creator === address;
+    return false;
+  };
+}
+
+/** The run a presented token belongs to, and whether it is still live; null
+ *  when the token is a registry credential or no run's at all. */
+function runCredential(
+  ctx: ApiContext,
+  presented: string | null
+): { runId: string; live: boolean } | null {
+  if (presented === null || presented === '') return null;
+  if (ctx.tokens.registry.lookup(presented).kind !== 'unknown') return null;
+  const runId = ctx.messaging.runTokens.verify(presented);
+  if (runId === null) return null;
+  return { runId, live: ctx.orchestrator.isRunLive(runId) };
 }
 
 export async function handleApi(
@@ -4899,23 +5082,123 @@ export async function handleApi(
   }
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
-  const tier = requiredTier(method, segments);
-  if (tier !== null) {
-    const unauthorized = rejectUnauthorized(
-      req,
-      daemonCtx.tokens,
-      tier,
-      presented
+
+  // An A2A client's bearer never works on /api, open routes included. Only a
+  // token the registry does not know reaches the messages.db lookup.
+  if (
+    presented !== null &&
+    daemonCtx.tokens.registry.lookup(presented).kind === 'unknown' &&
+    isA2AClientToken(daemonCtx.messaging.store, presented)
+  ) {
+    return authErrorResponse(
+      403,
+      'A2A client tokens work only on the A2A listener',
+      'auth_a2a_client'
     );
+  }
+
+  // Resolves and enforces the principal here, before dispatch, so every
+  // self-authenticated route fails closed even with no handler behind it.
+  let principal: Principal | undefined;
+  if (isSelfAuthenticated(segments, method, url.searchParams)) {
+    const principalResult = resolvePrincipal(daemonCtx, presented);
+    if (!principalResult.ok) {
+      return authErrorResponse(
+        principalResult.status,
+        principalResult.error,
+        principalResult.code
+      );
+    }
+    principal = principalResult.principal;
+  }
+
+  // XH-R2: a run's MCP presents the run's own token, so a write is known to
+  // come from that run. It stands where the agent token does (request tier,
+  // no human behind it) and only while the run is live.
+  const run = runCredential(daemonCtx, presented);
+  if (run !== null && !run.live) {
+    return authErrorResponse(
+      401,
+      'run token for a finished run',
+      'auth_run_token_ended'
+    );
+  }
+
+  const tier = requiredTier(method, segments, url.searchParams);
+  if (tier !== null) {
+    const unauthorized =
+      run === null
+        ? rejectUnauthorized(req, daemonCtx.tokens, tier, presented)
+        : tierAllows('request', tier)
+          ? null
+          : authErrorResponse(
+              403,
+              wrongTierMessage(tier, 'request'),
+              'auth_insufficient_tier'
+            );
     if (unauthorized !== null) return unauthorized;
   }
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
-  const caller = daemonCtx.tokens.registry.resolve(presented);
-  const ctx: ApiContext =
-    caller === null ? daemonCtx : { ...daemonCtx, caller };
+  const caller = daemonCtx.tokens.registry.resolve(
+    run === null ? presented : daemonCtx.tokens.agentToken
+  );
+  // The shared agentToken resolves to the owner but is never a human; a
+  // constant-time digest compare, as resolvePrincipal does.
+  const viaAgentToken =
+    run !== null ||
+    (presented !== null &&
+      timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken)));
+  const ownerCredential =
+    presented !== null &&
+    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
+  let ctx: ApiContext = daemonCtx;
+  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
+  if (run !== null) {
+    const meta = ctx.orchestrator.list().find((r) => r.id === run.runId);
+    ctx = {
+      ...ctx,
+      viaRun: run.runId,
+      runActor: runActorFor(
+        run.runId,
+        meta === undefined ? null : runOperator(meta)
+      ),
+    };
+  }
+  if (principal !== undefined) ctx = { ...ctx, principal };
+  const scope = run === null ? null : a2aRunScope(ctx, run.runId);
+  if (scope !== null) {
+    const bridge = ctx.a2a;
+    ctx = {
+      ...ctx,
+      a2aRun: scope,
+      store: lineageStore(ctx.store, (taskId) =>
+        bridge?.inherit(scope.runId, taskId)
+      ),
+    };
+    const findingTask =
+      segments[0] === 'findings' && method === 'POST'
+        ? await bodyTaskId(req)
+        : null;
+    if (!a2aRunAllows(scope, method, segments, findingTask)) {
+      return authErrorResponse(
+        403,
+        'an A2A-origin run reaches only its own task and run, messaging, memory and docs',
+        'auth_a2a_run_scope'
+      );
+    }
+    // Whatever task it may still write inherits its provenance (XH-R8).
+    const written =
+      method === 'GET'
+        ? null
+        : segments[0] === 'tasks'
+          ? segments[1]
+          : findingTask;
+    if (written !== undefined && written !== null)
+      ctx.a2a?.inherit(scope.runId, written);
+  }
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {
@@ -4940,6 +5223,10 @@ export async function handleApi(
         problems: [
           ...ctx.cache.problems(),
           ...(identity.problem === null ? [] : [identity.problem]),
+          ...receiptsProblems(ctx),
+          ...ctx.team.teammates.problems(),
+          ...ctx.memory.restoreProblems(),
+          ...(ctx.a2a?.problems() ?? []),
         ],
         // The same fact as an enum, so a client can branch on it without
         // matching the problem string.
@@ -4963,13 +5250,16 @@ export async function handleApi(
       });
     }
 
+    if (segments[0] === 'team' && isFederationRoute(segments)) {
+      return await handleFederationRoute(req, ctx, segments, method);
+    }
     if (segments[0] === 'team' && segments[1] === 'tokens') {
       if (segments.length === 2 && method === 'GET') return listTeamTokens(ctx);
       if (segments.length === 2 && method === 'POST') {
         return await issueTeamToken(req, ctx);
       }
       if (segments.length === 3 && method === 'DELETE') {
-        return revokeTeamToken(ctx, segments[2]);
+        return await revokeTeamToken(ctx, segments[2]);
       }
     }
 
@@ -5034,12 +5324,11 @@ export async function handleApi(
     // answered below and read by the app's status strip.
     if (segments[0] === 'board-sync') {
       if (segments.length === 1 && method === 'GET') {
-        return jsonResponse(
-          ctx.boardSync?.status() ?? {
-            enabled: false,
-            reason: boardSyncOffReason(ctx),
-          }
-        );
+        const status = ctx.boardSync?.status() ?? {
+          enabled: false,
+          reason: boardSyncOffReason(ctx),
+        };
+        return jsonResponse(statusFor(status, ctx.caller?.tier ?? 'request'));
       }
       if (segments.length === 2 && segments[1] === 'now' && method === 'POST') {
         if (ctx.boardSync === null) {
@@ -5048,8 +5337,7 @@ export async function handleApi(
             BOARD_SYNC_OFF_MESSAGE[boardSyncOffReason(ctx)]
           );
         }
-        await ctx.boardSync.syncNow();
-        return jsonResponse(ctx.boardSync.status());
+        return jsonResponse(await boardSyncNow(ctx, ctx.boardSync));
       }
     }
 
@@ -5077,6 +5365,25 @@ export async function handleApi(
       // caller here would be a bug rather than an unauthenticated one.
       if (ctx.caller === undefined) {
         return errorResponse(401, 'credential resolves to no one');
+      }
+      // A run's own token is that run, never the owner its caller stands in
+      // for; an A2A run names no operator at all.
+      if (ctx.viaRun !== undefined) {
+        const meta = ctx.orchestrator.list().find((r) => r.id === ctx.viaRun);
+        const operator = meta === undefined ? null : runOperator(meta);
+        return jsonResponse({
+          ref: `run:${ctx.viaRun}`,
+          ...(ctx.a2aRun === undefined
+            ? {
+                operator:
+                  operator?.startsWith('human:') === true
+                    ? operator.slice('human:'.length)
+                    : null,
+              }
+            : {}),
+          tier: 'request',
+          runToken: true,
+        });
       }
       return jsonResponse(ctx.caller);
     }
@@ -5293,6 +5600,9 @@ export async function handleApi(
     }
 
     if (segments[0] === 'tasks') {
+      // One fence for every write to a task an open A2A proposal holds.
+      const fenced = proposalWriteRefusal(ctx, method, segments);
+      if (fenced !== null) return fenced;
       // Before any `:id` sub-route below, and matched on its own literal so
       // "fanout" is never read as a run id.
       if (
@@ -5538,9 +5848,7 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         ctx.orchestrator.backfillLastSteps();
         return jsonResponse(
-          ctx.orchestrator.decorateRunsWithPendingApproval(
-            ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
-          )
+          ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
         );
       }
       if (
@@ -5556,26 +5864,7 @@ export async function handleApi(
         if (result === null) {
           return errorResponse(404, `run not found: ${segments[1]}`);
         }
-        // Same decoration as the list: a paused run's approval must be
-        // answerable from a fresh read, not only from the live event.
-        const [meta] = ctx.orchestrator.decorateRunsWithPendingApproval([
-          result.meta,
-        ]);
-        return jsonResponse({ ...result, meta });
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'approval' &&
-        method === 'POST'
-      ) {
-        return await approveRun(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'message' &&
-        method === 'POST'
-      ) {
-        return await sendRunMessage(req, ctx, segments[1]);
+        return jsonResponse(result);
       }
       if (
         segments.length === 3 &&
@@ -5602,6 +5891,24 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      // GET /api/runs/:id/approvals/:requestId — the full input of a call the
+      // run is parked on; its gate carries only a preview.
+      if (
+        segments.length === 4 &&
+        segments[2] === 'approvals' &&
+        method === 'GET'
+      ) {
+        const parked = ctx.orchestrator.pendingApprovalFor(
+          segments[1],
+          segments[3]
+        );
+        return parked === undefined
+          ? errorResponse(
+              404,
+              `run ${segments[1]} is not parked on ${segments[3]}`
+            )
+          : jsonResponse({ tool: parked.toolName, input: parked.input });
       }
       // GET /api/runs/:id/checklist — the run's requirement checklist; 404
       // until the finish hook has written one (or ever, without a client).
@@ -5648,7 +5955,10 @@ export async function handleApi(
         method === 'POST'
       ) {
         return jsonResponse(
-          ctx.orchestrator.resumeRun(segments[1], { actor: humanActor(ctx) }),
+          ctx.orchestrator.resumeRun(segments[1], {
+            actor: requestActor(ctx),
+            operator: humanOperator(ctx),
+          }),
           201
         );
       }
@@ -5736,89 +6046,13 @@ export async function handleApi(
       ) {
         return await commentPr(req, ctx, segments[1]);
       }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'inject' &&
-        method === 'POST'
-      ) {
-        return await injectRunMessage(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'message-user' &&
-        method === 'POST'
-      ) {
-        return await messageUser(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'questions' &&
-        method === 'POST'
-      ) {
-        return await askQuestion(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'questions' &&
-        method === 'GET'
-      ) {
-        return jsonResponse(ctx.questions.listOpen(segments[1]));
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'questions' &&
-        method === 'GET'
-      ) {
-        return await getQuestion(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'questions' &&
-        method === 'DELETE'
-      ) {
-        return withdrawQuestion(ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 5 &&
-        segments[2] === 'questions' &&
-        segments[4] === 'answer' &&
-        method === 'POST'
-      ) {
-        return await answerQuestion(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'scope-requests' &&
-        method === 'POST'
-      ) {
-        return await requestScope(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'scope-requests' &&
-        method === 'GET'
-      ) {
-        return listScopeRequests(ctx, segments[1]);
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'scope-requests' &&
-        method === 'GET'
-      ) {
-        return await getScopeRequest(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 5 &&
-        segments[2] === 'scope-requests' &&
-        segments[4] === 'decide' &&
-        method === 'POST'
-      ) {
-        return await decideScopeRequest(req, ctx, segments[1], segments[3]);
-      }
     }
 
     if (segments[0] === 'conversations') {
       if (segments.length === 1 && method === 'GET') {
+        // with=/about= is the bus's participant-scoped read; subject= the review chat.
+        if (isBusConversationQuery(url.searchParams))
+          return listBusConversation(ctx, url);
         return listConversation(req, ctx);
       }
       if (segments.length === 1 && method === 'POST') {
@@ -5829,10 +6063,183 @@ export async function handleApi(
       }
     }
 
-    // GET /api/questions — every open question across every run, for the
-    // app's "an agent is waiting on you" surfaces.
-    if (segments[0] === 'questions' && segments.length === 1) {
-      if (method === 'GET') return jsonResponse(ctx.questions.listOpen());
+    // Messaging routes read ctx.principal; the agent roster, register and
+    // approve/revoke/mute/unmute routes use the tier ladder instead.
+    if (segments[0] === 'messages') {
+      if (segments.length === 1 && method === 'POST') {
+        return await sendMessage(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        return getMessageById(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'reply' &&
+        method === 'POST'
+      ) {
+        return await replyToMessage(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'answer' &&
+        method === 'GET'
+      ) {
+        return await waitForAnswer(req, ctx, segments[1], url);
+      }
+    }
+
+    if (segments[0] === 'threads') {
+      if (segments.length === 1 && method === 'GET') {
+        return listRecentThreads(ctx, url);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        return getThreadById(ctx, segments[1]);
+      }
+    }
+
+    if (
+      segments[0] === 'mailbox' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return getMailbox(ctx, url);
+    }
+
+    if (
+      segments[0] === 'deliveries' &&
+      segments.length === 3 &&
+      segments[2] === 'read' &&
+      method === 'POST'
+    ) {
+      return markDeliveryRead(ctx, segments[1]);
+    }
+
+    if (segments[0] === 'channels') {
+      if (segments.length === 1 && method === 'GET') {
+        return listChannels(ctx, url);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'members' &&
+        method === 'POST'
+      ) {
+        return await joinChannel(req, ctx, decodeURIComponent(segments[1]));
+      }
+      if (
+        (segments.length === 3 || segments.length === 4) &&
+        segments[2] === 'members' &&
+        method === 'DELETE'
+      ) {
+        return leaveChannel(
+          ctx,
+          decodeURIComponent(segments[1]),
+          segments.length === 4 ? decodeURIComponent(segments[3]) : undefined
+        );
+      }
+    }
+
+    if (segments[0] === 'a2a') {
+      const handled = await handleA2ARoute(req, ctx, segments.slice(1), method);
+      if (handled !== null) return handled;
+    }
+
+    if (segments[0] === 'agents') {
+      if (
+        segments.length === 2 &&
+        segments[1] === 'roster' &&
+        method === 'GET'
+      ) {
+        return listAgentRoster(ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'register' &&
+        method === 'POST'
+      ) {
+        return await registerAgent(req, ctx);
+      }
+      if (segments.length === 3 && method === 'POST') {
+        const address = decodeURIComponent(segments[1]);
+        if (segments[2] === 'approve') return await approveAgent(ctx, address);
+        if (segments[2] === 'revoke') return await revokeAgent(ctx, address);
+        if (segments[2] === 'mute') return muteAgent(ctx, address);
+        if (segments[2] === 'unmute') return unmuteAgent(ctx, address);
+      }
+    }
+
+    // Docs routes read ctx.principal and map their own errors (docs/routes.ts).
+    if (segments[0] === 'docs') {
+      const res = await handleDocsRoute(req, ctx, segments.slice(1), url);
+      if (res !== null) return res;
+    }
+
+    // Memory routes read ctx.principal, like messaging's (memory/routes.ts).
+    if (segments[0] === 'memory') {
+      if (segments.length === 1 && method === 'GET') {
+        return listMemory(ctx, url);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await saveMemoryRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        if (segments[1] === 'search') return searchMemory(ctx, url);
+        if (segments[1] === 'health') return memoryHealthRoute(ctx);
+        if (segments[1] === 'index') return memoryIndexRoute(ctx, url);
+        if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
+        if (segments[1] === 'proposals') return listProposalsRoute(ctx, url);
+        if (segments[1] === 'activity') return memoryActivityRoute(ctx, url);
+        if (segments[1] === 'identity') return memoryIdentityRoute(ctx);
+        if (segments[1] === 'ingest-problems') return ingestProblemsRoute(ctx);
+        if (segments[1] === 'rehome') return memoryRehomeKeysRoute(ctx);
+        return getMemory(ctx, segments[1]);
+      }
+      if (segments.length === 2 && method === 'POST') {
+        if (segments[1] === 'link') return await startLinkRoute(req, ctx);
+        if (segments[1] === 'rehome') return await memoryRehomeRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        return deleteMemoryRoute(ctx, segments[1]);
+      }
+      if (segments.length === 3 && method === 'GET') {
+        if (segments[1] === 'proposals') {
+          return getProposalRoute(ctx, segments[2]);
+        }
+      }
+      if (segments.length === 3 && method === 'POST') {
+        if (segments[1] === 'import' && segments[2] === 'ledger') {
+          return importLedgerRoute(ctx, url);
+        }
+        if (segments[1] === 'import' && segments[2] === 'claude') {
+          return await importClaudeRoute(ctx, url);
+        }
+        if (segments[1] === 'link') {
+          return await completeLinkRoute(req, ctx, segments[2]);
+        }
+        const acted = await memoryActionRoute(
+          req,
+          ctx,
+          segments[1],
+          segments[2]
+        );
+        if (acted !== null) return acted;
+      }
+      if (
+        segments.length === 4 &&
+        method === 'POST' &&
+        segments[1] === 'ingest-problems' &&
+        segments[3] === 'accept'
+      ) {
+        return await acceptIngestProblemRoute(ctx, segments[2]);
+      }
+    }
+
+    if (
+      segments[0] === 'decisions' &&
+      segments.length === 2 &&
+      segments[1] === 'open' &&
+      method === 'GET'
+    ) {
+      return listOpenDecisions(ctx);
     }
 
     // GET /api/decisions — every item awaiting a human, across all four
@@ -5851,10 +6258,14 @@ export async function handleApi(
           );
         }
         return jsonResponse({
-          items: ctx.decisionFeed.list({
-            disposition: (raw ?? undefined) as DecisionDisposition | undefined,
-            includeResolved: url.searchParams.get('resolved') === '1',
-          }),
+          items: ctx.decisionFeed
+            .list({
+              disposition: (raw ?? undefined) as
+                | DecisionDisposition
+                | undefined,
+              includeResolved: url.searchParams.get('resolved') === '1',
+            })
+            .filter(decisionVisibleTo(ctx)),
         });
       }
     }
@@ -6297,9 +6708,6 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return listLedger(ctx, url);
       }
-      if (segments.length === 1 && method === 'POST') {
-        return await createLedgerEntry(req, ctx);
-      }
     }
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
@@ -6384,7 +6792,11 @@ export async function handleApi(
 
     if (segments[0] === 'overseer') {
       if (segments.length === 1 && method === 'POST') {
-        return await startOverseer(req, ctx);
+        return await startOverseer(
+          req,
+          ctx,
+          overseerSpeaker(daemonCtx, presented)
+        );
       }
       if (segments.length === 2 && method === 'GET') {
         return jsonResponse(ctx.overseerManager.get(segments[1]));
@@ -6394,22 +6806,12 @@ export async function handleApi(
         segments[2] === 'message' &&
         method === 'POST'
       ) {
-        return await sendOverseerMessage(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 5 &&
-        segments[2] === 'actions' &&
-        segments[4] === 'confirm' &&
-        method === 'POST'
-      ) {
-        return await confirmOverseerAction(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'approvals' &&
-        method === 'POST'
-      ) {
-        return await decideOverseerApproval(req, ctx, segments[1], segments[3]);
+        return await sendOverseerMessage(
+          req,
+          ctx,
+          segments[1],
+          overseerSpeaker(daemonCtx, presented)
+        );
       }
     }
 
@@ -6530,11 +6932,46 @@ export async function handleApi(
       return errorResponse(404, err.message);
     }
     if (err instanceof OrchestratorConflictError) {
+      return conflictResponse(err, ctx.caller?.tier);
+    }
+    // The message says which file and what to do; it never quotes the file.
+    if (err instanceof CredentialsUnreadableError) {
       return errorResponse(409, err.message);
     }
     if (err instanceof OrchestratorClientError) {
       return errorResponse(400, err.message);
     }
+    if (err instanceof TaskTooLargeError) {
+      return jsonResponse(
+        { error: err.message, code: 'too_large', field: err.field },
+        413
+      );
+    }
+    // Messaging routes let @dispatch-foo/protocol's MessagingError surface
+    // rather than pre-validating; `code` maps to the same statuses below.
+    if (err instanceof MessagingError) {
+      const status: Record<MessagingError['code'], number> = {
+        invalid: 400,
+        forbidden: 403,
+        'not-found': 404,
+        conflict: 409,
+        limited: 429,
+      };
+      const body: { error: string; field?: string } = { error: err.message };
+      if (err.field !== undefined) body.field = err.field;
+      return jsonResponse(body, status[err.code]);
+    }
+    // Memory routes do the same with MemoryError, which also has `unavailable` (503).
+    if (err instanceof MemoryError) {
+      const body: { error: string; field?: string } = { error: err.message };
+      if (err.field !== undefined) body.field = err.field;
+      const res = jsonResponse(body, err.status);
+      if (err instanceof MemoryBusyError) res.headers.set('retry-after', '1');
+      return res;
+    }
+    // A busy database is 503 to retry; a write the disk refused is 507.
+    const storage = storageErrorResponse(err);
+    if (storage !== null) return storage;
     throw err;
   }
 }

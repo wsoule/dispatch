@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -685,6 +685,7 @@ describe('PrManager polling', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });

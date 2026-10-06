@@ -17,7 +17,7 @@ interface QuestionCardProps {
 }
 
 /** An agent's blocking question and the form that answers it. Its options are one click,
- * because the agent is parked inside a tool call until this is submitted. Built on the
+ * because the agent waits on the answer until this is submitted. Built on the
  * `ui/ai/approval-card` primitive (quaternary card, chip-ringed option rows) for the question
  * header and suggested-answer options; a free-text answer stays a 13px textarea below with
  * the primary indigo `Answer`, since the primitive has no slot for one. */

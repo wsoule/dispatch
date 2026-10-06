@@ -1,11 +1,10 @@
-import { RotateCw } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
+import { DecideUnavailableNotice } from './DecideUnavailableNotice';
 import { Markdown } from './Markdown';
 import type { ApprovalCardOption } from '@/ui/ai/approval-card';
 import { ApprovalCard } from '@/ui/ai/approval-card';
-import { Button } from '@/ui/button';
 
 interface ScopeRequestCardProps {
   paths: string[];
@@ -20,8 +19,8 @@ interface ScopeRequestCardProps {
 const DENY_ID = 'deny';
 const GRANT_ID = 'grant';
 
-/** An agent parked on permission to edit outside its declared fence — grant
- *  or deny, no ruling text required (this only gates one tool call). Built on the
+/** An agent's scope gate: it waits on permission to edit outside its declared fence — grant
+ *  or deny, no ruling text required (a grant is advisory and logged). Built on the
  *  `ui/ai/approval-card` primitive for the question/options chrome; the affected paths and the
  *  daemon-unavailable notice render as their own blocks below since the primitive has no slot
  *  for either. */
@@ -33,7 +32,6 @@ export function ScopeRequestCard({
   onRestartDaemon,
 }: ScopeRequestCardProps) {
   const [pending, setPending] = useState<'grant' | 'deny' | null>(null);
-  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>();
 
@@ -46,18 +44,6 @@ export function ScopeRequestCard({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPending(null);
-    }
-  }
-
-  async function restart() {
-    setRestarting(true);
-    setError(null);
-    try {
-      await onRestartDaemon();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRestarting(false);
     }
   }
 
@@ -105,29 +91,10 @@ export function ScopeRequestCard({
           </li>
         ))}
       </ul>
-      {!availability.enabled && (
-        <div className="rounded-control border-border-chip bg-surface-quaternary flex flex-col gap-1.5 border-[0.5px] px-2.5 py-2">
-          <span className="text-[13px] font-medium">{availability.notice}</span>
-          <span className="font-book text-muted-foreground text-[12px]">
-            {availability.explanation}
-          </span>
-          {availability.restart?.safe === true ? (
-            <Button
-              variant="secondary"
-              className="self-start"
-              disabled={restarting}
-              onClick={() => void restart()}
-            >
-              <RotateCw className="size-3" />
-              {restarting ? 'Restarting…' : 'Restart daemon'}
-            </Button>
-          ) : (
-            <span className="font-book text-muted-foreground text-[12px]">
-              {availability.restart?.blockedReason}
-            </span>
-          )}
-        </div>
-      )}
+      <DecideUnavailableNotice
+        availability={availability}
+        onRestartDaemon={onRestartDaemon}
+      />
       {error !== null && <div className="text-red text-[12px]">{error}</div>}
     </div>
   );

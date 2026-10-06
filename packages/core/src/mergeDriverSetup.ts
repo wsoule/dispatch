@@ -1,6 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { delimiter, join } from 'node:path';
+
+import { childEnv } from './childEnv.js';
 
 // Registers dispatch's merge drivers: the .gitattributes lines that route
 // task files and the team roster through them, and the local git config
@@ -55,12 +64,12 @@ export function registerMergeDriverGitConfig(cwd: string): boolean {
   const name = spawnSync(
     'git',
     ['config', 'merge.dispatch-task.name', 'Dispatch task file merge'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   const driver = spawnSync(
     'git',
     ['config', 'merge.dispatch-task.driver', 'dispatch merge-task %O %A %B'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   return name.status === 0 && driver.status === 0;
 }
@@ -70,12 +79,12 @@ export function registerTeamMergeDriverGitConfig(cwd: string): boolean {
   const name = spawnSync(
     'git',
     ['config', 'merge.dispatch-team.name', 'Dispatch team roster merge'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   const driver = spawnSync(
     'git',
     ['config', 'merge.dispatch-team.driver', 'dispatch merge-team %O %A %B'],
-    { cwd }
+    { cwd, env: childEnv() }
   );
   return name.status === 0 && driver.status === 0;
 }
@@ -84,6 +93,7 @@ function gitConfigHasDriver(cwd: string, key: string): boolean {
   const result = spawnSync('git', ['config', '--local', '--get', key], {
     cwd,
     encoding: 'utf8',
+    env: childEnv(),
   });
   return result.status === 0;
 }
@@ -118,18 +128,49 @@ export function checkMergeDriverSetup(cwd: string): {
 // silent data loss — the conflict still surfaces normally), but every OTHER
 // concurrent edit that a field-aware merge would have reconciled cleanly
 // instead falls back to a plain line-based git merge, with no diagnostic
-// anywhere. Bun.which mirrors the same PATH lookup a spawned `git` process
+// anywhere. whichOnPath mirrors the same PATH lookup a spawned `git` process
 // would perform, using this process's own (i.e. the daemon's) PATH.
 export function isMergeDriverResolvable(cwd: string): boolean {
   const configured = spawnSync(
     'git',
     ['config', '--local', '--get', 'merge.dispatch-task.driver'],
-    { cwd, encoding: 'utf8' }
+    { cwd, encoding: 'utf8', env: childEnv() }
   );
   if (configured.status !== 0) return false;
   const command = configured.stdout.trim().split(/\s+/)[0];
   if (command === undefined || command === '') return false;
-  return Bun.which(command) !== null;
+  return whichOnPath(command) !== null;
+}
+
+// A PATH lookup that works under Node as well as Bun (Bun.which is Bun-only),
+// so a published @dispatch-foo/core can run the merge-driver check.
+export function whichOnPath(
+  command: string,
+  env: Record<string, string | undefined> = process.env
+): string | null {
+  const exts =
+    process.platform === 'win32'
+      ? (env['PATHEXT'] ?? '.EXE;.CMD;.BAT').split(';')
+      : [''];
+  const direct = command.includes('/') || command.includes('\\');
+  const bases = direct
+    ? [command]
+    : (env['PATH'] ?? '')
+        .split(delimiter)
+        .filter((d) => d !== '')
+        .map((d) => join(d, command));
+  for (const base of bases) {
+    for (const ext of exts) {
+      const candidate = `${base}${ext}`;
+      try {
+        accessSync(candidate, constants.X_OK);
+        if (statSync(candidate).isFile()) return candidate;
+      } catch {
+        // Not here; keep looking.
+      }
+    }
+  }
+  return null;
 }
 
 // Same as checkMergeDriverSetup, for the team roster's driver.

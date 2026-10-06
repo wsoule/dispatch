@@ -8,8 +8,8 @@ import {
   TaskStore,
   updateConfig,
   withLabelColor,
-} from '@dispatch/core';
-import type { LinearIssue, LinearUser } from '@dispatch/core';
+} from '@dispatch-foo/core';
+import type { LinearIssue, LinearUser } from '@dispatch-foo/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

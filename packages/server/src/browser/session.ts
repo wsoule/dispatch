@@ -1,3 +1,4 @@
+import { childEnv } from '@dispatch-foo/core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -185,6 +186,7 @@ export class BrowserSession {
     ];
 
     const proc = Bun.spawn([executable, ...args], {
+      env: childEnv(),
       stdout: 'pipe',
       stderr: 'pipe',
     });
