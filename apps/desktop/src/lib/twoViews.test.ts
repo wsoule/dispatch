@@ -364,34 +364,34 @@ describe('appNavReducer', () => {
   });
 });
 
-describe('the Tasks filter', () => {
+describe('the Tasks preset', () => {
   test('a count opens the list filtered to its bucket', () => {
     const state = run([
       { type: 'openTask', taskId: 't-1' },
-      { type: 'tv/showTasks', filter: 'failed' },
+      { type: 'tv/showTasks', preset: 'failed' },
     ]);
     expect(state.mainView).toBe('tasks');
-    expect(state.tasksFilter).toBe('failed');
+    expect(state.tasksPreset).toBe('failed');
     expect(state.tasksPage).toEqual({ kind: 'list' });
   });
 
   test('plain Tasks clears the filter and keeps the page', () => {
     const state = run([
-      { type: 'tv/showTasks', filter: 'review' },
+      { type: 'tv/showTasks', preset: 'review' },
       { type: 'openPeek', taskId: 't-1' },
       { type: 'tv/showOverseer' },
       { type: 'tv/showTasks' },
     ]);
-    expect(state.tasksFilter).toBeNull();
+    expect(state.tasksPreset).toBe('all');
     expect(state.tasksPage).toMatchObject({ kind: 'task', taskId: 't-1' });
   });
 
   test('clearing the filter keeps everything else', () => {
     const state = run([
-      { type: 'tv/showTasks', filter: 'working' },
-      { type: 'tv/setTasksFilter', filter: null },
+      { type: 'tv/showTasks', preset: 'moving' },
+      { type: 'tv/setTasksPreset', preset: 'all' },
     ]);
-    expect(state.tasksFilter).toBeNull();
+    expect(state.tasksPreset).toBe('all');
     expect(state.mainView).toBe('tasks');
   });
 });

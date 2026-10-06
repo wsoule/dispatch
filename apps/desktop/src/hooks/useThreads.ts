@@ -137,8 +137,8 @@ export function useOpenGates(
   });
 }
 
-// My mailbox, on one key the rail and a task's Thread tab share.
-function useMailbox(
+// My mailbox, on one key the rail, a task's Thread tab and Needs you share.
+export function useMailbox(
   client: ApiClient | null,
   port: number | undefined,
   me: string | null,

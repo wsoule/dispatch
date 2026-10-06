@@ -17,6 +17,7 @@ import {
   type FlightPlanHost,
   FlightPlanHostContext,
 } from './components/flightplan/ContainerFlightPlanSection';
+import { MemoryRecent } from './components/memory/MemoryRecent';
 import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { accessFor } from './components/settings/access';
@@ -67,6 +68,7 @@ import {
 } from './components/tasks/page/TaskPageHost';
 import { TaskPeekDialog } from './components/tasks/TaskPeekDialog';
 import { TaskThreadTab } from './components/tasks/TaskThreadTab';
+import { useAdminItems } from './hooks/useAdminItems';
 import { useDataChangedEvents } from './hooks/useDataChangedEvents';
 import { useDeepLinkRouter } from './hooks/useDeepLinkRouter';
 import { useDispatchProject } from './hooks/useDispatchProject';
@@ -74,7 +76,7 @@ import { useDocList } from './hooks/useDocs';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
-import { useThreadsNeedsYouCount } from './hooks/useThreads';
+import { useMailbox, useThreadsNeedsYouCount } from './hooks/useThreads';
 import {
   type ActionFeedbackCache,
   withActionFeedback,
@@ -759,10 +761,42 @@ function App() {
   );
 
   // One set of numbers: the orb, "tasks ●" and the Needs you header all read `needs.count`.
+  const mailbox = useMailbox(
+    data.client,
+    data.port,
+    data.me,
+    twoViews && data.messageAccess.canMessage
+  ).data?.items;
+  // My tasks: assigned to me, or their latest run is mine.
+  const myTaskIds = useMemo(() => {
+    const mine = new Set<string>();
+    if (data.me === null) return mine;
+    for (const doc of data.tasks) {
+      const run = data.latestRunByTaskId.get(doc.meta.id);
+      if (
+        doc.meta.assignee === data.me ||
+        (run?.operator ?? run?.dispatchedBy) === data.me
+      ) {
+        mine.add(doc.meta.id);
+      }
+    }
+    return mine;
+  }, [data.tasks, data.latestRunByTaskId, data.me]);
   const needs = useMemo(
-    () => needsYou(data.decisions, data.me),
-    [data.decisions, data.me]
+    () => needsYou(data.decisions, data.me, { mailbox, myTaskIds }),
+    [data.decisions, data.me, mailbox, myTaskIds]
   );
+  // Asks of mine decided in the last 15 minutes, for "Decided by you" receipts.
+  const recentlyDecided = useMemo(() => {
+    const since = Date.now() - 15 * 60_000;
+    return data.decisions.filter(
+      (item) =>
+        item.state === 'resolved' &&
+        item.resolvedAt !== undefined &&
+        Date.parse(item.resolvedAt) >= since &&
+        (item.owner === undefined || item.owner === data.me)
+    );
+  }, [data.decisions, data.me]);
   const blockedIds = useMemo(
     () => computeBlockedIds(data.tasks, statusModel),
     [data.tasks, statusModel]
@@ -806,6 +840,20 @@ function App() {
       statusModel,
     ]
   );
+  const starredTaskIds = useMemo(
+    () =>
+      new Set(
+        savedViews.favorites.flatMap((ref) =>
+          ref.kind === 'task' ? [ref.id] : []
+        )
+      ),
+    [savedViews.favorites]
+  );
+  const presetContext = useMemo(
+    () => ({ bucketOf, starred: starredTaskIds }),
+    [bucketOf, starredTaskIds]
+  );
+  const admin = useAdminItems(data.client, data.port, twoViews);
   const daemonDown = data.portLoading || data.portError || data.client === null;
   const orb = orbState({
     revoked: overseer.revoked,
@@ -1512,7 +1560,10 @@ function App() {
             dispatchNav(
               count === 'asks'
                 ? { type: 'tv/showTasks' }
-                : { type: 'tv/showTasks', filter: count }
+                : {
+                    type: 'tv/showTasks',
+                    preset: count === 'working' ? 'moving' : count,
+                  }
             ),
           counts: {
             asks: needs.count,
@@ -1520,8 +1571,13 @@ function App() {
             failed: statusCounts.buckets.failed,
             working: statusCounts.buckets.working,
           },
-          settingsCount: 0,
-          onOpenSettings: () => dispatchNav({ type: 'tv/openSettings' }),
+          settingsCount: admin.reduce((n, item) => n + item.count, 0),
+          settingsTitle:
+            admin.length === 0
+              ? undefined
+              : admin.map((item) => item.label).join(' · '),
+          onOpenSettings: () =>
+            dispatchNav({ type: 'tv/openSettings', page: admin[0]?.page }),
           settingsOpen: twoViewsState.settings !== null,
           projectMenu: (
             <div className="flex items-center gap-1">
@@ -1558,22 +1614,28 @@ function App() {
           <TasksView
             data={data}
             needs={needs}
+            decided={recentlyDecided}
             counts={statusCounts}
             page={tasksPage}
             mode={twoViewsState.tasksMode}
             onModeChange={(mode) =>
               dispatchNav({ type: 'tv/setTasksMode', mode })
             }
-            filter={twoViewsState.tasksFilter}
-            onFilter={(filter) =>
-              dispatchNav({ type: 'tv/setTasksFilter', filter })
+            preset={twoViewsState.tasksPreset}
+            onPreset={(preset) =>
+              dispatchNav({ type: 'tv/setTasksPreset', preset })
             }
-            bucketOf={bucketOf}
+            presetContext={presetContext}
             onSelectTask={selectBoardTask}
             onNewTask={() => openCreateTask()}
             onOpenRef={openRef}
             onOpenDecision={onOpenDecision}
             onClosePage={closeTwoViewsPage}
+            onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
+            onOpenDoc={(docId) => openDoc(docId, null)}
+            onOpenAllDocs={() =>
+              dispatchNav({ type: 'setProjectView', view: 'docs' })
+            }
             renderPage={renderTwoViewsPage}
             composer={
               <TasksComposer
@@ -1606,6 +1668,12 @@ function App() {
           initialPage={twoViewsState.settings}
           onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
           hostedPages={hostedSettingsPages}
+          pageExtras={{
+            memory:
+              data.client === null ? null : (
+                <MemoryRecent client={data.client} port={data.port} />
+              ),
+          }}
           onClose={() => dispatchNav({ type: 'tv/closeSettings' })}
         />
       )}

@@ -1,24 +1,40 @@
-import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { Plus } from 'lucide-react';
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useCallback, useMemo } from 'react';
 
+import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
+import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
 import { TasksStrip } from '../components/tasks/TasksStrip';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
+import { containerStatus } from '../lib/containerStatus';
 import type { DecisionItem } from '../lib/decisionFeed';
+import type { ListGroup } from '../lib/listGrouping';
 import type { NeedsYou } from '../lib/needsYou';
 import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../lib/tasksPrefs';
-import type { TaskBucket, TaskStatusCounts } from '../lib/taskStatus';
+import {
+  type PresetContext,
+  presetMatcher,
+  TASKS_PRESETS,
+  type TasksPreset,
+} from '../lib/tasksPresets';
+import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
 import type { TasksMode, TasksPage } from '../lib/twoViews';
 import { MilestoneBranchesView } from './MilestoneBranchesView';
 import { TasksListView } from './TasksListView';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/ui/dropdown-menu';
 
 // One list grouped by milestone, the No milestone group included.
 const BY_MILESTONE: TasksDisplayPrefs = {
@@ -32,31 +48,22 @@ const MODES: { id: TasksMode; label: string }[] = [
   { id: 'graph', label: 'Graph' },
 ];
 
-const FILTER_LABEL: Record<TaskBucket, string> = {
-  'need-you': '● tasks that need you',
-  failed: '✕ failed',
-  working: '◐ working',
-  review: '◇ review',
-  landing: 'landing',
-  ready: 'ready',
-  draft: 'draft',
-  blocked: 'blocked',
-};
-
 /** A page that is not the list: a task, a doc, a PR, a draft or a door to Classic. */
 export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
 
 export interface TasksViewProps {
   data: DispatchProjectData;
   needs: NeedsYou;
+  /** Asks of mine decided elsewhere a moment ago. */
+  decided: readonly DecisionItem[];
   counts: TaskStatusCounts;
   page: TasksPage;
   mode: TasksMode;
   onModeChange: (mode: TasksMode) => void;
-  /** Narrows the list and graph to one bucket; `null` shows everything. */
-  filter: TaskBucket | null;
-  onFilter: (bucket: TaskBucket | null) => void;
-  bucketOf: (doc: TaskListItem) => TaskBucket | null;
+  /** Narrows the list and graph to one question; All shows everything. */
+  preset: TasksPreset;
+  onPreset: (preset: TasksPreset) => void;
+  presetContext: PresetContext;
   onSelectTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   onNewTask: () => void;
   onOpenRef: (action: RefAction) => void;
@@ -64,6 +71,9 @@ export interface TasksViewProps {
   renderPage: (page: TasksSidePage) => ReactNode;
   /** Back to the list from a full page. */
   onClosePage: () => void;
+  onOpenPr: (number: number) => void;
+  onOpenDoc: (docId: string) => void;
+  onOpenAllDocs: () => void;
   composer: ReactNode;
 }
 
@@ -71,36 +81,71 @@ export interface TasksViewProps {
 export function TasksView({
   data,
   needs,
+  decided,
   counts,
   page,
   mode,
   onModeChange,
-  filter,
-  onFilter,
-  bucketOf,
+  preset,
+  onPreset,
+  presetContext,
   onSelectTask,
   onNewTask,
   onOpenRef,
   onOpenDecision,
   renderPage,
   onClosePage,
+  onOpenPr,
+  onOpenDoc,
+  onOpenAllDocs,
   composer,
 }: TasksViewProps) {
   const split = page.kind === 'task' && !page.full;
   const taskFilter = useMemo(
-    () =>
-      filter === null
-        ? undefined
-        : (doc: TaskListItem) => bucketOf(doc) === filter,
-    [filter, bucketOf]
+    () => presetMatcher(preset, presetContext),
+    [preset, presetContext]
   );
+  const epicById = useMemo(
+    () => new Map(data.epics.map((e) => [e.meta.id, e])),
+    [data.epics]
+  );
+  // Every group's folded status, in the same units as the top bar.
+  const groupAccessory = useCallback(
+    (group: ListGroup) => (
+      <MilestoneStatusCells
+        status={containerStatus(
+          group.rows.map((row) => row.doc),
+          {
+            bucketOf: presetContext.bucketOf,
+            asksByTask: needs.byTask,
+          }
+        )}
+        dueDate={
+          group.epicId === null
+            ? null
+            : (epicById.get(group.epicId)?.meta.dueDate ?? null)
+        }
+      />
+    ),
+    [presetContext.bucketOf, needs.byTask, epicById]
+  );
+  const footer = (
+    <TasksExtraGroups
+      data={data}
+      onOpenPr={onOpenPr}
+      onOpenDoc={onOpenDoc}
+      onOpenAllDocs={onOpenAllDocs}
+    />
+  );
+  const presetLabel =
+    TASKS_PRESETS.find((p) => p.id === preset)?.label ?? 'All';
   const full = page.kind !== 'list' && !split;
 
   return (
     <div data-testid="tasks-view" className="flex h-full min-h-0 flex-col">
       <div className="border-border flex items-center gap-3 border-b-[0.5px] px-4 py-2">
         <span className="shrink-0 text-[13px] font-medium">All work</span>
-        <TasksStrip counts={counts} filter={filter} onFilter={onFilter} />
+        <TasksStrip counts={counts} preset={preset} onPreset={onPreset} />
         <span className="flex-1" />
         <div
           role="radiogroup"
@@ -125,6 +170,29 @@ export function TasksView({
             </button>
           ))}
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            data-testid="tasks-preset"
+            className="rounded-control border-border-chip text-muted-foreground hover:bg-surface-hover shrink-0 border-[0.5px] px-2 py-0.5 text-[12px]"
+          >
+            view: {presetLabel} ▾
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[160px]">
+            <DropdownMenuRadioGroup
+              value={preset}
+              onValueChange={(value) => {
+                const next = TASKS_PRESETS.find((p) => p.id === value);
+                if (next !== undefined) onPreset(next.id);
+              }}
+            >
+              {TASKS_PRESETS.map((p) => (
+                <DropdownMenuRadioItem key={p.id} value={p.id}>
+                  {p.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button size="sm" onClick={onNewTask} className="shrink-0">
           <Plus className="size-3.5" />
           New task
@@ -158,19 +226,20 @@ export function TasksView({
               <NeedsYouBlock
                 data={data}
                 needs={needs}
+                decided={decided}
                 onOpenRef={onOpenRef}
                 onOpenDecision={onOpenDecision}
               />
             </div>
-            {filter !== null && (
+            {preset !== 'all' && (
               <div
                 data-testid="tasks-filter"
                 className="text-muted-foreground flex items-center gap-2 px-4 pt-1 pb-1 text-[12px]"
               >
-                <span>Showing {FILTER_LABEL[filter]} only</span>
+                <span>Showing {presetLabel} only</span>
                 <button
                   type="button"
-                  onClick={() => onFilter(null)}
+                  onClick={() => onPreset('all')}
                   className="text-(--accent) hover:underline"
                 >
                   Clear
@@ -191,6 +260,8 @@ export function TasksView({
                   display={BY_MILESTONE}
                   taskFilter={taskFilter}
                   needsYouIds={needs.taskIds}
+                  groupAccessory={groupAccessory}
+                  footer={footer}
                 />
               )}
             </div>
