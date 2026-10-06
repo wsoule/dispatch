@@ -218,7 +218,7 @@ describe('beta and Two views rows', () => {
     expect(toggled).toEqual(['on']);
   });
 
-  test('Two views navigates to its two views and Settings, with no sidebar row', () => {
+  test('Two views navigates to its two views, Settings and its pages, with no sidebar row', () => {
     const { ctx, calls } = context({ twoViews: true });
     const entries = buildPaletteEntries(ctx);
     const nav = entries.filter((e) => e.section === 'navigation');
@@ -226,6 +226,12 @@ describe('beta and Two views rows', () => {
       ['Go to Overseer', '⌘1'],
       ['Go to Tasks', '⌘2'],
       ['Go to Settings', '⌘,'],
+      ['Open Notes', undefined],
+      ['Open Git', undefined],
+      ['Open Files', undefined],
+      ['Open Terminals', undefined],
+      ['Open Design', undefined],
+      ['Open Impact', undefined],
     ]);
     expect(entries.some((e) => e.id === 'action-toggle-sidebar')).toBe(false);
     for (const row of nav) row.run();
@@ -233,6 +239,12 @@ describe('beta and Two views rows', () => {
       'global:overseer',
       'project:board',
       'global:settings',
+      'project:brain-dump',
+      'project:branches',
+      'project:files',
+      'project:terminals',
+      'project:design',
+      'project:impact',
     ]);
   });
 });

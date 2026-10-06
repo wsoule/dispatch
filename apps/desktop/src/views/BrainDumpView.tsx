@@ -4,6 +4,7 @@ import { Fragment, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useToasts } from '../components/shell/Toasts';
+import { BackToTasks } from '../components/tasks/BackToTasks';
 import { StatusIcon } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
@@ -31,6 +32,8 @@ interface BrainDumpViewProps {
   data: DispatchProjectData;
   onPlanText: (text: string) => void;
   onOpenTask: (taskId: string) => void;
+  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  onBack?: () => void;
 }
 
 // Only the kinds that carry information get a pill — a bug's dot is the app's red, an
@@ -68,6 +71,7 @@ export function BrainDumpView({
   data,
   onPlanText,
   onOpenTask,
+  onBack,
 }: BrainDumpViewProps) {
   const toasts = useToasts();
   // Shared with the ⌘D quick-capture modal and persisted across navigation and
@@ -127,7 +131,10 @@ export function BrainDumpView({
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={['Notes']} />
+        <PageHeader
+          leading={onBack && <BackToTasks onBack={onBack} />}
+          crumb={['Notes']}
+        />
         <div className="px-6 py-4">
           <DaemonUnavailable
             starting={data.portLoading}
@@ -303,7 +310,11 @@ export function BrainDumpView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader crumb={['Notes']} actions={<ExplainerPopover />} />
+      <PageHeader
+        leading={onBack && <BackToTasks onBack={onBack} />}
+        crumb={['Notes']}
+        actions={<ExplainerPopover />}
+      />
 
       <div
         className="min-h-0 flex-1 overflow-y-auto px-6 py-4"

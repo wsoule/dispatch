@@ -32,8 +32,8 @@ import { PeopleProvider } from './components/people/PeopleContext';
 import { accessFor } from './components/settings/access';
 import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
-import { ClassicDoor } from './components/shell/ClassicDoor';
 import { CommandPalette } from './components/shell/CommandPalette';
+import { DaemonUnavailable } from './components/shell/DaemonUnavailable';
 import {
   DeepLinkProvider,
   useCopyTaskLink,
@@ -70,6 +70,7 @@ import {
 import { useToasts } from './components/shell/Toasts';
 import { TwoViewShell } from './components/shell/TwoViewShell';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
+import { BackToTasks } from './components/tasks/BackToTasks';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
 import { TaskPage } from './components/tasks/page/TaskPage';
@@ -147,7 +148,11 @@ import {
   signOutOfTeam,
 } from './lib/teamLocal';
 import { openRefWith, type RefAction } from './lib/threadSources';
-import { appNavReducer, initialAppNavState } from './lib/twoViews';
+import {
+  appNavReducer,
+  type HostedView,
+  initialAppNavState,
+} from './lib/twoViews';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -1078,6 +1083,7 @@ function App() {
           ...(twoViews && {
             showLessons: true,
             planOpensPages: true,
+            compactPage: true,
             filesView: (runId: string) => (
               <FilesView data={data} runId={runId} />
             ),
@@ -1524,6 +1530,52 @@ function App() {
 
   const closeTwoViewsPage = () => dispatchNav({ type: 'tv/closePage' });
 
+  // A classic project view shown as a page under Tasks, its own header leading back.
+  const renderHostedView = (view: HostedView): ReactNode => {
+    if (data.portLoading || data.portError || data.client === null) {
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="px-4 pt-2">
+            <BackToTasks onBack={closeTwoViewsPage} />
+          </div>
+          <DaemonUnavailable
+            starting={data.portLoading}
+            errorDetail={data.portErrorDetail}
+            onRetry={data.retryEnsureDispatchd}
+          />
+        </div>
+      );
+    }
+    switch (view) {
+      case 'branches':
+        return (
+          <BranchesView
+            data={data}
+            onOpenRun={jumpToRun}
+            onOpenImpact={(subject) =>
+              dispatchNav({ type: 'openImpact', subject })
+            }
+            onBack={closeTwoViewsPage}
+          />
+        );
+      case 'files':
+        return <FilesView data={data} onBack={closeTwoViewsPage} />;
+      case 'terminals':
+        return <TerminalsView data={data} onBack={closeTwoViewsPage} />;
+      case 'design':
+        return <DesignView data={data} onBack={closeTwoViewsPage} />;
+      case 'brain-dump':
+        return (
+          <BrainDumpView
+            data={data}
+            onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
+            onPlanText={openOverseer}
+            onBack={closeTwoViewsPage}
+          />
+        );
+    }
+  };
+
   // What Tasks shows beside or instead of its list.
   const renderTwoViewsPage = (page: TasksSidePage): ReactNode => {
     switch (page.kind) {
@@ -1540,6 +1592,7 @@ function App() {
             onClose={closeTwoViewsPage}
             onExpand={() => dispatchNav({ type: 'tv/expandTask' })}
             onBack={closeTwoViewsPage}
+            conversationCount={speechByTask.get(page.taskId)?.count ?? 0}
           />
         );
       case 'docs':
@@ -1597,14 +1650,18 @@ function App() {
       }
       case 'room':
         return <RoomHome data={data} room={page.room} onOpenRef={openRef} />;
-      case 'classic':
+      case 'view':
+        return renderHostedView(page.view);
+      case 'impact':
         return (
-          <ClassicDoor
-            view={page.view}
-            onOpenClassic={() => {
-              setTwoViewsOn(false);
-              dispatchNav({ type: 'setProjectView', view: page.view });
-            }}
+          <ImpactView
+            key={
+              page.subject === null
+                ? 'impact-empty'
+                : `${page.subject.kind}:${page.subject.id}`
+            }
+            data={data}
+            initialSubject={page.subject}
             onBack={closeTwoViewsPage}
           />
         );
@@ -1935,6 +1992,9 @@ function App() {
             onOpenDoc={(docId) => openDoc(docId, null)}
             onOpenAllDocs={() =>
               dispatchNav({ type: 'setProjectView', view: 'docs' })
+            }
+            onOpenNotes={() =>
+              dispatchNav({ type: 'setProjectView', view: 'brain-dump' })
             }
             renderPage={renderTwoViewsPage}
             composer={

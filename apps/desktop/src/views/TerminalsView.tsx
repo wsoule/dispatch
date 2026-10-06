@@ -3,6 +3,7 @@ import { TerminalSquare } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { BackToTasks } from '../components/tasks/BackToTasks';
 import { TerminalSplitView } from '../components/terminal/TerminalSplitView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TerminalSubscribe } from '../hooks/useTerminalOutput';
@@ -39,9 +40,15 @@ interface TerminalsViewProps {
   data: DispatchProjectData;
   /** Pre-selects a run's worktree when the view is opened from a run. */
   runId?: string | null;
+  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  onBack?: () => void;
 }
 
-export function TerminalsView({ data, runId = null }: TerminalsViewProps) {
+export function TerminalsView({
+  data,
+  runId = null,
+  onBack,
+}: TerminalsViewProps) {
   const { client } = data;
   const [layout, setLayout] = useState<LayoutNode>(() =>
     makePane(nextId('pane'))
@@ -181,6 +188,7 @@ export function TerminalsView({ data, runId = null }: TerminalsViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-3">
       <header className="flex items-center gap-2">
+        {onBack && <BackToTasks onBack={onBack} />}
         <TerminalSquare className="size-4" />
         <h1 className="text-sm font-medium">Terminals</h1>
         <span className="text-xs text-[var(--color-muted-foreground)]">

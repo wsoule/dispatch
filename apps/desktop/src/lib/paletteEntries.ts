@@ -74,6 +74,16 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; shortcut?: string }[] = [
   { id: 'settings', label: 'Settings', shortcut: 'G S' },
 ];
 
+// Two views' pages under Tasks with no other way in from the top bar.
+const TWO_VIEWS_PAGES: PaletteView[] = [
+  { id: 'brain-dump', label: 'Notes' },
+  { id: 'branches', label: 'Git' },
+  { id: 'files', label: 'Files' },
+  { id: 'terminals', label: 'Terminals' },
+  { id: 'design', label: 'Design' },
+  { id: 'impact', label: 'Impact' },
+];
+
 /** The rows the command menu offers right now: actions (a `Copy link` when a task is up),
  * then navigation, the saved views, then one row per task (plus a "Dispatch …" row for
  * each ready one). Project-scoped rows are omitted while no project is active. */
@@ -187,6 +197,17 @@ export function buildPaletteEntries(
         run: () => actions.setGlobalView('settings'),
       }
     );
+    if (ctx.hasProject) {
+      for (const page of TWO_VIEWS_PAGES) {
+        entries.push({
+          id: `go-${page.id}`,
+          label: `Open ${page.label}`,
+          kind: 'go to',
+          section: 'navigation',
+          run: () => actions.setProjectView(page.id),
+        });
+      }
+    }
   } else if (ctx.hasProject) {
     ctx.views.forEach((view, index) => {
       entries.push({
