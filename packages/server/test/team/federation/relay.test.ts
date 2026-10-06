@@ -1,9 +1,12 @@
-import { isStub } from '@dispatch-foo/protocol/federation';
+import { isStub, opHash } from '@dispatch-foo/protocol/federation';
 import type { LogEntry } from '@dispatch-foo/protocol/federation';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import {
   founderChain,
+  leadingZeroBits,
+  mintStamp,
+  powText,
   registerAtRelay,
   RELAY_DISCLOSURE,
   relayHttpBase,
@@ -398,6 +401,35 @@ describe('switching a team to the relay', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  // A joiner's log may hold more than its key op before it is let in (a
+  // presence or agent op its collectors wrote). A pending machine stores
+  // only its key op on the relay, so it switches with that alone and sends
+  // the rest once admitted.
+  it('lets a joiner with more than its key op in its log join a team on the relay', async () => {
+    const r = await team(['ada']);
+    const ada = at(0);
+    await ada.teamRoute('/api/team/transport', toRelay(r));
+    await passes(open, 2);
+    const { code } = ada.roster.invite('bob');
+    await passes([ada], 1);
+    const bob = messagingReplica('bob', ada.remote);
+    open.push(bob);
+    bob.roster.join(code);
+    // A second op behind the key op, before any admission.
+    bob.fed.append({ type: 'presence', body: { kind: 'replica' } });
+    await passes([bob], 2);
+    // It switched with its key op alone, so nothing was refused.
+    expect(bob.service.status().transport).toBe('relay');
+    expect(
+      bob.fed.problems().some((p) => p.subject === 'transport:switch')
+    ).toBe(false);
+    // ada lets bob in on its own: the invite's proof rides bob's key op.
+    await passes(open, 6);
+    expect(bob.service.status().transport).toBe('relay');
+    expect(bob.roster.isAdmitted(bob.fed.replica)).toBe(true);
+    expect(r.stored(bob.fed.replica).at(-1)?.seq).toBe(bob.fed.head()?.seq);
+  });
+
   it('accepts mail sealed to a machine revoked in flight, and wedges nobody', async () => {
     const r = await team(['ada', 'bob', 'cy']);
     const [ada, bob, cy] = [at(0), at(1), at(2)];
@@ -766,5 +798,169 @@ describe('F4 review fixes', () => {
     while (t.presence() !== null && Date.now() - started < 1000)
       await Bun.sleep(5);
     expect(t.presence()).toBeNull();
+  });
+});
+
+describe('registering at the relay without a token', () => {
+  // A fetch that answers the terms and records what each POST carried.
+  const scripted = (
+    terms: Record<string, unknown> | null,
+    answers: number[]
+  ): {
+    fetch: typeof fetch;
+    posts: { body: Record<string, unknown>; auth: string | null }[];
+  } => {
+    const posts: { body: Record<string, unknown>; auth: string | null }[] = [];
+    const fake = ((input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.endsWith('/v1/registration'))
+        return Promise.resolve(
+          terms === null
+            ? new Response('no', { status: 404 })
+            : Response.json(terms)
+        );
+      const headers = new Headers(init?.headers);
+      posts.push({
+        body: JSON.parse(
+          typeof init?.body === 'string' ? init.body : '{}'
+        ) as Record<string, unknown>,
+        auth: headers.get('authorization'),
+      });
+      const status = answers[posts.length - 1] ?? 500;
+      return Promise.resolve(
+        status < 300
+          ? Response.json({ teamId: 'the-team' }, { status })
+          : Response.json({ error: 'refused' }, { status })
+      );
+    }) as unknown as typeof fetch;
+    return { fetch: fake, posts };
+  };
+
+  it('counts leading zero bits most significant first', () => {
+    expect(leadingZeroBits(new Uint8Array([0, 0x0f, 0xff]))).toBe(12);
+    expect(leadingZeroBits(new Uint8Array([0x80]))).toBe(0);
+    expect(leadingZeroBits(new Uint8Array([0, 0]))).toBe(16);
+  });
+
+  it('mints a stamp whose hash has the asked-for zero bits', async () => {
+    const nonce = await mintStamp(
+      't'.repeat(32),
+      'wss://relay.test',
+      1_700_000_000,
+      12
+    );
+    expect(nonce).toMatch(/^\d+$/);
+    const digest = new Bun.CryptoHasher('sha256')
+      .update(powText('t'.repeat(32), 'wss://relay.test', 1_700_000_000, nonce))
+      .digest();
+    expect(leadingZeroBits(digest)).toBeGreaterThanOrEqual(12);
+  });
+
+  it('registers at the fake relay with a stamp and no token, and is refused with none', async () => {
+    open = await foundedTeam('ada');
+    relay = await startFakeRelay(at(0), { difficulty: 10 });
+    const bare = await fetch(`${relayHttpBase(relay.url)}/v1/teams`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(registrationOf(at(0))),
+    });
+    expect(bare.status).toBe(403);
+    expect(await registerAtRelay(relay.url, registrationOf(at(0)))).toBe(
+      relay.teamId
+    );
+    expect(await registered(relay)).toBe(true);
+  });
+
+  it('sends {t, nonce} over the normalized URL, and mints once more after a 403', async () => {
+    open = await foundedTeam('ada');
+    const { fetch: fake, posts } = scripted(
+      { difficulty: 4, tokenRequired: false, tokenAccepted: false },
+      [403, 201]
+    );
+    let now = 1_700_000_000_000;
+    const id = await registerAtRelay(
+      'wss://relay.test/',
+      registrationOf(at(0)),
+      {
+        fetch: fake,
+        now: () => (now += 5_000),
+      }
+    );
+    expect(id).toBe('the-team');
+    expect(posts).toHaveLength(2);
+    const [first, second] = posts.map(
+      (p) => p.body.pow as { t: number; nonce: string }
+    );
+    expect(second?.t).toBeGreaterThan(first?.t ?? 0);
+    // The stamp covers the team id and the URL without its trailing slash.
+    const teamId = opHash(registrationOf(at(0)).found).slice(0, 32);
+    const digest = new Bun.CryptoHasher('sha256')
+      .update(
+        powText(teamId, 'wss://relay.test', second?.t ?? 0, second?.nonce ?? '')
+      )
+      .digest();
+    expect(leadingZeroBits(digest)).toBeGreaterThanOrEqual(4);
+    expect(posts.every((p) => p.auth === null)).toBe(true);
+  });
+
+  it('fails in plain words after a second 403', async () => {
+    open = await foundedTeam('ada');
+    const { fetch: fake, posts } = scripted(
+      { difficulty: 2, tokenRequired: false, tokenAccepted: false },
+      [403, 403]
+    );
+    await expect(
+      registerAtRelay('wss://relay.test', registrationOf(at(0)), {
+        fetch: fake,
+      })
+    ).rejects.toThrow('refused the proof of work twice');
+    expect(posts).toHaveLength(2);
+  });
+
+  it('asks for a token a self-hosted relay requires, without posting', async () => {
+    open = await foundedTeam('ada');
+    const { fetch: fake, posts } = scripted(
+      { difficulty: 19, tokenRequired: true, tokenAccepted: true },
+      []
+    );
+    await expect(
+      registerAtRelay('wss://relay.test', registrationOf(at(0)), {
+        fetch: fake,
+      })
+    ).rejects.toThrow('needs a registration token');
+    expect(posts).toHaveLength(0);
+  });
+
+  it('sends the token in place of a stamp where the relay accepts one', async () => {
+    open = await foundedTeam('ada');
+    const { fetch: fake, posts } = scripted(
+      { difficulty: 19, tokenRequired: false, tokenAccepted: true },
+      [201]
+    );
+    await registerAtRelay('wss://relay.test', registrationOf(at(0)), {
+      fetch: fake,
+      token: 'op-token',
+    });
+    expect(posts[0]?.auth).toBe('Bearer op-token');
+    expect(posts[0]?.body.pow).toBeUndefined();
+  });
+
+  it('refuses a relay that asks for more work than Dispatch will do', async () => {
+    open = await foundedTeam('ada');
+    const { fetch: fake, posts } = scripted(
+      { difficulty: 40, tokenRequired: false, tokenAccepted: false },
+      []
+    );
+    await expect(
+      registerAtRelay('wss://relay.test', registrationOf(at(0)), {
+        fetch: fake,
+      })
+    ).rejects.toThrow('more work');
+    expect(posts).toHaveLength(0);
   });
 });

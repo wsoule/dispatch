@@ -23,7 +23,7 @@ beforeEach(async () => {
   );
 });
 afterEach(async () => {
-  f.close();
+  await f.close();
   await peer.stop();
 });
 

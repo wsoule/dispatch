@@ -1,3 +1,4 @@
+import { upsertMember } from '@dispatch-foo/core';
 import { HANDLE, printable } from '@dispatch-foo/federation';
 import { fingerprint } from '@dispatch-foo/protocol/federation';
 import type { LogEntry } from '@dispatch-foo/protocol/federation';
@@ -11,7 +12,17 @@ import {
 } from '../../api/http.js';
 import type { AuthTier } from '../../tiers.js';
 import { tierAllows } from '../../tiers.js';
+import { readRoster } from '../routes.js';
 import { capsOf } from './caps.js';
+import {
+  checkString,
+  decodeTeamLink,
+  defaultRelayUrl,
+  normalRelay,
+  teamLinkUrl,
+  teamStatus,
+} from './onboarding.js';
+import type { TeamStatus } from './onboarding.js';
 import {
   founderChain,
   registerAtRelay,
@@ -19,6 +30,7 @@ import {
 } from './relay.js';
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
+import type { SharingAnswer } from './sharing.js';
 import type { FedStore } from './store.js';
 import { OpTooLargeError } from './store.js';
 import {
@@ -134,6 +146,9 @@ export async function boardSyncNow(
 
 // The roster actions under /api/team, beside the teammate-token routes.
 const ACTIONS = new Set([
+  'start',
+  'status',
+  'leave',
   'keys',
   'found',
   'trust',
@@ -175,6 +190,8 @@ const ACKNOWLEDGEABLE = [
   'link-op:',
   'mail-out:',
   'run-moved:',
+  // A reused, expired or shared invite a machine tried.
+  'invite:',
 ];
 
 const STATUS: Record<RosterError['code'], number> = {
@@ -236,8 +253,21 @@ export async function handleFederationRoute(
 ): Promise<Response> {
   const fedCtx = ctx.federation;
   const service = ctx.boardSync;
-  if (fedCtx === null || service === null)
+  if (method === 'GET' && segments.length === 2 && segments[1] === 'status')
+    return jsonResponse(
+      fedCtx === null || service === null
+        ? SHARING_OFF
+        : statusOf(fedCtx, service)
+    );
+  if (fedCtx === null || service === null) {
+    if (
+      method === 'POST' &&
+      segments.length === 2 &&
+      (segments[1] === 'start' || segments[1] === 'join')
+    )
+      return await shareFirst(req, ctx, segments[1]);
     return errorResponse(409, 'board sync is not on');
+  }
   if (method === 'GET' && segments.length === 2 && segments[1] === 'keys')
     return jsonResponse(teamKeys(fedCtx, service));
   if (method === 'GET' && segments.length === 2 && segments[1] === 'presence') {
@@ -368,11 +398,14 @@ async function act(
     case 'trust':
       roster.trust(need('fingerprint'));
       return after(null);
+    case 'start':
+      return startTeam(ctx, fedCtx, service, body, after);
     case 'invite':
-      return after(roster.invite(need('handle')));
+      return after(invite(ctx, fedCtx, service, body));
     case 'join':
-      roster.join(need('code'));
-      return after(null);
+      return after(join(fedCtx, service, need('code')));
+    case 'leave':
+      return after(leave(fedCtx));
     case 'recover':
       roster.recover(need('code'));
       return after(null);
@@ -671,4 +704,366 @@ function teamKeys(
     remote: fedCtx.remote,
     now: fedCtx.now(),
   });
+}
+
+/** The status while board sync is off: no team can be here yet. */
+const SHARING_OFF: TeamStatus = {
+  state: 'off',
+  line: 'Not in a team yet · start one, or join with an invite link',
+  team: null,
+  role: null,
+  seats: null,
+  sync: null,
+  teammates: [],
+  check: null,
+  problems: [
+    {
+      message:
+        'Team sync is off here. Starting or joining a team turns it on: Dispatch restarts for this project once no run is live.',
+      fix: 'dispatch team start',
+    },
+  ],
+};
+
+// GET /api/team/status: the team in one line, and its problems in plain
+// words with the command that fixes each.
+function statusOf(
+  fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>
+): TeamStatus {
+  const { fed, roster } = fedCtx;
+  const status = service.status();
+  const keys = teamKeys(fedCtx, service);
+  return teamStatus(
+    {
+      machine: {
+        replica: fed.replica,
+        handle: fedCtx.handle,
+        fingerprint: keys.machine.fingerprint,
+      },
+      view: roster.view(),
+      pins: fed.pins(),
+      joining: roster.joining(),
+      foundings: keys.foundings,
+      followedOnly:
+        keys.team !== null &&
+        fed.meta('founder_pin') === 'auto' &&
+        fed.head() === null &&
+        roster.joining() === null
+          ? { name: keys.team.name, fingerprint: keys.team.founder.fingerprint }
+          : null,
+      waiting: keys.waiting,
+      health: status.transportHealth,
+      lastSyncAt: status.lastSyncAt,
+      lastError:
+        status.lastError === null ? null : redactCredentials(status.lastError),
+      paused: status.paused,
+      problems: fed.problems(),
+      olderBuilds: keys.legacy.olderBuilds,
+      now: fedCtx.now(),
+    },
+    withoutCredentials(status.remote)
+  );
+}
+
+// POST /api/team/start: founds the team, closes the legacy window when no
+// older build syncs here, and moves it to the relay (the hosted one unless
+// `relayUrl` or DISPATCH_RELAY_URL names another), registering it there
+// first. `git: true` keeps it on the git branch; an unreachable relay leaves
+// it there too, with a notice saying so. The relay's disclosure must be
+// confirmed first, as for any switch (F-D31).
+async function startTeam(
+  ctx: ApiContext,
+  fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>,
+  body: Body,
+  after: (
+    value: Record<string, unknown> | null
+  ) => Promise<Record<string, unknown> | null>
+): Promise<Response | Record<string, unknown> | null> {
+  const { roster, fed } = fedCtx;
+  const view = roster.view();
+  if (view !== null && view.members.has(fed.replica))
+    throw new RosterError(
+      'conflict',
+      `This machine is already in team ${view.name}.`
+    );
+  const toRelay = body.git !== true;
+  const given =
+    typeof body.relayUrl === 'string' && body.relayUrl !== ''
+      ? body.relayUrl
+      : defaultRelayUrl();
+  // Shown and dialed in one normal form; a URL that has none is refused below.
+  const url = normalRelay(given) ?? given;
+  const token = body.registrationToken;
+  if (token !== undefined && (typeof token !== 'string' || token === ''))
+    throw new RosterError(
+      'invalid',
+      'registrationToken must be a non-empty string'
+    );
+  if (toRelay) {
+    const bad = relayUrlProblem(url, fedCtx.allowLoopbackRelay === true);
+    if (bad !== null) throw new RosterError('invalid', `relayUrl: ${bad}`);
+    if (body.confirmed !== true)
+      return jsonResponse(
+        {
+          error: 'confirm what the relay can read first',
+          code: 'confirm_required',
+          disclosure: RELAY_DISCLOSURE,
+          relayUrl: url,
+        },
+        409
+      );
+  }
+  // Founding needs a pull that succeeds (spec:943-944).
+  if (!(await boundedPass(fedCtx, service, 'the pull before starting')))
+    return jsonResponse(
+      {
+        error: 'the pull before starting is still running; try again shortly',
+        code: 'conflict',
+        pending: true,
+      },
+      409
+    );
+  const pulled = service.status().lastError;
+  if (pulled !== null)
+    return jsonResponse(
+      {
+        error: `Dispatch could not reach the sync remote, so it cannot check no team is here yet: ${redactCredentials(pulled)}`,
+        code: 'conflict',
+      },
+      409
+    );
+  if (roster.foundingSeen() && !roster.founded())
+    throw new RosterError(
+      'conflict',
+      'A team was already started on this branch. Ask its founder for an invite link and run `dispatch team join <link>`.'
+    );
+  const name =
+    typeof body.name === 'string' && body.name.trim() !== ''
+      ? body.name.trim()
+      : basename(ctx.rootDir);
+  const { recoveryCode, legacyClosed } = roster.start(name);
+  let transport: { kind: 'git' | 'relay'; url?: string } = { kind: 'git' };
+  let notice: string | null = null;
+  if (toRelay) {
+    const later = `dispatch team advanced transport relay ${url} --yes`;
+    if (!legacyClosed)
+      notice = `Older Dispatch builds already sync this board, so the team syncs over git until they update. Then run \`dispatch team advanced close-legacy\` and \`${later}\`.`;
+    else {
+      const refused = await registerTeam(
+        fedCtx,
+        service,
+        url,
+        typeof token === 'string' ? token : undefined
+      );
+      if (refused === null) {
+        roster.setTransport('relay', url);
+        transport = { kind: 'relay', url };
+      } else
+        notice = `${refused}. The team syncs over git for now; switch later with \`${later}\`.`;
+    }
+  }
+  return after({
+    teamId: roster.teamId(),
+    name,
+    recoveryCode,
+    fingerprint: fingerprint(fed.keys.signPub, fed.keys.sealPub),
+    transport,
+    notice,
+  });
+}
+
+// POST /api/team/invite with `{ handle }` or `{ email }`: an invite for
+// one machine, as a single link that carries everything it needs to join.
+function invite(
+  ctx: ApiContext,
+  fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>,
+  body: Body
+): Record<string, unknown> {
+  const { roster, fed } = fedCtx;
+  const handle = inviteeHandle(ctx, body);
+  const view = roster.view();
+  const status = service.status();
+  const issued = roster.invite(
+    handle,
+    view === null
+      ? undefined
+      : {
+          name: view.name,
+          by: fedCtx.handle,
+          fp: fingerprint(fed.keys.signPub, fed.keys.sealPub),
+          via:
+            view.transport.kind === 'relay' && view.transport.url !== undefined
+              ? { kind: 'relay', url: view.transport.url }
+              : { kind: 'git' },
+          remote: withoutCredentials(status.remote),
+        }
+  );
+  return {
+    ...issued,
+    handle,
+    ...(issued.link === undefined ? {} : { url: teamLinkUrl(issued.link) }),
+  };
+}
+
+// The handle an invite is for: as given, or the one team.yml gives (or
+// would give) an email, the same rule the joiner's own daemon follows.
+function inviteeHandle(ctx: ApiContext, body: Body): string {
+  if (typeof body.handle === 'string' && body.handle !== '') return body.handle;
+  const email = typeof body.email === 'string' ? body.email.trim() : '';
+  if (email === '')
+    throw new RosterError('invalid', 'handle or email is required');
+  if (!email.includes('@') || email.length > MAX_INPUT_CHARS)
+    throw new RosterError('invalid', `${printable(email, 64)} is not an email`);
+  const roster = readRoster(ctx.rootDir);
+  if (!roster.ok)
+    throw new RosterError(
+      'conflict',
+      `team.yml cannot be read (${roster.error}); invite by handle instead`
+    );
+  const known = roster.members.find(
+    (m) => m.email === email || m.emails.includes(email)
+  );
+  if (known !== undefined) return known.handle;
+  return upsertMember(roster.members, email, email.slice(0, email.indexOf('@')))
+    .member.handle;
+}
+
+// POST /api/team/join: what the joiner sees right away, the team, who
+// invited it and the optional check, and whether this project syncs where
+// the team does.
+function join(
+  fedCtx: FederationContext,
+  service: NonNullable<ApiContext['boardSync']>,
+  code: string
+): Record<string, unknown> {
+  const { teamId, link } = fedCtx.roster.join(code);
+  if (link === null) return { ok: true, team: { id: teamId, name: null } };
+  const here = withoutCredentials(service.status().remote);
+  const warning =
+    link.remote !== null && sameRemote(link.remote, here) === false
+      ? `This team syncs through ${link.remote}, but this project syncs through ${here}. Only if you know this repo, point Settings → Board sync at ${link.remote} (sync.repo), then restart Dispatch.`
+      : undefined;
+  return {
+    ok: true,
+    team: { id: teamId, name: link.name },
+    by: link.by,
+    via: link.via,
+    check: checkString(
+      teamId,
+      link.fp,
+      fingerprint(fedCtx.fed.keys.signPub, fedCtx.fed.keys.sealPub)
+    ),
+    ...(warning === undefined ? {} : { warning }),
+  };
+}
+
+// Whether two git remotes name one repository, read loosely: scheme, login,
+// a trailing .git and scp-style colons do not matter. Null when either is
+// not a remote the comparison can read.
+function sameRemote(a: string, b: string): boolean | null {
+  const norm = (r: string): string =>
+    r
+      .trim()
+      .toLowerCase()
+      .replace(/^[a-z+]+:\/\//, '')
+      .replace(/^[^@/]+@/, '')
+      .replace(/:(?!\d)/, '/')
+      .replace(/\.git$/, '')
+      .replace(/\/+$/, '');
+  if (a.trim() === '' || b.trim() === '') return null;
+  return norm(a) === norm(b);
+}
+
+// POST /api/team/leave: lets go of an invite this machine is waiting on. A
+// machine in the team cannot sign its own removal; the answer names who can.
+function leave(fedCtx: FederationContext): Record<string, unknown> {
+  const { roster, fed } = fedCtx;
+  if (roster.joining() !== null) {
+    roster.abandonInvite();
+    return { ok: true, left: 'invite' };
+  }
+  const view = roster.view();
+  if (view === null || !view.members.has(fed.replica))
+    throw new RosterError('conflict', 'This machine is not in a team.');
+  const admins = [...view.members.values()]
+    .filter((m) => m.role === 'admin' && m.replica !== fed.replica)
+    .map((m) => m.handle);
+  throw new RosterError(
+    'conflict',
+    admins.length === 0
+      ? `This machine is the team's only admin, so nobody else can remove it. Make someone else an admin first: dispatch team advanced role <machine> admin`
+      : `A machine cannot remove itself. Ask ${[...new Set(admins)].join(' or ')} to run: dispatch team advanced revoke ${fed.replica}`
+  );
+}
+
+// `team start` or `team join` while board sync is off: check what can be
+// checked without sync (a link's shape, expiry and handle; the relay's
+// disclosure), then turn sync on and restart. Answers 202 `restarting`; the
+// client waits for sync to be on and sends the same request again, so it is
+// still one action.
+async function shareFirst(
+  req: Request,
+  ctx: ApiContext,
+  action: 'start' | 'join'
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
+  const tooBig = oversized(body);
+  if (tooBig !== null)
+    return jsonResponse({ error: tooBig, code: 'invalid' }, 400);
+  if (action === 'start' && body.git !== true && body.confirmed !== true)
+    // The relay's disclosure comes before anything changes, sync included.
+    return jsonResponse(
+      {
+        error: 'confirm what the relay can read first',
+        code: 'confirm_required',
+        disclosure: RELAY_DISCLOSURE,
+      },
+      409
+    );
+  // A link's shape, expiry and handle are checked before sync is touched.
+  const precheck = (now: Date): void => {
+    if (action !== 'join') return;
+    const code = typeof body.code === 'string' ? body.code.trim() : '';
+    if (code === '') throw new RosterError('invalid', 'code is required');
+    if (code.startsWith('di1.')) return;
+    const link = decodeTeamLink(code);
+    const me = ctx.actorContext.member.handle;
+    if (Date.parse(link.expires) <= now.getTime())
+      throw new RosterError(
+        'invalid',
+        `This invite expired on ${link.expires.slice(0, 10)}. Ask ${link.by} for a new link.`
+      );
+    if (link.handle !== me)
+      throw new RosterError(
+        'invalid',
+        `This invite is for ${link.handle}, but this machine's Dispatch handle is ${me}. Ask ${link.by} to invite ${me} instead.`
+      );
+  };
+  if (ctx.turnOnSharing === undefined)
+    return errorResponse(409, 'board sync is not on');
+  let answer: SharingAnswer;
+  try {
+    answer = await ctx.turnOnSharing(precheck);
+  } catch (err) {
+    if (err instanceof RosterError)
+      return jsonResponse(
+        { error: err.message, code: err.code },
+        STATUS[err.code]
+      );
+    throw err;
+  }
+  if (!answer.ok)
+    return jsonResponse(
+      { error: answer.error, code: answer.code },
+      answer.status
+    );
+  return jsonResponse(
+    { restarting: true, code: 'restarting', message: answer.message },
+    202
+  );
 }

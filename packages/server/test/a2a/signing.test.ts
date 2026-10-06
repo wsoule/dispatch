@@ -195,7 +195,7 @@ describe('a rotation’s overlap', () => {
           )
         ).resolves.toBe(true);
     } finally {
-      f.close();
+      await f.close();
     }
   });
 

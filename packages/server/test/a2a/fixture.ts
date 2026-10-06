@@ -158,9 +158,11 @@ export async function bridgeFixture(
       outbound?.stop();
       outbound = startWorker();
     },
-    close() {
+    // Async: owner notices in flight finish before the database closes.
+    async close() {
       outbound?.stop();
       stopWatch();
+      await notices.drain();
       messaging.close();
       store.close();
     },

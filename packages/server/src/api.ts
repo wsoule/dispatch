@@ -309,6 +309,8 @@ import {
   statusFor,
 } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
+import type { SharingAnswer, SharingState } from './team/federation/sharing.js';
+import { FROZEN_MESSAGE, frozenBySharing } from './team/federation/sharing.js';
 import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
@@ -490,6 +492,12 @@ export interface ApiContext {
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
+  /** Turns board sync on and restarts to wire it (team/federation/sharing.ts):
+   *  what `team start` and `team join` do when sync is off. Set by
+   *  startServer; absent in contexts built without a daemon. */
+  turnOnSharing?: (precheck?: (now: Date) => void) => Promise<SharingAnswer>;
+  /** This server's restart mark while it restarts to turn on sync. */
+  sharing?: SharingState;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -4588,6 +4596,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
+  // The team in one line: its name, seats, transport and problems.
+  { method: 'GET', segments: ['team', 'status'], tier: 'decide' },
   { method: 'GET', segments: ['team', 'presence'], tier: 'decide' },
   // Where the daemon is reachable is only useful to someone handing out a
   // token, and it names the operator's network addresses.
@@ -4607,6 +4617,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
   // Roster changes are signed with this machine's key, so they need its owner.
+  { method: 'POST', segments: ['team', 'start'], tier: 'operator' },
+  { method: 'POST', segments: ['team', 'leave'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'found'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'trust'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'invite'], tier: 'operator' },
@@ -5138,6 +5150,10 @@ export async function handleApi(
             );
     if (unauthorized !== null) return unauthorized;
   }
+
+  // While the daemon restarts to turn on team sync, nothing new starts.
+  if (frozenBySharing(daemonCtx.sharing, method, segments))
+    return errorResponse(503, FROZEN_MESSAGE);
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's
