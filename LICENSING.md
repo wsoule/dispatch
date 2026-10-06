@@ -70,6 +70,11 @@ Four tiers, one rule each:
   signing key pair (paste the printed public key into `LICENSE_PUBLIC_KEY`);
   `bun scripts/license-issue.ts --key <path> --org … --seats … [--expires …]`
   per customer. The private key never goes in this repo.
+- **Setting a team up.** `dispatch team start`, then
+  `dispatch team invite <email or handle>`; the teammate runs
+  `dispatch team join` with the one link it prints (or uses the same buttons in
+  Settings → Team). Only handles the signed roster admits count for seats.
+  Shared-host tokens are `dispatch team host …`.
 - **What stays FSL.** Everything a person working alone uses, plus the plumbing
   that does nothing without a second person's credential: the permission tiers,
   HTTPS, browser sign-in, presence, teammate previews, the receipt log and its

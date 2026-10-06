@@ -130,8 +130,24 @@ other platforms.
 
 ## Federation: a team board with no server
 
-Teammates sync one board through a git branch you already have. There's no
-central server to run, and every change is signed.
+Teammates sync one board through the hosted relay, or a git branch you already
+have. There's no server of your own to run, and every change is signed.
+
+- **Set up in two actions each.** You run `dispatch team start`, then
+  `dispatch team invite <email or handle>`, and send the one link it prints.
+  Your teammate runs `dispatch team join` and pastes it. Their machine is let in
+  automatically, because the link's one-time secret proves the invite: each link
+  works once, for 7 days. Settings → Team has the same three buttons.
+- **An optional check, never a required step.** Both machines show the same
+  six-digit check next to each other's name; read it together if you want to be
+  sure nobody swapped a key.
+- **The hosted relay by default.** `team start` registers the team at
+  `relay.dispatch.foo` with a proof of work, no token needed, after showing what
+  the relay can read. `--git` keeps it on a git branch; an unreachable relay
+  falls back to git and says so.
+- **Status in one line.** `dispatch team status` reads like "Team 'acme' · 3 of
+  3 seats · syncing via relay.dispatch.foo · last sync 4s ago", with any problem
+  in plain words and the one command that fixes it.
 
 - **Signed by every machine.** Each machine has its own key. Invites, admission,
   roles and revocation are signed roster changes.
@@ -144,8 +160,10 @@ central server to run, and every change is signed.
 - **Recoverable.** A recovery key gets the team back if the founder's machine is
   lost.
 - **Audited.** Every roster change lands in the git receipt log.
-- **Run it from the app.** Found a team, invite, admit by fingerprint and
-  resolve problems from the desktop's Machines settings.
+- **Advanced when you need it.** Admitting by fingerprint, trust, roles, the
+  recovery code, transports and problem notes live under
+  `dispatch team advanced …` and Settings → Team → Advanced; shared-host sign-in
+  tokens under `dispatch team host …`.
 
 ### Messages that cross machines
 
