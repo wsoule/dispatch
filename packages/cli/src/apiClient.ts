@@ -801,6 +801,12 @@ export interface ApiClient {
   // The signed team roster (decide tier to read, operator tier to change):
   // build the client on the app token.
   getTeamKeys(): Promise<TeamKeys>;
+  /** The team in one line, with plain-worded problems and their fixes. */
+  getTeamStatus(): Promise<TeamStatus>;
+  /** Founds the team and moves it to the relay (by default) in one step. */
+  startTeam(input: StartTeamInput): Promise<StartedTeam>;
+  /** Lets go of an invite this machine waits on. */
+  leaveTeam(): Promise<RosterAnswer>;
   foundTeam(name?: string): Promise<
     {
       teamId: string;
@@ -809,8 +815,10 @@ export interface ApiClient {
     } & RosterAnswer
   >;
   trustFounder(fingerprint: string): Promise<void>;
-  inviteToTeam(handle: string): Promise<{ code: string; expires: string }>;
-  joinTeam(code: string): Promise<RosterAnswer>;
+  /** An invite for a handle, or an email (team.yml's handle for it). */
+  inviteToTeam(handleOrEmail: string): Promise<TeamInvite>;
+  /** Joins with a team link (or an older invite code). */
+  joinTeam(code: string): Promise<JoinedTeam>;
   recoverTeam(code: string): Promise<RosterAnswer>;
   newRecoveryCode(): Promise<{ recoveryCode: string }>;
   shareTeamLicense(): Promise<void>;
@@ -895,6 +903,64 @@ interface AdmitBody {
   role?: 'member' | 'admin';
   hosts?: string[];
   observer?: boolean;
+}
+
+/** Mirrors TeamStatus in packages/server/src/team/federation/onboarding.ts. */
+export interface TeamStatus {
+  state: 'off' | 'none' | 'joining' | 'member';
+  line: string;
+  team: { id: string; name: string } | null;
+  role: 'admin' | 'member' | 'observer' | null;
+  seats: { used: number; total: number } | null;
+  sync: {
+    kind: 'git' | 'relay';
+    where: string | null;
+    lastSyncAt: string | null;
+  } | null;
+  teammates: {
+    handle: string;
+    device: string;
+    role: 'admin' | 'member' | 'observer';
+    you: boolean;
+    check: string | null;
+  }[];
+  check: string | null;
+  problems: { message: string; fix: string | null }[];
+}
+
+/** What `team start` sends; see POST /api/team/start. */
+export interface StartTeamInput {
+  name?: string;
+  git?: boolean;
+  relayUrl?: string;
+  confirmed?: boolean;
+  registrationToken?: string;
+}
+
+/** A started team; `notice` says why it stayed on git, when it did. */
+export interface StartedTeam extends RosterAnswer {
+  teamId: string;
+  name: string;
+  recoveryCode: string;
+  fingerprint: string;
+  transport: { kind: 'git' | 'relay'; url?: string };
+  notice: string | null;
+}
+
+/** An invite: one link, its URL form, and the older code form. */
+export interface TeamInvite extends RosterAnswer {
+  code: string;
+  expires: string;
+  handle: string;
+  link?: string;
+  url?: string;
+}
+
+/** What joining answers: the team, who invited, and the optional check. */
+export interface JoinedTeam extends RosterAnswer {
+  team: { id: string; name: string | null };
+  by?: string;
+  check?: string;
 }
 
 /** A roster change's answer: a warning when it could not pull first, and
@@ -1177,6 +1243,9 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         method: 'PUT',
       }),
     getTeamKeys: () => request(target, '/api/team/keys'),
+    getTeamStatus: () => request(target, '/api/team/status'),
+    startTeam: (input) => request(target, '/api/team/start', jsonBody(input)),
+    leaveTeam: () => request(target, '/api/team/leave', jsonBody({})),
     foundTeam: (name) =>
       request(
         target,
@@ -1186,8 +1255,12 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     trustFounder: async (fingerprint) => {
       await request(target, '/api/team/trust', jsonBody({ fingerprint }));
     },
-    inviteToTeam: (handle) =>
-      request(target, '/api/team/invite', jsonBody({ handle })),
+    inviteToTeam: (who) =>
+      request(
+        target,
+        '/api/team/invite',
+        jsonBody(who.includes('@') ? { email: who } : { handle: who })
+      ),
     joinTeam: (code) => request(target, '/api/team/join', jsonBody({ code })),
     recoverTeam: (code) =>
       request(target, '/api/team/recover', jsonBody({ code })),
