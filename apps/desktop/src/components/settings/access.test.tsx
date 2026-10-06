@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   accessFor,
+  ATTACHED_BACKGROUND_READ_ONLY,
   ATTACHED_READ_ONLY,
   NEEDS_DECIDE,
   OPERATOR_ONLY,
@@ -56,6 +57,11 @@ describe('accessFor', () => {
     // Restarting from the app also unlocks the owner-only settings.
     expect(accessFor('request', false).operateReason).toBe(OPERATOR_ONLY);
     expect(accessFor('request', true).operateReason).toBe(ATTACHED_READ_ONLY);
+    // A background CLI daemon is named as such.
+    expect(accessFor('request', true, true).decideReason).toBe(
+      ATTACHED_BACKGROUND_READ_ONLY
+    );
+    expect(accessFor('request', false, true).decideReason).toBe(NEEDS_DECIDE);
     // Being attached never changes what the tier itself allows.
     expect(accessFor('request', true).canDecide).toBe(false);
     expect(accessFor('operator', true).canOperate).toBe(true);

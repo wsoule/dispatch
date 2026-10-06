@@ -41,6 +41,15 @@ struct DaemonFileInfo {
     /// deserialize and silently routing every attach into a fresh spawn.
     #[serde(default)]
     agent_token: Option<String>,
+    /// Set by a daemon the CLI started in the background. Read loosely, so a
+    /// shape this build does not know never fails the whole file.
+    #[serde(default)]
+    background: Option<serde_json::Value>,
+}
+
+/// Whether the daemon file marks its daemon as a background CLI daemon.
+fn is_background(value: &Option<serde_json::Value>) -> bool {
+    matches!(value, Some(serde_json::Value::Bool(true)))
 }
 
 /// What the frontend needs to talk to a dispatchd: its port plus whichever
@@ -54,6 +63,9 @@ pub struct DaemonConnection {
     pub port: u16,
     pub app_token: Option<String>,
     pub agent_token: Option<String>,
+    /// True when an attached daemon's file says the CLI started it in the
+    /// background, so the UI can say who holds it.
+    pub background: bool,
 }
 
 /// The subset of dispatchd's `/api/health` response this cares about: `ok`
@@ -201,6 +213,7 @@ fn pid_alive(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
@@ -367,7 +380,22 @@ pub fn dev_launch(manifest_dir: &Path) -> DaemonLaunch {
 /// inside `ensure_dispatchd`, and Tauri's async commands require their
 /// whole future to be `Send`.
 pub trait DaemonSpawner: Send + Sync {
-    fn spawn(&self, launch: &DaemonLaunch, root: &str) -> Result<Child, String>;
+    /// `port` asks dispatchd to bind that port instead of an ephemeral one.
+    fn spawn(&self, launch: &DaemonLaunch, root: &str, port: Option<u16>) -> Result<Child, String>;
+}
+
+/// dispatchd's arguments after the entry point: the root, `--init` for a root
+/// with no tracker yet, and `--port` when a takeover keeps the old port.
+fn daemon_args(root: &str, init: bool, port: Option<u16>) -> Vec<String> {
+    let mut args = vec!["--root".to_string(), root.to_string()];
+    if init {
+        args.push("--init".to_string());
+    }
+    if let Some(port) = port {
+        args.push("--port".to_string());
+        args.push(port.to_string());
+    }
+    args
 }
 
 /// PATH for the spawned dispatchd child: the app's own PATH plus the standard
@@ -433,7 +461,7 @@ fn resolve_bun() -> std::ffi::OsString {
 pub struct BunSpawner;
 
 impl DaemonSpawner for BunSpawner {
-    fn spawn(&self, launch: &DaemonLaunch, root: &str) -> Result<Child, String> {
+    fn spawn(&self, launch: &DaemonLaunch, root: &str, port: Option<u16>) -> Result<Child, String> {
         // A project added through the desktop's onboarding flow (a fresh folder,
         // or a just-cloned GitHub repo) may have no `.dispatch/tasks` tracker
         // yet. Passing `--init` tells dispatchd (via bin.ts's `--init` handling,
@@ -441,15 +469,12 @@ impl DaemonSpawner for BunSpawner {
         // first daemon spawn for such a root creates the tracker instead of
         // erroring out. Harmless for an already-initialized root — bin.ts only
         // initializes when `.dispatch/tasks` is missing.
-        let init = needs_init(root);
+        let args = daemon_args(root, needs_init(root), port);
         let mut command = match launch {
             // Dev: `bun <bin.ts> --root <root>`, with the fake executor toggle.
             DaemonLaunch::BunScript(bin_path) => {
                 let mut c = Command::new(resolve_bun());
-                c.arg(bin_path).arg("--root").arg(root);
-                if init {
-                    c.arg("--init");
-                }
+                c.arg(bin_path).args(&args);
                 // Phase 7: `DISPATCH_ENABLE_FAKES=1` makes dispatchd register a
                 // FakeExecutor/FakePlanner alongside the real ones (see
                 // packages/server/src/bin.ts) — set only in debug builds so the
@@ -464,10 +489,7 @@ impl DaemonSpawner for BunSpawner {
             // shelling out to `bun` (see buildDispatchMcpServerConfig).
             DaemonLaunch::Bundled { dispatchd, mcp } => {
                 let mut c = Command::new(dispatchd);
-                c.arg("--root").arg(root).env("DISPATCH_MCP_BIN", mcp);
-                if init {
-                    c.arg("--init");
-                }
+                c.args(&args).env("DISPATCH_MCP_BIN", mcp);
                 c
             }
         };
@@ -837,7 +859,9 @@ async fn wait_for_app_token(slot: &AppTokenSlot, timeout: Duration) -> Option<St
 /// no disk fallback for the app token.
 ///
 /// `force_spawn` skips the reuse fast path, for the user-initiated restart that
-/// upgrades an attached (request-tier) session to a spawned (decide-tier) one.
+/// upgrades an attached (request-tier) session to a spawned (decide-tier) one:
+/// see `stop_for_takeover` for when it refuses, and it keeps the old port when
+/// it can so other clients reconnect.
 pub async fn ensure_dispatchd(
     spawner: &dyn DaemonSpawner,
     children: &DispatchdChildren,
@@ -868,6 +892,7 @@ pub async fn ensure_dispatchd(
                 port: info.port,
                 app_token: app_tokens.get(root, info.pid),
                 agent_token: info.agent_token,
+                background: is_background(&info.background),
             };
             match reuse_decision(probe_health(&client, info.port).await, pid_alive(info.pid)) {
                 ReuseDecision::Reuse => return Ok(attach(info)),
@@ -891,24 +916,35 @@ pub async fn ensure_dispatchd(
         }
     }
 
-    // Control reaches here in two cases: `needs_init(root)` skipped the
-    // reuse fast path entirely (so a healthy, live daemon for this exact
-    // root may still be sitting there, just never checked above), or the
-    // reuse check above found the daemon file's daemon unhealthy already
-    // (in which case the check just below will independently confirm that
-    // too and decline to kill anything). Either way, best-effort kill
-    // whatever live process the daemon file currently names FIRST, before
-    // spawning its replacement — otherwise the about-to-be-spawned daemon
-    // and an orphaned still-running one for the same root would both be
-    // alive at once, racing to write the same daemon file. Re-verifies
-    // health AND rootDir independently right here — never trusting the
-    // daemon file's own claims alone, and never killing before a live,
-    // same-root dispatchd is confirmed answering on the file's port (see
-    // `should_kill_superseded_daemon` for exactly what that does and does
-    // not guarantee about the pid) — since the file is only ever a hint
-    // about which port to probe next, not proof of what's still listening
-    // there.
-    if let Some(info) = read_daemon_file(root) {
+    // A takeover stops the daemon serving this root only once it has nothing
+    // in flight, and then offers its port to the replacement.
+    let mut stopped_pid = None;
+    let mut port_choice = None;
+    if force_spawn {
+        if let Some(info) = read_daemon_file(root) {
+            if let Some(port) = stop_for_takeover(&client, root, &info).await? {
+                stopped_pid = Some(info.pid);
+                port_choice = Some(port);
+            }
+        }
+    } else if let Some(info) = read_daemon_file(root) {
+        // Control reaches here in two cases: `needs_init(root)` skipped the
+        // reuse fast path entirely (so a healthy, live daemon for this exact
+        // root may still be sitting there, just never checked above), or the
+        // reuse check above found the daemon file's daemon unhealthy already
+        // (in which case the check just below will independently confirm that
+        // too and decline to kill anything). Either way, best-effort kill
+        // whatever live process the daemon file currently names FIRST, before
+        // spawning its replacement — otherwise the about-to-be-spawned daemon
+        // and an orphaned still-running one for the same root would both be
+        // alive at once, racing to write the same daemon file. Re-verifies
+        // health AND rootDir independently right here — never trusting the
+        // daemon file's own claims alone, and never killing before a live,
+        // same-root dispatchd is confirmed answering on the file's port (see
+        // `should_kill_superseded_daemon` for exactly what that does and does
+        // not guarantee about the pid) — since the file is only ever a hint
+        // about which port to probe next, not proof of what's still listening
+        // there.
         let health = fetch_health(&client, info.port).await;
         let health_ok = health.as_ref().map(|h| h.ok).unwrap_or(false);
         let health_root_dir = health.and_then(|h| h.root_dir);
@@ -922,46 +958,219 @@ pub async fn ensure_dispatchd(
         }
     }
 
-    let log_path = daemon_log_path(root);
-    let tail: OutputTail = Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_LINES)));
-    let app_token_slot: AppTokenSlot = Arc::new(Mutex::new(None));
+    loop {
+        let log_path = daemon_log_path(root);
+        let tail: OutputTail = Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_LINES)));
+        let app_token_slot: AppTokenSlot = Arc::new(Mutex::new(None));
 
-    let mut child = spawner.spawn(&launch, root)?;
-    let spawned_pid = child.id();
-    forward_child_output(
-        &mut child,
-        Arc::clone(&tail),
-        log_path.clone(),
-        Arc::clone(&app_token_slot),
-    );
-    children.push(child);
+        let mut child = spawner.spawn(&launch, root, port_choice)?;
+        let spawned_pid = child.id();
+        forward_child_output(
+            &mut child,
+            Arc::clone(&tail),
+            log_path.clone(),
+            Arc::clone(&app_token_slot),
+        );
+        let outcome =
+            wait_for_spawned_daemon(&client, root, &mut child, stopped_pid, POLL_TIMEOUT).await;
+        children.push(child);
 
-    let port = poll_for_healthy_daemon(&client, root, POLL_TIMEOUT)
-        .await
-        .ok_or_else(|| {
-            let lines: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
-            format_timeout_error(POLL_TIMEOUT, &describe_launch(&launch), &lines, &log_path)
-        })?;
+        let port = match outcome {
+            SpawnOutcome::Healthy(port) => port,
+            // Most likely the kept port was taken in the gap: any port will do.
+            SpawnOutcome::Exited if port_choice.is_some() => {
+                log::warn!(
+                    "dispatchd: could not start on port {}; retrying on a fresh port",
+                    port_choice.unwrap_or_default()
+                );
+                port_choice = None;
+                continue;
+            }
+            SpawnOutcome::Exited | SpawnOutcome::TimedOut => {
+                let lines: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
+                return Err(format_timeout_error(
+                    POLL_TIMEOUT,
+                    &describe_launch(&launch),
+                    &lines,
+                    &log_path,
+                ));
+            }
+        };
 
-    // The healthy daemon on `port` is only ours if the daemon file it wrote
-    // names the pid we spawned; a lost race with another daemon for this root
-    // means the token we captured authorizes a process nobody is talking to.
-    let info = read_daemon_file(root);
-    let ours = info.as_ref().map(|i| i.pid) == Some(spawned_pid);
-    let app_token = if ours {
-        wait_for_app_token(&app_token_slot, APP_TOKEN_WAIT).await
-    } else {
-        None
-    };
-    if let Some(token) = &app_token {
-        app_tokens.remember(root, spawned_pid, token);
+        // The healthy daemon on `port` is only ours if the daemon file it wrote
+        // names the pid we spawned; a lost race with another daemon for this root
+        // means the token we captured authorizes a process nobody is talking to.
+        let info = read_daemon_file(root);
+        let ours = info.as_ref().map(|i| i.pid) == Some(spawned_pid);
+        let app_token = if ours {
+            wait_for_app_token(&app_token_slot, APP_TOKEN_WAIT).await
+        } else {
+            None
+        };
+        if let Some(token) = &app_token {
+            app_tokens.remember(root, spawned_pid, token);
+        }
+
+        return Ok(DaemonConnection {
+            port,
+            app_token,
+            agent_token: info.and_then(|i| i.agent_token),
+            background: false,
+        });
     }
+}
 
-    Ok(DaemonConnection {
-        port,
-        app_token,
-        agent_token: info.and_then(|i| i.agent_token),
+/// How a freshly spawned dispatchd's boot ended.
+#[derive(Debug, PartialEq, Eq)]
+enum SpawnOutcome {
+    Healthy(u16),
+    /// The child exited before any daemon answered for this root.
+    Exited,
+    TimedOut,
+}
+
+/// `poll_for_healthy_daemon`, but also watching the child so a boot that dies
+/// (a taken port) is seen at once. `ignore_pid` skips a daemon file still
+/// naming the daemon a takeover just stopped.
+async fn wait_for_spawned_daemon(
+    client: &reqwest::Client,
+    root: &str,
+    child: &mut Child,
+    ignore_pid: Option<u32>,
+    timeout: Duration,
+) -> SpawnOutcome {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(info) = read_daemon_file(root) {
+            if Some(info.pid) != ignore_pid && is_healthy(client, info.port).await {
+                return SpawnOutcome::Healthy(info.port);
+            }
+        }
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return SpawnOutcome::Exited;
+        }
+        if Instant::now() >= deadline {
+            return SpawnOutcome::TimedOut;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// How long a stopped daemon gets to shut down before a takeover gives up.
+const STOP_WAIT: Duration = Duration::from_secs(15);
+
+/// Parses `GET /api/live-work`: what stopping the daemon would cut short.
+fn parse_live_work(body: &str) -> Result<Vec<String>, String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LiveWork {
+        live_work: Vec<String>,
+    }
+    serde_json::from_str::<LiveWork>(body)
+        .map(|parsed| parsed.live_work)
+        .map_err(|e| format!("invalid /api/live-work response: {e}"))
+}
+
+/// Why a takeover is refused while the daemon has work in flight, or `None`.
+fn live_work_refusal(live: &[String]) -> Option<String> {
+    (!live.is_empty()).then(|| {
+        format!(
+            "Dispatch for this project is busy with {}. Restarting it from this app would stop that, so try again once it finishes.",
+            live.join(", ")
+        )
     })
+}
+
+/// Asks the daemon what it is running, with the agent token its file carries.
+async fn fetch_live_work(
+    client: &reqwest::Client,
+    info: &DaemonFileInfo,
+) -> Result<Vec<String>, String> {
+    let mut request = client
+        .get(format!("http://127.0.0.1:{}/api/live-work", info.port))
+        .timeout(Duration::from_secs(5));
+    if let Some(token) = &info.agent_token {
+        request = request.bearer_auth(token);
+    }
+    let unreachable = |detail: String| {
+        format!(
+            "Couldn't ask Dispatch for this project (pid {}) what it is running ({detail}), so it was left alone.",
+            info.pid
+        )
+    };
+    let response = request
+        .send()
+        .await
+        .map_err(|e| unreachable(e.to_string()))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(format!(
+            "Dispatch for this project (pid {pid}) is too old to say what it is running, so this app won't stop it. Once nothing is in flight, stop it yourself (kill {pid}) and try again.",
+            pid = info.pid
+        ));
+    }
+    if !status.is_success() {
+        return Err(unreachable(format!("HTTP {status}")));
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|e| unreachable(e.to_string()))?;
+    parse_live_work(&body).map_err(unreachable)
+}
+
+/// Polls until `pid` is gone or `timeout` elapses; true once it is gone.
+async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !pid_alive(pid) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Stops the daemon `info` names so this app can spawn its own in its place,
+/// refusing while it has anything in flight (the check `team start` makes
+/// before its own restart). `Ok(Some(port))` is the port it freed; `Ok(None)`
+/// means nothing live was serving this root. Not `--replace`: that only lets a
+/// second daemon start beside the first, whose runs would keep going unseen.
+async fn stop_for_takeover(
+    client: &reqwest::Client,
+    root: &str,
+    info: &DaemonFileInfo,
+) -> Result<Option<u16>, String> {
+    match probe_health(client, info.port).await {
+        HealthProbe::Healthy => {}
+        HealthProbe::Unresponsive if pid_alive(info.pid) => {
+            return Err(format!(
+                "Dispatch for this project (pid {}) isn't answering, so this app can't check what it is running. Try again in a moment.",
+                info.pid
+            ));
+        }
+        HealthProbe::Unresponsive | HealthProbe::Down => return Ok(None),
+    }
+    let health = fetch_health(client, info.port).await;
+    let health_ok = health.as_ref().map(|h| h.ok).unwrap_or(false);
+    let health_root_dir = health.and_then(|h| h.root_dir);
+    if !should_kill_superseded_daemon(root, &info.root_dir, health_ok, health_root_dir.as_deref()) {
+        return Ok(None);
+    }
+    if let Some(refusal) = live_work_refusal(&fetch_live_work(client, info).await?) {
+        return Err(refusal);
+    }
+    kill_pid_best_effort(info.pid);
+    if !wait_for_exit(info.pid, STOP_WAIT).await {
+        return Err(format!(
+            "Dispatch for this project (pid {pid}) did not stop within {}s. Try again, or stop it yourself (kill {pid}).",
+            STOP_WAIT.as_secs(),
+            pid = info.pid
+        ));
+    }
+    Ok(Some(info.port))
 }
 
 /// True if `root` looks like a Dispatch project — i.e. it has a `.dispatch/`
@@ -1407,9 +1616,219 @@ mod tests {
     struct FailingSpawner;
 
     impl DaemonSpawner for FailingSpawner {
-        fn spawn(&self, _launch: &DaemonLaunch, _root: &str) -> Result<Child, String> {
+        fn spawn(
+            &self,
+            _launch: &DaemonLaunch,
+            _root: &str,
+            _port: Option<u16>,
+        ) -> Result<Child, String> {
             Err("bun: command not found".to_string())
         }
+    }
+
+    #[test]
+    fn is_background_reads_only_a_true_flag() {
+        assert!(is_background(&Some(serde_json::Value::Bool(true))));
+        assert!(!is_background(&Some(serde_json::Value::Bool(false))));
+        assert!(!is_background(&None));
+        assert!(!is_background(&Some(serde_json::json!({ "by": "cli" }))));
+    }
+
+    #[test]
+    fn read_daemon_file_at_tolerates_any_background_shape() {
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-background-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("daemon.json");
+        fs::write(
+            &path,
+            r#"{"port":4771,"pid":123,"rootDir":"/tmp/x","startedAt":"2026-07-20T00:00:00.000Z","background":true}"#,
+        )
+        .unwrap();
+        assert!(is_background(
+            &read_daemon_file_at(&path).unwrap().background
+        ));
+        fs::write(
+            &path,
+            r#"{"port":4771,"pid":123,"rootDir":"/tmp/x","startedAt":"2026-07-20T00:00:00.000Z","background":{"by":"cli"}}"#,
+        )
+        .unwrap();
+        let info = read_daemon_file_at(&path).expect("an unknown shape still parses");
+        assert!(!is_background(&info.background));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn daemon_args_adds_init_and_port_only_when_asked() {
+        assert_eq!(daemon_args("/p", false, None), vec!["--root", "/p"]);
+        assert_eq!(
+            daemon_args("/p", true, Some(4771)),
+            vec!["--root", "/p", "--init", "--port", "4771"]
+        );
+    }
+
+    #[test]
+    fn parse_live_work_reads_the_list_and_rejects_garbage() {
+        assert_eq!(
+            parse_live_work(r#"{"liveWork":["1 live run","2 terminals"],"waiting":3}"#),
+            Ok(vec!["1 live run".to_string(), "2 terminals".to_string()])
+        );
+        assert!(parse_live_work("not json").is_err());
+    }
+
+    #[test]
+    fn live_work_refusal_names_what_would_stop() {
+        assert_eq!(live_work_refusal(&[]), None);
+        assert_eq!(
+            live_work_refusal(&["1 live run".to_string(), "1 browser".to_string()]),
+            Some("Dispatch for this project is busy with 1 live run, 1 browser. Restarting it from this app would stop that, so try again once it finishes.".to_string())
+        );
+    }
+
+    /// A process that is not this test's child, so it never lingers as a
+    /// zombie `kill -0` still sees: `sh` backgrounds it and exits.
+    fn spawn_orphan_sleeper() -> u32 {
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 30 >/dev/null 2>&1 & echo $!")
+            .output()
+            .expect("sh runs");
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .expect("sh prints the pid")
+    }
+
+    /// A one-thread HTTP stand-in for dispatchd: `routes` maps a path to a
+    /// status and body; anything else is a 404.
+    fn fake_daemon(routes: Vec<(&'static str, u16, String)>) -> u16 {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+                let path = request.split_whitespace().nth(1).unwrap_or("");
+                let (status, body) = routes
+                    .iter()
+                    .find(|(p, _, _)| *p == path)
+                    .map(|(_, s, b)| (*s, b.clone()))
+                    .unwrap_or((404, String::new()));
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        port
+    }
+
+    fn file_info(port: u16, pid: u32, root: &str) -> DaemonFileInfo {
+        DaemonFileInfo {
+            port,
+            pid,
+            root_dir: root.to_string(),
+            started_at: String::new(),
+            agent_token: Some("agent".to_string()),
+            background: None,
+        }
+    }
+
+    fn healthy(root: &str) -> (&'static str, u16, String) {
+        (
+            "/api/health",
+            200,
+            format!(r#"{{"ok":true,"rootDir":"{root}"}}"#),
+        )
+    }
+
+    #[tokio::test]
+    async fn stop_for_takeover_refuses_a_busy_daemon_and_leaves_it_running() {
+        let root = "/tmp/dispatch-takeover-busy";
+        let port = fake_daemon(vec![
+            healthy(root),
+            (
+                "/api/live-work",
+                200,
+                r#"{"liveWork":["1 live run"],"waiting":2}"#.to_string(),
+            ),
+        ]);
+        let pid = spawn_orphan_sleeper();
+        let result =
+            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        let alive = pid_alive(pid);
+        kill_pid_best_effort(pid);
+        assert_eq!(
+            result,
+            Err(live_work_refusal(&["1 live run".to_string()]).unwrap())
+        );
+        assert!(alive, "a refused takeover must not stop the daemon");
+    }
+
+    #[tokio::test]
+    async fn stop_for_takeover_refuses_a_daemon_too_old_to_report() {
+        let root = "/tmp/dispatch-takeover-old";
+        let port = fake_daemon(vec![healthy(root)]);
+        let pid = spawn_orphan_sleeper();
+        let result =
+            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        let alive = pid_alive(pid);
+        kill_pid_best_effort(pid);
+        let err = result.expect_err("an older daemon is left alone");
+        assert!(err.contains("too old"), "{err}");
+        assert!(alive);
+    }
+
+    #[tokio::test]
+    async fn stop_for_takeover_stops_an_idle_daemon_and_frees_its_port() {
+        let root = "/tmp/dispatch-takeover-idle";
+        let port = fake_daemon(vec![
+            healthy(root),
+            (
+                "/api/live-work",
+                200,
+                r#"{"liveWork":[],"waiting":0}"#.to_string(),
+            ),
+        ]);
+        let pid = spawn_orphan_sleeper();
+        let result =
+            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        assert_eq!(result, Ok(Some(port)));
+        assert!(!pid_alive(pid));
+    }
+
+    #[tokio::test]
+    async fn stop_for_takeover_never_stops_a_daemon_serving_another_root() {
+        let port = fake_daemon(vec![healthy("/tmp/someone-else")]);
+        let pid = spawn_orphan_sleeper();
+        let root = "/tmp/dispatch-takeover-mine";
+        let result =
+            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        let alive = pid_alive(pid);
+        kill_pid_best_effort(pid);
+        assert_eq!(result, Ok(None));
+        assert!(alive);
+    }
+
+    #[tokio::test]
+    async fn wait_for_spawned_daemon_sees_a_boot_that_died() {
+        let mut child = Command::new("true").spawn().unwrap();
+        let outcome = wait_for_spawned_daemon(
+            &reqwest::Client::new(),
+            "/tmp/dispatch-fixture-root-that-never-boots",
+            &mut child,
+            None,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(outcome, SpawnOutcome::Exited);
     }
 
     #[tokio::test]
@@ -1956,6 +2375,91 @@ mod tests {
         assert_eq!(attached.port, spawned.port);
         assert_eq!(attached.app_token, None);
         assert_eq!(attached.agent_token.as_deref(), Some(agent_token.as_str()));
+
+        children.kill_all();
+        let _ = fs::remove_dir_all(&scratch);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn live_takeover_keeps_the_port_and_gets_the_app_token() {
+        let scratch =
+            std::env::temp_dir().join(format!("dispatch-live-takeover-{}", std::process::id()));
+        let dispatch_home = scratch.join("home");
+        let proj = scratch.join("proj");
+        let _ = fs::remove_dir_all(&scratch);
+        fs::create_dir_all(&dispatch_home).unwrap();
+        init_git_project(&proj);
+        std::env::set_var("DISPATCH_HOME", &dispatch_home);
+        let root = proj.to_string_lossy().to_string();
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        // The daemon `dispatch serve` would start: not ours, token unread, and
+        // not this test's child either, so it never lingers as a zombie.
+        let launch = format!(
+            "'{}' '{}' {} >/dev/null 2>&1 &",
+            resolve_bun().to_string_lossy(),
+            dispatchd_bin_path(manifest_dir).display(),
+            daemon_args(&root, true, None).join(" ")
+        );
+        let started = Command::new("sh")
+            .arg("-c")
+            .arg(&launch)
+            .env("DISPATCH_HOME", &dispatch_home)
+            .status()
+            .expect("sh runs");
+        assert!(started.success());
+        let client = reqwest::Client::new();
+        let old_port = poll_for_healthy_daemon(&client, &root, Duration::from_secs(30))
+            .await
+            .expect("the external daemon comes up");
+        let old = read_daemon_file(&root).unwrap();
+        let children = DispatchdChildren::new();
+        let app_tokens = SpawnedAppTokens::new();
+
+        let attached = ensure_dispatchd(
+            &BunSpawner,
+            &children,
+            &app_tokens,
+            dev_launch(manifest_dir),
+            &root,
+            false,
+        )
+        .await
+        .expect("attach");
+        assert_eq!(attached.app_token, None);
+
+        let taken = ensure_dispatchd(
+            &BunSpawner,
+            &children,
+            &app_tokens,
+            dev_launch(manifest_dir),
+            &root,
+            true,
+        )
+        .await
+        .expect("takeover");
+        eprintln!(
+            "[live] takeover: old port {old_port} -> new port {}, app token {}",
+            taken.port,
+            taken.app_token.is_some()
+        );
+        assert_eq!(taken.port, old_port);
+        assert!(taken.app_token.is_some());
+        assert!(!pid_alive(old.pid));
+
+        // The window's follow-up attach keeps the token.
+        let reattached = ensure_dispatchd(
+            &BunSpawner,
+            &children,
+            &app_tokens,
+            dev_launch(manifest_dir),
+            &root,
+            false,
+        )
+        .await
+        .expect("reattach");
+        assert_eq!(reattached.app_token, taken.app_token);
 
         children.kill_all();
         let _ = fs::remove_dir_all(&scratch);

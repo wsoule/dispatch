@@ -61,6 +61,7 @@ import {
   SearchScopeProvider,
   SettingsSearchProvider,
 } from '../components/settings/search';
+import { TakeOverDaemon } from '../components/settings/TakeOverDaemon';
 import { TeamSection } from '../components/settings/TeamSection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { SettingsPage } from '../lib/appNav';
@@ -455,7 +456,11 @@ export function SettingsView({
   });
 
   // What this viewer may change, handed to every group and row below.
-  const access = accessFor(data.myTier, data.attachedWithoutAppToken);
+  const access = accessFor(
+    data.myTier,
+    data.attachedWithoutAppToken,
+    data.takeover?.background === true
+  );
 
   // The one save path every config-backed section's onSave goes through, so
   // one indicator covers those pages instead of each section reporting on its
@@ -679,16 +684,23 @@ export function SettingsView({
                     {spec.savesConfig &&
                       data.myTier !== null &&
                       !access.canDecide && (
-                        <p
-                          role="note"
-                          className="bg-surface-secondary text-muted-foreground rounded-control font-book flex items-start gap-2 px-3 py-2 text-[12px]"
-                        >
-                          <LockIcon
-                            aria-hidden
-                            className="mt-px size-3.5 shrink-0"
-                          />
-                          {access.decideReason}
-                        </p>
+                        <div className="bg-surface-secondary text-muted-foreground rounded-control font-book flex flex-col gap-2 px-3 py-2 text-[12px]">
+                          <p role="note" className="flex items-start gap-2">
+                            <LockIcon
+                              aria-hidden
+                              className="mt-px size-3.5 shrink-0"
+                            />
+                            {access.decideReason}
+                          </p>
+                          {data.takeover !== null && (
+                            <div className="pl-[22px]">
+                              <TakeOverDaemon
+                                takeover={data.takeover}
+                                onRestart={data.handleRestartDaemon}
+                              />
+                            </div>
+                          )}
+                        </div>
                       )}
                     {spec.render(ctx)}
                     {pageExtras?.[spec.id]}

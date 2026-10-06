@@ -3,8 +3,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
 
-import { accessFor, SettingsAccessProvider } from './access';
+import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import type { DaemonTakeover } from '../../lib/daemonAuth';
+import {
+  accessFor,
+  ATTACHED_BACKGROUND_READ_ONLY,
+  SettingsAccessProvider,
+} from './access';
 import { dataWith } from './fixtures.test-helper';
+import { takeoverBusyReason, takeoverWaitingNotice } from './TakeOverDaemon';
 import { TeamSetupGroup } from './TeamSetupGroup';
 
 function status(over: Partial<TeamStatus> = {}): TeamStatus {
@@ -72,20 +79,38 @@ function client(initial: TeamStatus) {
   };
 }
 
-function mount(c: ReturnType<typeof client>, tier: 'operator' | 'decide') {
+function mount(
+  c: ReturnType<typeof client>,
+  tier: 'operator' | 'decide' | 'request',
+  attached: Partial<DispatchProjectData> = {}
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const takeover = attached.takeover ?? null;
   return render(
     <QueryClientProvider client={queryClient}>
-      <SettingsAccessProvider access={accessFor(tier, false)}>
+      <SettingsAccessProvider
+        access={accessFor(
+          tier,
+          takeover !== null,
+          takeover?.background === true
+        )}
+      >
         <TeamSetupGroup
-          data={dataWith({ presence: [], myTier: tier, client: c as never })}
+          data={dataWith({
+            presence: [],
+            myTier: tier,
+            client: c as never,
+            ...attached,
+          })}
         />
       </SettingsAccessProvider>
     </QueryClientProvider>
   );
 }
+
+const IDLE: DaemonTakeover = { background: false, liveWork: [], waiting: 0 };
 
 describe('TeamSetupGroup', () => {
   test('starts a team in one press, beside the relay disclosure, and shows the recovery code', async () => {
@@ -177,5 +202,55 @@ describe('TeamSetupGroup', () => {
     );
     expect(await screen.findByText('<b>not bold</b>')).toBeTruthy();
     expect(screen.getByText('dispatch sync now')).toBeTruthy();
+  });
+
+  // The owner's own window, attached to a daemon it did not start: the start
+  // and join rows give way to the restart that unlocks them, not to nothing.
+  test('an attached window offers the restart where start and join would be', async () => {
+    const restart = mock(() => Promise.resolve());
+    mount(client(status()), 'request', {
+      takeover: IDLE,
+      handleRestartDaemon: restart,
+    });
+    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    expect(screen.getByText('Start or join a team')).toBeTruthy();
+    expect(screen.queryByTestId('team-start')).toBeNull();
+    expect(screen.queryByTestId('team-join')).toBeNull();
+    await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+  });
+
+  test('names a background CLI daemon and the items waiting behind it', async () => {
+    mount(client(status()), 'request', {
+      takeover: { background: true, liveWork: [], waiting: 2 },
+    });
+    expect(await screen.findByText(ATTACHED_BACKGROUND_READ_ONLY)).toBeTruthy();
+    expect(screen.getByText(takeoverWaitingNotice(2))).toBeTruthy();
+  });
+
+  test('holds the restart back while the daemon is busy, and says why', async () => {
+    mount(client(status()), 'request', {
+      takeover: { ...IDLE, liveWork: ['1 live run', '1 terminal'] },
+    });
+    expect(
+      await screen.findByText(takeoverBusyReason(['1 live run', '1 terminal']))
+    ).toBeTruthy();
+    expect(screen.queryByTestId('daemon-takeover')).toBeNull();
+  });
+
+  test('shows the refusal the restart came back with', async () => {
+    const refusal =
+      'Dispatch for this project is busy with 1 browser. Restarting it from this app would stop that, so try again once it finishes.';
+    mount(client(status()), 'request', {
+      takeover: IDLE,
+      handleRestartDaemon: () => Promise.reject(new Error(refusal)),
+    });
+    fireEvent.click(await screen.findByTestId('daemon-takeover'));
+    expect((await screen.findByRole('alert')).textContent).toBe(refusal);
+  });
+
+  test('a teammate below operator, not attached, sees no restart', async () => {
+    mount(client(status()), 'decide');
+    await screen.findByTestId('team-status-line');
+    expect(screen.queryByTestId('daemon-takeover')).toBeNull();
   });
 });

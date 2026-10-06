@@ -80,6 +80,7 @@ import {
 } from '../lib/configEvents';
 import type {
   DaemonConnection,
+  DaemonTakeover,
   DecideAvailability,
   MessageAccess,
 } from '../lib/daemonAuth';
@@ -433,6 +434,9 @@ export interface DispatchProjectData {
   /** Whether this window holds the owner's app token: only the owner may turn
    *  their revoked Overseer back on. */
   ownerCredential: boolean;
+  /** What restarting Dispatch from this app would mean, for a window attached
+   *  without the app token; `null` otherwise. */
+  takeover: DaemonTakeover | null;
   portLoading: boolean;
   portError: boolean;
   portErrorDetail: unknown;
@@ -1145,6 +1149,33 @@ export function useDispatchProject(
     enabled: client !== null,
     staleTime: Number.POSITIVE_INFINITY,
   });
+  // What a takeover would stop, polled only while this window is attached
+  // without the app token. An older daemon has no such route and errors.
+  const attachedWithoutAppToken =
+    connection !== undefined &&
+    connection.session === undefined &&
+    (connection.appToken === null || connection.appToken === '');
+  const { data: liveWork } = useQuery({
+    queryKey: ['dispatch-live-work', port],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLiveWork();
+    },
+    enabled: client !== null && attachedWithoutAppToken,
+    refetchInterval: 15_000,
+    retry: false,
+  });
+  const takeover = useMemo(
+    (): DaemonTakeover | null =>
+      attachedWithoutAppToken
+        ? {
+            background: connection?.background === true,
+            liveWork: liveWork?.liveWork ?? null,
+            waiting: liveWork?.waiting ?? 0,
+          }
+        : null,
+    [attachedWithoutAppToken, connection?.background, liveWork]
+  );
   // The people registry. Changes with config (`people:`) and the team roster, so a
   // `config.changed` refetches it; otherwise it holds for the connection.
   const peopleQueryKey = useMemo(
@@ -3175,10 +3206,8 @@ export function useDispatchProject(
       localHuman: peopleSnapshot?.local ?? null,
       people: peopleSnapshot?.people ?? NO_PEOPLE,
       myTier: whoami?.tier ?? credentialTier(connection),
-      attachedWithoutAppToken:
-        connection !== undefined &&
-        connection.session === undefined &&
-        (connection.appToken === null || connection.appToken === ''),
+      attachedWithoutAppToken,
+      takeover,
       ownerCredential:
         connection !== undefined &&
         connection.session === undefined &&
@@ -3327,6 +3356,8 @@ export function useDispatchProject(
       client,
       port,
       connection,
+      attachedWithoutAppToken,
+      takeover,
       presence,
       whoami,
       whoamiError,
