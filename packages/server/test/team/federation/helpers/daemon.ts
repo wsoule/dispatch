@@ -312,7 +312,11 @@ export function daemons(): {
           method: 'POST',
           body: JSON.stringify({ title, ...fields }),
         });
-        return (r.body as { meta: { id: string } }).meta.id;
+        const id = (r.body as { meta?: { id?: string } } | null)?.meta?.id;
+        // Named on failure, so a CI log says why a create was refused.
+        if (id === undefined)
+          throw new Error(`create: ${r.status} ${JSON.stringify(r.body)}`);
+        return id;
       },
       patch: async (id, patch) => {
         await call(`/api/tasks/${id}`, {
