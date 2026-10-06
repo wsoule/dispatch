@@ -51,7 +51,7 @@ const NO_AGENTS: AgentSummary[] = [];
 const NO_CHANNELS: ChannelSummary[] = [];
 const NO_OPEN: ReadonlySet<string> = new Set();
 
-function threadsPrefix(port: number | undefined) {
+export function threadsPrefix(port: number | undefined) {
   return ['dispatch-threads', port] as const;
 }
 
