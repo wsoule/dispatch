@@ -1170,7 +1170,24 @@ async fn stop_for_takeover(
             pid = info.pid
         ));
     }
+    // A clean stop removes the file; wait for that so nothing reads the old
+    // daemon's port and token. A file left by an unclean exit names a dead pid,
+    // which the spawn poll skips anyway.
+    let deadline = Instant::now() + FILE_RELEASE_WAIT;
+    while !daemon_file_released(read_daemon_file(root).as_ref(), info.pid)
+        && Instant::now() < deadline
+    {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
     Ok(Some(info.port))
+}
+
+/// How long a takeover waits, after the old pid exits, for its file to go.
+const FILE_RELEASE_WAIT: Duration = Duration::from_secs(3);
+
+/// True once the daemon file no longer names `old_pid`.
+fn daemon_file_released(info: Option<&DaemonFileInfo>, old_pid: u32) -> bool {
+    info.map(|i| i.pid) != Some(old_pid)
 }
 
 /// True if `root` looks like a Dispatch project — i.e. it has a `.dispatch/`
@@ -1817,6 +1834,13 @@ mod tests {
         assert!(alive);
     }
 
+    #[test]
+    fn daemon_file_released_once_it_is_gone_or_names_another_pid() {
+        assert!(daemon_file_released(None, 7));
+        assert!(daemon_file_released(Some(&file_info(1, 8, "/r")), 7));
+        assert!(!daemon_file_released(Some(&file_info(1, 7, "/r")), 7));
+    }
+
     #[tokio::test]
     async fn wait_for_spawned_daemon_sees_a_boot_that_died() {
         let mut child = Command::new("true").spawn().unwrap();
@@ -2447,6 +2471,7 @@ mod tests {
         assert_eq!(taken.port, old_port);
         assert!(taken.app_token.is_some());
         assert!(!pid_alive(old.pid));
+        assert_ne!(read_daemon_file(&root).map(|i| i.pid), Some(old.pid));
 
         // The window's follow-up attach keeps the token.
         let reattached = ensure_dispatchd(
