@@ -842,7 +842,7 @@ async function stopForTakeover(
     if (live.busy.length > 0) throw busy(live.busy.join(', '));
     if (live.parked > 0) {
       const n = live.parked;
-      const why = `${n} ${n === 1 ? 'run is' : 'runs are'} waiting on you in the dispatchd serving this project (${which}). They'll pick up again after the restart. Questions stay open; tool approvals will be asked again. Answer them afterwards with `dispatch approvals`.`;
+      const why = `${n} ${n === 1 ? 'run is' : 'runs are'} waiting on you in the dispatchd serving this project (${which}). They'll pick up again after the restart. Questions stay open; tool approvals will be asked again. Answer them afterwards with \`dispatch approvals\`.`;
       const ask = ctx.confirm ?? (process.stdin.isTTY === true ? askNo : null);
       if (ask === null)
         throw new CliError(
