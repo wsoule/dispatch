@@ -315,7 +315,7 @@ describe('TeamSetupGroup', () => {
     fireEvent.click(await screen.findByTestId('daemon-takeover'));
     expect(screen.getByText(takeoverParkedConfirm(2))).toBeTruthy();
     expect(takeoverParkedConfirm(2)).toBe(
-      "2 runs are waiting on you; they'll pick up again after the restart, and you can answer them here."
+      "2 runs are waiting on you; they'll pick up again after the restart. Questions stay open; tool approvals will be asked again."
     );
     expect(restart).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('daemon-takeover-confirm'));

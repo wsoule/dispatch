@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import type { ApiContext } from '../../../src/api.js';
+import type { TeamStatus } from '../../../src/team/federation/onboarding.js';
 import {
   boardSyncNow,
   handleFederationRoute,
   statusFor,
+  teamStatusFor,
 } from '../../../src/team/federation/routes.js';
 import { MAX_TASK_FIELD_BYTES } from '../../../src/team/federation/taskOps.js';
 import { daemons } from './helpers/daemon.js';
@@ -54,12 +56,51 @@ describe('statusFor', () => {
   });
 });
 
+describe('teamStatusFor', () => {
+  const status: TeamStatus = {
+    state: 'member',
+    line: "Team 'acme' · 2 of 3 seats · syncing via relay.dispatch.foo",
+    team: { id: 'a'.repeat(32), name: 'acme' },
+    role: 'member',
+    seats: { used: 2, total: 3 },
+    sync: { kind: 'relay', where: 'relay.dispatch.foo', lastSyncAt: null },
+    teammates: [
+      {
+        handle: 'ada',
+        device: 'mac',
+        role: 'admin',
+        you: false,
+        check: '123 456',
+      },
+    ],
+    check: null,
+    problems: [{ message: 'a race', fix: 'dispatch team advanced ack x' }],
+  };
+  it('keeps everything at the decide tier', () => {
+    expect(teamStatusFor(status, 'decide')).toEqual(status);
+  });
+  it('answers the summary alone below it, marked reduced', () => {
+    expect(teamStatusFor(status, 'request')).toEqual({
+      ...status,
+      teammates: [],
+      check: null,
+      problems: [],
+      reduced: true,
+    });
+  });
+});
+
 describe('/api/team federation routes', () => {
   it(
     'shows keys at the decide tier and never to the shared agent token',
     async () => {
       const ada = await teammate('ada');
       expect((await ada.asAgent('/api/team/keys')).status).toBe(403);
+      // Status stays readable on the agent token, without the details.
+      const status = await ada.asAgent('/api/team/status');
+      expect(status.status).toBe(200);
+      expect(status.body?.reduced).toBe(true);
+      expect(status.body?.problems).toEqual([]);
       const keys = await ada.api('/api/team/keys');
       expect(keys.status).toBe(200);
       expect(keys.body?.machine).toMatchObject({

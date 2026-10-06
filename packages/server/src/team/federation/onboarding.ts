@@ -137,6 +137,17 @@ export function teamLinkUrl(link: string): string {
   return `${LINK_URL_BASE}${link.slice(LINK_PREFIX.length)}`;
 }
 
+/** Whether `text` is a team invite in any form: a link, its URL, or an
+ *  older `di1.` code — what someone may paste where a token belongs. */
+export function looksLikeInvite(text: string): boolean {
+  const t = text.trim();
+  return (
+    t.startsWith(LINK_PREFIX) ||
+    t.startsWith(LINK_URL_BASE) ||
+    t.startsWith('di1.')
+  );
+}
+
 const DAMAGED = 'This invite link is damaged; copy the whole link again.';
 
 /** A link in either form, or throws RosterError('invalid') in plain words. */
@@ -311,6 +322,8 @@ export interface TeamStatus {
   /** While joining: the check to compare with whoever invited this machine. */
   check: string | null;
   problems: StatusProblem[];
+  /** True when the caller's tier withheld teammates, checks and problems. */
+  reduced?: true;
 }
 
 export interface TeamStatusInput {

@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { parseListenerFlags } from './a2a/settings.js';
 import { FakeAiTaskFilter } from './aiTaskFilter.js';
 import { mintDaemonTokens } from './api.js';
+import { RootServedError } from './daemonfile.js';
 import { makeFakeGhRunner } from './fakeGh.js';
 import {
   registerCodexIfInstalled,
@@ -509,6 +510,10 @@ if (!a2aFlags.ok) {
 }
 const a2aOverrides = a2aFlags.overrides;
 
+// `--started-by <label>`: who spawned this background daemon, for the daemon
+// file (the CLI's ensureDaemon passes it alongside --idle-timeout).
+const startedBy = readFlag(args, '--started-by');
+
 const serverOpts: Parameters<typeof startServer>[0] = {
   rootDir,
   port,
@@ -526,9 +531,9 @@ const serverOpts: Parameters<typeof startServer>[0] = {
         },
       }),
   ...(Object.keys(a2aOverrides).length === 0 ? {} : { a2a: a2aOverrides }),
-  // `--init` is the desktop's add-project spawn, which deliberately replaces
-  // whatever daemon predates the project's tracker; `--replace` is the
-  // explicit operator override.
+  // `--init` is the desktop's add-project spawn, which stops whatever daemon
+  // predates the project's tracker; `--replace` is the explicit override.
+  // Either way this boot waits for the old pid to exit, never runs beside it.
   replaceRunningDaemon: args.includes('--init') || args.includes('--replace'),
   // `undefined` here defers to index.ts's own production defaults (the real
   // 'claude' backend, plus 'codex' when installed) — see the module comment
@@ -581,6 +586,13 @@ const serverOpts: Parameters<typeof startServer>[0] = {
     process.env.DISPATCH_FAKE_GH === '1' ? makeFakeGhRunner() : undefined,
   idleTimeoutMs:
     idleTimeoutSeconds !== undefined ? idleTimeoutSeconds * 1000 : undefined,
+  ...(startedBy === undefined ? {} : { startedBy }),
+  onShutdownRequest: () => {
+    console.log(
+      'dispatchd: another dispatchd is taking over this project, exiting'
+    );
+    void shutdown();
+  },
   onIdle: () => {
     console.log(
       `dispatchd: unused for ${idleTimeoutSeconds}s with no live work, exiting`
@@ -631,9 +643,14 @@ function restartForSharing(rollback: () => void): Promise<void> {
   return restarting;
 }
 
+// A root another daemon serves is a refusal to print, not a crash to trace.
 let handle = await startServer({
   ...serverOpts,
   onSharingRestart: restartForSharing,
+}).catch((err: unknown) => {
+  if (!(err instanceof RootServedError)) throw err;
+  console.error(`dispatchd: ${err.message}`);
+  process.exit(1);
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 

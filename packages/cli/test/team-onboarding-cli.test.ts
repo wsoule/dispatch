@@ -21,6 +21,7 @@ let answers: string[] = [];
 let server: ReturnType<typeof Bun.serve>;
 let posted: { path: string; body: unknown }[];
 let syncOn = true;
+let statusAuth: (string | null)[];
 const originalHome = process.env.DISPATCH_HOME;
 const originalToken = process.env.DISPATCH_APP_TOKEN;
 
@@ -96,6 +97,7 @@ beforeEach(async () => {
   posted = [];
   answers = [];
   syncOn = true;
+  statusAuth = [];
   ctx = {
     cwd: root,
     log: (l) => lines.push(l),
@@ -121,7 +123,16 @@ beforeEach(async () => {
       if (url.pathname === '/api/health') return Response.json({ ok: true });
       if (url.pathname === '/api/team/keys')
         return Response.json({ relayDisclosure: 'The relay can read X.' });
-      if (url.pathname === '/api/team/status') return Response.json(STATUS);
+      if (url.pathname === '/api/team/status') {
+        const auth = req.headers.get('authorization');
+        statusAuth.push(auth);
+        // The agent token gets the server's reduced view.
+        return Response.json(
+          auth === 'Bearer agent'
+            ? { ...STATUS, teammates: [], problems: [], reduced: true }
+            : STATUS
+        );
+      }
       if (url.pathname === '/api/board-sync')
         return Response.json({ enabled: syncOn });
       posted.push({ path: url.pathname, body: await req.json() });
@@ -242,6 +253,63 @@ describe('team setup from the CLI', () => {
     const text = lines.join('\n');
     expect(text).toContain('bob (desk) · member · check 123 456');
     expect(text).toContain('fix: dispatch sync now');
+  });
+
+  it('status without an app token reads the reduced view on the agent token', async () => {
+    delete process.env.DISPATCH_APP_TOKEN;
+    await run('team', 'status');
+    expect(statusAuth).toEqual(['Bearer agent']);
+    expect(lines[0]).toBe(STATUS.line);
+    const text = lines.join('\n');
+    expect(text).not.toContain('bob (desk)');
+    expect(text).toContain('need the daemon app token');
+  });
+
+  it('join, advanced join and recover check the token before asking for a secret', async () => {
+    delete process.env.DISPATCH_APP_TOKEN;
+    for (const argv of [
+      ['team', 'join'],
+      ['team', 'advanced', 'join'],
+      ['team', 'advanced', 'recover'],
+    ]) {
+      const err = await run(...argv).catch((e: unknown) => e);
+      expect((err as Error).message).toContain(`pid ${process.pid}, port`);
+    }
+    expect(asked).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+
+  it('names a background daemon, who started it, and the ways out', async () => {
+    delete process.env.DISPATCH_APP_TOKEN;
+    writeFileSync(
+      daemonFilePath(root),
+      JSON.stringify({
+        port: server.port,
+        pid: process.pid,
+        rootDir: root,
+        startedAt: new Date().toISOString(),
+        agentToken: 'agent',
+        background: true,
+        startedBy: 'dispatch mcp (pid 4120)',
+      })
+    );
+    const err = await run('team', 'join').catch((e: unknown) => e);
+    const message = (err as Error).message;
+    expect(message).toContain(
+      `(pid ${process.pid}, port ${server.port}) was started in the background by dispatch mcp (pid 4120)`
+    );
+    expect(message).toContain(
+      'Run `dispatch serve` in a terminal you keep open; it takes over the background daemon'
+    );
+  });
+
+  it('says an invite pasted as the app token is an invite, without echoing it', async () => {
+    process.env.DISPATCH_APP_TOKEN = 'dispatch-team:SECRET-LINK';
+    const err = await run('team', 'join').catch((e: unknown) => e);
+    const message = (err as Error).message;
+    expect(message).toStartWith('that is a team invite link');
+    expect(message).not.toContain('SECRET-LINK');
+    expect(asked).toEqual([]);
   });
 
   it('help lists start, invite, join, status and leave, and hides the old names', () => {

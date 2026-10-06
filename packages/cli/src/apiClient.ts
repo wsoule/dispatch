@@ -941,7 +941,11 @@ export interface TeamStatus {
     check: string | null;
   }[];
   check: string | null;
-  problems: { message: string; fix: string | null }[];
+  problems: {
+    message: string;
+    fix: string | null;
+  }[] /** True when the token's tier withheld teammates, checks and problems. */;
+  reduced?: true;
 }
 
 /** What `team start` sends; see POST /api/team/start. */

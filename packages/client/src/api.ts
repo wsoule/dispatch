@@ -2439,7 +2439,11 @@ export interface TeamStatus {
   }[];
   /** While joining: the check to compare with whoever invited this machine. */
   check: string | null;
-  problems: { message: string; fix: string | null }[];
+  problems: {
+    message: string;
+    fix: string | null;
+  }[] /** True when the token's tier withheld teammates, checks and problems. */;
+  reduced?: true;
 }
 
 /** What `team start` sends: the relay is the default, `git` keeps the team
@@ -3396,7 +3400,8 @@ export interface ApiClient {
   installLicense(key: string): Promise<LicenseStatus>;
   /** Decide-tier: this machine, the signed team, its roster and problems. */
   getTeamKeys(): Promise<TeamKeys>;
-  /** Decide-tier: the team in one line, with plain-worded problems. */
+  /** The team in one line; plain-worded problems and teammates only at the
+   *  decide tier (below it the answer is `reduced`). */
   getTeamStatus(): Promise<TeamStatus>;
   /** Operator-tier: founds the team and moves it to the relay (by default)
    *  in one step. Rejects with `confirm_required` until the relay's

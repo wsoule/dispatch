@@ -205,6 +205,25 @@ describe('request tier', () => {
     const body = await json<AuthError>(res);
     expect(body.code).toBe('auth_invalid_token');
     expect(body.error).toContain('restarted daemon');
+    // Someone holding a stale app token is told which line it comes from.
+    expect(body.error).toContain('DISPATCH_APP_TOKEN line');
+  });
+
+  it('says an invite link is not a daemon token, in every form', async () => {
+    for (const invite of [
+      'dispatch-team:payload',
+      'https://dispatch.foo/join#payload',
+      'di1.abc',
+    ]) {
+      const res = await rawFetch(`${baseUrl}/api/tasks`, {
+        headers: auth(invite),
+      });
+      expect(res.status).toBe(401);
+      const body = await json<AuthError>(res);
+      expect(body.code).toBe('auth_invalid_token');
+      expect(body.error).toStartWith('that is a team invite link');
+      expect(body.error).not.toContain(invite);
+    }
   });
 
   it('accepts the agent token', async () => {
@@ -316,6 +335,25 @@ describe('token storage', () => {
     expect(readDaemonFile(root)?.agentToken).toBe(agentToken);
   });
 
+  it('marks only a daemon with an idle timeout as background, with who started it', async () => {
+    expect(readDaemonFile(root)?.background).toBeUndefined();
+    await handle.stop();
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      webDistDir: null,
+      writeDaemonFile: true,
+      registerExecutors: () => {},
+      idleTimeoutMs: 60_000,
+      onIdle: () => {},
+      startedBy: 'dispatch mcp (pid 1)',
+    });
+    expect(readDaemonFile(root)).toMatchObject({
+      background: true,
+      startedBy: 'dispatch mcp (pid 1)',
+    });
+  });
+
   it('never writes the app token anywhere under the dispatch home', () => {
     const carrying = filesUnder(fakeHome).filter((path) =>
       readFileSync(path, 'utf8').includes(appToken)
@@ -349,5 +387,46 @@ describe('GET /api/whoami', () => {
       headers: auth(null),
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe('handing the project to another daemon', () => {
+  it('reports no live work on the agent token', async () => {
+    const res = await rawFetch(`${baseUrl}/api/live-work`, {
+      headers: auth(agentToken),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ busy: [], parked: 0, waiting: 0 });
+  });
+
+  it('refuses to stop when its process cannot exit', async () => {
+    const res = await rawFetch(`${baseUrl}/api/daemon/shutdown`, {
+      method: 'POST',
+      headers: auth(agentToken),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it('exits on its own agent token once idle, after answering', async () => {
+    await handle.stop();
+    let stopped = 0;
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      webDistDir: null,
+      writeDaemonFile: true,
+      registerExecutors: () => {},
+      onShutdownRequest: () => {
+        stopped += 1;
+      },
+    });
+    const res = await rawFetch(
+      `http://127.0.0.1:${handle.port}/api/daemon/shutdown`,
+      { method: 'POST', headers: auth(handle.tokens.agentToken) }
+    );
+    expect(res.status).toBe(202);
+    expect(stopped).toBe(0);
+    await Bun.sleep(300);
+    expect(stopped).toBe(1);
   });
 });

@@ -20,7 +20,7 @@ export function takeoverBusyReason(busy: readonly string[]): string {
 export function takeoverParkedConfirm(parked: number): string {
   const runs = parked === 1 ? '1 run is' : `${parked} runs are`;
   const pronoun = parked === 1 ? "it'll" : "they'll";
-  return `${runs} waiting on you; ${pronoun} pick up again after the restart, and you can answer them here.`;
+  return `${runs} waiting on you; ${pronoun} pick up again after the restart. Questions stay open; tool approvals will be asked again.`;
 }
 
 /**
