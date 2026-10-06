@@ -309,6 +309,7 @@ import {
   statusFor,
 } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
+import type { SharingAnswer } from './team/federation/sharing.js';
 import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
@@ -490,6 +491,10 @@ export interface ApiContext {
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
+  /** Turns board sync on and restarts to wire it (team/federation/sharing.ts):
+   *  what `team start` and `team join` do when sync is off. Set by
+   *  startServer; absent in contexts built without a daemon. */
+  turnOnSharing?: (precheck?: (now: Date) => void) => Promise<SharingAnswer>;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts

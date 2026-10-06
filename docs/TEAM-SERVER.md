@@ -29,7 +29,10 @@ settled (§3); §8 lists what remains open.
 > admits a machine whose key op proves the link's one-time secret, once per
 > invite and before it expires. Fingerprint comparison is an optional six-digit
 > check. Shared-host tokens moved to `dispatch team host …` and the roster's
-> other commands to `dispatch team advanced …`.
+> other commands to `dispatch team advanced …`. With board sync off, `start` and
+> `join` write `sync.enabled: true` and restart the daemon in its own process
+> (same port and tokens), refusing while any run, merge, plan, terminal or
+> browser is live; the client waits and sends the request again.
 
 ## 1. Why tasks leave markdown
 

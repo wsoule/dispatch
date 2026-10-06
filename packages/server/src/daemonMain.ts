@@ -509,7 +509,7 @@ if (!a2aFlags.ok) {
 }
 const a2aOverrides = a2aFlags.overrides;
 
-const handle = await startServer({
+const serverOpts: Parameters<typeof startServer>[0] = {
   rootDir,
   port,
   tokens,
@@ -587,6 +587,28 @@ const handle = await startServer({
     );
     void shutdown();
   },
+};
+
+// `team start` and `team join` turn board sync on by restarting in this
+// process: the same port and tokens, so every client stays signed in, and
+// only once no live work would be cut short (team/federation/sharing.ts).
+async function restartForSharing(): Promise<void> {
+  console.log('dispatchd: restarting to turn on board sync');
+  const { port: same, tokens: kept } = handle;
+  await handle.stop();
+  handle = await startServer({
+    ...serverOpts,
+    port: same,
+    tokens: kept,
+    replaceRunningDaemon: false,
+    onSharingRestart: restartForSharing,
+  });
+  console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
+}
+
+let handle = await startServer({
+  ...serverOpts,
+  onSharingRestart: restartForSharing,
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 

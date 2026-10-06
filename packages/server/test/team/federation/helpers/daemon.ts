@@ -33,6 +33,9 @@ export interface TeammateOpts {
   gitName?: string;
   /** Extra .dispatch/config.yml lines. */
   config?: string;
+  /** Start with board sync off, the bare remote as the project's origin,
+   *  as a fresh clone is before anyone turns sync on. */
+  syncOff?: boolean;
 }
 
 // The runs a daemon started, and what each run was sent or notified: an
@@ -161,11 +164,15 @@ export function daemons(): {
   const boot = async (
     root: string,
     opts: TeammateOpts,
-    executor: RecordingExecutor
+    executor: RecordingExecutor,
+    keep?: { port: number; tokens: ServerHandle['tokens'] },
+    onRestart?: () => Promise<void>
   ): Promise<ServerHandle> => {
     const handle = await startServer({
       rootDir: root,
-      port: 0,
+      port: keep?.port ?? 0,
+      ...(keep === undefined ? {} : { tokens: keep.tokens }),
+      ...(onRestart === undefined ? {} : { onSharingRestart: onRestart }),
       webDistDir: null,
       storeBackend: 'sqlite',
       registerExecutors: (orchestrator) => {
@@ -196,14 +203,29 @@ export function daemons(): {
     writeFileSync(join(root, 'README.md'), `# ${name}\n`);
     mkdirSync(join(root, '.dispatch'), { recursive: true });
     // A long interval: every pass is asked for explicitly.
-    writeFileSync(
-      join(root, '.dispatch', 'config.yml'),
-      `sync:\n  enabled: true\n  repo: ${remote}\n  intervalSec: 3600\n${opts.config ?? ''}`
-    );
+    if (opts.syncOff === true) {
+      runGitSync(root, ['remote', 'add', 'origin', remote]);
+      writeFileSync(
+        join(root, '.dispatch', 'config.yml'),
+        `sync:\n  enabled: false\n  intervalSec: 3600\n${opts.config ?? ''}`
+      );
+    } else
+      writeFileSync(
+        join(root, '.dispatch', 'config.yml'),
+        `sync:\n  enabled: true\n  repo: ${remote}\n  intervalSec: 3600\n${opts.config ?? ''}`
+      );
     runGitSync(root, ['add', '-A']);
     runGitSync(root, ['commit', '-q', '-m', 'init']);
     const executor = new RecordingExecutor();
-    let server = await boot(root, opts, executor);
+    // The daemon's own restart to turn board sync on: same port and tokens,
+    // as dispatchd's daemonMain does it.
+    const restartForSharing = async (): Promise<void> => {
+      const keep = { port: server.port, tokens: server.tokens };
+      await server.stop();
+      handles.splice(handles.indexOf(server), 1);
+      server = await boot(root, opts, executor, keep, restartForSharing);
+    };
+    let server = await boot(root, opts, executor, undefined, restartForSharing);
     const syncDir = boardSyncDir(root);
     const call = async (
       path: string,
@@ -399,7 +421,7 @@ export function daemons(): {
       },
       restart: async () => {
         await self.stop();
-        server = await boot(root, opts, executor);
+        server = await boot(root, opts, executor, undefined, restartForSharing);
       },
     };
     return self;

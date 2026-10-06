@@ -108,7 +108,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         />
       ))}
 
-      {canOperate && s.state === 'none' && (
+      {canOperate && (s.state === 'none' || s.state === 'off') && (
         <SettingsRow
           title="Start a team"
           subtitle={RELAY_DISCLOSURE}

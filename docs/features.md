@@ -137,7 +137,10 @@ have. There's no server of your own to run, and every change is signed.
   `dispatch team invite <email or handle>`, and send the one link it prints.
   Your teammate runs `dispatch team join` and pastes it. Their machine is let in
   automatically, because the link's one-time secret proves the invite: each link
-  works once, for 7 days. Settings → Team has the same three buttons.
+  works once, for 7 days. Settings → Team has the same three buttons. If team
+  sync is off, starting or joining turns it on: Dispatch restarts for the
+  project on the same port, keeping everyone signed in, and refuses while a run
+  is live instead of stopping it.
 - **An optional check, never a required step.** Both machines show the same
   six-digit check next to each other's name; read it together if you want to be
   sure nobody swapped a key.

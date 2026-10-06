@@ -4407,7 +4407,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     getTeamKeys: () => request(target, '/api/team/keys'),
     getTeamStatus: () => request(target, '/api/team/status'),
-    startTeam: (input = {}) => teamPost(target, '/api/team/start', input),
+    startTeam: (input = {}) =>
+      afterSharingRestart(target, () =>
+        teamPost(target, '/api/team/start', input)
+      ),
     leaveTeam: () => teamPost(target, '/api/team/leave', {}),
     foundTeam: (name) =>
       teamPost(target, '/api/team/found', name === undefined ? {} : { name }),
@@ -4419,7 +4422,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         '/api/team/invite',
         who.includes('@') ? { email: who } : { handle: who }
       ),
-    joinTeam: (code) => teamPost(target, '/api/team/join', { code }),
+    joinTeam: (code) =>
+      afterSharingRestart(target, () =>
+        teamPost(target, '/api/team/join', { code })
+      ),
     recoverTeam: (code) => teamPost(target, '/api/team/recover', { code }),
     newRecoveryCode: () => teamPost(target, '/api/team/recovery-key', {}),
     shareTeamLicense: () => teamPost(target, '/api/team/license', {}),
@@ -5442,4 +5448,37 @@ function teamPost<T>(
 // A roster action on one replica's key, the replica percent-encoded.
 function rosterPath(replica: string, action: string): string {
   return `/api/team/keys/${encodeURIComponent(replica)}/${action}`;
+}
+
+// How long a team action waits for the daemon to come back with board sync on.
+const SHARING_RESTART_WAIT_MS = 90_000;
+
+/**
+ * Team start and join on a daemon with board sync off: it turns sync on,
+ * answers `restarting`, and comes back on the same port with the same
+ * tokens. This waits for sync to be on, then sends the same request once
+ * more, so it stays one action for the person.
+ */
+async function afterSharingRestart<T>(
+  target: ApiTarget,
+  send: () => Promise<T>
+): Promise<T> {
+  const first = await send();
+  if ((first as { code?: unknown }).code !== 'restarting') return first;
+  const until = Date.now() + SHARING_RESTART_WAIT_MS;
+  while (Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    try {
+      const sync = await request<{ enabled?: boolean }>(
+        target,
+        '/api/board-sync'
+      );
+      if (sync.enabled === true) return await send();
+    } catch {
+      // Down while it restarts; ask again.
+    }
+  }
+  throw new Error(
+    'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
+  );
 }

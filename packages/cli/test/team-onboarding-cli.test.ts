@@ -18,6 +18,7 @@ let asked: string[];
 let ctx: CliContext;
 let server: ReturnType<typeof Bun.serve>;
 let posted: { path: string; body: unknown }[];
+let syncOn = true;
 const originalHome = process.env.DISPATCH_HOME;
 const originalToken = process.env.DISPATCH_APP_TOKEN;
 
@@ -91,6 +92,7 @@ beforeEach(async () => {
   lines = [];
   asked = [];
   posted = [];
+  syncOn = true;
   ctx = {
     cwd: root,
     log: (l) => lines.push(l),
@@ -113,7 +115,21 @@ beforeEach(async () => {
       if (url.pathname === '/api/team/keys')
         return Response.json({ relayDisclosure: 'The relay can read X.' });
       if (url.pathname === '/api/team/status') return Response.json(STATUS);
+      if (url.pathname === '/api/board-sync')
+        return Response.json({ enabled: syncOn });
       posted.push({ path: url.pathname, body: await req.json() });
+      // Sync off: the first start or join turns it on and restarts.
+      if (
+        !syncOn &&
+        (url.pathname === '/api/team/start' ||
+          url.pathname === '/api/team/join')
+      ) {
+        syncOn = true;
+        return Response.json(
+          { restarting: true, code: 'restarting' },
+          { status: 202 }
+        );
+      }
       return Response.json(ANSWERS[url.pathname] ?? { ok: true });
     },
   });
@@ -223,5 +239,15 @@ describe('team setup from the CLI', () => {
       '/api/team/found',
       '/api/team/found',
     ]);
+  });
+
+  it('join with sync off waits out the restart and joins, in one command', async () => {
+    syncOn = false;
+    await run('team', 'join');
+    expect(posted.map((p) => p.path)).toEqual([
+      '/api/team/join',
+      '/api/team/join',
+    ]);
+    expect(lines.join('\n')).toContain("Joined team 'acme'");
   });
 });

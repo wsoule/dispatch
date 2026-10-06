@@ -102,6 +102,12 @@ describe('TeamSetupGroup', () => {
     expect(c.startTeam).toHaveBeenCalledWith({ confirmed: true });
   });
 
+  test('offers start and join while team sync is still off', async () => {
+    mount(client(status({ state: 'off' })), 'operator');
+    expect(await screen.findByTestId('team-start')).toBeTruthy();
+    expect(screen.getByTestId('team-join')).toBeTruthy();
+  });
+
   test('joins with a pasted link and shows the optional check', async () => {
     const c = client(status());
     mount(c, 'operator');

@@ -31,6 +31,8 @@ export async function cluster(
     gitNames?: Record<string, string>;
     /** Extra .dispatch/config.yml lines per member. */
     config?: Record<string, string>;
+    /** Members that start with board sync off (team start/join turn it on). */
+    syncOff?: string[];
   } = {}
 ): Promise<Cluster> {
   const env = daemons();
@@ -53,6 +55,7 @@ export async function cluster(
       federationDebounceMs: 0,
       ...(gitName === undefined ? {} : { gitName }),
       ...(config === undefined ? {} : { config }),
+      ...(opts.syncOff?.includes(name) === true ? { syncOff: true } : {}),
     });
     const member = { name, handle, clock };
     members.push(member);

@@ -16,6 +16,7 @@ import { readRoster } from '../routes.js';
 import { capsOf } from './caps.js';
 import {
   checkString,
+  decodeTeamLink,
   defaultRelayUrl,
   normalRelay,
   teamLinkUrl,
@@ -29,6 +30,7 @@ import {
 } from './relay.js';
 import type { RosterService } from './roster.js';
 import { RosterError } from './roster.js';
+import type { SharingAnswer } from './sharing.js';
 import type { FedStore } from './store.js';
 import { OpTooLargeError } from './store.js';
 import {
@@ -257,8 +259,15 @@ export async function handleFederationRoute(
         ? SHARING_OFF
         : statusOf(fedCtx, service)
     );
-  if (fedCtx === null || service === null)
+  if (fedCtx === null || service === null) {
+    if (
+      method === 'POST' &&
+      segments.length === 2 &&
+      (segments[1] === 'start' || segments[1] === 'join')
+    )
+      return await shareFirst(req, ctx, segments[1]);
     return errorResponse(409, 'board sync is not on');
+  }
   if (method === 'GET' && segments.length === 2 && segments[1] === 'keys')
     return jsonResponse(teamKeys(fedCtx, service));
   if (method === 'GET' && segments.length === 2 && segments[1] === 'presence') {
@@ -700,7 +709,7 @@ function teamKeys(
 /** The status while board sync is off: no team can be here yet. */
 const SHARING_OFF: TeamStatus = {
   state: 'off',
-  line: 'Sharing is off for this project, so it is in no team',
+  line: 'Not in a team yet · start one, or join with an invite link',
   team: null,
   role: null,
   seats: null,
@@ -710,8 +719,8 @@ const SHARING_OFF: TeamStatus = {
   problems: [
     {
       message:
-        'Board sync is off here. Turn it on in Settings → Board sync (or set `sync.enabled: true` in .dispatch/config.yml), then restart Dispatch for this project.',
-      fix: null,
+        'Team sync is off here. Starting or joining a team turns it on: Dispatch restarts for this project once no run is live.',
+      fix: 'dispatch team start',
     },
   ],
 };
@@ -980,5 +989,74 @@ function leave(fedCtx: FederationContext): Record<string, unknown> {
     admins.length === 0
       ? `This machine is the team's only admin, so nobody else can remove it. Make someone else an admin first: dispatch team advanced role <machine> admin`
       : `A machine cannot remove itself. Ask ${[...new Set(admins)].join(' or ')} to run: dispatch team advanced revoke ${fed.replica}`
+  );
+}
+
+// `team start` or `team join` while board sync is off: check what can be
+// checked without sync (a link's shape, expiry and handle; the relay's
+// disclosure), then turn sync on and restart. Answers 202 `restarting`; the
+// client waits for sync to be on and sends the same request again, so it is
+// still one action.
+async function shareFirst(
+  req: Request,
+  ctx: ApiContext,
+  action: 'start' | 'join'
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value;
+  const tooBig = oversized(body);
+  if (tooBig !== null)
+    return jsonResponse({ error: tooBig, code: 'invalid' }, 400);
+  if (action === 'start' && body.git !== true && body.confirmed !== true)
+    // The relay's disclosure comes before anything changes, sync included.
+    return jsonResponse(
+      {
+        error: 'confirm what the relay can read first',
+        code: 'confirm_required',
+        disclosure: RELAY_DISCLOSURE,
+      },
+      409
+    );
+  // A link's shape, expiry and handle are checked before sync is touched.
+  const precheck = (now: Date): void => {
+    if (action !== 'join') return;
+    const code = typeof body.code === 'string' ? body.code.trim() : '';
+    if (code === '') throw new RosterError('invalid', 'code is required');
+    if (code.startsWith('di1.')) return;
+    const link = decodeTeamLink(code);
+    const me = ctx.actorContext.member.handle;
+    if (Date.parse(link.expires) <= now.getTime())
+      throw new RosterError(
+        'invalid',
+        `This invite expired on ${link.expires.slice(0, 10)}. Ask ${link.by} for a new link.`
+      );
+    if (link.handle !== me)
+      throw new RosterError(
+        'invalid',
+        `This invite is for ${link.handle}, but this machine's Dispatch handle is ${me}. Ask ${link.by} to invite ${me} instead.`
+      );
+  };
+  if (ctx.turnOnSharing === undefined)
+    return errorResponse(409, 'board sync is not on');
+  let answer: SharingAnswer;
+  try {
+    answer = await ctx.turnOnSharing(precheck);
+  } catch (err) {
+    if (err instanceof RosterError)
+      return jsonResponse(
+        { error: err.message, code: err.code },
+        STATUS[err.code]
+      );
+    throw err;
+  }
+  if (!answer.ok)
+    return jsonResponse(
+      { error: answer.error, code: answer.code },
+      answer.status
+    );
+  return jsonResponse(
+    { restarting: true, code: 'restarting', message: answer.message },
+    202
   );
 }

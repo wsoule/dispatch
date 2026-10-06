@@ -22,6 +22,30 @@ afterEach(async () => {
 
 const post = (m: Member, path: string, body: Record<string, unknown>) =>
   m.handle.api(path, { method: 'POST', body: JSON.stringify(body) });
+// What a client does with a team action: when the daemon answers that it
+// is restarting to turn board sync on, it waits for sync and asks again.
+// Still one action for the person.
+const act = async (
+  m: Member,
+  path: string,
+  body: Record<string, unknown>
+): Promise<{
+  status: number;
+  body: Record<string, unknown> | null;
+  restarted: boolean;
+}> => {
+  const first = await post(m, path, body);
+  if (first.status !== 202 || first.body?.code !== 'restarting')
+    return { ...first, restarted: false };
+  for (let i = 0; i < 300; i++) {
+    await Bun.sleep(50);
+    const sync = await m.handle
+      .api('/api/board-sync')
+      .catch(() => ({ status: 0, body: null }));
+    if (sync.status === 200 && sync.body?.enabled === true) break;
+  }
+  return { ...(await post(m, path, body)), restarted: true };
+};
 const statusOf = async (m: Member): Promise<TeamStatus> =>
   (await m.handle.api('/api/team/status')).body as unknown as TeamStatus;
 
@@ -29,9 +53,11 @@ describe('team setup in two actions', () => {
   it(
     'start, invite, join: both machines see each other, a task syncs and mail flows',
     async () => {
-      const c = await cluster(['ada', 'bob']);
+      // Both start as a fresh clone does: board sync off.
+      const c = await cluster(['ada', 'bob'], { syncOff: ['ada', 'bob'] });
       stops.push(c.stop);
       const [ada, bob] = c.members as [Member, Member];
+      for (const m of c.members) expect((await statusOf(m)).state).toBe('off');
       // The hosted relay's stand-in: keyless registration with a stamp.
       const relay = await startFakeRelay({
         clock: {
@@ -45,12 +71,13 @@ describe('team setup in two actions', () => {
       const began = performance.now();
 
       // Founder, action 1: start the team (Settings: "Start a team").
-      const started = await post(ada, '/api/team/start', {
+      const started = await act(ada, '/api/team/start', {
         name: 'acme',
         relayUrl: relay.url,
         confirmed: true,
       });
       actions.push('ada: start');
+      expect(started.restarted).toBe(true);
       expect(started.status).toBe(200);
       expect(started.body?.transport).toEqual({
         kind: 'relay',
@@ -71,8 +98,13 @@ describe('team setup in two actions', () => {
       expect(decoded.handle).toBe('bob');
 
       // Joiner, action 1: paste the link.
-      const joined = await post(bob, '/api/team/join', { code: link });
+      const joined = await act(bob, '/api/team/join', { code: link });
       actions.push('bob: join');
+      expect([joined.restarted, joined.status, joined.body?.error]).toEqual([
+        true,
+        200,
+        undefined,
+      ]);
       expect(joined.status).toBe(200);
       expect(joined.body?.team).toEqual({
         id: started.body?.teamId,
@@ -199,6 +231,29 @@ describe('team setup in two actions', () => {
       const other = await post(bob, '/api/team/join', { code: elsewhere });
       expect(other.status).toBe(400);
       expect(other.body?.error).toContain('another team');
+    },
+    SLOW
+  );
+
+  it(
+    'refuses to turn sync on while a run is live, and changes nothing',
+    async () => {
+      const c = await cluster(['ada'], { syncOff: ['ada'] });
+      stops.push(c.stop);
+      const [ada] = c.members as [Member];
+      const task = await ada.handle.create('long job');
+      await ada.handle.startRun(task);
+      const refused = await post(ada, '/api/team/start', { git: true });
+      expect(refused.status).toBe(409);
+      expect(refused.body?.code).toBe('busy');
+      expect(String(refused.body?.error)).toContain('1 live run');
+      expect((await statusOf(ada)).state).toBe('off');
+      // A bad link is refused before anything restarts.
+      const bad = await post(ada, '/api/team/join', {
+        code: 'dispatch-team:xx',
+      });
+      expect(bad.status).toBe(400);
+      expect(ada.handle.executor.started).toHaveLength(1);
     },
     SLOW
   );
