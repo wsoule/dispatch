@@ -74,7 +74,7 @@ import { useDocList } from './hooks/useDocs';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
-import { useThreadsNeedsYouCount } from './hooks/useThreads';
+import { useMailbox, useThreadsNeedsYouCount } from './hooks/useThreads';
 import {
   type ActionFeedbackCache,
   withActionFeedback,
@@ -759,10 +759,42 @@ function App() {
   );
 
   // One set of numbers: the orb, "tasks ●" and the Needs you header all read `needs.count`.
+  const mailbox = useMailbox(
+    data.client,
+    data.port,
+    data.me,
+    twoViews && data.messageAccess.canMessage
+  ).data?.items;
+  // My tasks: assigned to me, or their latest run is mine.
+  const myTaskIds = useMemo(() => {
+    const mine = new Set<string>();
+    if (data.me === null) return mine;
+    for (const doc of data.tasks) {
+      const run = data.latestRunByTaskId.get(doc.meta.id);
+      if (
+        doc.meta.assignee === data.me ||
+        (run?.operator ?? run?.dispatchedBy) === data.me
+      ) {
+        mine.add(doc.meta.id);
+      }
+    }
+    return mine;
+  }, [data.tasks, data.latestRunByTaskId, data.me]);
   const needs = useMemo(
-    () => needsYou(data.decisions, data.me),
-    [data.decisions, data.me]
+    () => needsYou(data.decisions, data.me, { mailbox, myTaskIds }),
+    [data.decisions, data.me, mailbox, myTaskIds]
   );
+  // Asks of mine decided in the last 15 minutes, for "Decided by you" receipts.
+  const recentlyDecided = useMemo(() => {
+    const since = Date.now() - 15 * 60_000;
+    return data.decisions.filter(
+      (item) =>
+        item.state === 'resolved' &&
+        item.resolvedAt !== undefined &&
+        Date.parse(item.resolvedAt) >= since &&
+        (item.owner === undefined || item.owner === data.me)
+    );
+  }, [data.decisions, data.me]);
   const blockedIds = useMemo(
     () => computeBlockedIds(data.tasks, statusModel),
     [data.tasks, statusModel]
@@ -1574,6 +1606,7 @@ function App() {
           <TasksView
             data={data}
             needs={needs}
+            decided={recentlyDecided}
             counts={statusCounts}
             page={tasksPage}
             mode={twoViewsState.tasksMode}
@@ -1590,6 +1623,11 @@ function App() {
             onOpenRef={openRef}
             onOpenDecision={onOpenDecision}
             onClosePage={closeTwoViewsPage}
+            onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
+            onOpenDoc={(docId) => openDoc(docId, null)}
+            onOpenAllDocs={() =>
+              dispatchNav({ type: 'setProjectView', view: 'docs' })
+            }
             renderPage={renderTwoViewsPage}
             composer={
               <TasksComposer

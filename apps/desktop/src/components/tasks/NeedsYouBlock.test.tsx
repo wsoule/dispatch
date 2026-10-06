@@ -37,7 +37,7 @@ function item(over: Partial<DecisionItem> & Pick<DecisionItem, 'id' | 'kind'>) {
   } satisfies DecisionItem;
 }
 
-function mount(decisions: DecisionItem[]) {
+function mount(decisions: DecisionItem[], decided: DecisionItem[] = []) {
   const opened: string[] = [];
   const needs = needsYou(decisions, ME);
   render(
@@ -45,6 +45,7 @@ function mount(decisions: DecisionItem[]) {
       <NeedsYouBlock
         data={data}
         needs={needs}
+        decided={decided}
         onOpenRef={(action) => opened.push(action.kind)}
         onOpenDecision={(decision) => opened.push(decision.id)}
       />
@@ -119,5 +120,45 @@ describe('NeedsYouBlock', () => {
     expect(screen.getByTestId('needs-you-count').textContent).toBe(
       'Needs you · 1'
     );
+  });
+});
+
+describe('receipts and batches', () => {
+  test('an ask decided elsewhere shows as a receipt and is not counted', () => {
+    mount(
+      [item({ id: 'open', kind: 'scope-request' })],
+      [
+        item({
+          id: 'done',
+          kind: 'scope-request',
+          state: 'resolved',
+          resolvedAt: '2026-10-06T09:14:00.000Z',
+          summary: 'agent asked to edit outside its scope: a.ts',
+        }),
+      ]
+    );
+    expect(screen.getByTestId('needs-you-count').textContent).toBe(
+      'Needs you · 1'
+    );
+    expect(screen.getByTestId('needs-you-receipt').textContent).toContain(
+      'Decided by you · agent asked to edit outside its scope: a.ts'
+    );
+    expect(screen.getAllByTestId('needs-you-row')).toHaveLength(1);
+  });
+
+  test('restored lessons are one row with Approve all', () => {
+    const restored = (id: string) =>
+      item({
+        id,
+        kind: 'memory',
+        messageId: id,
+        summary: 'system proposes a team memory restored from the receipt log',
+      });
+    mount([restored('m-1'), restored('m-2'), restored('m-3')]);
+    expect(screen.getByTestId('needs-you-count').textContent).toBe(
+      'Needs you · 1'
+    );
+    expect(screen.getByText('Review 3 restored lessons')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Approve all' })).toBeTruthy();
   });
 });

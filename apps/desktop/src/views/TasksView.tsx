@@ -1,11 +1,15 @@
 import { Plus } from 'lucide-react';
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useCallback, useMemo } from 'react';
 
+import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
+import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
 import { TasksStrip } from '../components/tasks/TasksStrip';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
+import { containerStatus } from '../lib/containerStatus';
 import type { DecisionItem } from '../lib/decisionFeed';
+import type { ListGroup } from '../lib/listGrouping';
 import type { NeedsYou } from '../lib/needsYou';
 import {
   DEFAULT_TASKS_DISPLAY,
@@ -50,6 +54,8 @@ export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
 export interface TasksViewProps {
   data: DispatchProjectData;
   needs: NeedsYou;
+  /** Asks of mine decided elsewhere a moment ago. */
+  decided: readonly DecisionItem[];
   counts: TaskStatusCounts;
   page: TasksPage;
   mode: TasksMode;
@@ -65,6 +71,9 @@ export interface TasksViewProps {
   renderPage: (page: TasksSidePage) => ReactNode;
   /** Back to the list from a full page. */
   onClosePage: () => void;
+  onOpenPr: (number: number) => void;
+  onOpenDoc: (docId: string) => void;
+  onOpenAllDocs: () => void;
   composer: ReactNode;
 }
 
@@ -72,6 +81,7 @@ export interface TasksViewProps {
 export function TasksView({
   data,
   needs,
+  decided,
   counts,
   page,
   mode,
@@ -85,12 +95,47 @@ export function TasksView({
   onOpenDecision,
   renderPage,
   onClosePage,
+  onOpenPr,
+  onOpenDoc,
+  onOpenAllDocs,
   composer,
 }: TasksViewProps) {
   const split = page.kind === 'task' && !page.full;
   const taskFilter = useMemo(
     () => presetMatcher(preset, presetContext),
     [preset, presetContext]
+  );
+  const epicById = useMemo(
+    () => new Map(data.epics.map((e) => [e.meta.id, e])),
+    [data.epics]
+  );
+  // Every group's folded status, in the same units as the top bar.
+  const groupAccessory = useCallback(
+    (group: ListGroup) => (
+      <MilestoneStatusCells
+        status={containerStatus(
+          group.rows.map((row) => row.doc),
+          {
+            bucketOf: presetContext.bucketOf,
+            asksByTask: needs.byTask,
+          }
+        )}
+        dueDate={
+          group.epicId === null
+            ? null
+            : (epicById.get(group.epicId)?.meta.dueDate ?? null)
+        }
+      />
+    ),
+    [presetContext.bucketOf, needs.byTask, epicById]
+  );
+  const footer = (
+    <TasksExtraGroups
+      data={data}
+      onOpenPr={onOpenPr}
+      onOpenDoc={onOpenDoc}
+      onOpenAllDocs={onOpenAllDocs}
+    />
   );
   const presetLabel =
     TASKS_PRESETS.find((p) => p.id === preset)?.label ?? 'All';
@@ -181,6 +226,7 @@ export function TasksView({
               <NeedsYouBlock
                 data={data}
                 needs={needs}
+                decided={decided}
                 onOpenRef={onOpenRef}
                 onOpenDecision={onOpenDecision}
               />
@@ -214,6 +260,8 @@ export function TasksView({
                   display={BY_MILESTONE}
                   taskFilter={taskFilter}
                   needsYouIds={needs.taskIds}
+                  groupAccessory={groupAccessory}
+                  footer={footer}
                 />
               )}
             </div>

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { DecisionItem } from './decisionFeed';
-import { askGroup, needsYou } from './needsYou';
+import { askGroup, type MailboxAsk, needsYou } from './needsYou';
 
 const ME = 'human:wyat';
 
@@ -165,5 +165,111 @@ describe('needsYou', () => {
     expect(result.byTask.get('t-1')).toBe(2);
     expect(result.byTask.get('t-2')).toBe(1);
     expect([...result.taskIds].sort()).toEqual(['t-1', 't-2']);
+  });
+});
+
+describe('restored lessons', () => {
+  const restored = (id: string, since: string) =>
+    item({
+      id,
+      kind: 'memory',
+      messageId: id,
+      since,
+      summary:
+        'system:dispatch proposes a team memory (lesson) restored from the receipt log; check it',
+    });
+
+  test('many restored lessons are one row that counts as one', () => {
+    const result = needsYou(
+      [
+        restored('m-2', '2026-10-06T09:02:00.000Z'),
+        restored('m-1', '2026-10-06T09:01:00.000Z'),
+        item({ id: 'd', kind: 'doc' }),
+      ],
+      ME
+    );
+    expect(result.count).toBe(2);
+    expect(result.restored.map((r) => r.id)).toEqual(['m-1', 'm-2']);
+    expect(
+      result.groups.find((g) => g.group === 'knowledge')?.items.map((i) => i.id)
+    ).toEqual(['d', 'm-1']);
+  });
+
+  test('a single restored lesson is an ordinary row', () => {
+    const result = needsYou([restored('m-1', '2026-10-06T09:01:00.000Z')], ME);
+    expect(result.count).toBe(1);
+    expect(result.restored).toEqual([]);
+  });
+});
+
+describe('mailbox asks', () => {
+  const mail = (
+    id: string,
+    over: Partial<{
+      kind: string;
+      from: string;
+      to: string[];
+      blocking: boolean;
+      state: string;
+    }> = {}
+  ) =>
+    ({
+      delivery: { state: over.state ?? 'delivered' },
+      message: {
+        id,
+        kind: over.kind ?? 'handoff',
+        from: over.from ?? 'human:sam',
+        to: over.to ?? [ME],
+        body: `body ${id}`,
+        blocking: over.blocking ?? false,
+        createdAt: '2026-10-06T09:00:00.000Z',
+      },
+    }) as unknown as MailboxAsk;
+
+  test('a handoff to me is a People ask; to my task from a run, Work', () => {
+    const result = needsYou([], ME, {
+      mailbox: [
+        mail('h-1'),
+        mail('h-2', { from: 'run:r-9', to: ['task:t-1'] }),
+        mail('h-3', { to: ['task:t-other'] }),
+      ],
+      myTaskIds: new Set(['t-1']),
+    });
+    expect(
+      result.groups.map((g) => [g.group, g.items.map((i) => i.messageId)])
+    ).toEqual([
+      ['work', ['h-2']],
+      ['people', ['h-1']],
+    ]);
+    expect(result.byTask.get('t-1')).toBe(1);
+  });
+
+  test('a blocking question counts; a plain message, an answered one or my own does not', () => {
+    const result = needsYou([], ME, {
+      mailbox: [
+        mail('q-1', { kind: 'question', blocking: true }),
+        mail('q-2', { kind: 'question', blocking: false }),
+        mail('h-1', { state: 'answered' }),
+        mail('h-2', { from: ME }),
+        mail('n-1', { kind: 'notice' }),
+      ],
+    });
+    expect(result.asks.map((a) => a.messageId)).toEqual(['q-1']);
+  });
+
+  test('a gate already in the decision feed is not counted twice', () => {
+    const result = needsYou(
+      [
+        item({
+          id: 'approval:g-1',
+          kind: 'approval',
+          reason: 'task-proposal',
+          messageId: 'g-1',
+        }),
+      ],
+      ME,
+      { mailbox: [mail('g-1')] }
+    );
+    expect(result.count).toBe(1);
   });
 });
