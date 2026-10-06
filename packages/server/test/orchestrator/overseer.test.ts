@@ -390,6 +390,7 @@ describe('OverseerManager turns', () => {
       'dequeue_merge',
       'dispatch_task',
       'message_run',
+      'send_as_you',
     ]);
   });
 
@@ -1655,5 +1656,46 @@ describe('one durable conversation', () => {
     expect(h.manager.current('human:ada')?.prompt).toBe('ada one');
     expect(h.manager.current('human:bo')?.prompt).toBe('bo one');
     expect(h.manager.current('human:cy')).toBeUndefined();
+  });
+});
+
+describe('a conversation reads as its owner', () => {
+  it('hands the owner to a status tool and keeps its words out of the transcript', async () => {
+    const h = makeHarness();
+    let seenOwner: string | undefined;
+    h.lateMessaging.bind({
+      answerRunApproval: () => Promise.resolve(),
+      sendAsHuman: () => Promise.resolve(),
+      readAs: (reader) => {
+        seenOwner = reader;
+        return [];
+      },
+    });
+    const backend = new FakeOverseer({
+      ok: true,
+      calls: [{ tool: 'read_conversation', input: { with: 'human:sam' } }],
+      reply: 'nothing new',
+    });
+    const manager = new OverseerManager({
+      rootDir: repo,
+      registry: h.registry,
+      events: h.events,
+    });
+    manager.registerBackend('fake', backend);
+    const started = manager.start(
+      'any news from sam?',
+      'fake',
+      undefined,
+      undefined,
+      {
+        address: 'human:wyat',
+        canDecide: true,
+      }
+    );
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    expect(seenOwner).toBe('human:wyat');
+    expect(
+      manager.get(started.id).messages.find((m) => m.role === 'tool')?.text
+    ).toBe('read 0 messages (kept out of this transcript)');
   });
 });
