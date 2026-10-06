@@ -20,6 +20,10 @@ import type { MessagingCredential } from './identity.js';
 import type { MessageBlockingTiming } from './toolKit.js';
 import {
   DEFAULT_MESSAGE_BLOCKING_TIMING,
+  DEFAULT_PAGE_LIMIT,
+  pageInput,
+  pageOf,
+  pageOutput,
   pollSignal,
   projectRoot,
   toolError,
@@ -577,25 +581,89 @@ async function channelLeave(
   return toolResult({ ok: true });
 }
 
-// GET /api/channels
+interface ChannelSummaryWire {
+  name: string;
+  auto: boolean;
+  members: string[];
+}
+
+// GET /api/channels, paged. An auto-created channel nobody is in (an epic
+// with no children or joiners) is hidden unless `includeEmpty`.
 async function channelList(
   rootDir: string,
-  server: McpServer
+  server: McpServer,
+  args: { includeEmpty?: boolean; limit?: number; offset?: number }
 ): Promise<ToolOutcome> {
   const fetched = await messagingFetch(rootDir, server, '/api/channels');
   if (!fetched.ok) return fetchFailed(fetched, 'channel_list');
   if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
-  return toolResult((await fetched.res.json()) as Record<string, unknown>);
+  const { channels } = (await fetched.res.json()) as {
+    channels: ChannelSummaryWire[];
+  };
+  const shown =
+    args.includeEmpty === true
+      ? channels
+      : channels.filter((c) => !c.auto || c.members.length > 0);
+  const page = pageOf(shown, args);
+  return toolResult({
+    channels: page.items,
+    total: page.total,
+    nextOffset: page.nextOffset,
+    hiddenEmpty: channels.length - shown.length,
+  });
+}
+
+interface RosterAgentWire {
+  address: string;
+  displayName: string;
+  client: string;
+  status: string;
+  remote?: string | null;
+}
+
+// GET /api/agents/roster on the shared request-tier token: every agent
+// address mail can reach, this machine's and teammates' synced ones.
+async function agentList(rootDir: string): Promise<ToolOutcome> {
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null)
+    return toolError('dispatchd not running — cannot list agents');
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${daemon.port}/api/agents/roster`, {
+      headers: daemonAuth(daemon),
+      signal: requestDeadline(),
+    });
+  } catch (err) {
+    return toolError(`agent_list failed: ${(err as Error).message}`);
+  }
+  if (!res.ok) return toolError(await messagingErrorText(res));
+  const body = (await res.json()) as { agents: RosterAgentWire[] };
+  return toolResult({
+    agents: body.agents
+      .filter((a) => a.status !== 'revoked')
+      .map((a) => ({
+        address: a.address,
+        // Names and clients were typed by whoever registered the agent.
+        name: untrustedInline(a.displayName),
+        client: untrustedInline(a.client),
+        status: a.status,
+        machine: a.remote ?? 'this machine',
+      }))
+      .sort((a, b) => a.address.localeCompare(b.address)),
+  });
 }
 
 const ADDRESS_GRAMMAR =
   '`to` addresses: `human:<handle>` (a person), `task:<id>` (its current or ' +
   'next run — a message to a task WAITS if none is live right now), ' +
   '`run:<id>` (one specific live run), `channel:<name>` (everyone in it), ' +
-  '`agent:<owner>/<name>` (a specific registered agent client), or ' +
+  '`agent:<owner>/<name>` (a registered agent client; agent_list lists ' +
+  "them, a teammate's included, and an unknown one is refused), or " +
   '`a2a:<alias>` (an outside A2A agent the project owner registered; see ' +
   'peer_list); A2A peers, and the A2A clients that reach this project, are ' +
-  'outside this machine, so whatever you send them leaves it.';
+  'outside this machine, so whatever you send them leaves it. To reach work ' +
+  "on a teammate's machine, address its `task:<id>` or `run:<id>`: those " +
+  'cross machines.';
 
 interface PeerSummaryWire {
   alias: string;
@@ -646,7 +714,7 @@ const MESSAGE_KIND_SCHEMA = z.union([
   z.string().regex(/^x-[a-z0-9][a-z0-9-]*$/),
 ]);
 
-// Registers the eight messaging tools against a fixed root and server; kept
+// Registers the messaging tools against a fixed root and server; kept
 // separate from registerDispatchTools so the two families stay independent.
 export function registerMessagingTools(
   server: McpServer,
@@ -824,8 +892,15 @@ export function registerMessagingTools(
     {
       title: 'List channels',
       description:
-        "List every channel, including each epic's implicit `epic/<id>` " +
-        'channel, with its membership.',
+        "List channels, including each epic's implicit `epic/<id>` channel, " +
+        'with their membership, by name. An auto-created channel with no ' +
+        'members is hidden (counted in `hiddenEmpty`) unless ' +
+        '`includeEmpty: true`. Paged: at most `limit` (default ' +
+        `${DEFAULT_PAGE_LIMIT}) from \`offset\`; \`nextOffset\` is null on the last page.`,
+      inputSchema: {
+        includeEmpty: z.boolean().optional(),
+        ...pageInput,
+      },
       outputSchema: {
         channels: z.array(
           z.object({
@@ -834,10 +909,39 @@ export function registerMessagingTools(
             members: z.array(z.string()),
           })
         ),
+        ...pageOutput,
+        hiddenEmpty: z.number(),
       },
       annotations: { readOnlyHint: true },
     },
-    () => channelList(rootDir, server)
+    ({ includeEmpty, limit, offset }) =>
+      channelList(rootDir, server, { includeEmpty, limit, offset })
+  );
+
+  server.registerTool(
+    'agent_list',
+    {
+      title: 'List agent addresses',
+      description:
+        'List the registered agents you can message as ' +
+        "`agent:<owner>/<name>`: this machine's and teammates' (approved " +
+        'agents sync team-wide), each with the machine it runs on. A pending ' +
+        'agent gets mail once a human approves it. To reach work running on ' +
+        "a teammate's machine, message its `task:<id>` or `run:<id>` instead.",
+      outputSchema: {
+        agents: z.array(
+          z.object({
+            address: z.string(),
+            name: z.string(),
+            client: z.string(),
+            status: z.string(),
+            machine: z.string(),
+          })
+        ),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    () => agentList(rootDir)
   );
 
   server.registerTool(

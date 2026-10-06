@@ -462,6 +462,38 @@ function continuedInput(
   return root === null ? input : { ...input, replyTo: root.id };
 }
 
+// How many valid addresses an unknown-agent refusal names.
+const MAX_SUGGESTED_AGENTS = 20;
+
+// Refuses a `to` naming an agent no machine registered (or one revoked):
+// mail to it would be held forever. Lists the addresses that do reach one.
+function unknownAgentRefusal(ctx: ApiContext, to: string[]): Response | null {
+  const store = ctx.messaging.store;
+  const unknown = to.find((addr) => {
+    if (!addr.startsWith('agent:') || addr === SYSTEM_ADDRESS) return false;
+    const agent = store.getAgent(addr);
+    return agent === null || agent.status === 'revoked';
+  });
+  if (unknown === undefined) return null;
+  const known = store
+    .agents()
+    .filter((a) => a.status !== 'revoked')
+    .map((a) => a.address)
+    .sort();
+  const listed =
+    known.length === 0
+      ? 'no agents are registered'
+      : `known agents: ${known.slice(0, MAX_SUGGESTED_AGENTS).join(', ')}` +
+        (known.length > MAX_SUGGESTED_AGENTS
+          ? ` (+${known.length - MAX_SUGGESTED_AGENTS} more; see agent_list)`
+          : '');
+  return invalidField(
+    'to',
+    `no agent ${unknown} is registered on this team; ${listed}. ` +
+      "To reach work on a teammate's machine, address its task:<id> or run:<id>."
+  );
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -485,6 +517,8 @@ export async function sendMessage(
       { error: "this credential's access was revoked", code: 'auth_revoked' },
       401
     );
+  const unknownAgent = unknownAgentRefusal(ctx, parsedInput.value.to);
+  if (unknownAgent !== null) return unknownAgent;
   const refusal =
     liveRunRefusal(ctx, principal, parsedInput.value.to) ??
     a2aRunRefusal(ctx, principal, parsedInput.value.to);
@@ -731,6 +765,10 @@ function ownMailboxItems(
   principal: Principal,
   states: DeliveryState[] | undefined
 ): { delivery: Delivery; message: Message }[] {
+  // An agent reading its mailbox here lives here: mail another machine
+  // placed elsewhere for it (a `forwarded` row) is delivered to it now.
+  if (principal.kind === 'agent')
+    ctx.messaging.engine.claimRemoteFor(principal.address);
   const addresses = [principal.address];
   const taskAddress = taskAddressOfRun(ctx, principal);
   if (taskAddress !== null) addresses.push(taskAddress);

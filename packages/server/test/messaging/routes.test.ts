@@ -516,6 +516,61 @@ describe('messaging HTTP routes', () => {
     expect(res.status).toBe(403);
   });
 
+  it("an agent's mailbox read claims mail another machine left forwarded", async () => {
+    const a = await registerAndApprove('forwarded-to-me');
+    const sent = await json<{ message: { id: string } }>(
+      await fetch(`${baseUrl}/api/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          to: [a.address],
+          kind: 'message',
+          body: 'answered on a teammate machine',
+        }),
+      })
+    );
+    // As a received answer whose placement named another home: only a
+    // remote `forwarded` row here, no local delivery.
+    handle.messaging.engine.moveToRemote(sent.message.id, a.address, [
+      'r-elsewhere',
+    ]);
+    expect(
+      handle.messaging.store.remoteDeliveries({ recipient: a.address })
+    ).toHaveLength(1);
+
+    const res = await fetch(`${baseUrl}/api/mailbox?state=held`, {
+      headers: authHeaders(a.token),
+    });
+    expect(res.status).toBe(200);
+    const body = await json<{
+      items: { delivery: { state: string }; message: { id: string } }[];
+    }>(res);
+    expect(body.items.map((i) => i.message.id)).toEqual([sent.message.id]);
+    expect(body.items[0]?.delivery.state).toBe('held');
+    expect(
+      handle.messaging.store.remoteDeliveries({ recipient: a.address })
+    ).toEqual([]);
+  });
+
+  it('a message to an unregistered agent is refused, naming the known ones', async () => {
+    const known = await registerAndApprove('known-bot');
+    const res = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: ['agent:wyat/guessed-name'],
+        kind: 'message',
+        body: 'anyone there?',
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await json<{ error: string; field: string }>(res);
+    expect(body.field).toBe('to');
+    expect(body.error).toContain('no agent agent:wyat/guessed-name');
+    expect(body.error).toContain(known.address);
+    expect(body.error).toContain('task:<id> or run:<id>');
+  });
+
   it('POST /api/deliveries/:id/read 404s an unknown delivery', async () => {
     const res = await fetch(`${baseUrl}/api/deliveries/d-nope/read`, {
       method: 'POST',

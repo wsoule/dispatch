@@ -1,5 +1,7 @@
 import { isClientAddress } from '@dispatch-foo/a2a';
+import { gateOf } from '@dispatch-foo/protocol';
 import { timingSafeEqual } from 'node:crypto';
+import { basename } from 'node:path';
 
 import { tokenHash } from '../a2a/auth.js';
 import type { ApiContext } from '../api.js';
@@ -112,7 +114,7 @@ export function resolvePrincipal(
       return {
         ok: false,
         status: 403,
-        error: 'awaiting approval in Dispatch',
+        error: pendingAgentMessage(ctx, agent.address),
         code: 'auth_agent_pending',
       };
     }
@@ -129,4 +131,24 @@ export function resolvePrincipal(
     error: 'unknown token',
     code: 'auth_invalid_token',
   };
+}
+
+// Where a pending agent is approved: the project, its open registration gate,
+// and both places a human can answer it.
+function pendingAgentMessage(ctx: ApiContext, address: string): string {
+  const project = `${basename(ctx.rootDir)} (${ctx.rootDir})`;
+  const gate = ctx.messaging.engine.openBlocking().find((m) => {
+    const data = gateOf(m);
+    return data?.type === 'agent-registration' && data.agent === address;
+  });
+  if (gate === undefined)
+    return (
+      `${address} is awaiting approval in Dispatch for project ${project}, ` +
+      'but no approval request is open; ask a human to approve it in Settings → Connected agents'
+    );
+  return (
+    `${address} is awaiting approval in Dispatch for project ${project}: ` +
+    `pending agent-registration ${gate.id}. A human approves it in the ` +
+    `Dispatch app's Needs you queue, or runs: dispatch approvals approve ${gate.id}`
+  );
 }

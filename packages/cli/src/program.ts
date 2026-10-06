@@ -14,6 +14,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { registerA2ACommands } from './commands/a2a.js';
+import { registerApprovalsCommands } from './commands/approvals.js';
 import { registerBoardSyncCommands } from './commands/boardSync.js';
 import { registerBrowserCommands } from './commands/browser.js';
 import {
@@ -318,6 +319,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerMergeTaskCommand(program, ctx);
   registerMergeTeamCommand(program, ctx);
   registerScopeCommands(program, ctx);
+  registerApprovalsCommands(program, ctx);
   registerMemoryCommands(program, ctx);
   registerBrowserCommands(program, ctx);
   registerFanoutCommand(program, ctx);

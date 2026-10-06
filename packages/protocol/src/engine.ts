@@ -1893,7 +1893,12 @@ export class DeliveryEngine {
   // Turns this replica's forwarded or held remote rows for a task into local
   // held deliveries, so a run starting here receives what waited elsewhere.
   claimRemote(taskId: string): Delivery[] {
-    const recipient = `task:${taskId}`;
+    return this.claimRemoteFor(`task:${taskId}`);
+  }
+
+  // The same for any recipient proven to live here, such as an agent reading
+  // its own mailbox on this machine.
+  claimRemoteFor(recipient: Address): Delivery[] {
     const now = this.nowIso();
     const retired: string[] = [];
     const claimed = this.store.transaction(() => {

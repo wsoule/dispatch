@@ -58,6 +58,7 @@ describe('server identity', () => {
   it('lists every dispatch tool', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'agent_list',
       'channel_join',
       'channel_leave',
       'channel_list',

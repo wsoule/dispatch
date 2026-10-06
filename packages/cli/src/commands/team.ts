@@ -10,10 +10,11 @@ import type {
   TeamStatus,
   TeamTier,
 } from '../apiClient.js';
+import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
-import { appTokenClient } from './appToken.js';
+import { appTokenClient, attachToRunningDaemon } from './appToken.js';
 import { readSecret } from './secret.js';
 
 const TIERS: readonly TeamTier[] = ['request', 'decide', 'operator'];
@@ -410,6 +411,48 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
       ).getTeamStatus();
       if (opts.json === true) ctx.log(JSON.stringify(status, null, 2));
       else for (const line of describeTeamStatus(status)) ctx.log(line);
+    });
+
+  team
+    .command('agents')
+    .description(
+      "Every agent address you can message: this machine's and teammates' synced ones"
+    )
+    .option('--all', 'include revoked agents')
+    .option('--json')
+    .action(async (opts: { all?: boolean; json?: boolean }) => {
+      // The roster is a request-tier read: the daemon file's token is enough.
+      const { baseUrl, agentToken } = await attachToRunningDaemon(ctx);
+      const { agents } = await createApiClient(
+        baseUrl,
+        agentToken
+      ).listAgentRoster();
+      const shown = agents
+        .filter((a) => opts.all === true || a.status !== 'revoked')
+        .sort((a, b) => a.address.localeCompare(b.address));
+      if (opts.json === true) {
+        ctx.log(JSON.stringify(shown, null, 2));
+        return;
+      }
+      if (shown.length === 0) {
+        ctx.log('No agents are registered.');
+        return;
+      }
+      ctx.log(
+        formatTable([
+          ['ADDRESS', 'STATUS', 'MACHINE', 'CLIENT'],
+          ...shown.map((a) => [
+            a.address,
+            a.status,
+            a.remote ?? 'this machine',
+            a.client,
+          ]),
+        ])
+      );
+      ctx.log('');
+      ctx.log(
+        "To reach work on a teammate's machine, message its task:<id> or run:<id>."
+      );
     });
 
   team
