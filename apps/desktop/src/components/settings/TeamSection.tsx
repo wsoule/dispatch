@@ -8,7 +8,7 @@ import { Check, Copy, UserMinus, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
-import { useSettingsAccess } from './access';
+import { NEEDS_DECIDE, useSettingsAccess } from './access';
 import { MachinesGroup } from './MachinesGroup';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { TeamSetupGroup } from './TeamSetupGroup';
@@ -157,7 +157,11 @@ export function TeamSection({ data }: TeamSectionProps) {
         >
           <SettingsRow
             title="Giving people browser access"
-            subtitle="Needs Can approve access. Ask the person running Dispatch for this project to give them access, or to raise yours."
+            subtitle={
+              decideReason === NEEDS_DECIDE
+                ? 'Needs Can approve access. Ask the person running Dispatch for this project to give them access, or to raise yours.'
+                : 'Restart Dispatch from this app (above) to manage browser access.'
+            }
             locked={decideReason}
           />
         </SettingsGroup>

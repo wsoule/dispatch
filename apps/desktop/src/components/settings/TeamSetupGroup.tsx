@@ -18,7 +18,7 @@ interface TeamSetupGroupProps {
 // What the invited person does with the link, on their own machine. Shown
 // with the link so whoever sends it can pass the steps along.
 const JOIN_STEPS =
-  'On their machine: open Dispatch, go to Settings → Members, and paste it under Join a team. Or run `dispatch team join` and paste it there. When they join, their name shows above with an optional check you can read together.';
+  'On their machine: open Dispatch, go to Settings → Members, and paste it under Join a team. Or run dispatch team join in a terminal and paste it there. When they join, their name shows above with an optional check you can read together.';
 
 // Shown beside "Start a team" so pressing it is the confirmation the relay
 // switch needs (F-D31); the daemon's own sentence once the team exists.
@@ -235,7 +235,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         </SettingsRow>
       )}
 
-      {canOperate && s.state !== 'member' && (
+      {canOperate && (s.state === 'none' || s.state === 'off') && (
         <SettingsRow
           title="Join a team"
           subtitle="Paste the link a teammate sent you."

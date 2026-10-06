@@ -206,6 +206,18 @@ describe('TeamSetupGroup', () => {
     expect(c.joinTeam).toHaveBeenCalledWith('dispatch-team:LINK');
   });
 
+  test('while a join waits to be let in, it offers no second join or start', async () => {
+    mount(
+      client(status({ state: 'joining', line: 'Joining team acme' })),
+      'operator'
+    );
+    expect((await screen.findByTestId('team-status-line')).textContent).toBe(
+      'Joining team acme'
+    );
+    expect(screen.queryByTestId('team-join')).toBeNull();
+    expect(screen.queryByTestId('team-start')).toBeNull();
+  });
+
   test('a member sees the status line, each teammate’s check, and invites with one link to copy', async () => {
     const c = client(MEMBER);
     mount(c, 'operator');

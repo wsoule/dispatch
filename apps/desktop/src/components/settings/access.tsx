@@ -30,7 +30,7 @@ export const OPERATOR_ONLY =
 /** Why config is read-only for the owner's own window when it attached to a
  *  daemon it did not start, and so holds only the request-tier token. */
 export const ATTACHED_READ_ONLY =
-  'Dispatch for this project was started outside this window (by `dispatch serve`, a CLI command or another window), so this window can only view settings. Restart Dispatch from this app to change them.';
+  'Dispatch for this project was started outside this window (by dispatch serve, a CLI command or another window), so this window can only view settings. Restart Dispatch from this app to change them.';
 
 /** The same, when the daemon file says the CLI started it in the background. */
 export const ATTACHED_BACKGROUND_READ_ONLY =
