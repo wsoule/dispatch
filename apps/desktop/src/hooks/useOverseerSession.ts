@@ -58,6 +58,11 @@ export function overseerKey(
   return [...overseerKeyPrefix(port), conversationId] as const;
 }
 
+// The daemon's coded refusal for a revoked Overseer (overseer.ts refuseIfRevoked).
+function isRevokedRefusal(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'overseer_revoked';
+}
+
 export interface OverseerSession {
   /** The open conversation, or `null` before one is started (the composer state). */
   conversationId: string | null;
@@ -100,6 +105,8 @@ export interface OverseerSession {
    * unmounted tree and the failure is reported to nobody.
    */
   sendError: string | null;
+  /** The last send was refused because the Overseer is revoked; cleared by a send that works. */
+  revoked: boolean;
   /**
    * Decides one queued mutating action by answering its `overseer-action`
    * gate: approving runs the real effect before resolving, denying never runs
@@ -246,6 +253,7 @@ export function useOverseerSession(
 
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [revoked, setRevoked] = useState(false);
 
   // A conversation opened against one project's dispatchd must not survive a
   // project switch — the stale id would 404 against the new daemon (the same
@@ -259,6 +267,7 @@ export function useOverseerSession(
     setDecidingRequestId(null);
     setSendError(null);
     setDecideError(null);
+    setRevoked(false);
   }, [projectPath]);
 
   const { data: record, error } = useQuery({
@@ -344,7 +353,9 @@ export function useOverseerSession(
         } else {
           await sendMessage(text);
         }
+        setRevoked(false);
       } catch (err) {
+        setRevoked(isRevokedRefusal(err));
         setSendError(err instanceof Error ? err.message : String(err));
         setDraft((current) => (current === '' ? text : current));
       } finally {
@@ -359,6 +370,10 @@ export function useOverseerSession(
       setSending(true);
       try {
         await sendMessage(text);
+        setRevoked(false);
+      } catch (err) {
+        setRevoked(isRevokedRefusal(err));
+        throw err;
       } finally {
         setSending(false);
       }
@@ -504,6 +519,7 @@ export function useOverseerSession(
     reply,
     sending,
     sendError,
+    revoked,
     confirmAction,
     decidingActionId,
     decideApproval,

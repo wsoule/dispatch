@@ -48,7 +48,7 @@ export type PromptBarProps = {
   efforts?: PromptBarModel[];
   effortId?: string;
   onEffortChange?: (id: string) => void;
-  /** Mic is affordance-only — dictation isn't wired up here, so this is optional. */
+  /** Shows the mic; without a handler there is no mic, so no button does nothing. */
   onMicClick?: () => void;
   disabled?: boolean;
   placeholder?: string;
@@ -254,13 +254,15 @@ export function PromptBar({
         </div>
 
         <div className="flex items-center gap-1">
-          <IconButton
-            label="Start dictation"
-            aria-pressed="false"
-            onClick={onMicClick}
-          >
-            <MicIcon aria-hidden />
-          </IconButton>
+          {onMicClick !== undefined && (
+            <IconButton
+              label="Start dictation"
+              aria-pressed="false"
+              onClick={onMicClick}
+            >
+              <MicIcon aria-hidden />
+            </IconButton>
+          )}
           <IconButton
             label="Send"
             filled

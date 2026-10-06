@@ -194,3 +194,41 @@ describe('docHitEntries', () => {
     ]);
   });
 });
+
+describe('beta and Two views rows', () => {
+  test('each beta row is an action in either layout', () => {
+    const toggled: string[] = [];
+    const { ctx } = context({
+      beta: [
+        {
+          id: 'two-views',
+          label: 'Turn on beta: Two views',
+          run: () => toggled.push('on'),
+        },
+      ],
+    });
+    const row = buildPaletteEntries(ctx).find((e) => e.id === 'beta-two-views');
+    expect(row?.section).toBe('actions');
+    expect(row?.label).toBe('Turn on beta: Two views');
+    row?.run();
+    expect(toggled).toEqual(['on']);
+  });
+
+  test('Two views navigates to its two views and Settings, with no sidebar row', () => {
+    const { ctx, calls } = context({ twoViews: true });
+    const entries = buildPaletteEntries(ctx);
+    const nav = entries.filter((e) => e.section === 'navigation');
+    expect(nav.map((e) => [e.label, e.shortcut])).toEqual([
+      ['Go to Overseer', '⌘1'],
+      ['Go to Tasks', '⌘2'],
+      ['Go to Settings', '⌘,'],
+    ]);
+    expect(entries.some((e) => e.id === 'action-toggle-sidebar')).toBe(false);
+    for (const row of nav) row.run();
+    expect(calls).toEqual([
+      'global:overseer',
+      'project:board',
+      'global:settings',
+    ]);
+  });
+});

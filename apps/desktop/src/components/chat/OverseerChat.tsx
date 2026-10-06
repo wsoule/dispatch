@@ -252,6 +252,12 @@ interface OverseerChatProps {
    * mutation from the rail goes through exactly the path the full page uses.
    */
   compact?: boolean;
+  /** Replaces both composers' placeholders (Two views says "say something"). */
+  placeholder?: string;
+  /** Sits between the transcript and the composer: Two views' door to the asks. */
+  aboveComposer?: ReactNode;
+  /** Locks the composer, as for a revoked Overseer. */
+  disabled?: boolean;
 }
 
 /**
@@ -261,7 +267,13 @@ interface OverseerChatProps {
  * questions are answered directly; anything mutating shows up as a confirm
  * card in the transcript and runs only once approved there.
  */
-export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
+export function OverseerChat({
+  overseer,
+  compact = false,
+  placeholder,
+  aboveComposer,
+  disabled = false,
+}: OverseerChatProps) {
   // The composer's text is the session's, not this component's: the rail
   // unmounts this chat on a tab flip and on collapse, and navigating to the
   // Overseer page unmounts the rail entirely. Only one of the two textareas
@@ -438,14 +450,15 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
             : 'Ask about this project — runs, tasks, the merge queue, what needs you — or about the code itself: the overseer is a full agent session in the checkout and can read, search, run commands and edit. It can also act on the project (dispatch, cancel, approve), but every mutation waits for your explicit approval here first, and tool calls the permission policy does not settle pause for you to allow.'}
         </p>
         {sendError !== null && <ErrorLine>{sendError}</ErrorLine>}
+        {aboveComposer}
         {/* Which model the conversation opens on — remembered per device, so
             "always Fable" sticks. An open conversation keeps its model. */}
         <PromptBar
           value={draft}
           onChange={setDraft}
           onSubmit={submitDraft}
-          disabled={sending}
-          placeholder="What's going on with my agents?"
+          disabled={disabled || sending}
+          placeholder={placeholder ?? "What's going on with my agents?"}
           ariaLabel="Overseer opening question"
           models={COMPOSER_MODELS}
           modelId={overseer.model}
@@ -478,6 +491,7 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
         {thread.map(renderRow)}
       </div>
 
+      {aboveComposer}
       <div className="flex flex-col gap-1.5">
         {(sendError ?? decideError) !== null && (
           <ErrorLine>{sendError ?? decideError}</ErrorLine>
@@ -525,8 +539,11 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
           value={draft}
           onChange={setDraft}
           onSubmit={submitDraft}
-          disabled={busy || sending}
-          placeholder="Ask about runs, tasks, the queue — or ask it to act…"
+          disabled={disabled || busy || sending}
+          placeholder={
+            placeholder ??
+            'Ask about runs, tasks, the queue — or ask it to act…'
+          }
           ariaLabel="Follow-up message"
         />
       </div>

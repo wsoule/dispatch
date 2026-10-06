@@ -1,0 +1,98 @@
+import type { TaskBucket, TaskStatusCounts } from '../../lib/taskStatus';
+import { cn } from '@/lib/utils';
+
+// Each bucket's chip: urgent ones tinted, resting ones outlined; a zero stays visible.
+const CHIP: Record<TaskBucket, { label: (n: number) => string; tone: string }> =
+  {
+    'need-you': {
+      label: (n) => `● ${n} ${n === 1 ? 'task needs' : 'tasks need'} you`,
+      tone: 'bg-(--state-waiting-surface) text-(--state-waiting-fg) font-medium',
+    },
+    failed: {
+      label: (n) => `✕ ${n} failed`,
+      tone: 'bg-(--state-failed-surface) text-(--state-failed-fg)',
+    },
+    working: {
+      label: (n) => `◐ ${n} working`,
+      tone: 'bg-(--state-working-surface) text-(--state-working-fg)',
+    },
+    review: {
+      label: (n) => `◇ ${n} review`,
+      tone: 'bg-(--state-review-surface) text-(--state-review-fg)',
+    },
+    landing: { label: (n) => `${n} landing`, tone: '' },
+    ready: { label: (n) => `${n} ready`, tone: '' },
+    draft: { label: (n) => `${n} draft`, tone: '' },
+    blocked: { label: (n) => `${n} blocked`, tone: '' },
+  };
+
+const ORDER: readonly TaskBucket[] = [
+  'need-you',
+  'failed',
+  'working',
+  'review',
+  'landing',
+  'ready',
+  'draft',
+  'blocked',
+];
+
+// The buckets the top bar also counts; their chips filter the list.
+const FILTERABLE: ReadonlySet<TaskBucket> = new Set([
+  'failed',
+  'working',
+  'review',
+]);
+
+/** The Tasks strip: every open task in one bucket, plus landed over total. */
+export function TasksStrip({
+  counts,
+  filter,
+  onFilter,
+}: {
+  counts: TaskStatusCounts;
+  filter: TaskBucket | null;
+  onFilter: (bucket: TaskBucket | null) => void;
+}) {
+  return (
+    <div
+      data-testid="tasks-strip"
+      className="flex min-w-0 flex-wrap items-center gap-1.5 text-[12px]"
+    >
+      {ORDER.map((bucket) => {
+        const n = counts.buckets[bucket];
+        const spec = CHIP[bucket];
+        const className = cn(
+          'rounded-pill px-2 py-px whitespace-nowrap',
+          spec.tone === '' || n === 0
+            ? 'border-border-chip text-muted-foreground border-[0.5px]'
+            : spec.tone,
+          filter === bucket && 'ring-1 ring-current'
+        );
+        return FILTERABLE.has(bucket) ? (
+          <button
+            key={bucket}
+            type="button"
+            data-testid={`tasks-strip-${bucket}`}
+            aria-pressed={filter === bucket}
+            onClick={() => onFilter(filter === bucket ? null : bucket)}
+            className={cn(className, 'hover:underline')}
+          >
+            {spec.label(n)}
+          </button>
+        ) : (
+          <span
+            key={bucket}
+            data-testid={`tasks-strip-${bucket}`}
+            className={className}
+          >
+            {spec.label(n)}
+          </span>
+        );
+      })}
+      <span className="text-muted-foreground px-1 whitespace-nowrap">
+        ✓ {counts.landed}/{counts.total} landed
+      </span>
+    </div>
+  );
+}

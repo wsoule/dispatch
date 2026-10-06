@@ -182,3 +182,26 @@ describe('PromptBar', () => {
     );
   });
 });
+
+describe('PromptBar dictation', () => {
+  test('no mic without a handler, so there is no button that does nothing', () => {
+    render(<PromptBar value="" onChange={() => {}} onSubmit={() => {}} />);
+    expect(
+      screen.queryByRole('button', { name: 'Start dictation' })
+    ).toBeNull();
+  });
+
+  test('the mic shows and calls its handler when one is passed', () => {
+    let clicks = 0;
+    render(
+      <PromptBar
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        onMicClick={() => clicks++}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start dictation' }));
+    expect(clicks).toBe(1);
+  });
+});

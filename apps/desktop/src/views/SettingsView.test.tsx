@@ -8,6 +8,7 @@ import {
   within,
 } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
+import { Bot } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import {
@@ -192,7 +193,7 @@ test('a page renders its sections as level-2 headings', () => {
   render(<SettingsView activeProject={project} data={data} />);
   expect(
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-  ).toEqual(['Board columns', 'Pull requests']);
+  ).toEqual(['Board columns', 'Pull requests', 'Beta']);
 });
 
 // Search renders every page, so the client needs what the Autonomy page reads.
@@ -1108,4 +1109,30 @@ describe('Board sync by storage backend', () => {
     ).toBeNull();
     expect(screen.getByText('No settings match')).toBeDefined();
   });
+});
+
+// Two views folds whole views (Sessions, All agents) into Settings as pages.
+test('a hosted page joins the rail and renders full width', () => {
+  render(
+    <SettingsView
+      activeProject={project}
+      data={data}
+      hostedPages={[
+        {
+          id: 'runs',
+          label: 'Runs',
+          icon: Bot,
+          intro: 'Every run.',
+          render: () => <p>every run here</p>,
+        },
+      ]}
+    />
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
+  expect(screen.getByText('every run here')).toBeTruthy();
+});
+
+test('Classic shows no hosted pages', () => {
+  render(<SettingsView activeProject={project} data={data} />);
+  expect(screen.queryByRole('button', { name: 'Runs' })).toBeNull();
 });

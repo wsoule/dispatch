@@ -37,6 +37,7 @@ import {
 } from '../components/settings/access';
 import { AgentRosterSection } from '../components/settings/AgentRosterSection';
 import { AgentsSection } from '../components/settings/AgentsSection';
+import { BetaGroup } from '../components/settings/BetaGroup';
 import { BoardSyncGroup } from '../components/settings/BoardSyncGroup';
 import { ChecksSection } from '../components/settings/ChecksSection';
 import {
@@ -84,7 +85,20 @@ interface SettingsViewProps {
   onOpenTask?: (taskId: string) => void;
   /** The page to open on — `navState.settingsPage`, which the rail's Connect Linear and
    *  the strip's gear set to Integrations. A new value while mounted switches the page. */
-  initialPage?: SettingsPage;
+  initialPage?: SettingsPage | HostedSettingsPage['id'];
+  /** Whole views shown as extra pages (Two views folds Sessions and All agents in here). */
+  hostedPages?: readonly HostedSettingsPage[];
+  /** Replaces the header's crumb-only row, e.g. with the panel's close button. */
+  headerActions?: ReactNode;
+}
+
+/** A page that is a whole view: full width, its own state, left out of search. */
+export interface HostedSettingsPage {
+  id: 'usage' | 'runs' | 'developer';
+  label: string;
+  icon: LucideIcon;
+  intro: string;
+  render: () => ReactNode;
 }
 
 type SaveState =
@@ -139,13 +153,18 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         icon: Settings2,
         intro: "The board's columns and where pull-request checkouts go.",
         savesConfig: true,
-        render: withConfig((ctx) => (
-          <GeneralSection
-            config={ctx.config}
-            onSave={ctx.save}
-            canOperate={ctx.canOperate}
-          />
-        )),
+        render: (ctx) => (
+          <>
+            {ctx.config !== null && (
+              <GeneralSection
+                config={ctx.config}
+                onSave={ctx.save}
+                canOperate={ctx.canOperate}
+              />
+            )}
+            <BetaGroup tier={ctx.data.myTier} />
+          </>
+        ),
       },
       {
         id: 'agents',
@@ -394,9 +413,13 @@ export function SettingsView({
   data,
   onOpenTask,
   initialPage,
+  hostedPages = [],
+  headerActions,
 }: SettingsViewProps) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
-  const [page, setPage] = useState<SettingsPage>(initialPage ?? 'general');
+  const [page, setPage] = useState<SettingsPage | HostedSettingsPage['id']>(
+    initialPage ?? 'general'
+  );
   const [query, setQuery] = useState('');
   const resultsRef = useRef<HTMLDivElement>(null);
   const [noMatches, setNoMatches] = useState(false);
@@ -468,6 +491,7 @@ export function SettingsView({
     );
   }
 
+  const hosted = hostedPages.find((entry) => entry.id === page);
   const spec = ALL_PAGES.find((entry) => entry.id === page) ?? ALL_PAGES[0];
   const ctx: PageContext = {
     data,
@@ -501,7 +525,7 @@ export function SettingsView({
   return (
     <SettingsAccessProvider access={access}>
       <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={['Settings']} />
+        <PageHeader crumb={['Settings']} actions={headerActions} />
         <div className="grid min-h-0 flex-1 grid-cols-[208px_minmax(0,1fr)]">
           <nav
             aria-label="Settings"
@@ -534,7 +558,12 @@ export function SettingsView({
                 </button>
               )}
             </div>
-            {SETTINGS_GROUPS.map((group) => (
+            {[
+              ...SETTINGS_GROUPS,
+              ...(hostedPages.length === 0
+                ? []
+                : [{ label: 'Activity', pages: hostedPages }]),
+            ].map((group) => (
               <div key={group.label}>
                 <div className="text-muted-foreground flex h-7 items-center px-2 text-[12px] font-medium">
                   {group.label}
@@ -572,82 +601,91 @@ export function SettingsView({
             ))}
           </nav>
 
-          <div className="min-h-0 overflow-y-auto px-6 py-5">
-            <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 pb-10">
-              {searching ? (
-                <>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <h1 className="text-foreground text-[20px] leading-7 font-semibold tracking-[-0.12px]">
-                      Results for &ldquo;{query.trim()}&rdquo;
-                    </h1>
-                    {saveLine}
-                  </div>
-                  <SettingsSearchProvider query={query}>
-                    <div ref={resultsRef} className="flex flex-col gap-8">
-                      {ALL_PAGES.map((entry) => (
-                        <SearchScopeProvider key={entry.id} text={entry.label}>
-                          <section
-                            aria-label={entry.label}
-                            className="flex flex-col gap-4 [&:not(:has([data-settings-row]))]:hidden"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setQuery('');
-                                setPage(entry.id);
-                              }}
-                              className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 self-start text-[12px] font-medium"
-                            >
-                              <entry.icon aria-hidden className="size-3.5" />
-                              {entry.label}
-                            </button>
-                            {entry.render(ctx)}
-                          </section>
-                        </SearchScopeProvider>
-                      ))}
-                    </div>
-                  </SettingsSearchProvider>
-                  {noMatches && (
-                    <EmptyState
-                      icon={SearchIcon}
-                      heading="No settings match"
-                      description="Try a different word, like “budget”, “model” or “webhook”."
-                    />
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
-                        {spec.label}
-                      </h1>
-                      {spec.savesConfig && saveLine}
-                    </div>
-                    <p className="font-book text-muted-foreground text-[13px]">
-                      {spec.intro}
-                    </p>
-                  </div>
-                  {/* No tier yet means no connection yet, not a refusal. */}
-                  {spec.savesConfig &&
-                    data.myTier !== null &&
-                    !access.canDecide && (
-                      <p
-                        role="note"
-                        className="bg-surface-secondary text-muted-foreground rounded-control font-book flex items-start gap-2 px-3 py-2 text-[12px]"
-                      >
-                        <LockIcon
-                          aria-hidden
-                          className="mt-px size-3.5 shrink-0"
-                        />
-                        {access.decideReason}
-                      </p>
-                    )}
-                  {spec.render(ctx)}
-                </>
-              )}
+          {hosted !== undefined && !searching ? (
+            <div className="flex min-h-0 flex-col overflow-hidden">
+              {hosted.render()}
             </div>
-          </div>
+          ) : (
+            <div className="min-h-0 overflow-y-auto px-6 py-5">
+              <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 pb-10">
+                {searching ? (
+                  <>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h1 className="text-foreground text-[20px] leading-7 font-semibold tracking-[-0.12px]">
+                        Results for &ldquo;{query.trim()}&rdquo;
+                      </h1>
+                      {saveLine}
+                    </div>
+                    <SettingsSearchProvider query={query}>
+                      <div ref={resultsRef} className="flex flex-col gap-8">
+                        {ALL_PAGES.map((entry) => (
+                          <SearchScopeProvider
+                            key={entry.id}
+                            text={entry.label}
+                          >
+                            <section
+                              aria-label={entry.label}
+                              className="flex flex-col gap-4 [&:not(:has([data-settings-row]))]:hidden"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setQuery('');
+                                  setPage(entry.id);
+                                }}
+                                className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 self-start text-[12px] font-medium"
+                              >
+                                <entry.icon aria-hidden className="size-3.5" />
+                                {entry.label}
+                              </button>
+                              {entry.render(ctx)}
+                            </section>
+                          </SearchScopeProvider>
+                        ))}
+                      </div>
+                    </SettingsSearchProvider>
+                    {noMatches && (
+                      <EmptyState
+                        icon={SearchIcon}
+                        heading="No settings match"
+                        description="Try a different word, like “budget”, “model” or “webhook”."
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
+                          {spec.label}
+                        </h1>
+                        {spec.savesConfig && saveLine}
+                      </div>
+                      <p className="font-book text-muted-foreground text-[13px]">
+                        {spec.intro}
+                      </p>
+                    </div>
+                    {/* No tier yet means no connection yet, not a refusal. */}
+                    {spec.savesConfig &&
+                      data.myTier !== null &&
+                      !access.canDecide && (
+                        <p
+                          role="note"
+                          className="bg-surface-secondary text-muted-foreground rounded-control font-book flex items-start gap-2 px-3 py-2 text-[12px]"
+                        >
+                          <LockIcon
+                            aria-hidden
+                            className="mt-px size-3.5 shrink-0"
+                          />
+                          {access.decideReason}
+                        </p>
+                      )}
+                    {spec.render(ctx)}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </SettingsAccessProvider>

@@ -53,6 +53,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     reply: () => Promise.resolve(),
     sending: false,
     sendError: null,
+    revoked: false,
     confirmAction: () => Promise.resolve(),
     decidingActionId: null,
     decideApproval: () => Promise.resolve(),

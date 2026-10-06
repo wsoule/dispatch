@@ -524,3 +524,22 @@ describe('resolveGitKeyCommand', () => {
     expect(resolveGitKeyCommand(key('Tab'), baseGitCtx)).toBeNull();
   });
 });
+
+describe('Two views shortcuts', () => {
+  test('⌘, opens Settings, even while typing', () => {
+    expect(
+      resolveGlobalKeyCommand(key(',', { metaKey: true }), baseGlobalCtx)
+    ).toBe('goto-settings');
+    expect(
+      resolveGlobalKeyCommand(key(',', { metaKey: true }), {
+        ...baseGlobalCtx,
+        isTyping: true,
+      })
+    ).toBe('goto-settings');
+  });
+
+  test('g o goes to Overseer, like g a', () => {
+    const armed = { ...baseGlobalCtx, pendingPrefix: 'g' as const };
+    expect(resolveGlobalKeyCommand(key('o'), armed)).toBe('goto-overseer');
+  });
+});

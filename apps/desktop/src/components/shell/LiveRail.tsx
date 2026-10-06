@@ -4,6 +4,7 @@ import { Bot } from 'lucide-react';
 import { useMemo } from 'react';
 
 import type { OverseerSession } from '../../hooks/useOverseerSession';
+import { overseerTurnLive } from '../../lib/agentPresence';
 import type { TaskTab } from '../../lib/appNav';
 import { spendPillLabel } from '../../lib/epicSession';
 import { deriveFeedState } from '../../lib/feedState';
@@ -61,15 +62,7 @@ export function LiveRail({
     return map;
   }, [epics]);
 
-  // `recordError` only decides the no-record case: fetch never succeeded (stale id 404s,
-  // retry: false) means a broken conversation, not a turn in flight. With a record cached,
-  // react-query keeps it through *background* refetch errors, and a running record plus one
-  // transient failure is still the overseer at work — dropping the row would flicker.
-  const overseerTurnLive =
-    overseer.conversationId !== null &&
-    (overseer.record === undefined
-      ? overseer.recordError === null
-      : overseer.record.state === 'running');
+  const turnLive = overseerTurnLive(overseer);
   // A settled turn with a pending action is idle, not running — but the row must not go
   // quiet while an approval is stranded behind it.
   const firstParked = overseer.record?.pendingApprovals[0];
@@ -77,7 +70,7 @@ export function LiveRail({
     firstParked !== undefined
       ? { summary: firstParked.summary, createdAt: firstParked.requestedAt }
       : overseer.record?.pendingActions[0];
-  const overseerRow = overseerTurnLive || firstPendingAction !== undefined;
+  const overseerRow = turnLive || firstPendingAction !== undefined;
 
   if (live.groups.length === 0 && live.rows.length === 0 && !overseerRow) {
     return (

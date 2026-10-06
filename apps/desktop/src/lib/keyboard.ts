@@ -82,6 +82,7 @@ const G_CHORDS: Record<string, GlobalKeyCommand> = {
   f: 'goto-live',
   c: 'goto-control-room',
   a: 'goto-overseer',
+  o: 'goto-overseer',
 };
 
 /** Whether this keystroke arms a chord prefix rather than resolving to a command on its
@@ -128,6 +129,8 @@ export function resolveGlobalKeyCommand(
   // and every editor already uses for this, so it needs no teaching.
   if (combo && input.key === '[') return 'nav-back';
   if (combo && input.key === ']') return 'nav-forward';
+  // ⌘, is Settings everywhere on macOS; a modifier chord, so it works while typing.
+  if (combo && input.key === ',') return 'goto-settings';
 
   // cmd+1..9 jumps to a rail entry. These work while typing on purpose: they
   // carry a modifier, so they cannot be confused with entering text, and being

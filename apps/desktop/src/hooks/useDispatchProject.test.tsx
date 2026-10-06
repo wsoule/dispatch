@@ -15,7 +15,7 @@ import type {
 import * as dispatchClient from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { expect, mock, test } from 'bun:test';
+import { expect, mock, spyOn, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 const PORT = 4321;
@@ -384,6 +384,32 @@ test('hello asks the daemon who this window is again', async () => {
   expect(
     queryClient.getQueryState(['dispatch-whoami', PORT])?.isInvalidated
   ).toBe(true);
+});
+
+// Events sent while the socket was down are lost, so a reconnect re-reads what
+// they would have changed. The first hello is the initial connect: nothing missed.
+test('a reconnect hello re-reads runs, the queue, landing and decisions', async () => {
+  const queryClient = await mountConnected();
+  const spy = spyOn(queryClient, 'invalidateQueries');
+  const asked = () =>
+    spy.mock.calls.map(([filters]) => JSON.stringify(filters?.queryKey));
+  const lost = [
+    ['dispatch-runs', PORT],
+    ['dispatch-merge-queue', PORT],
+    ['dispatch-landing', PORT],
+    ['dispatch-decisions', PORT],
+  ].map((key) => JSON.stringify(key));
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  expect(lost.filter((key) => asked().includes(key))).toEqual([]);
+
+  spy.mockClear();
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  expect(lost.filter((key) => asked().includes(key))).toEqual(lost);
 });
 
 test('a failed whoami is exposed with a retry that asks again', async () => {
