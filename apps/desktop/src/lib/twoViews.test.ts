@@ -7,6 +7,7 @@ import {
   initialAppNavState,
   initialTwoViewsState,
   projectViewDestination,
+  tasksPageTitle,
   type TwoViewsAction,
   type TwoViewsDestination,
   twoViewsReducer,
@@ -75,15 +76,27 @@ describe('projectViewDestination', () => {
   });
 
   test.each([
-    'threads',
     'branches',
     'files',
     'terminals',
     'design',
-    'impact',
     'brain-dump',
-  ] as const)('%p is Classic-only behind a door', (view) => {
-    expect(projectViewDestination(view)).toEqual({ kind: 'classic', view });
+  ] as const)('%p is a page under Tasks', (view) => {
+    expect(projectViewDestination(view)).toEqual({
+      kind: 'page',
+      page: { kind: 'view', view },
+    });
+  });
+
+  test('impact is an empty Impact page under Tasks', () => {
+    expect(projectViewDestination('impact')).toEqual({
+      kind: 'page',
+      page: { kind: 'impact', subject: null },
+    });
+  });
+
+  test('threads fold into Overseer', () => {
+    expect(projectViewDestination('threads')).toEqual({ kind: 'overseer' });
   });
 
   test('plans fold into Overseer', () => {
@@ -144,10 +157,19 @@ describe('twoViewsReducer', () => {
     expect(state.peek).toEqual({ kind: 'thread', messageId: 'm-1' });
   });
 
-  test('a thread with no focus is the Classic Threads door', () => {
-    const state = run([{ type: 'openThread', messageId: null }]);
+  test('a thread with no focus is Overseer', () => {
+    const state = run([
+      { type: 'tv/showTasks' },
+      { type: 'openThread', messageId: null },
+    ]);
     expect(state.peek).toBeNull();
-    expect(state.tasksPage).toEqual({ kind: 'classic', view: 'threads' });
+    expect(state.mainView).toBe('overseer');
+  });
+
+  test('a hosted view opens as a page under Tasks', () => {
+    const state = run([{ type: 'setProjectView', view: 'branches' }]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksPage).toEqual({ kind: 'view', view: 'branches' });
   });
 
   test('a row click in Tasks opens the task beside the list', () => {
@@ -219,7 +241,7 @@ describe('twoViewsReducer', () => {
     expect(
       run([{ type: 'openImpact', subject: { kind: 'file', id: 'a.ts' } }])
         .tasksPage
-    ).toEqual({ kind: 'classic', view: 'impact' });
+    ).toEqual({ kind: 'impact', subject: { kind: 'file', id: 'a.ts' } });
   });
 
   test('Settings opens over the current view and keeps it', () => {
@@ -431,5 +453,22 @@ describe('opening an address', () => {
     expect(run([{ type: 'tv/openAddress', address: 'run:r-1' }])).toBe(
       initialTwoViewsState
     );
+  });
+});
+
+describe('tasksPageTitle', () => {
+  test.each([
+    [{ kind: 'docs', docId: null, anchor: null, merge: null }, 'Docs'],
+    [{ kind: 'pr', number: 7 }, 'PR #7'],
+    [{ kind: 'draft', draftId: 'dr-1' }, 'Draft'],
+    [{ kind: 'room', room: 'release' }, '# release'],
+    [{ kind: 'view', view: 'branches' }, 'Git'],
+    [{ kind: 'view', view: 'files' }, 'Files'],
+    [{ kind: 'view', view: 'terminals' }, 'Terminals'],
+    [{ kind: 'view', view: 'design' }, 'Design'],
+    [{ kind: 'view', view: 'brain-dump' }, 'Notes'],
+    [{ kind: 'impact', subject: null }, 'Impact'],
+  ] as const)('%o is titled %p', (page, title) => {
+    expect(tasksPageTitle(page)).toBe(title);
   });
 });

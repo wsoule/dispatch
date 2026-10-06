@@ -1,5 +1,6 @@
 import type {
   GlobalView,
+  ImpactSubjectRef,
   NavAction,
   NavState,
   ProjectView,
@@ -18,18 +19,19 @@ export type TasksMode = 'list' | 'graph';
 /** Settings' own pages plus the three global views that fold into it. */
 type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs' | 'developer';
 
-/** Views with no Two views home yet; they render a door to the classic layout. */
-export type ClassicOnlyView = Extract<
+/** Classic project views Two views shows as a page under Tasks, unchanged. */
+export type HostedView = Extract<
   ProjectView,
-  | 'threads'
-  | 'branches'
-  | 'files'
-  | 'terminals'
-  | 'design'
-  | 'impact'
-  | 'plans'
-  | 'brain-dump'
+  'branches' | 'files' | 'terminals' | 'design' | 'brain-dump'
 >;
+
+const HOSTED_TITLE: Record<HostedView, string> = {
+  branches: 'Git',
+  files: 'Files',
+  terminals: 'Terminals',
+  design: 'Design',
+  'brain-dump': 'Notes',
+};
 
 /** What the Tasks view shows beside or instead of its list. */
 export type TasksPage =
@@ -51,7 +53,8 @@ export type TasksPage =
   | { kind: 'draft'; draftId: string }
   /** A named room, reached by name, never listed. */
   | { kind: 'room'; room: string }
-  | { kind: 'classic'; view: ClassicOnlyView };
+  | { kind: 'view'; view: HostedView }
+  | { kind: 'impact'; subject: ImpactSubjectRef | null };
 
 /** A drawer over either view; it never changes the view underneath. */
 type Peek =
@@ -94,7 +97,7 @@ export type TwoViewsDestination =
   | { kind: 'tasks' }
   | { kind: 'docs' }
   | { kind: 'settings'; page: TwoViewsSettingsPage }
-  | { kind: 'classic'; view: ClassicOnlyView }
+  | { kind: 'page'; page: TasksPage }
   | { kind: 'none' };
 
 const LIST: TasksPage = { kind: 'list' };
@@ -126,16 +129,18 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
       return { kind: 'tasks' };
     case 'docs':
       return { kind: 'docs' };
-    case 'threads':
     case 'branches':
     case 'files':
     case 'terminals':
     case 'design':
-    case 'impact':
     case 'brain-dump':
-      return { kind: 'classic', view };
-    // Planning is a conversation with the agent, ending in one create_plan card.
+      return { kind: 'page', page: { kind: 'view', view } };
+    case 'impact':
+      return { kind: 'page', page: { kind: 'impact', subject: null } };
+    // Planning is a conversation with the agent, ending in one create_plan card;
+    // threads are that conversation, so there is no list of them.
     case 'plans':
+    case 'threads':
       return { kind: 'overseer' };
     // These name a record; without its id there is nowhere to go.
     case 'task':
@@ -168,6 +173,30 @@ export function globalViewDestination(
       return { kind: 'settings', page: 'developer' };
     default: {
       const unhandled: never = view;
+      return unhandled;
+    }
+  }
+}
+
+/** The title a page under Tasks shows beside its back button. */
+export function tasksPageTitle(
+  page: Exclude<TasksPage, { kind: 'list' | 'task' }>
+): string {
+  switch (page.kind) {
+    case 'docs':
+      return 'Docs';
+    case 'pr':
+      return `PR #${page.number}`;
+    case 'draft':
+      return 'Draft';
+    case 'room':
+      return `# ${page.room}`;
+    case 'view':
+      return HOSTED_TITLE[page.view];
+    case 'impact':
+      return 'Impact';
+    default: {
+      const unhandled: never = page;
       return unhandled;
     }
   }
@@ -212,8 +241,8 @@ function applyDestination(
       });
     case 'settings':
       return { ...state, settings: destination.page };
-    case 'classic':
-      return toTasks(state, { kind: 'classic', view: destination.view });
+    case 'page':
+      return toTasks(state, destination.page);
     case 'none':
       return state;
   }
@@ -313,7 +342,7 @@ export function twoViewsReducer(
       return withTaskPage(state, { tab: action.tab });
     case 'openThread':
       return action.messageId === null
-        ? toTasks(state, { kind: 'classic', view: 'threads' })
+        ? applyDestination(state, { kind: 'overseer' })
         : { ...state, peek: { kind: 'thread', messageId: action.messageId } };
     case 'openDoc':
       return toTasks(state, {
@@ -327,7 +356,7 @@ export function twoViewsReducer(
     case 'openDraft':
       return toTasks(state, { kind: 'draft', draftId: action.draftId });
     case 'openImpact':
-      return toTasks(state, { kind: 'classic', view: 'impact' });
+      return toTasks(state, { kind: 'impact', subject: action.subject });
     case 'back':
       if (state.peek !== null) return { ...state, peek: null };
       return step(state, -1);
