@@ -6,6 +6,7 @@ import type {
 import type { FloorCheck } from '@dispatch-foo/core';
 
 import { floorCheckForToolInput } from '../floor.js';
+import type { OverseerHold } from './overseerHold.js';
 
 /** One floor-tripping tool call, held while a human decides on it. */
 export interface FloorHoldRequest {
@@ -15,7 +16,8 @@ export interface FloorHoldRequest {
   toolUseId: string;
   toolName: string;
   input: unknown;
-  check: FloorCheck;
+  /** The floor check it trips, or the Overseer's hold on Dispatch's own surfaces. */
+  check: FloorCheck | OverseerHold;
 }
 
 /** A human's answer to a held call; `reason` is shown to the model. */
@@ -91,13 +93,15 @@ const FLOOR_HOLD_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
  */
 export function floorGuard(
   policy: FloorPolicy,
-  refusal: () => string | null = () => null
+  refusal: () => string | null = () => null,
+  // A session's own holds beyond the floor (the Overseer's: overseerHold.ts).
+  extra?: (toolName: string, input: unknown) => OverseerHold | null
 ): Required<Pick<Options, 'hooks' | 'settings'>> {
   return {
     hooks: {
       PreToolUse: [
         {
-          hooks: [floorHook(policy, refusal)],
+          hooks: [floorHook(policy, refusal, extra)],
           timeout: FLOOR_HOLD_TIMEOUT_SECONDS,
         },
       ],
@@ -113,13 +117,17 @@ export function floorGuard(
 // command can reach the shell through any tool whose input carries one.
 function floorHook(
   policy: FloorPolicy,
-  refusal: () => string | null
+  refusal: () => string | null,
+  extra?: (toolName: string, input: unknown) => OverseerHold | null
 ): HookCallback {
   return async (input, toolUseId) => {
     if (input.hook_event_name !== 'PreToolUse') return {};
     const refused = refusal();
     if (refused !== null) return decision('deny', refused);
-    const check = floorCheckForToolInput(input.tool_input);
+    const check =
+      floorCheckForToolInput(input.tool_input) ??
+      extra?.(input.tool_name, input.tool_input) ??
+      null;
     if (check === null) return {};
     if (policy === 'deny') {
       return decision(

@@ -247,7 +247,11 @@ describe('ClaudeOverseer session wiring', () => {
     const { captured } = await runTurn(successStream(), toolset);
 
     const prompt = captured?.systemPrompt as { append?: string } | undefined;
-    expect(prompt?.append).toContain('queues the action for the human');
+    expect(prompt?.append).toContain(
+      'queues the action as an approval card the human answers'
+    );
+    // Dispatch's own side doors always wait on a human.
+    expect(prompt?.append).toContain('always waits on a human');
     expect(prompt?.append).toContain('never report one as done');
     // And that a built-in denial is the human's answer, not an obstacle.
     expect(prompt?.append).toContain('respect rather than work around');

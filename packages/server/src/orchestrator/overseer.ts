@@ -16,6 +16,7 @@ import type {
   OverseerTurn,
   OverseerTurnOptions,
 } from './overseerBackend.js';
+import { grantKey, GrantStore, type GrantView } from './overseerGrants.js';
 import type { OverseerAction, OverseerToolRegistry } from './overseerTools.js';
 import {
   OrchestratorClientError,
@@ -90,10 +91,14 @@ interface OverseerApproval {
   /** One line, safe to render verbatim, saying what the call would do. */
   summary: string;
   requestedAt: string;
+  /** Held by the floor or an Overseer hold: never covered by, or a source of, a session grant. */
+  held?: boolean;
 }
 
 export interface OverseerRecord {
   id: string;
+  /** The human who opened it; only they and the operator read it or speak in it. */
+  owner?: string;
   /** The opening prompt, kept alongside `messages[0]` for callers that only want the ask. */
   prompt: string;
   /** Which registered backend this conversation talks to; follow-ups re-resolve it. */
@@ -152,7 +157,7 @@ export interface OverseerManagerContext {
 // cancelled in the very same turn.
 const QUEUED_NOTE =
   'Queued for human confirmation. NOTHING has happened yet and nothing will ' +
-  'until the human confirms it in the chat UI. Do not say the action was ' +
+  'until the human confirms its approval card. Do not say the action was ' +
   'taken — tell the user what you have queued and that it needs their ' +
   'confirmation.';
 
@@ -247,10 +252,9 @@ export class OverseerManager {
     string,
     (decision: ApprovalDecision) => void
   >();
-  // Tools the human allowed "for the rest of this conversation", per
-  // conversation. Kept off the record on purpose: it is a permission grant,
-  // not transcript, and it must not survive the conversation it was given in.
-  private readonly sessionAllowed = new Map<string, Set<string>>();
+  // What the human allowed "for this conversation": per program for Bash, up to
+  // four hours or the next rollover. Off the record: a grant, not transcript.
+  private readonly grants = new GrantStore();
   // Each conversation's bus posts, chained so its lines land in order.
   private readonly posts = new Map<string, Promise<void>>();
   // Conversations already logged as having a turn no human spoke.
@@ -339,6 +343,7 @@ export class OverseerManager {
     const now = new Date().toISOString();
     const record: OverseerRecord = {
       id: generateOverseerId(now),
+      ...(speaker !== null ? { owner: speaker.address } : {}),
       prompt,
       backendName,
       ...(model !== undefined ? { model } : {}),
@@ -464,6 +469,11 @@ export class OverseerManager {
     }
   }
 
+  /** The conversation, or undefined when there is none by that id. */
+  find(conversationId: string): OverseerRecord | undefined {
+    return this.conversations.get(conversationId);
+  }
+
   get(conversationId: string): OverseerRecord {
     const record = this.conversations.get(conversationId);
     if (record === undefined) {
@@ -552,6 +562,18 @@ export class OverseerManager {
     return this.get(conversationId);
   }
 
+  /** The live grants in a conversation, for Settings to list and revoke. */
+  listGrants(conversationId: string): GrantView[] {
+    this.get(conversationId);
+    return this.grants.list(conversationId, Date.now());
+  }
+
+  /** Ends one grant at once; false when there was none. */
+  revokeGrant(conversationId: string, key: string): boolean {
+    this.get(conversationId);
+    return this.grants.revoke(conversationId, key);
+  }
+
   /**
    * Decides one parked built-in tool call. Allowing it lets the call run at
    * once (the turn was blocked on exactly this); `scope: 'session'` also
@@ -562,7 +584,9 @@ export class OverseerManager {
   decideApproval(
     conversationId: string,
     requestId: string,
-    decision: ApprovalDecision
+    decision: ApprovalDecision,
+    // The tool the answered card showed; a different parked call is refused.
+    expectedTool?: string
   ): OverseerRecord {
     const record = this.get(conversationId);
     const approval = record.pendingApprovals.find(
@@ -576,16 +600,27 @@ export class OverseerManager {
         `no tool call awaiting approval on ${conversationId}: ${requestId}`
       );
     }
+    if (expectedTool !== undefined && approval.toolName !== expectedTool) {
+      throw new OrchestratorNotFoundError(
+        `the card answered was for ${expectedTool}, but ${requestId} is waiting on ${approval.toolName}`
+      );
+    }
     this.approvalResolvers.delete(requestId);
     this.updateRecord(conversationId, {
       pendingApprovals: record.pendingApprovals.filter(
         (a) => a.requestId !== requestId
       ),
     });
-    if (decision.allow && decision.scope === 'session') {
-      const allowed = this.sessionAllowed.get(conversationId) ?? new Set();
-      allowed.add(approval.toolName);
-      this.sessionAllowed.set(conversationId, allowed);
+    // A held call is allowed once, whatever was asked: no grant ever covers one.
+    const granted =
+      decision.allow && decision.scope === 'session' && approval.held !== true;
+    if (granted) {
+      this.grants.grant(
+        conversationId,
+        grantKey(approval.toolName, approval.input),
+        Date.now(),
+        record.sessionId
+      );
     }
     const reason = decision.reason?.trim();
     this.appendMessage(conversationId, {
@@ -594,7 +629,7 @@ export class OverseerManager {
       requestId,
       outcome: decision.allow ? 'allowed' : 'denied',
       text: decision.allow
-        ? `Allowed${decision.scope === 'session' ? ' for this conversation' : ''}: ${approval.summary}`
+        ? `Allowed${granted ? ` ${grantKey(approval.toolName, approval.input)} for this conversation (up to 4 hours)` : ''}: ${approval.summary}`
         : `Denied: ${approval.summary}${reason !== undefined && reason !== '' ? ` — ${reason}` : ''}`,
     });
     this.ctx.bus?.closeGate(
@@ -623,18 +658,28 @@ export class OverseerManager {
     request: OverseerToolRequest
   ): Promise<ApprovalDecision> {
     const { requestId, toolName, input } = request;
-    if (floorCheckForToolInput(input) === null) {
+    const record = this.conversations.get(conversationId);
+    // The floor and the Overseer's holds always ask, whatever the mode or any grant.
+    const held =
+      floorCheckForToolInput(input) !== null || request.check !== undefined;
+    if (!held) {
       if (
         permissionMode === 'acceptEdits' &&
         AUTO_ALLOWED_EDIT_TOOLS.has(toolName)
       ) {
         return Promise.resolve({ allow: true });
       }
-      if (this.sessionAllowed.get(conversationId)?.has(toolName) === true) {
+      if (
+        this.grants.allows(
+          conversationId,
+          grantKey(toolName, input),
+          Date.now(),
+          record?.sessionId
+        )
+      ) {
         return Promise.resolve({ allow: true });
       }
     }
-    const record = this.conversations.get(conversationId);
     if (record === undefined) {
       return Promise.resolve({ allow: false, reason: TURN_ENDED_DENIAL });
     }
@@ -644,6 +689,7 @@ export class OverseerManager {
       input,
       summary: describeToolCall(toolName, input),
       requestedAt: new Date().toISOString(),
+      ...(held ? { held: true } : {}),
     };
     return new Promise<ApprovalDecision>((resolve) => {
       this.approvalResolvers.set(requestId, resolve);
