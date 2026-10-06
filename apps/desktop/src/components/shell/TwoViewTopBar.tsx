@@ -52,6 +52,12 @@ export interface TwoViewTopBarProps {
   settingsTitle?: string;
   onOpenSettings: () => void;
   settingsOpen: boolean;
+  /** The docs and threads pages under Tasks; `page` says which one is open. */
+  onOpenDocs: () => void;
+  onOpenThreads: () => void;
+  /** Unread messages to you, beside "threads"; muted, never amber. */
+  threadsUnread: number;
+  page: 'docs' | 'threads' | null;
   /** The project menu under the orb ("dispatch ▾"). */
   projectMenu: ReactNode;
   trafficLightInset: boolean;
@@ -68,6 +74,10 @@ export function TwoViewTopBar({
   onCount,
   counts,
   settingsCount,
+  onOpenDocs,
+  onOpenThreads,
+  threadsUnread,
+  page,
   settingsTitle,
   onOpenSettings,
   settingsOpen,
@@ -102,11 +112,16 @@ export function TwoViewTopBar({
           <button
             type="button"
             onClick={onShowTasks}
-            aria-current={view === 'tasks' ? 'page' : undefined}
+            aria-current={
+              view === 'tasks' && page === null ? 'page' : undefined
+            }
             data-testid="two-views-tasks"
             className={cn(
               'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
-              view === 'tasks' && 'font-semibold underline underline-offset-4'
+              // Docs and threads are pages under Tasks; then they hold the underline.
+              view === 'tasks' &&
+                page === null &&
+                'font-semibold underline underline-offset-4'
             )}
           >
             tasks
@@ -132,6 +147,36 @@ export function TwoViewTopBar({
             );
           })}
         </div>
+        <button
+          type="button"
+          onClick={onOpenDocs}
+          aria-current={page === 'docs' ? 'page' : undefined}
+          data-testid="two-views-docs"
+          className={cn(
+            'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
+            page === 'docs' && 'font-semibold underline underline-offset-4'
+          )}
+        >
+          docs
+        </button>
+        <button
+          type="button"
+          onClick={onOpenThreads}
+          aria-current={page === 'threads' ? 'page' : undefined}
+          data-testid="two-views-threads"
+          className={cn(
+            'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
+            page === 'threads' && 'font-semibold underline underline-offset-4'
+          )}
+        >
+          threads
+          {threadsUnread > 0 && (
+            <span className="text-muted-foreground font-normal tabular-nums">
+              {' '}
+              ·{threadsUnread}
+            </span>
+          )}
+        </button>
         <button
           type="button"
           onClick={onOpenSettings}

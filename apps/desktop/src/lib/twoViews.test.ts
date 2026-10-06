@@ -94,8 +94,11 @@ describe('projectViewDestination', () => {
     });
   });
 
-  test('threads fold into Overseer', () => {
-    expect(projectViewDestination('threads')).toEqual({ kind: 'overseer' });
+  test('threads is a page under Tasks, reached from the top bar', () => {
+    expect(projectViewDestination('threads')).toEqual({
+      kind: 'page',
+      page: { kind: 'view', view: 'threads' },
+    });
   });
 
   test('plans fold into Overseer', () => {

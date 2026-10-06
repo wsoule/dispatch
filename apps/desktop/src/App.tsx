@@ -1565,6 +1565,23 @@ function App() {
         return <TerminalsView data={data} onBack={closeTwoViewsPage} />;
       case 'design':
         return <DesignView data={data} onBack={closeTwoViewsPage} />;
+      case 'threads':
+        return (
+          <ThreadsView
+            data={data}
+            projectName={activeProject?.name ?? null}
+            focus={threadsFocus}
+            onFocus={setThreadsFocus}
+            onOpenRef={openRef}
+            overseer={{
+              thread: overseer.record?.thread ?? null,
+              busy: overseer.sending || overseer.record?.state === 'running',
+              submit: overseer.reply,
+              open: openOverseer,
+            }}
+            onBack={closeTwoViewsPage}
+          />
+        );
       case 'brain-dump':
         return (
           <BrainDumpView
@@ -1845,6 +1862,8 @@ function App() {
         : { type: 'tv/showTasks', preset: door.preset }
     );
   };
+  // The thread open on Two views' Threads page; Classic keeps its own in nav.
+  const [threadsFocus, setThreadsFocus] = useState<string | null>(null);
   // What a side column of the Overseer opened in its middle.
   const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
     null
@@ -1852,6 +1871,12 @@ function App() {
   const addressName = (address: string) =>
     data.people.find((p) => p.ref === address)?.name ??
     address.replace(/^(human|a2a|run|agent):/, '');
+  // Messages to me not yet read, the quiet count beside "threads".
+  const unreadToMe = (mailbox ?? []).filter(
+    ({ delivery }) =>
+      delivery.recipient === data.me &&
+      ['held', 'notified', 'pushed'].includes(delivery.state)
+  ).length;
   const openPost = (post: Post) => {
     const client = data.client;
     if (client !== null) {
@@ -1918,6 +1943,19 @@ function App() {
           onOpenSettings: () =>
             dispatchNav({ type: 'tv/openSettings', page: admin[0]?.page }),
           settingsOpen: twoViewsState.settings !== null,
+          onOpenDocs: () =>
+            dispatchNav({ type: 'setProjectView', view: 'docs' }),
+          onOpenThreads: () =>
+            dispatchNav({ type: 'setProjectView', view: 'threads' }),
+          threadsUnread: unreadToMe,
+          page:
+            twoViewsState.mainView !== 'tasks'
+              ? null
+              : tasksPage.kind === 'docs'
+                ? 'docs'
+                : tasksPage.kind === 'view' && tasksPage.view === 'threads'
+                  ? 'threads'
+                  : null,
           projectMenu: (
             <div className="flex items-center gap-1">
               {projectSwitcher}
