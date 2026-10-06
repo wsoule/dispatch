@@ -31,6 +31,8 @@ export async function cluster(
     gitNames?: Record<string, string>;
     /** Extra .dispatch/config.yml lines per member. */
     config?: Record<string, string>;
+    /** Members that start with board sync off (team start/join turn it on). */
+    syncOff?: string[];
   } = {}
 ): Promise<Cluster> {
   const env = daemons();
@@ -53,6 +55,7 @@ export async function cluster(
       federationDebounceMs: 0,
       ...(gitName === undefined ? {} : { gitName }),
       ...(config === undefined ? {} : { config }),
+      ...(opts.syncOff?.includes(name) === true ? { syncOff: true } : {}),
     });
     const member = { name, handle, clock };
     members.push(member);
@@ -68,10 +71,14 @@ type Counts = { applied?: number; pending?: number };
 // and leave every outbox empty (spec "Converge").
 export async function quiesce(
   members: Member[],
-  maxRounds = 12
+  maxRounds = 12,
+  /** A wait between rounds that moved something, so a transport in its
+   *  reconnect backoff (the relay's starts at a second) gets its turn. */
+  pauseMs = 0
 ): Promise<void> {
   let quiet = 0;
   for (let round = 0; round < maxRounds && quiet < 2; round++) {
+    if (round > 0 && quiet === 0 && pauseMs > 0) await Bun.sleep(pauseMs);
     let moved = 0;
     for (const m of members) {
       const before = (await m.handle.api('/api/board-sync')).body as Counts;

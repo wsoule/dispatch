@@ -65,6 +65,7 @@ export type FedMetaKey =
   | 'transport'
   | 'transport_url'
   | 'pending_invite'
+  | 'invites_spent'
   | 'audit_exported'
   | 'device'
   | 'agents_republished'

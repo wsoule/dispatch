@@ -194,6 +194,7 @@ import {
 import { rekeyIfKeysLost } from './team/federation/keys.js';
 import type { FederationContext } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
+import { SharingState, turnOnSharing } from './team/federation/sharing.js';
 import type { Team } from './team/index.js';
 import { createTeam } from './team/index.js';
 import { hostSpawner } from './terminalHost.js';
@@ -369,6 +370,10 @@ export interface StartServerOptions {
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   onIdle?: () => void;
+  // Restarts this daemon in its own process with the same port and tokens,
+  // so board sync turned on by `team start` or `team join` is wired at boot
+  // (team/federation/sharing.ts). Absent, those ask the person to restart.
+  onSharingRestart?: (rollback: () => void) => Promise<void>;
   // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
   a2a?: ListenerOverrides;
   // Standalone hosts' watch-stream limits; tests shorten the keepalive.
@@ -2270,34 +2275,85 @@ async function bootServer(
     shared,
   };
 
+  // What a restart would interrupt or lose, in words: a live agent, a queued
+  // merge, a shell, a browser. Idle shutdown and the restart that turns on
+  // board sync both wait for it to be empty.
+  const liveWork = (): string[] => {
+    const out: string[] = [];
+    const count = (n: number, one: string, many: string) => {
+      if (n > 0) out.push(`${n} ${n === 1 ? one : many}`);
+    };
+    count(
+      orchestrator.list().filter((r) => !TERMINAL_RUN_STATES.has(r.state))
+        .length,
+      'live run',
+      'live runs'
+    );
+    count(
+      mergeQueue.snapshot().entries.length,
+      'queued merge',
+      'queued merges'
+    );
+    if (epicEngine.hasActiveSession()) out.push('an epic session');
+    count(
+      fixLoop
+        .list()
+        .filter((l) => l.state === 'implementing' || l.state === 'reviewing')
+        .length,
+      'fix loop',
+      'fix loops'
+    );
+    count(
+      planManager.list().filter((p) => p.state === 'running').length +
+        planManager.listDrafts().filter((d) => d.state === 'running').length,
+      'running plan',
+      'running plans'
+    );
+    count(
+      overseerManager.list().filter((o) => o.state === 'running').length,
+      'overseer',
+      'overseers'
+    );
+    count(
+      terminals.list().filter((t) => t.state === 'running').length,
+      'terminal',
+      'terminals'
+    );
+    count(browsers.list().length, 'browser', 'browsers');
+    return out;
+  };
+  // This server's own restart mark (never shared with another server).
+  const sharing = new SharingState();
+  apiCtx.sharing = sharing;
+  apiCtx.turnOnSharing = (precheck) =>
+    turnOnSharing(
+      {
+        rootDir,
+        state: sharing,
+        now: federationNow,
+        backend,
+        liveWork,
+        ...(opts.onSharingRestart === undefined
+          ? {}
+          : { restart: opts.onSharingRestart }),
+        resolveRemote: (target) =>
+          resolvePushTarget(rootDir, target, defaultAsyncGitRunner),
+        hold: (why) => orchestrator.hold(why),
+        release: () => orchestrator.release(),
+      },
+      precheck
+    );
+
   const idle =
     opts.idleTimeoutMs !== undefined && opts.onIdle !== undefined
       ? new IdleShutdown({
           timeoutMs: opts.idleTimeoutMs,
           checkIntervalMs: opts.idleCheckIntervalMs,
           onIdle: opts.onIdle,
-          // Everything that keeps working with no request in flight. Each is
-          // something a restart would interrupt or lose (a live agent, a
-          // queued merge, a shell), or a viewer that expects live events.
+          // Everything that keeps working with no request in flight, plus a
+          // viewer that expects live events and an agent exposed to answer.
           isBusy: () =>
-            events.hasClients() ||
-            orchestrator
-              .list()
-              .some((r) => !TERMINAL_RUN_STATES.has(r.state)) ||
-            mergeQueue.snapshot().entries.length > 0 ||
-            epicEngine.hasActiveSession() ||
-            fixLoop
-              .list()
-              .some(
-                (l) => l.state === 'implementing' || l.state === 'reviewing'
-              ) ||
-            planManager.list().some((p) => p.state === 'running') ||
-            planManager.listDrafts().some((d) => d.state === 'running') ||
-            overseerManager.list().some((o) => o.state === 'running') ||
-            terminals.list().some((t) => t.state === 'running') ||
-            browsers.list().length > 0 ||
-            // An exposed agent must stay up to answer.
-            a2a.listening(),
+            events.hasClients() || liveWork().length > 0 || a2a.listening(),
         })
       : null;
 
@@ -2546,6 +2602,7 @@ async function bootServer(
     prWorktrees,
     memory,
     async stop() {
+      sharing.clear();
       watchdog.stop();
       idle?.stop();
       clearInterval(previewSweep);
