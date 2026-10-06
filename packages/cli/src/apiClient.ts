@@ -932,6 +932,10 @@ export interface TeamStatus {
 interface StartTeamInput {
   name?: string;
   git?: boolean;
+  /** Where the team's board is kept: one of this project's remotes, or a
+   *  repository of its own. */
+  remote?: string;
+  repo?: string;
   relayUrl?: string;
   confirmed?: boolean;
   registrationToken?: string;
@@ -1041,7 +1045,7 @@ export interface TeamKeys {
  *  `reason` (BoardSyncOffReason in packages/server/src/api.ts) is absent on
  *  daemons older than it. */
 export type SyncStatus =
-  | { enabled: false; reason?: 'files' | 'off' | 'not-started' }
+  | { enabled: false; reason?: 'files' | 'off' | 'not-started' | 'no-place' }
   | {
       enabled: true;
       replica: string;
@@ -1063,6 +1067,8 @@ export type SyncStatus =
       federationProblems?: { subject: string; message: string; at: string }[];
       /** On POST /now: the pass outran the daemon's wait and carries on. */
       running?: boolean;
+      /** config.yml names other sync settings than the running ones. */
+      restartRequired?: string;
     };
 
 /** Mirrors licenseView in packages/server/src/team/routes.ts. */
@@ -1658,31 +1664,33 @@ export function createA2AApiClient(
 const SHARING_RESTART_WAIT_MS = 90_000;
 
 /**
- * Team start and join on a daemon with board sync off: it turns sync on,
- * answers `restarting`, and comes back on the same port with the same
- * tokens. This waits for sync to be on, then sends the same request once
- * more, so it stays one action for the person.
+ * Team start and join on a daemon with board sync off, or syncing somewhere
+ * other than the team: it turns sync on (or moves it), answers `restarting`,
+ * and comes back on the same port with the same tokens. This waits for sync
+ * to be on and sends the same request again, for as long as the daemon still
+ * answers `restarting`, so it stays one action for the person.
  */
 async function afterSharingRestart<T>(
   target: ApiTarget,
   send: () => Promise<T>
 ): Promise<T> {
-  const first = await send();
-  if ((first as { code?: unknown }).code !== 'restarting') return first;
+  let answer = await send();
   const until = Date.now() + SHARING_RESTART_WAIT_MS;
-  while (Date.now() < until) {
+  while ((answer as { code?: unknown }).code === 'restarting') {
+    if (Date.now() >= until)
+      throw new CliError(
+        'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
+      );
     await new Promise((resolve) => setTimeout(resolve, 250));
     try {
       const sync = await request<{ enabled?: boolean }>(
         target,
         '/api/board-sync'
       );
-      if (sync.enabled === true) return await send();
+      if (sync.enabled === true) answer = await send();
     } catch {
       // Down while it restarts; ask again.
     }
   }
-  throw new CliError(
-    'Turned on team sync, but Dispatch did not come back within 90s. Check it is running, then try again.'
-  );
+  return answer;
 }

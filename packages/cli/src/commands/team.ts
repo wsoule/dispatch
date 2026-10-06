@@ -152,6 +152,14 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
     .option('--name <team>', 'the team name (default: the project folder)')
     .option('--git', 'sync over a git branch instead of the relay')
     .option(
+      '--remote <name>',
+      "keep the team's board on a branch of one of this project's remotes (like origin)"
+    )
+    .option(
+      '--repo <url>',
+      "keep the team's board in a repository of its own (a git URL or path)"
+    )
+    .option(
       '--relay <url>',
       'another relay (default: DISPATCH_RELAY_URL, or wss://relay.dispatch.foo)'
     )
@@ -169,6 +177,8 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
       async (opts: {
         name?: string;
         git?: boolean;
+        remote?: string;
+        repo?: string;
         relay?: string;
         registrationToken?: string | true;
         yes?: boolean;
@@ -179,6 +189,8 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
         const git = opts.git === true;
         if (git && opts.relay !== undefined)
           throw new CliError('Pick one: --git or --relay <url>.');
+        if (opts.remote !== undefined && opts.repo !== undefined)
+          throw new CliError('Pick one: --remote <name> or --repo <url>.');
         let confirmed = false;
         if (!git) {
           const where = hostOf(opts.relay ?? 'wss://relay.dispatch.foo');
@@ -208,6 +220,8 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
               : given;
         const started = await api.startTeam({
           ...(opts.name === undefined ? {} : { name: opts.name }),
+          ...(opts.remote === undefined ? {} : { remote: opts.remote }),
+          ...(opts.repo === undefined ? {} : { repo: opts.repo }),
           ...(git ? { git: true } : { confirmed }),
           ...(opts.relay === undefined ? {} : { relayUrl: opts.relay }),
           ...(registrationToken === undefined ? {} : { registrationToken }),

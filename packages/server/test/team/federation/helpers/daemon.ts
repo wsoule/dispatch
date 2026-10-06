@@ -36,6 +36,8 @@ export interface TeammateOpts {
   /** Start with board sync off, the bare remote as the project's origin,
    *  as a fresh clone is before anyone turns sync on. */
   syncOff?: boolean;
+  /** Sync on, but at this repository instead of the shared remote. */
+  syncRepo?: string;
 }
 
 // The runs a daemon started, and what each run was sent or notified: an
@@ -212,7 +214,7 @@ export function daemons(): {
     } else
       writeFileSync(
         join(root, '.dispatch', 'config.yml'),
-        `sync:\n  enabled: true\n  repo: ${remote}\n  intervalSec: 3600\n${opts.config ?? ''}`
+        `sync:\n  enabled: true\n  repo: ${opts.syncRepo ?? remote}\n  intervalSec: 3600\n${opts.config ?? ''}`
       );
     runGitSync(root, ['add', '-A']);
     runGitSync(root, ['commit', '-q', '-m', 'init']);

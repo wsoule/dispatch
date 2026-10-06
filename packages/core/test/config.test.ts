@@ -17,6 +17,7 @@ import {
   DEFAULT_SYNC,
   loadConfig,
   queueWeights,
+  syncPlace,
 } from '../src/config.js';
 import {
   DEFAULT_A2A,
@@ -653,13 +654,20 @@ describe('sync config', () => {
     return loadConfig(dir);
   }
 
-  it('is off by default and travels on its own branch of origin', () => {
+  it('is off by default and names no place until one is chosen', () => {
     expect(load('statuses: [ready]\n').sync).toEqual(DEFAULT_SYNC);
     expect(DEFAULT_SYNC).toEqual({
       enabled: false,
-      remote: 'origin',
       branch: 'dispatch-sync',
       intervalSec: 30,
+    });
+    // Turned on with nowhere named: no remote is implied.
+    const bare = load('sync:\n  enabled: true\n').sync;
+    expect(bare?.remote).toBeUndefined();
+    expect(bare === undefined ? 'unset' : syncPlace(bare)).toBeNull();
+    const origin = load('sync:\n  enabled: true\n  remote: origin\n').sync;
+    expect(origin === undefined ? null : syncPlace(origin)).toEqual({
+      remote: 'origin',
     });
   });
 
@@ -686,7 +694,6 @@ describe('sync config', () => {
         .sync
     ).toEqual({
       enabled: true,
-      remote: 'origin',
       repo: 'git@example.com:team/board.git',
       branch: 'dispatch-sync',
       intervalSec: 30,

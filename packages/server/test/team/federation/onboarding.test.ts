@@ -84,11 +84,21 @@ describe('team setup in two actions', () => {
       const actions: string[] = [];
       const began = performance.now();
 
-      // Founder, action 1: start the team (Settings: "Start a team").
+      // Nowhere chosen: starting refuses rather than push to origin.
+      const unplaced = await post(ada, '/api/team/start', {
+        name: 'acme',
+        relayUrl: relay.url,
+        confirmed: true,
+      });
+      expect([unplaced.status, unplaced.body?.code]).toEqual([409, 'no_place']);
+      expect((await statusOf(ada)).state).toBe('off');
+
+      // Founder, action 1: start the team on this project's origin.
       const started = await act(ada, '/api/team/start', {
         name: 'acme',
         relayUrl: relay.url,
         confirmed: true,
+        remote: 'origin',
       });
       actions.push('ada: start');
       expect(started.restarted).toBe(true);
@@ -257,7 +267,10 @@ describe('team setup in two actions', () => {
       const [ada] = c.members as [Member];
       const task = await ada.handle.create('long job');
       await ada.handle.startRun(task);
-      const refused = await post(ada, '/api/team/start', { git: true });
+      const refused = await post(ada, '/api/team/start', {
+        git: true,
+        remote: 'origin',
+      });
       expect(refused.status).toBe(409);
       expect(refused.body?.code).toBe('busy');
       expect(String(refused.body?.error)).toContain('1 live run');
@@ -279,15 +292,18 @@ describe('team setup in two actions', () => {
       stops.push(c.stop);
       const [ada] = c.members as [Member];
       const [a, b] = await Promise.all([
-        post(ada, '/api/team/start', { git: true }),
-        post(ada, '/api/team/start', { git: true }),
+        post(ada, '/api/team/start', { git: true, remote: 'origin' }),
+        post(ada, '/api/team/start', { git: true, remote: 'origin' }),
       ]);
       expect([a.status, b.status]).toEqual([202, 202]);
       const meanwhile = await post(ada, '/api/tasks', { title: 'too soon' });
       expect(meanwhile.status).toBe(503);
       expect(String(meanwhile.body?.error)).toContain('restarting');
       // Back with sync on, the start goes through once.
-      const started = await act(ada, '/api/team/start', { git: true });
+      const started = await act(ada, '/api/team/start', {
+        git: true,
+        remote: 'origin',
+      });
       expect(started.status).toBe(200);
       expect((await statusOf(ada)).state).toBe('member');
       expect(

@@ -176,6 +176,13 @@ describe('team setup from the CLI', () => {
     expect(posted).toEqual([{ path: '/api/team/start', body: { git: true } }]);
   });
 
+  it('start --remote names where the board is kept', async () => {
+    await run('team', 'start', '--git', '--remote', 'origin');
+    expect(posted).toEqual([
+      { path: '/api/team/start', body: { remote: 'origin', git: true } },
+    ]);
+  });
+
   it('invite prints one link, for an email or a handle', async () => {
     await run('team', 'invite', 'bob@example.com');
     expect(posted).toEqual([

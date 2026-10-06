@@ -16,7 +16,10 @@ export interface Cluster {
   members: Member[];
   remote: string;
   /** Another daemon on the same remote, starting on the cluster's time. */
-  add(name: string, opts?: { gitName?: string }): Promise<Member>;
+  add(
+    name: string,
+    opts?: { gitName?: string; syncRepo?: string }
+  ): Promise<Member>;
   stop(): Promise<void>;
 }
 
@@ -40,7 +43,7 @@ export async function cluster(
   const members: Member[] = [];
   const add = async (
     name: string,
-    more: { gitName?: string } = {}
+    more: { gitName?: string; syncRepo?: string } = {}
   ): Promise<Member> => {
     // A late joiner starts on the cluster's current time, not the base.
     const now =
@@ -55,6 +58,7 @@ export async function cluster(
       federationDebounceMs: 0,
       ...(gitName === undefined ? {} : { gitName }),
       ...(config === undefined ? {} : { config }),
+      ...(more.syncRepo === undefined ? {} : { syncRepo: more.syncRepo }),
       ...(opts.syncOff?.includes(name) === true ? { syncOff: true } : {}),
     });
     const member = { name, handle, clock };

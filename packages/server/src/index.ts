@@ -14,6 +14,7 @@ import {
   MAX_HANDLE_BYTES,
   openProjectStores,
   SqliteTaskStore,
+  syncPlace,
   syncSettings,
   TaskStore,
   totalImported,
@@ -1240,18 +1241,20 @@ async function bootServer(
   // time), then exchange changes with the other replicas on the remote. A
   // remote that cannot be resolved costs the daemon its sync, not its boot.
   if (syncConfig !== null && syncLedger !== null && syncedStore !== null) {
-    // A repository of its own when the config names one, else a branch on
-    // one of the project's own remotes.
-    const remoteUrl = await resolvePushTarget(
-      rootDir,
-      syncConfig.repo === undefined
-        ? { remote: syncConfig.remote }
-        : { repo: syncConfig.repo },
-      defaultAsyncGitRunner
-    );
-    if (remoteUrl === null) {
+    // A repository of its own, or a branch on one of the project's remotes,
+    // only as the config names it: no remote is ever implied.
+    const place = syncPlace(syncConfig);
+    const remoteUrl =
+      place === null
+        ? null
+        : await resolvePushTarget(rootDir, place, defaultAsyncGitRunner);
+    if (place === null) {
       console.error(
-        `dispatchd: board sync is on but "${syncConfig.remote}" is not a remote of ${rootDir}; add it, or point sync.repo at a repository of its own. Sync is off until then.`
+        'dispatchd: board sync is on but no place is set (sync.remote or sync.repo); choose one in Settings → Board sync. Nothing is pushed until then.'
+      );
+    } else if (remoteUrl === null) {
+      console.error(
+        `dispatchd: board sync is on but ${'repo' in place ? place.repo : `"${place.remote}"`} could not be resolved for ${rootDir}; add the remote, or point sync.repo at a repository of its own. Sync is off until then.`
       );
     } else {
       // Only here are the federation's store and roster built; the team
@@ -2267,6 +2270,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
+    bootSync: syncConfig,
     federation: federationContext,
     team,
     presence: presenceTracker,

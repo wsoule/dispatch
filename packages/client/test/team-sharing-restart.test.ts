@@ -46,4 +46,32 @@ describe('team actions across the restart that turns sync on', () => {
       globalThis.fetch = original;
     }
   });
+
+  it("keeps waiting while a move to the team's repo is still restarting", async () => {
+    const original = globalThis.fetch;
+    let joins = 0;
+    globalThis.fetch = ((url: string | URL) => {
+      const path = new URL(String(url)).pathname;
+      const json = (body: unknown, status = 200) =>
+        Promise.resolve(Response.json(body, { status }));
+      if (path === '/api/team/join') {
+        joins += 1;
+        // Sync is already on, so the probe passes before the restart lands.
+        return joins < 3
+          ? json({ restarting: true, code: 'restarting' }, 202)
+          : json({ team: { id: 't', name: 'acme' } });
+      }
+      if (path === '/api/board-sync') return json({ enabled: true });
+      return json({}, 404);
+    }) as typeof fetch;
+    try {
+      const joined = await createApiClient(
+        'http://example.test',
+        'app-token'
+      ).joinTeam('dispatch-team:LINK');
+      expect([joined.team.name, joins]).toEqual(['acme', 3]);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 });

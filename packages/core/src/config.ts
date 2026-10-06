@@ -1011,7 +1011,7 @@ function parseSyncConfig(raw: unknown): SyncConfig {
   const { remote, repo } = pushTarget(obj, 'sync');
   return {
     enabled: obj.enabled ?? DEFAULT_SYNC.enabled,
-    remote: remote ?? DEFAULT_SYNC.remote,
+    ...(remote === undefined ? {} : { remote }),
     ...(repo === undefined ? {} : { repo }),
     branch: optionalName(obj.branch, 'sync.branch') ?? DEFAULT_SYNC.branch,
     intervalSec: interval ?? DEFAULT_SYNC.intervalSec,
@@ -1021,6 +1021,16 @@ function parseSyncConfig(raw: unknown): SyncConfig {
 /** A config's sync settings, defaulted for a hand-built config without them. */
 export function syncSettings(config: DispatchConfig): SyncConfig {
   return config.sync ?? { ...DEFAULT_SYNC };
+}
+
+/** Where board sync was told to push, or null when nobody chose a place:
+ *  sync never falls back to a remote the config does not name. */
+export function syncPlace(
+  sync: SyncConfig
+): { remote: string } | { repo: string } | null {
+  if (sync.repo !== undefined) return { repo: sync.repo };
+  if (sync.remote !== undefined) return { remote: sync.remote };
+  return null;
 }
 
 // Validates the optional `policy:` block, same contract as the blocks above —

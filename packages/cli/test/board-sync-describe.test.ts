@@ -39,6 +39,14 @@ describe('describeSync', () => {
     expect(lines).not.toContain('Turn it on');
   });
 
+  test('on with no place says nothing is pushed and where to choose one', () => {
+    const lines = describeSync({ enabled: false, reason: 'no-place' }).join(
+      '\n'
+    );
+    expect(lines).toContain('nothing is pushed');
+    expect(lines).toContain('Settings → Board sync');
+  });
+
   test('on says where, when, what is waiting, and what went wrong', () => {
     const lines = describeSync({
       enabled: true,

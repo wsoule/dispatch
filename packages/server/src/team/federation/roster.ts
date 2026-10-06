@@ -112,6 +112,7 @@ export interface LinkFacts {
   fp: string;
   via: TeamVia;
   remote: string | null;
+  branch?: string;
 }
 
 // The daemon's side of the signed roster: it publishes this machine's roster
@@ -1502,6 +1503,7 @@ function linkOf(
     expires: issued.expires,
     via: facts.via,
     remote: facts.remote,
+    ...(facts.branch === undefined ? {} : { branch: facts.branch }),
   });
 }
 

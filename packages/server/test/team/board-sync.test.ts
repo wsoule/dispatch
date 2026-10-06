@@ -205,11 +205,10 @@ describe('board sync', () => {
   );
 
   it(
-    'by default the board rides a branch of the project’s own origin, and nothing else there moves',
+    'turned on with no place named, it pushes nowhere, not even to origin',
     async () => {
-      // The zero-config setup: `sync: { enabled: true }` and the origin every
-      // checkout of the project already has — here added as a relative path,
-      // which git would read against the wrong directory if left as it is.
+      // `sync: { enabled: true }` alone, as `team start` and `team join`
+      // once left it: the project's origin is not a place anyone chose.
       const withOrigin = (root: string) =>
         runGitSync(root, [
           'remote',
@@ -218,7 +217,40 @@ describe('board sync', () => {
           join('..', basename(remote)),
         ]);
       const ada = await teammate('ada', '', 3600, withOrigin);
-      const grace = await teammate('grace', '', 3600, withOrigin);
+      expect((await ada.api('/api/board-sync')).body).toEqual({
+        enabled: false,
+        reason: 'no-place',
+      });
+      const now = await ada.sync();
+      expect(now.status).toBe(409);
+      expect((now.body as { error: string }).error).toContain(
+        'no place is set'
+      );
+      const status = (await ada.api('/api/team/status')).body as {
+        problems: { message: string }[];
+      };
+      expect(status.problems.map((p) => p.message).join(' ')).toContain(
+        'no place is set'
+      );
+      expect(
+        runGitSync(remote, ['for-each-ref', '--format=%(refname)']).trim()
+      ).toBe('');
+    },
+    SLOW
+  );
+
+  it(
+    'named as this project’s origin, the board rides a branch of it, and nothing else there moves',
+    async () => {
+      const withOrigin = (root: string) =>
+        runGitSync(root, [
+          'remote',
+          'add',
+          'origin',
+          join('..', basename(remote)),
+        ]);
+      const ada = await teammate('ada', 'remote: origin', 3600, withOrigin);
+      const grace = await teammate('grace', 'remote: origin', 3600, withOrigin);
 
       const id = await ada.create('Next to the code');
       expect((await ada.sync()).body?.lastError).toBeNull();
@@ -228,6 +260,30 @@ describe('board sync', () => {
       // Only the sync branch was pushed; the project's own branches are theirs.
       const heads = runGitSync(remote, ['for-each-ref', '--format=%(refname)']);
       expect(heads.trim().split('\n')).toEqual(['refs/heads/dispatch-sync']);
+    },
+    SLOW
+  );
+
+  it(
+    'says a restart is needed once config.yml points sync somewhere new',
+    async () => {
+      const ada = await teammate('ada');
+      expect((await ada.api('/api/board-sync')).body?.restartRequired).toBe(
+        undefined
+      );
+      writeFileSync(
+        join(ada.root, '.dispatch', 'config.yml'),
+        'sync:\n  enabled: true\n  repo: ../elsewhere.git\n  intervalSec: 3600\n'
+      );
+      expect(
+        String((await ada.api('/api/board-sync')).body?.restartRequired)
+      ).toContain('restarts');
+      const status = (await ada.api('/api/team/status')).body as {
+        problems: { message: string }[];
+      };
+      expect(status.problems.map((p) => p.message).join(' ')).toContain(
+        'changed since Dispatch started'
+      );
     },
     SLOW
   );
