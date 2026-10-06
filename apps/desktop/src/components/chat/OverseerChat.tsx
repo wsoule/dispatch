@@ -25,6 +25,7 @@ import {
   buildOverseerThread,
   doorLabel,
   findInThread,
+  groupConfirmRows,
   groupToolRows,
   type OverseerDoor,
   type OverseerStreamItem,
@@ -32,6 +33,7 @@ import {
 import { slashSuggestions } from '../../lib/slashCommands';
 import { Markdown } from '../runs/Markdown';
 import { cn } from '@/lib/utils';
+import { IconButton } from '@/ui/ai/icon-button';
 import { PillButton } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
@@ -58,12 +60,30 @@ function OverseerMessageBubble({
   role,
   text,
   at,
+  plain = false,
 }: {
   role: 'user' | 'assistant';
   text: string;
   at: string;
+  /** Two views: a pill for you, bare text for the agent, the time on hover. */
+  plain?: boolean;
 }) {
   const fromUser = role === 'user';
+  if (plain) {
+    const when = new Date(at).toLocaleString();
+    return fromUser ? (
+      <p
+        title={when}
+        className="bg-surface-secondary shadow-hairline rounded-card font-book max-w-[85%] self-end px-3 py-1.5 text-[13px] whitespace-pre-wrap"
+      >
+        {text}
+      </p>
+    ) : (
+      <div title={when} className="max-w-full self-stretch px-1">
+        <Markdown content={text} className="text-[13px]" />
+      </div>
+    );
+  }
   return (
     <div
       className={cn(
@@ -143,6 +163,78 @@ function OverseerConfirmCard({
         >
           <X className="size-3.5" />
           Deny
+        </PillButton>
+      </div>
+    </div>
+  );
+}
+
+/** Several actions queued in one turn: one card, a row each, and both answers for all. */
+function OverseerConfirmBatch({
+  actions,
+  decidingId,
+  locked,
+  onDecide,
+  onDecideAll,
+}: {
+  actions: { action: OverseerAction; failure: string | null }[];
+  decidingId: string | null;
+  locked: boolean;
+  onDecide: (actionId: string, approve: boolean) => void;
+  onDecideAll: (approve: boolean) => void;
+}) {
+  const tools = new Set(actions.map((a) => a.action.tool));
+  const label =
+    tools.size === 1
+      ? `${actions[0].action.tool} ×${actions.length}`
+      : `${actions.length} actions`;
+  return (
+    <div
+      data-testid="overseer-confirm-batch"
+      className="bg-state-waiting-surface rounded-card flex flex-col self-stretch border-[0.5px] border-(--state-waiting-edge)"
+    >
+      <div className="text-state-waiting flex items-center gap-1.5 px-3 pt-2.5 pb-1.5 text-[12px] font-medium">
+        <Shield className="size-3.5" />
+        Needs your approval
+        <span className="text-muted-foreground font-book">{label}</span>
+      </div>
+      {actions.map(({ action, failure }) => (
+        <div
+          key={action.id}
+          className="flex flex-col gap-1 border-t-[0.5px] border-(--state-waiting-edge) px-3 py-1.5"
+        >
+          <div className="flex items-center gap-2">
+            <p className="font-book min-w-0 flex-1 text-[13px]">
+              {action.summary}
+            </p>
+            <IconButton
+              label={`Approve: ${action.summary}`}
+              disabled={locked}
+              onClick={() => onDecide(action.id, true)}
+            >
+              {decidingId === action.id ? <Spinner /> : <Check />}
+            </IconButton>
+            <IconButton
+              label={`Deny: ${action.summary}`}
+              disabled={locked}
+              onClick={() => onDecide(action.id, false)}
+            >
+              <X />
+            </IconButton>
+          </div>
+          {failure !== null && <ErrorLine>{failure}</ErrorLine>}
+        </div>
+      ))}
+      <div className="flex items-center gap-2 border-t-[0.5px] border-(--state-waiting-edge) px-3 py-2">
+        <Button disabled={locked} onClick={() => onDecideAll(true)}>
+          <Check className="size-3.5" />
+          {actions.length === 2
+            ? 'Approve both'
+            : `Approve all ${actions.length}`}
+        </Button>
+        <PillButton disabled={locked} onClick={() => onDecideAll(false)}>
+          <X className="size-3.5" />
+          Deny all
         </PillButton>
       </div>
     </div>
@@ -473,6 +565,7 @@ export function OverseerChat({
             role={item.role}
             text={item.text}
             at={item.at}
+            plain={durable}
           />
         );
       case 'tool':
@@ -489,6 +582,24 @@ export function OverseerChat({
         );
       case 'tools':
         return <ToolRun key={item.key} calls={item.calls} />;
+      case 'confirms':
+        return (
+          <OverseerConfirmBatch
+            key={item.key}
+            actions={item.actions}
+            decidingId={decidingId}
+            locked={decidingId !== null}
+            onDecide={decide}
+            onDecideAll={(approve) => {
+              // One at a time: the session decides one action per call.
+              void (async () => {
+                for (const { action } of item.actions) {
+                  await overseer.confirmAction(action.id, approve);
+                }
+              })();
+            }}
+          />
+        );
       case 'confirm':
         return (
           <OverseerConfirmCard
@@ -668,7 +779,10 @@ export function OverseerChat({
         aria-label="Overseer conversation"
         className="flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto [overflow-wrap:anywhere]"
       >
-        {groupToolRows(thread).map(renderRow)}
+        {(durable
+          ? groupConfirmRows(groupToolRows(thread))
+          : groupToolRows(thread)
+        ).map(renderRow)}
       </div>
 
       {aboveComposer}
@@ -682,17 +796,18 @@ export function OverseerChat({
               ? durable
                 ? 'Working · what you send now goes when it finishes'
                 : 'The overseer is answering…'
-              : compact
-                ? 'Actions wait for your approval.'
-                : 'Ask a follow-up. Actions always wait for your approval.'}
+              : durable
+                ? null
+                : compact
+                  ? 'Actions wait for your approval.'
+                  : 'Ask a follow-up. Actions always wait for your approval.'}
             {/* The picker below names the model; the classic rail has none. */}
             {!durable && overseer.record?.model !== undefined && (
               <> · {modelLabel(overseer.record.model)}</>
             )}
             {durable && spend > 0 && (
               <span data-testid="overseer-spend">
-                {' '}
-                · ${spend.toFixed(2)} so far
+                {busy ? ' · ' : ''}${spend.toFixed(2)} so far
               </span>
             )}
           </span>

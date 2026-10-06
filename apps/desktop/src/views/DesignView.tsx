@@ -3,6 +3,7 @@ import { Copy, Crosshair, Globe, Plus, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import {
   designHandoffText,
@@ -30,9 +31,11 @@ const PICK_POLL_MS = 300;
 
 interface DesignViewProps {
   data: DispatchProjectData;
+  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  onBack?: () => void;
 }
 
-export function DesignView({ data }: DesignViewProps) {
+export function DesignView({ data, onBack }: DesignViewProps) {
   const { client } = data;
   const [browsers, setBrowsers] = useState<BrowserInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -158,6 +161,7 @@ export function DesignView({ data }: DesignViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
+        {onBack && <TasksBackButton onBack={onBack} />}
         <Globe className="size-4" />
         <h1 className="text-sm font-medium">Design</h1>
         <Input

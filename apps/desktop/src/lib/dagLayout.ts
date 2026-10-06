@@ -368,6 +368,47 @@ export function dagWaves(tasks: DagTask[]): Map<string, number> {
 }
 
 /**
+ * A node width that spreads the layout's columns across `available` pixels, clamped to
+ * [min, max], so a few nodes fill the space and many stay readable and scroll instead.
+ */
+export function fitNodeWidth(
+  tasks: DagTask[],
+  opts: {
+    available: number;
+    direction: DagDirection;
+    wrap: number | null;
+    min: number;
+    max: number;
+  }
+): number {
+  if (tasks.length === 0 || !(opts.available > 0)) return opts.min;
+  const { byId, blockersOf, dependentsOf } = dependencyMaps(tasks);
+  const hasEdges = [...blockersOf.values()].some((b) => b.length > 0);
+  let columns: number;
+  let gap = GAP_X;
+  if (!hasEdges) {
+    columns = Math.min(GRID_COLUMNS, tasks.length);
+  } else {
+    const layers = computeLayers(tasks, byId, blockersOf, dependentsOf);
+    if (opts.direction === 'LR') {
+      const depth = Math.max(...layers.values()) + 1;
+      columns = opts.wrap === null ? depth : Math.min(depth, opts.wrap);
+      gap = GAP_LR_X;
+    } else {
+      const perLayer = new Map<number, number>();
+      for (const l of layers.values()) {
+        perLayer.set(l, (perLayer.get(l) ?? 0) + 1);
+      }
+      columns = Math.max(...perLayer.values());
+    }
+  }
+  const fit = Math.floor(
+    (opts.available - PADDING * 2 - (columns - 1) * gap) / columns
+  );
+  return Math.max(opts.min, Math.min(opts.max, fit));
+}
+
+/**
  * Hand-rolled layered ("Sugiyama-style") layout for an epic's dependency graph — no charting
  * library, since an epic's task count tops out in the dozens (see `DAG_NODE_WIDTH`'s comment).
  * `tasks` is expected to be one epic's children; `blockedBy` edges pointing outside that set

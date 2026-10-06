@@ -351,7 +351,37 @@ export type OverseerStreamItem =
       kind: 'tools';
       key: string;
       calls: { tool: string; text: string; failed: boolean }[];
+    }
+  /** Two or more actions queued together, answered on one card. */
+  | {
+      kind: 'confirms';
+      key: string;
+      actions: { action: OverseerAction; failure: string | null }[];
     };
+
+/** Folds each run of two or more queued actions into one card's row list. */
+export function groupConfirmRows(
+  items: readonly OverseerStreamItem[]
+): OverseerStreamItem[] {
+  const out: OverseerStreamItem[] = [];
+  for (const item of items) {
+    const last = out.at(-1);
+    if (item.kind !== 'confirm') {
+      out.push(item);
+      continue;
+    }
+    const row = { action: item.action, failure: item.failure };
+    if (last?.kind === 'confirms') last.actions.push(row);
+    else if (last?.kind === 'confirm') {
+      out[out.length - 1] = {
+        kind: 'confirms',
+        key: last.key,
+        actions: [{ action: last.action, failure: last.failure }, row],
+      };
+    } else out.push(item);
+  }
+  return out;
+}
 
 /** Folds each run of tool rows into one `tools` row and drops the SDK's own plumbing. */
 export function groupToolRows(

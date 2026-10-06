@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, TriangleAlert, Waypoints } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ImpactPanel } from '../components/impact/ImpactPanel';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef } from '../lib/appNav';
 import { findClaimOverlaps } from '../lib/claimOverlap';
@@ -54,6 +55,8 @@ interface ImpactViewProps {
    *  (Review case panel, task detail, Git file pane), or `null` when this
    *  view was reached from the sidebar with nothing chosen yet. */
   initialSubject: ImpactSubjectRef | null;
+  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  onBack?: () => void;
 }
 
 const SUBJECT_KIND_LABEL: Record<ImpactSubjectKind, string> = {
@@ -261,6 +264,7 @@ export function ImpactView({
   data,
   projectName,
   initialSubject,
+  onBack,
 }: ImpactViewProps) {
   const [kind, setKind] = useState<ImpactSubjectKind>(
     initialSubject?.kind ?? 'file'
@@ -452,6 +456,7 @@ export function ImpactView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
+        leading={onBack && <TasksBackButton onBack={onBack} />}
         crumb={[
           ...(projectName !== undefined && projectName !== null
             ? [projectName]

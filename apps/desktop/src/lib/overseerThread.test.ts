@@ -9,6 +9,7 @@ import {
   buildOverseerThread,
   doorLabel,
   findInThread,
+  groupConfirmRows,
   groupToolRows,
 } from './overseerThread';
 
@@ -488,6 +489,29 @@ describe('groupToolRows', () => {
         { tool: 'list_runs', failed: false },
         { tool: 'merge_queue', failed: true },
       ],
+    });
+  });
+});
+
+describe('groupConfirmRows', () => {
+  test('two or more queued actions in a row share one card; one stays alone', () => {
+    const a = makeAction({ id: 'a', summary: 'Dispatch t-1' });
+    const b = makeAction({ id: 'b', summary: 'Dispatch t-2' });
+    const c = makeAction({ id: 'c', summary: 'Cancel r-9' });
+    const items = groupConfirmRows([
+      { kind: 'confirm', key: 'k-a', action: a, failure: null },
+      { kind: 'confirm', key: 'k-b', action: b, failure: null },
+      { kind: 'pending', key: 'p' },
+      { kind: 'confirm', key: 'k-c', action: c, failure: 'boom' },
+    ]);
+    expect(items.map((i) => i.kind)).toEqual([
+      'confirms',
+      'pending',
+      'confirm',
+    ]);
+    expect(items[0]).toMatchObject({
+      key: 'k-a',
+      actions: [{ action: { id: 'a' } }, { action: { id: 'b' } }],
     });
   });
 });

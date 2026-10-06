@@ -802,3 +802,41 @@ describe('keyboard', () => {
     ).toBeTruthy();
   });
 });
+
+describe('Two views’ compact page', () => {
+  test('leads with “‹ tasks”, shows properties as chips and keeps the column closed', async () => {
+    const log = newLog();
+    let back = 0;
+    const host = {
+      ...fakeHost(log, { tasks: [task('t-1')], body: BODY }),
+      compactPage: true,
+    };
+    mount(host, {
+      layout: 'full',
+      onBack: () => {
+        back++;
+      },
+    });
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-slot=property-chips]')
+      ).not.toBeNull();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /tasks/ }));
+    expect(back).toBe(1);
+  });
+});
+
+test('Two views names the Conversation toggle and shows its unread count', async () => {
+  const log = newLog();
+  const host = {
+    ...fakeHost(log, { tasks: [task('t-1')], body: BODY }),
+    compactPage: true,
+    threadView: () => <div>thread</div>,
+  };
+  mount(host, { layout: 'full', conversationCount: 2 });
+  const toggle = await screen.findByTestId('task-conversation-toggle');
+  expect(toggle.textContent).toBe('Conversation· 2');
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+});

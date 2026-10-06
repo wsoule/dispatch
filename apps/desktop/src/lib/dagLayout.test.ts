@@ -6,6 +6,7 @@ import {
   dagLayout,
   type DagTask,
   dagWaves,
+  fitNodeWidth,
 } from './dagLayout';
 
 // dagLayout takes its own minimal `DagTask` shape rather than a full TaskDoc, so the fixture
@@ -240,6 +241,35 @@ describe('left-to-right layout', () => {
     expect(at(dagLayout(tasks), 'b').y).toBe(
       at(dagLayout(tasks), 'a').y + DAG_NODE_HEIGHT + 64
     );
+  });
+});
+
+describe('fitNodeWidth', () => {
+  const opts = { direction: 'LR' as const, wrap: 6, min: 200, max: 400 };
+
+  it('fills the space across the columns the layout will draw', () => {
+    const chain = [makeTask('a'), makeTask('b', ['a']), makeTask('c', ['b'])];
+    const width = fitNodeWidth(chain, { ...opts, available: 1000 });
+    const layout = dagLayout(chain, { ...opts, nodeWidth: width });
+    expect(width).toBeGreaterThan(200);
+    expect(layout.width).toBeLessThanOrEqual(1000);
+    expect(layout.width).toBeGreaterThan(1000 - 3);
+  });
+
+  it('clamps to the minimum and maximum', () => {
+    const chain = Array.from({ length: 6 }, (_, i) =>
+      makeTask(`n${i}`, i === 0 ? [] : [`n${i - 1}`])
+    );
+    expect(fitNodeWidth(chain, { ...opts, available: 600 })).toBe(200);
+    expect(fitNodeWidth([makeTask('a')], { ...opts, available: 2000 })).toBe(
+      400
+    );
+  });
+
+  it('counts columns of the no-edges grid when nothing waits', () => {
+    const flat = [makeTask('a'), makeTask('b')];
+    const width = fitNodeWidth(flat, { ...opts, available: 600 });
+    expect(dagLayout(flat, { ...opts, nodeWidth: width }).width).toBe(600);
   });
 });
 

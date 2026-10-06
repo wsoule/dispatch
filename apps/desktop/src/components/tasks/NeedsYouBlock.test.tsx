@@ -37,7 +37,11 @@ function item(over: Partial<DecisionItem> & Pick<DecisionItem, 'id' | 'kind'>) {
   } satisfies DecisionItem;
 }
 
-function mount(decisions: DecisionItem[], decided: DecisionItem[] = []) {
+function mount(
+  decisions: DecisionItem[],
+  decided: DecisionItem[] = [],
+  fold?: { folded: boolean; onFoldedChange: (folded: boolean) => void }
+) {
   const opened: string[] = [];
   const needs = needsYou(decisions, ME);
   render(
@@ -48,6 +52,8 @@ function mount(decisions: DecisionItem[], decided: DecisionItem[] = []) {
         decided={decided}
         onOpenRef={(action) => opened.push(action.kind)}
         onOpenDecision={(decision) => opened.push(decision.id)}
+        folded={fold?.folded}
+        onFoldedChange={fold?.onFoldedChange}
       />
     </QueryClientProvider>
   );
@@ -120,6 +126,31 @@ describe('NeedsYouBlock', () => {
     expect(screen.getByTestId('needs-you-count').textContent).toBe(
       'Needs you · 1'
     );
+  });
+});
+
+describe('folding from outside', () => {
+  test('a folded block is one line: the count and the first ask', () => {
+    const changes: boolean[] = [];
+    mount(
+      [
+        item({ id: 'a', kind: 'scope-request', summary: 'widen writes' }),
+        item({ id: 'b', kind: 'doc' }),
+      ],
+      [],
+      { folded: true, onFoldedChange: (f) => changes.push(f) }
+    );
+    expect(screen.queryAllByTestId('needs-you-row')).toHaveLength(0);
+    expect(screen.getByTestId('needs-you-count').textContent).toBe(
+      'Needs you · 2'
+    );
+    expect(screen.getByTestId('needs-you-preview').textContent).toBe(
+      'widen writes'
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Needs you · 2/ }));
+    expect(changes).toEqual([false]);
+    // The owner decides; the block stays folded until the prop changes.
+    expect(screen.queryAllByTestId('needs-you-row')).toHaveLength(0);
   });
 });
 

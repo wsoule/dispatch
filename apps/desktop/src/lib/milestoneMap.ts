@@ -1,7 +1,13 @@
-import type { TaskListItem } from '@dispatch-foo/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import {
+  isCanceledStatus,
+  isCompletedStatus,
+} from '@dispatch-foo/core/browser';
 
 import type { DagTask } from './dagLayout';
 import type { ListGroup } from './listGrouping';
+import { activeStatusModel } from './statusModel';
+import type { TaskBucket } from './taskStatus';
 
 /** A milestone-to-milestone wait: tasks in `to` wait on `count` tasks in `from`. */
 interface MilestoneEdge {
@@ -58,4 +64,90 @@ export function milestoneMap(groups: readonly ListGroup[]): MilestoneMap {
     });
   }
   return { nodes, edges, childrenOf };
+}
+
+/** A milestone's tasks by where they stand, in the order its progress bar draws them. */
+export interface MilestoneMix {
+  landed: number;
+  landing: number;
+  review: number;
+  working: number;
+  needYou: number;
+  failed: number;
+  ready: number;
+  /** Drafts, blocked tasks and anything else not yet startable. */
+  waiting: number;
+}
+
+export const MIX_ORDER: readonly (keyof MilestoneMix)[] = [
+  'landed',
+  'landing',
+  'review',
+  'working',
+  'needYou',
+  'failed',
+  'ready',
+  'waiting',
+];
+
+// Open work most urgent first: what needs you, what broke, then what is moving.
+const URGENCY: readonly (keyof MilestoneMix)[] = [
+  'needYou',
+  'failed',
+  'working',
+  'review',
+  'landing',
+  'ready',
+  'waiting',
+];
+
+const MIX_OF: Record<TaskBucket, keyof MilestoneMix> = {
+  'need-you': 'needYou',
+  failed: 'failed',
+  working: 'working',
+  review: 'review',
+  landing: 'landing',
+  ready: 'ready',
+  draft: 'waiting',
+  blocked: 'waiting',
+};
+
+/**
+ * A milestone's mix for the map's node body, its open tasks most urgent first (list order
+ * within a state), and the first ready one as what to start next.
+ */
+export function milestoneMix(
+  children: readonly TaskListItem[],
+  ctx: {
+    bucketOf: (doc: TaskListItem) => TaskBucket | null;
+    model?: StatusModel;
+  }
+): { mix: MilestoneMix; open: TaskListItem[]; next: TaskListItem | null } {
+  const model = ctx.model ?? activeStatusModel();
+  const mix: MilestoneMix = {
+    landed: 0,
+    landing: 0,
+    review: 0,
+    working: 0,
+    needYou: 0,
+    failed: 0,
+    ready: 0,
+    waiting: 0,
+  };
+  const ranked: { doc: TaskListItem; rank: number }[] = [];
+  for (const doc of children) {
+    if (isCanceledStatus(doc.meta.status, model)) continue;
+    if (isCompletedStatus(doc.meta.status, model)) {
+      mix.landed++;
+      continue;
+    }
+    const bucket = ctx.bucketOf(doc);
+    const key = bucket === null ? 'waiting' : MIX_OF[bucket];
+    mix[key]++;
+    ranked.push({ doc, rank: URGENCY.indexOf(key) });
+  }
+  // Stable, so tasks in one state keep their list order.
+  const open = ranked.sort((a, b) => a.rank - b.rank).map((r) => r.doc);
+  const next = ranked.find((r) => URGENCY[r.rank] === 'ready')?.doc ?? null;
+  return { mix, open, next };
 }

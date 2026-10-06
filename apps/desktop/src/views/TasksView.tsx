@@ -1,10 +1,11 @@
 import { Plus } from 'lucide-react';
-import { type ReactNode, useCallback, useMemo } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 
 import { MilestoneMapView } from '../components/graph/MilestoneMap';
 import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import { TasksStrip } from '../components/tasks/TasksStrip';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
@@ -55,9 +56,30 @@ const OWN_HEADER: ReadonlySet<TasksPage['kind']> = new Set([
   'docs',
   'pr',
   'room',
+  'view',
+  'impact',
 ]);
 
-/** A page that is not the list: a task, a doc, a PR, a draft or a door to Classic. */
+const GRAPH_NEEDS_FOLDED_KEY = 'dispatch:graph-needs-you-folded';
+
+// Graph mode keeps Needs you to its header unless it was opened there before.
+function storedGraphFold(): boolean {
+  try {
+    return localStorage.getItem(GRAPH_NEEDS_FOLDED_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function storeGraphFold(folded: boolean): void {
+  try {
+    localStorage.setItem(GRAPH_NEEDS_FOLDED_KEY, String(folded));
+  } catch {
+    // Kept for this session only.
+  }
+}
+
+/** A page that is not the list: a task, a doc, a PR, a draft, a room or a hosted view. */
 export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
 
 export interface TasksViewProps {
@@ -83,6 +105,7 @@ export interface TasksViewProps {
   onOpenPr: (number: number) => void;
   onOpenDoc: (docId: string) => void;
   onOpenAllDocs: () => void;
+  onOpenNotes: () => void;
   /** Keys per-project choices such as the graph's Milestones | Tasks. */
   projectKey: string;
   speechByTask: ReadonlyMap<string, { count: number; mention: boolean }>;
@@ -110,11 +133,17 @@ export function TasksView({
   onOpenPr,
   onOpenDoc,
   onOpenAllDocs,
+  onOpenNotes,
   projectKey,
   speechByTask,
   composer,
 }: TasksViewProps) {
   const split = page.kind === 'task' && !page.full;
+  const [graphFolded, setGraphFolded] = useState(storedGraphFold);
+  const onGraphFold = useCallback((folded: boolean) => {
+    setGraphFolded(folded);
+    storeGraphFold(folded);
+  }, []);
   const taskFilter = useMemo(
     () => presetMatcher(preset, presetContext),
     [preset, presetContext]
@@ -149,6 +178,7 @@ export function TasksView({
       onOpenPr={onOpenPr}
       onOpenDoc={onOpenDoc}
       onOpenAllDocs={onOpenAllDocs}
+      onOpenNotes={onOpenNotes}
     />
   );
   const model = useStatusModelOf(data.config);
@@ -230,13 +260,9 @@ export function TasksView({
       {full ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {!OWN_HEADER.has(page.kind) && (
-            <button
-              type="button"
-              onClick={onClosePage}
-              className="text-muted-foreground self-start px-4 pt-2 text-[12px] hover:underline"
-            >
-              ‹ tasks
-            </button>
+            <div className="px-4 pt-2">
+              <TasksBackButton onBack={onClosePage} />
+            </div>
           )}
           <div className="min-h-0 flex-1 overflow-hidden">
             {renderPage(page as TasksSidePage)}
@@ -259,6 +285,8 @@ export function TasksView({
                 decided={decided}
                 onOpenRef={onOpenRef}
                 onOpenDecision={onOpenDecision}
+                folded={mode === 'graph' ? graphFolded : undefined}
+                onFoldedChange={mode === 'graph' ? onGraphFold : undefined}
               />
             </div>
             {preset !== 'all' && (
@@ -283,6 +311,7 @@ export function TasksView({
                   bucketOf={presetContext.bucketOf}
                   asksByTask={needs.byTask}
                   projectKey={projectKey}
+                  dueDateOf={(id) => epicById.get(id)?.meta.dueDate ?? null}
                   onOpenTask={onSelectTask}
                 />
               ) : (
