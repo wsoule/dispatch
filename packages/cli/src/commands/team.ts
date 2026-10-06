@@ -101,7 +101,7 @@ function hostOf(url: string): string {
 
 /** `dispatch team status` as lines: the one-line summary, who is on the
  *  team with the optional check for each, and each problem with its fix. */
-export function describeTeamStatus(status: TeamStatus): string[] {
+function describeTeamStatus(status: TeamStatus): string[] {
   const lines = [status.line];
   for (const t of status.teammates) {
     const who = `${t.handle}${t.device === '' ? '' : ` (${t.device})`}`;

@@ -929,7 +929,7 @@ export interface TeamStatus {
 }
 
 /** What `team start` sends; see POST /api/team/start. */
-export interface StartTeamInput {
+interface StartTeamInput {
   name?: string;
   git?: boolean;
   relayUrl?: string;
@@ -938,7 +938,7 @@ export interface StartTeamInput {
 }
 
 /** A started team; `notice` says why it stayed on git, when it did. */
-export interface StartedTeam extends RosterAnswer {
+interface StartedTeam extends RosterAnswer {
   teamId: string;
   name: string;
   recoveryCode: string;
@@ -957,7 +957,7 @@ export interface TeamInvite extends RosterAnswer {
 }
 
 /** What joining answers: the team, who invited, and the optional check. */
-export interface JoinedTeam extends RosterAnswer {
+interface JoinedTeam extends RosterAnswer {
   team: { id: string; name: string | null };
   by?: string;
   check?: string;

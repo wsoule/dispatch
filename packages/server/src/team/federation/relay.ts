@@ -140,7 +140,7 @@ export class RelayRegistrationError extends Error {
 const REGISTER_MS = 15_000;
 /** The most leading zero bits a relay may ask a stamp for; past it, the
  *  relay is refused rather than costing this machine minutes of hashing. */
-export const MAX_POW_DIFFICULTY = 26;
+const MAX_POW_DIFFICULTY = 26;
 // Hashes between yields to the event loop while minting, so the daemon
 // keeps answering requests during the second or two a stamp takes.
 const MINT_SLICE = 20_000;
@@ -148,7 +148,7 @@ const MINT_SLICE = 20_000;
 /** What `GET /v1/registration` answers: the stamp's difficulty in leading
  *  zero bits, whether this relay needs its operator's token (self-hosted),
  *  and whether it takes one in place of a stamp. */
-export interface RegistrationTerms {
+interface RegistrationTerms {
   difficulty: number;
   tokenRequired: boolean;
   tokenAccepted: boolean;
@@ -177,7 +177,7 @@ export function leadingZeroBits(digest: Uint8Array): number {
 }
 
 /**
- * A hashcash-style stamp: the first decimal nonce whose
+ * A proof-of-work stamp: the first decimal nonce whose
  * sha256(powText(teamId, relayUrl, t, nonce)) has at least `difficulty`
  * leading zero bits. The relay checks one hash; this machine pays about
  * 2^difficulty, which keeps anonymous registrations cheap to accept and

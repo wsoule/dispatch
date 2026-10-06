@@ -847,7 +847,7 @@ describe('registering at the relay without a token', () => {
     expect(await registered(relay)).toBe(true);
   });
 
-  it('sends {t, nonce} over the normalised URL, and mints once more after a 403', async () => {
+  it('sends {t, nonce} over the normalized URL, and mints once more after a 403', async () => {
     open = await foundedTeam('ada');
     const { fetch: fake, posts } = scripted(
       { difficulty: 4, tokenRequired: false, tokenAccepted: false },

@@ -99,22 +99,26 @@ function forged(fields: Record<string, unknown>): string {
 }
 
 const ESC = String.fromCharCode(0x1b);
+// Whether text holds a control, a bidi override or a line separator.
+const unprintable = (text: string): boolean =>
+  [...Array(text.length).keys()].some((i) => {
+    const c = text.charCodeAt(i);
+    return c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x202e || c === 0x2028;
+  });
 const BEL = String.fromCharCode(0x07);
 const RLO = String.fromCharCode(0x202e);
 
 describe('a hostile link', () => {
   it('prints no escape sequence, bidi override or line break from its name', () => {
-    const name = `acme${ESC}[31m red${ESC}]8;;https://evil${BEL}x${RLO}gpj.exe\nPWNED\r${String.fromCharCode(0x2028)}ok`;
+    const name = `acme${ESC}[31m red ${ESC}]8;;https://evil${BEL}x${RLO}gpj.exe\nPWNED\r${String.fromCharCode(0x2028)}ok`;
     const decoded = decodeTeamLink(forged({ name }));
-    expect(decoded.name).not.toMatch(
-      /[\u0000-\u001f\u007f-\u009f\u202e\u2028]/
-    );
-    expect(decoded.name).toBe('acme redx gpj.exe PWNED ok');
+    expect(unprintable(decoded.name)).toBe(false);
+    expect(decoded.name).toBe('acme red x gpj.exe PWNED ok');
   });
 
   it('caps an over-long name', () => {
     const decoded = decodeTeamLink(forged({ name: 'n'.repeat(5000) }));
-    expect([...decoded.name].length).toBeLessThanOrEqual(64);
+    expect(decoded.name.length).toBeLessThanOrEqual(64);
   });
 
   it('refuses a handle, inviter, fingerprint or team id off its grammar', () => {
@@ -132,7 +136,7 @@ describe('a hostile link', () => {
       expect(() => decodeTeamLink(forged(bad))).toThrow('damaged');
   });
 
-  it('shows a relay URL normalised', () => {
+  it('shows a relay URL normalized', () => {
     const decoded = decodeTeamLink(
       forged({
         via: { kind: 'relay', url: 'wss://Relay.Example:443/a/?q=1#f' },
@@ -179,7 +183,7 @@ describe('a hostile link', () => {
     const text = [status.line, ...status.problems.map((p) => p.message)].join(
       ' | '
     );
-    expect(text).not.toMatch(/[\u0000-\u001f\u202e]/);
+    expect(unprintable(text)).toBe(false);
     expect(status.line).toContain("Joining team 'acme x'");
   });
 

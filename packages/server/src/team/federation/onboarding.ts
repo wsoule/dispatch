@@ -15,7 +15,7 @@ import type { TransportHealth } from './transport.js';
 // everything a joiner needs, and one status line says how the team is doing.
 
 /** The hosted relay a new team syncs through unless told otherwise. */
-export const DEFAULT_RELAY_URL = 'wss://relay.dispatch.foo';
+const DEFAULT_RELAY_URL = 'wss://relay.dispatch.foo';
 
 /** The relay `team start` registers at: DISPATCH_RELAY_URL, else the hosted one. */
 export function defaultRelayUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -54,8 +54,9 @@ export function plainText(value: string, max = MAX_TEXT_CHARS): string {
     .replace(UNPRINTABLE, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  const chars = [...clean];
-  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : clean;
+  if (clean.length <= max) return clean;
+  // Never cut a surrogate pair in half.
+  return `${clean.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
 }
 
 /** A relay URL as it is shown and dialed: wss:// (ws:// only on this
@@ -77,7 +78,7 @@ export function normalRelay(url: string): string | null {
   return parsed.href.replace(/\/+$/, '');
 }
 /** The web form of a link: the payload rides the fragment, never a request. */
-export const LINK_URL_BASE = 'https://dispatch.foo/join#';
+const LINK_URL_BASE = 'https://dispatch.foo/join#';
 const SEED_BYTES = 32;
 const SUM_CHARS = 16;
 
@@ -252,7 +253,7 @@ export function checkString(teamId: string, a: string, b: string): string {
 // ---- status ----
 
 /** A problem in plain words, with the one command that fixes it, if any. */
-export interface StatusProblem {
+interface StatusProblem {
   message: string;
   fix: string | null;
 }
@@ -313,7 +314,7 @@ export interface TeamStatusInput {
 }
 
 // Notes `dispatch team advanced ack` takes; mirrors routes.ts's list.
-const ACKABLE = [
+const ACKNOWLEDGEABLE = [
   'team:race:',
   'team:cut:',
   'transport:merge',
@@ -354,7 +355,7 @@ export function whereOf(
 }
 
 /** "4s ago", "3 min ago", "2 h ago", or the date. */
-export function ago(iso: string | null, now: Date): string | null {
+function ago(iso: string | null, now: Date): string | null {
   if (iso === null) return null;
   const ms = Math.max(0, now.getTime() - Date.parse(iso));
   if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
@@ -504,7 +505,7 @@ function plainProblems(
         message: plainText(p.message),
         fix: isAdmin ? 'dispatch team advanced keys' : null,
       };
-    if (ACKABLE.some((a) => p.subject.startsWith(a)))
+    if (ACKNOWLEDGEABLE.some((a) => p.subject.startsWith(a)))
       return {
         message: plainText(p.message),
         fix: `dispatch team advanced ack ${plainText(p.subject, 120)}`,
