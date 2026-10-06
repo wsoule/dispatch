@@ -987,6 +987,31 @@ describe('OverseerManager turn options', () => {
     expect(h.gated.options?.model).toBe('claude-fable-5-1');
   });
 
+  it('changes model and effort for the next turns, and null restores the default', async () => {
+    updateConfig(repo, { models: { overseer: 'claude-haiku-4-5' } });
+    const h = makeGated([]);
+    const started = h.manager.start('hi', 'gated', 'claude-fable-5-1');
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+
+    const changed = h.manager.setOptions(started.id, {
+      model: 'claude-sonnet-5',
+      effort: 'high',
+    });
+    expect(changed).toMatchObject({ model: 'claude-sonnet-5', effort: 'high' });
+    h.manager.sendMessage(started.id, 'next');
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.gated.options).toMatchObject({
+      model: 'claude-sonnet-5',
+      effort: 'high',
+    });
+
+    h.manager.setOptions(started.id, { model: null, effort: null });
+    h.manager.sendMessage(started.id, 'again');
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.gated.options?.model).toBe('claude-haiku-4-5');
+    expect(h.gated.options?.effort).toBeUndefined();
+  });
+
   it('sends no effort by default, then config effort.overseer, and a chosen effort wins', async () => {
     const h = makeGated([]);
     const plain = h.manager.start('hi', 'gated');

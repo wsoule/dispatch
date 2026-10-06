@@ -66,6 +66,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     configuredEffort: undefined,
     reset: () => {},
     stop: () => Promise.resolve(),
+    setConversationOptions: () => Promise.resolve(),
     draft: '',
     setDraft: () => {},
     ...over,

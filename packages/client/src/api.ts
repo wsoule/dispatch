@@ -3754,6 +3754,11 @@ export interface ApiClient {
     opts?: { backend?: string; model?: string; effort?: EffortLevel }
   ): Promise<OverseerRecord>;
   getOverseer(id: string): Promise<OverseerRecord>;
+  /** The model and effort the conversation's next turns run on; null restores the project default. */
+  setOverseerOptions(
+    id: string,
+    options: { model?: string | null; effort?: EffortLevel | null }
+  ): Promise<OverseerRecord>;
   // Sends a follow-up on an existing conversation. Resolves (202) with the
   // record already back in `running` — watch `overseer.changed` for the reply.
   // Mid-turn it queues for the turn's end. 404s an unknown conversation.
@@ -4803,6 +4808,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         }),
       }),
     getOverseer: (id) => request(target, `/api/overseer/${id}`),
+    setOverseerOptions: (id, options) =>
+      request(target, `/api/overseer/${id}`, {
+        method: 'PATCH',
+        ...jsonBody(options),
+      }),
     sendOverseerMessage: (conversationId, text) =>
       request(target, `/api/overseer/${conversationId}/message`, {
         method: 'POST',

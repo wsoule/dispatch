@@ -6862,6 +6862,32 @@ export async function handleApi(
       if (segments.length === 2 && method === 'GET') {
         return jsonResponse(ctx.overseerManager.get(conversationId));
       }
+      // The model and effort its next turns run on; null restores the default.
+      if (segments.length === 2 && method === 'PATCH') {
+        const parsed = await readJsonBody(req);
+        if (!parsed.ok) return parsed.response;
+        const body = parsed.value as { model?: unknown; effort?: unknown };
+        const model =
+          body.model === null ? null : readOptionalModel(body.model);
+        if (model !== null && !model.ok) return model.response;
+        const effort =
+          body.effort === null ? null : readOptionalEffort(body.effort);
+        if (effort !== null && !effort.ok) return effort.response;
+        return jsonResponse(
+          ctx.overseerManager.setOptions(conversationId, {
+            ...(model === null
+              ? { model: null }
+              : model.model !== undefined
+                ? { model: model.model }
+                : {}),
+            ...(effort === null
+              ? { effort: null }
+              : effort.effort !== undefined
+                ? { effort: effort.effort }
+                : {}),
+          })
+        );
+      }
       if (
         segments.length === 3 &&
         segments[2] === 'message' &&

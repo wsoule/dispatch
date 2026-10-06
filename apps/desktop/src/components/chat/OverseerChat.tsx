@@ -15,7 +15,12 @@ import type {
   OverseerSession,
 } from '../../hooks/useOverseerSession';
 import { formatRelativeTimeFromIso } from '../../lib/format';
-import { effortOptions, modelLabel, MODELS } from '../../lib/models';
+import {
+  DEFAULT_EFFORT_ID,
+  effortOptions,
+  modelLabel,
+  MODELS,
+} from '../../lib/models';
 import {
   buildOverseerThread,
   doorLabel,
@@ -737,6 +742,17 @@ export function OverseerChat({
             'Ask about runs, tasks, the queue — or ask it to act…'
           }
           ariaLabel="Follow-up message"
+          // The open conversation's own model and effort; a change applies from its next turn.
+          models={COMPOSER_MODELS}
+          modelId={overseer.record?.model ?? overseer.model}
+          onModelChange={(id) =>
+            void overseer.setConversationOptions({ model: id })
+          }
+          efforts={effortOptions(overseer.configuredEffort)}
+          effortId={overseer.record?.effort ?? DEFAULT_EFFORT_ID}
+          onEffortChange={(id) =>
+            void overseer.setConversationOptions({ effortId: id })
+          }
         />
       </div>
     </div>

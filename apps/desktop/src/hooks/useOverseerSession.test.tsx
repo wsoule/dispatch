@@ -774,3 +774,33 @@ test('resume opens the conversation under StrictMode', async () => {
     expect(result.current.conversationId).toBe('w-1');
   });
 });
+
+test('setConversationOptions patches the open conversation; Default effort clears it', async () => {
+  const sent: unknown[] = [];
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    currentOverseer: () => Promise.resolve({ conversation: overseerRecord() }),
+    getOverseer: () => Promise.resolve(overseerRecord()),
+    setOverseerOptions: (_id: string, options: unknown) => {
+      sent.push(options);
+      return Promise.resolve(overseerRecord());
+    },
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo', undefined, undefined, true),
+    { wrapper }
+  );
+  await waitFor(() => {
+    expect(result.current.conversationId).toBe('w-1');
+  });
+  await act(async () => {
+    await result.current.setConversationOptions({ model: 'claude-sonnet-5' });
+    await result.current.setConversationOptions({ effortId: 'default' });
+    await result.current.setConversationOptions({ effortId: 'high' });
+  });
+  expect(sent).toEqual([
+    { model: 'claude-sonnet-5' },
+    { effort: null },
+    { effort: 'high' },
+  ]);
+});
