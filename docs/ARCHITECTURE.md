@@ -109,7 +109,7 @@ none of your runs or memory; replicating team memory is team-server work.
 | `@dispatch/memory`       | ~4.6k                 | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                |
 | `@dispatch/server`       | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
 | `@dispatch/cli`          | ~6.4k                 | The `dispatch` binary                                                                                                                          |
-| `@dispatch/mcp`          | ~2.8k                 | Stdio MCP server, 20 tools                                                                                                                     |
+| `@dispatch/mcp`          | ~2.8k                 | Stdio MCP server, 21 tools                                                                                                                     |
 | `@dispatch/client`       | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
 | `@dispatch/ui`           | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
 | `@dispatch/tokens`       | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |
@@ -282,10 +282,11 @@ Agents, runs and people talk over one persistent bus
 - **Tables** (`messages.db`, machine-local): `messages`, `recipients`,
   `deliveries` (one per resolved recipient, each with its own state),
   `channels`, `members`, `agents`, `gate_effects`.
-- **Clients**: the MCP's `msg_*`, `inbox_read`, `thread_read` and `channel_*`
-  tools; the CLI's `dispatch approve`, `dispatch message` and `dispatch scope`;
-  the desktop's Threads view, each task's Thread tab, messages inline in the run
-  chat, the gate cards, and Settings → Connected agents, all fed by
+- **Clients**: the MCP's `msg_*`, `inbox_read`, `thread_read`, `channel_*` and
+  `agent_list` tools; the CLI's `dispatch approvals`, `dispatch approve`,
+  `dispatch message`, `dispatch scope` and `dispatch team agents`; the desktop's
+  Threads view, each task's Thread tab, messages inline in the run chat, the
+  gate cards, and Settings → Connected agents, all fed by
   `apps/desktop/src/hooks/useThreads.ts` and the one open-gates query.
 
 ## Clients
@@ -296,14 +297,14 @@ plans, sessions, agents, impact, inbox/brain-dump, threads, settings, gallery.
 
 **CLI** (`packages/cli`) — commands include `init`, `mcp`, `task`, `plan`,
 `epic`, `serve`, `ui`, `doctor`, `run`, `runs`, `approve`, `message`, `cancel`,
-`diff`, `review`, `scope`, `fanout`, `worktree`, `share`, `team`, `sync`,
-`receipts`, `migrate`, `merge-task`, `merge-team`; `dispatch --help` lists them
-all. Every read command takes `--json`.
+`diff`, `review`, `scope`, `approvals`, `fanout`, `worktree`, `share`, `team`,
+`sync`, `receipts`, `migrate`, `merge-task`, `merge-team`; `dispatch --help`
+lists them all. Every read command takes `--json`.
 
 **MCP** (`packages/mcp`) — stdio server registered into the project's
-`.mcp.json` by `dispatch init`. 20 tools. Five (`task_list`, `task_get`,
+`.mcp.json` by `dispatch init`. 21 tools. Five (`task_list`, `task_get`,
 `task_save`, `task_comment`, `task_next`) operate on `.dispatch/tasks/*.md`
-directly and need no daemon; the other fifteen require a running `dispatchd` and
+directly and need no daemon; the other sixteen require a running `dispatchd` and
 return a clear error without one. A `workflow://onboarding` resource briefs a
 connecting agent on the conventions.
 

@@ -1263,10 +1263,14 @@ describe('channel tools', () => {
     expect(daemon.leaveCalls).toEqual([]);
   });
 
-  it('channel_list returns the roster', async () => {
+  it('channel_list returns the roster, hiding empty auto channels', async () => {
     daemon = new FakeDaemon();
+    const general = { name: 'general', auto: false, members: ['human:wyat'] };
+    const quiet = { name: 'quiet', auto: false, members: [] };
+    const busyEpic = { name: 'epic/e-1', auto: true, members: ['task:t-1'] };
+    const emptyEpic = { name: 'epic/e-2', auto: true, members: [] };
     daemon.channelsBody = {
-      channels: [{ name: 'general', auto: false, members: ['human:wyat'] }],
+      channels: [busyEpic, emptyEpic, general, quiet],
     };
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
@@ -1275,9 +1279,23 @@ describe('channel tools', () => {
       name: 'channel_list',
       arguments: {},
     })) as ToolCallResult;
-    expect(result.structuredContent).toEqual(
-      daemon.channelsBody as Record<string, unknown>
-    );
+    expect(result.structuredContent).toEqual({
+      channels: [busyEpic, general, quiet],
+      total: 3,
+      nextOffset: null,
+      hiddenEmpty: 1,
+    });
+
+    const all = (await client.callTool({
+      name: 'channel_list',
+      arguments: { includeEmpty: true, limit: 2, offset: 1 },
+    })) as ToolCallResult;
+    expect(all.structuredContent).toEqual({
+      channels: [emptyEpic, general],
+      total: 4,
+      nextOffset: 3,
+      hiddenEmpty: 0,
+    });
   });
 });
 

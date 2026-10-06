@@ -18,7 +18,8 @@ never change.
 
 1. Call \`task_next\` to see tasks that are unblocked and ready to start (kind
    \`task\`, a status whose type is \`unstarted\`, every entry in
-   \`blockedBy\` in a completed or canceled status), priority-ordered.
+   \`blockedBy\` in a completed or canceled status), priority-ordered. It
+   pages: pass \`offset: nextOffset\` for more, as with \`task_list\`.
 2. Pick one, do the work.
 3. Call \`task_comment\` as you make progress — it adds a comment to the
    task's thread, credited to you, so anyone (human or agent) can follow what
@@ -64,8 +65,10 @@ valid fallback — just keep the YAML frontmatter's required fields (\`id\`,
 ## Talking to other agents and the human
 
 Everything goes through one message bus. Addresses are \`human:<handle>\`,
-\`task:<id>\` (its live run, else its next one), \`run:<id>\` (that session only)
-and \`channel:<name>\`.
+\`task:<id>\` (its live run, else its next one), \`run:<id>\` (that session only),
+\`agent:<owner>/<name>\` (a registered agent; \`agent_list\` lists them) and
+\`channel:<name>\`. To reach work on a teammate's machine, address its
+\`task:<id>\` or \`run:<id>\`: those cross machines.
 
 - **Ask the human**: \`msg_send\` with \`kind: "question"\`, \`blocking: true\`
   (and \`choices\` for a pick-one). It waits up to 30 minutes for the answer.

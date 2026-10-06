@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 // Primitives shared by tools.ts and messaging.ts; it imports neither, so the
 // two can both depend on it without an import cycle.
 
@@ -77,3 +79,43 @@ export const DEFAULT_MESSAGE_BLOCKING_TIMING: MessageBlockingTiming = {
   retryDelayMs: 250,
   errorDelayMs: 2000,
 };
+
+// List tools page their results so a large board fits one MCP response.
+export const DEFAULT_PAGE_LIMIT = 100;
+const MAX_PAGE_LIMIT = 500;
+
+export const pageInput = {
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_PAGE_LIMIT)
+    .optional()
+    .describe(`At most this many (default ${DEFAULT_PAGE_LIMIT}).`),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe('Skip this many first; pass the last nextOffset to page on.'),
+};
+
+export const pageOutput = {
+  total: z.number(),
+  nextOffset: z.number().nullable(),
+};
+
+// One page of `items`, its total, and where the next page starts (null when
+// this is the last).
+export function pageOf<T>(
+  items: readonly T[],
+  args: { limit?: number; offset?: number }
+): { items: T[]; total: number; nextOffset: number | null } {
+  const offset = args.offset ?? 0;
+  const end = offset + (args.limit ?? DEFAULT_PAGE_LIMIT);
+  return {
+    items: items.slice(offset, end),
+    total: items.length,
+    nextOffset: end < items.length ? end : null,
+  };
+}
