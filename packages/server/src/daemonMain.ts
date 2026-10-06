@@ -591,19 +591,44 @@ const serverOpts: Parameters<typeof startServer>[0] = {
 
 // `team start` and `team join` turn board sync on by restarting in this
 // process: the same port and tokens, so every client stays signed in, and
-// only once no live work would be cut short (team/federation/sharing.ts).
-async function restartForSharing(): Promise<void> {
-  console.log('dispatchd: restarting to turn on board sync');
-  const { port: same, tokens: kept } = handle;
-  await handle.stop();
-  handle = await startServer({
-    ...serverOpts,
-    port: same,
-    tokens: kept,
-    replaceRunningDaemon: false,
-    onSharingRestart: restartForSharing,
-  });
-  console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
+// only once no live work would be cut short (team/federation/sharing.ts). A
+// boot that fails rolls the config back and boots as before; if even that
+// fails, the process exits so whatever supervises it starts it again.
+let restarting: Promise<void> | null = null;
+function restartForSharing(rollback: () => void): Promise<void> {
+  restarting ??= (async () => {
+    console.log('dispatchd: restarting to turn on board sync');
+    const { port: same, tokens: kept } = handle;
+    const next = {
+      ...serverOpts,
+      port: same,
+      tokens: kept,
+      replaceRunningDaemon: false,
+      onSharingRestart: restartForSharing,
+    };
+    await handle.stop();
+    try {
+      handle = await startServer(next);
+    } catch (err) {
+      console.error(
+        `dispatchd: COULD NOT BOOT WITH BOARD SYNC ON: ${(err as Error).message}. Rolling the config back and booting as before.`
+      );
+      rollback();
+      try {
+        handle = await startServer(next);
+      } catch (again) {
+        console.error(
+          `dispatchd: COULD NOT BOOT AGAIN: ${(again as Error).message}. Exiting so it can be started again.`
+        );
+        process.exit(1);
+      }
+      throw err;
+    } finally {
+      restarting = null;
+    }
+    console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
+  })();
+  return restarting;
 }
 
 let handle = await startServer({

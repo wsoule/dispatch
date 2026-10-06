@@ -373,7 +373,7 @@ export interface StartServerOptions {
   // Restarts this daemon in its own process with the same port and tokens,
   // so board sync turned on by `team start` or `team join` is wired at boot
   // (team/federation/sharing.ts). Absent, those ask the person to restart.
-  onSharingRestart?: () => Promise<void>;
+  onSharingRestart?: (rollback: () => void) => Promise<void>;
   // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
   a2a?: ListenerOverrides;
   // Standalone hosts' watch-stream limits; tests shorten the keepalive.
@@ -2334,6 +2334,8 @@ async function bootServer(
           : { restart: opts.onSharingRestart }),
         resolveRemote: (target) =>
           resolvePushTarget(rootDir, target, defaultAsyncGitRunner),
+        hold: (why) => orchestrator.hold(why),
+        release: () => orchestrator.release(),
       },
       precheck
     );

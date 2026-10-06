@@ -257,4 +257,29 @@ describe('team setup in two actions', () => {
     },
     SLOW
   );
+
+  it(
+    'shares one restart between two starts, and starts nothing new meanwhile',
+    async () => {
+      const c = await cluster(['ada'], { syncOff: ['ada'] });
+      stops.push(c.stop);
+      const [ada] = c.members as [Member];
+      const [a, b] = await Promise.all([
+        post(ada, '/api/team/start', { git: true }),
+        post(ada, '/api/team/start', { git: true }),
+      ]);
+      expect([a.status, b.status]).toEqual([202, 202]);
+      const meanwhile = await post(ada, '/api/tasks', { title: 'too soon' });
+      expect(meanwhile.status).toBe(503);
+      expect(String(meanwhile.body?.error)).toContain('restarting');
+      // Back with sync on, the start goes through once.
+      const started = await act(ada, '/api/team/start', { git: true });
+      expect(started.status).toBe(200);
+      expect((await statusOf(ada)).state).toBe('member');
+      expect(
+        (await post(ada, '/api/tasks', { title: 'now fine' })).status
+      ).toBe(201);
+    },
+    SLOW
+  );
 });

@@ -310,6 +310,7 @@ import {
 } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
 import type { SharingAnswer } from './team/federation/sharing.js';
+import { FROZEN_MESSAGE, frozenBySharing } from './team/federation/sharing.js';
 import { TaskTooLargeError } from './team/federation/taskOps.js';
 import type { Team } from './team/index.js';
 import {
@@ -5147,6 +5148,10 @@ export async function handleApi(
             );
     if (unauthorized !== null) return unauthorized;
   }
+
+  // While the daemon restarts to turn on team sync, nothing new starts.
+  if (frozenBySharing(daemonCtx.rootDir, method, segments))
+    return errorResponse(503, FROZEN_MESSAGE);
 
   // Every handler below sees who made this request. A shallow copy per
   // request, so the daemon-wide context is never mutated with one caller's

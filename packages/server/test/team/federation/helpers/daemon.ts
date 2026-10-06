@@ -166,7 +166,7 @@ export function daemons(): {
     opts: TeammateOpts,
     executor: RecordingExecutor,
     keep?: { port: number; tokens: ServerHandle['tokens'] },
-    onRestart?: () => Promise<void>
+    onRestart?: (rollback: () => void) => Promise<void>
   ): Promise<ServerHandle> => {
     const handle = await startServer({
       rootDir: root,
@@ -218,12 +218,25 @@ export function daemons(): {
     runGitSync(root, ['commit', '-q', '-m', 'init']);
     const executor = new RecordingExecutor();
     // The daemon's own restart to turn board sync on: same port and tokens,
-    // as dispatchd's daemonMain does it.
-    const restartForSharing = async (): Promise<void> => {
-      const keep = { port: server.port, tokens: server.tokens };
-      await server.stop();
-      handles.splice(handles.indexOf(server), 1);
-      server = await boot(root, opts, executor, keep, restartForSharing);
+    // and a rollback and boot as before when the new boot fails, as
+    // dispatchd's daemonMain does it.
+    let restarting: Promise<void> | null = null;
+    const restartForSharing = (rollback: () => void): Promise<void> => {
+      restarting ??= (async () => {
+        const keep = { port: server.port, tokens: server.tokens };
+        await server.stop();
+        handles.splice(handles.indexOf(server), 1);
+        try {
+          server = await boot(root, opts, executor, keep, restartForSharing);
+        } catch (err) {
+          rollback();
+          server = await boot(root, opts, executor, keep, restartForSharing);
+          throw err;
+        } finally {
+          restarting = null;
+        }
+      })();
+      return restarting;
     };
     let server = await boot(root, opts, executor, undefined, restartForSharing);
     const syncDir = boardSyncDir(root);
