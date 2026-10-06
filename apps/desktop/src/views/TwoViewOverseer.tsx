@@ -1,8 +1,13 @@
+import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
 import { Minus } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 
 import { DockedConversation } from '../components/chat/DockedConversation';
 import { OverseerChat } from '../components/chat/OverseerChat';
+import {
+  InflowColumn,
+  OutflowColumn,
+} from '../components/overseer/FlowColumns';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
@@ -23,8 +28,14 @@ export interface TwoViewOverseerProps {
   revoked: boolean;
   onShowAsks: () => void;
   onOpenConnectedAgents: () => void;
-  /** "For you" posts, between the conversation and its composer. */
+  /** "For you" posts: beside the stream on a wide window, above the composer otherwise. */
   posts?: ReactNode;
+  /** How many posts `posts` holds, for the Coming in count. */
+  postsCount?: number;
+  /** Live and recent runs, and the merge queue's entries, for the Going out column. */
+  runs?: readonly RunMeta[];
+  merges?: readonly MergeQueueEntry[];
+  onOpenTask?: (taskId: string) => void;
   /** Opens one of the agent's "Show in tasks" doors. */
   onOpenDoor: (door: OverseerDoor) => void;
 }
@@ -45,6 +56,10 @@ export function TwoViewOverseer({
   onShowAsks,
   onOpenConnectedAgents,
   posts,
+  postsCount = 0,
+  runs = [],
+  merges = [],
+  onOpenTask = () => {},
   onOpenDoor,
 }: TwoViewOverseerProps) {
   const { dock: stored, setDock } = useOverseerDock(projectPath);
@@ -106,7 +121,6 @@ export function TwoViewOverseer({
   }
 
   const showAsksAside = asks > 0 && needsBlock !== undefined && !revoked;
-  const aside = showAsksAside || dock.length > 0;
   const door =
     revoked || asks === 0 ? null : (
       <button
@@ -141,6 +155,11 @@ export function TwoViewOverseer({
       data-testid="overseer-view"
       className="flex h-full min-h-0 gap-6 px-6 pt-3 pb-4"
     >
+      {/* Wide windows read left to right: what comes to you, the talk, what leaves. */}
+      <InflowColumn count={(showAsksAside ? asks : 0) + postsCount}>
+        {showAsksAside && needsBlock}
+        {posts}
+      </InflowColumn>
       {/* Before the first message the composer sits at the bottom, as it will after. */}
       <div
         className={cn(
@@ -195,7 +214,7 @@ export function TwoViewOverseer({
           placeholder="say something"
           aboveComposer={
             <>
-              {posts}
+              <div className="xl:hidden">{posts}</div>
               {dock.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 xl:hidden">
                   {dockCards(true)}
@@ -209,23 +228,12 @@ export function TwoViewOverseer({
           onOpenDoor={onOpenDoor}
         />
       </div>
-      {aside && (
-        <aside
-          aria-label="Asks and set-aside conversations"
-          data-testid="overseer-aside"
-          className="hidden min-h-0 w-[380px] shrink-0 flex-col gap-3 overflow-y-auto xl:flex"
-        >
-          {showAsksAside && needsBlock}
-          {dock.length > 0 && (
-            <section className="flex flex-col gap-1.5">
-              <h2 className="text-muted-foreground text-[12px] font-medium">
-                Set aside
-              </h2>
-              {dockCards(false)}
-            </section>
-          )}
-        </aside>
-      )}
+      <OutflowColumn
+        runs={runs}
+        merges={merges}
+        setAside={dockCards(false)}
+        onOpenTask={onOpenTask}
+      />
     </div>
   );
 }
