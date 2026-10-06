@@ -386,11 +386,15 @@ describe('OverseerManager turns', () => {
     expect(mutating).toEqual([
       'approve_run',
       'cancel_run',
+      'create_plan',
+      'create_task',
       'deny_run',
       'dequeue_merge',
       'dispatch_task',
       'message_run',
+      'queue_merge',
       'send_as_you',
+      'update_task',
     ]);
   });
 

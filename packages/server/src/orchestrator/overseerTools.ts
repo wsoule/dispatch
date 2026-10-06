@@ -5,7 +5,13 @@ import {
   untrustedInline,
   untrustedVerbatim,
 } from '@dispatch-foo/core';
-import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch-foo/core';
+import type {
+  CreateInput,
+  LedgerEntry,
+  TaskDoc,
+  TaskStorePort,
+  UpdatePatch,
+} from '@dispatch-foo/core';
 import type { Message } from '@dispatch-foo/protocol';
 import { gateOf, parseAddress } from '@dispatch-foo/protocol';
 import { MEMORY_KINDS } from '@dispatch/memory';
@@ -111,6 +117,14 @@ export interface OverseerToolContext {
       query: { with?: string; about?: string },
       limit: number
     ): Message[];
+  };
+  /**
+   * Task writes, made the way the API makes them: checked, cached and
+   * broadcast. Absent where no daemon is behind the registry.
+   */
+  tasks?: {
+    create(input: CreateInput): TaskDoc;
+    update(id: string, patch: UpdatePatch): TaskDoc;
   };
   /** The daemon's human: the overseer acts for them, so its runs do too. */
   ownerRef: string;
@@ -1133,6 +1147,284 @@ const sendAsYou: OverseerMutatingTool<z.infer<typeof sendAsYouInput>> = {
   },
 };
 
+const PRIORITY = z.enum(['urgent', 'high', 'medium', 'low', 'none']);
+
+// The task writer, or a refusal the model can read.
+function requireTasks(
+  ctx: OverseerToolContext
+): NonNullable<OverseerToolContext['tasks']> {
+  if (ctx.tasks === undefined) {
+    throw new OverseerToolError('task writes are not available here');
+  }
+  return ctx.tasks;
+}
+
+// A milestone to file under, checked to be one.
+function requireMilestone(ctx: OverseerToolContext, id: string): TaskDoc {
+  const doc = requireTask(ctx, id);
+  if (!ctx.cache.isContainer(id)) {
+    throw new OverseerToolError(`not a milestone: ${id}`);
+  }
+  return doc;
+}
+
+// How a card lists many titles: the first six, then a count.
+function titleList(titles: string[]): string {
+  const shown = titles.slice(0, 6).map((t) => `"${safeTitle(t)}"`);
+  const more = titles.length - shown.length;
+  return more > 0 ? `${shown.join(', ')} and ${more} more` : shown.join(', ');
+}
+
+const createTaskInput = z.strictObject({
+  title: z.string().min(1).describe('The task title.'),
+  description: z
+    .string()
+    .optional()
+    .describe('The spec: what done looks like.'),
+  parent: z
+    .string()
+    .optional()
+    .describe('The milestone (or parent task) to file it under.'),
+  priority: PRIORITY.optional(),
+  blockedBy: z
+    .array(z.string())
+    .optional()
+    .describe('Tasks that must land first.'),
+});
+
+const createTask: OverseerMutatingTool<z.infer<typeof createTaskInput>> = {
+  name: 'create_task',
+  description:
+    'Create one task. For several related tasks, or a new milestone, use create_plan so the human answers one card.',
+  inputSchema: createTaskInput,
+  describe(ctx, input) {
+    const parent =
+      input.parent === undefined ? null : requireTask(ctx, input.parent);
+    for (const id of input.blockedBy ?? []) requireTask(ctx, id);
+    return [
+      `Create task "${safeTitle(input.title)}"`,
+      parent === null
+        ? null
+        : `under ${parent.meta.id} ("${safeTitle(parent.meta.title)}")`,
+      input.priority === undefined ? null : `· ${input.priority}`,
+      (input.blockedBy ?? []).length === 0
+        ? null
+        : `· after ${(input.blockedBy ?? []).join(', ')}`,
+    ]
+      .filter((part) => part !== null)
+      .join(' ');
+  },
+  apply(ctx, input) {
+    requireTasks(ctx).create({
+      title: input.title,
+      ...(input.description !== undefined
+        ? { description: input.description }
+        : {}),
+      ...(input.parent !== undefined ? { parent: input.parent } : {}),
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
+      ...(input.blockedBy !== undefined ? { blockedBy: input.blockedBy } : {}),
+    });
+  },
+};
+
+// A plan step's blocker: a task id, or `#n` for the plan's own n-th task.
+const PLAN_REF = /^#(\d+)$/;
+
+const createPlanInput = z.strictObject({
+  milestone: z
+    .strictObject({
+      title: z.string().min(1),
+      description: z.string().optional(),
+      parent: z
+        .string()
+        .optional()
+        .describe('A project to file the new milestone under.'),
+    })
+    .optional()
+    .describe('A new milestone to hold the tasks.'),
+  parent: z
+    .string()
+    .optional()
+    .describe('An existing milestone to add the tasks to, instead.'),
+  tasks: z
+    .array(
+      z.strictObject({
+        title: z.string().min(1),
+        description: z.string().optional(),
+        priority: PRIORITY.optional(),
+        blockedBy: z
+          .array(z.string())
+          .optional()
+          .describe("Task ids, or #n for this plan's n-th task (from 1)."),
+      })
+    )
+    .min(1)
+    .max(30),
+});
+
+const createPlan: OverseerMutatingTool<z.infer<typeof createPlanInput>> = {
+  name: 'create_plan',
+  description:
+    'Turn a plan into work on one card: optionally a new milestone, then its tasks in order, with dependencies between them (#n) or on existing tasks.',
+  inputSchema: createPlanInput,
+  describe(ctx, input) {
+    if (input.milestone !== undefined && input.parent !== undefined) {
+      throw new OverseerToolError('pass a new milestone or a parent, not both');
+    }
+    if (input.milestone?.parent !== undefined) {
+      requireTask(ctx, input.milestone.parent);
+    }
+    const parent =
+      input.parent === undefined ? null : requireMilestone(ctx, input.parent);
+    input.tasks.forEach((task, i) => {
+      for (const ref of task.blockedBy ?? []) {
+        const local = PLAN_REF.exec(ref);
+        if (local === null) {
+          requireTask(ctx, ref);
+          continue;
+        }
+        const n = Number(local[1]);
+        if (n < 1 || n > i) {
+          throw new OverseerToolError(
+            `task ${i + 1} can only wait on an earlier task of the plan, not ${ref}`
+          );
+        }
+      }
+    });
+    const titles = titleList(input.tasks.map((t) => t.title));
+    const count = `${input.tasks.length} ${input.tasks.length === 1 ? 'task' : 'tasks'}`;
+    if (input.milestone !== undefined) {
+      return `Create milestone "${safeTitle(input.milestone.title)}" with ${count}: ${titles}`;
+    }
+    if (parent !== null) {
+      return `Add ${count} to ${parent.meta.id} ("${safeTitle(parent.meta.title)}"): ${titles}`;
+    }
+    return `Create ${count}: ${titles}`;
+  },
+  apply(ctx, input) {
+    const tasks = requireTasks(ctx);
+    const milestone =
+      input.milestone === undefined
+        ? null
+        : tasks.create({
+            title: input.milestone.title,
+            kind: 'milestone',
+            ...(input.milestone.description !== undefined
+              ? { description: input.milestone.description }
+              : {}),
+            ...(input.milestone.parent !== undefined
+              ? { parent: input.milestone.parent }
+              : {}),
+          });
+    const parent = milestone?.meta.id ?? input.parent;
+    const created: string[] = [];
+    for (const task of input.tasks) {
+      const blockedBy = (task.blockedBy ?? []).map((ref) => {
+        const local = PLAN_REF.exec(ref);
+        return local === null ? ref : created[Number(local[1]) - 1];
+      });
+      const doc = tasks.create({
+        title: task.title,
+        ...(task.description !== undefined
+          ? { description: task.description }
+          : {}),
+        ...(parent !== undefined ? { parent } : {}),
+        ...(task.priority !== undefined ? { priority: task.priority } : {}),
+        ...(blockedBy.length > 0 ? { blockedBy } : {}),
+      });
+      created.push(doc.meta.id);
+    }
+  },
+};
+
+const updateTaskInput = z
+  .strictObject({
+    taskId: z.string().describe('The task (t-…) to change.'),
+    title: z.string().min(1).optional(),
+    status: z.string().optional().describe("One of the project's statuses."),
+    priority: PRIORITY.optional(),
+    blockedBy: z
+      .array(z.string())
+      .optional()
+      .describe('The full new list of blockers.'),
+  })
+  .refine(
+    (v) =>
+      v.title !== undefined ||
+      v.status !== undefined ||
+      v.priority !== undefined ||
+      v.blockedBy !== undefined,
+    { message: 'change at least one of title, status, priority, blockedBy' }
+  );
+
+const updateTask: OverseerMutatingTool<z.infer<typeof updateTaskInput>> = {
+  name: 'update_task',
+  description:
+    "Change a task's title, status, priority or blockers. A running task's status follows its run; dispatch or cancel instead.",
+  inputSchema: updateTaskInput,
+  describe(ctx, input) {
+    const doc = requireTask(ctx, input.taskId);
+    if (input.status !== undefined) {
+      const known = statusModelFor(ctx.store.rootDir).definitions.map(
+        (d) => d.name
+      );
+      if (!known.includes(input.status)) {
+        throw new OverseerToolError(
+          `unknown status ${JSON.stringify(input.status)} (expected ${known.join('|')})`
+        );
+      }
+    }
+    for (const id of input.blockedBy ?? []) {
+      if (id === doc.meta.id) {
+        throw new OverseerToolError('a task cannot wait on itself');
+      }
+      requireTask(ctx, id);
+    }
+    const changes = [
+      input.title === undefined ? null : `title → "${safeTitle(input.title)}"`,
+      input.status === undefined
+        ? null
+        : `status ${doc.meta.status} → ${input.status}`,
+      input.priority === undefined
+        ? null
+        : `priority ${doc.meta.priority} → ${input.priority}`,
+      input.blockedBy === undefined
+        ? null
+        : `blockers → ${input.blockedBy.length === 0 ? 'none' : input.blockedBy.join(', ')}`,
+    ].filter((c) => c !== null);
+    return `Update ${doc.meta.id} ("${safeTitle(doc.meta.title)}"): ${changes.join(', ')}`;
+  },
+  apply(ctx, input) {
+    requireTasks(ctx).update(input.taskId, {
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
+      ...(input.blockedBy !== undefined ? { blockedBy: input.blockedBy } : {}),
+    });
+  },
+};
+
+const queueMergeInput = z.strictObject({
+  runId: z.string().describe('The reviewed run (r-…) to land.'),
+});
+
+const queueMerge: OverseerMutatingTool<z.infer<typeof queueMergeInput>> = {
+  name: 'queue_merge',
+  description:
+    'Put one finished, reviewed run in the merge queue to land. One card per run: never the whole project at once.',
+  inputSchema: queueMergeInput,
+  describe(ctx, input) {
+    const meta = requireRun(ctx, input.runId);
+    if (ctx.mergeQueue.snapshot().entries.some((e) => e.runId === meta.id)) {
+      throw new OverseerToolError(`run is already queued: ${meta.id}`);
+    }
+    return `Queue run ${meta.id} ("${safeTitle(meta.taskTitle)}") to land`;
+  },
+  apply(ctx, input) {
+    ctx.mergeQueue.enqueue(input.runId);
+  },
+};
+
 export const OVERSEER_MUTATING_TOOLS: readonly OverseerMutatingTool[] = [
   dispatchTask,
   approveRun,
@@ -1141,6 +1433,10 @@ export const OVERSEER_MUTATING_TOOLS: readonly OverseerMutatingTool[] = [
   dequeueMerge,
   messageRun,
   sendAsYou,
+  createTask,
+  createPlan,
+  updateTask,
+  queueMerge,
 ] as OverseerMutatingTool[];
 
 // ---------------------------------------------------------------------------

@@ -1980,6 +1980,23 @@ async function bootServer(
           ).messages;
         },
       },
+      // Writes as the API makes them; a refusal fails the card with its reason.
+      tasks: {
+        create: (input) => {
+          const made = createTaskChecked(
+            { rootDir, store, cache, events },
+            input
+          );
+          if (!made.ok) throw new Error(made.error);
+          return made.doc;
+        },
+        update: (id, patch) => {
+          const doc = store.update(id, patch);
+          cache.refresh(store, [id]);
+          events.broadcast({ type: 'task.changed', ids: [id] });
+          return doc;
+        },
+      },
       ownerRef: actorContext.humanRef,
       overseer: overseerAddress,
       docs: docs.service,
