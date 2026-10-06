@@ -47,6 +47,10 @@ export interface PaletteEntriesContext {
   savedViews?: { id: string; name: string }[];
   /** The task page or peek showing right now, which earns a `Copy link` row. */
   currentTaskId?: string | null;
+  /** One row per beta feature, turning it on or off. */
+  beta?: { id: string; label: string; run: () => void }[];
+  /** Two views: navigation is Overseer, Tasks and Settings, and there is no sidebar. */
+  twoViews?: boolean;
   actions: {
     openCreateTask: () => void;
     openQuickAddTask: () => void;
@@ -128,26 +132,62 @@ export function buildPaletteEntries(
       });
     }
   }
-  entries.push(
-    {
+  for (const beta of ctx.beta ?? []) {
+    entries.push({
+      id: `beta-${beta.id}`,
+      label: beta.label,
+      kind: 'action',
+      section: 'actions',
+      run: beta.run,
+    });
+  }
+  if (ctx.twoViews !== true) {
+    entries.push({
       id: 'action-toggle-sidebar',
       label: 'Toggle sidebar',
       kind: 'action',
       section: 'actions',
       shortcut: '[',
       run: actions.toggleSidebar,
-    },
-    {
-      id: 'action-shortcuts',
-      label: 'Keyboard shortcuts',
-      kind: 'action',
-      section: 'actions',
-      shortcut: '?',
-      run: actions.openShortcuts,
-    }
-  );
+    });
+  }
+  entries.push({
+    id: 'action-shortcuts',
+    label: 'Keyboard shortcuts',
+    kind: 'action',
+    section: 'actions',
+    shortcut: '?',
+    run: actions.openShortcuts,
+  });
 
-  if (ctx.hasProject) {
+  if (ctx.twoViews === true) {
+    entries.push(
+      {
+        id: 'go-overseer',
+        label: 'Go to Overseer',
+        kind: 'go to',
+        section: 'navigation',
+        shortcut: '⌘1',
+        run: () => actions.setGlobalView('overseer'),
+      },
+      {
+        id: 'go-board',
+        label: 'Go to Tasks',
+        kind: 'go to',
+        section: 'navigation',
+        shortcut: '⌘2',
+        run: () => actions.setProjectView('board'),
+      },
+      {
+        id: 'go-settings',
+        label: 'Go to Settings',
+        kind: 'go to',
+        section: 'navigation',
+        shortcut: '⌘,',
+        run: () => actions.setGlobalView('settings'),
+      }
+    );
+  } else if (ctx.hasProject) {
     ctx.views.forEach((view, index) => {
       entries.push({
         id: `go-${view.id}`,
@@ -159,7 +199,8 @@ export function buildPaletteEntries(
       });
     });
   }
-  for (const view of GLOBAL_VIEWS) {
+  // Two views folds every global view into Settings or Overseer.
+  for (const view of ctx.twoViews === true ? [] : GLOBAL_VIEWS) {
     entries.push({
       id: `go-${view.id}`,
       label: `Go to ${view.label}`,
@@ -170,7 +211,7 @@ export function buildPaletteEntries(
     });
   }
   // Dev-only primitive review surface — never registered in a production build.
-  if (ctx.dev) {
+  if (ctx.dev && ctx.twoViews !== true) {
     entries.push({
       id: 'go-gallery',
       label: 'Go to Gallery',

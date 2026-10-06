@@ -95,6 +95,8 @@ interface TasksListViewProps {
   onRequestFilter?: () => void;
   /** `⇧V` on the list: the page header opens its Display popover. No-op until wired. */
   onRequestDisplay?: () => void;
+  /** Tasks with an ask of yours; without it, any task wanting attention reads "Needs you". */
+  needsYouIds?: ReadonlySet<string>;
 }
 
 const PRIORITIES = Object.keys(PRIORITY_ORDER) as Priority[];
@@ -137,6 +139,7 @@ export function TasksListView({
   display,
   onRequestFilter,
   onRequestDisplay,
+  needsYouIds,
 }: TasksListViewProps) {
   const shell = useShellActions();
   const model = useStatusModelOf(data.config);
@@ -484,7 +487,11 @@ export function TasksListView({
                     prefs={prefs}
                     run={data.latestRunByTaskId.get(id)}
                     live={data.liveRunStateByTaskId.has(id)}
-                    needsYou={data.attentionByTaskId.has(id)}
+                    needsYou={
+                      needsYouIds === undefined
+                        ? data.attentionByTaskId.has(id)
+                        : needsYouIds.has(id)
+                    }
                     landing={landingByTaskId.get(id)}
                     statuses={statuses}
                     epics={data.epics}
