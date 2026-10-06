@@ -1078,6 +1078,7 @@ function App() {
           ...(twoViews && {
             showLessons: true,
             planOpensPages: true,
+            compactPage: true,
             filesView: (runId: string) => (
               <FilesView data={data} runId={runId} />
             ),
