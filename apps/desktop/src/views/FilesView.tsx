@@ -6,6 +6,7 @@ import { FilePreview } from '../components/files/FilePreview';
 import { FileTree } from '../components/files/FileTree';
 import { QuickOpenDialog } from '../components/files/QuickOpenDialog';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { BackToTasks } from '../components/tasks/BackToTasks';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { EditorBuffer } from '../lib/editorBuffer';
 import {
@@ -32,6 +33,8 @@ interface FilesViewProps {
   data: DispatchProjectData;
   /** The run whose worktree to browse, or null for the project checkout. */
   runId?: string | null;
+  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  onBack?: () => void;
 }
 
 function statusLabel(buffer: EditorBuffer | null): string {
@@ -42,7 +45,7 @@ function statusLabel(buffer: EditorBuffer | null): string {
   return 'Saved';
 }
 
-export function FilesView({ data, runId = null }: FilesViewProps) {
+export function FilesView({ data, runId = null, onBack }: FilesViewProps) {
   const { client } = data;
   const [selected, setSelected] = useState<string | null>(null);
   const [file, setFile] = useState<WorkspaceFile | null>(null);
@@ -140,6 +143,7 @@ export function FilesView({ data, runId = null }: FilesViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
+        {onBack && <BackToTasks onBack={onBack} />}
         <FileCode2 className="size-4" />
         <h1 className="text-sm font-medium">Files</h1>
         {runId !== null && (

@@ -2,6 +2,7 @@ import { Plus } from 'lucide-react';
 import { type ReactNode, useCallback, useMemo } from 'react';
 
 import { MilestoneMapView } from '../components/graph/MilestoneMap';
+import { BackToTasks } from '../components/tasks/BackToTasks';
 import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
@@ -49,7 +50,7 @@ const MODES: { id: TasksMode; label: string }[] = [
   { id: 'graph', label: 'Graph' },
 ];
 
-/** A page that is not the list: a task, a doc, a PR, a draft or a door to Classic. */
+/** A page that is not the list: a task, a doc, a PR, a draft, a room or a hosted view. */
 export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
 
 export interface TasksViewProps {
@@ -75,6 +76,7 @@ export interface TasksViewProps {
   onOpenPr: (number: number) => void;
   onOpenDoc: (docId: string) => void;
   onOpenAllDocs: () => void;
+  onOpenNotes: () => void;
   /** Keys per-project choices such as the graph's Milestones | Tasks. */
   projectKey: string;
   speechByTask: ReadonlyMap<string, { count: number; mention: boolean }>;
@@ -102,6 +104,7 @@ export function TasksView({
   onOpenPr,
   onOpenDoc,
   onOpenAllDocs,
+  onOpenNotes,
   projectKey,
   speechByTask,
   composer,
@@ -141,6 +144,7 @@ export function TasksView({
       onOpenPr={onOpenPr}
       onOpenDoc={onOpenDoc}
       onOpenAllDocs={onOpenAllDocs}
+      onOpenNotes={onOpenNotes}
     />
   );
   const model = useStatusModelOf(data.config);
@@ -221,15 +225,13 @@ export function TasksView({
       </div>
       {full ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {page.kind !== 'task' && (
-            <button
-              type="button"
-              onClick={onClosePage}
-              className="text-muted-foreground self-start px-4 pt-2 text-[12px] hover:underline"
-            >
-              ‹ tasks
-            </button>
-          )}
+          {page.kind !== 'task' &&
+            page.kind !== 'view' &&
+            page.kind !== 'impact' && (
+              <div className="px-4 pt-2">
+                <BackToTasks onBack={onClosePage} />
+              </div>
+            )}
           <div className="min-h-0 flex-1 overflow-hidden">
             {renderPage(page as TasksSidePage)}
           </div>
