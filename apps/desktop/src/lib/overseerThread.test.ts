@@ -5,7 +5,7 @@ import type {
 } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { buildOverseerThread, findInThread } from './overseerThread';
+import { buildOverseerThread, doorLabel, findInThread } from './overseerThread';
 
 function makeAction(overrides: Partial<OverseerAction> = {}): OverseerAction {
   return {
@@ -436,5 +436,31 @@ describe('one durable conversation', () => {
     ]);
     expect(findInThread(items, '  ')).toEqual(items);
     expect(findInThread(items, 'nothing like it')).toEqual([]);
+  });
+});
+
+describe('show_tasks doors', () => {
+  test('a show_tasks result is a door, an error stays a tool line', () => {
+    const items = buildOverseerThread(
+      makeRecord([
+        {
+          role: 'tool',
+          tool: 'show_tasks',
+          text: JSON.stringify({ door: { preset: 'ready' }, note: 'x' }),
+          at: 'a',
+        },
+        { role: 'tool', tool: 'show_tasks', text: 'error: nope', at: 'b' },
+      ])
+    );
+    expect(items[0]).toMatchObject({ kind: 'door', door: { preset: 'ready' } });
+    expect(items[1].kind).toBe('tool');
+  });
+
+  test('the label names what the door opens', () => {
+    expect(doorLabel({})).toBe('Show in tasks →');
+    expect(doorLabel({ preset: 'ready' })).toBe('Show Ready in tasks →');
+    expect(doorLabel({ taskId: 't-203', preset: 'ready' })).toBe(
+      'Show t-203 in tasks →'
+    );
   });
 });

@@ -4,6 +4,7 @@ import { OverseerChat } from '../components/chat/OverseerChat';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
+import type { OverseerDoor } from '../lib/overseerThread';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 
@@ -17,6 +18,8 @@ export interface TwoViewOverseerProps {
   onOpenConnectedAgents: () => void;
   /** "For you" posts, between the conversation and its composer. */
   posts?: ReactNode;
+  /** Opens one of the agent's "Show in tasks" doors. */
+  onOpenDoor: (door: OverseerDoor) => void;
 }
 
 /** Overseer in Two views: one conversation with your agent, a door to the asks. */
@@ -28,6 +31,7 @@ export function TwoViewOverseer({
   onShowAsks,
   onOpenConnectedAgents,
   posts,
+  onOpenDoor,
 }: TwoViewOverseerProps) {
   const daemonDown = data.portLoading || data.portError || data.client === null;
 
@@ -91,6 +95,7 @@ export function TwoViewOverseer({
           }
           disabled={revoked}
           durable
+          onOpenDoor={onOpenDoor}
         />
       </div>
     </div>

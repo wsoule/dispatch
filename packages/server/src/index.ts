@@ -106,7 +106,11 @@ import { docsOverflowPort } from './memory/overflow.js';
 import { memoryReceiptsStep, memoryRestoreDir } from './memory/receipts.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
-import { newestOpenRoot } from './messaging/conversations.js';
+import {
+  conversationMatch,
+  newestOpenRoot,
+  scanConversation,
+} from './messaging/conversations.js';
 import {
   closeOrphanedGates,
   openHumanDecisions,
@@ -1950,13 +1954,32 @@ async function bootServer(
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
       memory: overseerMemory(memory),
-      messaging: overseerToolMessaging(messaging.engine, (sender, to) =>
-        newestOpenRoot(
-          { engine: messaging.engine, store: messaging.store, orchestrator },
-          sender,
-          to
-        )
-      ),
+      messaging: {
+        ...overseerToolMessaging(messaging.engine, (sender, to) =>
+          newestOpenRoot(
+            { engine: messaging.engine, store: messaging.store, orchestrator },
+            sender,
+            to
+          )
+        ),
+        // Read as a participant only: no decide-tier view of others' threads.
+        readAs: (reader, query, limit) => {
+          const match = conversationMatch(
+            orchestrator,
+            reader,
+            query.with ?? null,
+            query.about ?? null
+          );
+          if (typeof match === 'string') throw new Error(match);
+          return scanConversation(
+            messaging.store,
+            messaging.engine,
+            match,
+            { address: reader, canDecide: false },
+            { limit }
+          ).messages;
+        },
+      },
       ownerRef: actorContext.humanRef,
       overseer: overseerAddress,
       docs: docs.service,

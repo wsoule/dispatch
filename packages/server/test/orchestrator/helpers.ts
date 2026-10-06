@@ -303,6 +303,11 @@ export function lateBoundOverseerMessaging(): {
         bound().answerRunApproval(runId, requestId, answer, actor),
       sendAsHuman: (to, text, actor, data) =>
         bound().sendAsHuman(to, text, actor, data),
+      readAs: (reader, query, limit) => {
+        const readAs = bound().readAs;
+        if (readAs === undefined) throw new Error('readAs is not bound');
+        return readAs(reader, query, limit);
+      },
     },
     bind: (next) => {
       real = next;

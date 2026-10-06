@@ -1036,11 +1036,14 @@ export class OverseerManager {
           action,
         };
       }
-      const data = registry.callStatusTool(name, input);
+      const owner = this.conversations.get(conversationId)?.owner;
+      const data = registry.callStatusTool(name, input, {
+        ...(owner !== undefined ? { owner } : {}),
+      });
       this.appendMessage(conversationId, {
         role: 'tool',
         tool: name,
-        text: describeToolResult(data),
+        text: registry.transcriptFor(name, data) ?? describeToolResult(data),
       });
       return { content: data, isError: false };
     } catch (err) {
