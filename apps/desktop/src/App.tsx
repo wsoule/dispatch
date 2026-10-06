@@ -71,6 +71,7 @@ import { useToasts } from './components/shell/Toasts';
 import { TwoViewShell } from './components/shell/TwoViewShell';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
+import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
 import { TaskPage } from './components/tasks/page/TaskPage';
 import {
   type TaskPageHost,
@@ -1863,7 +1864,18 @@ function App() {
           <TwoViewOverseer
             data={data}
             overseer={overseer}
+            projectPath={activeProject?.path ?? null}
             asks={needs.count}
+            needsBlock={
+              <NeedsYouBlock
+                data={data}
+                needs={needs}
+                decided={recentlyDecided}
+                onOpenRef={openRef}
+                onOpenDecision={onOpenDecision}
+                flush
+              />
+            }
             revoked={overseer.revoked}
             onShowAsks={() => dispatchNav({ type: 'tv/showTasks' })}
             onOpenDoor={openDoor}

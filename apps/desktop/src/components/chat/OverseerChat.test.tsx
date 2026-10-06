@@ -60,6 +60,8 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     reset: () => {},
     stop: () => Promise.resolve(),
     setConversationOptions: () => Promise.resolve(),
+    submitNew: () => Promise.resolve(),
+    open: () => {},
     draft: '',
     setDraft: () => {},
     ...over,

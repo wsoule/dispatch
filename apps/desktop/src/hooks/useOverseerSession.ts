@@ -177,6 +177,10 @@ export interface OverseerSession {
   reset: () => void;
   /** Stops the running turn; what was typed during it waits for the next send. */
   stop: () => Promise<void>;
+  /** Sends `text` as the opening of a new conversation, whatever is open now. */
+  submitNew: (text: string) => Promise<void>;
+  /** Makes an existing conversation the open one. */
+  open: (conversationId: string) => void;
   /**
    * Moves the open conversation to another model or effort for its next
    * turns. `DEFAULT_EFFORT_ID` goes back to the project's configured effort.
@@ -384,13 +388,13 @@ export function useOverseerSession(
    * back — but only if the composer is still empty, since whatever the human
    * has started typing since is theirs to keep.
    */
-  const submit = useCallback(
-    async (text: string) => {
+  const send = useCallback(
+    async (text: string, fresh: boolean) => {
       setSending(true);
       setSendError(null);
       setDraft('');
       try {
-        if (conversationId === null) {
+        if (fresh || conversationId === null) {
           await start(text);
         } else {
           await sendMessage(text);
@@ -406,6 +410,8 @@ export function useOverseerSession(
     },
     [conversationId, sendMessage, start]
   );
+  const submit = useCallback((text: string) => send(text, false), [send]);
+  const submitNew = useCallback((text: string) => send(text, true), [send]);
 
   const reply = useCallback(
     async (text: string) => {
@@ -606,6 +612,8 @@ export function useOverseerSession(
     reset,
     stop,
     setConversationOptions,
+    submitNew,
+    open: setConversationId,
     draft,
     setDraft,
   };

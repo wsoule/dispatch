@@ -23,6 +23,7 @@ import {
   RegistrationCard,
   WakeCard,
 } from '../gates/GateCard';
+import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 
 const MAX_ROWS = 8;
@@ -101,6 +102,8 @@ export interface NeedsYouBlockProps {
   onOpenRef: (action: RefAction) => void;
   /** Where an ask with no gate card (a capped fix loop, a stalled run) is handled. */
   onOpenDecision: (item: DecisionItem) => void;
+  /** Drops the list's own margins, for a column that spaces its children. */
+  flush?: boolean;
 }
 
 /** Every ask waiting on you, pinned above the list, regardless of filters. */
@@ -110,6 +113,7 @@ export function NeedsYouBlock({
   decided = [],
   onOpenRef,
   onOpenDecision,
+  flush = false,
 }: NeedsYouBlockProps) {
   const { client, port, me, messageAccess: access } = data;
   const gates = useOpenGates(client, port, access);
@@ -220,7 +224,10 @@ export function NeedsYouBlock({
     <section
       aria-label="Needs you"
       data-testid="needs-you"
-      className="bg-background border-border rounded-card shadow-card mx-4 mt-3 mb-1 border-[0.5px]"
+      className={cn(
+        'bg-background border-border rounded-card shadow-card border-[0.5px]',
+        !flush && 'mx-4 mt-3 mb-1'
+      )}
     >
       <button
         type="button"
