@@ -716,3 +716,58 @@ test('typing a slash suggests the session’s commands and a pick fills the draf
   expect((box as HTMLTextAreaElement).value).toBe('/compact ');
   expect(screen.queryByTestId('overseer-slash')).toBeNull();
 });
+
+test('actions queued together share one card, and Approve both decides each in turn', async () => {
+  const decided: [string, boolean][] = [];
+  const a = overseerAction({
+    id: 'act-a',
+    tool: 'dispatch_task',
+    summary: 'Dispatch t-1',
+  });
+  const b = overseerAction({
+    id: 'act-b',
+    tool: 'dispatch_task',
+    summary: 'Dispatch t-2',
+  });
+  render(
+    <ChatWithDraft
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          pendingActions: [a, b],
+          messages: [
+            {
+              role: 'action',
+              actionId: 'act-a',
+              outcome: 'pending',
+              text: 'q',
+              at: 't1',
+            },
+            {
+              role: 'action',
+              actionId: 'act-b',
+              outcome: 'pending',
+              text: 'q',
+              at: 't2',
+            },
+          ],
+        }),
+        confirmAction: (id, approve) => {
+          decided.push([id, approve]);
+          return Promise.resolve();
+        },
+      })}
+      durable
+    />
+  );
+  const card = screen.getByTestId('overseer-confirm-batch');
+  expect(card.textContent).toContain('dispatch_task ×2');
+  await clickAndSettle(screen.getByRole('button', { name: 'Approve both' }));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(decided).toEqual([
+    ['act-a', true],
+    ['act-b', true],
+  ]);
+});
