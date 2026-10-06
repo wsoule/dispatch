@@ -386,6 +386,35 @@ test('hello asks the daemon who this window is again', async () => {
   ).toBe(true);
 });
 
+// Events sent while the socket was down are lost, so a reconnect re-reads what
+// they would have changed. The first hello is the initial connect: nothing missed.
+test('a reconnect hello re-reads runs, the queue, landing and decisions', async () => {
+  const queryClient = await mountConnected();
+  const asked: string[] = [];
+  const original = queryClient.invalidateQueries.bind(queryClient);
+  queryClient.invalidateQueries = ((filters?: { queryKey?: unknown[] }) => {
+    asked.push(JSON.stringify(filters?.queryKey));
+    return original(filters);
+  }) as typeof queryClient.invalidateQueries;
+  const lost = [
+    ['dispatch-runs', PORT],
+    ['dispatch-merge-queue', PORT],
+    ['dispatch-landing', PORT],
+    ['dispatch-decisions', PORT],
+  ].map((key) => JSON.stringify(key));
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  expect(lost.filter((key) => asked.includes(key))).toEqual([]);
+
+  asked.length = 0;
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+  expect(lost.filter((key) => asked.includes(key))).toEqual(lost);
+});
+
 test('a failed whoami is exposed with a retry that asks again', async () => {
   whoamiFixture = null;
   const queryClient = new QueryClient({

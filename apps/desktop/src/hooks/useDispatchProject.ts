@@ -1656,6 +1656,8 @@ export function useDispatchProject(
     const refreshTeamKeys = () => {
       void queryClient.invalidateQueries({ queryKey: ['team-keys'] });
     };
+    // The first hello is the initial connect; any later one is a reconnect.
+    let connectedBefore = false;
     const disconnect = client.connectEvents(refreshTeamKeys, {
       onEvent: (event) => {
         applyThreadEvent(queryClient, port, event);
@@ -1708,6 +1710,20 @@ export function useDispatchProject(
           // Who this window is: the answer never goes stale, so a whoami that
           // failed while the daemon was coming up is asked again here.
           void queryClient.invalidateQueries({ queryKey: whoamiQueryKey });
+          // Run, queue and decision events sent while the socket was down are lost too;
+          // applyThreadEvent re-reads open gates on every hello.
+          if (connectedBefore) {
+            for (const queryKey of [
+              runsQueryKey,
+              mergeQueueQueryKey,
+              landingQueryKey,
+              decisionsQueryKey,
+              fixLoopQueryRootKey(port),
+            ]) {
+              void queryClient.invalidateQueries({ queryKey });
+            }
+          }
+          connectedBefore = true;
           // Presence too, and for a reason of its own: the daemon announces
           // this socket's arrival before the socket joins the event bus, so
           // the one event saying "you are here now" never reaches the window

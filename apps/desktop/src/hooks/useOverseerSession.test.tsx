@@ -682,3 +682,49 @@ test('a decision whose gate is no longer open surfaces decideError', async () =>
   expect(replies).toEqual([]);
   expect(result.current.decidingActionId).toBeNull();
 });
+
+// The orb goes "off" on this flag; any other refusal is an ordinary send error.
+test('a refusal coded overseer_revoked marks the session revoked until a send works', async () => {
+  let refuse = true;
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: () =>
+      refuse
+        ? Promise.reject(
+            new ApiError('the overseer is revoked', 409, 'overseer_revoked')
+          )
+        : Promise.resolve(overseerRecord()),
+    getOverseer: () => Promise.resolve(overseerRecord()),
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  expect(result.current.revoked).toBe(false);
+  await act(async () => {
+    await result.current.submit('hello');
+  });
+  expect(result.current.revoked).toBe(true);
+  refuse = false;
+  await act(async () => {
+    await result.current.submit('hello again');
+  });
+  expect(result.current.revoked).toBe(false);
+});
+
+test('another 409 is not a revocation', async () => {
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: () =>
+      Promise.reject(new ApiError('still answering', 409, 'overseer_busy')),
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  await act(async () => {
+    await result.current.submit('hello');
+  });
+  expect(result.current.revoked).toBe(false);
+  expect(result.current.sendError).toBe('still answering');
+});
