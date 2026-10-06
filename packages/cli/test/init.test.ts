@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   writeFileSync,
@@ -70,6 +71,54 @@ describe('dispatch init', () => {
     await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
     await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
     expect(lines.join('\n')).toContain('already initialized');
+  });
+});
+
+// A teammate's fresh clone: the committed config (a custom status set), the
+// roster and the ignore file, but no board.
+describe('dispatch init — an existing .dispatch/', () => {
+  const config =
+    'statuses: [backlog, todo, in-progress, in-review, done, cancelled]\nautoCommit: false\n';
+  const team = 'members:\n  - handle: alice\n    email: alice@example.com\n';
+
+  beforeEach(() => {
+    mkdirSync(join(root, '.dispatch'));
+    writeFileSync(join(root, '.dispatch/config.yml'), config);
+    writeFileSync(join(root, '.dispatch/team.yml'), team);
+    writeFileSync(join(root, '.dispatch/.gitignore'), 'dispatch.db\n');
+  });
+
+  it('keeps config.yml and team.yml untouched and says what it kept and created', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(readFileSync(join(root, '.dispatch/config.yml'), 'utf8')).toBe(
+      config
+    );
+    expect(readFileSync(join(root, '.dispatch/team.yml'), 'utf8')).toBe(team);
+    const out = lines.join('\n');
+    expect(out).toContain('kept config.yml, team.yml');
+    expect(out).toContain('created tasks/');
+    expect(out).not.toContain('Initialized');
+  });
+
+  it('changes nothing on a second run', async () => {
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    lines = [];
+    await makeProgram(ctx).parseAsync(['init'], { from: 'user' });
+    expect(lines.join('\n')).toContain(
+      'already initialized — .dispatch/: kept config.yml, team.yml, .gitignore, tasks/'
+    );
+    expect(readFileSync(join(root, '.dispatch/team.yml'), 'utf8')).toBe(team);
+  });
+
+  it('refuses over an unreadable config.yml without writing anything', async () => {
+    writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: 7\n');
+    await expect(
+      makeProgram(ctx).parseAsync(['init'], { from: 'user' })
+    ).rejects.toThrow(/config.yml exists but cannot be read/);
+    expect(existsSync(join(root, '.dispatch/tasks'))).toBe(false);
+    expect(readFileSync(join(root, '.dispatch/config.yml'), 'utf8')).toBe(
+      'statuses: 7\n'
+    );
   });
 });
 
