@@ -140,6 +140,9 @@ describe('/api/team federation routes', () => {
       await ada.api('/api/team/found', { method: 'POST', body: '{}' });
       await ada.sync();
       await bob.sync();
+      // A machine announces its key once it chooses the team it follows.
+      await bob.choose();
+      await bob.sync();
       await ada.sync();
       const waiting = (await ada.api('/api/team/keys')).body?.waiting as {
         replica: string;
@@ -216,7 +219,12 @@ describe('/api/team federation routes', () => {
         ['ada', 'bob', 'cy', 'dee'].map((h) => teammate(h))
       );
       await ada.api('/api/team/found', { method: 'POST', body: '{}' });
-      for (const t of [ada, bob, cy, dee, ada]) await t.sync();
+      for (const t of [ada, bob, cy, dee]) await t.sync();
+      for (const t of [bob, cy, dee]) {
+        await t.choose();
+        await t.sync();
+      }
+      await ada.sync();
       const waiting = (await ada.api('/api/team/keys')).body?.waiting as {
         replica: string;
         handle: string;

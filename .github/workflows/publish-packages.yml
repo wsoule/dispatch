@@ -98,11 +98,14 @@ jobs:
         run: bun scripts/publish-package.ts pack "$DIR" "$RUNNER_TEMP/package"
       - name: Smoke under Node
         run: bun scripts/publish-package.ts smoke "$RUNNER_TEMP/package"
-      # Node 24.11.0 bundles npm 11.6.1; staging needs npm >= 11.15.0.
-      - name: npm with staged publishing
-        run: npm install -g npm@11.15.0
-      - name: Stage with provenance
+      # Node 24.11.0 bundles npm 11.6.1; staging needs npm >= 11.15.0. Run it
+      # through npx: a global install loses to proto's npm on PATH. Provenance
+      # needs a public source repository, so it stays off while this repo is
+      # private; --loglevel verbose shows why a trusted-publishing exchange fails.
+      - name: Stage
         working-directory: ${{ runner.temp }}/package
         env:
           DIST_TAG: ${{ steps.pkg.outputs.distTag }}
-        run: npm stage publish --provenance --access public --tag "$DIST_TAG"
+        run:
+          npx --yes npm@11.15.0 stage publish --access public --tag "$DIST_TAG"
+          --loglevel verbose

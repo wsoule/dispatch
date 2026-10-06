@@ -21,8 +21,13 @@ import type {
   RosterBody,
 } from '@dispatch-foo/protocol/federation';
 import type { ServerWebSocket } from 'bun';
+import { createHash } from 'node:crypto';
 
-import { relayAuthText } from '../../../src/team/federation/relay.js';
+import {
+  leadingZeroBits,
+  powText,
+  relayAuthText,
+} from '../../../src/team/federation/relay.js';
 import type { RelayFrame } from '../../../src/team/federation/relay.js';
 
 // The in-repo fake relay (Task 22): the frame contract of
@@ -43,6 +48,8 @@ const LIMITS: RelayLimits = {
   pendingPerSourceMinute: 3,
 };
 const RETAIN_MS = 30 * 24 * 60 * 60 * 1000;
+// How far a registration stamp's time may stray from the relay's clock.
+const STAMP_FRESH_SEC = 10 * 60;
 const OPS_PER_FRAME = 1000;
 const MINUTE = 60_000;
 
@@ -57,7 +64,10 @@ interface Conn {
 export interface FakeRelay {
   /** The base URL clients dial: ws://127.0.0.1:<port>. */
   url: string;
-  teamId: string;
+  /** The registered team's id; '' until a registration names one. */
+  readonly teamId: string;
+  /** Registrations refused so far, with the relay's reason. */
+  refusals(): string[];
   /** What the relay holds for `replica`, in seq order. */
   stored(replica: string): LogEntry[];
   /** The relay's clock, for retention and rate limits. */
@@ -72,46 +82,83 @@ export interface FakeRelay {
 // A frame over this many bytes closes the socket (the contract's cap).
 const FRAME_MAX_BYTES = 8 * 1024 * 1024;
 
-/** A relay for the founder's team. It serves the team only once it is
- *  registered through `POST /v1/teams`, as the real relay does; with a
- *  `registrationToken`, that call needs `Authorization: Bearer <token>`. */
+/** A relay for the founder's team, or, with no founder yet, for the first
+ *  team that registers. It serves the team only once it is registered
+ *  through `POST /v1/teams`, as the real relay does. With a
+ *  `registrationToken`, that call needs `Authorization: Bearer <token>`;
+ *  without one, a founder-signed registration with a proof-of-work stamp of
+ *  `difficulty` leading zero bits (`GET /v1/registration`). */
 export function startFakeRelay(
-  founder: { fed: { ownLog(): LogEntry[] }; clock?: { now: Date } },
+  founder: { fed?: { ownLog(): LogEntry[] }; clock?: { now: Date } },
   opts: {
     licensePublicKey?: string | null;
     limits?: Partial<RelayLimits>;
     registrationToken?: string;
+    /** Leading zero bits a keyless registration's stamp needs (default 8). */
+    difficulty?: number;
   } = {}
 ): Promise<FakeRelay> {
   const found = founder.fed
-    .ownLog()
+    ?.ownLog()
     .find(
       (e) =>
         e.type === 'roster' &&
         !isStub(e) &&
         (e.body as { action?: string } | undefined)?.action === 'found'
     );
-  if (found === undefined) throw new Error('the founder has no found op');
-  const teamId = opHash(found).slice(0, 32);
+  if (founder.fed !== undefined && found === undefined)
+    throw new Error('the founder has no found op');
+  let teamId = found === undefined ? '' : opHash(found).slice(0, 32);
   const clock = founder.clock ?? { now: new Date() };
+  const difficulty = opts.difficulty ?? 8;
+  const refused: string[] = [];
   let relay: Relay | null = null;
+  let url = '';
   const register = async (req: Request): Promise<Response> => {
+    const refuse = (status: number, error: string): Response => {
+      refused.push(error);
+      return answer(status, { error });
+    };
     const token = opts.registrationToken;
     if (
       token !== undefined &&
       req.headers.get('authorization') !== `Bearer ${token}`
     )
-      return answer(401, { error: 'registration needs the relay’s token' });
-    let body: { key?: LogEntry; found?: LogEntry; ops?: LogEntry[] };
+      return refuse(401, 'registration needs the relay’s token');
+    let body: {
+      key?: LogEntry;
+      found?: LogEntry;
+      ops?: LogEntry[];
+      pow?: { t?: unknown; nonce?: unknown };
+    };
     try {
       body = (await req.json()) as typeof body;
     } catch {
-      return answer(400, { error: 'expected a JSON body' });
+      return refuse(400, 'expected a JSON body');
     }
     const chain = verifiedChain(body);
-    if (typeof chain === 'string') return answer(400, { error: chain });
-    if (opHash(chain.found).slice(0, 32) !== teamId)
-      return answer(400, { error: 'this relay serves another team' });
+    if (typeof chain === 'string') return refuse(400, chain);
+    const named = opHash(chain.found).slice(0, 32);
+    if (teamId !== '' && named !== teamId)
+      return refuse(400, 'this relay serves another team');
+    // Keyless: the founder's signed chain plus a fresh stamp over this
+    // relay's URL; the time is the real clock's, as the real relay's is.
+    if (token === undefined) {
+      const { t, nonce } = body.pow ?? {};
+      const fresh =
+        typeof t === 'number' &&
+        Number.isInteger(t) &&
+        Math.abs(Date.now() / 1000 - t) <= STAMP_FRESH_SEC;
+      const digest =
+        fresh && typeof nonce === 'string' && /^\d+$/.test(nonce)
+          ? createHash('sha256')
+              .update(powText(named, url, t, nonce))
+              .digest()
+          : null;
+      if (digest === null || leadingZeroBits(digest) < difficulty)
+        return refuse(403, 'registration needs a fresh proof-of-work stamp');
+    }
+    teamId = named;
     if (relay !== null) return answer(200, { teamId });
     relay = new Relay(teamId, chain, opts.licensePublicKey ?? null, clock, {
       ...LIMITS,
@@ -125,6 +172,12 @@ export function startFakeRelay(
     fetch(req, srv) {
       const path = new URL(req.url).pathname;
       if (path === '/v1/teams' && req.method === 'POST') return register(req);
+      if (path === '/v1/registration' && req.method === 'GET')
+        return answer(200, {
+          difficulty,
+          tokenRequired: opts.registrationToken !== undefined,
+          tokenAccepted: opts.registrationToken !== undefined,
+        });
       if (path !== `/v1/teams/${teamId}` || relay === null)
         return answer(404, { error: 'no such team' });
       if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket')
@@ -155,10 +208,13 @@ export function startFakeRelay(
       },
     },
   });
-  const url = `ws://127.0.0.1:${String(server.port)}`;
+  url = `ws://127.0.0.1:${String(server.port)}`;
   return Promise.resolve({
     url,
-    teamId,
+    get teamId() {
+      return teamId;
+    },
+    refusals: () => [...refused],
     stored: (r) => relay?.stored(r) ?? [],
     clock,
     publishFrames: () => relay?.publishFrames ?? 0,
@@ -276,6 +332,7 @@ class Relay {
       this.publishFrames += 1;
       const through = this.store(conn, frame.ops);
       send(ws, { t: 'stored', re: frame.id, through });
+      this.recheck();
       this.push(conn.replica);
     } else if (frame.t === 'pull') {
       const all = this.visible(conn, frame.since, frame.replicas);
@@ -446,6 +503,20 @@ class Relay {
       }
     }
     return out;
+  }
+
+  // A pending machine the roster now admits reads as a member from here on,
+  // as the real relay's recheck does.
+  private recheck(): void {
+    const view = this.fold(new Map());
+    if (view === null) return;
+    for (const c of this.conns.values())
+      if (
+        c.status === 'pending' &&
+        c.replica !== null &&
+        view.members.has(c.replica)
+      )
+        c.status = 'member';
   }
 
   // Tells every member connection other than the publisher that ops arrived.

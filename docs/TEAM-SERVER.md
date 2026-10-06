@@ -20,6 +20,19 @@ settled (§3); §8 lists what remains open.
 > reason for it was that FSL code can be used internally for free, and ELv2
 > closes that by protecting the license key. A hosted server (§2, §7) remains
 > the way to add a web dashboard and hosted sync on top.
+>
+> **Update 2026-10-06.** Setting a team up is two actions a person: the founder
+> runs `dispatch team start` (founds, closes the legacy window when no older
+> build syncs, and registers at the hosted relay with a proof of work) and
+> `dispatch team invite <email|handle>`, which prints one `dispatch-team:` link;
+> the teammate runs `dispatch team join` and pastes it. The inviting machine
+> admits a machine whose key op proves the link's one-time secret, once per
+> invite and before it expires. Fingerprint comparison is an optional six-digit
+> check. Shared-host tokens moved to `dispatch team host …` and the roster's
+> other commands to `dispatch team advanced …`. With board sync off, `start` and
+> `join` write `sync.enabled: true` and restart the daemon in its own process
+> (same port and tokens), refusing while any run, merge, plan, terminal or
+> browser is live; the client waits and sends the request again.
 
 ## 1. Why tasks leave markdown
 

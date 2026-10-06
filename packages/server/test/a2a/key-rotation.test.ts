@@ -120,6 +120,12 @@ describe('a planned key rotation', () => {
         ),
       });
     };
+    // b re-pins alice's next key when a's push lands, which is not awaited
+    // by rotate(); a statement naming k2 before then is simply unknown (404).
+    await waitFor(
+      () => b.handle.a2a.store!.getPeer('alice')?.keyThumbprint === k2Kid,
+      5000
+    );
     // Unsigned, naming the pinned key but signed by another: refused.
     const forger = newPrivateJwk();
     const forged = await rawFetch(`${b.listener}/a2a/v1/dispatch/key-change`, {

@@ -448,6 +448,7 @@ describe('signed responses and outbound signing (T40)', () => {
     expect(verdict).toEqual({ ok: true, keyid: kid });
   });
 
+  // Three signed send-and-retry rounds against a live peer: more than 5 s on a loaded CI runner.
   it('signs requests to a pinned peer and reads its signed reply; an unsigned reply marks it auth-failed', async () => {
     const peerKey = newKey();
     let mode: 'signed' | 'unsigned' | 'signed401' = 'signed';
@@ -600,7 +601,7 @@ describe('signed responses and outbound signing (T40)', () => {
     } finally {
       await peer.stop(true);
     }
-  });
+  }, 20_000);
 
   it('a signed client works end to end through a standalone host, and the reply is signed for the host URL', async () => {
     const { key } = await signatureClient('acme');
