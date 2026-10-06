@@ -481,7 +481,19 @@ function App() {
 
   // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
   // now, and a run that has just been created is live, so it opens on Run.
+  // Two views' page right now; read by callbacks made before it is computed below.
+  const twoViewsPageRef = useRef<{ on: boolean; taskId: string | null }>({
+    on: false,
+    taskId: null,
+  });
   const onRunDispatched = useCallback((runId: string, taskId: string) => {
+    // A run started from a task already open (split or full) stays on that page.
+    const page = twoViewsPageRef.current;
+    if (page.on && page.taskId === taskId) {
+      dispatchNav({ type: 'setTaskTab', tab: 'run' });
+      dispatchNav({ type: 'openRun', runId });
+      return;
+    }
     dispatchNav({ type: 'openTask', taskId, tab: 'run', runId });
   }, []);
 
@@ -518,6 +530,18 @@ function App() {
       : twoViewsState.peek?.kind === 'task'
         ? twoViewsState.peek.taskId
         : null;
+  const twoViewsOpenTaskId =
+    twoViews &&
+    twoViewsState.mainView === 'tasks' &&
+    twoViewsState.tasksPage.kind === 'task'
+      ? twoViewsState.tasksPage.taskId
+      : null;
+  useEffect(() => {
+    twoViewsPageRef.current = {
+      on: twoViewsOpenTaskId !== null,
+      taskId: twoViewsOpenTaskId,
+    };
+  }, [twoViewsOpenTaskId]);
   const focusedTaskId = twoViews
     ? twoViewsTaskId
     : (navState.activeTaskId ?? navState.peekTaskId);
@@ -1001,6 +1025,29 @@ function App() {
                 />
               )
             : undefined,
+          // Two views moves the repo-wide Files and Terminals onto each run's page.
+          ...(twoViews && {
+            filesView: (runId: string) => (
+              <FilesView data={data} runId={runId} />
+            ),
+            terminalView: (runId: string) => (
+              <TerminalsView data={data} runId={runId} />
+            ),
+            prView: (runId: string, onClose: () => void) => {
+              const number = prNumberFromUrl(
+                projectRuns.find((r) => r.id === runId)?.prUrl
+              );
+              return number === null ? null : (
+                <PrReviewView
+                  key={number}
+                  projectName={activeProject?.name ?? null}
+                  data={data}
+                  prNumber={number}
+                  onBack={onClose}
+                />
+              );
+            },
+          }),
         };
 
   // The Cockpit's `d`: dispatch without following the run (it moves into In flight in

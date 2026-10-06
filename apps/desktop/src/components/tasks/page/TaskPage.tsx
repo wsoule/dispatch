@@ -19,11 +19,13 @@ import {
   Ban,
   Copy,
   Ellipsis,
+  FolderTree,
   Link2,
   Maximize2,
   MessagesSquare,
   MonitorPlay,
   Play,
+  SquareTerminal,
   Star,
   X,
 } from 'lucide-react';
@@ -300,6 +302,18 @@ function PropertyChips({
   );
 }
 
+// Every view the page body can show: a lifecycle stage or one of the side tabs.
+type PageView = TaskPageMode | 'thread' | 'preview' | 'files' | 'terminal';
+
+function isStage(view: PageView): view is TaskPageMode {
+  return (
+    view !== 'thread' &&
+    view !== 'preview' &&
+    view !== 'files' &&
+    view !== 'terminal'
+  );
+}
+
 function TaskPageLoaded({
   host,
   item,
@@ -373,8 +387,10 @@ function TaskPageLoaded({
   const autoMode = defaultTaskPageMode(stateInput);
   const modes = taskPageModes(container);
   const requested = controlledMode ?? localMode;
-  const { threadView } = host;
-  const mode: TaskPageMode | 'thread' | 'preview' =
+  const { threadView, filesView, terminalView } = host;
+  const runTab = (view: unknown) =>
+    view !== undefined && latestRun !== undefined;
+  const mode: PageView =
     requested === 'auto'
       ? autoMode
       : requested === 'preview'
@@ -385,9 +401,17 @@ function TaskPageLoaded({
           ? threadView !== undefined
             ? 'thread'
             : autoMode
-          : modes.includes(requested)
-            ? requested
-            : autoMode;
+          : requested === 'files'
+            ? runTab(filesView)
+              ? 'files'
+              : autoMode
+            : requested === 'terminal'
+              ? runTab(terminalView)
+                ? 'terminal'
+                : autoMode
+              : modes.includes(requested)
+                ? requested
+                : autoMode;
   const selectedRunId = controlledRunId ?? localRunId;
   // Any kind: a review or verify run opened by id (the live rail, the inbox) shows itself.
   const selectedRun = allRuns.find((r) => r.id === selectedRunId) ?? latestRun;
@@ -429,7 +453,7 @@ function TaskPageLoaded({
     [moveTaskStatus, taskId, fail]
   );
   const selectMode = useCallback(
-    (next: TaskPageMode | 'thread' | 'preview') => {
+    (next: PageView) => {
       // Picking the state's own mode returns the page to following the state.
       const tab: TaskTab = next === autoMode ? 'auto' : next;
       if (onModeChange !== undefined) onModeChange(tab);
@@ -627,6 +651,26 @@ function TaskPageLoaded({
           <MessagesSquare />
         </IconButton>
       )}
+      {runTab(filesView) && (
+        <IconButton
+          label="The run's files"
+          active={mode === 'files'}
+          onClick={() => selectMode(mode === 'files' ? autoMode : 'files')}
+        >
+          <FolderTree />
+        </IconButton>
+      )}
+      {runTab(terminalView) && (
+        <IconButton
+          label="A terminal in the run's worktree"
+          active={mode === 'terminal'}
+          onClick={() =>
+            selectMode(mode === 'terminal' ? autoMode : 'terminal')
+          }
+        >
+          <SquareTerminal />
+        </IconButton>
+      )}
       {layout === 'full' && latestRun !== undefined && (
         <IconButton
           label="Preview the run's app"
@@ -723,7 +767,9 @@ function TaskPageLoaded({
     mode === 'review' ||
     mode === 'plan' ||
     mode === 'thread' ||
-    mode === 'preview';
+    mode === 'preview' ||
+    mode === 'files' ||
+    mode === 'terminal';
   let modeView: ReactNode;
   switch (mode) {
     case 'spec':
@@ -749,6 +795,20 @@ function TaskPageLoaded({
       break;
     case 'preview':
       modeView = <TaskPreviewTab data={project} selectedRun={selectedRun} />;
+      break;
+    case 'files':
+      modeView = selectedRun !== undefined && filesView !== undefined && (
+        <ErrorBoundary label="this tab">
+          {filesView(selectedRun.id)}
+        </ErrorBoundary>
+      );
+      break;
+    case 'terminal':
+      modeView = selectedRun !== undefined && terminalView !== undefined && (
+        <ErrorBoundary label="this tab">
+          {terminalView(selectedRun.id)}
+        </ErrorBoundary>
+      );
       break;
   }
 
@@ -863,7 +923,7 @@ function TaskPageLoaded({
             )}
             <LifecycleTrack
               stages={stages}
-              active={mode === 'preview' || mode === 'thread' ? autoMode : mode}
+              active={isStage(mode) ? mode : autoMode}
               onSelect={selectMode}
               statusColor={statusColor(meta.status, model)}
               className="max-w-[720px]"

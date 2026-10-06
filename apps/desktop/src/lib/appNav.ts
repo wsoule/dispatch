@@ -60,7 +60,13 @@ export type ProjectView =
 /** Which mode the task page shows: `auto` follows the task's state (see
  * defaultTaskPageMode); `thread` is the task's message threads; `preview` is the
  * run's live app, full page only. */
-export type TaskTab = 'auto' | TaskPageMode | 'thread' | 'preview';
+export type TaskTab =
+  | 'auto'
+  | TaskPageMode
+  | 'thread'
+  | 'preview'
+  | 'files'
+  | 'terminal';
 
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
  * and what the two "open in Impact" entry points (Review case panel, Git
