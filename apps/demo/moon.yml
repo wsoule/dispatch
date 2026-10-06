@@ -12,3 +12,11 @@ tasks:
       cache: false
       persistent: true
       runInCI: 'skip'
+  # The demo imports and spawns the daemon, which loads server's dependencies
+  # from dist; `^:build` never reaches them, since server has no build task.
+  typecheck:
+    deps:
+      - 'server:build-deps'
+  test:
+    deps:
+      - 'server:build-deps'

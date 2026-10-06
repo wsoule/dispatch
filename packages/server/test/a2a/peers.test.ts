@@ -93,6 +93,15 @@ describe('owner notices', () => {
       expect(body).not.toContain('--token-stdin');
     }
   });
+
+  it('drain waits out a notice in flight, then skips new ones', async () => {
+    f.notices.send('acme', 'test', 'first');
+    await f.notices.drain();
+    expect(ownerNotices()).toEqual(['first']);
+    f.notices.send('acme', 'later', 'second');
+    await f.notices.drain();
+    expect(ownerNotices()).toEqual(['first']);
+  });
 });
 
 describe('adding a peer', () => {

@@ -77,9 +77,9 @@ beforeEach(async () => {
   });
   stop = worker.start();
 });
-afterEach(() => {
+afterEach(async () => {
   stop();
-  f.close();
+  await f.close();
 });
 
 const ask = async () =>

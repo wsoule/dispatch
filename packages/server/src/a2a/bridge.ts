@@ -811,6 +811,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         stopWatch?.();
         stopWatch = null;
         await listener?.close();
+        // Owner notices write to the messaging database, which closes next.
+        await peers?.notices.drain();
         messaging.setExternalPolicy(null);
         guardDeps.store = null;
         store?.close();
