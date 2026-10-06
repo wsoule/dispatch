@@ -23,6 +23,9 @@ export interface CliContext {
   // Asks a yes/no question (team start's relay disclosure); tests inject
   // it, real usage asks on the terminal and answers no without one.
   confirm?: (question: string) => Promise<boolean>;
+  // Asks for a line of text (team start's place); tests inject it, real
+  // usage asks on the terminal and answers null without one.
+  ask?: (question: string) => Promise<string | null>;
 }
 
 export class CliError extends Error {
