@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -77,6 +83,32 @@ describe('dispatch serve', () => {
     await expect(
       makeProgram(bareCtx).parseAsync(['serve'], { from: 'user' })
     ).rejects.toThrow(/not initialized/);
+  });
+
+  // A teammate's clone of a database-backed project: the committed config
+  // and roster, no board yet. dispatchd creates the database on boot.
+  it('starts dispatchd in a clone that has only the committed .dispatch files', async () => {
+    const clone = mkdtempSync(join(tmpdir(), 'dispatch-cli-clone-'));
+    mkdirSync(join(clone, '.dispatch'));
+    writeFileSync(join(clone, '.dispatch/config.yml'), 'autoCommit: true\n');
+    writeFileSync(join(clone, '.dispatch/team.yml'), 'members: []\n');
+    writeFileSync(join(clone, '.dispatch/.gitignore'), 'dispatch.db\n');
+    const argsFile = join(clone, 'daemon-args');
+    const stub = join(clone, 'fake-dispatchd');
+    writeFileSync(stub, `#!/bin/sh\necho "$@" > "${argsFile}"\n`);
+    chmodSync(stub, 0o755);
+    const originalBin = process.env.DISPATCH_DAEMON_BIN;
+    process.env.DISPATCH_DAEMON_BIN = stub;
+    try {
+      await makeProgram({ cwd: clone, log: (l) => lines.push(l) }).parseAsync(
+        ['serve'],
+        { from: 'user' }
+      );
+    } finally {
+      if (originalBin === undefined) delete process.env.DISPATCH_DAEMON_BIN;
+      else process.env.DISPATCH_DAEMON_BIN = originalBin;
+    }
+    expect(readFileSync(argsFile, 'utf8')).toContain('--root');
   });
 });
 
