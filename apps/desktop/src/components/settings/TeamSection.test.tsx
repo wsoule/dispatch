@@ -78,6 +78,14 @@ describe('holderDates', () => {
 });
 
 describe('TeamSection', () => {
+  test('folds the shared-host tokens and machine keys behind Advanced', () => {
+    mount({ myTier: 'operator', client: teamClient([]) as never });
+    const advanced = screen.getByTestId('team-advanced');
+    expect(advanced.tagName).toBe('DETAILS');
+    expect(advanced.hasAttribute('open')).toBe(false);
+    expect(advanced.textContent).toContain('Invite someone');
+  });
+
   test('below decide, it says who to ask instead of offering controls', () => {
     mount({ myTier: 'request', client: teamClient([]) as never });
     expect(screen.getByText('Inviting people')).toBeTruthy();

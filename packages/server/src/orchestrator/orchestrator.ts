@@ -501,6 +501,8 @@ export class Orchestrator {
   private readonly autoResumeOperators = new Map<string, string | null>();
   // Set by shutdown(); see it for what this is protecting against.
   private stopped = false;
+  // Set by hold(): why no run may start right now, or null.
+  private held: string | null = null;
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
@@ -563,8 +565,25 @@ export class Orchestrator {
     this.dispatchGuard = guard;
   }
 
+  /** Starts nothing until release(): every dispatch, aux run, resume and
+   *  wake is refused with `why`. The daemon holds it while it restarts to
+   *  turn on team sync, so no run begins in the window before the stop. */
+  hold(why: string): void {
+    this.held = why;
+  }
+
+  release(): void {
+    this.held = null;
+  }
+
+  // Refuses a start while held.
+  private refuseHeld(): void {
+    if (this.held !== null) throw new OrchestratorConflictError(this.held);
+  }
+
   // A gated A2A draft never runs, whichever entry point is asked.
   private refuseGuarded(task: TaskDoc): void {
+    this.refuseHeld();
     const refusal = this.dispatchGuard?.(task) ?? null;
     if (refusal !== null) throw new OrchestratorConflictError(refusal);
   }
@@ -5148,6 +5167,7 @@ export class Orchestrator {
     actor: string | undefined,
     operator: string | null
   ): RunMeta {
+    this.refuseHeld();
     const {
       executor,
       name: executorName,
@@ -5295,6 +5315,7 @@ export class Orchestrator {
       operator?: string | null;
     } = {}
   ): RunMeta {
+    this.refuseHeld();
     const meta = this.requireRun(runId);
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
       throw new OrchestratorClientError(`run is still live: ${runId}`);

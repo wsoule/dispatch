@@ -20,6 +20,9 @@ export interface CliContext {
   // tests inject a stub; real usage falls back to stdin or a muted prompt
   // (`readSecret` in commands/secret.ts).
   readSecret?: (prompt: string) => Promise<string>;
+  // Asks a yes/no question (team start's relay disclosure); tests inject
+  // it, real usage asks on the terminal and answers no without one.
+  confirm?: (question: string) => Promise<boolean>;
 }
 
 export class CliError extends Error {

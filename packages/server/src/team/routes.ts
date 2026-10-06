@@ -108,7 +108,7 @@ function teamFile(rootDir: string): string {
 /** The roster as it stands, with the entries it skipped, or a reason it
  *  cannot be read. A conflicted team.yml is reported, never treated as empty —
  *  writing over it would wipe the team, the same rule ActorContext follows. */
-function readRoster(
+export function readRoster(
   rootDir: string
 ):
   | { ok: true; members: TeamMember[]; dropped: DroppedEntry[] }

@@ -33,6 +33,9 @@ export interface TeammateOpts {
   gitName?: string;
   /** Extra .dispatch/config.yml lines. */
   config?: string;
+  /** Start with board sync off, the bare remote as the project's origin,
+   *  as a fresh clone is before anyone turns sync on. */
+  syncOff?: boolean;
 }
 
 // The runs a daemon started, and what each run was sent or notified: an
@@ -119,7 +122,11 @@ export interface TeammateDaemon {
     recoveryCode: string;
     fingerprint: string;
   }>;
-  /** Admits `other`'s waiting key by its fingerprint, syncing both first. */
+  /** Trusts the founding this daemon follows, which announces its key to
+   *  that team: a daemon announces itself only to a team it chose. */
+  choose(): Promise<void>;
+  /** Admits `other`'s waiting key by its fingerprint, syncing both first;
+   *  `other` chooses the team first (`choose`). */
   admit(
     other: TeammateDaemon,
     opts?: { role?: 'admin'; observer?: boolean }
@@ -157,11 +164,15 @@ export function daemons(): {
   const boot = async (
     root: string,
     opts: TeammateOpts,
-    executor: RecordingExecutor
+    executor: RecordingExecutor,
+    keep?: { port: number; tokens: ServerHandle['tokens'] },
+    onRestart?: (rollback: () => void) => Promise<void>
   ): Promise<ServerHandle> => {
     const handle = await startServer({
       rootDir: root,
-      port: 0,
+      port: keep?.port ?? 0,
+      ...(keep === undefined ? {} : { tokens: keep.tokens }),
+      ...(onRestart === undefined ? {} : { onSharingRestart: onRestart }),
       webDistDir: null,
       storeBackend: 'sqlite',
       registerExecutors: (orchestrator) => {
@@ -192,14 +203,42 @@ export function daemons(): {
     writeFileSync(join(root, 'README.md'), `# ${name}\n`);
     mkdirSync(join(root, '.dispatch'), { recursive: true });
     // A long interval: every pass is asked for explicitly.
-    writeFileSync(
-      join(root, '.dispatch', 'config.yml'),
-      `sync:\n  enabled: true\n  repo: ${remote}\n  intervalSec: 3600\n${opts.config ?? ''}`
-    );
+    if (opts.syncOff === true) {
+      runGitSync(root, ['remote', 'add', 'origin', remote]);
+      writeFileSync(
+        join(root, '.dispatch', 'config.yml'),
+        `sync:\n  enabled: false\n  intervalSec: 3600\n${opts.config ?? ''}`
+      );
+    } else
+      writeFileSync(
+        join(root, '.dispatch', 'config.yml'),
+        `sync:\n  enabled: true\n  repo: ${remote}\n  intervalSec: 3600\n${opts.config ?? ''}`
+      );
     runGitSync(root, ['add', '-A']);
     runGitSync(root, ['commit', '-q', '-m', 'init']);
     const executor = new RecordingExecutor();
-    let server = await boot(root, opts, executor);
+    // The daemon's own restart to turn board sync on: same port and tokens,
+    // and a rollback and boot as before when the new boot fails, as
+    // dispatchd's daemonMain does it.
+    let restarting: Promise<void> | null = null;
+    const restartForSharing = (rollback: () => void): Promise<void> => {
+      restarting ??= (async () => {
+        const keep = { port: server.port, tokens: server.tokens };
+        await server.stop();
+        handles.splice(handles.indexOf(server), 1);
+        try {
+          server = await boot(root, opts, executor, keep, restartForSharing);
+        } catch (err) {
+          rollback();
+          server = await boot(root, opts, executor, keep, restartForSharing);
+          throw err;
+        } finally {
+          restarting = null;
+        }
+      })();
+      return restarting;
+    };
+    let server = await boot(root, opts, executor, undefined, restartForSharing);
     const syncDir = boardSyncDir(root);
     const call = async (
       path: string,
@@ -241,9 +280,20 @@ export function daemons(): {
           fingerprint: string;
         };
       },
+      choose: async () => {
+        const fingerprint = (await self.keys()).team?.founder.fingerprint;
+        if (fingerprint === undefined || fingerprint === '') return;
+        const r = await call('/api/team/trust', {
+          method: 'POST',
+          body: JSON.stringify({ fingerprint }),
+        });
+        if (r.status !== 200)
+          throw new Error(`trust: ${r.status} ${JSON.stringify(r.body)}`);
+      },
       admit: async (other, admitOpts = {}) => {
         await self.sync();
         await other.sync();
+        await other.choose();
         await self.sync();
         const { machine } = await other.keys();
         const r = await call(`/api/team/keys/${machine.replica}/admit`, {
@@ -262,7 +312,11 @@ export function daemons(): {
           method: 'POST',
           body: JSON.stringify({ title, ...fields }),
         });
-        return (r.body as { meta: { id: string } }).meta.id;
+        const id = (r.body as { meta?: { id?: string } } | null)?.meta?.id;
+        // Named on failure, so a CI log says why a create was refused.
+        if (id === undefined)
+          throw new Error(`create: ${r.status} ${JSON.stringify(r.body)}`);
+        return id;
       },
       patch: async (id, patch) => {
         await call(`/api/tasks/${id}`, {
@@ -384,7 +438,7 @@ export function daemons(): {
       },
       restart: async () => {
         await self.stop();
-        server = await boot(root, opts, executor);
+        server = await boot(root, opts, executor, undefined, restartForSharing);
       },
     };
     return self;
