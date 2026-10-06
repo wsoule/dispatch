@@ -65,7 +65,7 @@ describe('noAppTokenMessage', () => {
     );
     expect(message).toContain('Settings → Members → Join a team');
     expect(message).toContain('`dispatch serve --replace`');
-    expect(message).toContain('force-fails any run');
+    expect(message).toContain('once it has no live work');
     // cli.ts prints a failure's first line only.
     expect(message).not.toContain('\n');
   });
@@ -78,7 +78,12 @@ describe('noAppTokenMessage', () => {
     expect(message).toContain(
       'started in the background by a dispatch command'
     );
-    expect(message).toContain('kill 4242');
+    // Taking over is what `dispatch serve` itself does now; no kill loop.
+    expect(message).toContain(
+      'Run `dispatch serve` in a terminal you keep open'
+    );
+    expect(message).not.toContain('kill');
+    expect(message).not.toContain('--replace');
     expect(message).not.toContain('Join a team');
     expect(message).not.toContain('\n');
   });

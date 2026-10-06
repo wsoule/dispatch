@@ -262,9 +262,9 @@ describe('team setup from the CLI', () => {
     expect(message).toContain(
       `(pid ${process.pid}, port ${server.port}) was started in the background by dispatch mcp (pid 4120)`
     );
-    expect(message).toContain('`dispatch serve --replace`');
-    expect(message).toContain('force-fails any run');
-    expect(message).toContain('Settings → Members → Join a team');
+    expect(message).toContain(
+      'Run `dispatch serve` in a terminal you keep open; it takes over the background daemon'
+    );
   });
 
   it('says an invite pasted as the app token is an invite, without echoing it', async () => {

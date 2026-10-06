@@ -24,26 +24,21 @@ export function noAppTokenMessage(
   const inApp = command.startsWith('dispatch team join')
     ? ' (Settings → Members → Join a team)'
     : '';
-  const replace =
-    `run \`dispatch serve --replace\` in a terminal you keep open: it takes over ` +
-    'and prints a fresh DISPATCH_APP_TOKEN line. It force-fails any run the ' +
-    `old daemon has in flight (\`dispatch runs\` lists them), and the old one ` +
-    `keeps running until you stop it: kill ${daemon.pid}.`;
   // One line: cli.ts prints only a failure's first line.
   if (daemon.background)
     return (
       `${lead} The dispatchd serving this project (${which}) was started in ` +
       `the background by ${daemon.startedBy ?? 'a dispatch command'}, so its ` +
-      'app token went nowhere, on purpose: agents read that output. Any ' +
-      'dispatch command or MCP tool call that finds no daemon starts another ' +
-      `like it, so stopping it alone does not help. Either ${replace} Or stop ` +
-      `it (kill ${daemon.pid}) and at once open this project in the Dispatch ` +
-      `app, which starts its own daemon, and do it there${inApp}.`
+      'app token went nowhere, on purpose: agents read that output. Run ' +
+      '`dispatch serve` in a terminal you keep open; it takes over the ' +
+      'background daemon (once it has no live work) and prints a token.'
     );
   return (
     `${lead} The dispatchd serving this project (${which}) was started by ` +
     'the Dispatch app or by `dispatch serve`, which hold its token: copy it ' +
-    `from that terminal, or do it in the app${inApp}. Failing both, ${replace}`
+    `from that terminal, or do it in the app${inApp}. Failing both, run ` +
+    '`dispatch serve --replace` in a terminal you keep open; it stops that ' +
+    'daemon once it has no live work, takes over and prints a token.'
   );
 }
 
