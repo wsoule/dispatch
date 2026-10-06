@@ -46,6 +46,20 @@ const act = async (
   }
   return { ...(await post(m, path, body)), restarted: true };
 };
+// The daemons' own syncs until nothing moves, with a pause between rounds
+// so a relay socket in its reconnect backoff is waited for, not raced; on
+// failure, what each machine says, so a CI log shows why.
+const settle = async (members: Member[]): Promise<void> => {
+  try {
+    await quiesce(members, 24, 250);
+  } catch (err) {
+    for (const m of members)
+      console.error(
+        `${m.name}: ${JSON.stringify((await m.handle.api('/api/board-sync')).body)}`
+      );
+    throw err;
+  }
+};
 const statusOf = async (m: Member): Promise<TeamStatus> =>
   (await m.handle.api('/api/team/status')).body as unknown as TeamStatus;
 
@@ -112,7 +126,7 @@ describe('team setup in two actions', () => {
       });
 
       // The daemons' own syncs, nothing a person does.
-      await quiesce(c.members);
+      await settle(c.members);
       const ms = Math.round(performance.now() - began);
       console.log(
         `team onboarding: ${actions.length} actions (${actions.join(', ')}), ${ms} ms`
@@ -144,7 +158,7 @@ describe('team setup in two actions', () => {
         kind: 'message',
         body: 'welcome aboard',
       });
-      await quiesce(c.members);
+      await settle(c.members);
       expect(await ada.handle.title(task)).toBe('made by the new teammate');
       expect(
         bob.handle.messagesDb<{ body: string }>(
@@ -189,7 +203,7 @@ describe('team setup in two actions', () => {
       expect((await post(bob, '/api/team/join', { code: link })).status).toBe(
         200
       );
-      await quiesce(c.members);
+      await settle(c.members);
       expect((await statusOf(bob)).state).toBe('member');
 
       // Reused: bob's second machine pastes the same link. It is never let in,
@@ -198,7 +212,7 @@ describe('team setup in two actions', () => {
       expect((await post(bob2, '/api/team/join', { code: link })).status).toBe(
         200
       );
-      await quiesce(c.members);
+      await settle(c.members);
       expect((await statusOf(bob2)).state).toBe('joining');
       const reused = (await statusOf(ada)).problems.find((p) =>
         p.message.includes('already used')
@@ -216,7 +230,7 @@ describe('team setup in two actions', () => {
       expect((await post(cy, '/api/team/join', { code: forged })).status).toBe(
         200
       );
-      await quiesce(c.members);
+      await settle(c.members);
       expect((await statusOf(cy)).state).toBe('joining');
       expect(
         (await statusOf(ada)).teammates.map((t) => t.handle).sort()

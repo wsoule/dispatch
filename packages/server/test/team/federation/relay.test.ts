@@ -401,6 +401,35 @@ describe('switching a team to the relay', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  // A joiner's log may hold more than its key op before it is let in (a
+  // presence or agent op its collectors wrote). A pending machine stores
+  // only its key op on the relay, so it switches with that alone and sends
+  // the rest once admitted.
+  it('lets a joiner with more than its key op in its log join a team on the relay', async () => {
+    const r = await team(['ada']);
+    const ada = at(0);
+    await ada.teamRoute('/api/team/transport', toRelay(r));
+    await passes(open, 2);
+    const { code } = ada.roster.invite('bob');
+    await passes([ada], 1);
+    const bob = messagingReplica('bob', ada.remote);
+    open.push(bob);
+    bob.roster.join(code);
+    // A second op behind the key op, before any admission.
+    bob.fed.append({ type: 'presence', body: { kind: 'replica' } });
+    await passes([bob], 2);
+    // It switched with its key op alone, so nothing was refused.
+    expect(bob.service.status().transport).toBe('relay');
+    expect(
+      bob.fed.problems().some((p) => p.subject === 'transport:switch')
+    ).toBe(false);
+    // ada lets bob in on its own: the invite's proof rides bob's key op.
+    await passes(open, 6);
+    expect(bob.service.status().transport).toBe('relay');
+    expect(bob.roster.isAdmitted(bob.fed.replica)).toBe(true);
+    expect(r.stored(bob.fed.replica).at(-1)?.seq).toBe(bob.fed.head()?.seq);
+  });
+
   it('accepts mail sealed to a machine revoked in flight, and wedges nobody', async () => {
     const r = await team(['ada', 'bob', 'cy']);
     const [ada, bob, cy] = [at(0), at(1), at(2)];
