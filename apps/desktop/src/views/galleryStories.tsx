@@ -329,7 +329,7 @@ function ChatPanelDemo() {
 }
 
 const PROMPT_BAR_MODELS: PromptBarModel[] = [
-  { id: 'sonnet-5', label: 'Sonnet 5' },
+  { id: 'sonnet-5-5', label: 'Sonnet 5.5' },
   { id: 'opus-5', label: 'Opus 5' },
   { id: 'haiku-5', label: 'Haiku 5' },
 ];
