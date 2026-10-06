@@ -24,6 +24,11 @@ export interface DaemonFileInfo {
   // Request-tier token for the CLI and MCP, which have no other channel. The
   // decide-tier token stays out: this file is readable by anything as the user.
   agentToken: string;
+  // Set when started with `--idle-timeout`: a background daemon some dispatch
+  // command spawned with its stdout (and so its app token) discarded.
+  background?: true;
+  // Who spawned that background daemon, e.g. "dispatch mcp (pid 4120)".
+  startedBy?: string;
 }
 
 // `DISPATCH_HOME` lets tests (and anything else) redirect daemon files away
@@ -149,10 +154,13 @@ export async function assertRootNotServed(
     served = (err as { name?: string }).name === 'TimeoutError';
   }
   if (!served) return;
-  throw new Error(
-    `another dispatchd (pid ${prior.pid}) is already serving ${rootDir} on port ${prior.port}; refusing to start a second one, which would force-fail the runs it has in flight. Stop it first (kill ${prior.pid}), or pass --replace to take over anyway.`
+  throw new RootServedError(
+    `another dispatchd (pid ${prior.pid}) is already serving ${rootDir} on port ${prior.port}; refusing to start a second one, which would force-fail the runs it has in flight. Stop it once its runs finish (kill ${prior.pid}), or take over now with \`dispatch serve --replace\`, which force-fails them.`
   );
 }
+
+/** The refusal `assertRootNotServed` throws; dispatchd prints it as one line. */
+export class RootServedError extends Error {}
 
 // Whether this process is still the daemon clients will find for `rootDir`.
 // Health reports it on every probe so a displaced daemon stops being visible

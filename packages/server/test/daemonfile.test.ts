@@ -15,6 +15,7 @@ import {
   daemonFilePath,
   readDaemonFile,
   removeDaemonFile,
+  RootServedError,
   writeDaemonFile,
 } from '../src/daemonfile.js';
 
@@ -189,6 +190,14 @@ describe('assertRootNotServed', () => {
       writeFileFor(portOf(server), process.ppid);
       await expect(assertRootNotServed(rootDir)).rejects.toThrow(
         /already serving .* on port \d+/
+      );
+      // A typed refusal dispatchd prints as one line, naming the CLI's flag.
+      const refusal = await assertRootNotServed(rootDir).catch(
+        (e: unknown) => e
+      );
+      expect(refusal).toBeInstanceOf(RootServedError);
+      expect((refusal as Error).message).toContain(
+        '`dispatch serve --replace`'
       );
     } finally {
       await server.stop(true);

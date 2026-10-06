@@ -533,6 +533,20 @@ describe('dispatch serve', () => {
     ]);
   });
 
+  it('forwards --replace, the flag dispatchd itself recommends', () => {
+    expect(serveArgs('/r', { replace: true })).toEqual([
+      '--root',
+      '/r',
+      '--replace',
+    ]);
+    expect(serveArgs('/r', {})).not.toContain('--replace');
+    const serve = makeProgram({ cwd: '/r', log: () => {} }).commands.find(
+      (c) => c.name() === 'serve'
+    );
+    expect(serve?.helpInformation()).toContain('--replace');
+    expect(serve?.helpInformation()).toContain('force-failed');
+  });
+
   it('checks --a2a-tls-cert and --a2a-tls-key together', () => {
     expect(() => serveArgs('/r', { a2aTlsCert: 'c.pem' })).toThrow(
       /--a2a-tls-cert and --a2a-tls-key go together/

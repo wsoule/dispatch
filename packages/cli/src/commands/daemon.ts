@@ -47,6 +47,10 @@ interface DaemonFileInfo {
   // Request-tier credential. Optional here only so a file written by a daemon
   // that predates token auth still parses into an actionable error.
   agentToken?: string;
+  // Written by a daemon started with --idle-timeout, i.e. by ensureDaemon
+  // below, whose app token went to /dev/null; startedBy names the spawner.
+  background?: boolean;
+  startedBy?: string;
 }
 
 export function daemonHome(): string {
@@ -255,17 +259,21 @@ function defaultOpenApp(rootDir: string): void {
 // platform falls back to the browser at the daemon's own URL. Both branches
 // route through CliContext seams (`openApp`/`openBrowser`) so tests can
 // assert on which path was taken without anything actually opening.
-export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
+export function openDesktopOrBrowser(
+  ctx: CliContext,
+  port: number
+): 'app' | 'browser' {
   if (process.platform === 'darwin') {
     const probe = spawnSync('open', ['-Ra', DESKTOP_PRODUCT_NAME], {
       env: childEnv(),
     });
     if (probe.status === 0) {
       (ctx.openApp ?? defaultOpenApp)(projectRoot(ctx.cwd));
-      return;
+      return 'app';
     }
   }
   openBrowserFor(ctx, `http://127.0.0.1:${port}`);
+  return 'browser';
 }
 
 // A stale daemon file can name a port some OTHER process now holds — one that
@@ -345,9 +353,7 @@ async function locateDaemon(
   const deadline = Date.now() + stalledWaitMs;
   for (;;) {
     const probe = await probeHealth(info.port, opts.healthTimeoutMs);
-    if (probe === 'healthy') {
-      return { port: info.port, agentToken: requireAgentToken(info) };
-    }
+    if (probe === 'healthy') return connectionFrom(info);
     if (probe === 'down' || !pidAlive(info.pid)) return null;
     if (Date.now() >= deadline) {
       throw new CliError(
@@ -392,10 +398,25 @@ function requireAgentToken(info: DaemonFileInfo): string {
   return info.agentToken;
 }
 
-/** A daemon this CLI can talk to: where it listens, and the token to present. */
+/** A daemon this CLI can talk to: where it listens, the token to present,
+ *  and who it is, for errors that have to name it. */
 export interface DaemonConnection {
   port: number;
   agentToken: string;
+  pid: number;
+  // Started in the background by ensureDaemon, and by whom (daemon file).
+  background: boolean;
+  startedBy: string | null;
+}
+
+function connectionFrom(info: DaemonFileInfo): DaemonConnection {
+  return {
+    port: info.port,
+    agentToken: requireAgentToken(info),
+    pid: info.pid,
+    background: info.background === true,
+    startedBy: info.startedBy ?? null,
+  };
 }
 
 // Attaches to an already-running daemon without ever starting one — the
@@ -414,6 +435,9 @@ export interface EnsureDaemonOptions extends LocateDaemonOptions {
   // Port to request when a fresh daemon must be spawned (default: ephemeral,
   // same as `dispatch serve`/`dispatch ui` with no `--port`).
   port?: string;
+  // Who is spawning, written to the daemon file so a missing-app-token error
+  // can name it (default: this dispatch process).
+  startedBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,9 +535,7 @@ export async function ensureDaemon(
   // loaded machine and still leaves the stale-lock takeover as the backstop.
   if (!claimSpawn(rootDir)) {
     const winner = await waitForHealthyDaemon(rootDir, 20_000);
-    if (winner !== null) {
-      return { port: winner.port, agentToken: requireAgentToken(winner) };
-    }
+    if (winner !== null) return connectionFrom(winner);
     // The holder never produced a healthy daemon; fall through and spawn one
     // ourselves rather than failing because another process misbehaved.
   }
@@ -525,6 +547,8 @@ export async function ensureDaemon(
     rootDir,
     '--idle-timeout',
     String(BACKGROUND_DAEMON_IDLE_TIMEOUT_S),
+    '--started-by',
+    opts.startedBy ?? `dispatch (pid ${process.pid})`,
   ];
   if (opts.port !== undefined) args.push('--port', opts.port);
 
@@ -570,7 +594,7 @@ export async function ensureDaemon(
     // someone started outside this code path (a bare `dispatch serve`) landing
     // between our claim and our child's own daemon-file write.
     const winner = await resolveRaceWinner(rootDir, child, info);
-    return { port: winner.port, agentToken: requireAgentToken(winner) };
+    return connectionFrom(winner);
   } finally {
     // Only once the daemon is up (or has failed): releasing earlier would let
     // a waiting caller through while there is still nothing to find.
@@ -630,6 +654,7 @@ export interface ServeOptions {
   a2aPublicUrl?: string;
   a2aTlsCert?: string;
   a2aTlsKey?: string;
+  replace?: boolean;
 }
 
 // The dispatchd arguments `dispatch serve` passes, in a stable order; throws
@@ -659,6 +684,7 @@ export function serveArgs(root: string, o: ServeOptions): string[] {
   for (const [flag, value] of flags) {
     if (value !== undefined) args.push(flag, value);
   }
+  if (o.replace === true) args.push('--replace');
   return args;
 }
 
@@ -700,6 +726,10 @@ export function registerDaemonCommands(
     .option(
       '--a2a-tls-key <file>',
       `A2A listener private key ${A2A_OVERRIDE_HELP}`
+    )
+    .option(
+      '--replace',
+      'start even though another dispatchd serves this project: every run it has in flight is force-failed, and it keeps running, unreachable, until you stop it'
     )
     .action((opts: ServeOptions) => {
       // requireInitialized, NOT requireStore: the latter demands

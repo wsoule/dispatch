@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { parseListenerFlags } from './a2a/settings.js';
 import { FakeAiTaskFilter } from './aiTaskFilter.js';
 import { mintDaemonTokens } from './api.js';
+import { RootServedError } from './daemonfile.js';
 import { makeFakeGhRunner } from './fakeGh.js';
 import {
   registerCodexIfInstalled,
@@ -509,6 +510,10 @@ if (!a2aFlags.ok) {
 }
 const a2aOverrides = a2aFlags.overrides;
 
+// `--started-by <label>`: who spawned this background daemon, for the daemon
+// file (the CLI's ensureDaemon passes it alongside --idle-timeout).
+const startedBy = readFlag(args, '--started-by');
+
 const serverOpts: Parameters<typeof startServer>[0] = {
   rootDir,
   port,
@@ -581,6 +586,7 @@ const serverOpts: Parameters<typeof startServer>[0] = {
     process.env.DISPATCH_FAKE_GH === '1' ? makeFakeGhRunner() : undefined,
   idleTimeoutMs:
     idleTimeoutSeconds !== undefined ? idleTimeoutSeconds * 1000 : undefined,
+  ...(startedBy === undefined ? {} : { startedBy }),
   onIdle: () => {
     console.log(
       `dispatchd: unused for ${idleTimeoutSeconds}s with no live work, exiting`
@@ -631,9 +637,14 @@ function restartForSharing(rollback: () => void): Promise<void> {
   return restarting;
 }
 
+// A root another daemon serves is a refusal to print, not a crash to trace.
 let handle = await startServer({
   ...serverOpts,
   onSharingRestart: restartForSharing,
+}).catch((err: unknown) => {
+  if (!(err instanceof RootServedError)) throw err;
+  console.error(`dispatchd: ${err.message}`);
+  process.exit(1);
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 

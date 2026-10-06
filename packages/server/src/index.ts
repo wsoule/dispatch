@@ -370,6 +370,9 @@ export interface StartServerOptions {
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   onIdle?: () => void;
+  // Who spawned this daemon in the background (dispatchd's `--started-by`),
+  // recorded in the daemon file so a missing-app-token error can name it.
+  startedBy?: string;
   // Restarts this daemon in its own process with the same port and tokens,
   // so board sync turned on by `team start` or `team join` is wired at boot
   // (team/federation/sharing.ts). Absent, those ask the person to restart.
@@ -2586,6 +2589,8 @@ async function bootServer(
       pid: process.pid,
       startedAt,
       agentToken: tokens.agentToken,
+      ...(opts.idleTimeoutMs === undefined ? {} : { background: true }),
+      ...(opts.startedBy === undefined ? {} : { startedBy: opts.startedBy }),
     });
   }
 
