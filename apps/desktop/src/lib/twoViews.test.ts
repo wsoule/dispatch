@@ -363,3 +363,35 @@ describe('appNavReducer', () => {
     ).toBe(initialAppNavState);
   });
 });
+
+describe('the Tasks filter', () => {
+  test('a count opens the list filtered to its bucket', () => {
+    const state = run([
+      { type: 'openTask', taskId: 't-1' },
+      { type: 'tv/showTasks', filter: 'failed' },
+    ]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksFilter).toBe('failed');
+    expect(state.tasksPage).toEqual({ kind: 'list' });
+  });
+
+  test('plain Tasks clears the filter and keeps the page', () => {
+    const state = run([
+      { type: 'tv/showTasks', filter: 'review' },
+      { type: 'openPeek', taskId: 't-1' },
+      { type: 'tv/showOverseer' },
+      { type: 'tv/showTasks' },
+    ]);
+    expect(state.tasksFilter).toBeNull();
+    expect(state.tasksPage).toMatchObject({ kind: 'task', taskId: 't-1' });
+  });
+
+  test('clearing the filter keeps everything else', () => {
+    const state = run([
+      { type: 'tv/showTasks', filter: 'working' },
+      { type: 'tv/setTasksFilter', filter: null },
+    ]);
+    expect(state.tasksFilter).toBeNull();
+    expect(state.mainView).toBe('tasks');
+  });
+});

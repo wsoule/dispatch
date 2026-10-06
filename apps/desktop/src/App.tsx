@@ -1,3 +1,4 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { useQuery } from '@tanstack/react-query';
 import { Bot, Coins, Plus, TriangleAlert, Wrench } from 'lucide-react';
 import {
@@ -102,7 +103,7 @@ import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
 import { useStatusModelOf } from './lib/statusModel';
 import { computeBlockedIds } from './lib/taskGraph';
-import { queuedTaskIds, taskStatusCounts } from './lib/taskStatus';
+import { itemBucket, queuedTaskIds, taskStatusCounts } from './lib/taskStatus';
 import { useTasksViewMode } from './lib/tasksViewMode';
 import {
   addProject,
@@ -778,6 +779,25 @@ function App() {
       }),
     [
       data.tasks,
+      needs.taskIds,
+      data.attentionByTaskId,
+      data.latestRunByTaskId,
+      data.mergeQueue,
+      blockedIds,
+      statusModel,
+    ]
+  );
+  const bucketOf = useCallback(
+    (doc: TaskListItem) =>
+      itemBucket(doc, {
+        asking: needs.taskIds,
+        attention: data.attentionByTaskId,
+        latestRun: data.latestRunByTaskId,
+        queued: queuedTaskIds(data.mergeQueue),
+        blocked: blockedIds,
+        model: statusModel,
+      }),
+    [
       needs.taskIds,
       data.attentionByTaskId,
       data.latestRunByTaskId,
@@ -1488,7 +1508,12 @@ function App() {
           postsDot: false,
           onShowOverseer: () => dispatchNav({ type: 'tv/showOverseer' }),
           onShowTasks: () => dispatchNav({ type: 'tv/showTasks' }),
-          onCount: () => dispatchNav({ type: 'tv/showTasks' }),
+          onCount: (count) =>
+            dispatchNav(
+              count === 'asks'
+                ? { type: 'tv/showTasks' }
+                : { type: 'tv/showTasks', filter: count }
+            ),
           counts: {
             asks: needs.count,
             review: statusCounts.buckets.review,
@@ -1539,6 +1564,11 @@ function App() {
             onModeChange={(mode) =>
               dispatchNav({ type: 'tv/setTasksMode', mode })
             }
+            filter={twoViewsState.tasksFilter}
+            onFilter={(filter) =>
+              dispatchNav({ type: 'tv/setTasksFilter', filter })
+            }
+            bucketOf={bucketOf}
             onSelectTask={selectBoardTask}
             onNewTask={() => openCreateTask()}
             onOpenRef={openRef}

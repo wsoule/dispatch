@@ -1,5 +1,6 @@
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { Plus } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useMemo } from 'react';
 
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksStrip } from '../components/tasks/TasksStrip';
@@ -11,7 +12,7 @@ import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../lib/tasksPrefs';
-import type { TaskStatusCounts } from '../lib/taskStatus';
+import type { TaskBucket, TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
 import type { TasksMode, TasksPage } from '../lib/twoViews';
 import { MilestoneBranchesView } from './MilestoneBranchesView';
@@ -31,6 +32,17 @@ const MODES: { id: TasksMode; label: string }[] = [
   { id: 'graph', label: 'Graph' },
 ];
 
+const FILTER_LABEL: Record<TaskBucket, string> = {
+  'need-you': '● tasks that need you',
+  failed: '✕ failed',
+  working: '◐ working',
+  review: '◇ review',
+  landing: 'landing',
+  ready: 'ready',
+  draft: 'draft',
+  blocked: 'blocked',
+};
+
 /** A page that is not the list: a task, a doc, a PR, a draft or a door to Classic. */
 export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
 
@@ -41,6 +53,10 @@ export interface TasksViewProps {
   page: TasksPage;
   mode: TasksMode;
   onModeChange: (mode: TasksMode) => void;
+  /** Narrows the list and graph to one bucket; `null` shows everything. */
+  filter: TaskBucket | null;
+  onFilter: (bucket: TaskBucket | null) => void;
+  bucketOf: (doc: TaskListItem) => TaskBucket | null;
   onSelectTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   onNewTask: () => void;
   onOpenRef: (action: RefAction) => void;
@@ -59,6 +75,9 @@ export function TasksView({
   page,
   mode,
   onModeChange,
+  filter,
+  onFilter,
+  bucketOf,
   onSelectTask,
   onNewTask,
   onOpenRef,
@@ -68,13 +87,20 @@ export function TasksView({
   composer,
 }: TasksViewProps) {
   const split = page.kind === 'task' && !page.full;
+  const taskFilter = useMemo(
+    () =>
+      filter === null
+        ? undefined
+        : (doc: TaskListItem) => bucketOf(doc) === filter,
+    [filter, bucketOf]
+  );
   const full = page.kind !== 'list' && !split;
 
   return (
     <div data-testid="tasks-view" className="flex h-full min-h-0 flex-col">
       <div className="border-border flex items-center gap-3 border-b-[0.5px] px-4 py-2">
         <span className="shrink-0 text-[13px] font-medium">All work</span>
-        <TasksStrip counts={counts} />
+        <TasksStrip counts={counts} filter={filter} onFilter={onFilter} />
         <span className="flex-1" />
         <div
           role="radiogroup"
@@ -136,14 +162,34 @@ export function TasksView({
                 onOpenDecision={onOpenDecision}
               />
             </div>
+            {filter !== null && (
+              <div
+                data-testid="tasks-filter"
+                className="text-muted-foreground flex items-center gap-2 px-4 pt-1 pb-1 text-[12px]"
+              >
+                <span>Showing {FILTER_LABEL[filter]} only</span>
+                <button
+                  type="button"
+                  onClick={() => onFilter(null)}
+                  className="text-(--accent) hover:underline"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
             <div className="min-h-0 flex-1 overflow-hidden">
               {mode === 'graph' ? (
-                <MilestoneBranchesView data={data} onOpenTask={onSelectTask} />
+                <MilestoneBranchesView
+                  data={data}
+                  onOpenTask={onSelectTask}
+                  taskFilter={taskFilter}
+                />
               ) : (
                 <TasksListView
                   data={data}
                   onSelectTask={(taskId) => onSelectTask(taskId)}
                   display={BY_MILESTONE}
+                  taskFilter={taskFilter}
                   needsYouIds={needs.taskIds}
                 />
               )}

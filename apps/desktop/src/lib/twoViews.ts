@@ -7,6 +7,7 @@ import type {
   TaskTab,
 } from './appNav';
 import { initialNavState, navReducer } from './appNav';
+import type { TaskBucket } from './taskStatus';
 
 // Two views' navigation: App dispatches every legacy NavAction here as well as to
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
@@ -62,6 +63,8 @@ interface Place {
 
 export interface TwoViewsState extends Place {
   tasksMode: TasksMode;
+  /** The top bar's ✕ ◇ ◐ narrow the list to one bucket; `null` shows everything. */
+  tasksFilter: TaskBucket | null;
   peek: Peek | null;
   /** The open Settings page, or `null` while Settings is closed. */
   settings: TwoViewsSettingsPage | null;
@@ -71,7 +74,8 @@ export interface TwoViewsState extends Place {
 
 export type TwoViewsAction =
   | { type: 'tv/showOverseer' }
-  | { type: 'tv/showTasks' }
+  | { type: 'tv/showTasks'; filter?: TaskBucket }
+  | { type: 'tv/setTasksFilter'; filter: TaskBucket | null }
   | { type: 'tv/setTasksMode'; mode: TasksMode }
   | { type: 'tv/openSettings'; page?: TwoViewsSettingsPage }
   | { type: 'tv/closeSettings' }
@@ -93,6 +97,7 @@ export const initialTwoViewsState: TwoViewsState = {
   mainView: 'overseer',
   tasksPage: LIST,
   tasksMode: 'list',
+  tasksFilter: null,
   peek: null,
   settings: null,
   history: [{ mainView: 'overseer', tasksPage: LIST }],
@@ -305,7 +310,14 @@ export function twoViewsReducer(
     case 'tv/showOverseer':
       return applyDestination(state, { kind: 'overseer' });
     case 'tv/showTasks':
-      return go(state, { mainView: 'tasks', tasksPage: state.tasksPage });
+      return action.filter === undefined
+        ? {
+            ...go(state, { mainView: 'tasks', tasksPage: state.tasksPage }),
+            tasksFilter: null,
+          }
+        : { ...toTasks(state, LIST), tasksFilter: action.filter };
+    case 'tv/setTasksFilter':
+      return { ...state, tasksFilter: action.filter };
     case 'tv/setTasksMode':
       return { ...state, tasksMode: action.mode };
     case 'tv/openSettings':
