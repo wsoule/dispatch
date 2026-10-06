@@ -325,8 +325,10 @@ export class ClaudeOverseer implements OverseerBackend {
     // so the owner's native Claude notes never load here.
     const sdkQuery: Query = openClaudeQuery(this.queryFn, prompt, options);
 
-    // Asked once per turn, alongside it; a failure only means no suggestions.
-    const commands = sdkQuery.supportedCommands().catch(() => undefined);
+    // Asked once per turn, alongside it; any failure only means no suggestions.
+    const commands = Promise.resolve()
+      .then(() => sdkQuery.supportedCommands())
+      .catch(() => undefined);
     try {
       let sessionId: string | undefined;
       let contextTokens: number | undefined;
