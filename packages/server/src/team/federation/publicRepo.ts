@@ -77,7 +77,14 @@ export function publicPinnedGit(
   lookup?: LookupAll
 ): AsyncGitRunner {
   let pin: string[] = [];
-  const run = linkGitRunner(base, remote, () => pin);
+  // 'decide': no proxy at all, since a proxy resolves the host itself and
+  // the pin would not hold (P2).
+  const run = linkGitRunner(
+    base,
+    remote,
+    () => pin,
+    () => 'decide'
+  );
   return async (cwd, args, env, maxOut) => {
     if (args.some((a) => NETWORK.has(a))) {
       const host = remoteHostUrl(remote);

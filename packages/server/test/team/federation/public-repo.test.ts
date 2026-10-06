@@ -17,12 +17,19 @@ import {
 
 const REMOTE = 'https://git.example.com/acme/board.git';
 
-function recorder(): { runner: AsyncGitRunner; calls: string[][] } {
+function recorder(): {
+  runner: AsyncGitRunner;
+  calls: string[][];
+  envs: (Record<string, string> | undefined)[];
+} {
   const calls: string[][] = [];
+  const envs: (Record<string, string> | undefined)[] = [];
   return {
     calls,
-    runner: (_cwd, args) => {
+    envs,
+    runner: (_cwd, args, env) => {
       calls.push(args);
+      envs.push(env);
       return Promise.resolve({ status: 0, stdout: '', stderr: '' });
     },
   };
@@ -41,6 +48,23 @@ describe('a public-pinned sync repo', () => {
     );
     expect(args).toContain('http.followRedirects=false');
     expect(args).toContain('protocol.file.allow=never');
+  });
+
+  // A proxy resolves the host itself, so the pin would not hold through one.
+  it('sends git through no proxy, from the environment or git config', async () => {
+    const { runner, calls, envs } = recorder();
+    const git = publicPinnedGit(runner, REMOTE, () =>
+      Promise.resolve(['93.184.216.34'])
+    );
+    await git('/x', ['fetch', 'origin', 'main']);
+    expect(calls[0]).toContain('http.proxy=');
+    expect(calls[0]).toContain(`http.${REMOTE}.proxy=`);
+    expect(envs[0]).toMatchObject({
+      https_proxy: '',
+      HTTPS_PROXY: '',
+      all_proxy: '',
+      ALL_PROXY: '',
+    });
   });
 
   it('refuses a fetch once the name resolves to a private address', async () => {
