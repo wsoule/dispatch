@@ -198,8 +198,8 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       )}
       {invite !== null && (
         <SettingsRow
-          title={`Send ${invite.handle} this link privately`}
-          subtitle={`Good once, until ${invite.expires.slice(0, 10)}. Once they join, their name shows above with an optional check you can read together.`}
+          title={`Send this privately: anyone holding it can join as ${invite.handle} until ${invite.expires.slice(0, 10)}`}
+          subtitle="It works once. When they join, their name shows above with an optional check you can read together."
           stacked
         >
           <div className="flex items-center gap-2">

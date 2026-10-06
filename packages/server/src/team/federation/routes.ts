@@ -745,6 +745,13 @@ function statusOf(
       pins: fed.pins(),
       joining: roster.joining(),
       foundings: keys.foundings,
+      followedOnly:
+        keys.team !== null &&
+        fed.meta('founder_pin') === 'auto' &&
+        fed.head() === null &&
+        roster.joining() === null
+          ? { name: keys.team.name, fingerprint: keys.team.founder.fingerprint }
+          : null,
       waiting: keys.waiting,
       health: status.transportHealth,
       lastSyncAt: status.lastSyncAt,
@@ -937,7 +944,7 @@ function join(
   const here = withoutCredentials(service.status().remote);
   const warning =
     link.remote !== null && sameRemote(link.remote, here) === false
-      ? `This team syncs through ${link.remote}, but this project syncs through ${here}. Point Settings → Board sync at ${link.remote} (sync.repo), then restart Dispatch.`
+      ? `This team syncs through ${link.remote}, but this project syncs through ${here}. Only if you know this repo, point Settings → Board sync at ${link.remote} (sync.repo), then restart Dispatch.`
       : undefined;
   return {
     ok: true,

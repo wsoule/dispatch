@@ -289,7 +289,7 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
         ctx.log(`  ${link}`);
         ctx.log('');
         ctx.log(
-          `Send it privately. ${invite.handle} runs \`dispatch team join\` and pastes it, or pastes it in Settings → Team.`
+          `Send this privately: anyone holding it can join as ${invite.handle} until ${invite.expires.slice(0, 10)}. ${invite.handle} runs \`dispatch team join\` and pastes it, or pastes it in Settings → Team.`
         );
         if (invite.url !== undefined) ctx.log(`As a URL: ${invite.url}`);
         logAnswer(ctx, invite);

@@ -193,3 +193,43 @@ describe('a hostile link', () => {
     );
   });
 });
+
+describe('the status of a machine that follows a team it never asked to join', () => {
+  it('suggests trusting the one founding it follows, or asking for a link', () => {
+    const status = teamStatus(
+      {
+        machine: { replica: 'cy-1', handle: 'cy', fingerprint: 'X' },
+        view: null,
+        pins: [],
+        joining: null,
+        foundings: [],
+        followedOnly: {
+          name: 'acme',
+          fingerprint: 'AAAA-BBBB-CCCC-DDDD-EEEE-FFFF',
+        },
+        waiting: [],
+        health: {
+          kind: 'git',
+          lastExchangeAt: null,
+          lastError: null,
+          unpublished: 0,
+          sizeBytes: null,
+          readBytes: 0,
+          acks: {},
+        },
+        lastSyncAt: null,
+        lastError: null,
+        paused: null,
+        problems: [],
+        olderBuilds: [],
+        now: new Date(),
+      },
+      null
+    );
+    const hint = status.problems.find((p) => p.message.includes("'acme'"));
+    expect(hint?.message).toContain('only if you know this team');
+    expect(hint?.fix).toBe(
+      'dispatch team advanced trust AAAA-BBBB-CCCC-DDDD-EEEE-FFFF'
+    );
+  });
+});

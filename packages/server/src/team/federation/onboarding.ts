@@ -297,6 +297,9 @@ export interface TeamStatusInput {
   } | null;
   /** Foundings seen on the branch while none is followed. */
   foundings: { replica: string; fingerprint: string }[];
+  /** The one founding this machine follows without having asked to join
+   *  it (a provisional pin, nothing announced), or null. */
+  followedOnly?: { name: string; fingerprint: string } | null;
   waiting: {
     replica: string;
     handle: string;
@@ -395,6 +398,12 @@ export function teamStatus(
         message:
           'More than one team was started on this branch. Pick the one whose founder you know.',
         fix: `dispatch team advanced trust ${input.foundings[0]?.fingerprint ?? '<fingerprint>'}`,
+      });
+    const followed = input.followedOnly ?? null;
+    if (input.joining === null && followed !== null)
+      problems.push({
+        message: `This branch has team '${plainText(followed.name, MAX_NAME_CHARS)}' on it, and this machine has not asked to join. Ask its founder for an invite link; only if you know this team, follow it as it is.`,
+        fix: `dispatch team advanced trust ${followed.fingerprint}`,
       });
     problems.push(...plainProblems(input.problems, false));
     if (input.joining !== null) {
