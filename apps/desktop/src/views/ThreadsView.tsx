@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { DocsLinkingList } from '../components/docs/DocsLinkingList';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import { Composer } from '../components/threads/Composer';
 import { ThreadPane } from '../components/threads/ThreadPane';
 import { ThreadRail } from '../components/threads/ThreadRail';
@@ -19,6 +20,8 @@ import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 
 export interface ThreadsViewProps {
+  /** Two views: the page leads with "‹ tasks" back to the list. */
+  onBack?: () => void;
   data: DispatchProjectData;
   projectName: string | null;
   /** A message id whose thread is open, from navigation; null for none. */
@@ -44,6 +47,7 @@ export function ThreadsView({
   onFocus,
   onOpenRef,
   overseer,
+  onBack,
 }: ThreadsViewProps) {
   const { client, port, me, messageAccess: access } = data;
   const rail = useThreadRail(client, port, me, access);
@@ -73,7 +77,14 @@ export function ThreadsView({
 
   const header = (
     <PageHeader
-      crumb={[projectName ?? 'Project', 'Threads']}
+      leading={
+        onBack === undefined ? undefined : <TasksBackButton onBack={onBack} />
+      }
+      crumb={
+        onBack === undefined
+          ? [projectName ?? 'Project', 'Threads']
+          : ['Threads']
+      }
       actions={
         <Button
           ref={newThreadRef}

@@ -1,6 +1,6 @@
 import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
 import { Minus } from 'lucide-react';
-import { type ReactNode, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 import { DockedConversation } from '../components/chat/DockedConversation';
 import { OverseerChat } from '../components/chat/OverseerChat';
@@ -23,8 +23,12 @@ export interface TwoViewOverseerProps {
   projectPath: string | null;
   /** Asks waiting on you; the stream shows a door to them, never a copy. */
   asks: number;
-  /** The Needs you block, shown beside the stream on a wide window. */
+  /** The Needs you block, beside the stream on a wide window. */
   needsBlock?: ReactNode;
+  /** What a side column opened, shown in the middle in place of the conversation. */
+  focus?: OverseerFocus | null;
+  onFocus?: (focus: OverseerFocus | null) => void;
+  renderFocus?: (focus: OverseerFocus, onClose: () => void) => ReactNode;
   revoked: boolean;
   onShowAsks: () => void;
   onOpenConnectedAgents: () => void;
@@ -35,12 +39,17 @@ export interface TwoViewOverseerProps {
   /** Live and recent runs, and the merge queue's entries, for the Going out column. */
   runs?: readonly RunMeta[];
   merges?: readonly MergeQueueEntry[];
-  onOpenTask?: (taskId: string) => void;
+
   /** Opens one of the agent's "Show in tasks" doors. */
   onOpenDoor: (door: OverseerDoor) => void;
 }
 
 const isSlash = (text: string) => text.trimStart().startsWith('/');
+
+/** What a side column can open in the middle: a task (maybe on its conversation) or someone's talk. */
+export type OverseerFocus =
+  | { kind: 'task'; taskId: string; conversation?: boolean }
+  | { kind: 'address'; address: string };
 
 /**
  * Overseer in Two views: the open conversation in the middle; on a wide window
@@ -59,9 +68,24 @@ export function TwoViewOverseer({
   postsCount = 0,
   runs = [],
   merges = [],
-  onOpenTask = () => {},
+  focus = null,
+  onFocus = () => {},
+  renderFocus,
   onOpenDoor,
 }: TwoViewOverseerProps) {
+  // Whatever a side column opened takes the middle; Esc hands it back to the talk.
+  useEffect(() => {
+    if (focus === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) onFocus(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focus, onFocus]);
+  const focused =
+    focus !== null && renderFocus !== undefined
+      ? renderFocus(focus, () => onFocus(null))
+      : null;
   const { dock: stored, setDock } = useOverseerDock(projectPath);
   const open = overseer.conversationId;
   const dock = useMemo(
@@ -161,10 +185,20 @@ export function TwoViewOverseer({
         {posts}
       </InflowColumn>
       {/* Before the first message the composer sits at the bottom, as it will after. */}
+      {focused !== null && (
+        <div
+          data-testid="overseer-focus"
+          className="rounded-card border-border bg-background flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-[0.5px]"
+        >
+          {focused}
+        </div>
+      )}
+      {/* Hidden, not unmounted, while something else holds the middle: the draft survives. */}
       <div
         className={cn(
           'mx-auto flex h-full min-h-0 w-full max-w-[760px] min-w-0 flex-col gap-3',
-          open === null && 'justify-end'
+          open === null && 'justify-end',
+          focused !== null && 'hidden'
         )}
       >
         {open !== null && (
@@ -232,7 +266,7 @@ export function TwoViewOverseer({
         runs={runs}
         merges={merges}
         setAside={dockCards(false)}
-        onOpenTask={onOpenTask}
+        onOpenTask={(taskId) => onFocus({ kind: 'task', taskId })}
       />
     </div>
   );

@@ -22,7 +22,7 @@ type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs' | 'developer';
 /** Classic project views Two views shows as a page under Tasks, led by "‹ tasks". */
 export type HostedView = Extract<
   ProjectView,
-  'branches' | 'files' | 'terminals' | 'design' | 'brain-dump'
+  'branches' | 'files' | 'terminals' | 'design' | 'brain-dump' | 'threads'
 >;
 
 /** What the Tasks view shows beside or instead of its list. */
@@ -126,13 +126,12 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
     case 'terminals':
     case 'design':
     case 'brain-dump':
+    case 'threads':
       return { kind: 'page', page: { kind: 'view', view } };
     case 'impact':
       return { kind: 'page', page: { kind: 'impact', subject: null } };
-    // Planning is a conversation with the agent, ending in one create_plan card;
-    // threads are that conversation, so there is no list of them.
+    // Planning is a conversation with the agent, ending in one create_plan card.
     case 'plans':
-    case 'threads':
       return { kind: 'overseer' };
     // These name a record; without its id there is nowhere to go.
     case 'task':

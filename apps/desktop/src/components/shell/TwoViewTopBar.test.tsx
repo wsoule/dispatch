@@ -17,6 +17,10 @@ function bar(over: Partial<TwoViewTopBarProps> = {}) {
     settingsCount: 0,
     onOpenSettings: () => calls.push('settings'),
     settingsOpen: false,
+    onOpenDocs: () => calls.push('docs'),
+    onOpenThreads: () => calls.push('threads'),
+    threadsUnread: 0,
+    page: null,
     projectMenu: <span>storefront</span>,
     trafficLightInset: false,
     ...over,
@@ -67,5 +71,15 @@ describe('TwoViewTopBar', () => {
     bar({ postsDot: true, view: 'overseer' });
     const overseerOrb = screen.getByTestId('two-views-orb');
     expect(overseerOrb.querySelectorAll('span').length).toBe(3);
+  });
+
+  test('docs and threads open their pages; threads carries a quiet unread count', () => {
+    const calls = bar({ threadsUnread: 3, page: 'threads' });
+    fireEvent.click(screen.getByTestId('two-views-docs'));
+    const threads = screen.getByTestId('two-views-threads');
+    expect(threads.textContent).toBe('threads ·3');
+    expect(threads.getAttribute('aria-current')).toBe('page');
+    fireEvent.click(threads);
+    expect(calls).toEqual(['docs', 'threads']);
   });
 });
