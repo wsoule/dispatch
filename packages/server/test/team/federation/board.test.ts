@@ -502,6 +502,9 @@ describe('board convergence over signed ops', () => {
       await quiesce([ada]);
       dee.handle.partition(false);
       await quiesce(c.members);
+      // dee announces its key once it chooses the team it follows.
+      await dee.handle.choose();
+      await quiesce(c.members);
       const { machine } = await dee.handle.keys();
       const admitted = await ada.handle.api(`/api/team/keys/${deeId}/admit`, {
         method: 'POST',

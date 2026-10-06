@@ -22,6 +22,7 @@ import {
   sha256Hex,
   signText,
   TAG,
+  verifyText,
   ZERO_HASH,
 } from '@dispatch-foo/protocol/federation';
 import type {
@@ -35,20 +36,14 @@ import { randomBytes } from 'node:crypto';
 import { seatLimitMessage } from '../license.js';
 import type { AuditKind } from './audit.js';
 import { BUILD_CAPS, recordKeyCaps } from './caps.js';
+import { RosterError } from './errors.js';
 import { signedEntry } from './git.js';
+import { decodeTeamLink, encodeTeamLink } from './onboarding.js';
+import type { TeamLink, TeamVia } from './onboarding.js';
 import type { FedStore } from './store.js';
 import { MAX_KEY_CLAIMS } from './store.js';
 
-/** Why a roster action was refused; the routes map each code to a status. */
-export class RosterError extends Error {
-  override name = 'RosterError';
-  constructor(
-    readonly code: 'forbidden' | 'conflict' | 'seat_limit' | 'invalid',
-    message: string
-  ) {
-    super(message);
-  }
-}
+export { RosterError };
 
 export interface RosterDeps {
   /** What this build speaks (FW-R39); BUILD_CAPS unless a test says. */
@@ -64,6 +59,10 @@ export interface RosterDeps {
   legacy: () => LegacyAttestation[];
   ownV1Attestation: () => { throughSeq: number; digest: string } | null;
   relayUrl?: () => string | null;
+  /** Announce this machine's key on any founding pin, chosen or not, as
+   *  builds before team links did. Tests of the fold assemble teams this
+   *  way; a daemon announces only to a team it chose. */
+  announceWhenPinned?: boolean;
 }
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -99,6 +98,20 @@ interface PendingInvite {
   teamId: string;
   /** When this machine joined with it; it binds for INVITE_TTL_MS after. */
   at?: string;
+  /** From a team link: the team's name, who invited, and their fingerprint,
+   *  for the status line and the optional check. */
+  name?: string;
+  by?: string;
+  fp?: string;
+}
+
+/** What a link carries beyond the invite itself, from the inviting machine. */
+export interface LinkFacts {
+  name: string;
+  by: string;
+  fp: string;
+  via: TeamVia;
+  remote: string | null;
 }
 
 // The daemon's side of the signed roster: it publishes this machine's roster
@@ -200,6 +213,22 @@ export class RosterService {
     return { recoveryCode: encodeRecoveryCode(seed) };
   }
 
+  /**
+   * `team start`: founds the team and, when no other machine on the branch
+   * syncs with an older build, closes the legacy window in the same step, so
+   * a new team can go straight to the relay. Answers whether it closed.
+   */
+  start(
+    name: string,
+    legacy: LegacyAttestation[] = this.deps.legacy()
+  ): { recoveryCode: string; legacyClosed: boolean } {
+    const founded = this.found(name, legacy);
+    if (legacy.some((a) => a.replica !== this.me))
+      return { ...founded, legacyClosed: false };
+    this.closeLegacy([]);
+    return { ...founded, legacyClosed: true };
+  }
+
   trust(fp: string): void {
     const chosen = this.foundings().find(
       (f) => this.claimOf(f.replica, f.signPub)?.fingerprint === fp
@@ -213,7 +242,21 @@ export class RosterService {
         `this machine joined with an invite to team ${invite.teamId}; trust that team's founding, or run \`dispatch team abandon-invite\` and then trust this one`
       );
     const founder = this.fed.meta('founder');
-    if (founder === chosen.replica) return;
+    if (founder === chosen.replica) {
+      // Choosing the founding already followed firms the pin and announces
+      // this machine to that team.
+      if (this.fed.meta('founder_pin') !== 'firm') {
+        this.fed.setMeta('founder_pin', 'firm');
+        this.fed.audit('trust', `replica:${chosen.replica}`, {
+          replica: chosen.replica,
+          seq: chosen.seq,
+          hash: chosen.hash,
+          fingerprint: fp,
+        });
+      }
+      this.publishKey();
+      return;
+    }
     if (founder === this.me) {
       const others = [...(this.view()?.members.keys() ?? [])].filter(
         (r) => r !== this.me
@@ -231,7 +274,10 @@ export class RosterService {
     });
   }
 
-  invite(handle: string): { code: string; expires: string } {
+  invite(
+    handle: string,
+    facts?: LinkFacts
+  ): { code: string; expires: string; link?: string } {
     const view = this.member();
     const mine = view.members.get(this.me);
     if (mine?.role !== 'admin' && mine?.handle !== handle)
@@ -242,7 +288,13 @@ export class RosterService {
     const at = this.deps.now().getTime();
     const recent = this.recentInvites.get(handle);
     if (recent !== undefined && at - recent.at < INVITE_RETRY_MS)
-      return { code: recent.code, expires: recent.expires };
+      return {
+        code: recent.code,
+        expires: recent.expires,
+        ...(facts === undefined
+          ? {}
+          : { link: linkOf(view.teamId, handle, recent, facts) }),
+      };
     const seed = randomBytes(SEED_BYTES);
     const pub = ed25519FromSeed(seed).signPub;
     const expires = new Date(at + INVITE_TTL_MS).toISOString();
@@ -259,22 +311,72 @@ export class RosterService {
       seed,
       relay: this.deps.relayUrl?.() ?? null,
     });
-    this.recentInvites.set(handle, { code, expires, at });
-    return { code, expires };
+    const issued = { code, expires, at };
+    this.recentInvites.set(handle, issued);
+    return {
+      code,
+      expires,
+      ...(facts === undefined
+        ? {}
+        : { link: linkOf(view.teamId, handle, issued, facts) }),
+    };
   }
 
-  join(code: string): void {
-    const { teamId, seed } = decodeInviteCode(code);
+  /**
+   * Joins with an invite: a team link (`dispatch-team:…`) or an older `di1.`
+   * code. This machine's key op carries the invite's proof, which is what
+   * lets the inviting machine admit it with no fingerprint to compare.
+   */
+  join(code: string): { teamId: string; link: TeamLink | null } {
+    const trimmed = code.trim();
+    const link = trimmed.startsWith('di1.') ? null : decodeTeamLink(trimmed);
+    const { teamId, seed } =
+      link === null
+        ? decodeInviteCode(trimmed)
+        : { teamId: link.team, seed: link.seed };
+    if (link !== null) {
+      if (Date.parse(link.expires) <= this.deps.now().getTime())
+        throw new RosterError(
+          'invalid',
+          `This invite expired on ${link.expires.slice(0, 10)}. Ask ${link.by} for a new link.`
+        );
+      if (link.handle !== this.deps.handle)
+        throw new RosterError(
+          'invalid',
+          `This invite is for ${link.handle}, but this machine's Dispatch handle is ${this.deps.handle}. Ask ${link.by} to invite ${this.deps.handle} instead.`
+        );
+    }
+    const view = this.view();
     const pinnedTeam = this.teamId();
-    if (pinnedTeam !== null && pinnedTeam !== teamId)
+    if (
+      pinnedTeam !== null &&
+      pinnedTeam === teamId &&
+      view?.members.has(this.me) === true
+    )
       throw new RosterError(
-        'invalid',
-        'this invite is for another team than the one this machine follows'
+        'conflict',
+        `This machine is already in team ${view.name}.`
       );
+    if (pinnedTeam !== null && pinnedTeam !== teamId) {
+      // A founding followed only provisionally, with nothing announced to
+      // it, gives way to the team the invite names (FW-R20, FW-R22(4)).
+      const provisional =
+        this.fed.meta('founder_pin') === 'auto' &&
+        this.fed.head() === null &&
+        this.fed.meta('founder') !== this.me;
+      if (!provisional)
+        throw new RosterError(
+          'invalid',
+          view === null
+            ? 'This invite is for another team than the one this machine follows.'
+            : `This invite is for another team; this machine is in team ${view.name}. Leave it first.`
+        );
+      this.unpinFounder();
+    }
     if (this.fed.head() !== null)
       throw new RosterError(
         'conflict',
-        'this machine already asked to join; an admin can admit it by fingerprint'
+        'This machine already asked to join a team; an admin lets it in from `dispatch team status`, or run `dispatch team leave` first.'
       );
     const inviteKey = ed25519FromSeed(seed);
     const sig = signText(
@@ -286,11 +388,33 @@ export class RosterService {
       sig,
       teamId,
       at: this.deps.now().toISOString(),
+      ...(link === null ? {} : { name: link.name, by: link.by, fp: link.fp }),
     };
     this.atomically(() => {
       this.fed.setMeta('pending_invite', JSON.stringify(pending));
       this.publishKey();
+      // A founding of the invited team already seen is followed now.
+      if (!this.founded()) this.onFoundSeen();
     });
+    return { teamId, link };
+  }
+
+  /** The invite this machine joined with, while it is not yet admitted: what
+   *  `team status` shows while it waits. */
+  joining(): {
+    teamId: string;
+    name: string | null;
+    by: string | null;
+    fp: string | null;
+  } | null {
+    const invite = this.pendingInvite();
+    if (invite === null || this.isAdmitted(this.me)) return null;
+    return {
+      teamId: invite.teamId,
+      name: invite.name ?? null,
+      by: invite.by ?? null,
+      fp: invite.fp ?? null,
+    };
   }
 
   /** Lets go of the invite this machine joined with, so trust or another
@@ -554,6 +678,107 @@ export class RosterService {
             noteFor(v, op) ?? 'the dismiss is not valid'
           )
     );
+  }
+
+  /**
+   * Lets in each machine waiting with proof of an invite this machine issued:
+   * the invite's one-time secret, carried in the link, stands in for the
+   * fingerprint comparison. Each invite admits one machine, before it
+   * expires; a second use, two machines on one invite, or an expired one is
+   * left waiting with a note in plain words. Answers the replicas admitted.
+   */
+  autoAdmit(): string[] {
+    const view = this.view();
+    const mine = view?.members.get(this.me);
+    if (view === null || mine === undefined || mine.observer) return [];
+    const now = this.deps.now().getTime();
+    const spent = this.spentInvites(view);
+    const uses = new Map<string, PinnedKey[]>();
+    for (const replica of view.pending) {
+      if (view.revoked.has(replica)) continue;
+      for (const claim of this.fed.claims(replica)) {
+        const proof = claim.invite;
+        const invite =
+          proof === undefined ? undefined : view.invites.get(proof.id);
+        if (proof === undefined || invite === undefined) continue;
+        if (invite.by !== this.me || invite.handle !== claim.handle) continue;
+        const signed = `${TAG.invite}\n${view.teamId}\n${replica}\n${claim.signPub}`;
+        if (!verifyText(invite.pub, signed, proof.sig)) continue;
+        uses.set(proof.id, [...(uses.get(proof.id) ?? []), claim]);
+      }
+    }
+    const admitted: string[] = [];
+    for (const [id, claims] of uses) {
+      const invite = view.invites.get(id);
+      if (invite === undefined) continue;
+      const subject = `invite:${id}`;
+      const who = (c: PinnedKey) => `${c.handle} on ${printable(c.device)}`;
+      const [only] = claims;
+      if (spent.has(id)) {
+        this.fed.problem(
+          subject,
+          `The invite for ${invite.handle} was already used. ${claims.map(who).join(' and ')} tried it again and was not let in. If that is really them, send a new invite.`
+        );
+        continue;
+      }
+      if (Date.parse(invite.expires) <= now) {
+        this.fed.problem(
+          subject,
+          `The invite for ${invite.handle} expired before ${claims.map(who).join(' and ')} could be let in. Send a new invite.`
+        );
+        continue;
+      }
+      if (claims.length > 1 || only === undefined) {
+        this.fed.problem(
+          subject,
+          `${claims.length} machines used the one invite for ${invite.handle} (${claims.map((c) => `${who(c)}, check ${c.fingerprint}`).join('; ')}). None was let in: ask ${invite.handle} which is theirs and admit that one.`
+        );
+        continue;
+      }
+      try {
+        this.admit(only.replica, {
+          fingerprint: only.fingerprint,
+          handle: invite.handle,
+        });
+      } catch (err) {
+        if (!(err instanceof RosterError)) throw err;
+        this.fed.problem(
+          subject,
+          `${who(only)} has a valid invite but could not be let in: ${err.message}`
+        );
+        continue;
+      }
+      this.markSpent(id);
+      this.fed.clearProblem(subject);
+      admitted.push(only.replica);
+    }
+    return admitted;
+  }
+
+  // Invite ids already used: by an admission this machine made, or by any
+  // machine the roster admitted or revoked whose bound key carries the proof.
+  private spentInvites(view: RosterView): Set<string> {
+    const raw = this.fed.meta('invites_spent');
+    const out = new Set<string>(
+      raw === null ? [] : (JSON.parse(raw) as string[])
+    );
+    for (const replica of [...view.members.keys(), ...view.revoked.keys()]) {
+      const bound = view.boundKeys.get(replica);
+      for (const c of this.fed.claims(replica))
+        if (
+          c.invite !== undefined &&
+          (bound === undefined || c.signPub === bound)
+        )
+          out.add(c.invite.id);
+    }
+    return out;
+  }
+
+  private markSpent(id: string): void {
+    const raw = this.fed.meta('invites_spent');
+    const list = raw === null ? [] : (JSON.parse(raw) as string[]);
+    if (!list.includes(id)) list.push(id);
+    this.fed.setMeta('invites_spent', JSON.stringify(list));
   }
 
   // ---- queries ----
@@ -860,9 +1085,32 @@ export class RosterService {
   }
 
   // Once a founder is pinned, this machine announces its key, unless an
-  // invite or a recovery already did. The pass writes the v1 outbox in its
-  // own publish step (B3), never a write running beside it.
+  // invite or a recovery already did. A machine announces itself only to a
+  // team it chose, by an invite, a recovery or `trust` (a firm pin); an
+  // older build upgrading is announced by announceIfUpgrading. A bare
+  // provisional pin waits, so a later invite's proof rides the key op. The
+  // pass writes the v1 outbox in its own publish step (B3).
   private onFounderPinned(): void {
+    if (
+      this.deps.announceWhenPinned === true ||
+      this.fed.meta('founder_pin') === 'firm' ||
+      this.pendingInvite() !== null
+    )
+      this.publishKey();
+  }
+
+  /** Each pass: a machine whose v1 log already syncs with the team it
+   *  follows, while that team's legacy window is open, announces its key so
+   *  an admin can admit it as before (an older build upgrading). */
+  announceIfUpgrading(): void {
+    const view = this.view();
+    if (
+      view === null ||
+      this.fed.head() !== null ||
+      view.legacy.closed !== null ||
+      this.deps.ownV1Attestation() === null
+    )
+      return;
     this.publishKey();
   }
 
@@ -1236,6 +1484,26 @@ function founding(op: FederatedOp, signPub: string): Founding {
 }
 
 // ---- codes ----
+
+// A team link for an invite issued here.
+function linkOf(
+  teamId: string,
+  handle: string,
+  issued: { code: string; expires: string },
+  facts: LinkFacts
+): string {
+  return encodeTeamLink({
+    team: teamId,
+    name: facts.name,
+    by: facts.by,
+    fp: facts.fp,
+    handle,
+    seed: decodeInviteCode(issued.code).seed,
+    expires: issued.expires,
+    via: facts.via,
+    remote: facts.remote,
+  });
+}
 
 /** 52 Crockford characters in 13 groups of four, joined by "-". */
 export function encodeRecoveryCode(seed: Uint8Array): string {

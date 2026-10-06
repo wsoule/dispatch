@@ -240,6 +240,9 @@ export class FederationService {
 
   // The transport the roster's `transport` op chose, once switched to.
   private current: FederationTransport;
+  // Set while this machine switched to the relay before it was admitted,
+  // holding back all but its key op (backfillOnceAdmitted).
+  private backfill = false;
 
   constructor(private readonly opts: FederationServiceOptions) {
     this.current = opts.transport;
@@ -386,6 +389,7 @@ export class FederationService {
         // A founding pinned just now: this replica's key op goes out this pass.
         if (!roster.founded()) return;
       }
+      roster.announceIfUpgrading();
       const now = this.now();
       if (!this.coveredHere()) {
         this.paused = this.opts.seatMessage(roster.seats());
@@ -404,6 +408,7 @@ export class FederationService {
       }
       // A switch the roster made, once nothing waits for the old transport.
       await this.followTransport();
+      await this.backfillOnceAdmitted();
       for (const c of this.collectors) c.collect(now);
       // Offline keeps both outboxes; the pull below says why.
       try {
@@ -425,6 +430,8 @@ export class FederationService {
       const before = roster.view();
       const verified = this.verify(entries);
       this.afterFold(before);
+      // A machine waiting with proof of an invite issued here is let in.
+      if (roster.autoAdmit().length > 0) this.notifyLocalChange();
       const changed = this.stage(verified, v1Ops, now);
       this.stageRereads(entries, now);
       await this.findNamedKeys();
@@ -1206,7 +1213,12 @@ export class FederationService {
       );
       return;
     } else next = this.opts.relayFor(want.url);
-    const log = fed.ownLog();
+    // A machine not yet let in stores only its key op on a relay (the
+    // contract), so it switches with that; the rest goes up once admitted.
+    const admitted = roster.isAdmitted(fed.replica);
+    const whole = fed.ownLog();
+    const log = want.kind === 'relay' && !admitted ? whole.slice(0, 1) : whole;
+    this.backfill = want.kind === 'relay' && !admitted && whole.length > 1;
     try {
       if ('upload' in next) await (next as SwitchableTransport).upload(log);
       else await next.publish(log.filter((e): e is FederatedOp => !isStub(e)));
@@ -1227,6 +1239,16 @@ export class FederationService {
       ...(want.url === undefined ? {} : { url: want.url }),
       uploaded: log.length,
     });
+  }
+
+  // A joiner that switched to the relay with only its key op sends the rest
+  // of its log once the roster admits it (idempotent by seq on the relay).
+  private async backfillOnceAdmitted(): Promise<void> {
+    const { fed, roster } = this.opts;
+    if (!this.backfill || !roster.isAdmitted(fed.replica)) return;
+    if (!('upload' in this.current)) return;
+    await (this.current as SwitchableTransport).upload(fed.ownLog());
+    this.backfill = false;
   }
 
   // Tells a parked op's handler that retention dropped it.

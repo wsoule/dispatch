@@ -1,5 +1,5 @@
 import { TaskStore } from '@dispatch-foo/core';
-import { afterEach, beforeEach, expect } from 'bun:test';
+import { afterEach, beforeEach, expect, setDefaultTimeout } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +28,10 @@ interface DaemonOptions {
 
 // Two or more in-process daemons, each on its own scratch root with its A2A
 // listener open on loopback, sharing one scratch DISPATCH_HOME per test.
+// Sets the calling file's test timeout: each daemon is a git init plus a full
+// boot, 1-2 s apiece on macOS and past bun's 5 s default for two under load.
 export function useDaemons() {
+  setDefaultTimeout(30_000);
   let home: string;
   let daemons: Daemon[] = [];
   const stopped = new Set<Daemon>();

@@ -50,25 +50,53 @@ pass, and before it signs the `transport` op:
   founder's log; a machine that does not hold them yet is refused and asked to
   pull first.
 
-- **Token.** When the relay requires one (`REGISTRATION_TOKEN`), registration
-  sends `Authorization: Bearer <token>`. The token comes from the switch's
+- **Terms.** `GET /v1/registration` answers
+  `{ difficulty, tokenRequired, tokenAccepted }`. `difficulty` is in leading
+  zero bits (the hosted relay's default is 19, a second or two). A relay that
+  does not answer it (an older one) gets the token if one was given, and no
+  proof.
+- **Proof of work.** With no token, the client proves the registration with a
+  proof-of-work stamp. It takes `t`, the current time in unix seconds, and finds
+  the first decimal nonce for which
+
+  ```text
+  sha256("dispatch-relay-reg-v1\n" + teamId + "\n" + url + "\n" + t + "\n" + nonce)
+  ```
+
+  has at least `difficulty` leading zero bits (most significant bit first).
+  `teamId` is the first 32 hex characters of the `found` op's hash, and `url` is
+  the relay URL as dialed, with no trailing slash. The body then carries
+  `pow: { t, nonce }` beside `key`, `found` and `ops`. Each proof is single-use,
+  so every attempt solves a fresh one. A 403 means the proof is missing, wrong
+  or stale (the message names clock skew when that is why); the client mints a
+  fresh one with a new `t` and tries once more, then fails with that reason. A
+  client refuses a difficulty above 26 bits rather than hash for minutes.
+
+- **Token.** When the relay requires one (`tokenRequired`, a self-hosted relay
+  with `REGISTRATION_TOKEN`), or accepts one in place of the proof
+  (`tokenAccepted`) and one was given, registration sends
+  `Authorization: Bearer <token>`. The token comes from the switch's
   `registrationToken` field
-  (`dispatch team transport relay <url> --yes --registration-token`, which reads
-  it from stdin or a prompt that does not echo when given no value, or the token
-  field beside the relay URL in the desktop's Machines settings). It is used for
-  that one request and never stored: no op, audit row, problem or log carries
-  it. Other machines never need it, because only registration does.
+  (`dispatch team advanced transport relay <url> --yes --registration-token` or
+  `dispatch team start --registration-token`, which read it from stdin or a
+  prompt that does not echo when given no value, or the token field beside the
+  relay URL in the desktop's Machines settings). It is used for that one request
+  and never stored: no op, audit row, problem or log carries it. Other machines
+  never need it, because only registration does.
 - **Idempotent.** A relay that already holds the team answers 200 with its id,
   and the switch goes on. A new team answers 201. Either way the answered team
   id must be this team's.
-- **Failure.** If the relay is unreachable, refuses the token (401), needs a
-  license (402), rate-limits (429) or refuses the chain (400), the switch
-  answers 502 with `code: 'relay_registration_failed'` and a message naming the
-  relay and the reason. Nothing is signed, and the team stays on its current
-  transport.
+- **Failure.** If the relay is unreachable, refuses the token (401), refuses the
+  proof twice (403), needs a license (402), rate-limits (429) or refuses the
+  chain (400), the switch answers 502 with `code: 'relay_registration_failed'`
+  and a message naming the relay and the reason. Nothing is signed, and the team
+  stays on its current transport.
 
-The hosted relay is `wss://relay.dispatch.foo`. The self-host image is one
-container with a SQLite volume.
+The hosted relay is `wss://relay.dispatch.foo` (overridable with
+`DISPATCH_RELAY_URL` or `dispatch team start --relay <url>`). `team start`
+registers there by proof of work, signs the switch in the same step, and stays
+on git with a notice when the relay cannot be reached. The self-host image is
+one container with a SQLite volume.
 
 ## Frames
 

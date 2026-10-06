@@ -34,6 +34,7 @@ export function testReplica(
     () => clock.now
   );
   const roster = new RosterService({
+    announceWhenPinned: true,
     fed,
     handle,
     device: `${handle}-laptop`,

@@ -12,11 +12,14 @@ import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 export const FREE_SEATS = 3;
 
 /**
- * The public half of the key licenses are signed with. Null until one is
- * generated (`bun scripts/license-keygen.ts`) and pasted here; while it is
- * null no key verifies, so every project runs on the free tier.
+ * The public half of the key licenses are signed with (made with
+ * `bun scripts/license-keygen.ts`). Keys signed by its private half verify;
+ * anything else reads as the free tier.
  */
-export const LICENSE_PUBLIC_KEY: string | null = null;
+export const LICENSE_PUBLIC_KEY: string | null =
+  '-----BEGIN PUBLIC KEY-----\n' +
+  'MCowBQYDK2VwAyEA+Dn54p7yp1UoWoVROSTTD1I5TD4wvpAovSg40zzvZ3U=\n' +
+  '-----END PUBLIC KEY-----\n';
 
 // Every key starts with this, so a pasted string is recognizable as one and a
 // future format can be told apart from this one.
