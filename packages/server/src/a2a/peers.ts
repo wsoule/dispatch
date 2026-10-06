@@ -153,28 +153,44 @@ function secretFor(
 
 // One owner notice per peer, reason and day; kept in memory, so a restart may
 // repeat one. Sent after the engine send that triggered it, because admission
-// runs inside engine.send.
+// runs inside engine.send. Each send is tracked until it settles, so the
+// bridge can drain them before the messaging database closes.
 export class PeerNotices {
   private readonly sent = new Map<string, string>();
+  private readonly inFlight = new Set<Promise<void>>();
+  private closed = false;
   constructor(
     private readonly deps: Pick<PeerDeps, 'engine' | 'ownerRef' | 'now'>
   ) {}
 
   send(alias: string, reason: string, body: string): void {
+    if (this.closed) {
+      console.error(`a2a: owner notice for ${alias} skipped: shutting down`);
+      return;
+    }
     const day = nowOf(this.deps).toISOString().slice(0, 10);
     const key = `${alias} ${reason}`;
     if (this.sent.get(key) === day) return;
     this.sent.set(key, day);
-    setTimeout(() => {
-      this.deps.engine
-        .send(
+    const pending: Promise<void> = new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    })
+      .then(async () => {
+        await this.deps.engine.send(
           { to: [this.deps.ownerRef], kind: 'notice', body },
           { address: SYSTEM_ADDRESS, canDecide: true }
-        )
-        .catch((err: unknown) =>
-          console.error('a2a: owner notice failed', err)
         );
-    }, 0);
+      })
+      .catch((err: unknown) => console.error('a2a: owner notice failed', err))
+      .finally(() => this.inFlight.delete(pending));
+    this.inFlight.add(pending);
+  }
+
+  // Waits out every notice in flight, including any sent while waiting, then
+  // skips new ones; the bridge calls it on close.
+  async drain(): Promise<void> {
+    while (this.inFlight.size > 0) await Promise.all(this.inFlight);
+    this.closed = true;
   }
 }
 
