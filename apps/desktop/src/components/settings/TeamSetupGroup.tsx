@@ -13,6 +13,11 @@ interface TeamSetupGroupProps {
   data: DispatchProjectData;
 }
 
+// What the invited person does with the link, on their own machine. Shown
+// with the link so whoever sends it can pass the steps along.
+const JOIN_STEPS =
+  'On their machine: open Dispatch, go to Settings → Members, and paste it under Join a team. Or run `dispatch team join` and paste it there. When they join, their name shows above with an optional check you can read together.';
+
 // Shown beside "Start a team" so pressing it is the confirmation the relay
 // switch needs (F-D31); the daemon's own sentence once the team exists.
 const RELAY_DISCLOSURE =
@@ -160,7 +165,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       {canInvite && (
         <SettingsRow
           title="Invite teammate"
-          subtitle="They paste the link in Settings → Team, or run `dispatch team join`. It works once, for 7 days."
+          subtitle="Makes a link to send them. It works once, for 7 days."
           htmlFor="team-invite-link-for"
           control={
             <form
@@ -199,7 +204,7 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       {invite !== null && (
         <SettingsRow
           title={`Send this privately: anyone holding it can join as ${invite.handle} until ${invite.expires.slice(0, 10)}`}
-          subtitle="It works once. When they join, their name shows above with an optional check you can read together."
+          subtitle={JOIN_STEPS}
           stacked
         >
           <div className="flex items-center gap-2">
@@ -268,7 +273,8 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
       )}
       {isAdmin && s.problems.length === 0 && s.seats !== null && (
         <SettingsHint>
-          You are an admin: you can add and remove people under Advanced below.
+          You are an admin: you can admit and remove machines under Machines
+          below.
         </SettingsHint>
       )}
       {error !== null && (

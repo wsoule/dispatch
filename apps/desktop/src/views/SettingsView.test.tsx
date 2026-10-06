@@ -114,7 +114,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     client: { fetchLedger: () => Promise.resolve([]) } as unknown as ApiClient,
   });
   render(<SettingsView activeProject={project} data={ledgerData} />);
-  for (const heading of ['Project', 'Team', 'This machine']) {
+  for (const heading of ['Project', 'Team', 'Connections', 'This machine']) {
     expect(screen.getByText(heading)).toBeDefined();
   }
   expect(navRows().map((row) => row.textContent)).toEqual([
@@ -126,11 +126,11 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Previews',
     'Notifications',
     'Members',
-    'Connected agents',
     'Board sync',
-    'Linear',
-    'A2A',
     'License',
+    'Linear',
+    'Connected agents',
+    'A2A',
     'Remotes',
     'Background',
     'Diff display',

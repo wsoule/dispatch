@@ -271,25 +271,17 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         id: 'team',
         label: 'Members',
         icon: Users,
-        intro: "Who can work on this project's board.",
+        intro:
+          'Your team: start one, invite a teammate, or join with a link someone sent you.',
         savesConfig: false,
         render: (ctx) => <TeamSection data={ctx.data} />,
-      },
-      {
-        id: 'connected-agents',
-        label: 'Connected agents',
-        icon: BotMessageSquare,
-        intro:
-          'Agents outside Dispatch that asked to message this project, and whether they may.',
-        savesConfig: false,
-        render: (ctx) => <AgentRosterSection data={ctx.data} />,
       },
       {
         id: 'sync',
         label: 'Board sync',
         icon: RefreshCw,
         intro:
-          "Keep one board in step with teammates' copies of Dispatch through git.",
+          "Keep this board in step with your teammates' copies of Dispatch, through the team relay or a git branch.",
         savesConfig: true,
         // Sharing works only on a database-backed board; a board kept as
         // files reaches teammates by committing them instead. Until the
@@ -317,6 +309,19 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         }),
       },
       {
+        id: 'license',
+        label: 'License',
+        icon: KeyRound,
+        intro: 'Your plan and how many seats are in use.',
+        savesConfig: false,
+        render: (ctx) => <LicenseSection data={ctx.data} />,
+      },
+    ],
+  },
+  {
+    label: 'Connections',
+    pages: [
+      {
         id: 'integrations',
         label: 'Linear',
         icon: Plug,
@@ -336,20 +341,22 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         ),
       },
       {
+        id: 'connected-agents',
+        label: 'Connected agents',
+        icon: BotMessageSquare,
+        intro:
+          'Agent tools such as Claude Code or Codex that connected through Dispatch’s MCP server and asked to message this project, and whether they may.',
+        savesConfig: false,
+        render: (ctx) => <AgentRosterSection data={ctx.data} />,
+      },
+      {
         id: 'a2a',
         label: 'A2A',
         icon: Network,
-        intro: 'Let other agents ask this project questions over A2A.',
+        intro:
+          "Agents outside your team, on other platforms or other people's Dispatch, over the open A2A protocol. Teammates don't need this: their agents already reach yours through the team.",
         savesConfig: false,
         render: (ctx) => <A2ASection data={ctx.data} />,
-      },
-      {
-        id: 'license',
-        label: 'License',
-        icon: KeyRound,
-        intro: 'Your plan and how many seats are in use.',
-        savesConfig: false,
-        render: (ctx) => <LicenseSection data={ctx.data} />,
       },
     ],
   },

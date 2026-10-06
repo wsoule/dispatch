@@ -110,7 +110,7 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
     <>
       <SettingsGroup
         title="Sharing"
-        hint="Changes to these take effect the next time Dispatch restarts for this project."
+        hint="Starting or joining a team in Members sets this up for you. Where the board is kept only matters while the team syncs over git rather than the relay. Changes here take effect the next time Dispatch restarts for this project."
         keywords="sync restart"
       >
         <SwitchSetting

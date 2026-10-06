@@ -145,6 +145,12 @@ describe('TeamSetupGroup', () => {
     expect(
       screen.getByRole('button', { name: 'Copy invite link' })
     ).toBeTruthy();
+    // Beside the link: where the invited person pastes it.
+    expect(
+      screen.getByText(
+        /go to Settings → Members, and paste it under Join a team/
+      )
+    ).toBeTruthy();
   });
 
   test('below operator it shows the status but offers no start, join or invite', async () => {
