@@ -133,6 +133,15 @@ export interface OverseerTurn {
   costUsd?: number;
   /** How full the session's context is after the turn, in tokens. */
   contextTokens?: number;
+  /** The slash commands the session offers, when the backend reports them. */
+  commands?: OverseerCommand[];
+}
+
+/** One slash command a session accepts: `/name`, with what it does. */
+export interface OverseerCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
 }
 
 export interface OverseerBackend {

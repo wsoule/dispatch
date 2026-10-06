@@ -9,6 +9,7 @@ import { floorCheckForToolInput } from '../floor.js';
 import type { OverseerBus } from '../messaging/overseerBus.js';
 import type {
   OverseerBackend,
+  OverseerCommand,
   OverseerToolDescriptor,
   OverseerToolRequest,
   OverseerToolResult,
@@ -148,6 +149,8 @@ export interface OverseerRecord {
   spendUsd?: number;
   /** Messages typed while a turn ran; they go out together when it ends. */
   queued?: { text: string; at: string }[];
+  /** The slash commands the session offered on its last turn. */
+  commands?: OverseerCommand[];
   /** The bus thread this conversation's lines are posted to, once one is. */
   thread?: string;
   error?: string;
@@ -478,8 +481,10 @@ export class OverseerManager {
       });
       return this.get(conversationId);
     }
-    const queued = (record.queued ?? []).map((q) => q.text);
-    return this.beginTurn(record, [...queued, message], speaker);
+    const pending = [...(record.queued ?? []).map((q) => q.text), message];
+    const [batch, rest] = nextBatch(pending);
+    if (rest.length > 0) this.queuedBy.set(conversationId, speaker);
+    return this.beginTurn(record, batch, speaker, rest);
   }
 
   // Records the human's lines and starts the turn that answers them. A
@@ -488,12 +493,17 @@ export class OverseerManager {
   private beginTurn(
     record: OverseerRecord,
     texts: string[],
-    speaker: Sender | null
+    speaker: Sender | null,
+    // What still waits behind this turn: messages after a slash command.
+    stillQueued: string[] = []
   ): OverseerRecord {
     const backend = this.requireBackend(record.backendName);
     const conversationId = record.id;
     const now = new Date().toISOString();
-    const rollover = (record.contextTokens ?? 0) >= ROLLOVER_TOKENS;
+    // A slash command goes to the session verbatim: no decisions prefix, and
+    // never a rollover, since commands like /compact act on that session.
+    const slash = texts.length === 1 && isSlashCommand(texts[0]);
+    const rollover = !slash && (record.contextTokens ?? 0) >= ROLLOVER_TOKENS;
     if (rollover) this.grants.clear(conversationId);
     const divider: OverseerMessage[] = rollover
       ? [
@@ -514,9 +524,9 @@ export class OverseerManager {
         ...divider,
         ...texts.map((text) => ({ role: 'user' as const, text, at: now })),
       ],
-      queued: [],
+      queued: stillQueued.map((text) => ({ text, at: now })),
       // Handed to the backend below, so they must not be delivered twice.
-      undeliveredDecisions: [],
+      undeliveredDecisions: slash ? record.undeliveredDecisions : [],
       // A new turn supersedes any prior failure.
       error: undefined,
       ...(rollover ? { contextTokens: 0 } : {}),
@@ -530,7 +540,10 @@ export class OverseerManager {
 
     // The transcript keeps what the human actually typed; the model gets that
     // plus the decisions it hasn't been told about yet.
-    const said = withDecisions(texts.join('\n\n'), record.undeliveredDecisions);
+    const drained = slash ? [] : record.undeliveredDecisions;
+    const said = slash
+      ? texts[0].trim()
+      : withDecisions(texts.join('\n\n'), drained);
     const outgoing = rollover ? `${recapOf(record.messages)}\n${said}` : said;
     const sessionId = rollover ? undefined : record.sessionId;
     const options = this.turnOptionsFor(conversationId);
@@ -542,7 +555,7 @@ export class OverseerManager {
           ...options,
           abortController,
         }),
-      record.undeliveredDecisions,
+      drained,
       { speaker, line }
     );
     return updated;
@@ -591,6 +604,7 @@ export class OverseerManager {
         ...(turn.contextTokens !== undefined
           ? { contextTokens: turn.contextTokens }
           : {}),
+        ...(turn.commands !== undefined ? { commands: turn.commands } : {}),
         ...(turn.costUsd !== undefined
           ? { spendUsd: (current.spendUsd ?? 0) + turn.costUsd }
           : {}),
@@ -655,13 +669,10 @@ export class OverseerManager {
     if (record === undefined || queued.length === 0) return;
     if (this.ctx.bus?.revoked() === true) return;
     const speaker = this.queuedBy.get(conversationId) ?? null;
-    this.queuedBy.delete(conversationId);
+    const [batch, rest] = nextBatch(queued.map((q) => q.text));
+    if (rest.length === 0) this.queuedBy.delete(conversationId);
     try {
-      this.beginTurn(
-        record,
-        queued.map((q) => q.text),
-        speaker
-      );
+      this.beginTurn(record, batch, speaker, rest);
     } catch (err) {
       console.error(`overseer: could not send ${conversationId}'s queue`, err);
     }
@@ -1298,6 +1309,19 @@ export class OverseerManager {
     this.persist(updated);
     this.ctx.events.broadcast({ type: 'overseer.changed', conversationId });
   }
+}
+
+function isSlashCommand(text: string): boolean {
+  return /^\/[\w:.-]/.test(text.trimStart());
+}
+
+// The next turn's messages: a slash command alone, or every plain message up
+// to the next one. The rest waits for that turn to end.
+function nextBatch(texts: string[]): [string[], string[]] {
+  if (texts.length === 0) return [[], []];
+  if (isSlashCommand(texts[0])) return [[texts[0]], texts.slice(1)];
+  const stop = texts.findIndex(isSlashCommand);
+  return stop === -1 ? [texts, []] : [texts.slice(0, stop), texts.slice(stop)];
 }
 
 // Rejects once `signal` aborts; never settles otherwise.
