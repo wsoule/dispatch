@@ -1,4 +1,4 @@
-import type { ApiClient, OverseerRecord } from '@dispatch/client';
+import type { ApiClient, OverseerRecord, RunMeta } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
@@ -6,7 +6,7 @@ import { useState } from 'react';
 
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
-import { TwoViewOverseer } from './TwoViewOverseer';
+import { type OverseerFocus, TwoViewOverseer } from './TwoViewOverseer';
 
 function record(id: string, prompt: string): OverseerRecord {
   return {
@@ -177,4 +177,68 @@ test('Set aside docks the conversation and empties the composer', () => {
       window.localStorage.getItem('dispatch:overseer-dock:/repo') ?? '[]'
     )
   ).toEqual(['w-1']);
+});
+
+function FocusHarness({ runs }: { runs: RunMeta[] }) {
+  const [focus, setFocus] = useState<OverseerFocus | null>(null);
+  const [draft, setDraft] = useState('');
+  const [queryClient] = useState(() => new QueryClient());
+  const data = {
+    client: {} as ApiClient,
+    port: 4321,
+    portLoading: false,
+    portError: false,
+  } as unknown as DispatchProjectData;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TwoViewOverseer
+        data={data}
+        overseer={{ ...session({}), draft, setDraft }}
+        projectPath="/repo"
+        asks={0}
+        revoked={false}
+        runs={runs}
+        focus={focus}
+        onFocus={setFocus}
+        renderFocus={(f, onClose) => (
+          <div>
+            <span>focused {f.kind === 'task' ? f.taskId : f.address}</span>
+            <button type="button" onClick={onClose}>
+              close focus
+            </button>
+          </div>
+        )}
+        onShowAsks={() => {}}
+        onOpenConnectedAgents={() => {}}
+        onOpenDoor={() => {}}
+      />
+    </QueryClientProvider>
+  );
+}
+
+test('a run on the right opens its task in the middle; Esc gives the talk back', () => {
+  render(
+    <FocusHarness
+      runs={[
+        {
+          id: 'r-1',
+          taskId: 't-9',
+          taskTitle: 'Warm the cache',
+          state: 'running',
+          createdAt: '2026-10-06T09:00:00Z',
+          updatedAt: '2026-10-06T09:00:00Z',
+        } as RunMeta,
+      ]}
+    />
+  );
+  fireEvent.click(screen.getByText('Warm the cache'));
+  expect(screen.getByTestId('overseer-focus').textContent).toContain(
+    'focused t-9'
+  );
+  // The talk is hidden, not gone, so the draft survives.
+  expect(
+    screen.getByRole('textbox', { name: 'Follow-up message', hidden: true })
+  ).toBeTruthy();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByTestId('overseer-focus')).toBeNull();
 });

@@ -172,6 +172,7 @@ import { InboxView } from './views/InboxView';
 import { LandingTableView } from './views/LandingTableView';
 import { LiveView } from './views/LiveView';
 import type { FocusEpicRequest } from './views/MilestonesView';
+import { OverseerFocusView } from './views/OverseerFocusView';
 import { OverseerView } from './views/OverseerView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
@@ -182,7 +183,7 @@ import { type HostedSettingsPage, SettingsView } from './views/SettingsView';
 import { type TasksSidePage, TasksView } from './views/TasksView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
-import { TwoViewOverseer } from './views/TwoViewOverseer';
+import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
@@ -1791,7 +1792,7 @@ function App() {
       />
     ) : null;
 
-  // "For you" posts: built from the mailbox, never stored; a solo user sees none.
+  // "For you" posts: built from the mailbox, never stored; agents' messages count too.
   const followedRooms = useMemo(
     () =>
       new Set(
@@ -1801,7 +1802,6 @@ function App() {
       ),
     [paletteRooms, data.me]
   );
-  const solo = data.people.length <= 1 && palettePeers.length === 0;
   // Each row's speech cell: unread messages to me about its task, never chatter.
   const speechByTask = useMemo(() => {
     const out = new Map<string, { count: number; mention: boolean }>();
@@ -1823,7 +1823,7 @@ function App() {
   }, [twoViews, data.me, mailbox]);
   const posts = useMemo(
     () =>
-      !twoViews || solo || data.me === null
+      !twoViews || data.me === null
         ? []
         : buildPosts(mailbox ?? [], {
             me: data.me,
@@ -1834,7 +1834,7 @@ function App() {
             authorOf: () => null,
             now: Date.now(),
           }),
-    [twoViews, solo, data.me, mailbox, myTaskIds, followedRooms]
+    [twoViews, data.me, mailbox, myTaskIds, followedRooms]
   );
   // An agent or narrator door: Tasks on a task, a milestone or a preset.
   const openDoor = (door: OverseerDoor) => {
@@ -1845,6 +1845,13 @@ function App() {
         : { type: 'tv/showTasks', preset: door.preset }
     );
   };
+  // What a side column of the Overseer opened in its middle.
+  const [overseerFocus, setOverseerFocus] = useState<OverseerFocus | null>(
+    null
+  );
+  const addressName = (address: string) =>
+    data.people.find((p) => p.ref === address)?.name ??
+    address.replace(/^(human|a2a|run|agent):/, '');
   const openPost = (post: Post) => {
     const client = data.client;
     if (client !== null) {
@@ -1854,15 +1861,16 @@ function App() {
         queryClient.invalidateQueries({ queryKey: threadListsKey(data.port) })
       );
     }
-    // A task opens as a peek over Overseer, so the view stays put.
-    if (post.subject.startsWith('task:')) {
-      dispatchNav({
-        type: 'openPeek',
-        taskId: post.subject.slice('task:'.length),
-      });
-    } else {
-      dispatchNav({ type: 'tv/openAddress', address: post.subject });
-    }
+    // It opens in the Overseer's middle: a task on its conversation, else that talk.
+    setOverseerFocus(
+      post.subject.startsWith('task:')
+        ? {
+            kind: 'task',
+            taskId: post.subject.slice('task:'.length),
+            conversation: true,
+          }
+        : { kind: 'address', address: post.subject }
+    );
   };
   const replyToPost = async (post: Post, body: string) => {
     if (data.client === null) throw new Error('dispatchd client not ready');
@@ -1938,14 +1946,43 @@ function App() {
             postsCount={posts.length}
             runs={data.runs}
             merges={data.mergeQueue?.entries ?? []}
-            onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
+            focus={overseerFocus}
+            onFocus={setOverseerFocus}
+            renderFocus={(focus, onClose) => (
+              <OverseerFocusView
+                focus={focus}
+                data={data}
+                name={addressName}
+                conversationCount={(taskId) =>
+                  speechByTask.get(taskId)?.count ?? 0
+                }
+                onOpenRef={openRef}
+                onOpenInTasks={(taskId) => {
+                  onClose();
+                  openTaskView(taskId, 'auto');
+                }}
+                onClose={onClose}
+              />
+            )}
             needsBlock={
               <NeedsYouBlock
                 data={data}
                 needs={needs}
                 decided={recentlyDecided}
-                onOpenRef={openRef}
-                onOpenDecision={onOpenDecision}
+                // Beside the talk, a task opens in the middle instead of in Tasks.
+                onOpenRef={(action) =>
+                  action.kind === 'task' || action.kind === 'run'
+                    ? setOverseerFocus({ kind: 'task', taskId: action.taskId })
+                    : openRef(action)
+                }
+                onOpenDecision={(item) => {
+                  const target = decisionTarget(item);
+                  if (target?.kind === 'task') {
+                    setOverseerFocus({ kind: 'task', taskId: target.taskId });
+                  } else {
+                    onOpenDecision(item);
+                  }
+                }}
                 flush
               />
             }
@@ -1968,10 +2005,7 @@ function App() {
                 />
                 <ForYouPosts
                   posts={posts}
-                  label={(address) =>
-                    data.people.find((p) => p.ref === address)?.name ??
-                    address.replace(/^(human|a2a|run|agent):/, '')
-                  }
+                  label={addressName}
                   onOpen={openPost}
                   onReply={replyToPost}
                   holding={overseerTurnLive(overseer)}
