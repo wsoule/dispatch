@@ -18,6 +18,7 @@ import {
   syncSettings,
   TaskStore,
   totalImported,
+  updateConfig,
 } from '@dispatch-foo/core';
 import type {
   CartoMode,
@@ -181,6 +182,7 @@ import {
   defaultGitRunner,
   SyncWorktree,
 } from './sync/worktree.js';
+import { implicitRemote } from './team/boardSync/implicitPlace.js';
 import { SyncLedger } from './team/boardSync/ledger.js';
 import { SyncedTaskStore } from './team/boardSync/syncedStore.js';
 import { appendAuditToReceipts } from './team/federation/audit.js';
@@ -1011,6 +1013,8 @@ async function bootServer(
   // database backend syncs this way — a file-backed board already travels in
   // the repo itself.
   const syncConfig = backend === 'sqlite' ? bootSyncSettings(rootDir) : null;
+  // What sync runs with, once a place adopted below is written.
+  let bootSync = syncConfig;
   const stores =
     backend === 'sqlite'
       ? initProjectStores({
@@ -1243,7 +1247,32 @@ async function bootServer(
   if (syncConfig !== null && syncLedger !== null && syncedStore !== null) {
     // A repository of its own, or a branch on one of the project's remotes,
     // only as the config names it: no remote is ever implied.
-    const place = syncPlace(syncConfig);
+    let place = syncPlace(syncConfig);
+    // A project that already syncs with teammates through its sync clone's
+    // remote, from before a place had to be named, keeps that place.
+    if (place === null) {
+      const adopted = await implicitRemote(
+        rootDir,
+        boardSyncDir(rootDir),
+        syncLedger.database,
+        syncLedger.replica,
+        defaultAsyncGitRunner
+      );
+      if (adopted !== null) {
+        try {
+          updateConfig(rootDir, { sync: { remote: adopted } });
+          place = { remote: adopted };
+          bootSync = { ...syncConfig, remote: adopted };
+          console.log(
+            `dispatchd: board sync named no place but already shares through the "${adopted}" remote with other machines; wrote sync.remote: ${adopted} to .dispatch/config.yml`
+          );
+        } catch (err) {
+          console.error(
+            `dispatchd: could not write sync.remote: ${adopted} to .dispatch/config.yml: ${(err as Error).message}`
+          );
+        }
+      }
+    }
     const remoteUrl =
       place === null
         ? null
@@ -2270,7 +2299,7 @@ async function bootServer(
     previews,
     previewGateway,
     boardSync,
-    bootSync: syncConfig,
+    bootSync,
     federation: federationContext,
     team,
     presence: presenceTracker,
