@@ -9,10 +9,15 @@ import type {
   TeamStatus,
   TeamTier,
 } from '../apiClient.js';
+import { createApiClient } from '../apiClient.js';
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { formatTable } from '../output.js';
-import { appTokenClient } from './appToken.js';
+import {
+  appTokenClient,
+  attachToRunningDaemon,
+  optionalAppToken,
+} from './appToken.js';
 import { readSecret } from './secret.js';
 
 const TIERS: readonly TeamTier[] = ['request', 'decide', 'operator'];
@@ -119,6 +124,10 @@ function describeTeamStatus(status: TeamStatus): string[] {
       if (p.fix !== null) lines.push(`    fix: ${p.fix}`);
     }
   }
+  if (status.reduced === true)
+    lines.push(
+      'Teammates, checks and problems need the daemon app token: pass --token or set DISPATCH_APP_TOKEN.'
+    );
   return lines;
 }
 
@@ -314,8 +323,10 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
           throw new CliError(
             'Paste the link at the prompt instead: `dispatch team join`, then paste. An invite is a secret, and arguments stay in shell history.'
           );
-        const code = await readSecret(ctx, 'Invite link: ');
+        // The token and daemon first, so a missing one fails before the
+        // person has pasted a secret.
         const api = await client(opts, 'dispatch team join');
+        const code = await readSecret(ctx, 'Invite link: ');
         const joined = await api.joinTeam(code);
         if (opts.json === true) {
           ctx.log(JSON.stringify(joined, null, 2));
@@ -344,11 +355,19 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
   team
     .command('status')
     .description('The team in one line, and anything that needs attention')
-    .option(tokenOption, tokenHelp)
+    .option(
+      tokenOption,
+      'the daemon app token (or DISPATCH_APP_TOKEN); without it, the summary line alone'
+    )
     .option('--json')
     .action(async (opts: { token?: string; json?: boolean }) => {
-      const status = await (
-        await client(opts, 'dispatch team status')
+      // Without an app token, the agent token's reduced view: where this
+      // machine stands, so someone stuck without a token can still see it.
+      const { baseUrl, agentToken } = await attachToRunningDaemon(ctx);
+      const appToken = optionalAppToken(opts.token);
+      const status = await createApiClient(
+        baseUrl,
+        appToken ?? agentToken
       ).getTeamStatus();
       if (opts.json === true) ctx.log(JSON.stringify(status, null, 2));
       else for (const line of describeTeamStatus(status)) ctx.log(line);
@@ -679,8 +698,8 @@ function registerFederationCommands(
     .option(tokenOption, tokenHelp)
     .allowExcessArguments(false)
     .action(async (opts: { token?: string }) => {
-      const code = await readSecret(ctx, 'Invite code: ');
       const api = await client(opts, 'dispatch team join');
+      const code = await readSecret(ctx, 'Invite code: ');
       logAnswer(ctx, await api.joinTeam(code));
       const { machine } = await api.getTeamKeys();
       ctx.log(
@@ -707,11 +726,9 @@ function registerFederationCommands(
     .option(tokenOption, tokenHelp)
     .allowExcessArguments(false)
     .action(async (opts: { token?: string }) => {
+      const api = await client(opts, 'dispatch team recover');
       const code = await readSecret(ctx, 'Recovery code: ');
-      logAnswer(
-        ctx,
-        await (await client(opts, 'dispatch team recover')).recoverTeam(code)
-      );
+      logAnswer(ctx, await api.recoverTeam(code));
       ctx.log('Recovered: this machine is an admin, ranked after every other.');
     });
 

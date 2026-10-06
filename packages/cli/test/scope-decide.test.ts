@@ -142,10 +142,11 @@ describe('dispatch scope decide', () => {
 
   it('never falls back to the agent token sitting in the daemon file', async () => {
     await expect(run('scope', 'decide', 'm-scope1')).rejects.toThrow(CliError);
-    // The point is not just the throw: no request must reach the daemon at
-    // all, since a decide attempt carrying the agent token would be the very
-    // silent fallback the tier split exists to prevent.
-    expect(received).toEqual([]);
+    // The point is not just the throw: nothing but the token-free health
+    // probe (which finds the daemon to name in the error) may reach it, since
+    // a decide attempt carrying the agent token would be the very silent
+    // fallback the tier split exists to prevent.
+    expect(received).toEqual([{ auth: null, path: '/api/health' }]);
   });
 
   it('grants with a --token app token', async () => {
@@ -201,6 +202,6 @@ describe('dispatch scope show', () => {
     await expect(run('scope', 'show', 'm-scope1')).rejects.toThrow(
       /DISPATCH_APP_TOKEN/
     );
-    expect(received).toEqual([]);
+    expect(received).toEqual([{ auth: null, path: '/api/health' }]);
   });
 });

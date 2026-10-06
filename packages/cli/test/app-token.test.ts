@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import { optionalAppToken, resolveAppToken } from '../src/commands/appToken.js';
+import {
+  noAppTokenMessage,
+  optionalAppToken,
+  resolveAppToken,
+} from '../src/commands/appToken.js';
 
 const originalAppToken = process.env.DISPATCH_APP_TOKEN;
 
@@ -46,5 +50,58 @@ describe('optionalAppToken', () => {
     expect(optionalAppToken('   ')).toBeUndefined();
     delete process.env.DISPATCH_APP_TOKEN;
     expect(optionalAppToken(undefined)).toBeUndefined();
+  });
+});
+
+describe('noAppTokenMessage', () => {
+  const daemon = { pid: 4242, port: 5151, startedBy: null };
+  it('names a daemon the app or a terminal started, and who holds its token', () => {
+    const message = noAppTokenMessage('dispatch team join', {
+      ...daemon,
+      background: false,
+    });
+    expect(message).toContain(
+      '(pid 4242, port 5151) was started by the Dispatch app'
+    );
+    expect(message).toContain('Settings → Members → Join a team');
+    expect(message).toContain('`dispatch serve --replace`');
+    expect(message).toContain('force-fails any run');
+    // cli.ts prints a failure's first line only.
+    expect(message).not.toContain('\n');
+  });
+
+  it('says a background daemon cannot give its token back, and why', () => {
+    const message = noAppTokenMessage('dispatch license set', {
+      ...daemon,
+      background: true,
+    });
+    expect(message).toContain(
+      'started in the background by a dispatch command'
+    );
+    expect(message).toContain('kill 4242');
+    expect(message).not.toContain('Join a team');
+    expect(message).not.toContain('\n');
+  });
+});
+
+describe('an invite where a token belongs', () => {
+  it('is refused in every form, without echoing it', () => {
+    for (const invite of [
+      'dispatch-team:SECRET',
+      'https://dispatch.foo/join#SECRET',
+      'di1.SECRET',
+    ]) {
+      process.env.DISPATCH_APP_TOKEN = invite;
+      expect(() => optionalAppToken(undefined)).toThrow(
+        /^that is a team invite link, not a daemon token/
+      );
+      let message = '';
+      try {
+        optionalAppToken(undefined);
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).not.toContain('SECRET');
+    }
   });
 });

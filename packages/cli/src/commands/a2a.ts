@@ -16,7 +16,7 @@ import type { RelayCommandOptions } from './a2aRelay.js';
 import { resolveRelay } from './a2aRelay.js';
 import type { ServeCommandOptions } from './a2aServe.js';
 import { resolveServe, stopSignal } from './a2aServe.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenConnection, attachToRunningDaemon } from './appToken.js';
 
 const TOKEN_HELP = 'the daemon app token (or DISPATCH_APP_TOKEN)';
 
@@ -102,13 +102,17 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
     const { baseUrl, agentToken } = await attachToRunningDaemon(ctx);
     return createA2AApiClient(baseUrl, agentToken);
   };
-  // Resolves the app token before attaching, so a missing one sends nothing.
+  // Attaches (a token-less health probe) first, so a missing token's error
+  // names the daemon; the app token itself is sent only once resolved.
   const withAppToken = async (
     explicit: string | undefined,
     command: string
   ): Promise<A2AApiClient> => {
-    const appToken = resolveAppToken(explicit, command);
-    const { baseUrl } = await attachToRunningDaemon(ctx);
+    const { baseUrl, appToken } = await appTokenConnection(
+      ctx,
+      explicit,
+      command
+    );
     return createA2AApiClient(baseUrl, appToken);
   };
   const printStatus = (s: A2AListenerStatus): void => {
