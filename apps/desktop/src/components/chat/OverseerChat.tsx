@@ -58,12 +58,30 @@ function OverseerMessageBubble({
   role,
   text,
   at,
+  plain = false,
 }: {
   role: 'user' | 'assistant';
   text: string;
   at: string;
+  /** Two views: a pill for you, bare text for the agent, the time on hover. */
+  plain?: boolean;
 }) {
   const fromUser = role === 'user';
+  if (plain) {
+    const when = new Date(at).toLocaleString();
+    return fromUser ? (
+      <p
+        title={when}
+        className="bg-surface-secondary shadow-hairline rounded-card font-book max-w-[85%] self-end px-3 py-1.5 text-[13px] whitespace-pre-wrap"
+      >
+        {text}
+      </p>
+    ) : (
+      <div title={when} className="max-w-full self-stretch px-1">
+        <Markdown content={text} className="text-[13px]" />
+      </div>
+    );
+  }
   return (
     <div
       className={cn(
@@ -473,6 +491,7 @@ export function OverseerChat({
             role={item.role}
             text={item.text}
             at={item.at}
+            plain={durable}
           />
         );
       case 'tool':
@@ -682,17 +701,18 @@ export function OverseerChat({
               ? durable
                 ? 'Working · what you send now goes when it finishes'
                 : 'The overseer is answering…'
-              : compact
-                ? 'Actions wait for your approval.'
-                : 'Ask a follow-up. Actions always wait for your approval.'}
+              : durable
+                ? null
+                : compact
+                  ? 'Actions wait for your approval.'
+                  : 'Ask a follow-up. Actions always wait for your approval.'}
             {/* The picker below names the model; the classic rail has none. */}
             {!durable && overseer.record?.model !== undefined && (
               <> · {modelLabel(overseer.record.model)}</>
             )}
             {durable && spend > 0 && (
               <span data-testid="overseer-spend">
-                {' '}
-                · ${spend.toFixed(2)} so far
+                {busy ? ' · ' : ''}${spend.toFixed(2)} so far
               </span>
             )}
           </span>
