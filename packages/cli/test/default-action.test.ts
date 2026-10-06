@@ -139,6 +139,10 @@ describe('bare `dispatch` in an uninitialized directory', () => {
       await makeProgram(ctx).parseAsync([], { from: 'user' });
 
       expect(lines.join('\n')).not.toContain('Initialized');
+      // An initialized project still hears what was opened, never silence.
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^(Opening|Opened) /);
+      expect(lines[0]).toContain(root);
       expect(readRegistry()).toHaveLength(1);
     } finally {
       await testServer.stop(true);
@@ -254,6 +258,24 @@ describe('bare `dispatch` in an uninitialized directory', () => {
     } finally {
       await testServer.stop(true);
     }
+  });
+});
+
+describe('dispatch --version', () => {
+  it('prints the CLI package version', async () => {
+    const pkg = JSON.parse(
+      readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf8')
+    ) as { version: string };
+    const out: string[] = [];
+    const program = makeProgram({ cwd: root, log: () => {} });
+    program.configureOutput({ writeOut: (s) => out.push(s) });
+    for (const flag of ['--version', '-V']) {
+      const err = await program
+        .parseAsync([flag], { from: 'user' })
+        .catch((e: unknown) => e);
+      expect((err as { code?: string }).code).toBe('commander.version');
+    }
+    expect(out).toEqual([`${pkg.version}\n`, `${pkg.version}\n`]);
   });
 });
 

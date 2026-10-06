@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import packageJson from '../package.json';
 import { registerA2ACommands } from './commands/a2a.js';
 import { registerBoardSyncCommands } from './commands/boardSync.js';
 import { registerBrowserCommands } from './commands/browser.js';
@@ -129,6 +130,9 @@ export function makeProgram(ctx: CliContext): Command {
         'project, and opens the dispatch UI (the desktop app if installed, ' +
         'otherwise a browser tab).'
     )
+    // Inlined at build time (tsdown and `bun build --compile` both bundle
+    // JSON), so the compiled CLI reads no package.json at runtime.
+    .version(packageJson.version, '-V, --version', 'print the CLI version')
     .exitOverride();
 
   program
@@ -198,9 +202,15 @@ export function makeProgram(ctx: CliContext): Command {
     }
     // The registry names projects, and a worktree or subdirectory is not
     // one — same root ensureDaemon keys its daemon on.
-    upsertRegisteredProject(projectRoot(ctx.cwd));
+    const root = projectRoot(ctx.cwd);
+    upsertRegisteredProject(root);
     const { port } = await ensureDaemon(ctx);
-    openDesktopOrBrowser(ctx, port);
+    // Said aloud: an app that is already open may not switch projects.
+    ctx.log(
+      openDesktopOrBrowser(ctx, port) === 'app'
+        ? `Opening ${root} in the Dispatch app; if it was already open, pick it in the project switcher.`
+        : `Opened http://127.0.0.1:${port} for ${root} in your browser.`
+    );
   });
 
   program
@@ -223,7 +233,10 @@ export function makeProgram(ctx: CliContext): Command {
       // project root itself, so the root the tool passes is used as its cwd.
       await runStdioServer(ctx.cwd, {
         startDaemon: async (rootDir) => {
-          await ensureDaemon({ ...ctx, cwd: rootDir });
+          await ensureDaemon(
+            { ...ctx, cwd: rootDir },
+            { startedBy: `dispatch mcp (pid ${process.pid})` }
+          );
         },
       });
     });
