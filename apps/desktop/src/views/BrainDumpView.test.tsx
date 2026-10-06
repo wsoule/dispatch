@@ -38,7 +38,8 @@ function inboxItem(over: Partial<InboxItem> = {}): InboxItem {
  */
 function mount(
   inbox: InboxItem[],
-  onUpdate: () => Promise<void> = () => Promise.resolve()
+  onUpdate: () => Promise<void> = () => Promise.resolve(),
+  onBack?: () => void
 ) {
   const updates: UpdateCall[] = [];
   const calls: string[] = [];
@@ -76,11 +77,32 @@ function mount(
 
   render(
     <ToastProvider>
-      <BrainDumpView data={data} onPlanText={() => {}} onOpenTask={() => {}} />
+      <BrainDumpView
+        data={data}
+        onPlanText={() => {}}
+        onOpenTask={() => {}}
+        onBack={onBack}
+      />
     </ToastProvider>
   );
   return { updates, calls };
 }
+
+test('in Two views one header leads back to Tasks and names the page', () => {
+  let backs = 0;
+  mount([inboxItem()], undefined, () => backs++);
+
+  const headers = document.querySelectorAll('[data-slot="page-header"]');
+  expect(headers).toHaveLength(1);
+  expect(headers[0]?.textContent).toContain('Notes');
+  fireEvent.click(screen.getByRole('button', { name: '‹ tasks' }));
+  expect(backs).toBe(1);
+});
+
+test('in Classic the header has no way back to Tasks', () => {
+  mount([inboxItem()]);
+  expect(screen.queryByRole('button', { name: '‹ tasks' })).toBeNull();
+});
 
 function addDetailButtons() {
   return screen.getAllByRole<HTMLButtonElement>('button', {

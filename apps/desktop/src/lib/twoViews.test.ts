@@ -7,7 +7,6 @@ import {
   initialAppNavState,
   initialTwoViewsState,
   projectViewDestination,
-  tasksPageTitle,
   type TwoViewsAction,
   type TwoViewsDestination,
   twoViewsReducer,
@@ -453,22 +452,5 @@ describe('opening an address', () => {
     expect(run([{ type: 'tv/openAddress', address: 'run:r-1' }])).toBe(
       initialTwoViewsState
     );
-  });
-});
-
-describe('tasksPageTitle', () => {
-  test.each([
-    [{ kind: 'docs', docId: null, anchor: null, merge: null }, 'Docs'],
-    [{ kind: 'pr', number: 7 }, 'PR #7'],
-    [{ kind: 'draft', draftId: 'dr-1' }, 'Draft'],
-    [{ kind: 'room', room: 'release' }, '# release'],
-    [{ kind: 'view', view: 'branches' }, 'Git'],
-    [{ kind: 'view', view: 'files' }, 'Files'],
-    [{ kind: 'view', view: 'terminals' }, 'Terminals'],
-    [{ kind: 'view', view: 'design' }, 'Design'],
-    [{ kind: 'view', view: 'brain-dump' }, 'Notes'],
-    [{ kind: 'impact', subject: null }, 'Impact'],
-  ] as const)('%o is titled %p', (page, title) => {
-    expect(tasksPageTitle(page)).toBe(title);
   });
 });

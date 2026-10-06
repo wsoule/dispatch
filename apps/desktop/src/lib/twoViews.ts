@@ -19,19 +19,11 @@ export type TasksMode = 'list' | 'graph';
 /** Settings' own pages plus the three global views that fold into it. */
 type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs' | 'developer';
 
-/** Classic project views Two views shows as a page under Tasks, unchanged. */
+/** Classic project views Two views shows as a page under Tasks, led by "‹ tasks". */
 export type HostedView = Extract<
   ProjectView,
   'branches' | 'files' | 'terminals' | 'design' | 'brain-dump'
 >;
-
-const HOSTED_TITLE: Record<HostedView, string> = {
-  branches: 'Git',
-  files: 'Files',
-  terminals: 'Terminals',
-  design: 'Design',
-  'brain-dump': 'Notes',
-};
 
 /** What the Tasks view shows beside or instead of its list. */
 export type TasksPage =
@@ -173,30 +165,6 @@ export function globalViewDestination(
       return { kind: 'settings', page: 'developer' };
     default: {
       const unhandled: never = view;
-      return unhandled;
-    }
-  }
-}
-
-/** The title a page under Tasks shows beside its back button. */
-export function tasksPageTitle(
-  page: Exclude<TasksPage, { kind: 'list' | 'task' }>
-): string {
-  switch (page.kind) {
-    case 'docs':
-      return 'Docs';
-    case 'pr':
-      return `PR #${page.number}`;
-    case 'draft':
-      return 'Draft';
-    case 'room':
-      return `# ${page.room}`;
-    case 'view':
-      return HOSTED_TITLE[page.view];
-    case 'impact':
-      return 'Impact';
-    default: {
-      const unhandled: never = page;
       return unhandled;
     }
   }

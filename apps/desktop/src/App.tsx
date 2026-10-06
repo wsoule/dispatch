@@ -33,6 +33,7 @@ import { accessFor } from './components/settings/access';
 import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
+import { DaemonUnavailable } from './components/shell/DaemonUnavailable';
 import {
   DeepLinkProvider,
   useCopyTaskLink,
@@ -69,6 +70,7 @@ import {
 import { useToasts } from './components/shell/Toasts';
 import { TwoViewShell } from './components/shell/TwoViewShell';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
+import { BackToTasks } from './components/tasks/BackToTasks';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
 import { TaskPage } from './components/tasks/page/TaskPage';
@@ -1527,32 +1529,47 @@ function App() {
 
   const closeTwoViewsPage = () => dispatchNav({ type: 'tv/closePage' });
 
-  // A classic project view shown as a page under Tasks.
+  // A classic project view shown as a page under Tasks, its own header leading back.
   const renderHostedView = (view: HostedView): ReactNode => {
+    if (data.portLoading || data.portError || data.client === null) {
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="px-4 pt-2">
+            <BackToTasks onBack={closeTwoViewsPage} />
+          </div>
+          <DaemonUnavailable
+            starting={data.portLoading}
+            errorDetail={data.portErrorDetail}
+            onRetry={data.retryEnsureDispatchd}
+          />
+        </div>
+      );
+    }
     switch (view) {
       case 'branches':
         return (
           <BranchesView
-            projectName={activeProject?.name ?? null}
             data={data}
             onOpenRun={jumpToRun}
             onOpenImpact={(subject) =>
               dispatchNav({ type: 'openImpact', subject })
             }
+            onBack={closeTwoViewsPage}
           />
         );
       case 'files':
-        return <FilesView data={data} />;
+        return <FilesView data={data} onBack={closeTwoViewsPage} />;
       case 'terminals':
-        return <TerminalsView data={data} />;
+        return <TerminalsView data={data} onBack={closeTwoViewsPage} />;
       case 'design':
-        return <DesignView data={data} />;
+        return <DesignView data={data} onBack={closeTwoViewsPage} />;
       case 'brain-dump':
         return (
           <BrainDumpView
             data={data}
             onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
             onPlanText={openOverseer}
+            onBack={closeTwoViewsPage}
           />
         );
     }
@@ -1636,7 +1653,6 @@ function App() {
       case 'impact':
         return (
           <ImpactView
-            projectName={activeProject?.name ?? null}
             key={
               page.subject === null
                 ? 'impact-empty'
@@ -1644,6 +1660,7 @@ function App() {
             }
             data={data}
             initialSubject={page.subject}
+            onBack={closeTwoViewsPage}
           />
         );
     }

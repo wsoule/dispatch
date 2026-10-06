@@ -2,6 +2,7 @@ import { Plus } from 'lucide-react';
 import { type ReactNode, useCallback, useMemo } from 'react';
 
 import { MilestoneMapView } from '../components/graph/MilestoneMap';
+import { BackToTasks } from '../components/tasks/BackToTasks';
 import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
@@ -25,11 +26,7 @@ import {
 } from '../lib/tasksPresets';
 import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
-import {
-  type TasksMode,
-  type TasksPage,
-  tasksPageTitle,
-} from '../lib/twoViews';
+import type { TasksMode, TasksPage } from '../lib/twoViews';
 import { TasksListView } from './TasksListView';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -228,21 +225,13 @@ export function TasksView({
       </div>
       {full ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {page.kind !== 'task' && (
-            <div
-              data-testid="tasks-page-header"
-              className="flex items-center gap-2 px-4 pt-2 text-[12px]"
-            >
-              <button
-                type="button"
-                onClick={onClosePage}
-                className="text-muted-foreground hover:underline"
-              >
-                ‹ tasks
-              </button>
-              <span className="font-medium">{tasksPageTitle(page)}</span>
-            </div>
-          )}
+          {page.kind !== 'task' &&
+            page.kind !== 'view' &&
+            page.kind !== 'impact' && (
+              <div className="px-4 pt-2">
+                <BackToTasks onBack={onClosePage} />
+              </div>
+            )}
           <div className="min-h-0 flex-1 overflow-hidden">
             {renderPage(page as TasksSidePage)}
           </div>
