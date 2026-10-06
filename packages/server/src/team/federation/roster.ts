@@ -374,12 +374,21 @@ export class RosterService {
         );
       this.unpinFounder();
     }
+    const inviteKey = ed25519FromSeed(seed);
+    const asked = this.pendingInvite();
+    // The same invite again, after sync moved to where the team is: its key
+    // op already carries the proof and goes out wherever sync runs now.
+    if (
+      this.fed.head() !== null &&
+      asked?.teamId === teamId &&
+      asked.id === sha256Hex(inviteKey.signPub).slice(0, 16)
+    )
+      return { teamId, link };
     if (this.fed.head() !== null)
       throw new RosterError(
         'conflict',
         'This machine already asked to join a team; an admin lets it in from `dispatch team status`, or run `dispatch team leave` first.'
       );
-    const inviteKey = ed25519FromSeed(seed);
     const sig = signText(
       inviteKey.signPriv,
       `${TAG.invite}\n${teamId}\n${this.me}\n${this.fed.keys.signPub}`

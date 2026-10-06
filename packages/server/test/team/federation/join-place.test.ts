@@ -3,6 +3,10 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  decodeTeamLink,
+  encodeTeamLink,
+} from '../../../src/team/federation/onboarding.js';
 import { runGitSync } from '../../orchestrator/helpers.js';
 import { cluster, quiesce } from './harness/cluster.js';
 import type { Member } from './harness/cluster.js';
@@ -116,6 +120,42 @@ describe('joining from a project that syncs elsewhere', () => {
       expect(config(bob)).toBe(before);
       expect((await bob.handle.api('/api/team/status')).body?.state).toBe(
         'none'
+      );
+    },
+    SLOW
+  );
+
+  it(
+    'a machine that already asked at the wrong place joins again with the same link',
+    async () => {
+      const c = await cluster(['ada']);
+      stops.push(c.stop);
+      const [ada] = c.members as [Member];
+      await post(ada, '/api/team/start', { name: 'acme', git: true });
+      const link = (await post(ada, '/api/team/invite', { handle: 'bob' })).body
+        ?.link as string;
+
+      // An older build joined where bob happened to sync: the same invite,
+      // naming bob's own repo, so nothing moves and the ask lands there.
+      const wrong = otherRepo();
+      const bob = await c.add('bob', { syncRepo: wrong });
+      const stale = encodeTeamLink({ ...decodeTeamLink(link), remote: wrong });
+      expect((await post(bob, '/api/team/join', { code: stale })).status).toBe(
+        200
+      );
+      await bob.handle.sync();
+      await ada.handle.sync();
+      expect((await bob.handle.api('/api/team/status')).body?.state).toBe(
+        'joining'
+      );
+
+      // The real link moves sync, and the ask already made goes out there.
+      const again = await act(bob, '/api/team/join', { code: link });
+      expect(again.restarts).toBeGreaterThan(0);
+      expect([again.status, again.body?.error]).toEqual([200, undefined]);
+      await quiesce(c.members, 24, 100);
+      expect((await bob.handle.api('/api/team/status')).body?.state).toBe(
+        'member'
       );
     },
     SLOW
