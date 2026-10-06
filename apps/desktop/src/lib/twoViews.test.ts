@@ -395,3 +395,38 @@ describe('the Tasks preset', () => {
     expect(state.mainView).toBe('tasks');
   });
 });
+
+describe('opening an address', () => {
+  test('a person or an outside agent opens in a peek over the current view', () => {
+    expect(
+      run([{ type: 'tv/openAddress', address: 'human:sam' }]).peek
+    ).toEqual({
+      kind: 'person',
+      address: 'human:sam',
+    });
+    const state = run([
+      { type: 'tv/showTasks' },
+      { type: 'tv/openAddress', address: 'a2a:acme' },
+    ]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.peek).toEqual({ kind: 'outside', address: 'a2a:acme' });
+  });
+
+  test('a room is a page under Tasks', () => {
+    const state = run([{ type: 'tv/openAddress', address: 'channel:release' }]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksPage).toEqual({ kind: 'room', room: 'release' });
+  });
+
+  test('a task opens beside the list', () => {
+    expect(
+      run([{ type: 'tv/openAddress', address: 'task:t-1' }]).tasksPage
+    ).toMatchObject({ kind: 'task', taskId: 't-1', full: false });
+  });
+
+  test('anything else goes nowhere', () => {
+    expect(run([{ type: 'tv/openAddress', address: 'run:r-1' }])).toBe(
+      initialTwoViewsState
+    );
+  });
+});

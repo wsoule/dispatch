@@ -49,12 +49,16 @@ export type TasksPage =
     }
   | { kind: 'pr'; number: number }
   | { kind: 'draft'; draftId: string }
+  /** A named room, reached by name, never listed. */
+  | { kind: 'room'; room: string }
   | { kind: 'classic'; view: ClassicOnlyView };
 
 /** A drawer over either view; it never changes the view underneath. */
 type Peek =
   | { kind: 'thread'; messageId: string }
-  | { kind: 'task'; taskId: string };
+  | { kind: 'task'; taskId: string }
+  | { kind: 'person'; address: string }
+  | { kind: 'outside'; address: string };
 
 interface Place {
   mainView: MainView;
@@ -81,7 +85,9 @@ export type TwoViewsAction =
   | { type: 'tv/closeSettings' }
   | { type: 'tv/closePeek' }
   | { type: 'tv/closePage' }
-  | { type: 'tv/expandTask' };
+  | { type: 'tv/expandTask' }
+  /** Opens a person, an outside agent, a room or a task by address. */
+  | { type: 'tv/openAddress'; address: string };
 
 export type TwoViewsDestination =
   | { kind: 'overseer' }
@@ -220,6 +226,31 @@ function withTaskPage(
   return { ...state, tasksPage: { ...page, ...patch } };
 }
 
+// Where an address leads: people and outside agents peek, rooms and tasks open under Tasks.
+function openAddress(state: TwoViewsState, address: string): TwoViewsState {
+  const colon = address.indexOf(':');
+  const kind = address.slice(0, colon);
+  const rest = address.slice(colon + 1);
+  switch (kind) {
+    case 'human':
+      return { ...state, peek: { kind: 'person', address } };
+    case 'a2a':
+      return { ...state, peek: { kind: 'outside', address } };
+    case 'channel':
+      return toTasks(state, { kind: 'room', room: rest });
+    case 'task':
+      return toTasks(state, {
+        kind: 'task',
+        taskId: rest,
+        tab: 'auto',
+        runId: null,
+        full: false,
+      });
+    default:
+      return state;
+  }
+}
+
 function step(state: TwoViewsState, delta: -1 | 1): TwoViewsState {
   const index = state.historyIndex + delta;
   const entry = state.history[index];
@@ -328,6 +359,8 @@ export function twoViewsReducer(
       return toTasks(state, LIST);
     case 'tv/expandTask':
       return withTaskPage(state, { full: true });
+    case 'tv/openAddress':
+      return openAddress(state, action.address);
     case 'closeRun':
     case 'openNewTask':
     case 'closeNewTask':

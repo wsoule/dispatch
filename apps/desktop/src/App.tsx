@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, Coins, Plus, TriangleAlert, Wrench } from 'lucide-react';
 import {
   type ReactNode,
@@ -12,12 +12,20 @@ import {
   useState,
 } from 'react';
 
+import { ForYouPosts } from './components/chat/ForYouPosts';
 import { TasksComposer } from './components/chat/TasksComposer';
+import { ConversationTimeline } from './components/conversation/ConversationTimeline';
+import {
+  RoomHome,
+  TaskConversationHome,
+} from './components/conversation/Homes';
 import {
   type FlightPlanHost,
   FlightPlanHostContext,
 } from './components/flightplan/ContainerFlightPlanSection';
 import { MemoryRecent } from './components/memory/MemoryRecent';
+import { OutsidePeek } from './components/peek/OutsidePeek';
+import { PersonPeek } from './components/peek/PersonPeek';
 import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { accessFor } from './components/settings/access';
@@ -76,7 +84,13 @@ import { useDocList } from './hooks/useDocs';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
-import { useMailbox, useThreadsNeedsYouCount } from './hooks/useThreads';
+import {
+  threadListsKey,
+  useA2APeers,
+  useChannels,
+  useMailbox,
+  useThreadsNeedsYouCount,
+} from './hooks/useThreads';
 import {
   type ActionFeedbackCache,
   withActionFeedback,
@@ -91,6 +105,7 @@ import type {
 import { hideArchivedRuns } from './lib/archiveFilter';
 import { twoViewsAllowed, useBetaFlag } from './lib/betaFeatures';
 import { hasDispatchKey, launchRootKey } from './lib/bootWarm';
+import { mentions, subjectOf } from './lib/conversationScope';
 import { type DecisionItem, decisionTarget } from './lib/decisionFeed';
 import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
@@ -98,8 +113,13 @@ import { buildInbox } from './lib/inboxQueue';
 import type { GlobalKeyCommand } from './lib/keyboard';
 import { liveCeilingsOf, spendToday } from './lib/liveSpend';
 import { needsYou } from './lib/needsYou';
-import { buildPaletteEntries, docHitEntries } from './lib/paletteEntries';
+import {
+  addressEntries,
+  buildPaletteEntries,
+  docHitEntries,
+} from './lib/paletteEntries';
 import { PALETTE_SECTION_CAPS } from './lib/paletteSections';
+import { buildPosts, type Post } from './lib/posts';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
@@ -120,7 +140,7 @@ import {
   readTeamSession,
   signOutOfTeam,
 } from './lib/teamLocal';
-import { openRefWith } from './lib/threadSources';
+import { openRefWith, type RefAction } from './lib/threadSources';
 import { appNavReducer, initialAppNavState } from './lib/twoViews';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
@@ -201,6 +221,7 @@ const TWO_VIEWS_PAGE_HEADER = {
 };
 
 function App() {
+  const queryClient = useQueryClient();
   // Classic and Two views move together on every action, so either layout can render.
   const [{ nav: navState, twoViews: twoViewsState }, dispatchNav] = useReducer(
     appNavReducer,
@@ -481,7 +502,19 @@ function App() {
 
   // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
   // now, and a run that has just been created is live, so it opens on Run.
+  // Two views' page right now; read by callbacks made before it is computed below.
+  const twoViewsPageRef = useRef<{ on: boolean; taskId: string | null }>({
+    on: false,
+    taskId: null,
+  });
   const onRunDispatched = useCallback((runId: string, taskId: string) => {
+    // A run started from a task already open (split or full) stays on that page.
+    const page = twoViewsPageRef.current;
+    if (page.on && page.taskId === taskId) {
+      dispatchNav({ type: 'setTaskTab', tab: 'run' });
+      dispatchNav({ type: 'openRun', runId });
+      return;
+    }
     dispatchNav({ type: 'openTask', taskId, tab: 'run', runId });
   }, []);
 
@@ -518,6 +551,18 @@ function App() {
       : twoViewsState.peek?.kind === 'task'
         ? twoViewsState.peek.taskId
         : null;
+  const twoViewsOpenTaskId =
+    twoViews &&
+    twoViewsState.mainView === 'tasks' &&
+    twoViewsState.tasksPage.kind === 'task'
+      ? twoViewsState.tasksPage.taskId
+      : null;
+  useEffect(() => {
+    twoViewsPageRef.current = {
+      on: twoViewsOpenTaskId !== null,
+      taskId: twoViewsOpenTaskId,
+    };
+  }, [twoViewsOpenTaskId]);
   const focusedTaskId = twoViews
     ? twoViewsTaskId
     : (navState.activeTaskId ?? navState.peekTaskId);
@@ -991,16 +1036,48 @@ function App() {
           // Docs need a teammate or app token, as the Docs view does.
           openDoc: data.messageAccess.canMessage ? openDoc : undefined,
           // Threads need the same token; without it the page shows no Thread tab.
-          threadView: data.messageAccess.canMessage
-            ? (taskId) => (
-                <TaskThreadTab
+          threadView: !data.messageAccess.canMessage
+            ? undefined
+            : twoViews
+              ? (taskId) => (
+                  <TaskConversationHome
+                    data={data}
+                    taskId={taskId}
+                    onOpenRef={openRef}
+                  />
+                )
+              : (taskId) => (
+                  <TaskThreadTab
+                    data={data}
+                    taskId={taskId}
+                    onOpenRef={openRef}
+                    onOpenOverseer={() => setGlobalView('overseer')}
+                  />
+                ),
+          // Two views moves the repo-wide Files and Terminals onto each run's page.
+          ...(twoViews && {
+            showLessons: true,
+            filesView: (runId: string) => (
+              <FilesView data={data} runId={runId} />
+            ),
+            terminalView: (runId: string) => (
+              <TerminalsView data={data} runId={runId} />
+            ),
+            prView: (runId: string, onClose: () => void) => {
+              const number = prNumberFromUrl(
+                projectRuns.find((r) => r.id === runId)?.prUrl
+              );
+              return number === null ? null : (
+                <PrReviewView
+                  key={number}
+                  projectName={activeProject?.name ?? null}
                   data={data}
-                  taskId={taskId}
-                  onOpenRef={openRef}
-                  onOpenOverseer={() => setGlobalView('overseer')}
+                  prNumber={number}
+                  onBack={onClose}
                 />
-              )
-            : undefined,
+              );
+            },
+          }),
         };
 
   // The Cockpit's `d`: dispatch without following the run (it moves into In flight in
@@ -1220,9 +1297,18 @@ function App() {
     [docsClient, openDoc]
   );
 
+  const paletteRooms = useChannels(
+    data.client,
+    data.port,
+    twoViews && data.messageAccess.canMessage
+  );
+  const palettePeers = useA2APeers(
+    data.client,
+    twoViews && data.messageAccess.canMessage
+  );
   const paletteEntries = useMemo(
-    () =>
-      buildPaletteEntries({
+    () => [
+      ...buildPaletteEntries({
         hasProject: activeProject !== null,
         views: PROJECT_NAV_VIEWS,
         tasks: paletteTasks,
@@ -1262,6 +1348,16 @@ function App() {
           copyTaskLink,
         },
       }),
+      ...(twoViews
+        ? addressEntries({
+            people: data.people,
+            rooms: paletteRooms.map((room) => room.name),
+            peers: palettePeers,
+            me: data.me,
+            open: (address) => dispatchNav({ type: 'tv/openAddress', address }),
+          })
+        : []),
+    ],
     [
       activeProject,
       paletteTasks,
@@ -1285,6 +1381,10 @@ function App() {
       twoViewsOn,
       setTwoViewsOn,
       data.myTier,
+      data.people,
+      data.me,
+      paletteRooms,
+      palettePeers,
     ]
   );
 
@@ -1430,6 +1530,20 @@ function App() {
             initialMerge={page.merge}
             onSelectDoc={(docId) => openDoc(docId, null)}
             onOpenRef={openRef}
+            discussion={(docId) => (
+              <ConversationTimeline
+                key={docId}
+                data={data}
+                query={{ about: `doc:${docId}` }}
+                composerTo={null}
+                composerLabel=""
+                onOpenRef={openRef}
+                header={
+                  <span className="text-[12px] font-semibold">Discussion</span>
+                }
+                emptyText="No discussion yet. Messages that reference this doc show here."
+              />
+            )}
           />
         );
       case 'pr':
@@ -1460,6 +1574,8 @@ function App() {
           />
         );
       }
+      case 'room':
+        return <RoomHome data={data} room={page.room} onOpenRef={openRef} />;
       case 'classic':
         return (
           <ClassicDoor
@@ -1544,6 +1660,122 @@ function App() {
       : []),
   ];
 
+  // A link inside a peek closes it, so the peek never sits over where it led.
+  const openRefFromPeek = (action: RefAction) => {
+    dispatchNav({ type: 'tv/closePeek' });
+    openRef(action);
+  };
+  const closePeek = () => dispatchNav({ type: 'tv/closePeek' });
+  const peek = twoViewsState.peek;
+  const peekView: ReactNode =
+    peek?.kind === 'thread' ? (
+      <ThreadPeek
+        key={peek.messageId}
+        data={data}
+        overseer={overseer}
+        messageId={peek.messageId}
+        onOpenRef={openRefFromPeek}
+        onOpenHome={(address) =>
+          dispatchNav({ type: 'tv/openAddress', address })
+        }
+        onShowOverseer={() => dispatchNav({ type: 'tv/showOverseer' })}
+        onClose={closePeek}
+      />
+    ) : peek?.kind === 'person' ? (
+      <PersonPeek
+        key={peek.address}
+        data={data}
+        address={peek.address}
+        onOpenRef={openRefFromPeek}
+        onClose={closePeek}
+      />
+    ) : peek?.kind === 'outside' ? (
+      <OutsidePeek
+        key={peek.address}
+        data={data}
+        address={peek.address}
+        onOpenRef={openRefFromPeek}
+        onOpenA2ASettings={() =>
+          dispatchNav({ type: 'tv/openSettings', page: 'a2a' })
+        }
+        onClose={closePeek}
+      />
+    ) : null;
+
+  // "For you" posts: built from the mailbox, never stored; a solo user sees none.
+  const followedRooms = useMemo(
+    () =>
+      new Set(
+        paletteRooms
+          .filter((room) => data.me !== null && room.members.includes(data.me))
+          .map((room) => `channel:${room.name}`)
+      ),
+    [paletteRooms, data.me]
+  );
+  const solo = data.people.length <= 1 && palettePeers.length === 0;
+  // Each row's speech cell: unread messages to me about its task, never chatter.
+  const speechByTask = useMemo(() => {
+    const out = new Map<string, { count: number; mention: boolean }>();
+    const me = data.me;
+    if (!twoViews || me === null) return out;
+    for (const { delivery, message } of mailbox ?? []) {
+      if (delivery.recipient !== me) continue;
+      if (!['held', 'notified', 'pushed'].includes(delivery.state)) continue;
+      if (message.from.startsWith('run:') || message.from === me) continue;
+      const subject = subjectOf(message, me);
+      if (!subject.startsWith('task:')) continue;
+      const id = subject.slice('task:'.length);
+      const cell = out.get(id) ?? { count: 0, mention: false };
+      cell.count++;
+      if (mentions(message.body, me)) cell.mention = true;
+      out.set(id, cell);
+    }
+    return out;
+  }, [twoViews, data.me, mailbox]);
+  const posts = useMemo(
+    () =>
+      !twoViews || solo || data.me === null
+        ? []
+        : buildPosts(mailbox ?? [], {
+            me: data.me,
+            myTaskIds,
+            followed: followedRooms,
+            muted: new Set(),
+            authorOf: () => null,
+            now: Date.now(),
+          }),
+    [twoViews, solo, data.me, mailbox, myTaskIds, followedRooms]
+  );
+  const openPost = (post: Post) => {
+    const client = data.client;
+    if (client !== null) {
+      void Promise.all(
+        post.deliveries.map((d) => client.markDeliveryRead(d.id))
+      ).then(() =>
+        queryClient.invalidateQueries({ queryKey: threadListsKey(data.port) })
+      );
+    }
+    // A task opens as a peek over Overseer, so the view stays put.
+    if (post.subject.startsWith('task:')) {
+      dispatchNav({
+        type: 'openPeek',
+        taskId: post.subject.slice('task:'.length),
+      });
+    } else {
+      dispatchNav({ type: 'tv/openAddress', address: post.subject });
+    }
+  };
+  const replyToPost = async (post: Post, body: string) => {
+    if (data.client === null) throw new Error('dispatchd client not ready');
+    await data.client.sendMessage(
+      { to: [post.subject], kind: 'message', body },
+      { continueThread: true }
+    );
+    void queryClient.invalidateQueries({
+      queryKey: threadListsKey(data.port),
+    });
+  };
+
   const twoViewsFrame = twoViews ? (
     <PageHeaderShellContext.Provider value={TWO_VIEWS_PAGE_HEADER}>
       <TwoViewShell
@@ -1553,7 +1785,7 @@ function App() {
           view: twoViewsState.mainView,
           orb,
           orbLabel: orbTitle,
-          postsDot: false,
+          postsDot: posts.some((post) => post.unread),
           onShowOverseer: () => dispatchNav({ type: 'tv/showOverseer' }),
           onShowTasks: () => dispatchNav({ type: 'tv/showTasks' }),
           onCount: (count) =>
@@ -1585,6 +1817,9 @@ function App() {
               {activeProject !== null && (
                 <PresenceStack
                   presence={data.presence}
+                  onOpenPerson={(ref) =>
+                    dispatchNav({ type: 'tv/openAddress', address: ref })
+                  }
                   taskTitle={(id) =>
                     data.tasksIncludingArchived.find((t) => t.meta.id === id)
                       ?.meta.title
@@ -1607,6 +1842,18 @@ function App() {
                 type: 'tv/openSettings',
                 page: 'connected-agents',
               })
+            }
+            posts={
+              <ForYouPosts
+                posts={posts}
+                label={(address) =>
+                  data.people.find((p) => p.ref === address)?.name ??
+                  address.replace(/^(human|a2a|run|agent):/, '')
+                }
+                onOpen={openPost}
+                onReply={replyToPost}
+                holding={overseerTurnLive(overseer)}
+              />
             }
           />
         }
@@ -1632,6 +1879,7 @@ function App() {
             onOpenDecision={onOpenDecision}
             onClosePage={closeTwoViewsPage}
             projectKey={activeProject?.path ?? ''}
+            speechByTask={speechByTask}
             onOpenPr={(number) => dispatchNav({ type: 'openPr', number })}
             onOpenDoc={(docId) => openDoc(docId, null)}
             onOpenAllDocs={() =>
@@ -1648,19 +1896,7 @@ function App() {
             }
           />
         }
-        peek={
-          twoViewsState.peek?.kind === 'thread' ? (
-            <ThreadPeek
-              key={twoViewsState.peek.messageId}
-              data={data}
-              overseer={overseer}
-              messageId={twoViewsState.peek.messageId}
-              onOpenRef={openRef}
-              onShowOverseer={() => dispatchNav({ type: 'tv/showOverseer' })}
-              onClose={() => dispatchNav({ type: 'tv/closePeek' })}
-            />
-          ) : null
-        }
+        peek={peekView}
       />
       {twoViewsState.settings !== null && (
         <SettingsPanel

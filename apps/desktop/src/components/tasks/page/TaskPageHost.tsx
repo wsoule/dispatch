@@ -83,6 +83,13 @@ export interface TaskPageHost {
   openDoc?: (docId: string, anchor: string | null) => void;
   /** The task's message threads, which the Thread toggle shows; absent hides it. */
   threadView?: (taskId: string) => ReactNode;
+  /** A run's worktree as files and as a shell; without them the page has no such tabs. */
+  filesView?: (runId: string) => ReactNode;
+  /** Summary lists the memory this task's runs wrote (Two views). */
+  showLessons?: boolean;
+  /** A run's pull request reviewed in place; without it "Review PR" leaves for the PR page. */
+  prView?: (runId: string, onClose: () => void) => ReactNode;
+  terminalView?: (runId: string) => ReactNode;
 }
 
 export const TaskPageHostContext = createContext<TaskPageHost | null>(null);

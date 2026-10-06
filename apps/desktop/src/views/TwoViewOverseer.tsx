@@ -1,4 +1,5 @@
 import { Plus } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import { OverseerChat } from '../components/chat/OverseerChat';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
@@ -15,6 +16,8 @@ export interface TwoViewOverseerProps {
   revoked: boolean;
   onShowAsks: () => void;
   onOpenConnectedAgents: () => void;
+  /** "For you" posts, between the conversation and its composer. */
+  posts?: ReactNode;
 }
 
 /** Overseer in Two views: one conversation with your agent, a door to the asks. */
@@ -25,6 +28,7 @@ export function TwoViewOverseer({
   revoked,
   onShowAsks,
   onOpenConnectedAgents,
+  posts,
 }: TwoViewOverseerProps) {
   // A queued mutation must stay decidable, so reset waits on it (as OverseerView does).
   const hasPendingAction =
@@ -99,7 +103,12 @@ export function TwoViewOverseer({
         <OverseerChat
           overseer={overseer}
           placeholder="say something"
-          aboveComposer={door}
+          aboveComposer={
+            <>
+              {posts}
+              {door}
+            </>
+          }
           disabled={revoked}
         />
       </div>

@@ -97,6 +97,8 @@ interface TasksListViewProps {
   onRequestDisplay?: () => void;
   /** Tasks with an ask of yours; without it, any task wanting attention reads "Needs you". */
   needsYouIds?: ReadonlySet<string>;
+  /** Unread messages to me per task, for each row's speech cell. */
+  speechByTask?: ReadonlyMap<string, { count: number; mention: boolean }>;
   /** Extra cells on a group's header row (Two views' milestone status). */
   groupAccessory?: (group: ListGroup) => ReactNode;
   /** Groups that are not task groups (notes, pull requests, docs), after the rows. */
@@ -146,6 +148,7 @@ export function TasksListView({
   needsYouIds,
   groupAccessory,
   footer,
+  speechByTask,
 }: TasksListViewProps) {
   const shell = useShellActions();
   const model = useStatusModelOf(data.config);
@@ -507,6 +510,7 @@ export function TasksListView({
                         ? data.attentionByTaskId.has(id)
                         : needsYouIds.has(id)
                     }
+                    speech={speechByTask?.get(id)}
                     landing={landingByTaskId.get(id)}
                     statuses={statuses}
                     epics={data.epics}

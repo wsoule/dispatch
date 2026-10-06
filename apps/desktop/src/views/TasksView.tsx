@@ -77,6 +77,7 @@ export interface TasksViewProps {
   onOpenAllDocs: () => void;
   /** Keys per-project choices such as the graph's Milestones | Tasks. */
   projectKey: string;
+  speechByTask: ReadonlyMap<string, { count: number; mention: boolean }>;
   composer: ReactNode;
 }
 
@@ -102,6 +103,7 @@ export function TasksView({
   onOpenDoc,
   onOpenAllDocs,
   projectKey,
+  speechByTask,
   composer,
 }: TasksViewProps) {
   const split = page.kind === 'task' && !page.full;
@@ -282,6 +284,7 @@ export function TasksView({
                   taskFilter={taskFilter}
                   needsYouIds={needs.taskIds}
                   groupAccessory={groupAccessory}
+                  speechByTask={speechByTask}
                   footer={footer}
                 />
               )}

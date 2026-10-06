@@ -9,6 +9,8 @@ interface PresenceStackProps {
    *  words rather than an id. Absent, the id is shown. */
   taskTitle?: (id: string) => string | undefined;
   className?: string;
+  /** Makes each face a button that opens that person (Two views' person peek). */
+  onOpenPerson?: (ref: string) => void;
 }
 
 // At most this many initials before collapsing the rest into "+N". Three
@@ -58,6 +60,7 @@ export function PresenceStack({
   presence,
   taskTitle,
   className,
+  onOpenPerson,
 }: PresenceStackProps) {
   if (presence.length < 2) return null;
   const shown = presence.slice(0, MAX_SHOWN);
@@ -79,23 +82,40 @@ export function PresenceStack({
           />
         }
       >
-        {shown.map((entry, i) => (
-          <span
-            key={entry.handle}
-            aria-hidden
-            className={cn(
-              'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-              // Side by side, not overlapped: two-letter initials stacked
-              // over each other read as one run-together word, not two people.
-              i > 0 && 'ml-0.5',
-              // A ring on anyone with a live agent, so "who is busy" reads
-              // without opening the tooltip.
-              entry.runs.length > 0 && 'ring-state-review ring-1'
-            )}
-          >
-            {initialsFor(entry.handle)}
-          </span>
-        ))}
+        {shown.map((entry, i) => {
+          const face = cn(
+            'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
+            i > 0 && 'ml-0.5',
+            entry.runs.length > 0 && 'ring-state-review ring-1'
+          );
+          return onOpenPerson !== undefined ? (
+            <button
+              key={entry.handle}
+              type="button"
+              aria-label={`Open ${entry.handle}`}
+              onClick={() => onOpenPerson(entry.ref)}
+              className={cn(face, 'hover:bg-surface-hover')}
+            >
+              {initialsFor(entry.handle)}
+            </button>
+          ) : (
+            <span
+              key={entry.handle}
+              aria-hidden
+              className={cn(
+                'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
+                // Side by side, not overlapped: two-letter initials stacked
+                // over each other read as one run-together word, not two people.
+                i > 0 && 'ml-0.5',
+                // A ring on anyone with a live agent, so "who is busy" reads
+                // without opening the tooltip.
+                entry.runs.length > 0 && 'ring-state-review ring-1'
+              )}
+            >
+              {initialsFor(entry.handle)}
+            </span>
+          );
+        })}
         {hidden > 0 && (
           <span aria-hidden className="text-muted-foreground ml-1">
             +{hidden}

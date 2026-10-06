@@ -162,12 +162,14 @@ function Verdict({
   page,
   run,
   onRequestChanges,
+  onReviewPr,
   busy,
   act,
 }: {
   page: TaskPageModel;
   run: RunMeta;
   onRequestChanges: () => void;
+  onReviewPr: () => void;
   busy: boolean;
   act: (action: () => Promise<void>) => void;
 }) {
@@ -190,11 +192,7 @@ function Verdict({
           busy={busy}
           onQueueMerge={() => act(() => project.handleEnqueueMerge(run.id))}
         />
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => page.host.openPr(run.id)}
-        >
+        <Button size="sm" variant="secondary" onClick={onReviewPr}>
           <GitPullRequest />
           Review PR
         </Button>
@@ -294,6 +292,8 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
   const runId = run?.id ?? null;
   const live = run !== undefined && !isTerminalRunState(run.state);
   const detail = useRunDetail(project.client, project.port, runId);
+  // The run's PR, reviewed in place of the diff when the host can show it.
+  const [prOpen, setPrOpen] = useState(false);
   const {
     diff,
     loading: diffLoading,
@@ -541,6 +541,10 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
               busy={busy}
               act={act}
               onRequestChanges={() => setChanging(true)}
+              onReviewPr={() => {
+                if (page.host.prView === undefined) page.host.openPr(meta.id);
+                else setPrOpen(true);
+              }}
             />
           }
         />
@@ -586,27 +590,34 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
           </div>
         )}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 @min-[760px]/review:flex-row">
-        <div className="order-2 flex min-h-0 min-w-0 flex-1 flex-col gap-2 @min-[760px]/review:order-1">
-          <div className="min-h-0 flex-1 overflow-auto">{diffPane}</div>
-          {project.client !== null && (
-            <ReviewChatPanel
-              client={project.client}
-              ref={chatRef}
-              runId={meta.id}
-              canResumeAgent={
-                isTerminalRunState(meta.state) && meta.reviewedAt === undefined
-              }
-            />
-          )}
+      {prOpen && page.host.prView !== undefined ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {page.host.prView(meta.id, () => setPrOpen(false))}
         </div>
-        <aside
-          aria-label="Review checklist"
-          className="order-1 max-h-[40%] shrink-0 overflow-y-auto @min-[760px]/review:order-2 @min-[760px]/review:max-h-none @min-[760px]/review:w-[300px]"
-        >
-          {side}
-        </aside>
-      </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-4 @min-[760px]/review:flex-row">
+          <div className="order-2 flex min-h-0 min-w-0 flex-1 flex-col gap-2 @min-[760px]/review:order-1">
+            <div className="min-h-0 flex-1 overflow-auto">{diffPane}</div>
+            {project.client !== null && (
+              <ReviewChatPanel
+                client={project.client}
+                ref={chatRef}
+                runId={meta.id}
+                canResumeAgent={
+                  isTerminalRunState(meta.state) &&
+                  meta.reviewedAt === undefined
+                }
+              />
+            )}
+          </div>
+          <aside
+            aria-label="Review checklist"
+            className="order-1 max-h-[40%] shrink-0 overflow-y-auto @min-[760px]/review:order-2 @min-[760px]/review:max-h-none @min-[760px]/review:w-[300px]"
+          >
+            {side}
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

@@ -274,3 +274,42 @@ export function docHitEntries(
     run: () => openDoc(hit.doc, hit.anchor === '' ? null : hit.anchor),
   }));
 }
+
+/** Two views' rows for talking to someone or opening a room; homes are never listed elsewhere. */
+export function addressEntries(input: {
+  people: readonly { ref: string; name: string }[];
+  rooms: readonly string[];
+  peers: readonly { alias: string; status: string }[];
+  me: string | null;
+  open: (address: string) => void;
+}): PaletteEntry[] {
+  const people = input.people
+    .filter((p) => p.ref !== input.me)
+    .map((p) => ({
+      id: `message-${p.ref}`,
+      label: `Message ${p.name}`,
+      kind: 'message',
+      section: 'navigation' as const,
+      run: () => input.open(p.ref),
+    }));
+  const peers = input.peers
+    .filter((p) => p.status === 'active')
+    .map((p) => ({
+      id: `message-a2a:${p.alias}`,
+      label: `Message ${p.alias} (outside)`,
+      kind: 'message',
+      section: 'navigation' as const,
+      run: () => input.open(`a2a:${p.alias}`),
+    }));
+  // Milestone rooms open from their milestone, not by name.
+  const rooms = input.rooms
+    .filter((name) => !name.startsWith('epic/'))
+    .map((name) => ({
+      id: `room-${name}`,
+      label: `Open #${name}`,
+      kind: 'room',
+      section: 'navigation' as const,
+      run: () => input.open(`channel:${name}`),
+    }));
+  return [...people, ...peers, ...rooms];
+}

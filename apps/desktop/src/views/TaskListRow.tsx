@@ -87,6 +87,8 @@ export interface TaskListRowProps {
   live: boolean;
   /** Whether the task's latest run needs a human (`attentionByTaskId`). */
   needsYou: boolean;
+  /** Unread messages to me about this task; a mention adds a dot. Chatter never counts. */
+  speech?: { count: number; mention: boolean };
   /** Where the task's run stands in the merge queue, while it is landing. */
   landing?: MergeQueueEntryState;
   /** This task's fix loop, for a capped phase pill's wording. */
@@ -148,6 +150,7 @@ export const TaskListRow = memo(function TaskListRow({
   run,
   live: liveRun,
   needsYou,
+  speech,
   landing,
   fixLoop,
   statuses,
@@ -226,6 +229,17 @@ export const TaskListRow = memo(function TaskListRow({
       )}
       {needsYou && !archived && (
         <LabelPill color="var(--state-waiting-fg)">Needs you</LabelPill>
+      )}
+      {speech !== undefined && speech.count > 0 && (
+        <Pill
+          data-slot="speech"
+          title={`${speech.count} unread ${speech.count === 1 ? 'message' : 'messages'}${speech.mention ? ', one mentions you' : ''}`}
+        >
+          ◫ {speech.count}
+          {speech.mention && (
+            <span aria-hidden className="size-1.5 rounded-full bg-(--accent)" />
+          )}
+        </Pill>
       )}
       {has('run') && landing !== undefined && !archived && (
         <LandingBadge state={landing} />

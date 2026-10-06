@@ -113,3 +113,19 @@ test('a row opens its task beside the list', async ({ page, baseURL }) => {
   await expect(page.getByRole('region', { name: 'Task' })).toBeVisible();
   await expect(page.getByTestId('tasks-view')).toContainText('about t-6c40de');
 });
+
+test('a task’s conversation is one flat timeline with a composer locked to it', async ({
+  page,
+  baseURL,
+}) => {
+  await page.goto(authedUrl(baseURL));
+  await page.getByTestId('two-views-tasks').click();
+  await page.getByText('Add address autocomplete').first().click();
+  await page.getByRole('button', { name: 'Thread' }).click();
+  await expect(page.getByTestId('conversation')).toBeVisible();
+  await expect(page.getByTestId('timeline-message').first()).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Send to t-9b2d14 ↑' })
+  ).toBeVisible();
+  await expectNoConversationLists(page);
+});
