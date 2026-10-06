@@ -194,7 +194,7 @@ import {
 import { rekeyIfKeysLost } from './team/federation/keys.js';
 import type { FederationContext } from './team/federation/routes.js';
 import type { FederationService } from './team/federation/service.js';
-import { turnOnSharing } from './team/federation/sharing.js';
+import { SharingState, turnOnSharing } from './team/federation/sharing.js';
 import type { Team } from './team/index.js';
 import { createTeam } from './team/index.js';
 import { hostSpawner } from './terminalHost.js';
@@ -2322,10 +2322,14 @@ async function bootServer(
     count(browsers.list().length, 'browser', 'browsers');
     return out;
   };
+  // This server's own restart mark (never shared with another server).
+  const sharing = new SharingState();
+  apiCtx.sharing = sharing;
   apiCtx.turnOnSharing = (precheck) =>
     turnOnSharing(
       {
         rootDir,
+        state: sharing,
         now: federationNow,
         backend,
         liveWork,
@@ -2598,6 +2602,7 @@ async function bootServer(
     prWorktrees,
     memory,
     async stop() {
+      sharing.clear();
       watchdog.stop();
       idle?.stop();
       clearInterval(previewSweep);

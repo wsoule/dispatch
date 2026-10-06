@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 import {
   frozenBySharing,
-  sharingPending,
+  SharingState,
   turnOnSharing,
 } from '../../../src/team/federation/sharing.js';
 import type { SharingDeps } from '../../../src/team/federation/sharing.js';
@@ -21,10 +21,12 @@ import type { SharingDeps } from '../../../src/team/federation/sharing.js';
 // Turning board sync on by restarting: one restart however many ask, nothing
 // new starts in the window, and nothing is left half done.
 let root: string;
+let state: SharingState;
 const config = () => join(root, '.dispatch', 'config.yml');
 const ORIGINAL = '# mine\nsync:\n  enabled: false\n  intervalSec: 3600\n';
 
 beforeEach(() => {
+  state = new SharingState();
   root = realpathSync(mkdtempSync(join(tmpdir(), 'sharing-')));
   mkdirSync(join(root, '.dispatch'));
   writeFileSync(config(), ORIGINAL);
@@ -42,6 +44,7 @@ function deps(over: Partial<SharingDeps> & { live?: string[][] } = {}) {
   });
   const d: SharingDeps = {
     rootDir: root,
+    state,
     backend: 'sqlite',
     now: () => new Date(),
     liveWork: () => live[Math.min(i++, live.length - 1)] ?? [],
@@ -64,15 +67,15 @@ describe('turnOnSharing', () => {
     const { d, log, done } = deps();
     const [a, b] = await Promise.all([turnOnSharing(d), turnOnSharing(d)]);
     expect(a.ok && b.ok).toBe(true);
-    expect(sharingPending(root)).toBe(true);
-    expect(frozenBySharing(root, 'POST', ['tasks', 't-1', 'runs'])).toBe(true);
-    expect(frozenBySharing(root, 'GET', ['tasks'])).toBe(false);
-    expect(frozenBySharing(root, 'POST', ['team', 'join'])).toBe(false);
+    expect(state.pending).toBe(true);
+    expect(frozenBySharing(state, 'POST', ['tasks', 't-1', 'runs'])).toBe(true);
+    expect(frozenBySharing(state, 'GET', ['tasks'])).toBe(false);
+    expect(frozenBySharing(state, 'POST', ['team', 'join'])).toBe(false);
     await done;
     expect(log.filter((l) => l === 'restart')).toHaveLength(1);
     expect(log[0]).toMatch(/^hold /);
     expect(readFileSync(config(), 'utf8')).toContain('enabled: true');
-    expect(sharingPending(root)).toBe(false);
+    expect(state.pending).toBe(false);
   });
 
   it('gives up, rolls the config back and releases when work started in the window', async () => {
@@ -82,7 +85,7 @@ describe('turnOnSharing', () => {
     expect(log).not.toContain('restart');
     expect(log).toContain('release');
     expect(readFileSync(config(), 'utf8')).toBe(ORIGINAL);
-    expect(sharingPending(root)).toBe(false);
+    expect(state.pending).toBe(false);
   });
 
   it('hands the restart a rollback that restores the config byte for byte', async () => {
@@ -95,7 +98,7 @@ describe('turnOnSharing', () => {
     await turnOnSharing(d);
     await done;
     expect(readFileSync(config(), 'utf8')).toBe(ORIGINAL);
-    expect(sharingPending(root)).toBe(false);
+    expect(state.pending).toBe(false);
   });
 
   it('rolls a config that did not exist back to none', async () => {
@@ -113,6 +116,29 @@ describe('turnOnSharing', () => {
     expect(answer.ok ? '' : answer.error).toContain('2 live runs');
     expect(log).toEqual([]);
     expect(readFileSync(config(), 'utf8')).toBe(ORIGINAL);
-    expect(sharingPending(root)).toBe(false);
+    expect(state.pending).toBe(false);
+  });
+
+  it('keeps one server’s pending mark from ever reaching another server', async () => {
+    const other = new SharingState();
+    const { d, done } = deps();
+    await turnOnSharing(d);
+    expect(state.pending).toBe(true);
+    // Another daemon in the same process, even on the same project root.
+    expect(other.pending).toBe(false);
+    expect(frozenBySharing(other, 'POST', ['a2a', 'relay'])).toBe(false);
+    expect(frozenBySharing(undefined, 'POST', ['tasks'])).toBe(false);
+    const second = deps();
+    const answer = await turnOnSharing({ ...second.d, state: other });
+    expect(answer.ok).toBe(true);
+    await Promise.all([done, second.done]);
+    expect(second.log.filter((l) => l === 'restart')).toHaveLength(1);
+  });
+
+  it('clears the mark when the server stops', () => {
+    expect(state.claim()).toBe(true);
+    expect(state.claim()).toBe(false);
+    state.clear();
+    expect(state.pending).toBe(false);
   });
 });

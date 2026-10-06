@@ -29,6 +29,8 @@ export type SharingAnswer =
 
 export interface SharingDeps {
   rootDir: string;
+  /** This server's own restart mark. */
+  state: SharingState;
   /** Only the database backend syncs this way. */
   backend: 'sqlite' | 'files';
   /** What a restart would interrupt, in words; empty when idle. */
@@ -56,23 +58,36 @@ const RESTART_AFTER_MS = 100;
 const HELD =
   'Dispatch is restarting for this project to turn on team sync; try again in a moment.';
 
-// Projects with a restart scheduled, by root: one daemon each, and it
-// outlives the server it replaces.
-const pending = new Set<string>();
+/** One server's restart to turn on sync: whether one is scheduled. Each
+ *  server owns its own, so a mark can never reach another server in the
+ *  same process; stopping the server clears it. */
+export class SharingState {
+  private scheduled = false;
 
-/** Whether a restart to turn on sync is scheduled for this project. */
-export function sharingPending(rootDir: string): boolean {
-  return pending.has(rootDir);
+  get pending(): boolean {
+    return this.scheduled;
+  }
+
+  /** Marks a restart scheduled; false when one already was. */
+  claim(): boolean {
+    if (this.scheduled) return false;
+    this.scheduled = true;
+    return true;
+  }
+
+  clear(): void {
+    this.scheduled = false;
+  }
 }
 
-/** Whether the API refuses this request while that restart is pending:
+/** Whether the API refuses this request while a restart is pending:
  *  everything but reads and the team start or join that share it. */
 export function frozenBySharing(
-  rootDir: string,
+  state: SharingState | undefined,
   method: string,
   segments: readonly string[]
 ): boolean {
-  if (!pending.has(rootDir)) return false;
+  if (state?.pending !== true) return false;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS')
     return false;
   return !(
@@ -103,7 +118,7 @@ export async function turnOnSharing(
       'Turned on team sync; Dispatch is restarting for this project. Your request goes through once it is back.',
   };
   // One restart however many ask: a later request rides the scheduled one.
-  if (pending.has(deps.rootDir)) return accepted;
+  if (deps.state.pending) return accepted;
   const refuse = (status: number, code: string, error: string) =>
     ({ ok: false, status, code, error }) as const;
   if (deps.backend !== 'sqlite')
@@ -130,7 +145,7 @@ export async function turnOnSharing(
       : { repo: settings.repo };
   const remote = await deps.resolveRemote(target);
   // Asked again after the await: another request may have got here first.
-  if (pending.has(deps.rootDir)) return accepted;
+  if (deps.state.pending) return accepted;
   if (remote === null)
     return refuse(
       409,
@@ -139,7 +154,7 @@ export async function turnOnSharing(
         ? `Team sync rides a branch on this project's "${settings.remote}" git remote, and it has none. Add the remote your teammates push to, then run this again.`
         : `Team sync rides ${settings.repo}, which Dispatch can't reach. Check sync.repo in Settings → Board sync, then run this again.`
     );
-  pending.add(deps.rootDir);
+  if (!deps.state.claim()) return accepted;
   deps.hold(HELD);
   const rollback = configRollback(deps.rootDir);
   try {
@@ -147,7 +162,7 @@ export async function turnOnSharing(
   } catch (err) {
     rollback();
     deps.release();
-    pending.delete(deps.rootDir);
+    deps.state.clear();
     throw err;
   }
   setTimeout(() => {
@@ -181,7 +196,7 @@ async function finish(
       `dispatchd: RESTART TO TURN ON TEAM SYNC FAILED: ${(err as Error).message}. Config rolled back.`
     );
   } finally {
-    pending.delete(deps.rootDir);
+    deps.state.clear();
     deps.settled?.();
   }
 }
