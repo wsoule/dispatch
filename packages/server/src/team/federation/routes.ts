@@ -1072,6 +1072,9 @@ async function inviteRepoConsent(
   const host = remoteHostUrl(repo);
   let why: string | null = null;
   if (host === null) why = 'a path on this machine';
+  else if (!/^https:\/\//i.test(repo))
+    // ssh and git:// resolve the host themselves, so it cannot be pinned.
+    why = 'an ssh or git:// host Dispatch cannot pin to the address it checks';
   else {
     try {
       await guardPublicUrl(`https://${new URL(host).hostname}/`, {
@@ -1147,7 +1150,7 @@ async function elsewhere(
       if (code === '' || code.startsWith('di1.')) return null;
       const link = decodeTeamLink(code);
       checkLink(ctx, link, fedCtx.now());
-      want = linkMove(link);
+      want = withPin(linkMove(link), body);
       const consent = await inviteRepoConsent(want, body);
       if (consent !== null) return consent;
     } else want = startMove(body);
@@ -1251,8 +1254,16 @@ async function shareFirst(
     if (code.startsWith('di1.')) return null;
     const link = decodeTeamLink(code);
     checkLink(ctx, link, now);
-    return linkMove(link);
+    return withPin(linkMove(link), body);
   });
+}
+
+// An invite's repo the joiner did not confirm stays pinned public on every
+// pass; one they confirmed is theirs to keep.
+function withPin(move: SyncMove | null, body: Body): SyncMove | null {
+  if (move === null || !('repo' in move.place) || body.confirmRepo === true)
+    return move;
+  return { ...move, pinPublic: true };
 }
 
 // The consent check for a join while sync is off, ahead of the restart (its

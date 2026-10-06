@@ -258,6 +258,7 @@ import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
 import type { Orchestrator } from './orchestrator/orchestrator.js';
 import type { OverseerManager } from './orchestrator/overseer.js';
+import { boardSyncDir } from './orchestrator/paths.js';
 import type { PlanManager } from './orchestrator/plan.js';
 import type { PrManager, PrReviewEvent, RepoPr } from './orchestrator/pr.js';
 import {
@@ -305,6 +306,7 @@ import { statusModelFor } from './statuses.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import { looksLikeInvite } from './team/federation/onboarding.js';
+import { markPublicRepo } from './team/federation/publicRepo.js';
 import type { FederationContext } from './team/federation/routes.js';
 import {
   boardSyncNow,
@@ -1478,6 +1480,13 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
 
   try {
     const config = updateConfig(ctx.rootDir, patch);
+    // The owner chose where the board goes, which outranks an invite's pick.
+    const syncPlaceSaved = patch.sync as Record<string, unknown> | undefined;
+    if (
+      syncPlaceSaved !== undefined &&
+      ('repo' in syncPlaceSaved || 'remote' in syncPlaceSaved)
+    )
+      markPublicRepo(boardSyncDir(ctx.rootDir), null);
     ctx.events.broadcast({ type: 'config.changed' });
     // A changed interval or enabled flag only takes effect once the poll timer is rebuilt.
     ctx.linearSync.start();

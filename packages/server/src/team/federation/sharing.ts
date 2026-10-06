@@ -9,7 +9,9 @@ import type { ConfigPatch } from '@dispatch-foo/core';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { boardSyncDir } from '../../orchestrator/paths.js';
 import { sameRemote } from './onboarding.js';
+import { markPublicRepo } from './publicRepo.js';
 
 // Turning board sync on from `team start` or `team join` (team-easy): sync
 // decides how ids are minted and which store everything is handed, so it is
@@ -31,6 +33,9 @@ import { sameRemote } from './onboarding.js';
 export interface SyncMove {
   place: { remote: string } | { repo: string };
   branch?: string;
+  /** An invite chose this repo without the joiner's say-so: it must keep
+   *  resolving public, pinned on every pass (publicRepo.ts). */
+  pinPublic?: boolean;
 }
 
 /** What a request that needs sync gets back when sync is off. */
@@ -181,6 +186,11 @@ export async function turnOnSharing(
   const rollback = configRollback(deps.rootDir);
   try {
     updateConfig(deps.rootDir, { sync: patch });
+    if (want !== null)
+      markPublicRepo(
+        boardSyncDir(deps.rootDir),
+        want.pinPublic === true && 'repo' in want.place ? want.place.repo : null
+      );
   } catch (err) {
     rollback();
     deps.release();
