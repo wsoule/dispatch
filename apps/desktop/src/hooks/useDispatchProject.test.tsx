@@ -31,7 +31,10 @@ let connectionFixture: {
   appToken: string | null;
   agentToken: string | null;
 } = APP_CONNECTION;
+// Spread the real module so files run after this one still find every export.
+const realTauri = { ...(await import('../lib/tauri')) };
 void mock.module('../lib/tauri', () => ({
+  ...realTauri,
   ensureDispatchd: () => Promise.resolve(connectionFixture),
   restartDispatchd: () => Promise.resolve(),
   isTauri: () => '__TAURI_INTERNALS__' in window,
