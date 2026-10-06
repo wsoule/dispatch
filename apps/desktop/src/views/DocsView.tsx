@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { BookText } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 
 import { DocList } from '../components/docs/DocList';
@@ -25,8 +26,11 @@ export function DocsView({
   initialMerge = null,
   onSelectDoc,
   onOpenRef,
+  discussion,
 }: {
   data: DispatchProjectData;
+  /** The open doc's discussion, under it (Two views). */
+  discussion?: (docId: string) => ReactNode;
   initialDoc?: string | null;
   initialAnchor?: string | null;
   /** A conflicting proposal whose marked merge the named doc opens on. */
@@ -156,19 +160,31 @@ export function DocsView({
             <p>Pick a doc.</p>
           </div>
         ) : (
-          <DocPage
-            key={open}
-            client={client}
-            port={port}
-            refId={open}
-            canDecide={messageAccess.canDecide}
-            anchor={anchor}
-            mergeProposal={merge}
-            onOpenDoc={select}
-            onOpenRef={onOpenRef}
-            taskIdOfRun={taskIdOfRun}
-            gates={gates}
-          />
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <DocPage
+                key={open}
+                client={client}
+                port={port}
+                refId={open}
+                canDecide={messageAccess.canDecide}
+                anchor={anchor}
+                mergeProposal={merge}
+                onOpenDoc={select}
+                onOpenRef={onOpenRef}
+                taskIdOfRun={taskIdOfRun}
+                gates={gates}
+              />
+            </div>
+            {discussion !== undefined && (
+              <section
+                aria-label="Discussion"
+                className="border-border h-[38%] shrink-0 border-t-[0.5px]"
+              >
+                {discussion(open)}
+              </section>
+            )}
+          </div>
         )}
       </main>
     </div>

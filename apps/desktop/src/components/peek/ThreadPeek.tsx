@@ -10,6 +10,7 @@ import {
   useThreadActions,
 } from '../../hooks/useThreads';
 import { overseerTurnLive } from '../../lib/agentPresence';
+import { subjectOf } from '../../lib/conversationScope';
 import type { RefAction } from '../../lib/threadSources';
 import { replyRoute } from '../../lib/threadSources';
 import { ThreadPane } from '../threads/ThreadPane';
@@ -23,6 +24,8 @@ export interface ThreadPeekProps {
   messageId: string;
   onOpenRef: (action: RefAction) => void;
   onShowOverseer: () => void;
+  /** Opens the thread's home: its task, its room or the other person. */
+  onOpenHome: (address: string) => void;
   onClose: () => void;
 }
 
@@ -33,6 +36,7 @@ export function ThreadPeek({
   messageId,
   onOpenRef,
   onShowOverseer,
+  onOpenHome,
   onClose,
 }: ThreadPeekProps) {
   const { client, port, me, messageAccess: access } = data;
@@ -61,6 +65,8 @@ export function ThreadPeek({
   }, []);
 
   const ready = open.thread !== null && open.messages.length > 0 && me !== null;
+  const root = open.messages[0];
+  const home = root === undefined || me === null ? null : subjectOf(root, me);
   return (
     <aside
       role="dialog"
@@ -72,6 +78,18 @@ export function ThreadPeek({
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
           Thread
         </span>
+        {home !== null && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenHome(home);
+            }}
+            className="text-[12px] text-(--accent) hover:underline"
+          >
+            Open in its home →
+          </button>
+        )}
         <IconButton ref={closeRef} label="Close" onClick={onClose}>
           <X aria-hidden />
         </IconButton>

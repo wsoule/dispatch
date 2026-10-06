@@ -28,6 +28,7 @@ import { flightScope } from '../../flightplan/flightScope';
 import { RunStatePill } from '../../runs/RunStatePill';
 import { MemoryReachSection } from '../detail/MemoryReachSection';
 import { ReceiptsSection } from '../detail/ReceiptsSection';
+import { TaskLessonsSection } from '../detail/TaskLessonsSection';
 import { VerificationSection } from '../detail/VerificationSection';
 import { StatusIcon } from '../StatusIcon';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -275,6 +276,13 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
           client={project.client}
           port={project.port}
           taskId={meta.id}
+        />
+      )}
+      {page.host.showLessons === true && project.client !== null && (
+        <TaskLessonsSection
+          client={project.client}
+          port={project.port}
+          runIds={page.runs.map((run) => run.id)}
         />
       )}
       <ReceiptsSection entries={ledger} />

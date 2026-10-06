@@ -30,7 +30,8 @@ function handleOf(me: string): string {
   return colon === -1 ? me : me.slice(colon + 1);
 }
 
-function mentions(body: string, me: string): boolean {
+/** Whether a body @-mentions me by handle. */
+export function mentions(body: string, me: string): boolean {
   const handle = handleOf(me).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|\\s)@${handle}(?![\\w.-])`).test(body);
 }

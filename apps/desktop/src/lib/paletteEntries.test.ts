@@ -2,7 +2,11 @@ import type { DocHit } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import type { PaletteEntriesContext, PaletteSection } from './paletteEntries';
-import { buildPaletteEntries, docHitEntries } from './paletteEntries';
+import {
+  addressEntries,
+  buildPaletteEntries,
+  docHitEntries,
+} from './paletteEntries';
 
 function context(over: Partial<PaletteEntriesContext> = {}) {
   const calls: string[] = [];
@@ -230,5 +234,31 @@ describe('beta and Two views rows', () => {
       'project:board',
       'global:settings',
     ]);
+  });
+});
+
+describe('addressEntries', () => {
+  test('people but me, active outside peers, and named rooms but milestones', () => {
+    const opened: string[] = [];
+    const entries = addressEntries({
+      people: [
+        { ref: 'human:wyat', name: 'Wyat' },
+        { ref: 'human:sam', name: 'Sam' },
+      ],
+      rooms: ['release', 'epic/t-1'],
+      peers: [
+        { alias: 'acme', status: 'active' },
+        { alias: 'gone', status: 'disabled' },
+      ],
+      me: 'human:wyat',
+      open: (address) => opened.push(address),
+    });
+    expect(entries.map((e) => e.label)).toEqual([
+      'Message Sam',
+      'Message acme (outside)',
+      'Open #release',
+    ]);
+    for (const entry of entries) entry.run();
+    expect(opened).toEqual(['human:sam', 'a2a:acme', 'channel:release']);
   });
 });
