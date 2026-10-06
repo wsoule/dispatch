@@ -396,7 +396,8 @@ function AskRow({
     <li
       data-testid="needs-you-row"
       title={gate === undefined ? undefined : 'this machine only'}
-      className="border-border flex flex-col gap-2 border-t-[0.5px] px-3 py-2 first:border-t-0"
+      // A new ask arrives from the left, where everything coming in flows from.
+      className="border-border animate-in fade-in-0 slide-in-from-left-4 flex flex-col gap-2 border-t-[0.5px] px-3 py-2 duration-300 first:border-t-0 motion-reduce:animate-none"
     >
       <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
         <span className="rounded-chip w-16 shrink-0 bg-(--state-waiting-surface) px-1.5 text-center text-[11px] text-(--state-waiting-fg)">

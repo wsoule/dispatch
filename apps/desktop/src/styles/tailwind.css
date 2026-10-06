@@ -56,6 +56,8 @@
 }
 
 @theme inline {
+  /* Two views' flow columns: a chevron that brightens in turn, like a marquee. */
+  --animate-flow: flow 1.2s ease-in-out infinite;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -204,5 +206,15 @@
 @layer base {
   * {
     border-color: var(--border);
+  }
+}
+
+@keyframes flow {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
   }
 }

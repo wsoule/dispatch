@@ -1935,6 +1935,10 @@ function App() {
             overseer={overseer}
             projectPath={activeProject?.path ?? null}
             asks={needs.count}
+            postsCount={posts.length}
+            runs={data.runs}
+            merges={data.mergeQueue?.entries ?? []}
+            onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
             needsBlock={
               <NeedsYouBlock
                 data={data}
