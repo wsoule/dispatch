@@ -194,9 +194,9 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
 }
 
 /** Replaces the dispatchd serving `root` with one this app spawns itself, so it can read the
- * app token off stdout and regain decide tier. The daemon hosts running agents, so callers
- * must gate this on nothing being in flight (see `daemonRestartReadiness`). Rejects in
- * browser-dev, which has no backend to spawn anything. */
+ * app token off stdout and regain decide tier. Rejects, with the reason, while that daemon has
+ * a run, merge, plan, terminal or browser in flight, and keeps its port when it can. Rejects
+ * in browser-dev, which has no backend to spawn anything. */
 export function restartDispatchd(root: string): Promise<DaemonConnection> {
   if (!isTauri()) {
     return Promise.reject(

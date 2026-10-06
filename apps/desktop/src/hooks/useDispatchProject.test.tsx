@@ -243,6 +243,8 @@ void mock.module('@dispatch/client', () => ({
         updatedAt: '2026-09-20T00:00:00Z',
       }),
     confirmPlan: () => Promise.resolve({ epicId: 'e-1', taskIds: ['t-1'] }),
+    fetchLiveWork: () =>
+      Promise.resolve({ busy: ['1 terminal'], parked: 1, waiting: 2 }),
     fetchWhoami: () =>
       whoamiFixture === null
         ? Promise.reject(new Error('dispatchd is still starting'))
@@ -1578,6 +1580,8 @@ test('request changes on a live run succeeds only when the run took the message'
   await waitFor(() => {
     expect(result.current.runs).toHaveLength(1);
   });
+  // The app's own daemon: nothing to take over.
+  expect(result.current.takeover).toBeNull();
   const outcome = () =>
     result.current.handleRequestChanges('r-1', 'again').then(
       () => 'resolved',
@@ -1625,6 +1629,15 @@ test('a window on the agent token reads no gates, notifies none and sends nothin
       sink?.onEvent({ type: 'message.new', message: approvalGate });
     });
 
+    // What it cannot list, it can count, and the restart says what it stops.
+    await waitFor(() => {
+      expect(result.current.takeover).toEqual({
+        background: false,
+        busy: ['1 terminal'],
+        parked: 1,
+        waiting: 2,
+      });
+    });
     expect(openDecisionsCalls).toBe(0);
     expect(result.current.pendingApprovals.size).toBe(0);
     expect(result.current.pendingScopeRequests.size).toBe(0);

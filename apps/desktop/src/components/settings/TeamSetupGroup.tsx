@@ -6,6 +6,7 @@ import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { StartTeamRow } from './StartTeamRow';
+import { TakeOverDaemon } from './TakeOverDaemon';
 import { CopyButton } from './TeamSection';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
@@ -33,7 +34,7 @@ const RELAY_DISCLOSURE =
  */
 export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
   const { client } = data;
-  const { canOperate } = useSettingsAccess();
+  const { canOperate, operateReason } = useSettingsAccess();
   const queryClient = useQueryClient();
   const key = ['team-status', client?.baseUrl];
   const status = useQuery({
@@ -78,6 +79,12 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
   const api = client;
   const isAdmin = s.role === 'admin';
   const canInvite = canOperate && s.state === 'member' && s.role !== 'observer';
+  // The owner's own window, attached to a daemon it did not start: offer the
+  // restart that unlocks these rows rather than hiding them without a word.
+  const locked =
+    !canOperate &&
+    data.takeover !== null &&
+    (s.state !== 'member' || s.role !== 'observer');
 
   return (
     <SettingsGroup
@@ -114,6 +121,20 @@ export function TeamSetupGroup({ data }: TeamSetupGroupProps) {
         />
       ))}
 
+      {locked && data.takeover !== null && (
+        <SettingsRow
+          title={
+            s.state === 'member' ? 'Invite teammate' : 'Start or join a team'
+          }
+          subtitle={operateReason}
+          stacked
+        >
+          <TakeOverDaemon
+            takeover={data.takeover}
+            onRestart={data.handleRestartDaemon}
+          />
+        </SettingsRow>
+      )}
       {canOperate && (s.state === 'none' || s.state === 'off') && (
         <StartTeamRow
           sync={data.config?.sync}

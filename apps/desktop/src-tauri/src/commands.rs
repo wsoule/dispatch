@@ -515,9 +515,9 @@ pub async fn ensure_dispatchd(
 }
 
 /// Replaces the dispatchd serving `root` with one this app spawns itself, so it
-/// can read the app token off stdout and regain decide tier. Only reachable
-/// from the UI's explicit restart affordance, which gates it on no run being
-/// in flight — the daemon hosts running agents, so this ends them.
+/// can read the app token off stdout and regain decide tier. Refuses while that
+/// daemon has anything in flight (`sidecar::stop_for_takeover`), and keeps its
+/// port when it can.
 #[tauri::command]
 pub async fn restart_dispatchd(
     app: tauri::AppHandle,

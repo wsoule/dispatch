@@ -511,6 +511,10 @@ export interface ApiContext {
   ) => Promise<SharingAnswer>;
   /** This server's restart mark while it restarts to turn on sync. */
   sharing?: SharingState;
+  /** What a restart would cut short (`busy`, in words) and how many runs it
+   *  would only pause (`parked`), from index.ts; absent in contexts built
+   *  without a daemon. */
+  liveWork?: () => { busy: string[]; parked: number };
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -5400,6 +5404,28 @@ export async function handleApi(
     // endpoint that exists purely because tokens now name people: presence,
     // claims and attribution all need a caller to be identifiable before they
     // can mean anything, and this is how a client checks that it is.
+    // GET /api/live-work, request tier, for whoever wants to restart this
+    // daemon (the desktop app's takeover, `dispatch serve`):
+    //   busy:    string[]  what a restart would cut short, in words ("1 live
+    //                      run", "2 terminals"); refuse while non-empty
+    //   parked:  number    live runs only waiting on a human (a tool approval,
+    //                      a blocking question); a restart pauses them and
+    //                      they resume on boot, so confirm rather than refuse
+    //   waiting: number    items waiting on a human, which the agent token
+    //                      cannot list
+    if (
+      segments[0] === 'live-work' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      const work = ctx.liveWork?.() ?? { busy: [], parked: 0 };
+      return jsonResponse({
+        busy: work.busy,
+        parked: work.parked,
+        waiting: ctx.decisionFeed.list({ disposition: 'blocking' }).length,
+      });
+    }
+
     if (segments[0] === 'whoami' && segments.length === 1 && method === 'GET') {
       // requiredTier already rejected an unusable credential, so a missing
       // caller here would be a bug rather than an unauthenticated one.

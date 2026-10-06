@@ -30,7 +30,11 @@ export const OPERATOR_ONLY =
 /** Why config is read-only for the owner's own window when it attached to a
  *  daemon it did not start, and so holds only the request-tier token. */
 export const ATTACHED_READ_ONLY =
-  "This window didn't start Dispatch for this project, so it can only view settings. Restart Dispatch from this app to change them.";
+  'Dispatch for this project was started outside this window (by `dispatch serve`, a CLI command or another window), so this window can only view settings. Restart Dispatch from this app to change them.';
+
+/** The same, when the daemon file says the CLI started it in the background. */
+export const ATTACHED_BACKGROUND_READ_ONLY =
+  'Dispatch for this project is running in the background, started by a `dispatch` CLI command, so this window can only view settings. Restart Dispatch from this app to change them.';
 
 // Outside a shell (a section rendered on its own, as the section tests do)
 // nothing is locked, which is what those callers have always assumed.
@@ -44,14 +48,18 @@ const AccessContext = createContext<SettingsAccess>({
 /** The access a viewer at `tier` has. `null` (no connection) grants nothing. */
 export function accessFor(
   tier: AuthTier | null,
-  attachedWithoutAppToken: boolean
+  attachedWithoutAppToken: boolean,
+  background = false
 ): SettingsAccess {
+  const attached = background
+    ? ATTACHED_BACKGROUND_READ_ONLY
+    : ATTACHED_READ_ONLY;
   return {
     canDecide: tier === 'decide' || tier === 'operator',
     canOperate: tier === 'operator',
-    decideReason: attachedWithoutAppToken ? ATTACHED_READ_ONLY : NEEDS_DECIDE,
+    decideReason: attachedWithoutAppToken ? attached : NEEDS_DECIDE,
     // Restarting from the app grants the owner operator, so it covers both.
-    operateReason: attachedWithoutAppToken ? ATTACHED_READ_ONLY : OPERATOR_ONLY,
+    operateReason: attachedWithoutAppToken ? attached : OPERATOR_ONLY,
   };
 }
 

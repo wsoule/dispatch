@@ -17,6 +17,9 @@ export interface DaemonConnection {
   agentToken: string | null;
   /** Full API base URL override; when set, port is ignored. Set by the web demo. */
   baseUrl?: string | null;
+  /** True when an attached daemon's file says the CLI started it in the
+   *  background. Absent from builds that predate the field. */
+  background?: boolean;
   /** Set only on a team-local page: the credential is an HttpOnly session
    *  cookie this code cannot see, so both token fields are null and this says
    *  what the cookie is good for. */
@@ -177,6 +180,21 @@ function errorCode(error: unknown): string | null {
     if (typeof nested === 'string') return nested;
   }
   return null;
+}
+
+/** What restarting Dispatch from this app would mean for a window attached to
+ *  a daemon it did not start. */
+export interface DaemonTakeover {
+  /** The daemon file says the CLI started it in the background. */
+  background: boolean;
+  /** What the restart would cut short, in words; `null` until the daemon
+   *  answers, or for an older one that cannot say. */
+  busy: readonly string[] | null;
+  /** Runs only waiting on a human: the restart pauses them, and they resume
+   *  on boot. */
+  parked: number;
+  /** Items waiting on a human, which this window cannot list. */
+  waiting: number;
 }
 
 /** Whether restarting the daemon is safe right now, and if not, why not. */
