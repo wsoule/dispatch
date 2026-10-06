@@ -1,10 +1,21 @@
 import { TaskStore } from '@dispatch-foo/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { findChrome } from '../src/browser/session.js';
+import {
+  BrowserLaunchError,
+  BrowserSession,
+  findChrome,
+} from '../src/browser/session.js';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { json } from './json.js';
@@ -103,9 +114,40 @@ describe('browser routes without a browser open', () => {
   });
 });
 
+if (chrome === null) {
+  console.warn(
+    '[browser-api] SKIPPED the real-Chromium tests: no Chrome or Chromium found. Install one, or set CHROME_PATH to its binary.'
+  );
+}
 const describeWithChrome = chrome === null ? describe.skip : describe;
 
+// A cold Chromium start (binaries off disk, font caches built) has taken from
+// 1s to over 30s on CI runners, against the daemon's 20s launch limit. Paying
+// it once here, through the same launch the routes use and retried past that
+// limit, leaves each test timing a warm launch.
+const WARM_UP_MS = 90_000;
+async function warmUpChrome(executablePath: string): Promise<void> {
+  const deadline = Date.now() + WARM_UP_MS;
+  for (;;) {
+    try {
+      const session = await BrowserSession.launch('warm-up', {
+        executablePath,
+        headless: true,
+      });
+      session.close();
+      return;
+    } catch (err) {
+      if (!(err instanceof BrowserLaunchError) || Date.now() > deadline)
+        throw err;
+    }
+  }
+}
+
 describeWithChrome('browser routes driving a real Chromium', () => {
+  beforeAll(async () => {
+    if (chrome !== null) await warmUpChrome(chrome);
+  }, WARM_UP_MS + 30_000);
+
   async function launch(): Promise<string> {
     const res = await apiFetch('/api/browser', {
       method: 'POST',
