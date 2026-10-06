@@ -1717,6 +1717,13 @@ export interface OverseerMessage {
   notice?: 'stopped' | 'rollover' | 'restarted';
 }
 
+/** One slash command an Overseer session accepts: `/name`, with what it does. */
+export interface OverseerCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
 // Mirrors OverseerApproval in packages/server/src/orchestrator/overseer.ts —
 // a built-in tool call (Bash, Edit, a project MCP tool) the overseer's running
 // turn is blocked on until a human answers its `tool-approval` gate. Allowing
@@ -1796,6 +1803,8 @@ export interface OverseerRecord {
   spendUsd?: number;
   /** Messages typed while a turn ran; they go out together when it ends. */
   queued?: { text: string; at: string }[];
+  /** The slash commands the session offered on its last turn. */
+  commands?: OverseerCommand[];
   /** The bus thread this conversation's lines are posted to, once one is. */
   thread?: string;
   error?: string;
@@ -3768,6 +3777,11 @@ export interface ApiClient {
   ): Promise<OverseerRecord>;
   /** Stops the running turn; anything queued waits for the next send. */
   stopOverseer(conversationId: string): Promise<OverseerRecord>;
+  /** Jev's read on whether `text` starts a new subject; fail-open reads "no". */
+  judgeOverseerTopic(
+    conversationId: string,
+    text: string
+  ): Promise<{ newTopic: boolean; confidence: number | null }>;
   /** The caller's own conversation on this project, newest first, or null. */
   currentOverseer(): Promise<{ conversation: OverseerRecord | null }>;
   /** What "Allow for this conversation" still covers: per program for Bash, up to four hours. */
@@ -4823,6 +4837,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
       }),
     currentOverseer: () => request(target, '/api/overseer/current'),
+    judgeOverseerTopic: (conversationId, text) =>
+      request(target, `/api/overseer/${conversationId}/topic`, {
+        method: 'POST',
+        ...jsonBody({ text }),
+      }),
     listOverseerGrants: (conversationId) =>
       request(target, `/api/overseer/${conversationId}/grants`),
     revokeOverseerGrant: (conversationId, key) =>

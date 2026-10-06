@@ -684,3 +684,33 @@ test('an open conversation shows its own model and effort in the pickers', () =>
     screen.getByRole('combobox', { name: 'Choose effort' }).textContent
   ).toContain('High');
 });
+
+test('typing a slash suggests the session’s commands and a pick fills the draft', () => {
+  render(
+    <ChatWithDraft
+      overseer={overseerSession({
+        conversationId: 'w-1',
+        record: overseerRecord({
+          commands: [
+            {
+              name: 'compact',
+              description: 'Compact the context',
+              argumentHint: '',
+            },
+            {
+              name: 'review',
+              description: 'Review a PR',
+              argumentHint: '<pr>',
+            },
+          ],
+        }),
+      })}
+      durable
+    />
+  );
+  const box = screen.getByRole('textbox', { name: 'Follow-up message' });
+  fireEvent.change(box, { target: { value: '/co' } });
+  fireEvent.click(screen.getByRole('button', { name: /\/compact/ }));
+  expect((box as HTMLTextAreaElement).value).toBe('/compact ');
+  expect(screen.queryByTestId('overseer-slash')).toBeNull();
+});

@@ -29,6 +29,7 @@ import {
   type OverseerDoor,
   type OverseerStreamItem,
 } from '../../lib/overseerThread';
+import { slashSuggestions } from '../../lib/slashCommands';
 import { Markdown } from '../runs/Markdown';
 import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
@@ -619,6 +620,7 @@ export function OverseerChat({
   }
 
   const spend = overseer.record?.spendUsd ?? 0;
+  const suggestions = slashSuggestions(draft, overseer.record?.commands ?? []);
 
   return (
     <div
@@ -729,6 +731,33 @@ export function OverseerChat({
             </Button>
           )}
         </div>
+        {suggestions.length > 0 && (
+          <ul
+            aria-label="Slash commands"
+            data-testid="overseer-slash"
+            className="rounded-card border-border flex flex-col border-[0.5px] py-1"
+          >
+            {suggestions.map((command) => (
+              <li key={command.name}>
+                <button
+                  type="button"
+                  onClick={() => setDraft(`/${command.name} `)}
+                  className="hover:bg-surface-quaternary font-book flex w-full items-baseline gap-2 px-3 py-1 text-left text-[13px]"
+                >
+                  <span className="font-mono">/{command.name}</span>
+                  {command.argumentHint !== '' && (
+                    <span className="text-muted-foreground font-mono text-[11px]">
+                      {command.argumentHint}
+                    </span>
+                  )}
+                  <span className="text-muted-foreground min-w-0 flex-1 truncate text-[12px]">
+                    {command.description}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {/* Disabled for the whole turn, not just the send: the composer is the
             primitive's, and a Send that looks live against a turn the server
             would 409 is the worse of the two. */}

@@ -1728,3 +1728,44 @@ describe('a conversation reads as its owner', () => {
     ).toBe('read 0 messages (kept out of this transcript)');
   });
 });
+
+describe('slash commands', () => {
+  it('go to the session verbatim, keeping undelivered decisions for later', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.backend.settle({
+      commands: [{ name: 'compact', description: 'Compact', argumentHint: '' }],
+    });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.manager.get(started.id).commands?.map((c) => c.name)).toEqual([
+      'compact',
+    ]);
+    // A decision the model has not heard about yet.
+    (
+      h.manager.get(started.id) as { undeliveredDecisions: string[] }
+    ).undeliveredDecisions.push('approved: cancel r-1');
+
+    h.manager.sendMessage(started.id, '/compact');
+    expect(h.backend.prompts[1]).toBe('/compact');
+    expect(h.manager.get(started.id).undeliveredDecisions).toEqual([
+      'approved: cancel r-1',
+    ]);
+  });
+
+  it('never ride along with plain messages: a slash command is its own turn', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.manager.sendMessage(started.id, 'one');
+    h.manager.sendMessage(started.id, '/compact');
+    h.manager.sendMessage(started.id, 'two');
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 2);
+    expect(h.backend.prompts[1]).toBe('one');
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 3);
+    expect(h.backend.prompts[2]).toBe('/compact');
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 4);
+    expect(h.backend.prompts[3]).toBe('two');
+  });
+});

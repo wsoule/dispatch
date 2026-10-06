@@ -249,6 +249,7 @@ export type {
   VerificationResult,
   OverseerAction,
   OverseerApproval,
+  OverseerCommand,
   OverseerGrant,
   OverseerMessage,
   OverseerRecord,

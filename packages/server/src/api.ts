@@ -193,6 +193,7 @@ import {
   readChecklist,
 } from './judgments/landingChecklist.js';
 import type { ChecklistSummary } from './judgments/landingChecklist.js';
+import { judgeTopic } from './judgments/overseerTopic.js';
 import { readinessFor, ReadinessStore } from './judgments/readiness.js';
 import type { ReadinessReading } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
@@ -6894,6 +6895,26 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await sendOverseerMessage(req, ctx, conversationId, speaker);
+      }
+      // Jev's read on whether a message starts a new subject (fail-open: no).
+      if (
+        segments.length === 3 &&
+        segments[2] === 'topic' &&
+        method === 'POST'
+      ) {
+        const parsed = await readJsonBody(req);
+        if (!parsed.ok) return parsed.response;
+        const text = (parsed.value as { text?: unknown }).text;
+        if (typeof text !== 'string' || text.trim() === '') {
+          return errorResponse(400, 'invalid text: text is required');
+        }
+        return jsonResponse(
+          await judgeTopic(
+            ctx.judgments,
+            ctx.overseerManager.get(conversationId).messages,
+            text
+          )
+        );
       }
       if (
         segments.length === 3 &&

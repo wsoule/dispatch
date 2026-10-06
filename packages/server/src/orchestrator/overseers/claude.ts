@@ -19,6 +19,7 @@ import { floorGuard } from '../floorHook.js';
 import type { FloorPolicy } from '../floorHook.js';
 import type {
   OverseerBackend,
+  OverseerCommand,
   OverseerToolDescriptor,
   OverseerToolset,
   OverseerTurn,
@@ -324,6 +325,8 @@ export class ClaudeOverseer implements OverseerBackend {
     // so the owner's native Claude notes never load here.
     const sdkQuery: Query = openClaudeQuery(this.queryFn, prompt, options);
 
+    // Asked once per turn, alongside it; a failure only means no suggestions.
+    const commands = sdkQuery.supportedCommands().catch(() => undefined);
     try {
       let sessionId: string | undefined;
       let contextTokens: number | undefined;
@@ -347,6 +350,7 @@ export class ClaudeOverseer implements OverseerBackend {
           sessionId: message.session_id ?? sessionId,
           costUsd: message.total_cost_usd,
           ...(contextTokens !== undefined ? { contextTokens } : {}),
+          ...withCommands(await commands),
         };
       }
       throw new Error('overseer turn produced no result message');
@@ -357,6 +361,22 @@ export class ClaudeOverseer implements OverseerBackend {
       throw new Error(rewriteMissingCliError((err as Error).message));
     }
   }
+}
+
+// The session's slash commands, trimmed to what the composer shows.
+function withCommands(
+  list:
+    | { name: string; description: string; argumentHint: string }[]
+    | undefined
+): { commands?: OverseerCommand[] } {
+  if (list === undefined) return {};
+  return {
+    commands: list.map(({ name, description, argumentHint }) => ({
+      name,
+      description,
+      argumentHint,
+    })),
+  };
 }
 
 // The context one API call read: its fresh input plus whatever came from cache.
