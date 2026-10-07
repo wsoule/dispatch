@@ -825,6 +825,21 @@ describe('Two views’ compact page', () => {
     fireEvent.click(screen.getByRole('button', { name: /tasks/ }));
     expect(back).toBe(1);
   });
+
+  test('a split or peek pane keeps Expand and Close, with no “‹ tasks”', () => {
+    for (const layout of ['split', 'peek'] as const) {
+      const view = mount(
+        { ...fakeHost(newLog(), { tasks: [task('t-1')] }), compactPage: true },
+        { layout, onBack: () => {}, onClose: () => {}, onExpand: () => {} }
+      );
+      expect(screen.queryByRole('button', { name: /tasks/ })).toBeNull();
+      expect(
+        screen.getByRole('button', { name: 'Open the full page' })
+      ).not.toBeNull();
+      expect(screen.getByRole('button', { name: 'Close' })).not.toBeNull();
+      view.unmount();
+    }
+  });
 });
 
 test('Two views names the Conversation toggle and shows its unread count', async () => {
