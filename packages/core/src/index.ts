@@ -431,3 +431,9 @@ export {
   writeGitAttributes,
 } from './mergeDriverSetup.js';
 export { childEnv } from './childEnv.js';
+export type {
+  SyncSpawner,
+  SyncSpawnOptions,
+  SyncSpawnResult,
+} from './syncSpawn.js';
+export { setSyncSpawner, spawnSyncText } from './syncSpawn.js';

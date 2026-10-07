@@ -84,6 +84,10 @@ export interface HealthPayload {
   // The daemon's event-loop watchdog. 'failed' means it never came up — for
   // a compiled daemon, that its worker module was left out of the build.
   watchdog?: 'idle' | 'starting' | 'armed' | 'failed' | 'stopped';
+  // How the daemon runs synchronous git. 'fallback' means its worker never
+  // came up — for a compiled daemon, that the worker module was left out of
+  // the build — and git is back on Bun.spawnSync.
+  blockingGit?: 'idle' | 'worker' | 'fallback';
   // Which backend this daemon's task store uses. Absent on older daemons;
   // treat that as 'sqlite', the default.
   storageBackend?: 'files' | 'sqlite';

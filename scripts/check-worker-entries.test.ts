@@ -19,12 +19,19 @@ const watchdogText = readFileSync(
   'utf8'
 );
 
+const blockingGitText = readFileSync(
+  resolve(repoRoot, 'packages/server/src/blockingGit.ts'),
+  'utf8'
+);
+
 const serverFiles = [
   { path: 'packages/server/src/watchdog.ts', text: watchdogText },
+  { path: 'packages/server/src/blockingGit.ts', text: blockingGitText },
 ];
 
-test('derives the watchdog worker from the server source, not a hard-coded name', () => {
+test('derives the server workers from its source, not hard-coded names', () => {
   expect(workerModulesIn(serverFiles)).toEqual([
+    'packages/server/src/blockingGitWorker.ts',
     'packages/server/src/watchdogWorker.ts',
   ]);
 });
@@ -40,7 +47,7 @@ test('ignores an import.meta.url URL in a file that spawns no Worker', () => {
   ).toEqual([]);
 });
 
-test('parses every sidecar and the server one carries the worker entry', () => {
+test('parses every sidecar and the server one carries the worker entries', () => {
   const sidecars = parseSidecars(buildSidecarsText);
   expect(sidecars.map((s) => s.entry)).toEqual([
     'packages/server/src/bin.ts',
@@ -49,6 +56,7 @@ test('parses every sidecar and the server one carries the worker entry', () => {
   ]);
   expect(sidecars[0].extraEntries).toEqual([
     'packages/server/src/watchdogWorker.ts',
+    'packages/server/src/blockingGitWorker.ts',
   ]);
 });
 
@@ -71,6 +79,10 @@ test('fails when the worker entry is removed from build-sidecars.ts', () => {
   expect(missingWorkerEntries(sidecars, workerModulesIn(serverFiles))).toEqual([
     {
       sidecar: 'packages/server/src/bin.ts',
+      worker: 'packages/server/src/blockingGitWorker.ts',
+    },
+    {
+      sidecar: 'packages/server/src/bin.ts',
       worker: 'packages/server/src/watchdogWorker.ts',
     },
   ]);
@@ -86,6 +98,7 @@ test('fails when a new Worker is spawned without a compile entry', () => {
     },
   ];
   expect(workerModulesIn(files)).toEqual([
+    'packages/server/src/blockingGitWorker.ts',
     'packages/server/src/indexer/indexWorker.ts',
     'packages/server/src/watchdogWorker.ts',
   ]);

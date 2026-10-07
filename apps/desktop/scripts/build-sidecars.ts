@@ -35,12 +35,15 @@ export const SIDECARS = [
   {
     entry: join(repoRoot, 'packages', 'server', 'src', 'bin.ts'),
     name: 'dispatchd',
-    // The event-loop watchdog runs on a Worker, which a compiled binary only
-    // embeds when its module is a build entrypoint of its own — otherwise
-    // `new Worker(...)` fails silently at runtime and the daemon boots with
-    // no watchdog. Keep in step with packages/server/src/watchdog.ts.
+    // The event-loop watchdog and synchronous git each run on a Worker,
+    // which a compiled binary only embeds when its module is a build
+    // entrypoint of its own — otherwise `new Worker(...)` fails at runtime
+    // and the daemon boots with no watchdog, or with git back on
+    // Bun.spawnSync. Keep in step with packages/server/src/watchdog.ts and
+    // blockingGit.ts (scripts/check-worker-entries.ts enforces it).
     extraEntries: [
       join(repoRoot, 'packages', 'server', 'src', 'watchdogWorker.ts'),
+      join(repoRoot, 'packages', 'server', 'src', 'blockingGitWorker.ts'),
     ],
   },
   {

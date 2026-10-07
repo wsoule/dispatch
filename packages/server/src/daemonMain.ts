@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { parseListenerFlags } from './a2a/settings.js';
 import { FakeAiTaskFilter } from './aiTaskFilter.js';
 import { mintDaemonTokens } from './api.js';
+import { installBlockingSpawner } from './blockingGit.js';
 import { RootServedError } from './daemonfile.js';
 import { makeFakeGhRunner } from './fakeGh.js';
 import {
@@ -429,6 +430,10 @@ if (
 // caller to shell out to the CLI first) so that logic stays in TS and this
 // one bin covers both "start a daemon" and "start a daemon, initializing the
 // project first" in a single spawn.
+// Before the first synchronous spawn (the --init merge-driver registration
+// below): core's spawns go through the git worker, never Bun.spawnSync.
+installBlockingSpawner();
+
 if (args.includes('--init')) {
   // Creates whichever backend this daemon is about to open, rather than
   // always scaffolding `.dispatch/tasks`: on `sqlite` that means applying the

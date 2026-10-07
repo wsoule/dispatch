@@ -147,6 +147,7 @@ import {
   writeTerminalInput,
 } from './api/terminals.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
+import { blockingGitStatus } from './blockingGit.js';
 import type { BrowserRegistry } from './browser/registry.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
@@ -5396,6 +5397,9 @@ export async function handleApi(
         startedAt: ctx.startedAt,
         models: loadConfig(ctx.rootDir).models,
         watchdog: ctx.watchdogStatus(),
+        // How synchronous git runs. 'fallback' means its worker never came
+        // up and git is back on Bun.spawnSync, which can spin forever.
+        blockingGit: blockingGitStatus(),
         // Which backend the task store uses, so a client can show only the
         // settings that apply to it (autoCommit is file-backend-only).
         storageBackend: ctx.storeBackend,

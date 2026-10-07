@@ -105,7 +105,7 @@ export function writeRepoDigest(rootDir: string, digest: RepoDigest): void {
 }
 
 // The project's current HEAD, or null when rootDir isn't a git checkout (or git
-// is unavailable). Mirrors Orchestrator.currentBranch's own spawnSync shape
+// is unavailable). Mirrors Orchestrator.currentBranch's own spawnGitSync shape
 // rather than reaching into WorktreeManager, whose runGit is module-private.
 export function headCommit(rootDir: string): string | null {
   try {

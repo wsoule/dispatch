@@ -110,7 +110,7 @@ function currentBranchName(result: CommandResult): string {
  * checking the main checkout's cleanliness, squash-merging a run's branch
  * back in, and producing the unified diff a run's review surface shows.
  *
- * Every method shells out to a real `git` binary (via Bun.spawnSync, or
+ * Every method shells out to a real `git` binary (via spawnGitSync, or
  * Bun.spawn for the Branches listing's reads) rather than reimplementing git
  * plumbing — the plan is explicit that tests must assert real git effects
  * (diff, merge, discard) against real temp repos.

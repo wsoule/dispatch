@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import {
   accessSync,
   constants,
@@ -10,6 +9,7 @@ import {
 import { delimiter, join } from 'node:path';
 
 import { childEnv } from './childEnv.js';
+import { spawnSyncText } from './syncSpawn.js';
 
 // Registers dispatch's merge drivers: the .gitattributes lines that route
 // task files and the team roster through them, and the local git config
@@ -61,12 +61,12 @@ export function writeGitAttributes(cwd: string): void {
 // a machine with no `git` on PATH, can report the truth instead of claiming
 // success unconditionally.
 export function registerMergeDriverGitConfig(cwd: string): boolean {
-  const name = spawnSync(
+  const name = spawnSyncText(
     'git',
     ['config', 'merge.dispatch-task.name', 'Dispatch task file merge'],
     { cwd, env: childEnv() }
   );
-  const driver = spawnSync(
+  const driver = spawnSyncText(
     'git',
     ['config', 'merge.dispatch-task.driver', 'dispatch merge-task %O %A %B'],
     { cwd, env: childEnv() }
@@ -76,12 +76,12 @@ export function registerMergeDriverGitConfig(cwd: string): boolean {
 
 // Same as registerMergeDriverGitConfig, for the team roster's driver.
 export function registerTeamMergeDriverGitConfig(cwd: string): boolean {
-  const name = spawnSync(
+  const name = spawnSyncText(
     'git',
     ['config', 'merge.dispatch-team.name', 'Dispatch team roster merge'],
     { cwd, env: childEnv() }
   );
-  const driver = spawnSync(
+  const driver = spawnSyncText(
     'git',
     ['config', 'merge.dispatch-team.driver', 'dispatch merge-team %O %A %B'],
     { cwd, env: childEnv() }
@@ -90,9 +90,8 @@ export function registerTeamMergeDriverGitConfig(cwd: string): boolean {
 }
 
 function gitConfigHasDriver(cwd: string, key: string): boolean {
-  const result = spawnSync('git', ['config', '--local', '--get', key], {
+  const result = spawnSyncText('git', ['config', '--local', '--get', key], {
     cwd,
-    encoding: 'utf8',
     env: childEnv(),
   });
   return result.status === 0;
@@ -131,10 +130,10 @@ export function checkMergeDriverSetup(cwd: string): {
 // anywhere. whichOnPath mirrors the same PATH lookup a spawned `git` process
 // would perform, using this process's own (i.e. the daemon's) PATH.
 export function isMergeDriverResolvable(cwd: string): boolean {
-  const configured = spawnSync(
+  const configured = spawnSyncText(
     'git',
     ['config', '--local', '--get', 'merge.dispatch-task.driver'],
-    { cwd, encoding: 'utf8', env: childEnv() }
+    { cwd, env: childEnv() }
   );
   if (configured.status !== 0) return false;
   const command = configured.stdout.trim().split(/\s+/)[0];

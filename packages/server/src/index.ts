@@ -55,7 +55,7 @@ import {
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { storageErrorResponse } from './api/storageErrors.js';
-import { spawnGitSync } from './blockingGit.js';
+import { installBlockingSpawner, spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
 import { compressForNetwork } from './compression.js';
@@ -914,6 +914,12 @@ export async function startServer(
       await waitForRootReleased(opts.rootDir);
     else await assertRootNotServed(opts.rootDir);
   }
+
+  // Core's synchronous spawns (the merge-driver check behind GET /api/sync,
+  // carto discovery) run through the git worker, not Bun.spawnSync — see
+  // spawnGitSync. daemonMain installs it too, earlier; this covers every
+  // other host of startServer.
+  installBlockingSpawner();
 
   // Started before anything that can block, so a boot-time stall (a migration,
   // the run reconcile sweep) is named in the log like any other. A boot that

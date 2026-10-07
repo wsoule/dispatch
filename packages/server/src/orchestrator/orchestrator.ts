@@ -188,7 +188,7 @@ export interface OrchestratorContext {
   digestCache?: RepoDigestCache;
   // How the orchestrator shells out to delete a retired PR review's head ref
   // (see cleanupDerivedAuxRun) — its one *async* git call, alongside several
-  // pre-existing synchronous Bun.spawnSync ones. Same seam PrManager /
+  // pre-existing synchronous spawnGitSync ones. Same seam PrManager /
   // MergeQueue / GitRepo share, so a test stubs git rather than running it.
   commandRunner?: CommandRunner;
   // The TypeSafe judgment client, or null/absent when none is configured —

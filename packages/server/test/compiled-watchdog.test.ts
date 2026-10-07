@@ -18,6 +18,8 @@ import { join, resolve } from 'node:path';
 const SRC = resolve(import.meta.dirname, '../src');
 const BIN = join(SRC, 'bin.ts');
 const WORKER = join(SRC, 'watchdogWorker.ts');
+// Synchronous git's worker (blockingGit.ts) is compiled in the same way.
+const GIT_WORKER = join(SRC, 'blockingGitWorker.ts');
 
 let work: string | undefined;
 let child: Bun.Subprocess<'ignore', 'pipe', 'ignore'> | undefined;
@@ -49,18 +51,15 @@ function compileDaemon(entries: string[]): string {
   return outfile;
 }
 
-// Boots the compiled binary against an empty project and returns the
-// watchdog status its health endpoint reports once it is listening.
-async function bootAndReadWatchdog(binary: string): Promise<string> {
-  return (await boot(binary)).watchdog;
-}
-
 const APP_TOKEN = 'compiled-test-app-token';
 
-// Boots the compiled binary, answering its port and the watchdog status.
+// Boots the compiled binary against an empty project, answering its port and
+// the watchdog and git-runner statuses its health endpoint reports once it is
+// listening. Boot itself runs synchronous git (the actor's `git config`), so
+// the git runner has settled by then.
 async function boot(
   binary: string
-): Promise<{ port: number; watchdog: string }> {
+): Promise<{ port: number; watchdog: string; blockingGit: string }> {
   const root = join(work!, 'project');
   mkdirSync(join(root, '.dispatch', 'tasks'), { recursive: true });
   writeFileSync(
@@ -98,25 +97,33 @@ async function boot(
   // so `starting` is not mistaken for the answer.
   for (;;) {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`);
-    const body = (await res.json()) as { watchdog?: string };
+    const body = (await res.json()) as {
+      watchdog?: string;
+      blockingGit?: string;
+    };
     if (body.watchdog !== 'starting' || Date.now() >= deadline) {
-      return { port, watchdog: body.watchdog ?? 'missing' };
+      return {
+        port,
+        watchdog: body.watchdog ?? 'missing',
+        blockingGit: body.blockingGit ?? 'missing',
+      };
     }
     await Bun.sleep(50);
   }
 }
 
 describe('compiled dispatchd', () => {
-  it('arms its watchdog when the worker is a compile entry', async () => {
+  it('arms its watchdog and runs git on its worker when both are compile entries', async () => {
     work = mkdtempSync(join(tmpdir(), 'dispatch-compiled-watchdog-'));
-    const binary = compileDaemon([BIN, WORKER]);
-    expect(await bootAndReadWatchdog(binary)).toBe('armed');
+    const health = await boot(compileDaemon([BIN, WORKER, GIT_WORKER]));
+    expect(health.watchdog).toBe('armed');
+    expect(health.blockingGit).toBe('worker');
   }, 60_000);
 
   // The terminal host is the same binary run with --terminal-host (bin.ts).
   it('runs a terminal session through its own terminal host', async () => {
     work = mkdtempSync(join(tmpdir(), 'dispatch-compiled-watchdog-'));
-    const { port } = await boot(compileDaemon([BIN, WORKER]));
+    const { port } = await boot(compileDaemon([BIN, WORKER, GIT_WORKER]));
     const api = (path: string, init?: RequestInit) =>
       fetch(`http://127.0.0.1:${port}${path}`, {
         ...init,
@@ -145,9 +152,10 @@ describe('compiled dispatchd', () => {
   // The failure mode the entry exists to prevent, kept as the control: if
   // the bundler ever starts following the Worker URL on its own this stops
   // failing, and the guard on build-sidecars.ts can be retired.
-  it('reports a failed watchdog when the worker is left out', async () => {
+  it('reports a failed watchdog and fallback git when the workers are left out', async () => {
     work = mkdtempSync(join(tmpdir(), 'dispatch-compiled-watchdog-'));
-    const binary = compileDaemon([BIN]);
-    expect(await bootAndReadWatchdog(binary)).toBe('failed');
+    const health = await boot(compileDaemon([BIN]));
+    expect(health.watchdog).toBe('failed');
+    expect(health.blockingGit).toBe('fallback');
   }, 60_000);
 });
