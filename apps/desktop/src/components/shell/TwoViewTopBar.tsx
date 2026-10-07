@@ -4,6 +4,12 @@ import type { OrbState } from '../../lib/agentPresence';
 import type { MainView } from '../../lib/twoViews';
 import { Orb } from './Orb';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+
+// A page word: secondary at rest, lifted onto the active fill while its page is open.
+const NAV_WORD =
+  'text-(--text-secondary) hover:bg-surface-control hover:text-foreground aria-[current=page]:bg-surface-active aria-[current=page]:text-foreground aria-expanded:bg-surface-active aria-expanded:text-foreground';
 
 /** The four counts on "tasks", each its own click target; a zero shows a muted 0. */
 type TopCount = 'asks' | 'review' | 'failed' | 'working';
@@ -63,6 +69,42 @@ export interface TwoViewTopBarProps {
   trafficLightInset: boolean;
 }
 
+// "settings", with its muted admin count and, when there is one, a tooltip naming them.
+function SettingsWord({
+  count,
+  title,
+  open,
+  onOpen,
+}: {
+  count: number;
+  title: string | undefined;
+  open: boolean;
+  onOpen: () => void;
+}) {
+  const button = (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onOpen}
+      aria-expanded={open}
+      data-testid="two-views-settings"
+      className={NAV_WORD}
+    >
+      settings
+      {count > 0 && (
+        <span className="text-muted-foreground font-normal"> ·{count}</span>
+      )}
+    </Button>
+  );
+  if (title === undefined || title === '') return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipContent side="bottom">{title}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** Two views' top bar: the drag region, the orb and project menu, the counts and settings. */
 export function TwoViewTopBar({
   view,
@@ -106,68 +148,66 @@ export function TwoViewTopBar({
       </div>
       <nav
         aria-label="Two views"
-        className="flex items-center justify-end gap-4 text-[13px]"
+        className="flex items-center justify-end gap-1"
       >
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={onShowTasks}
-            aria-current={
-              view === 'tasks' && page === null ? 'page' : undefined
-            }
-            data-testid="two-views-tasks"
-            className={cn(
-              'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
-              // Docs and threads are pages under Tasks; then they hold the underline.
-              view === 'tasks' &&
-                page === null &&
-                'font-semibold underline underline-offset-4'
-            )}
-          >
-            tasks
-          </button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onShowTasks}
+          aria-current={view === 'tasks' && page === null ? 'page' : undefined}
+          data-testid="two-views-tasks"
+          className={NAV_WORD}
+        >
+          tasks
+        </Button>
+        <div className="mr-2 flex items-center">
           {ORDER.map((key) => {
             const value = counts[key];
             const spec = COUNT[key];
+            const label = `${value} ${spec.label}`;
             return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => onCount(key)}
-                aria-label={`${value} ${spec.label}`}
-                title={`${value} ${spec.label}`}
-                data-testid={`two-views-count-${key}`}
-                className={cn(
-                  'rounded-control px-0.5 font-semibold tabular-nums outline-none hover:underline focus-visible:underline',
-                  value > 0 ? spec.tone : 'font-normal text-(--text-ghost)'
-                )}
-              >
-                {spec.glyph} {value}
-              </button>
+              <Tooltip key={key}>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => onCount(key)}
+                      aria-label={label}
+                      data-testid={`two-views-count-${key}`}
+                      className={cn(
+                        'hover:bg-surface-control tabular-nums',
+                        value > 0
+                          ? cn(spec.tone, 'font-semibold')
+                          : 'font-normal text-(--text-ghost)'
+                      )}
+                    />
+                  }
+                >
+                  {spec.glyph} {value}
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{label}</TooltipContent>
+              </Tooltip>
             );
           })}
         </div>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onOpenDocs}
           aria-current={page === 'docs' ? 'page' : undefined}
           data-testid="two-views-docs"
-          className={cn(
-            'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
-            page === 'docs' && 'font-semibold underline underline-offset-4'
-          )}
+          className={NAV_WORD}
         >
           docs
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onOpenThreads}
           aria-current={page === 'threads' ? 'page' : undefined}
           data-testid="two-views-threads"
-          className={cn(
-            'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
-            page === 'threads' && 'font-semibold underline underline-offset-4'
-          )}
+          className={NAV_WORD}
         >
           threads
           {threadsUnread > 0 && (
@@ -176,26 +216,13 @@ export function TwoViewTopBar({
               ·{threadsUnread}
             </span>
           )}
-        </button>
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          aria-expanded={settingsOpen}
+        </Button>
+        <SettingsWord
+          count={settingsCount}
           title={settingsTitle}
-          data-testid="two-views-settings"
-          className={cn(
-            'rounded-control px-1 text-(--text-primary) outline-none hover:underline focus-visible:underline',
-            settingsOpen && 'font-semibold'
-          )}
-        >
-          settings
-          {settingsCount > 0 && (
-            <span className="text-muted-foreground font-normal">
-              {' '}
-              ·{settingsCount}
-            </span>
-          )}
-        </button>
+          open={settingsOpen}
+          onOpen={onOpenSettings}
+        />
       </nav>
     </header>
   );

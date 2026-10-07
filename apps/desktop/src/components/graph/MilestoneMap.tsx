@@ -25,7 +25,10 @@ import {
 import { StatusIcon } from '../tasks/StatusIcon';
 import { DependencyGraph } from './DependencyGraph';
 import { cn } from '@/lib/utils';
+import { RowButton } from '@/ui/ai/row-button';
+import { TextButton } from '@/ui/ai/text-button';
 import { Button } from '@/ui/button';
+import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 type GraphMode = 'milestones' | 'tasks';
 
@@ -146,15 +149,15 @@ function MilestoneNode({
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <button
-          type="button"
+        <TextButton
+          stretch
           onClick={onOpen}
           title={`Open the flight plan for ${title}`}
           data-testid="milestone-node-open"
-          className="after:rounded-card min-w-0 flex-1 truncate text-left text-[13px] font-semibold outline-none after:absolute after:inset-0 focus-visible:after:ring-1 focus-visible:after:ring-(--accent)"
+          className="flex-1 text-[13px] font-semibold"
         >
           {title}
-        </button>
+        </TextButton>
         {dueDate !== null && (
           <span className="text-muted-foreground shrink-0 text-[12px]">
             due {shortDate(dueDate)}
@@ -201,12 +204,10 @@ function MilestoneNode({
             const mark = bucket === null ? undefined : ROW_MARK[bucket];
             return (
               <li key={doc.meta.id}>
-                <button
-                  type="button"
+                <RowButton
                   onClick={() => onOpenTask(doc.meta.id)}
                   title={doc.meta.title}
                   data-testid="milestone-node-task"
-                  className="rounded-control hover:bg-surface-secondary relative z-10 -mx-1 flex h-5 w-[calc(100%+8px)] min-w-0 items-center gap-1.5 px-1 text-left text-[12px]"
                 >
                   <StatusIcon
                     status={doc.meta.status}
@@ -227,7 +228,7 @@ function MilestoneNode({
                       </span>
                     )
                   )}
-                </button>
+                </RowButton>
               </li>
             );
           })}
@@ -379,29 +380,18 @@ export function MilestoneMapView({
   return (
     <div data-testid="milestone-map" className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 px-4 py-2">
-        <div
-          role="radiogroup"
+        <ToggleGroup
           aria-label="Graph of"
-          className="rounded-control border-border-chip bg-surface-secondary flex gap-0.5 border-[0.5px] p-0.5"
+          variant="outline"
+          size="sm"
+          value={[mode]}
+          onValueChange={([next]) => {
+            if (next === 'milestones' || next === 'tasks') pick(next);
+          }}
         >
-          {(['milestones', 'tasks'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="radio"
-              aria-checked={mode === m}
-              onClick={() => pick(m)}
-              className={cn(
-                'rounded-[6px] px-2.5 py-0.5 text-[12px] capitalize',
-                mode === m
-                  ? 'bg-background shadow-card font-medium'
-                  : 'text-muted-foreground'
-              )}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
+          <ToggleGroupItem value="milestones">Milestones</ToggleGroupItem>
+          <ToggleGroupItem value="tasks">Tasks</ToggleGroupItem>
+        </ToggleGroup>
         <span
           data-testid="milestone-map-summary"
           className="text-muted-foreground text-[12px] tabular-nums"
@@ -472,14 +462,13 @@ export function MilestoneMapView({
               return (
                 <section key={node.id} aria-label={titleOf.get(node.id)}>
                   <div className="flex items-center gap-3 py-2">
-                    <button
-                      type="button"
+                    <TextButton
                       onClick={() => onOpenTask(node.id, 'plan')}
                       title={`Open the flight plan for ${node.title}`}
-                      className="text-[13px] font-semibold hover:underline"
+                      className="text-[13px] font-semibold"
                     >
                       {node.title}
-                    </button>
+                    </TextButton>
                     {status !== undefined && (
                       <MilestoneStatusCells
                         status={status}
