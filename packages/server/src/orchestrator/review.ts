@@ -111,6 +111,11 @@ export interface StartReviewOptions {
   target?: ReviewTarget;
   // Who the review run acts for (see Orchestrator.dispatchAuxRun).
   operator: string | null;
+  // The branch the reviewed work was cut from (the implementer's
+  // `baseBranch`). When the branch has since been restacked onto a newer
+  // tip of it, the review range re-anchors on that newer fork point so the
+  // base's own commits never read as the run's changes. See reviewAnchor.
+  baseBranch?: string;
 }
 
 export interface ReviewPromptInput {
@@ -315,8 +320,43 @@ function git(cwd: string, args: string[]): string {
   return result.stdout;
 }
 
+// The commit a review range starts from: the newest point head's own work
+// forks from, never a tip head does not contain. Plain `base..head` would count
+// every commit the base gained after the branch was cut as the run's own work —
+// a run restacked onto a busy main drew a "changed 59 files outside its
+// declared writes" hazard for a 6-file diff. So this is three-dot semantics
+// (merge-base(base, head), the same anchor diffCommittedOnly uses), and when
+// `baseBranch` is known it moves forward to merge-base(baseBranch, head) if
+// that is newer: a fix loop pins `base` at the first fork point, and a restack
+// leaves that sha behind every main commit the rebase pulled in. A fork point
+// equal to head (the branch already landed) is ignored rather than turning the
+// range empty.
+export function reviewAnchor(
+  root: string,
+  base: string,
+  head: string,
+  baseBranch?: string
+): string {
+  const mergeBase = (a: string): string | null => {
+    const result = spawnGitSync(root, ['merge-base', a, head]);
+    return result.exitCode === 0 ? result.stdout.trim() : null;
+  };
+  const anchor = mergeBase(base) ?? base;
+  if (baseBranch === undefined) return anchor;
+  const fork = mergeBase(baseBranch);
+  if (fork === null || fork === anchor) return anchor;
+  if (spawnGitSync(root, ['rev-parse', head]).stdout.trim() === fork) {
+    return anchor;
+  }
+  const newer =
+    spawnGitSync(root, ['merge-base', '--is-ancestor', anchor, fork])
+      .exitCode === 0;
+  return newer ? fork : anchor;
+}
+
 // The files base..head actually touched, repo-relative — the ground truth
-// write-set validation and dependency scope are both measured against.
+// write-set validation and dependency scope are both measured against. `base`
+// must already be an ancestor of head (see reviewAnchor).
 function changedFiles(root: string, base: string, head: string): string[] {
   return git(root, ['diff', '--name-only', `${base}..${head}`])
     .split('\n')
@@ -852,7 +892,13 @@ export class ReviewRunner {
       model: reviewModelForRisk(task.meta.risk, models),
       operator: opts.operator,
       buildPrompt: ({ runId, worktreePath }) => {
-        const changed = changedFiles(this.ctx.rootDir, opts.base, opts.head);
+        const base = reviewAnchor(
+          this.ctx.rootDir,
+          opts.base,
+          opts.head,
+          opts.baseBranch
+        );
+        const changed = changedFiles(this.ctx.rootDir, base, opts.head);
         this.recordUndeclaredWrites(task, changed, opts.round);
         const depMap = this.ctx.depMap.get();
         const dependents = capDependencyList(
@@ -871,7 +917,7 @@ export class ReviewRunner {
         mkdirSync(reviewDir(this.ctx.rootDir, runId), { recursive: true });
         writeFileSync(
           packagePath,
-          buildDiffPackage(this.ctx.rootDir, opts.base, opts.head)
+          buildDiffPackage(this.ctx.rootDir, base, opts.head)
         );
         this.pending.set(runId, {
           taskId: opts.taskId,
@@ -888,7 +934,7 @@ export class ReviewRunner {
           task,
           round: opts.round,
           scope: opts.scope,
-          base: opts.base,
+          base,
           head: opts.head,
           openFindings: opts.openFindings,
           extraRisks: opts.extraRisks ?? [],

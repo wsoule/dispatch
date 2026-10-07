@@ -20,6 +20,7 @@ import {
   mergeRoundRobin,
   parseReviewOutput,
   planUndeclaredWriteBatch,
+  reviewAnchor,
   reviewModelForRisk,
   ReviewRunner,
   scanDestructiveWrites,
@@ -1376,6 +1377,119 @@ it('undeclaredWrites exempts .dispatch bookkeeping', () => {
       ['.dispatch/tasks/t-abc123-something.md', 'src/real-change.ts']
     )
   ).toEqual(['src/real-change.ts']);
+});
+
+// Commits one file on whatever branch is checked out and returns the new sha.
+function commitFile(path: string, content: string): string {
+  writeFileSync(join(repo, path), content);
+  runGitSync(repo, ['add', path]);
+  runGitSync(repo, ['commit', '-m', `touch ${path}`]);
+  return runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+}
+
+// A run branch cut from main, then main moving on underneath it — the shape
+// every busy day produces. Returns the fork point and the run's own head.
+function branchThenAdvanceMain(): { fork: string; head: string } {
+  const fork = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+  runGitSync(repo, ['checkout', '-q', '-b', 'dispatch/run']);
+  const head = commitFile('src.ts', 'export const answer = 42;\n');
+  runGitSync(repo, ['checkout', '-q', 'main']);
+  commitFile('main-a.ts', 'export const a = 1;\n');
+  commitFile('main-b.ts', 'export const b = 2;\n');
+  return { fork, head };
+}
+
+// Live repro 2026-08-11/12: a 6-file run drew "changed 59 files outside its
+// declared writes" because the hazard's diff counted every commit main gained
+// after the branch was cut. The range has to start where the run's own work
+// does — merge-base semantics — however far the base has moved since.
+describe('undeclared-writes hazard against a moved base', () => {
+  async function reviewHazards(opts: {
+    base: string;
+    head: string;
+    baseBranch?: string;
+  }): Promise<{ hazards: number; files: string[] }> {
+    const reviewer = new ScriptedReviewer('{"findings": []}');
+    const { runner, findingStore, ledgerStore, store } = setupReview(reviewer);
+    const task = store.create({ title: 'answer', writes: ['src.ts'] });
+    // The hazard is recorded while the prompt is built, inside startReview.
+    await runner.startReview({
+      operator: null,
+      taskId: task.meta.id,
+      round: 0,
+      scope: 'full',
+      openFindings: [],
+      ...opts,
+    });
+    return {
+      hazards: ledgerStore.list().filter((e) => e.kind === 'hazard').length,
+      files: findingStore
+        .list({ taskId: task.meta.id })
+        .flatMap((f) => f.files ?? []),
+    };
+  }
+
+  it('flags nothing when main advanced after the branch was cut', async () => {
+    const { head } = branchThenAdvanceMain();
+    const result = await reviewHazards({ base: 'main', head });
+    expect(result).toEqual({ hazards: 0, files: [] });
+  });
+
+  it('flags nothing when the branch was restacked past a pinned fork point', async () => {
+    // The fix loop pins `base` at the first fork point; the merge queue then
+    // rebases the branch onto the newer main, so the pinned sha sits behind
+    // every main commit the rebase pulled into the branch.
+    const { fork } = branchThenAdvanceMain();
+    runGitSync(repo, ['checkout', '-q', 'dispatch/run']);
+    runGitSync(repo, ['rebase', '-q', 'main']);
+    const head = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    runGitSync(repo, ['checkout', '-q', 'main']);
+
+    const result = await reviewHazards({
+      base: fork,
+      head,
+      baseBranch: 'main',
+    });
+    expect(result).toEqual({ hazards: 0, files: [] });
+  });
+
+  it('still flags a real undeclared write on a restacked branch', async () => {
+    const { fork } = branchThenAdvanceMain();
+    runGitSync(repo, ['checkout', '-q', 'dispatch/run']);
+    commitFile('stray.ts', 'export const stray = true;\n');
+    runGitSync(repo, ['rebase', '-q', 'main']);
+    const head = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    runGitSync(repo, ['checkout', '-q', 'main']);
+
+    const result = await reviewHazards({
+      base: fork,
+      head,
+      baseBranch: 'main',
+    });
+    expect(result).toEqual({ hazards: 1, files: ['stray.ts'] });
+  });
+});
+
+describe('reviewAnchor', () => {
+  it('keeps an explicit base newer than the fork point', () => {
+    // A review of only the later commits of a branch must not widen back to
+    // the branch's whole history just because baseBranch is known.
+    runGitSync(repo, ['checkout', '-q', '-b', 'dispatch/run']);
+    const mid = commitFile('one.ts', '1\n');
+    const head = commitFile('two.ts', '2\n');
+    expect(reviewAnchor(repo, mid, head, 'main')).toBe(mid);
+  });
+
+  it('keeps the base when baseBranch has already absorbed head', () => {
+    const base = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    const head = commitFile('landed.ts', 'x\n');
+    expect(reviewAnchor(repo, base, head, 'main')).toBe(base);
+  });
+
+  it('falls back to the merge base when baseBranch does not exist', () => {
+    const { fork, head } = branchThenAdvanceMain();
+    expect(reviewAnchor(repo, 'main', head, 'gone/branch')).toBe(fork);
+  });
 });
 
 describe('ReviewRunner executor choice', () => {

@@ -801,6 +801,9 @@ export class FixLoop {
     const review = await this.ctx.reviewRunner.startReview({
       taskId: state.taskId,
       base: state.baseSha,
+      // A restack onto a newer base tip would otherwise make every commit
+      // the base gained since baseSha read as this task's own changes.
+      baseBranch: this.latestRun(state.taskId, 'execute')?.baseBranch,
       head: opts.head,
       round: state.round,
       scope: opts.scope,
