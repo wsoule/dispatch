@@ -69,8 +69,12 @@ describe('TwoViewTopBar', () => {
 
   test('the posts dot shows only in Tasks', () => {
     bar({ postsDot: true, view: 'overseer' });
-    const overseerOrb = screen.getByTestId('two-views-orb');
-    expect(overseerOrb.querySelectorAll('span').length).toBe(3);
+    expect(screen.queryByTestId('two-views-orb-posts')).toBeNull();
+  });
+
+  test('the posts dot shows on the orb while Tasks is in view', () => {
+    bar({ postsDot: true, view: 'tasks' });
+    expect(screen.getByTestId('two-views-orb-posts')).toBeTruthy();
   });
 
   test('docs and threads open their pages; threads carries a quiet unread count', () => {

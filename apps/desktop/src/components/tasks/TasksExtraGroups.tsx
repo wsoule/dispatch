@@ -3,6 +3,8 @@ import { type ReactNode, useState } from 'react';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useDocList } from '../../hooks/useDocs';
 import { GroupHeader } from '@/ui/ai/group-header';
+import { ListRow } from '@/ui/ai/list-row';
+import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 
 const UNLINKED_TEAM_DOCS = { unlinked: true, scope: 'team' } as const;
@@ -35,12 +37,14 @@ function Section({
         onToggle={() => setOpen(!open)}
         actions={extra}
       />
-      {open && <ul className="flex flex-col pb-1">{children}</ul>}
+      {open && (
+        <div role="list" className="flex flex-col pb-1">
+          {children}
+        </div>
+      )}
     </section>
   );
 }
-
-const ROW = 'flex min-h-9 items-center gap-2 px-3 text-[13px]';
 
 /** The groups today's views lose: notes to convert, PRs with no task, docs with no task. */
 export function TasksExtraGroups({
@@ -74,52 +78,47 @@ export function TasksExtraGroups({
         count={notes.length}
         testId="tasks-group-notes"
         extra={
-          <button
-            type="button"
-            onClick={onOpenNotes}
-            className="text-[12px] text-(--accent) hover:underline"
-          >
+          <Button variant="link" size="xs" onClick={onOpenNotes}>
             All notes →
-          </button>
+          </Button>
         }
       >
         {notes.map((note) => (
-          <li key={note.id} className={ROW}>
-            <span className="min-w-0 flex-1 truncate">{note.text}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => void data.handleConvertInbox([note.id])}
-            >
-              Convert
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => void data.handleDismissInbox([note.id])}
-            >
-              Dismiss
-            </Button>
-          </li>
+          <ListRow
+            key={note.id}
+            role="listitem"
+            title={note.text}
+            trailing={
+              <>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => void data.handleConvertInbox([note.id])}
+                >
+                  Convert
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => void data.handleDismissInbox([note.id])}
+                >
+                  Dismiss
+                </Button>
+              </>
+            }
+          />
         ))}
       </Section>
       <Section name="Pull requests" count={prs.length} testId="tasks-group-prs">
         {prs.map((pr) => (
-          <li key={pr.number} className={ROW}>
-            <button
-              type="button"
-              onClick={() => onOpenPr(pr.number)}
-              className="min-w-0 flex-1 truncate text-left hover:underline"
-            >
-              <span className="text-muted-foreground font-mono text-[12px]">
-                #{pr.number}
-              </span>{' '}
-              {pr.title}
-            </button>
-            <span className="text-muted-foreground text-[12px]">
-              {pr.author}
-            </span>
-          </li>
+          <ListRow
+            key={pr.number}
+            role="listitem"
+            onClick={() => onOpenPr(pr.number)}
+            id={`#${pr.number}`}
+            title={pr.title}
+            date={pr.author}
+          />
         ))}
       </Section>
       {docsClient !== null && (
@@ -128,42 +127,36 @@ export function TasksExtraGroups({
           count={teamDocs.length}
           testId="tasks-group-docs"
           extra={
-            <span className="flex items-center gap-2 text-[12px]">
+            <>
               {unreviewed > 0 && (
-                <span className="text-muted-foreground rounded-chip border border-dashed border-(--text-ghost) px-1.5">
-                  {unreviewed} unreviewed
-                </span>
+                <Badge variant="outline">{unreviewed} unreviewed</Badge>
               )}
-              <button
-                type="button"
-                onClick={onOpenAllDocs}
-                className="text-(--accent) hover:underline"
-              >
+              <Button variant="link" size="xs" onClick={onOpenAllDocs}>
                 All docs →
-              </button>
-            </span>
+              </Button>
+            </>
           }
         >
           {teamDocs.map((doc) => (
-            <li key={doc.id} className={ROW}>
-              <button
-                type="button"
-                onClick={() => onOpenDoc(doc.id)}
-                className="min-w-0 flex-1 truncate text-left hover:underline"
-              >
-                {doc.title}
-              </button>
-              {doc.unreviewed && (
-                <span className="text-muted-foreground rounded-chip border border-dashed border-(--text-ghost) px-1.5 text-[11px]">
-                  unreviewed
-                </span>
-              )}
-            </li>
+            <ListRow
+              key={doc.id}
+              role="listitem"
+              onClick={() => onOpenDoc(doc.id)}
+              title={doc.title}
+              trailing={
+                doc.unreviewed ? (
+                  <Badge variant="outline">unreviewed</Badge>
+                ) : undefined
+              }
+            />
           ))}
           {personalDocs.length > 0 && (
-            <li className="text-muted-foreground px-3 py-1 text-[12px]">
+            <div
+              role="listitem"
+              className="text-muted-foreground px-3 py-1 text-[12px]"
+            >
               Personal · {personalDocs.length} · only you
-            </li>
+            </div>
           )}
         </Section>
       )}
