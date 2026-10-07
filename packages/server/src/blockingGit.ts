@@ -91,7 +91,7 @@ export function spawnGitSync(
  * spawnGitSync for any command: the same worker, deadline and watchdog
  * label. Throws when the command cannot be started at all.
  */
-export function spawnBlocking(
+function spawnBlocking(
   cmd: string[],
   cwd: string,
   opts: BlockingGitOptions = {}

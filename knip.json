@@ -20,6 +20,7 @@
       // .meta.url)` in watchdog.ts, never imported, so nothing static reaches
       // it. It is also a second `bun build --compile` entrypoint in
       // apps/desktop/scripts/build-sidecars.ts for the same reason.
+      // blockingGitWorker.ts is loaded the same way by blockingGit.ts.
       //
       // test/fixtures/watchdogTeardown.ts is spawned as a subprocess by
       // test/watchdog-teardown.test.ts (its stderr is the thing under test),
@@ -28,6 +29,7 @@
       "entry": [
         "src/index.ts",
         "src/watchdogWorker.ts",
+        "src/blockingGitWorker.ts",
         "test/fixtures/watchdogTeardown.ts",
         "test/fixtures/a2aFixturePeer.ts"
       ]

@@ -176,6 +176,7 @@ forwardable
 freviewer
 frontmatter
 fullwidth
+futex
 gelato
 getcwd
 GHSA
@@ -236,6 +237,7 @@ jsonpointer
 katex
 keepalives
 keepme
+kevent
 keycap
 keycaps
 keydowns
@@ -531,6 +533,7 @@ tybys
 typer
 typesafe
 uall
+unfetched
 urlmatch
 überblick
 ulid
