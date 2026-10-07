@@ -1126,7 +1126,13 @@ async function reviewRun(
     const meta = await ctx.prManager.openPr(runId);
     return jsonResponse(meta);
   }
-  const meta = ctx.orchestrator.review(runId, body.action);
+  // Merge goes through the queue's mergeNow so a project whose base lives on
+  // origin lands there first (and shares the queue's origin writer) instead
+  // of merging into the main checkout.
+  const meta =
+    body.action === 'merge'
+      ? await ctx.mergeQueue.mergeNow(runId)
+      : ctx.orchestrator.review(runId, body.action);
   return jsonResponse(meta);
 }
 

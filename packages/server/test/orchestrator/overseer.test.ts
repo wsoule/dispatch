@@ -390,6 +390,7 @@ describe('OverseerManager turns', () => {
       'create_task',
       'deny_run',
       'dequeue_merge',
+      'discard_run',
       'dispatch_task',
       'message_run',
       'queue_merge',

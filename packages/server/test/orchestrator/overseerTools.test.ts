@@ -1,7 +1,7 @@
 import { TaskStore } from '@dispatch-foo/core';
 import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,7 +28,11 @@ import {
 } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
 import { makeService as makeDocsService } from '../docs/fakeHost.js';
-import { initGitRepo, lateBoundOverseerMessaging } from './helpers.js';
+import {
+  initGitRepo,
+  lateBoundOverseerMessaging,
+  runGitSync,
+} from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
@@ -340,6 +344,7 @@ describe('overseer tool sets', () => {
       'create_task',
       'deny_run',
       'dequeue_merge',
+      'discard_run',
       'dispatch_task',
       'message_run',
       'queue_merge',
@@ -1237,6 +1242,163 @@ describe('mutating tools refuse an invalid target at call time', () => {
     expect(() =>
       h.registry.callMutatingTool('message_run', { runId, text: 'hello' })
     ).toThrow(`run is not live: ${runId}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// discard_run
+// ---------------------------------------------------------------------------
+
+describe('discard_run', () => {
+  // Registers an executor whose run ends `failed`; with `dirty`, it leaves an
+  // uncommitted file behind and breaks the repo's git identity so nothing can
+  // commit it, which the survey then upgrades to interrupted-dirty.
+  async function failedRun(
+    h: Harness,
+    title: string,
+    opts: { dirty?: boolean } = {}
+  ): Promise<{ runId: string; taskId: string }> {
+    const name = opts.dirty === true ? 'dirty' : 'failing';
+    if (opts.dirty === true) {
+      runGitSync(repo, ['config', 'user.email', '']);
+      runGitSync(repo, ['config', 'user.name', '']);
+    }
+    h.orchestrator.registerExecutor(
+      name,
+      new FakeExecutor({
+        steps:
+          opts.dirty === true
+            ? [
+                {
+                  write: (cwd) => {
+                    writeFileSync(join(cwd, 'oops.txt'), 'leftover\n');
+                  },
+                  commit: false,
+                },
+              ]
+            : [],
+        finish: { state: 'failed', sessionId: 'sess-f', error: 'limit' },
+      })
+    );
+    return dispatchUntil(
+      h,
+      title,
+      name,
+      opts.dirty === true ? 'interrupted-dirty' : 'failed'
+    );
+  }
+
+  it('describes the discard of a failed run without touching it', async () => {
+    const h = makeHarness();
+    const { runId } = await failedRun(h, 'Broke');
+
+    const action = h.registry.callMutatingTool('discard_run', { runId });
+    expect(action.summary).toBe(`Discard run ${runId} ("Broke", failed)`);
+    await tick();
+    const meta = h.orchestrator.getRun(runId)?.meta;
+    expect(meta?.reviewedAt).toBeUndefined();
+    expect(existsSync(meta?.worktreePath ?? '')).toBe(true);
+  });
+
+  it('discards a failed run once confirmed, as the confirming human', async () => {
+    const h = makeHarness();
+    const { runId, taskId } = await failedRun(h, 'Broke');
+    const worktree = h.orchestrator.getRun(runId)?.meta.worktreePath ?? '';
+
+    const action = h.registry.callMutatingTool('discard_run', { runId });
+    await h.registry.applyAction(action.id, CONFIRMED);
+
+    const meta = h.orchestrator.getRun(runId)?.meta;
+    expect(meta?.reviewAction).toBe('discard');
+    expect(existsSync(worktree)).toBe(false);
+    expect(h.store.get(taskId)?.body).toContain(`run ${runId} discarded`);
+  });
+
+  it('warns on the card that an interrupted-dirty run loses its uncommitted changes', async () => {
+    const h = makeHarness();
+    const { runId } = await failedRun(h, 'Died mid-write', { dirty: true });
+
+    const action = h.registry.callMutatingTool('discard_run', { runId });
+    expect(action.summary).toBe(
+      `Discard run ${runId} ("Died mid-write", interrupted-dirty, dropping its uncommitted changes with no undo)`
+    );
+  });
+
+  it('discards several runs on one card', async () => {
+    const h = makeHarness();
+    const first = await failedRun(h, 'One');
+    const second = await dispatchUntil(h, 'Two', 'fake', 'finished');
+
+    const action = h.registry.callMutatingTool('discard_run', {
+      runIds: [first.runId, second.runId],
+    });
+    expect(action.summary).toBe(
+      `Discard 2 runs: ${first.runId} ("One", failed); ${second.runId} ("Two", finished)`
+    );
+    await h.registry.applyAction(action.id, CONFIRMED);
+
+    for (const id of [first.runId, second.runId]) {
+      expect(h.orchestrator.getRun(id)?.meta.reviewAction).toBe('discard');
+    }
+  });
+
+  it('rejects an unknown run, and needs exactly one of runId and runIds', () => {
+    const h = makeHarness();
+    expect(() =>
+      h.registry.callMutatingTool('discard_run', { runId: 'r-ghost0' })
+    ).toThrow('run not found: r-ghost0');
+    expect(() => h.registry.callMutatingTool('discard_run', {})).toThrow(
+      'give exactly one of runId, runIds'
+    );
+  });
+
+  it('rejects a run listed twice on one card', async () => {
+    const h = makeHarness();
+    const { runId } = await failedRun(h, 'Twice');
+    expect(() =>
+      h.registry.callMutatingTool('discard_run', { runIds: [runId, runId] })
+    ).toThrow(`run listed twice: ${runId}`);
+  });
+
+  it('rejects a live run, pointing at cancel_run', async () => {
+    const h = makeHarness();
+    const { runId } = await dispatchUntil(h, 'Long one', 'slow', 'running');
+    expect(() => h.registry.callMutatingTool('discard_run', { runId })).toThrow(
+      `run is still live: ${runId} (cancel it with cancel_run first)`
+    );
+  });
+
+  it('rejects a run already merged or already discarded', async () => {
+    const h = makeHarness();
+    const merged = await dispatchUntil(h, 'Landed', 'fake', 'finished');
+    h.orchestrator.review(merged.runId, 'merge');
+    expect(() =>
+      h.registry.callMutatingTool('discard_run', { runId: merged.runId })
+    ).toThrow(`run already merged: ${merged.runId}`);
+
+    const gone = await failedRun(h, 'Gone');
+    h.orchestrator.review(gone.runId, 'discard');
+    expect(() =>
+      h.registry.callMutatingTool('discard_run', { runId: gone.runId })
+    ).toThrow(`run already discarded: ${gone.runId}`);
+  });
+
+  it('rejects a run in the merge queue, and refuses the whole card for one bad id', async () => {
+    const h = makeHarness();
+    const { runId } = await dispatchUntil(h, 'Held', 'fake', 'finished');
+    writeFileSync(join(repo, 'stray-download.zip'), 'nope\n');
+    h.mergeQueue.enqueue(runId);
+    await waitFor(
+      () => h.mergeQueue.snapshot().entries[0]?.state === 'blocked-environment'
+    );
+    const other = await failedRun(h, 'Fine');
+
+    expect(() =>
+      h.registry.callMutatingTool('discard_run', {
+        runIds: [other.runId, runId],
+      })
+    ).toThrow(`run is in the merge queue: ${runId}`);
+    expect(h.registry.listPending()).toHaveLength(0);
   });
 });
 

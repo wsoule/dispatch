@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
+import { OriginWriter } from '../../src/git/originWriter.js';
 import { BoardSyncer } from '../../src/sync/boardSyncer.js';
 import type { GitRunner } from '../../src/sync/worktree.js';
 import { defaultGitRunner, SyncWorktree } from '../../src/sync/worktree.js';
@@ -991,6 +992,53 @@ describe('BoardSyncer network runner', () => {
         syncCalls.some((args) => args[0] === 'pull' || args[0] === 'push')
       ).toBe(false);
       expect(syncCalls.some((args) => args[0] === 'commit')).toBe(true);
+    } finally {
+      cleanupClone(a);
+      cleanupClone(b);
+    }
+  });
+});
+
+// The board syncer and the merge queue's origin landings push to the same
+// trunk. Sharing one OriginWriter is what stops them racing each other.
+describe('BoardSyncer with a shared OriginWriter', () => {
+  it('waits for a landing holding the writer before it pulls or pushes', async () => {
+    const { a, b } = twoClones();
+    try {
+      const networkCalls: string[] = [];
+      const worktree = SyncWorktree.open(a, run);
+      if (worktree === null) throw new Error('expected a resolvable trunk');
+      const actor = ActorContext.resolve(a, gitReaderFor(a));
+      const writer = new OriginWriter();
+      const syncer = new BoardSyncer(
+        a,
+        worktree,
+        actor,
+        run,
+        (cwd, args) => {
+          networkCalls.push(args[0] ?? '');
+          return Promise.resolve(run(cwd, args));
+        },
+        writer
+      );
+      new TaskStore(a).create({ title: 'queued behind a landing' });
+
+      let releaseLanding: () => void = () => {};
+      const landing = writer.exclusive(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseLanding = resolve;
+          })
+      );
+      const sync = syncer.syncOnce();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(networkCalls).toEqual([]);
+
+      releaseLanding();
+      await landing;
+      const result = await sync;
+      expect(result.state).toBe('idle');
+      expect(networkCalls).toEqual(['pull', 'push']);
     } finally {
       cleanupClone(a);
       cleanupClone(b);

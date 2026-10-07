@@ -121,7 +121,7 @@ import {
   TERMINAL_RUN_STATES,
 } from './types.js';
 import type { RunUsage } from './usage.js';
-import type { DiffResult } from './worktree.js';
+import type { DiffResult, FollowResult } from './worktree.js';
 import { WorktreeManager } from './worktree.js';
 
 /**
@@ -2787,22 +2787,7 @@ export class Orchestrator {
       throw new OrchestratorClientError(`invalid review action: ${action}`);
     }
     const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
-    const meta = this.requireRun(runId);
-    if (!TERMINAL_RUN_STATES.has(meta.state)) {
-      throw new OrchestratorConflictError(
-        `run is not in a terminal state: ${runId} (state: ${meta.state})`
-      );
-    }
-    if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
-    }
-    // Discarding blocked work is exactly what a human should still be able to
-    // do; merging it is the thing the ruling exists to prevent.
-    if (action === 'merge') {
-      const blocked = this.blockedFindingReason(meta.taskId);
-      if (blocked !== null) throw new OrchestratorConflictError(blocked);
-    }
-    this.requireNoOpenPr(meta);
+    const meta = this.requireReviewable(runId, action);
     const now = new Date().toISOString();
 
     // Everything above this line is a refusal — the run was never touched.
@@ -2867,6 +2852,184 @@ export class Orchestrator {
     const reviewed = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewed);
     return reviewed;
+  }
+
+  // Every refusal review() makes before it touches anything. Public so the
+  // origin-first landing (OriginLander) turns away exactly the same runs
+  // before it fetches anything: live, already reviewed, blocked by a finding,
+  // or owned by an open PR.
+  requireReviewable(runId: string, action: 'merge' | 'discard'): RunMeta {
+    const meta = this.requireRun(runId);
+    if (!TERMINAL_RUN_STATES.has(meta.state)) {
+      throw new OrchestratorConflictError(
+        `run is not in a terminal state: ${runId} (state: ${meta.state})`
+      );
+    }
+    if (meta.reviewedAt !== undefined) {
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
+    }
+    // Discarding blocked work is exactly what a human should still be able to
+    // do; merging it is the thing the ruling exists to prevent.
+    if (action === 'merge') {
+      const blocked = this.blockedFindingReason(meta.taskId);
+      if (blocked !== null) throw new OrchestratorConflictError(blocked);
+    }
+    this.requireNoOpenPr(meta);
+    return meta;
+  }
+
+  // ---------------------------------------------------------------------
+  // Origin-first merges. On a project whose base branch lives on origin, a
+  // merge lands on origin's copy of the branch and the main checkout follows
+  // it, rather than the old order (merge locally, push later). OriginLander
+  // owns the network half (fetch, push, retry) and calls the three methods
+  // below for everything local. Splitting it this way keeps every network
+  // call on the injectable CommandRunner seam and every bookkeeping write
+  // here, next to review()'s own.
+  // ---------------------------------------------------------------------
+
+  /**
+   * Whether merging `meta` lands on origin first instead of in the main
+   * checkout. True when the project has an `origin` remote that already
+   * carries the run's base branch (its remote-tracking ref exists).
+   *
+   * Everything else keeps the local merge unchanged: no remote, a remote that
+   * has never seen the base branch, or an epic integration branch. Epic
+   * branches are local-only by design and land on the default base as a
+   * whole later.
+   */
+  landsOnOrigin(meta: RunMeta): boolean {
+    if (isEpicBranch(meta.baseBranch)) return false;
+    if (!this.worktrees.hasOriginRemote()) return false;
+    return this.worktrees.originBaseTip(meta.baseBranch) !== null;
+  }
+
+  /**
+   * Builds the squash commit that will land `runId` on top of `ontoCommit`
+   * (origin's freshly fetched tip), without moving any ref. Runs review()'s
+   * merge refusals first, so a landing is turned away exactly where a local
+   * merge would be.
+   *
+   * `commit` is undefined when there is nothing to push: the branch carries
+   * no committed changes, or its content is already on origin (the squash
+   * tree equals the tip's tree). The landing still records the run as merged
+   * in that case, same as mergeRun's no-changes path.
+   *
+   * A content conflict is a 409 naming the files, matching the local path.
+   */
+  prepareOriginLanding(
+    runId: string,
+    ontoCommit: string
+  ): { commit: string | undefined; diff: DiffResult } {
+    const meta = this.requireReviewable(runId, 'merge');
+    if (!existsSync(meta.worktreePath)) {
+      throw new OrchestratorConflictError(
+        `worktree is gone: ${meta.worktreePath} — re-dispatch the task or discard this run`
+      );
+    }
+    // Committed-only, for the reason mergeRun gives: the squash carries only
+    // what is reachable from the branch.
+    const diff = this.worktrees.diffCommittedOnly(
+      meta.worktreePath,
+      ontoCommit
+    );
+    if (diff.files.length === 0) return { commit: undefined, diff };
+    let commit: string;
+    try {
+      commit = this.worktrees.squashCommitOnto(
+        ontoCommit,
+        meta.branch,
+        `dispatch: ${meta.taskTitle} (run ${meta.id})`
+      );
+    } catch (err) {
+      throw new OrchestratorConflictError((err as Error).message);
+    }
+    if (this.worktrees.treeOf(commit) === this.worktrees.treeOf(ontoCommit)) {
+      return { commit: undefined, diff };
+    }
+    return { commit, diff };
+  }
+
+  /**
+   * Records a run as merged once its squash commit is on origin: the same
+   * bookkeeping review('merge') does, minus the local commit. The task file
+   * moves to the landed status but is not committed, the same as an epic-branch
+   * or PR landing; the board syncer carries it to trunk.
+   *
+   * `mergeCommit` is the sha origin now has, so the run reads as pushed the
+   * moment it is recorded. "Merged locally, push pending" never exists for it.
+   */
+  completeOriginLanding(
+    runId: string,
+    mergeCommit: string | undefined,
+    diff: DiffResult,
+    actor: string | undefined
+  ): RunMeta {
+    const meta = this.requireRun(runId);
+    // The push already happened, so this only guards against recording a
+    // second review on a run someone reviewed while the push was in flight.
+    if (meta.reviewedAt !== undefined) {
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
+    }
+    const now = new Date().toISOString();
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: this.statuses().roles.landed,
+        appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch} on origin`,
+        activityActor: actor,
+      },
+      now
+    );
+    this.persistDiffSnapshot(meta, diff);
+    this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+    this.transition(runId, meta.state, {
+      reviewedAt: now,
+      reviewAction: 'merge',
+      mergeCommit,
+      ...(meta.reviewFailure !== undefined ? { reviewFailure: null } : {}),
+    });
+    this.closeSupersededPredecessors(runId, now, mergeCommit);
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    const reviewed = this.registry.get(runId)!;
+    this.invokeHooksSafely(this.reviewedHooks, reviewed);
+    return reviewed;
+  }
+
+  // A landing attempt that threw, recorded the way a failed review() is so
+  // the run shows why it is still unmerged.
+  recordOriginLandingFailure(
+    runId: string,
+    err: unknown,
+    actor: string | undefined
+  ): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    this.recordReviewFailure(
+      meta,
+      'merge',
+      err,
+      new Date().toISOString(),
+      actor
+    );
+  }
+
+  /**
+   * Fast-forwards the local `base` branch to origin's copy. This is how the
+   * main checkout follows origin after a landing. It never blocks or undoes
+   * a landing: a checkout that cannot fast-forward (dirty file in the way,
+   * local commits origin lacks) stays behind and is retried next time. See
+   * WorktreeManager.fastForwardToOrigin.
+   */
+  followOrigin(base: string): FollowResult {
+    return this.worktrees.fastForwardToOrigin(base, this.currentMainBranch());
+  }
+
+  // The actor review() would credit when none is given: the daemon's human.
+  defaultReviewActor(): string | undefined {
+    return this.ctx.actorContext?.humanRef;
   }
 
   // Once a run merges, walks its `resumedFrom` chain and marks every

@@ -107,6 +107,15 @@ describe('labels', () => {
   test('a GitHub hold reads as waiting on GitHub', () => {
     expect(queueStateLabel('waiting-github')).toBe('Waiting on GitHub');
   });
+
+  // Origin-first merges: a merged entry says where the work went, so an
+  // origin landing never reads like a local merge still waiting on a push.
+  test('a merged entry names where it landed', () => {
+    expect(queueStateLabel('merged', 'origin')).toBe('landed on origin');
+    expect(queueStateLabel('merged', 'local')).toBe('merged locally');
+    expect(queueStateLabel('merged', 'pr')).toBe('merged');
+    expect(queueStateLabel('merged')).toBe('merged');
+  });
 });
 
 describe('named verify steps', () => {
