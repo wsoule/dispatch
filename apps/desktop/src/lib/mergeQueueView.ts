@@ -1,4 +1,8 @@
-import type { MergeQueueEntryState, VerifyStepResult } from '@dispatch/client';
+import type {
+  MergeQueueEntry,
+  MergeQueueEntryState,
+  VerifyStepResult,
+} from '@dispatch/client';
 
 import type { Step } from '@/ui/chrome/StepStrip';
 
@@ -88,15 +92,25 @@ export function phaseSteps(
   }));
 }
 
-/** What the entry is doing, phrased for someone scanning the queue. */
-export function queueStateLabel(state: MergeQueueEntryState): string {
+/** What the entry is doing, phrased for someone scanning the queue.
+ *
+ * A merged entry says where its work went. "landed on origin" is the
+ * origin-first path: the merge was a push, so nothing is left to push. A local
+ * merge on a project with a remote still owes the drain-push, which is why it
+ * says "merged locally" rather than claiming it is on origin. */
+export function queueStateLabel(
+  state: MergeQueueEntryState,
+  landedOn?: MergeQueueEntry['landedOn']
+): string {
   switch (state) {
     case 'queued':
       return 'queued';
     case 'waiting-blockers':
       return 'waiting on blockers';
     case 'blocked-environment':
-      return 'held: checkout not clean';
+      // A dirty checkout (local merges) or an unreachable origin (origin
+      // landings); the entry's reason names which.
+      return 'held: retrying';
     case 'waiting-github':
       return 'Waiting on GitHub';
     case 'rebasing':
@@ -106,7 +120,11 @@ export function queueStateLabel(state: MergeQueueEntryState): string {
     case 'merging':
       return 'merging';
     case 'merged':
-      return 'merged';
+      return landedOn === 'origin'
+        ? 'landed on origin'
+        : landedOn === 'local'
+          ? 'merged locally'
+          : 'merged';
     case 'failed':
       return 'failed';
   }

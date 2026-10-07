@@ -2225,6 +2225,14 @@ export interface MergeQueueEntry {
   enqueuedAt: string;
   /** Set only once an entry lands in `merged`/`failed`. */
   finishedAt?: string;
+  /**
+   * Where a `merged` entry's work went: 'origin' when it landed on the
+   * remote's base branch as part of the merge (origin-first projects),
+   * 'local' when it merged into the main checkout (no remote, or a remote
+   * without the base branch), 'pr' when GitHub merged its PR. Absent on
+   * entries recorded before the field existed.
+   */
+  landedOn?: 'origin' | 'local' | 'pr';
 }
 
 // The body of `GET /api/merge-queue` — mirrors MergeQueueSnapshot in

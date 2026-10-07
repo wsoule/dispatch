@@ -2,6 +2,7 @@ import type { ActorContext } from '@dispatch-foo/core';
 import { loadConfig } from '@dispatch-foo/core';
 
 import type { EventBus } from '../events.js';
+import type { OriginWriter } from '../git/originWriter.js';
 import { markBlockingSection } from '../watchdog.js';
 import type { SyncResult } from './boardSyncer.js';
 import { BoardSyncer } from './boardSyncer.js';
@@ -24,6 +25,8 @@ export interface BoardSyncSchedulerDeps {
    * DEFAULT_PERIODIC_MS; tests pass something much shorter.
    */
   periodicMs?: number;
+  /** Serializes this syncer's pull/push with the merge queue's landings. */
+  originWriter?: OriginWriter;
 }
 
 // Mirrors LinearSync's DEFAULT_PUSH_DEBOUNCE_MS shape/purpose: long enough to
@@ -63,7 +66,8 @@ export class BoardSyncScheduler {
       deps.worktree,
       deps.actor,
       deps.run,
-      deps.runAsync
+      deps.runAsync,
+      deps.originWriter
     );
     // Runs unconditionally so a config edit re-enabling autoCommit takes
     // effect on the next tick without a restart — the gate is checked fresh

@@ -150,7 +150,7 @@ export function LandingRow({
     pr !== undefined
       ? `${pr.headRefName} → ${pr.baseRefName}`
       : queue !== undefined
-        ? queueStateLabel(queue.entry.state)
+        ? queueStateLabel(queue.entry.state, queue.entry.landedOn)
         : undefined;
   const crumbWithRuns =
     extraRuns !== undefined && extraRuns > 0

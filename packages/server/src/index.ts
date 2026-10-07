@@ -85,6 +85,7 @@ import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
+import { OriginWriter } from './git/originWriter.js';
 import { resolvePushTarget } from './gitTarget.js';
 import { sha256, TokenRegistry } from './identity.js';
 import { IdleShutdown } from './idleShutdown.js';
@@ -138,6 +139,7 @@ import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
+import { OriginLander } from './orchestrator/originLanding.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import {
@@ -1177,6 +1179,10 @@ async function bootServer(
     store instanceof TaskStore
       ? SyncWorktree.open(rootDir, defaultGitRunner)
       : null;
+  // The one serialized writer to origin's default branch, shared by the board
+  // syncer below and the merge queue's origin-first landings, so neither
+  // push races the other's. See OriginWriter.
+  const originWriter = new OriginWriter();
   const boardSyncScheduler =
     syncWorktree === null
       ? null
@@ -1189,6 +1195,7 @@ async function bootServer(
           events,
           debounceMs: opts.boardSyncDebounceMs,
           periodicMs: opts.boardSyncPeriodicMs,
+          originWriter,
         });
   if (boardSyncScheduler === null && store instanceof TaskStore) {
     console.log(
@@ -1962,6 +1969,12 @@ async function bootServer(
       jj,
       prState: (url) => prManager.cachedPrByUrl(url),
       cacheReady: () => prManager.cacheReady(),
+      lander: new OriginLander({
+        rootDir,
+        orchestrator,
+        run: opts.prCommandRunner ?? defaultCommandRunner,
+        writer: originWriter,
+      }),
     },
     opts.prCommandRunner
   );

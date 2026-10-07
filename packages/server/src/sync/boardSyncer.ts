@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { basename, join } from 'node:path';
 
+import type { OriginWriter } from '../git/originWriter.js';
 import type { AsyncGitRunner, GitRunner, SyncWorktree } from './worktree.js';
 
 export interface SyncResult {
@@ -55,13 +56,24 @@ export class BoardSyncer {
     private readonly worktree: SyncWorktree,
     private readonly actor: ActorContext,
     private readonly run: GitRunner,
-    runAsync?: AsyncGitRunner
+    runAsync?: AsyncGitRunner,
+    // Shared with the merge queue's OriginLander in production, so a board
+    // push and a run landing on the same trunk never interleave their
+    // fetch → push sequences. Absent in tests that build a syncer alone.
+    private readonly originWriter?: OriginWriter
   ) {
     this.runAsync =
       runAsync ?? ((cwd, args) => Promise.resolve(this.run(cwd, args)));
   }
 
-  async syncOnce(): Promise<SyncResult> {
+  // The whole pass holds the origin writer: its pull and push bracket the
+  // window another writer's push would otherwise land in.
+  syncOnce(): Promise<SyncResult> {
+    if (this.originWriter === undefined) return this.syncOnceUnlocked();
+    return this.originWriter.exclusive(() => this.syncOnceUnlocked());
+  }
+
+  private async syncOnceUnlocked(): Promise<SyncResult> {
     this.worktree.ensure();
 
     const localStore = new TaskStore(this.rootDir);
