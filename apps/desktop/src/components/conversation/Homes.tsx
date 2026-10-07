@@ -9,6 +9,7 @@ import type { RefAction } from '../../lib/threadSources';
 import { TasksPageHeader } from '../tasks/TasksPageHeader';
 import { ConversationTimeline } from './ConversationTimeline';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
+import { Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 
@@ -157,19 +158,16 @@ export function RoomHome({
       <div className="shadow-hairline-bottom flex flex-wrap items-center gap-1.5 px-4 py-2">
         <SectionLabel count={members.length}>Members</SectionLabel>
         {members.slice(0, 8).map((member) => (
-          <span
-            key={member}
-            className="rounded-control border-border-chip flex h-[22px] items-center gap-1.5 border-[0.5px] px-2 text-[11.5px] text-(--text-secondary)"
-          >
+          <Pill key={member} className="pl-1">
             <InitialsAvatar
               name={memberLabel(member, data.people)}
-              className="size-3.5 text-[7px]"
+              className="size-4 text-[7px]"
             />
             {memberLabel(member, data.people)}
-          </span>
+          </Pill>
         ))}
         {members.length > 8 && (
-          <span className="text-muted-foreground text-[11.5px]">
+          <span className="text-muted-foreground text-[12px]">
             +{members.length - 8}
           </span>
         )}

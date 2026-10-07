@@ -9,7 +9,7 @@ import {
   sendProblem,
   toSendInput,
 } from '../../lib/composer';
-import { cn } from '@/lib/utils';
+import { InlineSegmented } from '@/ui/ai/inline-segmented';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
 
@@ -212,29 +212,12 @@ export function HomeComposer({
       />
       {/* Wraps in a peek's narrow drawer rather than clipping the send button. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-        <div
-          role="radiogroup"
-          aria-label="Kind"
-          className="rounded-control border-border-chip flex gap-0.5 border-[0.5px] p-0.5"
-        >
-          {kinds.map((k) => (
-            <button
-              key={k}
-              type="button"
-              role="radio"
-              aria-checked={kind === k}
-              onClick={() => setKind(k)}
-              className={cn(
-                'rounded-[6px] px-2 py-0.5 text-[12px]',
-                kind === k
-                  ? 'bg-surface-active font-medium'
-                  : 'text-muted-foreground'
-              )}
-            >
-              {KIND_LABEL[k]}
-            </button>
-          ))}
-        </div>
+        <InlineSegmented<HomeKind>
+          label="Kind"
+          options={kinds.map((k) => ({ id: k, label: KIND_LABEL[k] }))}
+          value={kind}
+          onChange={setKind}
+        />
         <span className="text-muted-foreground min-w-[140px] flex-1 text-[11px]">
           {kind === 'comment'
             ? 'Synced to the team and Linear · wakes no agent'
