@@ -26,6 +26,7 @@ import {
   useRunReviewThreads,
 } from '../../../hooks/useRunData';
 import { fixLoopNeedsRuling } from '../../../lib/fixLoopStatus';
+import { landButtonLabel, mergeLadderState } from '../../../lib/mergeLadder';
 import {
   readCriteriaChecks,
   writeCriteriaChecks,
@@ -38,6 +39,7 @@ import {
 import { reviewedRun } from '../../../lib/taskPageMode';
 import { diffStat } from '../../../lib/taskTimeline';
 import { DiffEmptyState } from '../../runs/DiffEmptyState';
+import { LandedAs } from '../../runs/LandedAs';
 import { PierreReviewDiff } from '../../runs/PierreReviewDiff';
 import { QueueMergeControl } from '../../runs/QueueMergeControl';
 import { ReviewCasePanel } from '../../runs/ReviewCasePanel';
@@ -199,7 +201,19 @@ function Verdict({
       </>
     );
   }
-  if (reviewed) return null;
+  // A reviewed run says where its work went. A merge that never reached origin
+  // carries its retry here, so the page that offered Land also owns the fix.
+  if (reviewed) {
+    return mergeLadderState(run) === 'unmerged' ? null : (
+      <span className="text-[12px]">
+        <LandedAs
+          run={run}
+          originWebUrl={project.health?.originWebUrl}
+          onPublish={project.handlePublishRun}
+        />
+      </span>
+    );
+  }
   const canOpenPr = project.health?.pr === true;
   return (
     <>
@@ -230,7 +244,7 @@ function Verdict({
           onClick={() => act(() => project.handleReview(run.id, 'merge'))}
         >
           <GitMerge />
-          Land
+          {landButtonLabel(run)}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger

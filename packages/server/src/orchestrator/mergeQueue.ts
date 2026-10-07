@@ -1403,6 +1403,16 @@ export class MergeQueue {
     return this.ctx.orchestrator.review(runId, 'merge');
   }
 
+  /**
+   * The retry for a run merged into the local base that never reached origin
+   * ("Merged locally — not on GitHub yet"): replays its squash onto origin
+   * through the same lander and OriginWriter a landing uses. See
+   * OriginLander.publish.
+   */
+  async publish(runId: string): Promise<RunMeta> {
+    return (await this.lander.publish(runId)).run;
+  }
+
   // Works through both restack backlogs — blockers that just merged, and runs
   // that just became safe to touch — one item at a time. Never throws:
   // restacking is repair work that runs *after* a merge already succeeded, so

@@ -132,6 +132,102 @@ export class OriginLander {
     return { run, mergeCommit: landed.commit, follow };
   }
 
+  /**
+   * The one-click retry for a run that merged into the LOCAL base but never
+   * reached origin: replays its squash onto origin's current tip and pushes
+   * it, under the same writer and with the same rejected-push retry as a
+   * landing. Origin has usually moved on by then (the 2026-10-06 case was 53
+   * commits behind), so pushing the local base itself would either be refused
+   * or publish unrelated local commits along with it. Only this run's change
+   * is carried.
+   *
+   * The run's merge commit becomes the sha origin now has. The local base
+   * still holds the original squash, so it can no longer fast-forward; a
+   * `git pull --rebase` drops that copy because its patch is already
+   * upstream. `follow` reports whether the checkout caught up.
+   */
+  async publish(
+    runId: string,
+    opts: { actor?: string } = {}
+  ): Promise<OriginLanding> {
+    const { orchestrator } = this.deps;
+    const actor = opts.actor ?? orchestrator.defaultReviewActor();
+    const { commit, base } = orchestrator.requirePublishable(runId);
+    const onOrigin = await this.writer.exclusive(() =>
+      this.pushReplay(commit, base)
+    );
+    const run = orchestrator.recordPublished(runId, onOrigin, actor);
+    return { run, mergeCommit: onOrigin, follow: this.follow(base) };
+  }
+
+  // publish()'s network half, run while holding the writer. Returns the sha
+  // that carries `commit`'s change on origin.
+  private async pushReplay(commit: string, base: string): Promise<string> {
+    const { rootDir, run, orchestrator } = this.deps;
+    for (let attempt = 1; ; attempt++) {
+      const fetch = await run(rootDir, ['git', 'fetch', 'origin', base]);
+      if (!fetch.ok) throw landingError('fetch', base, fetch);
+      const tipSha = await this.originTip(base);
+      // Already there: someone pushed the local base after all.
+      const contained = await run(rootDir, [
+        'git',
+        'merge-base',
+        '--is-ancestor',
+        commit,
+        tipSha,
+      ]);
+      if (contained.ok) return commit;
+      const parent = await run(rootDir, ['git', 'rev-parse', `${commit}^`]);
+      // Origin is exactly where the squash was built: push the squash itself,
+      // so local and origin agree on the sha and the checkout can follow.
+      let replayed: string;
+      if (parent.ok && parent.stdout.trim() === tipSha) {
+        replayed = commit;
+      } else {
+        try {
+          replayed = orchestrator.replayOntoOrigin(tipSha, commit);
+        } catch (err) {
+          throw new OrchestratorConflictError((err as Error).message);
+        }
+        // The change is already on origin by another route (a hand
+        // cherry-pick, say): nothing to push, and origin's tip carries it.
+        if (orchestrator.sameTree(replayed, tipSha)) return tipSha;
+      }
+      const push = await run(rootDir, [
+        'git',
+        'push',
+        'origin',
+        `${replayed}:refs/heads/${base}`,
+      ]);
+      if (push.ok) return replayed;
+      if (!STALE_PUSH.test(outputOf(push))) {
+        throw landingError('push', base, push);
+      }
+      if (attempt >= MAX_PUSH_ATTEMPTS) {
+        throw new OrchestratorConflictError(
+          `origin/${base} kept moving during the publish (${MAX_PUSH_ATTEMPTS} attempts rejected) — retry once it settles`
+        );
+      }
+    }
+  }
+
+  // The commit origin's freshly fetched `base` points at.
+  private async originTip(base: string): Promise<string> {
+    const tip = await this.deps.run(this.deps.rootDir, [
+      'git',
+      'rev-parse',
+      '--verify',
+      `refs/remotes/origin/${base}^{commit}`,
+    ]);
+    const tipSha = tip.stdout.trim();
+    if (!tip.ok || tipSha === '') {
+      throw new OrchestratorConflictError(
+        `origin has no ${base} branch to land on`
+      );
+    }
+    return tipSha;
+  }
+
   // Step 1, run while holding the writer. Returns the commit origin now has
   // (or undefined when the run had nothing to add) plus the diff to snapshot.
   private async pushLanding(
@@ -142,18 +238,7 @@ export class OriginLander {
     for (let attempt = 1; ; attempt++) {
       const fetch = await run(rootDir, ['git', 'fetch', 'origin', base]);
       if (!fetch.ok) throw landingError('fetch', base, fetch);
-      const tip = await run(rootDir, [
-        'git',
-        'rev-parse',
-        '--verify',
-        `refs/remotes/origin/${base}^{commit}`,
-      ]);
-      const tipSha = tip.stdout.trim();
-      if (!tip.ok || tipSha === '') {
-        throw new OrchestratorConflictError(
-          `origin has no ${base} branch to land on`
-        );
-      }
+      const tipSha = await this.originTip(base);
       const prepared = orchestrator.prepareOriginLanding(meta.id, tipSha);
       if (prepared.commit === undefined) return prepared;
       const push = await run(rootDir, [

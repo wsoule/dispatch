@@ -64,6 +64,8 @@ const SUCCESS_MESSAGES: Record<string, SuccessSpec> = {
   handleMergeAllReady: { message: 'Ready work queued to merge' },
   handleReview: { message: 'Review recorded' },
   handleOpenPr: { message: 'Pull request opened' },
+  // Its effect is on GitHub, the one place this app is not showing you.
+  handlePublishRun: { message: 'Pushed to origin' },
   handleFreeBranchDisk: { message: 'Worktree reclaimed' },
   handleDeleteBranch: { message: 'Branch deleted' },
   handleArchiveRun: { message: 'Run archived' },

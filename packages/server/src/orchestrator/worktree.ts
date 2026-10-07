@@ -95,6 +95,17 @@ function originHeadBranch(result: CommandResult): string | null {
   return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
 }
 
+// A GitHub remote URL (scp-style, ssh:// or https://, with or without
+// `.git`) as the repository's browser URL; undefined for any other host.
+export function githubWebUrl(remote: string): string | undefined {
+  const match = remote.match(
+    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/(?:[^@/]+@)?github\.com\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/
+  );
+  return match === null
+    ? undefined
+    : `https://github.com/${match[1]}/${match[2]}`;
+}
+
 function currentBranchName(result: CommandResult): string {
   if (!result.ok) {
     throw new Error(
@@ -893,6 +904,93 @@ export class WorktreeManager {
   // (same tree as its parent) from one worth pushing.
   treeOf(commit: string): string {
     return this.resolveCommit(`${commit}^{tree}`);
+  }
+
+  /**
+   * Cherry-picks one commit onto `ontoCommit` with plumbing and returns the
+   * new commit's sha, moving no ref and touching no checkout.
+   *
+   * This is how a squash that only ever reached the LOCAL base gets published:
+   * origin has usually moved on since, so the squash is replayed onto origin's
+   * tip and that is pushed. The three-way merge uses the commit's own parent as
+   * its base, so only that commit's change is carried, not whatever else the
+   * local base holds that origin lacks. A conflict throws, naming the files.
+   */
+  replayCommitOnto(ontoCommit: string, commit: string): string {
+    const mergeTree = runGit(this.mainRepoDir, [
+      'merge-tree',
+      '--write-tree',
+      '--name-only',
+      `--merge-base=${commit}^`,
+      ontoCommit,
+      commit,
+    ]);
+    const lines = mergeTree.stdout.split('\n');
+    if (mergeTree.exitCode === 1) {
+      const conflicted: string[] = [];
+      for (const line of lines.slice(1)) {
+        if (line.trim() === '') break;
+        conflicted.push(line.trim());
+      }
+      throw new Error(
+        `replaying ${commit.slice(0, 7)} onto origin has conflicts: ${conflicted.join(', ')}`
+      );
+    }
+    if (!mergeTree.ok) {
+      throw new Error(`git merge-tree failed: ${mergeTree.stderr.trim()}`);
+    }
+    const message = runGit(this.mainRepoDir, [
+      'log',
+      '-1',
+      '--format=%B',
+      commit,
+    ]);
+    const created = runGit(this.mainRepoDir, [
+      'commit-tree',
+      lines[0]?.trim() ?? '',
+      '-p',
+      ontoCommit,
+      '-m',
+      message.ok ? message.stdout.trim() : `replay ${commit}`,
+    ]);
+    if (!created.ok) {
+      throw new Error(`git commit-tree failed: ${created.stderr.trim()}`);
+    }
+    return created.stdout.trim();
+  }
+
+  /**
+   * The browser URL of origin's repository, for links to a landed commit.
+   * Only GitHub-shaped remotes (`git@github.com:o/r.git`,
+   * `https://github.com/o/r`) have one; anything else (a bare path, another
+   * host) is undefined, and surfaces show the sha without a link.
+   */
+  originWebUrl(): string | undefined {
+    const result = runGit(this.mainRepoDir, ['remote', 'get-url', 'origin']);
+    return result.ok ? githubWebUrl(result.stdout.trim()) : undefined;
+  }
+
+  /**
+   * The newest release tag (`v*`, by version order) and the commit it names,
+   * or null when the repo has none. "Did it ship?" is answered against this
+   * one tag: a landed commit it contains is released, anything newer is not.
+   */
+  latestReleaseTag(): { tag: string; commit: string } | null {
+    const tags = runGit(this.mainRepoDir, [
+      'tag',
+      '--list',
+      'v*',
+      '--sort=-v:refname',
+    ]);
+    const tag = tags.ok ? tags.stdout.split('\n')[0]?.trim() : undefined;
+    if (tag === undefined || tag === '') return null;
+    const commit = runGit(this.mainRepoDir, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `refs/tags/${tag}^{commit}`,
+    ]);
+    return commit.ok ? { tag, commit: commit.stdout.trim() } : null;
   }
 
   /**

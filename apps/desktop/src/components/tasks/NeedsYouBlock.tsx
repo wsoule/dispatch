@@ -89,7 +89,8 @@ function kindLabel(item: DecisionItem): string {
     case 'fix-loop-capped':
       return 'fix loop';
     case 'run-stalled':
-      return 'stalled';
+      // Merged, but only on this machine: not stalled work, an unfinished landing.
+      return item.reason === 'not-on-origin' ? 'not pushed' : 'stalled';
   }
 }
 

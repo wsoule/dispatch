@@ -175,12 +175,15 @@ describe('the mode follows the task', () => {
             reviewedAt: '2026-09-23T11:00:00.000Z',
             reviewAction: 'merge',
             mergeCommit: 'abc1234def',
+            landsOn: 'origin',
+            pushedToOrigin: true,
           }),
         ],
       })
     );
     expect(modeOf()).toBe('summary');
-    expect(screen.getByText('Merged into main')).not.toBeNull();
+    // Where it landed, never a bare "merged": origin and the branch, then the sha.
+    expect(screen.getByText('Landed on origin/main')).not.toBeNull();
     expect(screen.getByText('abc1234')).not.toBeNull();
   });
 

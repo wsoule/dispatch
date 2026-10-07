@@ -31,12 +31,7 @@ export function MergeLadderPill({
     <LabelPill
       color={mergeLadderTint(state)}
       data-merge-ladder={state}
-      title={mergeLadderLabel(
-        state,
-        meta?.branch,
-        meta?.mergeCommit,
-        meta?.prUrl
-      )}
+      title={mergeLadderLabel(meta)}
       className={className}
     >
       {mergeLadderPillLabel(state)}

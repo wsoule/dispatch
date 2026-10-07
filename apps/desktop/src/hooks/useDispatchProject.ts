@@ -478,8 +478,10 @@ export interface DispatchProjectData {
   // queue) reads the unfiltered `runs` above on purpose.
   visibleRuns: RunMeta[];
   /** GET /api/health, undefined until it loads. `storageBackend` is absent
-   *  on daemons older than it. */
-  health: Pick<HealthPayload, 'pr' | 'storageBackend'> | undefined;
+   *  on daemons older than it; `originWebUrl` without a GitHub remote. */
+  health:
+    | Pick<HealthPayload, 'pr' | 'storageBackend' | 'originWebUrl'>
+    | undefined;
   readyIds: Set<string>;
   blockedIds: Set<string>;
   epics: TaskListItem[];
@@ -766,6 +768,9 @@ export interface DispatchProjectData {
   /** Hides a run from the Runs list, or brings it back. Nothing is deleted. */
   handleArchiveRun: (runId: string, archived: boolean) => Promise<void>;
   handleReview: (runId: string, action: 'merge' | 'discard') => Promise<void>;
+  /** The retry for a run merged locally that never reached origin ("Merged locally —
+   * not on GitHub yet"): replays its squash onto origin's tip. */
+  handlePublishRun: (runId: string) => Promise<void>;
   handleRequestChanges: (runId: string, text: string) => Promise<void>;
   handleOpenPr: (runId: string) => Promise<void>;
   /** Starts a fan-out session on an epic. A bare number is the pre-fan-out
@@ -2644,6 +2649,15 @@ export function useDispatchProject(
     [client, queryClient, runsQueryKey]
   );
 
+  const handlePublishRun = useCallback(
+    async (runId: string): Promise<void> => {
+      if (client === null) return;
+      await client.publishRun(runId);
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+    },
+    [client, queryClient, runsQueryKey]
+  );
+
   const handleRequestChanges = useCallback(
     async (runId: string, text: string): Promise<void> => {
       if (client === null) return;
@@ -3297,6 +3311,7 @@ export function useDispatchProject(
       handleStopRun,
       handleArchiveRun,
       handleReview,
+      handlePublishRun,
       handleRequestChanges,
       handleOpenPr,
       handleWorkEpic,
@@ -3443,6 +3458,7 @@ export function useDispatchProject(
       handleStopRun,
       handleArchiveRun,
       handleReview,
+      handlePublishRun,
       handleRequestChanges,
       handleOpenPr,
       handleWorkEpic,

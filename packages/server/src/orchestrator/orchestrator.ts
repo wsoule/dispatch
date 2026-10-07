@@ -91,6 +91,7 @@ import type {
   ApprovalGatePort,
   BranchEntry,
   BranchEntryStatus,
+  DecoratedRunMeta,
   DocsPromptPort,
   Executor,
   ExecutorEvents,
@@ -476,6 +477,14 @@ export class Orchestrator {
     string,
     { tip: string; commits: Map<string, boolean> }
   >();
+  // The newest release tag last seen and which merge commits it contains.
+  // See releasedMerges.
+  private releasedAtTag:
+    | { tag: string; commits: Map<string, boolean> }
+    | undefined;
+  // origin's browser URL, read once: a remote's URL does not change under a
+  // running daemon often enough to spawn git on every health probe.
+  private cachedOriginWebUrl: { url: string | undefined } | null = null;
   private readonly claimsRefreshCooldownMs: number;
   // Pending "this stop has taken too long" timers, keyed by run — see
   // scheduleStopEscalation, and transition() for where they are cleared.
@@ -892,28 +901,125 @@ export class Orchestrator {
     return this.registry.pendingApprovals(runId);
   }
 
-  // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
-  // persisted). Memoizes by (mergeCommit, baseBranch) so runs sharing a base pay once.
-  decorateRunsWithPushed(
-    runs: RunMeta[]
-  ): (RunMeta & { pushedToOrigin?: boolean })[] {
+  // Adds where each finished run lands (or landed) to its meta, computed fresh
+  // per request (never persisted):
+  // - `pushedToOrigin` on every merged run: whether its merge commit is on
+  //   origin's copy of its base. Memoized by (mergeCommit, baseBranch) so runs
+  //   sharing a base pay once.
+  // - `landsOn` on every finished run that is unreviewed or merged: 'origin'
+  //   when Land pushes to origin (the project has a remote), 'local' when it
+  //   merges into the local base only (no remote, or an epic branch).
+  // - `release` on merged runs that reached origin: the newest release tag and
+  //   whether it contains the merge, so "did it ship?" has an answer.
+  decorateRunsWithPushed(runs: RunMeta[]): DecoratedRunMeta[] {
     const merged = runs.flatMap((run) =>
       run.reviewAction === 'merge' && run.mergeCommit !== undefined
         ? [{ commit: run.mergeCommit, base: run.baseBranch }]
         : []
     );
-    // Asked only when some run is merged: a board with none spawns no git.
-    const hasOrigin = merged.length > 0 && this.worktrees.hasOriginRemote();
-    const isPushed = hasOrigin ? this.pushedMerges(merged) : () => false;
+    const landable = runs.some(
+      (run) =>
+        TERMINAL_RUN_STATES.has(run.state) &&
+        (run.reviewedAt === undefined || run.reviewAction === 'merge')
+    );
+    // Asked only when some run is landable or merged: a board with none
+    // spawns no git.
+    const hasOrigin = landable && this.worktrees.hasOriginRemote();
+    const isPushed =
+      hasOrigin && merged.length > 0 ? this.pushedMerges(merged) : () => false;
+    const release =
+      hasOrigin && merged.length > 0 ? this.releasedMerges(merged) : null;
     return runs.map((run) => {
-      if (run.reviewAction !== 'merge' || run.mergeCommit === undefined) {
-        return run;
-      }
+      if (!TERMINAL_RUN_STATES.has(run.state)) return run;
+      const isMerged =
+        run.reviewAction === 'merge' && run.mergeCommit !== undefined;
+      if (run.reviewedAt !== undefined && !isMerged) return run;
+      const landsOn =
+        hasOrigin && !isEpicBranch(run.baseBranch) ? 'origin' : 'local';
+      if (!isMerged) return { ...run, landsOn };
+      const pushedToOrigin = isPushed(run.mergeCommit!, run.baseBranch);
+      const tag = pushedToOrigin ? release?.(run.mergeCommit!) : undefined;
       return {
         ...run,
-        pushedToOrigin: isPushed(run.mergeCommit, run.baseBranch),
+        landsOn,
+        pushedToOrigin,
+        ...(tag === undefined ? {} : { release: tag }),
       };
     });
+  }
+
+  /**
+   * Whether each merge commit is in the newest release tag. Like pushedMerges
+   * this is one `git rev-list` per tag, cached until the tag changes. Null
+   * when the repo has no release tags, so no run claims "not released yet"
+   * on a project that does not cut releases.
+   */
+  private releasedMerges(
+    merges: readonly { commit: string }[]
+  ): ((commit: string) => { tag: string; included: boolean }) | null {
+    const latest = this.worktrees.latestReleaseTag();
+    if (latest === null) return null;
+    if (this.releasedAtTag?.tag !== latest.tag) {
+      this.releasedAtTag = { tag: latest.tag, commits: new Map() };
+    }
+    const known = this.releasedAtTag.commits;
+    const unknown = [
+      ...new Set(merges.map((m) => m.commit).filter((c) => !known.has(c))),
+    ];
+    const full = unknown.filter((c) => FULL_SHA.test(c));
+    const missing =
+      full.length > 0 ? this.worktrees.commitsNotOn(full, latest.commit) : null;
+    for (const commit of unknown) {
+      known.set(
+        commit,
+        missing !== null && FULL_SHA.test(commit)
+          ? !missing.has(commit)
+          : this.worktrees.isMergedInto(commit, latest.commit)
+      );
+    }
+    return (commit) => ({
+      tag: latest.tag,
+      included: known.get(commit) ?? false,
+    });
+  }
+
+  /**
+   * Merged runs whose work never reached origin although the project has
+   * one: the split-brain of a squash that landed on the local base only (a
+   * merge from before origin-first landings, or a push that failed). The
+   * newest merged run per task, epic bases excluded (those are local by
+   * design), archived runs excluded. The decision feed raises each as
+   * "merged locally, not on GitHub yet" and the publish endpoint retries it.
+   */
+  unpublishedMerges(): RunMeta[] {
+    const newest = new Map<string, RunMeta>();
+    for (const run of this.registry.list()) {
+      if (run.reviewAction !== 'merge' || run.mergeCommit === undefined) {
+        continue;
+      }
+      if (!newest.has(run.taskId)) newest.set(run.taskId, run);
+    }
+    const candidates = [...newest.values()].filter(
+      (run) => run.archivedAt === undefined && !isEpicBranch(run.baseBranch)
+    );
+    if (candidates.length === 0 || !this.worktrees.hasOriginRemote()) {
+      return [];
+    }
+    const isPushed = this.pushedMerges(
+      candidates.map((run) => ({
+        commit: run.mergeCommit!,
+        base: run.baseBranch,
+      }))
+    );
+    return candidates.filter(
+      (run) => !isPushed(run.mergeCommit!, run.baseBranch)
+    );
+  }
+
+  /** origin's browser URL when it is on GitHub, for links to landed commits. */
+  originWebUrl(): string | undefined {
+    this.cachedOriginWebUrl ??= { url: this.worktrees.originWebUrl() };
+    return this.cachedOriginWebUrl.url;
   }
 
   /**
@@ -2788,6 +2894,16 @@ export class Orchestrator {
     }
     const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
     const meta = this.requireReviewable(runId, action);
+    // With a remote, a merge lands on origin through OriginLander (the merge
+    // queue, and the API's Merge via MergeQueue.mergeNow). A squash into the
+    // local base alone is how a "landed" run once sat unpushed while origin
+    // shipped two releases without it, so this path refuses rather than
+    // quietly doing it again.
+    if (action === 'merge' && this.landsOnOrigin(meta)) {
+      throw new OrchestratorConflictError(
+        `run ${runId} lands on origin/${meta.baseBranch}, not the local ${meta.baseBranch} alone — merge it through the merge queue or the Land button`
+      );
+    }
     const now = new Date().toISOString();
 
     // Everything above this line is a refusal — the run was never touched.
@@ -2890,18 +3006,19 @@ export class Orchestrator {
 
   /**
    * Whether merging `meta` lands on origin first instead of in the main
-   * checkout. True when the project has an `origin` remote that already
-   * carries the run's base branch (its remote-tracking ref exists).
+   * checkout. True whenever the project has an `origin` remote, unless the
+   * run's base is an epic integration branch: those are local-only by design
+   * and land on the default base as a whole later.
    *
-   * Everything else keeps the local merge unchanged: no remote, a remote that
-   * has never seen the base branch, or an epic integration branch. Epic
-   * branches are local-only by design and land on the default base as a
-   * whole later.
+   * Deliberately not conditional on a remote-tracking ref for the base
+   * existing yet. The landing fetches before it does anything, and a remote
+   * that genuinely lacks the base refuses the landing with a reason. Falling
+   * back to a local merge there would be the "landed, but only on this
+   * laptop" split this exists to remove.
    */
   landsOnOrigin(meta: RunMeta): boolean {
     if (isEpicBranch(meta.baseBranch)) return false;
-    if (!this.worktrees.hasOriginRemote()) return false;
-    return this.worktrees.originBaseTip(meta.baseBranch) !== null;
+    return this.worktrees.hasOriginRemote();
   }
 
   /**
@@ -3027,9 +3144,72 @@ export class Orchestrator {
     return this.worktrees.fastForwardToOrigin(base, this.currentMainBranch());
   }
 
+  // publish()'s two local git steps, kept here so OriginLander never reaches
+  // into WorktreeManager: replay one commit onto origin's tip, and compare
+  // two commits' trees.
+  replayOntoOrigin(ontoCommit: string, commit: string): string {
+    return this.worktrees.replayCommitOnto(ontoCommit, commit);
+  }
+
+  sameTree(a: string, b: string): boolean {
+    return this.worktrees.treeOf(a) === this.worktrees.treeOf(b);
+  }
+
   // The actor review() would credit when none is given: the daemon's human.
   defaultReviewActor(): string | undefined {
     return this.ctx.actorContext?.humanRef;
+  }
+
+  /**
+   * The merge commit a publish retry should carry to origin: `runId` must be
+   * a merged run whose squash sits on the local base only. Refuses anything
+   * else (unmerged, a PR merge, an epic base, no remote) with a 409.
+   */
+  requirePublishable(runId: string): { commit: string; base: string } {
+    const meta = this.requireRun(runId);
+    if (meta.reviewAction !== 'merge' || meta.mergeCommit === undefined) {
+      throw new OrchestratorConflictError(
+        `run ${runId} has no local merge to publish`
+      );
+    }
+    if (!this.landsOnOrigin(meta)) {
+      throw new OrchestratorConflictError(
+        `run ${runId} merged into ${meta.baseBranch}, which does not live on origin`
+      );
+    }
+    return { commit: meta.mergeCommit, base: meta.baseBranch };
+  }
+
+  /**
+   * Records that a locally merged run's work is now on origin as `onOrigin`
+   * (the replayed squash, or origin's tip when the content was already
+   * there). The run keeps its review; only its merge commit moves, so every
+   * surface that asks "is this on origin?" now answers yes.
+   */
+  recordPublished(
+    runId: string,
+    onOrigin: string,
+    actor: string | undefined
+  ): RunMeta {
+    const meta = this.requireRun(runId);
+    const now = new Date().toISOString();
+    this.transition(runId, meta.state, {
+      reviewedAt: meta.reviewedAt,
+      reviewAction: 'merge',
+      mergeCommit: onOrigin,
+    });
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        appendActivity: `${now} run ${meta.id} published to origin/${meta.baseBranch} as ${onOrigin.slice(0, 7)}`,
+        activityActor: actor,
+      },
+      now
+    );
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return this.registry.get(runId)!;
   }
 
   // Once a run merges, walks its `resumedFrom` chain and marks every

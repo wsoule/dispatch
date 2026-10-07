@@ -4,7 +4,6 @@ import {
   statusLabel,
 } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import { ArrowUpRight, GitCommitHorizontal } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
@@ -20,11 +19,13 @@ import {
   rollupOutcome,
 } from '../../../lib/containerRollup';
 import { taskLedgerEntries } from '../../../lib/ledgerScope';
+import { mergeLadderState } from '../../../lib/mergeLadder';
 import { modelLabel } from '../../../lib/models';
 import { formatShortDate } from '../../../lib/taskDates';
 import { taskIndexOf } from '../../../lib/taskIndex';
 import { taskTimeline } from '../../../lib/taskTimeline';
 import { flightScope } from '../../flightplan/flightScope';
+import { LandedAs } from '../../runs/LandedAs';
 import { RunStatePill } from '../../runs/RunStatePill';
 import { MemoryReachSection } from '../detail/MemoryReachSection';
 import { ReceiptsSection } from '../detail/ReceiptsSection';
@@ -34,7 +35,6 @@ import { StatusIcon } from '../StatusIcon';
 import { ActivityTimeline } from './ActivityTimeline';
 import type { TaskPageModel } from './pageModel';
 import { FilesTouched } from './RunStrip';
-import { Pill } from '@/ui/ai/pill';
 import { formatElapsed } from '@/ui/ai/use-elapsed';
 
 function Figure({ label, children }: { label: string; children: ReactNode }) {
@@ -67,38 +67,15 @@ function span(runs: readonly RunMeta[]): string | null {
   return formatElapsed(ms);
 }
 
-/** Where a run's work landed: its merge commit (and whether it reached origin), its PR. */
-function LandedAs({ run }: { run: RunMeta }) {
-  return (
-    <>
-      {run.mergeCommit !== undefined && (
-        <Pill className="font-mono font-normal" title={run.mergeCommit}>
-          <GitCommitHorizontal />
-          {run.mergeCommit.slice(0, 7)}
-        </Pill>
-      )}
-      {run.pushedToOrigin === true && (
-        <span className="text-muted-foreground">· pushed</span>
-      )}
-      {run.prUrl !== undefined && (
-        <a href={run.prUrl} target="_blank" rel="noreferrer">
-          <Pill className="hover:bg-surface-active">
-            Pull request
-            <ArrowUpRight className="text-muted-foreground" />
-          </Pill>
-        </a>
-      )}
-    </>
-  );
-}
-
 /** A container's sub-issues, each with its status and where its work landed. */
 function SubIssueOutcomes({
   rollup,
   onOpenTask,
+  originWebUrl,
 }: {
   rollup: ContainerRollup;
   onOpenTask: (taskId: string) => void;
+  originWebUrl: string | undefined;
 }) {
   if (rollup.subIssues.length === 0) return null;
   return (
@@ -124,7 +101,7 @@ function SubIssueOutcomes({
             </button>
             {landedBy !== undefined && (
               <span className="font-book flex shrink-0 items-center gap-2 text-[12px]">
-                <LandedAs run={landedBy} />
+                <LandedAs run={landedBy} originWebUrl={originWebUrl} />
               </span>
             )}
           </li>
@@ -186,13 +163,12 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
       ? rollupOutcome(rollup)
       : canceled
         ? 'No work landed.'
-        : landed?.mergeCommit !== undefined
-          ? `Merged into ${landed.baseBranch}`
-          : landed?.prUrl !== undefined
-            ? 'Landed through a pull request'
-            : done
-              ? 'Closed without an agent run here.'
-              : 'Not finished yet.';
+        : // A landed run says where it went itself (LandedAs below).
+          mergeLadderState(landed) !== 'unmerged'
+          ? null
+          : done
+            ? 'Closed without an agent run here.'
+            : 'Not finished yet.';
 
   return (
     <div data-slot="summary-mode" className="flex flex-col gap-6 px-4 pb-10">
@@ -207,8 +183,14 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
           </span>
         </div>
         <div className="font-book flex flex-wrap items-center gap-2 text-[13px] text-(--text-secondary)">
-          <span>{outcome}</span>
-          {landed !== undefined && <LandedAs run={landed} />}
+          {outcome !== null && <span>{outcome}</span>}
+          {landed !== undefined && (
+            <LandedAs
+              run={landed}
+              originWebUrl={project.health?.originWebUrl}
+              onPublish={project.handlePublishRun}
+            />
+          )}
         </div>
         {runs.length > 0 && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -224,7 +206,11 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
       </section>
 
       {rollup !== null && (
-        <SubIssueOutcomes rollup={rollup} onOpenTask={page.openTask} />
+        <SubIssueOutcomes
+          rollup={rollup}
+          onOpenTask={page.openTask}
+          originWebUrl={project.health?.originWebUrl}
+        />
       )}
 
       {rollup === null && runs.length > 0 && (

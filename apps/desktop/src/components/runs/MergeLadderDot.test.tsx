@@ -36,7 +36,7 @@ describe('MergeLadderPill', () => {
     expect(el?.textContent).toBe('Not merged');
   });
 
-  test('a local squash-merge is a label pill with the waiting tint', () => {
+  test('a squash that never reached the remote is a label pill with the waiting tint', () => {
     const { container } = render(
       <MergeLadderPill
         meta={run({ reviewAction: 'merge', mergeCommit: 'abcdef1234567' })}
@@ -45,8 +45,8 @@ describe('MergeLadderPill', () => {
     const el = pill(container);
     expect(el?.dataset['slot']).toBe('label-pill');
     expect(el?.dataset['mergeLadder']).toBe('merged-local');
-    expect(el?.textContent).toBe('Merged locally');
-    expect(el?.title).toBe('on dispatch/t-abc123, not pushed');
+    expect(el?.textContent).toBe('Not on GitHub');
+    expect(el?.title).toBe('Merged locally — not on GitHub yet');
     const dot = el?.querySelector<HTMLElement>('[aria-hidden]');
     expect(dot?.style.backgroundColor).toBe('var(--state-waiting-fg)');
   });
@@ -64,7 +64,7 @@ describe('MergeLadderPill', () => {
     const el = pill(container);
     expect(el?.dataset['mergeLadder']).toBe('on-origin');
     expect(el?.textContent).toBe('On origin');
-    expect(el?.title).toBe('in origin (abcdef1)');
+    expect(el?.title).toBe('Landed on origin/main · abcdef1');
     expect(
       el?.querySelector<HTMLElement>('[aria-hidden]')?.style.backgroundColor
     ).toBe('var(--state-landing-fg)');

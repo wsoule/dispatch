@@ -7,6 +7,7 @@ import type {
   LandingRow,
   LandingSnapshot,
   RepoPr,
+  RunMeta,
 } from '@dispatch/client';
 
 import { activeStatusModel } from './statusModel';
@@ -342,4 +343,26 @@ export function landedFromTasks(
       title: t.meta.title,
       landedAt: t.meta.updated,
     }));
+}
+
+/**
+ * Each task's most recently landed run (merged, or merged through its PR), so a
+ * landed row can say where the work went — origin with its sha, locally, or
+ * "Merged locally — not on GitHub yet" — instead of a bare "landed".
+ */
+export function landedRunByTask(
+  runs: readonly RunMeta[]
+): ReadonlyMap<string, RunMeta> {
+  const out = new Map<string, RunMeta>();
+  for (const run of runs) {
+    const landed =
+      (run.reviewAction === 'merge' && run.mergeCommit !== undefined) ||
+      run.reviewAction === 'pr';
+    if (!landed || run.reviewedAt === undefined) continue;
+    const seen = out.get(run.taskId);
+    if (seen === undefined || (seen.reviewedAt ?? '') < run.reviewedAt) {
+      out.set(run.taskId, run);
+    }
+  }
+  return out;
 }

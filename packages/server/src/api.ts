@@ -5387,6 +5387,9 @@ export async function handleApi(
         // Phase 5 P1: whether this project can use the PR review action
         // (gh on PATH + a configured git remote), detected once at boot.
         pr: ctx.prCapability,
+        // origin's browser URL when it is on GitHub, so a landed run can
+        // link its commit. Absent with no remote or a non-GitHub one.
+        originWebUrl: ctx.orchestrator.originWebUrl(),
         // Who is answering and what it will run. On 2026-09-08 a fleet ran
         // on the wrong model for two days and nothing surfaced it, and two
         // daemons served one root with only `ps` able to tell them apart.
@@ -6026,7 +6029,12 @@ export async function handleApi(
         if (result === null) {
           return errorResponse(404, `run not found: ${segments[1]}`);
         }
-        return jsonResponse(result);
+        // The same landing fields the list carries, so run detail can say
+        // where its work went.
+        return jsonResponse({
+          ...result,
+          meta: ctx.orchestrator.decorateRunsWithPushed([result.meta])[0],
+        });
       }
       if (
         segments.length === 3 &&
@@ -6053,6 +6061,17 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      // POST /api/runs/:id/publish — the one-click retry for a run that
+      // merged into the local base but never reached origin. Replays its
+      // squash onto origin's tip; returns the run with its new merge commit.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'publish' &&
+        method === 'POST'
+      ) {
+        const meta = await ctx.mergeQueue.publish(segments[1]);
+        return jsonResponse(ctx.orchestrator.decorateRunsWithPushed([meta])[0]);
       }
       // GET /api/runs/:id/approvals/:requestId — the full input of a call the
       // run is parked on; its gate carries only a preview.

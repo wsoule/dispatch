@@ -709,6 +709,8 @@ export interface ApiClient {
     runId: string,
     action: 'merge' | 'discard' | 'pr'
   ): Promise<RunMeta>;
+  // Replays a locally merged run's squash onto origin when it never got there.
+  publishRun(runId: string): Promise<RunMeta>;
   startPlan(prompt: string, planner?: string): Promise<{ planId: string }>;
   getPlan(planId: string): Promise<PlanRecord>;
   sendPlanMessage(planId: string, text: string): Promise<PlanRecord>;
@@ -1160,6 +1162,8 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/runs/${runId}/review`, {
         ...jsonBody({ action }),
       }),
+    publishRun: (runId) =>
+      request(target, `/api/runs/${runId}/publish`, { method: 'POST' }),
     startPlan: (prompt, planner) =>
       request(target, '/api/plan', {
         ...jsonBody(planner !== undefined ? { prompt, planner } : { prompt }),

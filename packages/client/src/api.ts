@@ -69,6 +69,9 @@ export interface HealthPayload {
   // PATH + a configured git remote) — gates whether the desktop UI shows
   // the "Open PR" action at all.
   pr: boolean;
+  // origin's browser URL when it is on GitHub, for links to landed commits.
+  // Absent with no remote, a non-GitHub remote, or an older daemon.
+  originWebUrl?: string;
   // Which process is answering and what it will run — optional because a
   // daemon predating these fields still answers health without them.
   pid?: number;
@@ -249,6 +252,13 @@ export interface RunMeta {
   // Present only on merged runs (see decorateRunsWithPushed server-side) —
   // whether the merge commit has actually reached origin's base branch.
   pushedToOrigin?: boolean;
+  // Present on finished runs that are unreviewed or merged: 'origin' when
+  // Land pushes to the remote's base (the project has a remote), 'local' when
+  // it merges into the local base only (no remote, or an epic branch).
+  landsOn?: 'origin' | 'local';
+  // Present on merged runs that reached origin, when the repo has `v*` tags:
+  // the newest tag and whether it contains this run's merge commit.
+  release?: { tag: string; included: boolean };
   // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
   survey?: RunSurvey;
   // Absent on runs recorded before review runs existed; treat that as
@@ -3537,6 +3547,9 @@ export interface ApiClient {
     runId: string,
     action: 'merge' | 'discard' | 'pr'
   ): Promise<RunMeta>;
+  /** The retry for a run merged locally that never reached origin: replays
+   *  its squash onto origin's tip. Returns the run with its new merge commit. */
+  publishRun(runId: string): Promise<RunMeta>;
   // The Branches surface: every `dispatch/*` ref that exists in git right now,
   // joined with whatever run claims it. `freeBranchDisk` reclaims the working
   // copy but keeps the ref (recoverable); `deleteBranch` removes both, and
@@ -4568,6 +4581,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ action }),
       }),
+    publishRun: (runId) =>
+      request(target, `/api/runs/${runId}/publish`, { method: 'POST' }),
     fetchBranches: () => request(target, '/api/branches'),
     freeBranchDisk: (branch) =>
       request(target, '/api/branches/free-disk', {

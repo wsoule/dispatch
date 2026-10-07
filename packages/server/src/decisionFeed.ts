@@ -49,7 +49,9 @@ type StalledRunReason =
   | 'base-discarded'
   | 'interrupted-dirty'
   | 'orphan-commits'
-  | 'failed';
+  | 'failed'
+  // Merged into the local base, but the commit never reached origin.
+  | 'not-on-origin';
 
 /** One thing awaiting a human, as the daemon sees it right now. */
 export interface DecisionItem {
@@ -120,6 +122,10 @@ export type DecisionPolicy = (
  */
 interface DecisionFeedRuns {
   list(): RunMeta[];
+  /** Merged runs whose squash sits on the local base only, though the project
+   *  has a remote (Orchestrator.unpublishedMerges). Optional so a test feed
+   *  without git need not stub it. */
+  unpublishedMerges?(): RunMeta[];
   pendingApprovalFor(
     runId: string,
     requestId: string
@@ -184,6 +190,8 @@ const TRIGGER_EVENTS: ReadonlySet<ServerEvent['type']> = new Set([
   'run.survey',
   'fixloop.changed',
   'fixloop.capped',
+  // A drain or refresh can move origin, which changes which merges are on it.
+  'queue.drained',
 ]);
 
 // Every kind in this feed is something a human still has to answer, so the
@@ -299,6 +307,7 @@ const STALLED_SUMMARY: Record<StalledRunReason, string> = {
   'interrupted-dirty': 'run was interrupted with uncommitted work left behind',
   'orphan-commits': 'run failed but its agent kept committing',
   failed: 'run failed and has not been reviewed',
+  'not-on-origin': 'merged locally — not on GitHub yet',
 };
 
 /**
@@ -608,6 +617,24 @@ export class DecisionFeed {
         taskTitle: run.taskTitle,
         since: run.updatedAt,
         ageMs: ageSince(run.updatedAt, nowMs),
+        state: 'open',
+      });
+    }
+    // A "landed" run whose work is only on this machine. Never a plain landed
+    // row: it waits here until the publish retry carries it to origin (or the
+    // local base is pushed some other way and origin contains it).
+    for (const run of this.ctx.orchestrator.unpublishedMerges?.() ?? []) {
+      const since = run.reviewedAt ?? run.updatedAt;
+      items.push({
+        id: `run-stalled:${run.id}`,
+        kind: 'run-stalled',
+        summary: `${run.taskTitle}: ${STALLED_SUMMARY['not-on-origin']}`,
+        reason: 'not-on-origin',
+        runId: run.id,
+        taskId: run.taskId,
+        taskTitle: run.taskTitle,
+        since,
+        ageMs: ageSince(since, nowMs),
         state: 'open',
       });
     }

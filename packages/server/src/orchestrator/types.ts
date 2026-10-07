@@ -491,6 +491,24 @@ export interface RunMeta {
   lastStep?: RunStep;
 }
 
+/**
+ * A run as the API serves it: RunMeta plus where its work lands, computed per
+ * request by Orchestrator.decorateRunsWithPushed and never persisted.
+ */
+export type DecoratedRunMeta = RunMeta & {
+  /** Merged runs only: whether the merge commit is on origin's base. */
+  pushedToOrigin?: boolean;
+  /**
+   * Finished runs that are unreviewed or merged: 'origin' when Land pushes to
+   * the remote's base (the project has a remote), 'local' when it merges into
+   * the local base only (no remote, or an epic integration branch).
+   */
+  landsOn?: 'origin' | 'local';
+  /** Merged runs on origin, when the repo has a `v*` tag: the newest one and
+   *  whether it contains this merge. */
+  release?: { tag: string; included: boolean };
+};
+
 // A run's kind, defaulted for the transcripts and registry entries written
 // before `kind` existed.
 export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {

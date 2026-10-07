@@ -1,8 +1,9 @@
-import type { GateStatus, MergeQueueEntry } from '@dispatch/client';
+import type { GateStatus, MergeQueueEntry, RunMeta } from '@dispatch/client';
 import { Search, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { LandingRow } from '../components/landing/LandingRow';
+import { LandedAs } from '../components/runs/LandedAs';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { LandingFilters } from '../lib/landingView';
@@ -10,6 +11,7 @@ import {
   dedupeLandingRows,
   EMPTY_FILTERS,
   landedFromTasks,
+  landedRunByTask,
   readLandingFilters,
   relativeTime,
   serializeLandingFilters,
@@ -261,6 +263,9 @@ export function LandingTableView({
         <LandedList
           landed={landedTasks}
           queueLanded={snapshot.landed}
+          landedRuns={landedRunByTask(data.runs)}
+          originWebUrl={data.health?.originWebUrl}
+          onPublish={data.handlePublishRun}
           now={now}
         />
       ) : (
@@ -375,10 +380,17 @@ export function LandingTableView({
 function LandedList({
   landed,
   queueLanded,
+  landedRuns,
+  originWebUrl,
+  onPublish,
   now,
 }: {
   landed: ReturnType<typeof landedFromTasks>;
   queueLanded: NonNullable<DispatchProjectData['landing']>['landed'];
+  /** Each task's landing run: where its work went is read off it. */
+  landedRuns: ReadonlyMap<string, RunMeta>;
+  originWebUrl: string | undefined;
+  onPublish: (runId: string) => Promise<void>;
   now: number;
 }) {
   if (landed.length === 0) {
@@ -391,13 +403,24 @@ function LandedList({
           // The queue's own history enriches a row with how it landed,
           // when this daemon session still remembers it.
           const queueEntry = queueLanded.find((l) => l.title === entry.title);
+          const run = landedRuns.get(entry.id);
           return (
             <ListRow
               key={entry.id}
               role="listitem"
               title={entry.title}
               trailing={
-                queueEntry !== undefined ? (
+                // The run says where the work went (origin and sha, local, or
+                // not on GitHub yet); the queue's memory is only a fallback.
+                run !== undefined ? (
+                  <span className="text-[12px]">
+                    <LandedAs
+                      run={run}
+                      originWebUrl={originWebUrl}
+                      onPublish={onPublish}
+                    />
+                  </span>
+                ) : queueEntry !== undefined ? (
                   <>
                     <Pill>
                       {queueEntry.via === 'pr'

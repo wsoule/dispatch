@@ -14,6 +14,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     cancelRun: () => Promise.reject(new Error('not used')),
     getRunDiff: () => Promise.reject(new Error('not used')),
     reviewRun: () => Promise.reject(new Error('not used')),
+    publishRun: () => Promise.reject(new Error('not used')),
     startPlan: () => Promise.reject(new Error('not used')),
     getPlan,
     sendPlanMessage: () => Promise.reject(new Error('not used')),

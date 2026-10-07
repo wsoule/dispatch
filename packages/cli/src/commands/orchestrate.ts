@@ -705,4 +705,20 @@ export function registerOrchestrateCommands(
           (meta.prUrl !== undefined ? ` (${meta.prUrl})` : '')
       );
     });
+
+  program
+    .command('publish <runId>')
+    .description(
+      'Push a run that merged locally but never reached origin (replays its squash onto origin)'
+    )
+    .action(async (runId: string) => {
+      const { client } = await daemonFor(ctx);
+      const meta = await client.publishRun(runId);
+      ctx.log(
+        `${runId} published to origin/${meta.baseBranch}` +
+          (meta.mergeCommit !== undefined
+            ? ` (${meta.mergeCommit.slice(0, 7)})`
+            : '')
+      );
+    });
 }

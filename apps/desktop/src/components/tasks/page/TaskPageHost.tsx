@@ -45,6 +45,7 @@ export type TaskPageProject = Pick<
   | 'handleRestartDaemon'
   | 'handleRequestChanges'
   | 'handleReview'
+  | 'handlePublishRun'
   | 'handleOpenPr'
   | 'handleEnqueueMerge'
   | 'handleEnqueueMergeStack'

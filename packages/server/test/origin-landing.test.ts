@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { TaskCache } from '../src/cache.js';
+import { DecisionFeed } from '../src/decisionFeed.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
 import { OriginWriter } from '../src/git/originWriter.js';
@@ -26,7 +27,7 @@ import { MergeQueue } from '../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../src/orchestrator/orchestrator.js';
 import type { CommandResult, CommandRunner } from '../src/orchestrator/pr.js';
 import { defaultCommandRunner } from '../src/orchestrator/pr.js';
-import { WorktreeManager } from '../src/orchestrator/worktree.js';
+import { githubWebUrl, WorktreeManager } from '../src/orchestrator/worktree.js';
 import {
   initGitRepo,
   runGitSync,
@@ -457,6 +458,188 @@ describe('local fallback', () => {
 
     expect(queue.snapshot().history[0]?.landedOn).toBe('local');
     expect(existsSync(join(repo, 'feature.txt'))).toBe(true);
+  });
+});
+
+// The Merge button (API reviewRun → MergeQueue.mergeNow) and every other
+// direct merge: with a remote there is exactly one way in, and it ends on
+// origin. Without one, the local merge is still the landing and says so.
+describe('direct merges', () => {
+  it('lands the Merge button on origin when the project has a remote', async () => {
+    const harness = makeHarness();
+    const runId = await finishedRunWithFile(harness, 'button.txt');
+    const queue = makeQueue(harness, defaultCommandRunner);
+
+    const meta = await queue.mergeNow(runId);
+
+    expect(meta.reviewAction).toBe('merge');
+    expect(meta.mergeCommit).toBe(originTip());
+    expect(originHasFile('button.txt')).toBe(true);
+    const [decorated] = harness.orchestrator.decorateRunsWithPushed([meta]);
+    expect(decorated.landsOn).toBe('origin');
+    expect(decorated.pushedToOrigin).toBe(true);
+  });
+
+  it('lands on origin even before origin/<base> has been fetched locally', async () => {
+    runGitSync(repo, ['update-ref', '-d', 'refs/remotes/origin/main']);
+    const harness = makeHarness();
+    const runId = await finishedRunWithFile(harness, 'unfetched.txt');
+    const queue = makeQueue(harness, defaultCommandRunner);
+
+    await queue.mergeNow(runId);
+
+    expect(originHasFile('unfetched.txt')).toBe(true);
+  });
+
+  it('refuses a squash into the local base alone when a remote exists', async () => {
+    const harness = makeHarness();
+    const runId = await finishedRunWithFile(harness, 'local-only.txt');
+    const before = runGitSync(repo, ['rev-parse', 'main']).trim();
+
+    expect(() => harness.orchestrator.review(runId, 'merge')).toThrow(
+      /lands on origin\/main/
+    );
+    expect(runGitSync(repo, ['rev-parse', 'main']).trim()).toBe(before);
+    expect(harness.orchestrator.getRun(runId)?.meta.reviewedAt).toBeUndefined();
+  });
+
+  it('merges locally and says so when there is no remote', async () => {
+    runGitSync(repo, ['remote', 'remove', 'origin']);
+    const harness = makeHarness();
+    const runId = await finishedRunWithFile(harness, 'offline.txt');
+    const queue = makeQueue(harness, defaultCommandRunner);
+
+    const meta = await queue.mergeNow(runId);
+
+    expect(meta.mergeCommit).toBe(
+      runGitSync(repo, ['rev-parse', 'main']).trim()
+    );
+    const [decorated] = harness.orchestrator.decorateRunsWithPushed([meta]);
+    expect(decorated.landsOn).toBe('local');
+    expect(decorated.pushedToOrigin).toBe(false);
+    expect(harness.orchestrator.unpublishedMerges()).toEqual([]);
+  });
+
+  it('tells an unreviewed run where Land will put it', async () => {
+    const harness = makeHarness();
+    const runId = await finishedRunWithFile(harness, 'pending.txt');
+    const meta = harness.orchestrator.getRun(runId)!.meta;
+
+    expect(harness.orchestrator.decorateRunsWithPushed([meta])[0].landsOn).toBe(
+      'origin'
+    );
+  });
+});
+
+// The split-brain: a squash that reached the local base but not origin (the
+// 2026-10-06 case, made here by merging with the remote detached and then
+// re-attaching it while origin moves on).
+describe('merged locally, not on origin', () => {
+  async function splitBrainRun(harness: Harness, file: string) {
+    const runId = await finishedRunWithFile(harness, file);
+    runGitSync(repo, ['remote', 'remove', 'origin']);
+    harness.orchestrator.review(runId, 'merge');
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    pushFromElsewhere('teammate.txt');
+    runGitSync(repo, ['fetch', '-q', 'origin', 'main']);
+    return runId;
+  }
+
+  function feedFor(harness: Harness): DecisionFeed {
+    return new DecisionFeed({
+      orchestrator: harness.orchestrator,
+      openGates: () => [],
+      fixLoopStore: { list: () => [] },
+      cache: { get: () => null },
+      events: harness.events,
+    });
+  }
+
+  it('reaches Needs you instead of reading as landed', async () => {
+    const harness = makeHarness();
+    const runId = await splitBrainRun(harness, 'stranded.txt');
+
+    const [decorated] = harness.orchestrator.decorateRunsWithPushed([
+      harness.orchestrator.getRun(runId)!.meta,
+    ]);
+    expect(decorated.landsOn).toBe('origin');
+    expect(decorated.pushedToOrigin).toBe(false);
+
+    const items = feedFor(harness).list();
+    const item = items.find((i) => i.runId === runId);
+    expect(item?.kind).toBe('run-stalled');
+    expect(item?.reason).toBe('not-on-origin');
+    expect(item?.summary).toContain('merged locally — not on GitHub yet');
+  });
+
+  it('publishes on retry, replaying only that squash onto origin, and leaves Needs you', async () => {
+    const harness = makeHarness();
+    const runId = await splitBrainRun(harness, 'stranded.txt');
+    // A local-only commit on main that is NOT this run's: publish must not
+    // carry it to origin along with the squash.
+    writeFileSync(join(repo, 'private.txt'), 'mine\n');
+    runGitSync(repo, ['add', 'private.txt']);
+    runGitSync(repo, ['commit', '-q', '-m', 'local only']);
+    const queue = makeQueue(harness, defaultCommandRunner);
+
+    const meta = await queue.publish(runId);
+
+    expect(originHasFile('stranded.txt')).toBe(true);
+    expect(originHasFile('teammate.txt')).toBe(true);
+    expect(originHasFile('private.txt')).toBe(false);
+    expect(meta.mergeCommit).toBe(originTip());
+    expect(
+      feedFor(harness)
+        .list()
+        .some((i) => i.runId === runId)
+    ).toBe(false);
+    expect(harness.orchestrator.unpublishedMerges()).toEqual([]);
+  });
+
+  it('refuses to publish a run that never merged', async () => {
+    const harness = makeHarness();
+    const runId = await finishedRunWithFile(harness, 'unmerged.txt');
+    const queue = makeQueue(harness, defaultCommandRunner);
+
+    await expect(queue.publish(runId)).rejects.toThrow(/no local merge/);
+  });
+});
+
+describe('release tags', () => {
+  it('says whether a landed commit is in the newest release tag', async () => {
+    const harness = makeHarness();
+    const queue = makeQueue(harness, defaultCommandRunner);
+    const shipped = await queue.mergeNow(
+      await finishedRunWithFile(harness, 'shipped.txt')
+    );
+    runGitSync(repo, ['tag', 'v0.39.1', shipped.mergeCommit!]);
+    runGitSync(repo, ['tag', 'v0.9.0', shipped.mergeCommit!]);
+    const fresh = await queue.mergeNow(
+      await finishedRunWithFile(harness, 'fresh.txt')
+    );
+
+    const [a, b] = harness.orchestrator.decorateRunsWithPushed([
+      shipped,
+      fresh,
+    ]);
+    expect(a.release).toEqual({ tag: 'v0.39.1', included: true });
+    expect(b.release).toEqual({ tag: 'v0.39.1', included: false });
+  });
+});
+
+describe('githubWebUrl', () => {
+  it('reads the browser URL out of GitHub remotes only', () => {
+    expect(githubWebUrl('git@github.com:wsoule/dispatch.git')).toBe(
+      'https://github.com/wsoule/dispatch'
+    );
+    expect(githubWebUrl('https://github.com/wsoule/dispatch')).toBe(
+      'https://github.com/wsoule/dispatch'
+    );
+    expect(githubWebUrl('ssh://git@github.com/wsoule/dispatch.git')).toBe(
+      'https://github.com/wsoule/dispatch'
+    );
+    expect(githubWebUrl('/tmp/bare-origin')).toBeUndefined();
+    expect(githubWebUrl('git@gitlab.com:a/b.git')).toBeUndefined();
   });
 });
 
