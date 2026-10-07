@@ -162,23 +162,6 @@ img {
   border-color: transparent;
 }
 
-/* Product screenshots sit directly on the page: a hairline and the card radius, nothing
-   framing them. The shots are dark captures, so the hairline uses the stronger border. */
-.shot {
-  display: block;
-  width: 100%;
-  height: auto;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
-  background: var(--surface-card);
-}
-
-.caption {
-  margin-top: var(--space-3);
-  font-size: var(--site-text-sm);
-  color: var(--text-secondary);
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

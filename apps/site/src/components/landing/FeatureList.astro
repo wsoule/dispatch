@@ -1,0 +1,107 @@
+---
+// A section's footnote of features: names in two columns, each opening to a
+// one-line explanation with its "+".
+interface Props {
+  items: [string, string][];
+}
+const { items } = Astro.props;
+---
+
+<div class="features">
+  <p class="features-label">Features</p>
+  <div class="features-grid">
+    {
+      items.map(([name, text]) => (
+        <details>
+          <summary>
+            {name}
+            <span class="plus" aria-hidden="true" />
+          </summary>
+          <p>{text}</p>
+        </details>
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .features {
+    display: grid;
+    gap: 1rem 4rem;
+    margin-top: clamp(3rem, 6vw, 4.5rem);
+    padding-top: 2rem;
+    border-top: 1px solid var(--line);
+  }
+  .features-label {
+    color: var(--ink-3);
+    font-size: 0.92rem;
+  }
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem 3rem;
+  }
+  summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    color: var(--ink);
+    font-size: 0.95rem;
+    list-style: none;
+    cursor: pointer;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary:hover {
+    color: #fff;
+  }
+  /* A plus that turns into a cross when open. */
+  .plus {
+    position: relative;
+    width: 0.6rem;
+    height: 0.6rem;
+    color: var(--ink-3);
+    transition: transform 200ms var(--ease);
+  }
+  .plus::before,
+  .plus::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 1.5px;
+    background: currentColor;
+  }
+  .plus::after {
+    transform: rotate(90deg);
+  }
+  details[open] .plus {
+    transform: rotate(45deg);
+  }
+  details p {
+    max-width: 26rem;
+    padding: 0.1rem 0 0.7rem;
+    color: var(--ink-2);
+    font-size: 0.9rem;
+    animation: open 250ms var(--ease);
+  }
+  @keyframes open {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  @media (min-width: 900px) {
+    .features {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 520px) {
+    .features-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

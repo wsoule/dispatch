@@ -1,0 +1,110 @@
+---
+// Recent releases, from the repo's v* tags and their release commits.
+const releases = [
+  { v: 'v0.41.0', date: 'Oct 7, 2026', title: 'Origin-first merges', text: 'Landing merges through your remote first, and queued Overseer messages can be edited.' },
+  { v: 'v0.40.2', date: 'Oct 6, 2026', title: 'Sharper topic routing', text: 'The Overseer is better at telling a new subject from a follow-up.' },
+  { v: 'v0.40.0', date: 'Oct 6, 2026', title: 'Two views everywhere', text: 'Task pages, the graph, docs and peeks all move to Overseer and Tasks.' },
+  { v: 'v0.39.0', date: 'Oct 6, 2026', title: 'Set conversations aside', text: 'Topic routing, model and effort controls, and slash commands.' },
+];
+---
+
+<section class="feature" id="changelog" aria-labelledby="changelog-title">
+  <div class="wrap">
+    <h2 id="changelog-title">Changelog</h2>
+    <ol class="releases">
+      {
+        releases.map((r, i) => (
+          <li>
+            <span class:list={['pip', i === 0 && 'latest']} aria-hidden="true" />
+            <b>{r.title}</b>
+            <p>{r.text}</p>
+            <p class="meta">
+              <code>{r.v}</code> {r.date}
+            </p>
+          </li>
+        ))
+      }
+    </ol>
+    <a class="all" href="https://github.com/wsoule/dispatch/releases">All releases</a>
+  </div>
+</section>
+
+<style>
+  .releases {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2rem;
+    margin-top: clamp(3rem, 6vw, 4rem);
+    padding: 0;
+    list-style: none;
+  }
+  li {
+    position: relative;
+    display: grid;
+    align-content: start;
+    gap: 0.45rem;
+    padding-top: 2.6rem;
+  }
+  /* The timeline: a hairline through every release's dot. */
+  li::before {
+    content: '';
+    position: absolute;
+    top: 0.3rem;
+    right: 0;
+    left: 0;
+    border-top: 1px solid var(--line-2);
+  }
+  @media (min-width: 901px) {
+    li:not(:last-child)::before {
+      right: -2rem;
+    }
+  }
+  .pip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0.65rem;
+    height: 0.65rem;
+    border: 2px solid var(--bg);
+    border-radius: 50%;
+    background: var(--ink-3);
+  }
+  .pip.latest {
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+  }
+  b {
+    font-weight: 560;
+  }
+  li p {
+    color: var(--ink-2);
+    font-size: 0.92rem;
+  }
+  li .meta {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .meta code {
+    color: var(--ink-3);
+  }
+  .all {
+    display: inline-block;
+    margin-top: 2.5rem;
+    color: var(--ink-2);
+    font-size: 0.92rem;
+    text-decoration: none;
+  }
+  .all:hover {
+    color: var(--ink);
+  }
+  @media (max-width: 900px) {
+    .releases {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 520px) {
+    .releases {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

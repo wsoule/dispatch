@@ -1,0 +1,98 @@
+---
+import InstallCommand from './InstallCommand.astro';
+
+const demo = 'https://dispatch-demo-production-aed7.up.railway.app';
+---
+
+<section class="feature" id="demo" aria-labelledby="demo-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="demo-title">Try the real board. <em>It runs in your browser.</em></h2>
+      <p>A live Dispatch instance, running in your browser. Click around; nothing here is a video.</p>
+    </div>
+    <div class="frame panel">
+      <iframe src={`${demo}/?embed=1`} title="Live Dispatch demo" loading="lazy"></iframe>
+    </div>
+    <p class="full">
+      <a href={demo} target="_blank" rel="noopener">Open the demo full screen</a>
+    </p>
+  </div>
+</section>
+
+<section class="closing" aria-labelledby="closing-title">
+  <div class="wrap">
+    <h2 id="closing-title">Linear, for agents.<br /><em>Available today.</em></h2>
+    <p>Install the app, run <code>dispatch init</code> in a repo, and hand over your first task.</p>
+    <div class="actions">
+      <InstallCommand />
+      <a class="btn btn-primary" href="https://github.com/wsoule/dispatch/releases/latest">
+        Download for Mac
+      </a>
+    </div>
+  </div>
+</section>
+
+
+<style>
+  .frame {
+    margin: 3rem 0 0;
+    overflow: hidden;
+  }
+  iframe {
+    display: block;
+    width: 100%;
+    height: 660px;
+    border: 0;
+  }
+  @media (max-width: 720px) {
+    iframe {
+      height: 500px;
+    }
+  }
+  .full {
+    margin-top: 1rem;
+    text-align: center;
+    font-size: 0.9rem;
+  }
+  .full a {
+    color: var(--ink-2);
+    text-underline-offset: 3px;
+  }
+
+  .closing {
+    position: relative;
+    padding: clamp(6rem, 14vw, 11rem) 0;
+    overflow: hidden;
+    text-align: center;
+  }
+  .closing::before {
+    content: '';
+    position: absolute;
+    inset: 20% 10% -40%;
+    background: radial-gradient(50% 50% at 50% 50%, rgb(91 95 214 / 40%), transparent 70%);
+    filter: blur(40px);
+    pointer-events: none;
+  }
+  .closing .wrap {
+    position: relative;
+    display: grid;
+  }
+  .closing h2 {
+    font-size: clamp(3.25rem, 9vw, 7rem);
+  }
+  .closing p {
+    max-width: 34rem;
+    margin: 1.5rem auto 0;
+    color: var(--ink-2);
+    font-size: 1.15rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 2.25rem;
+  }
+
+</style>

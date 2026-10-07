@@ -1,0 +1,202 @@
+---
+// Every agent plugs into one MCP server and gets the same tools. The lines
+// are drawn in a 100x100 box stretched over the three columns, so they meet
+// the pills wherever the layout puts them.
+import FeatureList from './FeatureList.astro';
+
+const features: [string, string][] = [
+  ['Claude and Codex built in', 'Native runs with live output, turn counts and spend for both.'],
+  ['Any CLI agent', 'Declare a command in config and Dispatch can send it work.'],
+  ['Fan out', 'Send one task to several agents at once and merge the best diff.'],
+  ['Scoped per run', 'Each run gets its own MCP connection, its own worktree and its own limits.'],
+];
+
+const agents = ['Claude Code', 'Codex', 'Gemini CLI', 'Cursor', 'Your own agent'];
+const tools: [string, string][] = [
+  ['Tasks', 'task_next  task_save  task_comment'],
+  ['Messages', 'peer_list  msg_send  msg_reply'],
+  ['Docs', 'doc_save  doc_search  doc_read'],
+  ['Memory', 'memory_save  memory_search'],
+];
+const y = (i: number, n: number) => ((i + 0.5) / n) * 100;
+const curve = (x1: number, y1: number, x2: number, y2: number) =>
+  `M${x1} ${y1} C${(x1 + x2) / 2} ${y1} ${(x1 + x2) / 2} ${y2} ${x2} ${y2}`;
+---
+
+<section class="feature" id="mcp" aria-labelledby="mcp-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="mcp-title">Any agent. <em>One MCP server for all of them.</em></h2>
+      <p>
+        <code>dispatch init</code> registers one MCP server in your repo. Any agent that speaks MCP
+        can take the next task, record what it found, write a spec and ask a teammate. Switch
+        agents without switching boards.
+      </p>
+    </div>
+
+    <div class="hub">
+      <svg class="wires" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        {agents.map((_, i) => <path class="wire in" d={curve(28, y(i, agents.length), 50, 50)} style={`--d:${i * -0.4}s`} />)}
+        {tools.map((_, i) => <path class="wire out" d={curve(50, 50, 72, y(i, tools.length))} style={`--d:${i * -0.5}s`} />)}
+      </svg>
+      <ul class="agents" aria-label="Agents that connect">
+        {agents.map((a) => <li>{a}</li>)}
+      </ul>
+      <div class="core">
+        <span class="core-orb" aria-hidden="true"></span>
+        <b>Dispatch</b>
+        <span>one MCP server</span>
+      </div>
+      <dl class="tools">
+        {
+          tools.map(([k, v]) => (
+            <div>
+              <dt>{k}</dt>
+              <dd>
+                <code>{v}</code>
+              </dd>
+            </div>
+          ))
+        }
+      </dl>
+    </div>
+    <FeatureList items={features} />
+  </div>
+</section>
+
+<style>
+  .hub {
+    position: relative;
+    display: grid;
+    grid-template-columns: 28% 44% 28%;
+    align-items: stretch;
+    min-height: 24rem;
+    margin: clamp(3.5rem, 7vw, 5rem) 0 0;
+  }
+  .wires {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .wire {
+    fill: none;
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+  }
+  /* Dashes travel along each wire: requests flowing in, tools flowing out. */
+  .wire.in {
+    stroke: rgb(139 143 248 / 55%);
+    stroke-dasharray: 1 2.5;
+    animation: flow 2.2s linear infinite var(--d);
+  }
+  .wire.out {
+    stroke: rgb(63 207 142 / 45%);
+    stroke-dasharray: 1 2.5;
+    animation: flow 2.6s linear infinite var(--d);
+  }
+  @keyframes flow {
+    to {
+      stroke-dashoffset: -7;
+    }
+  }
+  .agents {
+    position: relative;
+    display: grid;
+    grid-template-rows: repeat(5, 1fr);
+    padding: 0;
+    list-style: none;
+  }
+  .agents li {
+    padding: 0.55rem 1rem;
+    margin: auto 0 auto auto;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    background: var(--panel);
+    font-size: 0.95rem;
+    font-weight: 500;
+  }
+  .agents li:last-child {
+    border-style: dashed;
+    color: var(--ink-2);
+  }
+  .core {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    align-self: center;
+    gap: 0.2rem;
+    margin: 0 auto;
+    padding: 1.6rem 2rem 1.3rem;
+    border: 1px solid rgb(139 143 248 / 40%);
+    border-radius: 20px;
+    background: radial-gradient(circle at 50% 0%, rgb(91 95 214 / 35%), var(--panel) 70%);
+    box-shadow: 0 0 80px -10px rgb(91 95 214 / 60%);
+  }
+  .core-orb {
+    width: 2.4rem;
+    height: 2.4rem;
+    margin-bottom: 0.6rem;
+    border: 3px solid var(--accent);
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 45%, transparent 48%);
+    box-shadow: 0 0 30px var(--accent);
+  }
+  .core b {
+    font-size: 1.25rem;
+    font-weight: 750;
+    letter-spacing: -0.03em;
+  }
+  .core span:last-child {
+    color: var(--ink-2);
+    font-size: 0.85rem;
+  }
+  .tools {
+    position: relative;
+    display: grid;
+    grid-template-rows: repeat(4, 1fr);
+  }
+  .tools div {
+    margin: auto 0;
+    padding: 0.6rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+  }
+  .tools dt {
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .tools code {
+    color: var(--ink-3);
+    font-size: 0.72rem;
+    white-space: pre-wrap;
+  }
+
+  @media (max-width: 820px) {
+    .hub {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1.5rem;
+      min-height: 0;
+    }
+    .wires {
+      display: none;
+    }
+    .agents {
+      display: flex;
+      grid-template-rows: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .agents li {
+      margin: 0;
+    }
+    .tools {
+      grid-template-rows: none;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.6rem;
+    }
+  }
+</style>

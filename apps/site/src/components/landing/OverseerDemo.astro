@@ -1,0 +1,656 @@
+---
+// A replica of the beta Overseer for the "talk to the project" section. It
+// plays the app's topic routing: you ask about something new mid-conversation,
+// the old conversation is set aside into Going out, a new one starts, and
+// later you bring the old one back. Meanwhile the side columns move: a landed
+// task slides out, a new run slides in, a teammate's question arrives.
+---
+
+<figure class="ow" data-ov aria-label="The Dispatch Overseer starting a new conversation when the subject changes">
+  <div class="chrome" aria-hidden="true">
+    <span class="lights"><i></i><i></i><i></i></span>
+    <span class="chrome-title"><b>Dispatch</b> storefront</span>
+  </div>
+
+  <div class="cols" aria-hidden="true">
+    <aside class="col">
+      <p class="col-head">Coming in <span data-in-n>2</span><span class="chev">›››</span></p>
+      <div class="block">
+        <p class="block-head">Needs you <span data-need-n>2</span></p>
+        <p class="group">People</p>
+        <div class="rows" data-people>
+          <p class="item"><span class="tag q">question</span><span class="it">Is discount.reason final?</span></p>
+        </div>
+        <p class="group">Outside</p>
+        <p class="item"><span class="tag p">proposal</span><span class="it">agent:dami, via A2A</span></p>
+      </div>
+      <p class="group">For you</p>
+      <p class="post"><b>priya</b> The old secret stays valid for 24h, so checkout has a day to switch.</p>
+    </aside>
+
+    <section class="mid">
+      <div class="thread" data-thread="a">
+        <p class="me">How’s checkout going?</p>
+        <p class="bot">
+          3 of 5 landed. Release notes is waiting on GitHub to merge, and Address autocomplete is
+          in review. Nothing is blocked.
+        </p>
+      </div>
+      <div class="thread" data-thread="b" hidden>
+        <p class="me">Why is the nightly build so slow?</p>
+        <p class="working" data-b-working><i class="spin"></i>The overseer is working…</p>
+        <p class="bot" data-b-reply hidden>
+          It reinstalls every dependency on each run: 9 of its 14 minutes. I can file a task to
+          cache them.
+        </p>
+        <div class="card" data-b-card hidden>
+          <p class="card-head"><span class="need">Needs your approval</span><code>create_task</code></p>
+          <p class="card-title">Cache dependencies in the nightly build</p>
+          <p class="acts" data-b-acts><span class="ok" data-b-ok>Approve<i class="cursor"></i></span><span>Deny</span></p>
+          <p class="applied" data-b-applied hidden>✓ Filed t-7c21e0 and started it</p>
+        </div>
+      </div>
+
+      <p class="topic" data-topic hidden>
+        New topic, so a new conversation · <span data-topic-title>“How’s checkout going?”</span> is set
+        aside <span class="put-back" data-put-back>Put it back<i class="cursor"></i></span>
+      </p>
+      <div class="composer" data-composer>
+        <p class="input"><span data-typed></span><i class="caret"></i><span class="ph">say something</span></p>
+        <p class="tools"><span>Opus 5.5</span><span>Default</span><i class="send"></i></p>
+      </div>
+    </section>
+
+    <aside class="col">
+      <p class="col-head">Going out <span data-out-n>2</span><span class="chev">›››</span></p>
+      <p class="group">Running</p>
+      <div class="rows" data-running>
+        <p class="run"><i class="pulse"></i><span class="it">Address autocomplete</span><span class="step">in review</span></p>
+      </div>
+      <p class="group">Landing</p>
+      <div class="rows" data-landing>
+        <p class="run land" data-release><span class="it">Release notes</span><span class="step">waiting github</span></p>
+      </div>
+      <p class="group">Set aside</p>
+      <div class="rows" data-aside>
+        <p class="empty" data-aside-empty>Nothing set aside.</p>
+      </div>
+    </aside>
+  </div>
+  <!-- Styled prototypes the script clones for rows it adds; cloning keeps
+       Astro's scoped-style attribute, which innerHTML would not. -->
+  <div hidden data-protos>
+    <p class="run" data-proto="run"><i class="pulse"></i><span class="it"></span><span class="step"></span></p>
+    <p class="run aside-row" data-proto="aside"><span class="it"></span><span class="step"></span></p>
+    <p class="item" data-proto="ask"><span class="tag q">question</span><span class="it"></span></p>
+  </div>
+</figure>
+
+<style>
+  .ow {
+    overflow: hidden;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    background: #08080a;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 7%),
+      0 60px 140px -40px rgb(0 0 0 / 95%);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    text-align: left;
+  }
+  .ow [hidden] {
+    display: none;
+  }
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    height: 2.3rem;
+    padding: 0 0.9rem;
+    color: var(--ink-3);
+    font-size: 0.76rem;
+  }
+  .lights {
+    display: flex;
+    gap: 0.45rem;
+  }
+  .lights i {
+    width: 0.68rem;
+    height: 0.68rem;
+    border-radius: 50%;
+    background: #26262b;
+  }
+  .chrome-title b {
+    margin-right: 0.35rem;
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+
+  .cols {
+    display: grid;
+    grid-template-columns: 17rem minmax(0, 1fr) 17rem;
+    gap: 1rem;
+    height: 32rem;
+    margin: 0 0.6rem 0.6rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #0c0c0e;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+  .col-head {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 7px;
+    background: rgb(255 255 255 / 5%);
+    font-weight: 500;
+  }
+  .col-head span {
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  /* The chevrons drift while something is in the column, as in the app. */
+  .chev {
+    margin-left: auto;
+    letter-spacing: -0.1em;
+    animation: drift 1.6s ease-in-out infinite;
+  }
+  @keyframes drift {
+    50% {
+      opacity: 0.35;
+      transform: translateX(3px);
+    }
+  }
+  .block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+  }
+  .block-head {
+    font-weight: 600;
+  }
+  .block-head span {
+    color: var(--ink-3);
+  }
+  .group {
+    margin-top: 0.3rem;
+    color: var(--ink-3);
+  }
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .item,
+  .run {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    padding: 0.35rem 0.4rem;
+    border-radius: 6px;
+  }
+  .it {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tag {
+    flex: none;
+    padding: 0 0.4rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+  }
+  .tag.q {
+    background: rgb(242 199 68 / 15%);
+    color: var(--working);
+  }
+  .tag.p {
+    background: rgb(240 138 60 / 18%);
+    color: #f0a060;
+  }
+  .post {
+    padding: 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink-2);
+  }
+  .post b {
+    display: block;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .pulse {
+    flex: none;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--working);
+    animation: beat 1.4s ease-in-out infinite;
+  }
+  @keyframes beat {
+    50% {
+      opacity: 0.3;
+    }
+  }
+  .step {
+    margin-left: auto;
+    flex: none;
+    color: var(--ink-3);
+  }
+  .run.land .step {
+    color: var(--review);
+  }
+  .empty {
+    padding: 0 0.4rem;
+    color: var(--ink-3);
+  }
+  .aside-row {
+    border: 1px dashed var(--line-2);
+  }
+  .aside-row .step {
+    color: var(--ink-3);
+  }
+  /* Rows slide in from the left of their column and out to the right. */
+  .enter {
+    animation: slide-in 450ms var(--ease) both;
+  }
+  .leave {
+    animation: slide-out 450ms var(--ease) forwards;
+  }
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(-14px);
+    }
+  }
+  @keyframes slide-out {
+    to {
+      opacity: 0;
+      transform: translateX(30px);
+    }
+  }
+  .flash {
+    background: rgb(139 143 248 / 14%);
+    transition: background 1.2s var(--ease);
+  }
+
+  .mid {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.7rem;
+    min-width: 0;
+  }
+  .thread {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    animation: rise 400ms var(--ease) both;
+  }
+  .me {
+    align-self: flex-end;
+    max-width: 80%;
+    padding: 0.55rem 0.8rem;
+    border-radius: 12px 12px 4px;
+    background: rgb(91 95 214 / 32%);
+    font-size: 0.86rem;
+  }
+  .bot {
+    max-width: 88%;
+    color: var(--ink-2);
+    font-size: 0.86rem;
+    animation: rise 400ms var(--ease) both;
+  }
+  .working {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--ink-3);
+  }
+  .spin {
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 1.5px solid var(--ink-3);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 800ms linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .card {
+    padding: 0.7rem 0.85rem;
+    border: 1px solid rgb(240 138 60 / 45%);
+    border-radius: 10px;
+    background: rgb(240 138 60 / 7%);
+    animation: rise 400ms var(--ease) both;
+  }
+  .card-head {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    color: var(--ink-3);
+  }
+  .need {
+    color: #f0a060;
+    font-weight: 600;
+  }
+  .card-title {
+    margin-top: 0.3rem;
+    font-size: 0.86rem;
+    font-weight: 500;
+  }
+  .acts {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+  }
+  .acts span,
+  .put-back {
+    position: relative;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    font-weight: 500;
+    transition: transform 150ms var(--ease);
+  }
+  .acts .ok {
+    border-color: transparent;
+    background: var(--accent-strong);
+  }
+  .press {
+    transform: scale(0.93);
+  }
+  .applied {
+    margin-top: 0.45rem;
+    color: var(--review);
+    animation: rise 350ms var(--ease) both;
+  }
+  .topic {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 8px;
+    background: rgb(255 255 255 / 5%);
+    color: var(--ink-2);
+    animation: rise 400ms var(--ease) both;
+  }
+  .topic span:not(.put-back) {
+    color: var(--ink);
+  }
+  .put-back {
+    margin-left: auto;
+    padding: 0.1rem 0.55rem;
+    border-color: transparent;
+    color: var(--accent);
+  }
+  .composer {
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: #111113;
+    transition: border-color 300ms var(--ease);
+  }
+  .ow.typing .composer {
+    border-color: rgb(139 143 248 / 60%);
+  }
+  .input {
+    min-height: 1.4em;
+    font-size: 0.86rem;
+  }
+  .ph {
+    color: var(--ink-3);
+  }
+  .caret {
+    display: none;
+    width: 1.5px;
+    height: 1em;
+    background: var(--ink);
+    vertical-align: text-bottom;
+    animation: blink 1s steps(1) infinite;
+  }
+  .ow.typing .caret {
+    display: inline-block;
+  }
+  .ow.typing .ph {
+    display: none;
+  }
+  @keyframes blink {
+    50% {
+      opacity: 0;
+    }
+  }
+  .tools {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-top: 0.45rem;
+  }
+  .tools span {
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    color: var(--ink-2);
+    font-size: 0.72rem;
+  }
+  .send {
+    width: 1.5rem;
+    height: 1.5rem;
+    margin-left: auto;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 8%);
+  }
+  .ow.typing .send {
+    background: var(--accent-strong);
+  }
+  /* A pointer glides to whatever is about to be clicked. */
+  .cursor {
+    position: absolute;
+    top: 60%;
+    left: 70%;
+    width: 14px;
+    height: 20px;
+    background: #fff;
+    clip-path: polygon(0 0, 0 78%, 26% 60%, 44% 100%, 58% 94%, 40% 56%, 72% 56%);
+    filter: drop-shadow(0 1px 2px rgb(0 0 0 / 60%));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .aim .cursor {
+    animation: aim 900ms var(--ease) both;
+  }
+  @keyframes aim {
+    from {
+      opacity: 0;
+      transform: translate(60px, 45px);
+    }
+    30% {
+      opacity: 1;
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  @media (max-width: 1000px) {
+    .cols {
+      grid-template-columns: minmax(0, 1fr) 15rem;
+    }
+    .cols > .col:first-child {
+      display: none;
+    }
+  }
+  @media (max-width: 680px) {
+    .cols {
+      grid-template-columns: minmax(0, 1fr);
+      height: auto;
+    }
+    .mid {
+      min-height: 22rem;
+    }
+  }
+</style>
+
+<script>
+  // Plays the Overseer story on a loop once it is on screen. Like the hero,
+  // each pass takes a ticket so a restart cancels the pass before it.
+  const ow = document.querySelector<HTMLElement>('[data-ov]');
+  if (ow) {
+    const $ = (sel: string) => ow.querySelector<HTMLElement>(sel)!;
+    const threadA = $('[data-thread="a"]');
+    const threadB = $('[data-thread="b"]');
+    const typed = $('[data-typed]');
+    const topic = $('[data-topic]');
+    const putBack = $('[data-put-back]');
+    const running = $('[data-running]');
+    const landing = $('[data-landing]');
+    const aside = $('[data-aside]');
+    const asideEmpty = $('[data-aside-empty]');
+    const people = $('[data-people]');
+    const initial = {
+      running: running.innerHTML,
+      landing: landing.innerHTML,
+      people: people.innerHTML,
+    };
+    // Every pause in the story is scaled by this; lower plays faster.
+    const PACE = 0.65;
+    let run = 0;
+
+    const row = (proto: string, title: string, step = '') => {
+      const p = $(`[data-proto="${proto}"]`).cloneNode(true) as HTMLElement;
+      p.removeAttribute('data-proto');
+      p.classList.add('enter');
+      p.querySelector('.it')!.textContent = title;
+      const stepEl = p.querySelector('.step');
+      if (stepEl) stepEl.textContent = step;
+      return p;
+    };
+    const counts = () => {
+      const out = running.children.length + landing.querySelectorAll('.run:not(.leave)').length;
+      $('[data-out-n]').textContent = String(out + aside.querySelectorAll('.aside-row').length);
+      const need = people.children.length + 1;
+      $('[data-need-n]').textContent = String(need);
+      $('[data-in-n]').textContent = String(need);
+    };
+    const reset = () => {
+      ow.classList.remove('typing');
+      threadA.hidden = false;
+      threadB.hidden = true;
+      topic.hidden = true;
+      typed.textContent = '';
+      for (const sel of ['[data-b-reply]', '[data-b-card]', '[data-b-applied]']) $(sel).hidden = true;
+      $('[data-b-working]').hidden = false;
+      $('[data-b-acts]').hidden = false;
+      $('[data-b-ok]').classList.remove('aim', 'press');
+      putBack.classList.remove('aim', 'press');
+      running.innerHTML = initial.running;
+      landing.innerHTML = initial.landing;
+      people.innerHTML = initial.people;
+      for (const r of aside.querySelectorAll('.aside-row')) r.remove();
+      asideEmpty.hidden = false;
+      counts();
+    };
+
+    async function story() {
+      const mine = ++run;
+      const wait = (ms: number) =>
+        new Promise<void>((resolve, reject) =>
+          setTimeout(() => (mine === run ? resolve() : reject(new Error('restarted'))), ms * PACE)
+        );
+      reset();
+      await wait(1400);
+      // A different subject, typed into the same conversation.
+      ow.classList.add('typing');
+      for (const ch of 'Why is the nightly build so slow?') {
+        typed.textContent += ch;
+        await wait(38);
+      }
+      await wait(450);
+      ow.classList.remove('typing');
+      typed.textContent = '';
+      // Judged a new topic: the old conversation is set aside, a new one starts.
+      threadA.hidden = true;
+      threadB.hidden = false;
+      topic.hidden = false;
+      asideEmpty.hidden = true;
+      aside.append(row('aside', 'How’s checkout going?'));
+      counts();
+      await wait(1600);
+      // The release lands and leaves the Going out column.
+      landing.querySelector('[data-release]')?.classList.add('leave');
+      await wait(450);
+      landing.innerHTML = '';
+      counts();
+      await wait(500);
+      $('[data-b-working]').hidden = true;
+      $('[data-b-reply]').hidden = false;
+      await wait(900);
+      $('[data-b-card]').hidden = false;
+      await wait(1100);
+      const ok = $('[data-b-ok]');
+      ok.classList.add('aim');
+      await wait(950);
+      ok.classList.add('press');
+      await wait(180);
+      $('[data-b-acts]').hidden = true;
+      $('[data-b-applied]').hidden = false;
+      running.prepend(row('run', 'Cache nightly dependencies', 'starting'));
+      counts();
+      await wait(1600);
+      // A teammate's question arrives on the left.
+      const ask = row('ask', 'Ada: ship Checkout v2 today?');
+      ask.classList.add('flash');
+      people.prepend(ask);
+      counts();
+      setTimeout(() => ask.classList.remove('flash'), 1400);
+      await wait(2200);
+      // Bring the first conversation back; the new one is set aside instead.
+      putBack.classList.add('aim');
+      await wait(950);
+      putBack.classList.add('press');
+      await wait(200);
+      putBack.classList.remove('press');
+      topic.hidden = true;
+      threadB.hidden = true;
+      threadA.hidden = false;
+      for (const r of aside.querySelectorAll('.aside-row')) r.remove();
+      aside.append(row('aside', 'Why is the nightly build so slow?', 'working'));
+      counts();
+      await wait(5000);
+      void story().catch(() => {});
+    }
+
+    let started = false;
+    new IntersectionObserver(
+      (entries) => {
+        if (started || !entries.some((e) => e.isIntersecting)) return;
+        started = true;
+        void story().catch(() => {});
+      },
+      { threshold: 0.5 }
+    ).observe(ow);
+  }
+</script>

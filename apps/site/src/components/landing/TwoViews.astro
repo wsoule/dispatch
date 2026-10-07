@@ -1,0 +1,69 @@
+---
+// "No clutter": the whole app is two views. The Overseer demo shows how the
+// one conversation and its two side columns work, then the guardrails.
+import OverseerDemo from './OverseerDemo.astro';
+import FeatureList from './FeatureList.astro';
+
+const features: [string, string][] = [
+  ['Its own worktree', 'Every run works on its own branch, so agents never trip over each other.'],
+  ['Declared scope', 'A task lists the files it may write. Anything else waits for your yes.'],
+  ['Hard limits', 'Spend and turn caps per run and per milestone. Hit one and it stops.'],
+  ['Review, then land', 'Diff, findings and transcript in one place, then a merge queue.'],
+  ['In your repo', 'Tasks as markdown in .dispatch/, or SQLite with a git receipt log.'],
+  ['Local first', 'Runs on your machine with your own agent and key. Nothing is uploaded.'],
+];
+
+---
+
+<section class="feature" id="two-views" aria-labelledby="two-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="two-title">Two views. <em>No clutter, no sidebar of fourteen pages.</em></h2>
+      <p>
+        Overseer and Tasks. That’s the app. In Overseer you talk to the whole project: what needs
+        you comes in on the left, running work goes out on the right, and when you change the
+        subject it starts a fresh conversation on its own.
+      </p>
+    </div>
+
+    <div class="demo">
+      <OverseerDemo />
+    </div>
+    <dl class="callouts">
+      <div>
+        <dt>Coming in</dt>
+        <dd>Questions, approvals and outside requests waiting on you, then posts for you.</dd>
+      </div>
+      <div>
+        <dt>New topic, new conversation</dt>
+        <dd>Change the subject and the old conversation is set aside. Put it back in one click.</dd>
+      </div>
+      <div>
+        <dt>Going out</dt>
+        <dd>Running work, merges in flight and set-aside conversations. Done work slides away.</dd>
+      </div>
+    </dl>
+
+    <FeatureList items={features} />
+  </div>
+</section>
+
+<style>
+  .demo {
+    margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+  }
+  .callouts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+    gap: 1.25rem 2.5rem;
+    margin: 2rem 0 0;
+  }
+  .callouts dt {
+    font-weight: 600;
+  }
+  .callouts dd {
+    margin-top: 0.3rem;
+    color: var(--ink-2);
+    font-size: 0.95rem;
+  }
+</style>

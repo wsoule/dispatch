@@ -1,0 +1,1446 @@
+---
+// A working replica of the app's beta (Two views) for the hero. It plays the
+// whole loop: in Overseer you type a project, the overseer plans it into five
+// tasks and asks for approval, approving switches to the Tasks view, and the
+// milestone runs wave by wave until all five land. Then it starts over.
+interface Card {
+  id: string;
+  title: string;
+  wave: number;
+  // The task this one waits on; it starts the moment that one lands.
+  after?: string;
+}
+const cards: Card[] = [
+  { id: 't-0359be', title: 'Apple Pay button', wave: 1 },
+  { id: 't-2c6ebb', title: 'Saved cards', wave: 1 },
+  { id: 't-d91bae', title: 'Address autocomplete', wave: 1 },
+  { id: 't-9a64e9', title: 'Wire Apple Pay into checkout', wave: 2, after: 't-0359be' },
+  { id: 't-f606fb', title: 'Release notes', wave: 3, after: 't-9a64e9' },
+];
+const wait = (c: Card) => (c.after ? `Starts when ${c.after} lands` : '');
+const num = (id?: string) => cards.findIndex((c) => c.id === id) + 1;
+const waves = [1, 2, 3].map((n) => ({ n, cards: cards.filter((c) => c.wave === n) }));
+---
+
+<figure
+  class="win"
+  data-plan
+  data-scene="overseer"
+  aria-label="The Dispatch app: a one-sentence project becomes five tasks, which agents work wave by wave"
+>
+  <div class="chrome" aria-hidden="true">
+    <span class="lights"><i></i><i></i><i></i></span>
+    <span class="chrome-title"><b>Dispatch</b> storefront</span>
+    <span class="chrome-tag">Two views</span>
+  </div>
+
+  <header class="top">
+    <div class="who">
+      <span class="orb" data-orb><span class="orb-badge" data-orb-n hidden>0</span></span>
+      <span class="proj"><span class="proj-chip">ST</span>storefront<span class="caret"></span></span>
+    </div>
+    <nav class="views" aria-hidden="true">
+      <span class="view tasks-tab">tasks</span>
+      <span class="mini"><i class="dot"></i>0</span>
+      <span class="mini is-review"><i class="dia"></i><span data-c="review">0</span></span>
+      <span class="mini"><i class="x"></i>0</span>
+      <span class="mini is-working"><i class="moon"></i><span data-c="working">3</span></span>
+      <span class="view">docs</span>
+      <span class="view">threads <span class="dim">2</span></span>
+      <span class="view">settings</span>
+    </nav>
+  </header>
+
+  <div class="scenes">
+    <div class="scene ov" aria-hidden="true">
+      <aside class="ov-side">
+        <p class="col-head">Coming in <span>0</span></p>
+        <p class="ov-empty">Nothing needs you.</p>
+      </aside>
+      <div class="ov-mid">
+        <div class="ov-thread">
+          <p class="ov-hint" data-hint>
+            Describe what you want built. The overseer plans it into tasks; nothing runs until you
+            approve.
+          </p>
+          <p class="ov-me" data-me hidden></p>
+          <p class="ov-thinking" data-thinking hidden><i class="spin"></i>The overseer is working…</p>
+          <div class="ov-card" data-proposal hidden>
+            <p class="ov-card-head">
+              <span class="ov-need">Needs your approval</span><code>create_plan</code>
+            </p>
+            <p class="ov-card-title">Create milestone “Checkout v2”: 5 tasks, dependencies included</p>
+              <ol class="ov-plan">
+                {
+                  cards.map((c) => (
+                    <li>
+                      <span class="ov-wave">{num(c.id)}</span>
+                      {c.title}
+                      <span class="ov-after">{c.after ? `after #${num(c.after)}` : 'starts now'}</span>
+                    </li>
+                  ))
+                }
+              </ol>
+            <p class="ov-actions" data-actions>
+              <span class="ov-approve" data-approve>Approve<i class="cursor"></i></span><span
+                class="ov-deny">Deny</span
+              >
+            </p>
+            <p class="ov-applied" data-applied hidden>✓ Created Checkout v2 and 5 tasks</p>
+          </div>
+        </div>
+        <div class="ov-composer">
+          <p class="ov-input"><span data-typed></span><i class="ov-caret"></i><span class="ov-ph" data-ph>say something</span></p>
+          <p class="ov-tools"><span>Opus 5.5</span><span>Default</span><i class="ov-send" data-send></i></p>
+        </div>
+      </div>
+      <aside class="ov-side">
+        <p class="col-head">Going out <span>0</span></p>
+        <p class="ov-empty">Nothing is running.</p>
+      </aside>
+    </div>
+
+  <div class="sheet scene plan">
+    <div class="strip" aria-hidden="true">
+      <span class="all">All work</span>
+      <span class="chip"><i class="dot"></i>0 tasks need you</span>
+      <span class="chip"><i class="x"></i>0 failed</span>
+      <span class="chip chip-working" data-chip="working"><i class="moon"></i><span data-c="working">3</span> working</span>
+      <span class="chip chip-review" data-chip="review"><i class="dia"></i><span data-c="review">0</span> review</span>
+      <span class="chip">0 landing</span>
+      <span class="chip">3 ready</span>
+      <span class="chip">1 draft</span>
+      <span class="chip"><span data-c="blocked">2</span> blocked</span>
+      <span class="landed-n">✓ <span data-c="landedAll">3</span>/15 landed</span>
+      <span class="strip-right">
+        <span class="seg"><b>List</b><span>Graph</span></span>
+        <span class="chip">view: All</span>
+        <span class="new">+ New task</span>
+      </span>
+    </div>
+
+    <div class="crumbs" aria-hidden="true">
+      <span>‹ tasks</span><span class="sep">›</span><span>storefront</span><span class="sep">›</span><span
+        class="dim">e-3dbc31</span
+      ><b>Checkout v2</b>
+      <span class="crumbs-right">Conversation</span>
+    </div>
+
+    <div class="page">
+      <h3 class="title"><i class="ring-sm" data-title-ring></i>Checkout v2</h3>
+      <div class="tabs" aria-hidden="true">
+        <span class="tab"><b>Spec</b><span>4 criteria</span></span>
+        <span class="tab on"><b>Plan</b><span><span data-c="landed">0</span>/5 done, <span data-c="running">3</span> running</span></span>
+        <span class="tab"><b>Summary</b><span data-summary>Not yet</span></span>
+      </div>
+
+      <div class="stats" aria-hidden="true">
+        <span><span class="slots" data-slots><i></i><i></i><i></i></span><b data-c="running">3</b>/3 slots</span>
+        <span><b data-c="landed">0</b>/5 landed</span>
+        <span><i class="cp"></i>Critical path <b>3</b> tasks</span>
+        <span class="notice" data-notice hidden></span>
+        <span class="stats-right">
+          <span class="chip"><i class="coin"></i><span data-spend>$0.00</span> / $50</span>
+          <span class="chip">Pause</span>
+        </span>
+      </div>
+
+      <div class="waves">
+        {
+          waves.map((w, i) => (
+            <>
+              {i > 0 && <div class="link" data-link-from={w.cards[0]?.after} aria-hidden="true" />}
+              <section class="wave" data-wave={w.n}>
+                <h4>
+                  Wave {w.n}{' '}
+                  <span class="dim">
+                    <span data-wave-done={w.n}>0</span>/{w.cards.length}
+                  </span>
+                  <span class="now" data-wave-now={w.n}>
+                    Now
+                  </span>
+                </h4>
+                {w.cards.map((c) => (
+                  <article
+                    class="card"
+                    style={`--i:${cards.indexOf(c)}`}
+                    data-card={c.id} data-wave-of={w.n} data-state="waiting" data-wait={wait(c)}>
+                    <p class="card-top">
+                      <svg class="glyph" viewBox="-7 -7 14 14" aria-hidden="true">
+                        <circle class="g-ring" r="5.5" />
+                        <path class="g-moon" d="M0 -5.5 A5.5 5.5 0 0 1 0 5.5 Z" />
+                        <circle class="g-core" r="2.4" />
+                        <path class="g-tick" d="M-2.6 0.2 L-0.7 2.1 L2.8 -1.8" />
+                      </svg>
+                      <code>{c.id}</code>
+                      <span class="cost" data-cost>
+                        $0.00
+                      </span>
+                    </p>
+                    <p class="card-title">{c.title}</p>
+                    <p class="card-status" data-status>
+                      {wait(c)}
+                    </p>
+                  </article>
+                ))}
+              </section>
+            </>
+          ))
+        }
+      </div>
+
+      <div class="done" aria-live="polite">
+        <svg class="big-ring" viewBox="0 0 44 44" aria-hidden="true">
+          <circle class="track" cx="22" cy="22" r="18"></circle>
+          <circle class="arc" cx="22" cy="22" r="18" pathLength="100" data-arc></circle>
+        </svg>
+        <p><b data-c="landed">0</b><span>/5</span></p>
+        <span class="done-label">tasks done by agents</span>
+      </div>
+    </div>
+
+    <div class="composer" aria-hidden="true">
+      <span class="about">about e-3dbc31</span><span class="dim">say something</span>
+    </div>
+  </div>
+  </div>
+</figure>
+
+<style>
+  .win {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    background: #08080a;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 7%),
+      0 60px 140px -40px rgb(0 0 0 / 95%),
+      0 0 0 1px rgb(0 0 0 / 70%);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    text-align: left;
+  }
+  .dim {
+    color: var(--ink-3);
+  }
+  /* Styled elements below set display, which would override [hidden]. */
+  .win [hidden] {
+    display: none;
+  }
+
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    height: 2.3rem;
+    padding: 0 0.9rem;
+    color: var(--ink-3);
+    font-size: 0.76rem;
+  }
+  .lights {
+    display: flex;
+    gap: 0.45rem;
+  }
+  .lights i {
+    width: 0.68rem;
+    height: 0.68rem;
+    border-radius: 50%;
+    background: #26262b;
+  }
+  .chrome-title b {
+    margin-right: 0.35rem;
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .chrome-tag {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+  }
+
+  .top {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 0.4rem 1rem 0.8rem;
+  }
+  .who {
+    display: grid;
+    grid-column: 2;
+    justify-items: center;
+    gap: 0.35rem;
+  }
+  /* The orb: the app's one status light. It glows indigo while agents work
+     and turns green when the milestone has landed. */
+  .orb {
+    position: relative;
+    width: 1.5rem;
+    height: 1.5rem;
+    border: 2px solid var(--orb, var(--accent));
+    border-radius: 50%;
+    box-shadow: 0 0 18px var(--orb, var(--accent));
+    transition:
+      border-color 600ms var(--ease),
+      box-shadow 600ms var(--ease);
+  }
+  .orb::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--orb, var(--accent));
+    transition: background 600ms var(--ease);
+  }
+  .orb-badge {
+    position: absolute;
+    top: -0.45rem;
+    right: -0.6rem;
+    z-index: 1;
+    min-width: 1rem;
+    height: 1rem;
+    padding: 0 0.2rem;
+    border-radius: 999px;
+    background: var(--orb, var(--accent));
+    color: #050506;
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1rem;
+    text-align: center;
+  }
+  .win[data-done] {
+    --orb: var(--review);
+  }
+  .proj {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 500;
+  }
+  .proj-chip {
+    display: grid;
+    place-items: center;
+    width: 1.05rem;
+    height: 1.05rem;
+    border-radius: 4px;
+    background: #4a82e8;
+    font-size: 0.5rem;
+    font-weight: 700;
+  }
+  .caret {
+    width: 0.35rem;
+    height: 0.35rem;
+    border-right: 1.5px solid var(--ink-3);
+    border-bottom: 1.5px solid var(--ink-3);
+    transform: translateY(-2px) rotate(45deg);
+  }
+  .views {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.9rem;
+    color: var(--ink);
+  }
+  .view.on {
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    background: rgb(255 255 255 / 9%);
+  }
+  .mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: -0.35rem;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .mini.is-working {
+    color: var(--working);
+  }
+  .mini.is-review {
+    color: var(--review);
+  }
+
+  /* Small inline status marks used in the top bar and the filter strip. */
+  .dot,
+  .moon,
+  .dia,
+  .x,
+  .coin {
+    display: inline-block;
+    flex: none;
+    width: 0.55rem;
+    height: 0.55rem;
+  }
+  .dot {
+    border-radius: 50%;
+    background: var(--ink-3);
+  }
+  .moon {
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+    background: linear-gradient(90deg, transparent 50%, currentColor 50%);
+  }
+  .dia {
+    width: 0.45rem;
+    height: 0.45rem;
+    border: 1.5px solid currentColor;
+    transform: rotate(45deg);
+  }
+  .x {
+    position: relative;
+  }
+  .x::before,
+  .x::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 1.5px;
+    background: currentColor;
+    transform: rotate(45deg);
+  }
+  .x::after {
+    transform: rotate(-45deg);
+  }
+  .coin {
+    border-radius: 50%;
+    background: var(--working);
+  }
+
+  .sheet {
+    margin: 0 0.6rem 0.6rem;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #111113;
+  }
+  .strip {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.65rem 0.9rem;
+    overflow: hidden;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .all {
+    margin-right: 0.3rem;
+    font-weight: 500;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+    transition:
+      color 400ms var(--ease),
+      background 400ms var(--ease),
+      border-color 400ms var(--ease);
+  }
+  .chip-working.lit {
+    border-color: transparent;
+    background: rgb(242 199 68 / 16%);
+    color: var(--working);
+  }
+  .chip-review.lit {
+    border-color: transparent;
+    background: rgb(63 207 142 / 14%);
+    color: var(--review);
+  }
+  .landed-n {
+    margin-left: 0.3rem;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .strip-right {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+  }
+  .seg {
+    display: inline-flex;
+    padding: 0.15rem;
+    border: 1px solid var(--line-2);
+    border-radius: 7px;
+    color: var(--ink-3);
+  }
+  .seg > * {
+    padding: 0.1rem 0.5rem;
+  }
+  .seg b {
+    border-radius: 5px;
+    background: rgb(255 255 255 / 9%);
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .new {
+    padding: 0.3rem 0.65rem;
+    border-radius: 6px;
+    background: var(--accent-strong);
+    font-weight: 500;
+  }
+
+  .crumbs {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-2);
+  }
+  .crumbs b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .sep {
+    color: var(--ink-3);
+  }
+  .crumbs-right {
+    margin-left: auto;
+    color: var(--ink-3);
+  }
+
+  .page {
+    position: relative;
+    padding: 1.4rem 1.25rem 1.5rem;
+  }
+  .title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 1.45rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+  .ring-sm {
+    width: 0.9rem;
+    height: 0.9rem;
+    border: 2px solid var(--ink-2);
+    border-radius: 50%;
+    transition:
+      border-color 500ms var(--ease),
+      background 500ms var(--ease);
+  }
+  .win[data-done] .ring-sm {
+    border-color: var(--landed);
+    background: var(--landed);
+  }
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 13rem));
+    gap: 0.6rem;
+    margin-top: 1.1rem;
+  }
+  .tab {
+    display: grid;
+    gap: 0.15rem;
+    padding: 0.55rem 0.7rem;
+    border-bottom: 2px solid var(--line-2);
+    border-radius: 8px 8px 0 0;
+    color: var(--ink-3);
+  }
+  .tab b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .tab.on {
+    border-bottom-color: var(--ink);
+    background: rgb(255 255 255 / 6%);
+  }
+  .tab:first-child {
+    border-bottom-color: var(--review);
+  }
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 1.2rem;
+    margin-top: 1.2rem;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .stats b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .slots {
+    display: inline-flex;
+    gap: 0.15rem;
+    margin-right: 0.35rem;
+  }
+  .slots i {
+    width: 0.45rem;
+    height: 0.45rem;
+    border: 1.5px solid var(--ink-3);
+    border-radius: 50%;
+  }
+  .slots i.on {
+    border-color: var(--working);
+    background: var(--working);
+  }
+  .cp {
+    display: inline-block;
+    width: 0.9rem;
+    height: 0.25rem;
+    margin-right: 0.35rem;
+    border-radius: 2px;
+    background: var(--accent-strong);
+    vertical-align: middle;
+  }
+  .stats-right {
+    display: flex;
+    gap: 0.4rem;
+    margin-left: auto;
+  }
+
+  .waves {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2.2rem minmax(0, 1fr) 2.2rem minmax(0, 1fr);
+    max-width: 52rem;
+    margin-top: 1.3rem;
+    padding-bottom: 5.5rem;
+  }
+  .wave h4 {
+    display: flex;
+    gap: 0.35rem;
+    padding-bottom: 0.55rem;
+    margin: 0 0 0.6rem;
+    border-bottom: 1.5px solid var(--line-2);
+    font-size: 0.8rem;
+    font-weight: 500;
+    transition: border-color 500ms var(--ease);
+  }
+  .wave.live h4 {
+    border-bottom-color: var(--working);
+  }
+  .wave.landed h4 {
+    border-bottom-color: var(--landed);
+  }
+  .now {
+    display: none;
+    color: var(--working);
+  }
+  .now::before {
+    content: '● ';
+  }
+  .wave.live .now {
+    display: inline;
+  }
+  /* The wait between two waves: dashed until the earlier wave lands. */
+  .link {
+    position: relative;
+  }
+  .link::before {
+    content: '';
+    position: absolute;
+    top: 4.15rem;
+    right: 0;
+    left: 0;
+    border-top: 1.5px dashed var(--ink-3);
+    transition: border-color 500ms var(--ease);
+  }
+  .link.clear::before {
+    border-top-style: solid;
+    border-top-color: var(--accent);
+  }
+
+  .card {
+    display: grid;
+    gap: 0.2rem;
+    margin-bottom: 0.55rem;
+    padding: 0.6rem 0.7rem;
+    border: 1px dashed var(--line-2);
+    border-radius: 8px;
+    transition:
+      border-color 500ms var(--ease),
+      background 500ms var(--ease),
+      box-shadow 500ms var(--ease);
+  }
+  .card-top {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--ink-3);
+  }
+  .card-top code {
+    font-size: 0.72rem;
+  }
+  .cost {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .card-title {
+    overflow: hidden;
+    color: var(--ink-2);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card-status {
+    overflow: hidden;
+    color: var(--ink-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card[data-state='working'] {
+    border: 1px solid rgb(242 199 68 / 55%);
+    background: rgb(242 199 68 / 4%);
+    box-shadow: inset 3px 0 0 var(--working);
+  }
+  .card[data-state='working'] .card-status {
+    color: var(--working);
+  }
+  .card[data-state='review'] {
+    border: 1px solid rgb(63 207 142 / 45%);
+  }
+  .card[data-state='review'] .card-status {
+    color: var(--review);
+  }
+  .card[data-state='landed'] {
+    border: 1px solid var(--line);
+  }
+  .card[data-state='landed'] .card-status {
+    color: var(--landed);
+  }
+  .card:not([data-state='waiting']) .card-title {
+    color: var(--ink);
+  }
+
+  .glyph {
+    width: 13px;
+    height: 13px;
+    overflow: visible;
+    color: var(--ink-3);
+  }
+  .glyph * {
+    transition: opacity 300ms var(--ease);
+  }
+  .g-ring {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-dasharray: 2 2;
+  }
+  .g-moon,
+  .g-core {
+    fill: currentColor;
+  }
+  .g-tick {
+    fill: none;
+    stroke: #111113;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .card:not([data-state='working']) .g-moon,
+  .card:not([data-state='review']) .g-core,
+  .card:not([data-state='landed']) .g-tick {
+    opacity: 0;
+  }
+  .card:not([data-state='waiting']) .g-ring {
+    stroke-dasharray: none;
+  }
+  .card[data-state='working'] .glyph {
+    color: var(--working);
+    animation: spin 2.4s linear infinite;
+  }
+  .card[data-state='review'] .glyph {
+    color: var(--review);
+  }
+  .card[data-state='landed'] .glyph {
+    color: var(--landed);
+  }
+  .card[data-state='landed'] .g-ring {
+    fill: currentColor;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .done {
+    position: absolute;
+    right: 1.25rem;
+    bottom: 1.25rem;
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    column-gap: 0.9rem;
+    padding: 0.9rem 1.3rem 0.9rem 0.9rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #0c0c0e;
+  }
+  .big-ring {
+    grid-row: span 2;
+    width: 3.6rem;
+    height: 3.6rem;
+    transform: rotate(-90deg);
+  }
+  .track {
+    fill: none;
+    stroke: rgb(255 255 255 / 8%);
+    stroke-width: 4;
+  }
+  .arc {
+    fill: none;
+    stroke: var(--accent);
+    stroke-dasharray: 0 100;
+    stroke-linecap: round;
+    stroke-width: 4;
+    transition:
+      stroke-dasharray 900ms var(--ease),
+      stroke 600ms var(--ease);
+  }
+  .win[data-done] .arc {
+    stroke: var(--review);
+  }
+  .done p {
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1;
+  }
+  .done p span {
+    color: var(--ink-3);
+    font-size: 1.2rem;
+  }
+  .done-label {
+    color: var(--ink-2);
+  }
+
+  .composer {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    width: min(36rem, calc(100% - 2rem));
+    margin: 0 auto 0.8rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #0c0c0e;
+  }
+  .about {
+    padding: 0.15rem 0.45rem;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+  }
+
+  /* The two scenes share one grid cell, so switching never changes the
+     window's height. */
+  .scenes {
+    display: grid;
+  }
+  .scene {
+    grid-area: 1 / 1;
+    transition:
+      opacity 500ms var(--ease),
+      transform 500ms var(--ease),
+      visibility 0s linear 500ms;
+  }
+  .win[data-scene='overseer'] .scene.plan,
+  .win[data-scene='plan'] .scene.ov {
+    visibility: hidden;
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  .win[data-scene='overseer'] .scene.ov,
+  .win[data-scene='plan'] .scene.plan {
+    transition-delay: 0s;
+  }
+  .win[data-scene='plan'] .tasks-tab {
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    background: rgb(255 255 255 / 9%);
+  }
+  .tasks-tab {
+    padding: 0.3rem 0.6rem;
+    transition: background 400ms var(--ease);
+  }
+  /* New tasks drop in one after another when the plan is approved. */
+  .win[data-scene='plan'].fresh .card {
+    animation: born 450ms var(--ease) both;
+    animation-delay: calc(var(--i) * 110ms + 150ms);
+  }
+  @keyframes born {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.97);
+    }
+  }
+
+  .ov {
+    display: grid;
+    grid-template-columns: 15rem minmax(0, 1fr) 15rem;
+    gap: 1.2rem;
+    margin: 0 0.6rem 0.6rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #0c0c0e;
+  }
+  .ov-side {
+    display: grid;
+    align-content: start;
+    gap: 0.6rem;
+  }
+  .col-head {
+    padding: 0.45rem 0.6rem;
+    border-radius: 7px;
+    background: rgb(255 255 255 / 5%);
+    font-weight: 500;
+  }
+  .col-head span,
+  .ov-empty {
+    color: var(--ink-3);
+  }
+  .ov-empty {
+    padding: 0 0.6rem;
+  }
+  .ov-mid {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.9rem;
+    min-width: 0;
+  }
+  .ov-thread {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    min-height: 22rem;
+  }
+  .ov-hint {
+    color: var(--ink-3);
+    font-size: 0.85rem;
+  }
+  .ov-me {
+    align-self: flex-end;
+    max-width: 85%;
+    padding: 0.6rem 0.8rem;
+    border-radius: 12px 12px 4px;
+    background: rgb(91 95 214 / 32%);
+    font-size: 0.85rem;
+    animation: rise 400ms var(--ease) both;
+  }
+  .ov-thinking {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--ink-3);
+    animation: rise 400ms var(--ease) both;
+  }
+  .spin {
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 1.5px solid var(--ink-3);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 800ms linear infinite;
+  }
+  .ov-card {
+    padding: 0.8rem 0.9rem;
+    border: 1px solid rgb(240 138 60 / 45%);
+    border-radius: 10px;
+    background: rgb(240 138 60 / 7%);
+    animation: rise 450ms var(--ease) both;
+  }
+  .ov-card-head {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    color: var(--ink-3);
+  }
+  .ov-need {
+    color: #f0a060;
+    font-weight: 600;
+  }
+  .ov-card-head code {
+    font-size: 0.72rem;
+  }
+  .ov-card-title {
+    margin-top: 0.35rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+  }
+  .ov-plan {
+    display: grid;
+    gap: 0.2rem;
+    margin: 0.6rem 0 0.75rem;
+    padding: 0;
+    color: var(--ink-2);
+    list-style: none;
+  }
+  .ov-plan li {
+    display: flex;
+    gap: 0.6rem;
+  }
+  .ov-wave {
+    width: 3.6rem;
+    color: var(--ink-3);
+  }
+  .ov-actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .ov-approve,
+  .ov-deny {
+    position: relative;
+    padding: 0.3rem 0.75rem;
+    border-radius: 6px;
+    font-weight: 500;
+    transition:
+      transform 150ms var(--ease),
+      background 150ms var(--ease);
+  }
+  .ov-approve {
+    background: var(--accent-strong);
+  }
+  .ov-deny {
+    border: 1px solid var(--line-2);
+  }
+  .ov-approve.press {
+    background: #4a4ec4;
+    transform: scale(0.94);
+  }
+  /* A pointer glides to Approve and clicks it. */
+  .cursor {
+    position: absolute;
+    top: 60%;
+    left: 70%;
+    width: 14px;
+    height: 20px;
+    background: #fff;
+    clip-path: polygon(0 0, 0 78%, 26% 60%, 44% 100%, 58% 94%, 40% 56%, 72% 56%);
+    filter: drop-shadow(0 1px 2px rgb(0 0 0 / 60%));
+    opacity: 0;
+    pointer-events: none;
+  }
+  .ov-approve.aim .cursor {
+    animation: aim 900ms var(--ease) both;
+  }
+  @keyframes aim {
+    from {
+      opacity: 0;
+      transform: translate(70px, 50px);
+    }
+    30% {
+      opacity: 1;
+    }
+    to {
+      opacity: 1;
+      transform: translate(0, 0);
+    }
+  }
+  .ov-applied {
+    margin-top: 0.4rem;
+    color: var(--review);
+    animation: rise 350ms var(--ease) both;
+  }
+  .ov-composer {
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: #111113;
+    transition: border-color 300ms var(--ease);
+  }
+  .win.typing .ov-composer {
+    border-color: rgb(139 143 248 / 60%);
+  }
+  .ov-input {
+    min-height: 2.6em;
+    font-size: 0.88rem;
+  }
+  .ov-ph {
+    color: var(--ink-3);
+  }
+  .ov-caret {
+    display: none;
+    width: 1.5px;
+    height: 1em;
+    margin-left: 1px;
+    background: var(--ink);
+    vertical-align: text-bottom;
+    animation: blink 1s steps(1) infinite;
+  }
+  .win.typing .ov-caret {
+    display: inline-block;
+  }
+  .win.typing .ov-ph {
+    display: none;
+  }
+  @keyframes blink {
+    50% {
+      opacity: 0;
+    }
+  }
+  .ov-tools {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-top: 0.45rem;
+  }
+  .ov-tools span {
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    color: var(--ink-2);
+    font-size: 0.72rem;
+  }
+  .ov-send {
+    width: 1.5rem;
+    height: 1.5rem;
+    margin-left: auto;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 8%);
+    transition: background 200ms var(--ease);
+  }
+  .win.typing .ov-send {
+    background: var(--accent-strong);
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  .ov-after {
+    margin-left: auto;
+    color: var(--ink-3);
+  }
+  .ov-wave {
+    width: 1.2rem;
+  }
+  /* What just landed and what it freed, beside the stats. */
+  .notice {
+    padding: 0.2rem 0.65rem;
+    border: 1px solid rgb(139 143 248 / 45%);
+    border-radius: 999px;
+    background: rgb(91 95 214 / 18%);
+    color: var(--ink);
+  }
+  .notice.in {
+    animation: rise 400ms var(--ease) both;
+  }
+  /* A link flashes the moment its blocker lands. */
+  .link.just::before {
+    animation: flash 1100ms var(--ease);
+  }
+  @keyframes flash {
+    from {
+      border-top-color: #fff;
+      box-shadow: 0 0 12px 2px var(--accent);
+    }
+  }
+  .card.unblocked[data-state='working'] {
+    animation: wake 1200ms var(--ease);
+  }
+  @keyframes wake {
+    from {
+      box-shadow:
+        inset 3px 0 0 var(--working),
+        0 0 0 4px rgb(139 143 248 / 45%);
+    }
+  }
+
+  @media (max-width: 1000px) {
+    .chrome-tag,
+    .views .view:not(.on),
+    .stats-right,
+    .strip-right,
+    .crumbs-right {
+      display: none;
+    }
+  }
+  @media (max-width: 900px) {
+    .ov {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .ov-side {
+      display: none;
+    }
+  }
+  @media (max-width: 720px) {
+    .ov-thread {
+      min-height: 18rem;
+    }
+    .top {
+      grid-template-columns: auto 1fr;
+    }
+    .who {
+      grid-column: 1;
+      grid-auto-flow: column;
+      gap: 0.8rem;
+    }
+    .tabs {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .tab span {
+      display: none;
+    }
+    .waves {
+      grid-template-columns: minmax(0, 1fr);
+      padding-bottom: 0;
+    }
+    .link {
+      height: 0.8rem;
+    }
+    .link::before {
+      display: none;
+    }
+    .done {
+      position: static;
+      margin-top: 1rem;
+      justify-content: start;
+    }
+    .composer {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  // Plays the hero story. Card state lives on each card's data-state and every
+  // count is recomputed from those states; the Overseer scene is driven by
+  // toggling hidden elements. Each pass of the loop checks `run` so a restart
+  // cancels the pass before it.
+  const win = document.querySelector<HTMLElement>('[data-plan]');
+  if (win) {
+    const $ = <T extends Element = HTMLElement>(sel: string) => win.querySelector<T>(sel)!;
+    const cards = [...win.querySelectorAll<HTMLElement>('[data-card]')];
+    const byId = (id: string) => cards.find((c) => c.dataset.card === id)!;
+    const arc = $<SVGCircleElement>('[data-arc]');
+    const orbN = $('[data-orb-n]');
+    const typed = $('[data-typed]');
+    const me = $('[data-me]');
+    const hint = $('[data-hint]');
+    const thinking = $('[data-thinking]');
+    const proposal = $('[data-proposal]');
+    const approve = $('[data-approve]');
+    const actions = $('[data-actions]');
+    const applied = $('[data-applied]');
+    const turns = new Map<HTMLElement, number>();
+    const costs = new Map<HTMLElement, number>();
+    const prompt =
+      'Plan a milestone “Checkout v2”: an Apple Pay button, saved cards and address autocomplete, then wire Apple Pay into checkout, then release notes.';
+    // Every pause in the story is scaled by this; lower plays faster.
+    const PACE = 0.6;
+    let run = 0;
+    let ticker = 0;
+
+    const setAll = (key: string, value: number | string) => {
+      for (const el of win.querySelectorAll<HTMLElement>(`[data-c="${key}"]`)) el.textContent = String(value);
+    };
+    const statusText = (c: HTMLElement) => {
+      switch (c.dataset.state) {
+        case 'working':
+          return `Working, turn ${turns.get(c) ?? 1}`;
+        case 'review':
+          return 'Ready for review';
+        case 'landed':
+          return 'Landed';
+        default:
+          return c.dataset.wait ?? '';
+      }
+    };
+    const render = () => {
+      const n = (s: string) => cards.filter((c) => c.dataset.state === s).length;
+      const working = n('working');
+      const review = n('review');
+      const landed = n('landed');
+      setAll('working', working);
+      setAll('review', review);
+      setAll('running', working);
+      setAll('landed', landed);
+      setAll('landedAll', 3 + landed);
+      setAll('blocked', n('waiting') > 0 ? 2 : 0);
+      $('[data-chip="working"]').classList.toggle('lit', working > 0);
+      $('[data-chip="review"]').classList.toggle('lit', review > 0);
+      win.querySelectorAll('[data-slots] i').forEach((dot, i) => dot.classList.toggle('on', i < working));
+      orbN.textContent = String(working + review);
+      orbN.hidden = working + review === 0;
+      arc.style.strokeDasharray = `${(landed / cards.length) * 100} 100`;
+      arc.style.opacity = landed ? '1' : '0';
+      let spent = 0;
+      for (const c of cards) {
+        const cost = costs.get(c) ?? 0;
+        spent += cost;
+        c.querySelector('[data-cost]')!.textContent = `$${cost.toFixed(2)}`;
+        c.querySelector('[data-status]')!.textContent = statusText(c);
+      }
+      $('[data-spend]').textContent = `$${spent.toFixed(2)}`;
+      for (const wave of win.querySelectorAll<HTMLElement>('[data-wave]')) {
+        const mine = cards.filter((c) => c.dataset.waveOf === wave.dataset.wave);
+        const done = mine.filter((c) => c.dataset.state === 'landed').length;
+        $(`[data-wave-done="${wave.dataset.wave}"]`).textContent = String(done);
+        wave.classList.toggle('live', mine.some((c) => c.dataset.state === 'working'));
+        wave.classList.toggle('landed', done === mine.length);
+      }
+      // A link lights up as soon as the one task it waits on has landed.
+      for (const link of win.querySelectorAll<HTMLElement>('[data-link-from]')) {
+        const clear = byId(link.dataset.linkFrom!).dataset.state === 'landed';
+        if (clear && !link.classList.contains('clear')) link.classList.add('just');
+        link.classList.toggle('clear', clear);
+      }
+      const all = landed === cards.length;
+      win.toggleAttribute('data-done', all);
+      $('[data-summary]').textContent = all ? 'Landed' : 'Not yet';
+    };
+    const set = (ids: string[], state: string) => {
+      for (const id of ids) {
+        const c = byId(id);
+        c.dataset.state = state;
+        if (state === 'working') turns.set(c, 1);
+      }
+      render();
+    };
+
+    const notice = $('[data-notice]');
+    let noticeTimer = 0;
+    // A short line in the stats row saying what just landed and what it freed.
+    const notify = (text: string) => {
+      notice.textContent = text;
+      notice.hidden = false;
+      notice.classList.remove('in');
+      void notice.offsetWidth;
+      notice.classList.add('in');
+      clearTimeout(noticeTimer);
+      noticeTimer = window.setTimeout(() => (notice.hidden = true), 2200);
+    };
+
+    const reset = () => {
+      notice.hidden = true;
+      for (const l of win.querySelectorAll('[data-link-from]')) l.classList.remove('just');
+      win.dataset.scene = 'overseer';
+      win.classList.remove('typing', 'fresh');
+      typed.textContent = '';
+      hint.hidden = false;
+      for (const el of [me, thinking, proposal, applied]) el.hidden = true;
+      actions.hidden = false;
+      approve.classList.remove('aim', 'press');
+      for (const c of cards) {
+        c.classList.remove('unblocked');
+        c.dataset.state = 'waiting';
+        costs.set(c, 0);
+        turns.delete(c);
+      }
+      render();
+    };
+
+    async function story() {
+      const mine = ++run;
+      const wait = (ms: number) =>
+        new Promise<void>((resolve, reject) =>
+          setTimeout(() => (mine === run ? resolve() : reject(new Error('restarted'))), ms * PACE)
+        );
+      reset();
+      // Overseer: type the project, send it, get a plan back, approve it.
+      await wait(700);
+      win.classList.add('typing');
+      for (const ch of prompt) {
+        typed.textContent += ch;
+        await wait(ch === ',' || ch === ':' ? 140 : 24);
+      }
+      await wait(500);
+      win.classList.remove('typing');
+      typed.textContent = '';
+      hint.hidden = true;
+      me.textContent = prompt;
+      me.hidden = false;
+      await wait(450);
+      thinking.hidden = false;
+      await wait(1700);
+      thinking.hidden = true;
+      proposal.hidden = false;
+      await wait(1500);
+      approve.classList.add('aim');
+      await wait(950);
+      approve.classList.add('press');
+      await wait(180);
+      approve.classList.remove('press');
+      actions.hidden = true;
+      applied.hidden = false;
+      await wait(1100);
+      // Tasks: the five new tasks appear, then the milestone runs.
+      win.classList.add('fresh');
+      win.dataset.scene = 'plan';
+      await wait(1300);
+      win.classList.remove('fresh');
+      const [pay, cardsTask, address, wire, notes] = cards.map((c) => c.dataset.card!);
+      set([pay, cardsTask, address], 'working');
+      await wait(2300);
+      set([pay], 'review');
+      await wait(900);
+      // The blocker lands while the other two are still going, and the task
+      // waiting on it starts right away.
+      set([pay], 'landed');
+      notify('Apple Pay button landed. Wire Apple Pay into checkout starts now.');
+      await wait(900);
+      set([wire], 'working');
+      byId(wire).classList.add('unblocked');
+      await wait(1700);
+      set([cardsTask], 'review');
+      await wait(900);
+      set([cardsTask], 'landed');
+      await wait(1600);
+      set([wire], 'review');
+      await wait(900);
+      set([wire], 'landed');
+      notify('Checkout wiring landed. Release notes starts now.');
+      await wait(900);
+      set([notes], 'working');
+      byId(notes).classList.add('unblocked');
+      await wait(1100);
+      set([address], 'review');
+      await wait(900);
+      set([address], 'landed');
+      await wait(1500);
+      set([notes], 'review');
+      await wait(900);
+      set([notes], 'landed');
+      notify('Checkout v2 landed. 5 of 5 tasks done by agents.');
+      await wait(5500);
+      void story().catch(() => {});
+    }
+
+    // Working agents take a turn now and then, and each turn costs a little.
+    const tick = () => {
+      let any = false;
+      for (const c of cards) {
+        if (c.dataset.state !== 'working') continue;
+        any = true;
+        turns.set(c, (turns.get(c) ?? 1) + 1);
+        costs.set(c, (costs.get(c) ?? 0) + 0.01 + Math.random() * 0.02);
+      }
+      if (any) render();
+    };
+
+    let started = false;
+    new IntersectionObserver(
+      (entries) => {
+        const visible = entries.some((e) => e.isIntersecting);
+        if (visible && !started) {
+          started = true;
+          void story().catch(() => {});
+        }
+        if (visible && !ticker) ticker = window.setInterval(tick, 420);
+        if (!visible && ticker) {
+          clearInterval(ticker);
+          ticker = 0;
+        }
+      },
+      // Most of the window must be on screen, so the typing is seen from the start.
+      { threshold: 0.55 }
+    ).observe(win);
+  }
+</script>
