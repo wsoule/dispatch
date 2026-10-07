@@ -28,7 +28,7 @@ import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
 import type { TasksMode, TasksPage } from '../lib/twoViews';
 import { TasksListView } from './TasksListView';
-import { cn } from '@/lib/utils';
+import { SelectPill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 import {
   DropdownMenu,
@@ -37,6 +37,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
+import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 // One list grouped by milestone, the No milestone group included.
 const BY_MILESTONE: TasksDisplayPrefs = {
@@ -206,35 +207,29 @@ export function TasksView({
         <span className="shrink-0 text-[13px] font-medium">All work</span>
         <TasksStrip counts={counts} preset={preset} onPreset={onPreset} />
         <span className="flex-1" />
-        <div
-          role="radiogroup"
+        <ToggleGroup
           aria-label="Tasks layout"
-          className="rounded-control border-border-chip bg-surface-secondary flex shrink-0 gap-0.5 border-[0.5px] p-0.5"
+          variant="outline"
+          size="sm"
+          value={[mode]}
+          onValueChange={(next) => {
+            const picked = MODES.find((m) => m.id === next[0]);
+            if (picked !== undefined) onModeChange(picked.id);
+          }}
+          className="shrink-0"
         >
           {MODES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              role="radio"
-              aria-checked={mode === m.id}
-              onClick={() => onModeChange(m.id)}
-              className={cn(
-                'rounded-[6px] px-2.5 py-0.5 text-[12px]',
-                mode === m.id
-                  ? 'bg-background font-medium shadow-card'
-                  : 'text-muted-foreground'
-              )}
-            >
+            <ToggleGroupItem key={m.id} value={m.id}>
               {m.label}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
         <DropdownMenu>
           <DropdownMenuTrigger
             data-testid="tasks-preset"
-            className="rounded-control border-border-chip text-muted-foreground hover:bg-surface-hover shrink-0 border-[0.5px] px-2 py-0.5 text-[12px]"
+            render={<SelectPill />}
           >
-            view: {presetLabel} ▾
+            view: {presetLabel}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[160px]">
             <DropdownMenuRadioGroup
@@ -295,13 +290,13 @@ export function TasksView({
                 className="text-muted-foreground flex items-center gap-2 px-4 pt-1 pb-1 text-[12px]"
               >
                 <span>Showing {presetLabel} only</span>
-                <button
-                  type="button"
+                <Button
+                  variant="link"
+                  size="xs"
                   onClick={() => onPreset('all')}
-                  className="text-(--accent) hover:underline"
                 >
                   Clear
-                </button>
+                </Button>
               </div>
             )}
             <div className="min-h-0 flex-1 overflow-hidden">

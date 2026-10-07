@@ -1,13 +1,15 @@
 import { presetForBucket, type TasksPreset } from '../../lib/tasksPresets';
 import type { TaskBucket, TaskStatusCounts } from '../../lib/taskStatus';
 import { cn } from '@/lib/utils';
+import { Pill } from '@/ui/ai/pill';
+import { Toggle } from '@/ui/toggle';
 
-// Each bucket's chip: urgent ones tinted, resting ones outlined; a zero stays visible.
+// Each bucket's chip: urgent ones tinted; one with a preset toggles it, the rest are labels.
 const CHIP: Record<TaskBucket, { label: (n: number) => string; tone: string }> =
   {
     'need-you': {
       label: (n) => `● ${n} ${n === 1 ? 'task needs' : 'tasks need'} you`,
-      tone: 'bg-(--state-waiting-surface) text-(--state-waiting-fg) font-medium',
+      tone: 'bg-(--state-waiting-surface) text-(--state-waiting-fg)',
     },
     failed: {
       label: (n) => `✕ ${n} failed`,
@@ -58,35 +60,28 @@ export function TasksStrip({
         const spec = CHIP[bucket];
         const chipPreset = presetForBucket(bucket);
         const active = chipPreset !== null && chipPreset === preset;
-        const className = cn(
-          'rounded-pill px-2 py-px whitespace-nowrap',
-          // A zero still shows (nothing appears or vanishes), but quietly.
-          n === 0
-            ? 'text-muted-foreground opacity-60'
-            : spec.tone === ''
-              ? 'border-border-chip text-muted-foreground border-[0.5px]'
-              : spec.tone,
-          active && 'ring-1 ring-current'
-        );
+        // A zero still shows (nothing appears or vanishes), but quietly.
+        const tone = n === 0 ? 'opacity-60' : spec.tone;
         return chipPreset !== null ? (
-          <button
+          <Toggle
             key={bucket}
-            type="button"
+            variant="outline"
+            size="sm"
             data-testid={`tasks-strip-${bucket}`}
-            aria-pressed={active}
-            onClick={() => onPreset(active ? 'all' : chipPreset)}
-            className={cn(className, 'hover:underline')}
+            pressed={active}
+            onPressedChange={() => onPreset(active ? 'all' : chipPreset)}
+            className={cn('px-2', tone)}
           >
             {spec.label(n)}
-          </button>
+          </Toggle>
         ) : (
-          <span
+          <Pill
             key={bucket}
             data-testid={`tasks-strip-${bucket}`}
-            className={className}
+            className={cn('text-muted-foreground', tone)}
           >
             {spec.label(n)}
-          </span>
+          </Pill>
         );
       })}
       <span className="text-muted-foreground px-1 whitespace-nowrap">
