@@ -5,6 +5,10 @@ import { useRunStep } from '../../hooks/useRunStep';
 import { type FlowRow, useFlowRows } from '../../lib/flowList';
 import { isTerminalRunState } from '../../lib/runState';
 import { cn } from '@/lib/utils';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { ListRow } from '@/ui/ai/list-row';
+import { MetaText, SectionLabel } from '@/ui/chrome';
+import { ScrollArea } from '@/ui/scroll-area';
 
 // Entering slides in from the column's outer edge; leaving keeps going outward.
 const ENTER_IN = 'animate-in fade-in-0 slide-in-from-left-6 duration-300';
@@ -36,12 +40,48 @@ function FlowChevrons({ active }: { active: boolean }) {
 // Both point right: in travels toward the talk, out travels away from it.
 function ColumnHead({ label, count }: { label: string; count: number }) {
   return (
-    <h2 className="text-muted-foreground flex items-center gap-1.5 px-1 text-[12px] font-medium">
-      {label}
-      <span className="tabular-nums">· {count}</span>
-      <span className="flex-1" />
-      <FlowChevrons active={count > 0} />
+    <h2 className="contents">
+      <GroupHeader
+        name={label}
+        count={count}
+        actions={<FlowChevrons active={count > 0} />}
+      />
     </h2>
+  );
+}
+
+/** A column: the head pinned on top, the rest scrolling under it. */
+function Column({
+  label,
+  count,
+  testId,
+  children,
+}: {
+  label: string;
+  count: number;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <aside
+      aria-label={label}
+      data-testid={testId}
+      className="hidden min-h-0 w-[300px] shrink-0 flex-col gap-2 min-[1440px]:w-[340px] xl:flex"
+    >
+      <ColumnHead label={label} count={count} />
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col gap-3">{children}</div>
+      </ScrollArea>
+    </aside>
+  );
+}
+
+/** The quiet line a column shows when nothing is in it. */
+function EmptyLine({ children }: { children: ReactNode }) {
+  return (
+    <p className="px-2">
+      <MetaText>{children}</MetaText>
+    </p>
   );
 }
 
@@ -54,17 +94,8 @@ export function InflowColumn({
   children: ReactNode;
 }) {
   return (
-    <aside
-      aria-label="Coming in"
-      data-testid="overseer-inflow"
-      className="hidden min-h-0 w-[300px] shrink-0 flex-col gap-2 overflow-y-auto min-[1440px]:w-[340px] xl:flex"
-    >
-      <ColumnHead label="Coming in" count={count} />
-      {count === 0 && (
-        <p className="text-muted-foreground font-book px-1 text-[12px]">
-          Nothing is waiting on you.
-        </p>
-      )}
+    <Column label="Coming in" count={count} testId="overseer-inflow">
+      {count === 0 && <EmptyLine>Nothing is waiting on you.</EmptyLine>}
       <div
         className={cn(
           'flex flex-col gap-2 motion-reduce:animate-none',
@@ -73,7 +104,7 @@ export function InflowColumn({
       >
         {children}
       </div>
-    </aside>
+    </Column>
   );
 }
 
@@ -91,24 +122,22 @@ const LANDING: ReadonlySet<MergeQueueEntry['state']> = new Set([
 function RunRow({ run, onOpen }: { run: RunMeta; onOpen: () => void }) {
   const step = useRunStep(run.id);
   return (
-    <button
-      type="button"
+    <ListRow
+      role="listitem"
       onClick={onOpen}
-      className="hover:bg-surface-hover rounded-control flex w-full min-w-0 items-start gap-2 px-2 py-1.5 text-left"
-    >
-      <span
-        aria-hidden
-        className="bg-state-working mt-1.5 size-1.5 shrink-0 rounded-full motion-safe:animate-pulse"
-      />
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate text-[13px]">{run.taskTitle}</span>
-        <span className="text-muted-foreground font-book truncate text-[11px]">
-          {run.state === 'awaiting-approval'
-            ? 'waiting on approval'
-            : (step ?? run.state)}
-        </span>
-      </span>
-    </button>
+      leading={
+        <span
+          aria-hidden
+          className="bg-state-working size-1.5 rounded-full motion-safe:animate-pulse"
+        />
+      }
+      title={run.taskTitle}
+      crumb={
+        run.state === 'awaiting-approval'
+          ? 'waiting on approval'
+          : (step ?? run.state)
+      }
+    />
   );
 }
 
@@ -155,58 +184,49 @@ export function OutflowColumn({
   const landingRows = useFlowRows(landing, (m) => m.runId);
   const count = live.length + landing.length + setAside.length;
   return (
-    <aside
-      aria-label="Going out"
-      data-testid="overseer-outflow"
-      className="hidden min-h-0 w-[300px] shrink-0 flex-col gap-3 overflow-y-auto min-[1440px]:w-[340px] xl:flex"
-    >
-      <ColumnHead label="Going out" count={count} />
+    <Column label="Going out" count={count} testId="overseer-outflow">
       {count === 0 && liveRows.length === 0 && landingRows.length === 0 && (
-        <p className="text-muted-foreground font-book px-1 text-[12px]">
-          Nothing is running.
-        </p>
+        <EmptyLine>Nothing is running.</EmptyLine>
       )}
       {liveRows.length > 0 && (
         <section className="flex flex-col">
-          <h3 className="text-muted-foreground px-1 pb-0.5 text-[11px]">
-            Running
-          </h3>
-          <Rows
-            rows={liveRows}
-            render={(run) => (
-              <RunRow run={run} onOpen={() => onOpenTask(run.taskId)} />
-            )}
-          />
+          <SectionLabel className="px-2 pb-0.5">Running</SectionLabel>
+          <div role="list" className="flex flex-col">
+            <Rows
+              rows={liveRows}
+              render={(run) => (
+                <RunRow run={run} onOpen={() => onOpenTask(run.taskId)} />
+              )}
+            />
+          </div>
         </section>
       )}
       {landingRows.length > 0 && (
         <section className="flex flex-col">
-          <h3 className="text-muted-foreground px-1 pb-0.5 text-[11px]">
-            Landing
-          </h3>
-          <Rows
-            rows={landingRows}
-            render={(entry) => (
-              <button
-                type="button"
-                onClick={() => onOpenTask(entry.taskId)}
-                className="hover:bg-surface-hover rounded-control flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left"
-              >
-                <span className="truncate text-[13px]">{entry.taskTitle}</span>
-                <span className="text-muted-foreground font-book ml-auto shrink-0 text-[11px]">
-                  {entry.state.replace('-', ' ')}
-                </span>
-              </button>
-            )}
-          />
+          <SectionLabel className="px-2 pb-0.5">Landing</SectionLabel>
+          <div role="list" className="flex flex-col">
+            <Rows
+              rows={landingRows}
+              render={(entry) => (
+                <ListRow
+                  role="listitem"
+                  onClick={() => onOpenTask(entry.taskId)}
+                  title={entry.taskTitle}
+                  date={entry.state.replace('-', ' ')}
+                />
+              )}
+            />
+          </div>
         </section>
       )}
       {setAside.length > 0 && (
-        <section className="flex flex-col gap-1.5">
-          <h3 className="text-muted-foreground px-1 text-[11px]">Set aside</h3>
-          {setAside}
+        <section className="flex flex-col">
+          <SectionLabel className="px-2 pb-0.5">Set aside</SectionLabel>
+          <div role="list" className="flex flex-col gap-1">
+            {setAside}
+          </div>
         </section>
       )}
-    </aside>
+    </Column>
   );
 }

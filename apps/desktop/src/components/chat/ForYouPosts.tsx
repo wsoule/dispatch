@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 import { problemText, sendProblem } from '../../lib/composer';
 import type { Post } from '../../lib/posts';
 import { UNDO_MS } from '../conversation/HomeComposer';
+import { NoticePill } from '@/ui/ai/notice-pill';
+import { Pill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
+import { SectionLabel } from '@/ui/chrome';
 import { Input } from '@/ui/input';
 
 function clock(iso: string): string {
@@ -53,8 +56,8 @@ export function ForYouPosts({
       data-testid="for-you"
       className="flex flex-col gap-1.5"
     >
-      <h2 className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
-        For you
+      <h2 className="contents">
+        <SectionLabel>For you</SectionLabel>
       </h2>
       {shown.map((post) => (
         <ForYouPost
@@ -66,13 +69,9 @@ export function ForYouPosts({
         />
       ))}
       {fresh > 0 && (
-        <button
-          type="button"
-          onClick={() => setShown(posts)}
-          className="rounded-pill self-center bg-(--accent-tint) px-3 py-0.5 text-[12px] text-(--accent)"
-        >
+        <NoticePill onClick={() => setShown(posts)} className="self-center">
           {fresh} new
-        </button>
+        </NoticePill>
       )}
     </section>
   );
@@ -125,14 +124,18 @@ function ForYouPost({
   const from = label(post.latest.from);
   if (!post.unread && receipt === null && held === null && !replying) {
     return (
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="xs"
         data-testid="for-you-post-read"
         onClick={() => onOpen(post)}
-        className="text-muted-foreground truncate text-left text-[12px] hover:underline"
+        className="max-w-full min-w-0 justify-start self-start"
       >
-        {from} on {subjectLabel(post.subject)} · {clock(post.latest.createdAt)}
-      </button>
+        <span className="truncate">
+          {from} on {subjectLabel(post.subject)} ·{' '}
+          {clock(post.latest.createdAt)}
+        </span>
+      </Button>
     );
   }
   return (
@@ -142,9 +145,7 @@ function ForYouPost({
     >
       <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
         <span className="text-foreground font-medium">{from}</span>
-        <span className="rounded-pill border-border-chip border-[0.5px] px-1.5">
-          {subjectLabel(post.subject)}
-        </span>
+        <Pill>{subjectLabel(post.subject)}</Pill>
         {post.count > 1 && <span>{post.count} messages</span>}
         <span className="flex-1" />
         <span>{clock(post.latest.createdAt)}</span>

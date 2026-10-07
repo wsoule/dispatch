@@ -3,6 +3,7 @@ import {
   Check,
   CircleAlert,
   Plus,
+  Search,
   Shield,
   TerminalSquare,
   Wrench,
@@ -33,12 +34,20 @@ import {
 import { slashSuggestions } from '../../lib/slashCommands';
 import { Markdown } from '../runs/Markdown';
 import { cn } from '@/lib/utils';
-import { IconButton } from '@/ui/ai/icon-button';
+import { IconButton, type IconButtonProps } from '@/ui/ai/icon-button';
 import { PillButton } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { ToolChip, ToolChipGroup } from '@/ui/ai/tool-chips';
 import { Button } from '@/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
+import { Separator } from '@/ui/separator';
 import { Spinner } from '@/ui/spinner';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 /** The models the opening composer offers, in `PromptBar`'s shape. */
 const COMPOSER_MODELS = MODELS.map((m) => ({ id: m.id, label: m.label }));
@@ -169,6 +178,16 @@ function OverseerConfirmCard({
   );
 }
 
+/** An icon button with its short name in a tooltip, for the batch card's per-row answers. */
+function TipIconButton({ tip, ...props }: IconButtonProps & { tip: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<IconButton {...props} />} />
+      <TooltipContent>{tip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** Several actions queued in one turn: one card, a row each, and both answers for all. */
 function OverseerConfirmBatch({
   actions,
@@ -207,20 +226,22 @@ function OverseerConfirmBatch({
             <p className="font-book min-w-0 flex-1 text-[13px]">
               {action.summary}
             </p>
-            <IconButton
+            <TipIconButton
+              tip="Approve"
               label={`Approve: ${action.summary}`}
               disabled={locked}
               onClick={() => onDecide(action.id, true)}
             >
               {decidingId === action.id ? <Spinner /> : <Check />}
-            </IconButton>
-            <IconButton
+            </TipIconButton>
+            <TipIconButton
+              tip="Deny"
               label={`Deny: ${action.summary}`}
               disabled={locked}
               onClick={() => onDecide(action.id, false)}
             >
               <X />
-            </IconButton>
+            </TipIconButton>
           </div>
           {failure !== null && <ErrorLine>{failure}</ErrorLine>}
         </div>
@@ -361,7 +382,9 @@ function ToolRun({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
       className="flex min-w-0 flex-col gap-1 self-start"
       data-testid="overseer-tools"
     >
@@ -376,25 +399,22 @@ function ToolRun({
             />
           ))}
         </ToolChipGroup>
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-          className="text-muted-foreground hover:text-foreground shrink-0 text-[11px] hover:underline"
-        >
+        <CollapsibleTrigger render={<Button variant="ghost" size="xs" />}>
           {open ? 'hide details' : 'details'}
-        </button>
+        </CollapsibleTrigger>
       </div>
-      {open && (
-        <ul className="text-muted-foreground flex flex-col gap-1 px-1 font-mono text-[11px] break-all whitespace-pre-wrap">
-          {calls.map((call, i) => (
-            <li key={`${call.tool}-${i}`}>
-              <span className="text-foreground">{call.tool}</span> {call.text}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+      <CollapsibleContent
+        render={
+          <ul className="text-muted-foreground flex flex-col gap-1 px-1 font-mono text-[11px] break-all whitespace-pre-wrap" />
+        }
+      >
+        {calls.map((call, i) => (
+          <li key={`${call.tool}-${i}`}>
+            <span className="text-foreground">{call.tool}</span> {call.text}
+          </li>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -656,11 +676,11 @@ export function OverseerChat({
             data-testid={`overseer-notice-${item.notice}`}
             className="text-muted-foreground font-book flex items-center gap-2 py-1 text-[11px]"
           >
-            <span className="bg-border h-px flex-1" />
+            <Separator className="flex-1" />
             <span className="max-w-[80%] text-center">
               {item.text} · {formatRelativeTimeFromIso(item.at)}
             </span>
-            <span className="bg-border h-px flex-1" />
+            <Separator className="flex-1" />
           </div>
         );
       case 'door':
@@ -672,15 +692,14 @@ export function OverseerChat({
             {doorLabel(item.door)}
           </div>
         ) : (
-          <button
+          <PillButton
             key={item.key}
-            type="button"
             data-testid="overseer-door"
             onClick={() => onOpenDoor(item.door)}
-            className="rounded-pill border-border text-foreground hover:bg-surface-quaternary self-start border-[0.5px] px-3 py-1 text-[12px]"
+            className="self-start"
           >
             {doorLabel(item.door)}
-          </button>
+          </PillButton>
         );
       case 'queued':
         return (
@@ -742,8 +761,11 @@ export function OverseerChat({
       )}
     >
       {query !== null && (
-        <div className="rounded-control border-border flex items-center gap-2 border-[0.5px] px-2 py-1">
-          <input
+        <InputGroup>
+          <InputGroupAddon>
+            <Search aria-hidden />
+          </InputGroupAddon>
+          <InputGroupInput
             ref={findRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -752,22 +774,23 @@ export function OverseerChat({
             }}
             placeholder="Find in this conversation"
             aria-label="Find in this conversation"
-            className="font-book min-w-0 flex-1 bg-transparent text-[13px] outline-none"
           />
-          <span className="text-muted-foreground font-book text-[11px] tabular-nums">
-            {query.trim() === ''
-              ? ''
-              : `${thread.length} ${thread.length === 1 ? 'match' : 'matches'}`}
-          </span>
-          <Button
-            variant="ghost"
-            size="xs"
-            aria-label="Close find"
-            onClick={() => setQuery(null)}
-          >
-            Done
-          </Button>
-        </div>
+          <InputGroupAddon align="inline-end">
+            <span className="font-book tabular-nums">
+              {query.trim() === ''
+                ? ''
+                : `${thread.length} ${thread.length === 1 ? 'match' : 'matches'}`}
+            </span>
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-label="Close find"
+              onClick={() => setQuery(null)}
+            >
+              Done
+            </Button>
+          </InputGroupAddon>
+        </InputGroup>
       )}
       {overseer.recordError !== null && overseer.record === undefined && (
         <ErrorLine>{overseer.recordError}</ErrorLine>
@@ -847,33 +870,6 @@ export function OverseerChat({
             </Button>
           )}
         </div>
-        {suggestions.length > 0 && (
-          <ul
-            aria-label="Slash commands"
-            data-testid="overseer-slash"
-            className="rounded-card border-border flex flex-col border-[0.5px] py-1"
-          >
-            {suggestions.map((command) => (
-              <li key={command.name}>
-                <button
-                  type="button"
-                  onClick={() => setDraft(`/${command.name} `)}
-                  className="hover:bg-surface-quaternary font-book flex w-full items-baseline gap-2 px-3 py-1 text-left text-[13px]"
-                >
-                  <span className="font-mono">/{command.name}</span>
-                  {command.argumentHint !== '' && (
-                    <span className="text-muted-foreground font-mono text-[11px]">
-                      {command.argumentHint}
-                    </span>
-                  )}
-                  <span className="text-muted-foreground min-w-0 flex-1 truncate text-[12px]">
-                    {command.description}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
         {/* Disabled for the whole turn, not just the send: the composer is the
             primitive's, and a Send that looks live against a turn the server
             would 409 is the worse of the two. */}
@@ -887,6 +883,14 @@ export function OverseerChat({
             'Ask about runs, tasks, the queue — or ask it to act…'
           }
           ariaLabel="Follow-up message"
+          // Only what the draft is typing, so a picked command closes the list.
+          commands={suggestions.map((command) => ({
+            id: command.name,
+            label: command.name,
+            hint:
+              command.argumentHint === '' ? undefined : command.argumentHint,
+            description: command.description,
+          }))}
           // The open conversation's own model and effort; a change applies from its next turn.
           models={COMPOSER_MODELS}
           modelId={overseer.record?.model ?? overseer.model}

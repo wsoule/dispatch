@@ -26,6 +26,8 @@ export type PromptBarCommand = {
   id: string;
   label: string;
   hint?: string;
+  /** A muted line after the label saying what the command does. */
+  description?: string;
 };
 
 export type PromptBarModel = {
@@ -194,7 +196,11 @@ export function PromptBar({
           align="start"
           initialFocus={false}
           finalFocus={false}
-          className="w-64 p-1"
+          className={cn(
+            'p-1',
+            // Described commands need the room for their one-line description.
+            commands.some((c) => c.description !== undefined) ? 'w-96' : 'w-64'
+          )}
         >
           {matches.length > 0 ? (
             <ul className="flex flex-col gap-0.5">
@@ -205,7 +211,14 @@ export function PromptBar({
                     onClick={() => onChange(`/${command.label} `)}
                     className="hover:bg-surface-hover rounded-control ease-out-expo font-book flex h-10 w-full items-center justify-between gap-3 px-2 text-left text-[13px] transition-colors duration-100"
                   >
-                    <span className="text-foreground">{command.label}</span>
+                    <span className="text-foreground shrink-0">
+                      {command.label}
+                    </span>
+                    {command.description !== undefined && (
+                      <span className="text-muted-foreground min-w-0 flex-1 truncate text-[12px]">
+                        {command.description}
+                      </span>
+                    )}
                     {command.hint !== undefined && (
                       <Kbd className="max-w-[60%] truncate">{command.hint}</Kbd>
                     )}

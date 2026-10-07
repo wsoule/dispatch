@@ -29,7 +29,7 @@ test('Going out lists live runs, opens their task, and says so when nothing runs
       onOpenTask={(id) => opened.push(id)}
     />
   );
-  expect(screen.getByRole('heading', { name: /Going out · 1/ })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: /Going out\s*1/ })).toBeTruthy();
   expect(screen.queryByText('Done one')).toBeNull();
   fireEvent.click(screen.getByText('Warm the cache'));
   expect(opened).toEqual(['t-a']);
@@ -64,6 +64,6 @@ test('a run that finishes slides out before it leaves', async () => {
 
 test('Coming in counts what waits and says so when nothing does', () => {
   render(<InflowColumn count={0}>{null}</InflowColumn>);
-  expect(screen.getByRole('heading', { name: /Coming in · 0/ })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: /Coming in\s*0/ })).toBeTruthy();
   expect(screen.getByText('Nothing is waiting on you.')).toBeTruthy();
 });
