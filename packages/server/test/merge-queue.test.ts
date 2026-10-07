@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { TaskCache } from '../src/cache.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
+import { epicBranchName } from '../src/orchestrator/epicBranch.js';
 import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import { JjManager } from '../src/orchestrator/jj.js';
 import { MergeQueue } from '../src/orchestrator/mergeQueue.js';
@@ -159,9 +160,15 @@ function makeHarness(jj?: JjManager): Harness {
 
 async function dispatchAndFinish(
   harness: Harness,
-  title = 'Ship it'
+  title = 'Ship it',
+  // An epic to file the task under, so the run's base is that epic's
+  // integration branch instead of main.
+  parent?: string
 ): Promise<{ runId: string; taskId: string }> {
-  const task = harness.store.create({ title });
+  const task = harness.store.create(
+    parent === undefined ? { title } : { title, parent }
+  );
+  if (parent !== undefined) harness.cache.rebuild(harness.store);
   const meta = await harness.orchestrator.dispatch(task.meta.id, 'fake');
   await waitFor(
     () => harness.orchestrator.getRun(meta.id)?.meta.state === 'finished'
@@ -705,13 +712,24 @@ describe('MergeQueue refreshRemote', () => {
 // Task 6: once the queue drains with at least one merge, it pushes origin's
 // copy of the base branch itself — the whole point is that a human never has
 // to remember to `git push` after every merge queue run.
+//
+// With an origin remote, a run on the default base lands on origin directly
+// and owes no drain-push (see origin-landing.test.ts). The run that still
+// merges locally there is an epic child, whose base is the local-only
+// epic/<id> integration branch, so these tests file their runs under an epic.
 describe('MergeQueue auto-push on drain', () => {
+  // An epic for the tests' runs to sit under; see the comment above.
+  function makeEpic(harness: Harness): string {
+    return harness.store.create({ title: 'The epic', kind: 'epic' }).meta.id;
+  }
+
   it('pushes once after draining with >=1 merge and broadcasts queue.drained', async () => {
     const origin = initBareOrigin();
     const harness = makeHarness();
     runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
+    const epicId = makeEpic(harness);
     const events = captureEvents(harness.events);
-    const { runId } = await dispatchAndFinish(harness);
+    const { runId } = await dispatchAndFinish(harness, 'Ship it', epicId);
     const stub = new StubRunner();
     const queue = makeQueue(harness, stub.run);
 
@@ -722,7 +740,12 @@ describe('MergeQueue auto-push on drain', () => {
       c.cmd.join(' ').startsWith('git push origin')
     );
     expect(pushes.length).toBe(1);
-    expect(pushes[0]?.cmd).toEqual(['git', 'push', 'origin', 'main']);
+    expect(pushes[0]?.cmd).toEqual([
+      'git',
+      'push',
+      'origin',
+      epicBranchName(epicId),
+    ]);
     const drained = events.find((e) => e.type === 'queue.drained') as {
       merged: number;
       pushed: boolean;
@@ -734,8 +757,9 @@ describe('MergeQueue auto-push on drain', () => {
     const origin = initBareOrigin();
     const harness = makeHarness();
     runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
+    const epicId = makeEpic(harness);
     const events = captureEvents(harness.events);
-    const { runId } = await dispatchAndFinish(harness);
+    const { runId } = await dispatchAndFinish(harness, 'Ship it', epicId);
     const stub = new StubRunner();
     stub.pushResult = { ok: false, stdout: '', stderr: 'no auth' };
     const queue = makeQueue(harness, stub.run);
@@ -778,8 +802,9 @@ describe('MergeQueue auto-push on drain', () => {
     const origin = initBareOrigin();
     const harness = makeHarness();
     runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
+    const epicId = makeEpic(harness);
     const events = captureEvents(harness.events);
-    const { runId } = await dispatchAndFinish(harness);
+    const { runId } = await dispatchAndFinish(harness, 'Ship it', epicId);
     const stub = new StubRunner();
     stub.pushResult = { ok: false, stdout: '', stderr: 'no auth' };
     const queue = makeQueue(harness, stub.run);
@@ -811,7 +836,12 @@ describe('MergeQueue auto-push on drain', () => {
     const origin = initBareOrigin();
     const harness = makeHarness();
     runGitSync(harness.rootDir, ['remote', 'add', 'origin', origin]);
-    const { runId: firstRunId } = await dispatchAndFinish(harness, 'First');
+    const epicId = makeEpic(harness);
+    const { runId: firstRunId } = await dispatchAndFinish(
+      harness,
+      'First',
+      epicId
+    );
     const stub = new StubRunner();
 
     // Stalls only the FIRST `git push origin` call indefinitely, until the
@@ -844,7 +874,11 @@ describe('MergeQueue auto-push on drain', () => {
     // A second, already-finished run enqueued WHILE the push above is still
     // pending. Its own kick() is a no-op (pumping is still true) — the only
     // thing that can ever process it is this same pump() call looping back.
-    const { runId: secondRunId } = await dispatchAndFinish(harness, 'Second');
+    const { runId: secondRunId } = await dispatchAndFinish(
+      harness,
+      'Second',
+      epicId
+    );
     queue.enqueue(secondRunId);
     expect(
       queue.snapshot().entries.find((e) => e.runId === secondRunId)?.state

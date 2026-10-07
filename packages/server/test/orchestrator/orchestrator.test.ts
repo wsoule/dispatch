@@ -2588,12 +2588,13 @@ describe('Orchestrator.listBranches', () => {
   });
 
   it('reports pushedToOrigin false without a remote, and false-then-true once a merge reaches origin', async () => {
-    const origin = initBareGitRepo();
-    runGitSync(repo, ['remote', 'add', 'origin', origin]);
     const { orchestrator, meta } = await dispatchFinishedRun(repo);
 
-    // Merged but nothing pushed anywhere yet.
+    // Merged but nothing pushed anywhere yet. With a remote, review() refuses
+    // a local merge, so the remote arrives after it: a run merged before the
+    // project had one.
     orchestrator.review(meta.id, 'merge');
+    runGitSync(repo, ['remote', 'add', 'origin', initBareGitRepo()]);
     // review() removes the ref on success — recreate it to simulate the
     // leftover case, same as the existing leftover test above.
     runGitSync(repo, ['branch', meta.branch, 'main']);
@@ -2667,10 +2668,11 @@ describe('Orchestrator.listBranches', () => {
 // earned that, based on whether its merge actually reached origin.
 describe('Orchestrator.reconcileArchives', () => {
   it('stamps archivedAt once the merge reaches origin, is a no-op before that, and never re-touches an archived task', async () => {
-    const origin = initBareGitRepo();
-    runGitSync(repo, ['remote', 'add', 'origin', origin]);
     const { orchestrator, store, meta } = await dispatchFinishedRun(repo);
+    // Merged before the remote existed: review() refuses a local merge once
+    // there is one.
     orchestrator.review(meta.id, 'merge');
+    runGitSync(repo, ['remote', 'add', 'origin', initBareGitRepo()]);
 
     // Merged locally, but origin still has no idea — nothing to stamp yet.
     expect(orchestrator.reconcileArchives()).toBe(0);
@@ -2696,14 +2698,14 @@ describe('Orchestrator.reconcileArchives', () => {
   });
 
   it('runs the same reconciliation from reconcileOnBoot, off a freshly-hydrated registry', async () => {
-    const origin = initBareGitRepo();
-    runGitSync(repo, ['remote', 'add', 'origin', origin]);
     const {
       orchestrator: first,
       store,
       meta,
     } = await dispatchFinishedRun(repo);
+    // Merged before the remote existed, then pushed by hand.
     first.review(meta.id, 'merge');
+    runGitSync(repo, ['remote', 'add', 'origin', initBareGitRepo()]);
     runGitSync(repo, ['push', 'origin', 'main']);
     runGitSync(repo, ['fetch', 'origin', 'main']);
 
@@ -2748,10 +2750,11 @@ describe('Orchestrator.decorateRunsWithPushed', () => {
   });
 
   it('reports true for a merged run once its commit reaches origin', async () => {
-    const origin = initBareGitRepo();
-    runGitSync(repo, ['remote', 'add', 'origin', origin]);
     const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    // Merged before the remote existed: review() refuses a local merge once
+    // there is one.
     const reviewed = orchestrator.review(meta.id, 'merge');
+    runGitSync(repo, ['remote', 'add', 'origin', initBareGitRepo()]);
 
     expect(
       orchestrator.decorateRunsWithPushed([reviewed])[0].pushedToOrigin
