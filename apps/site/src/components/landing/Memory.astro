@@ -1,0 +1,301 @@
+---
+// Memory, as one loop: a run learns something the hard way, saves it, a person
+// approves it for the team, and the next run starts with it in its prompt.
+// The three steps play in order once the section is on screen.
+import FeatureList from './FeatureList.astro';
+
+const features: [string, string][] = [
+  ['Seven kinds', 'Preference, convention, constraint, hazard, decision, fact and reference.'],
+  ['Personal, project, team', 'Your own memories save at once. Shared ones become proposals you review.'],
+  ['Fades when unused', 'Entries no run recalls go stale, then expire, so the index stays short.'],
+  ['Works with Claude’s memory', 'Mirrored into Claude Code’s memory files. Outside A2A agents never see it.'],
+];
+const entries = [
+  { handle: '#C2', kind: 'convention', scope: 'team', title: 'Money is integer cents everywhere; never floats' },
+  { handle: '#P4', kind: 'preference', scope: 'personal', title: 'Keep code comments to one or two lines' },
+  { handle: '#D1', kind: 'decision', scope: 'project', title: 'Checkout state lives in the session store' },
+];
+---
+
+<section class="feature" id="memory" aria-labelledby="memory-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="memory-title">Agents that remember. <em>Every run starts smarter.</em></h2>
+      <p>
+        Agents save what they learn the hard way: hazards, conventions, decisions. The next run
+        starts with them in its prompt, whichever agent picks it up. Team memories are reviewed by a
+        person first, and ones nobody uses fade out on their own.
+      </p>
+    </div>
+
+    <ol class="loop" data-seq-root>
+      <li class="step" data-seq style="--i:0">
+        <p class="label"><span class="n">1</span>A run learns</p>
+        <div class="pane">
+          <p class="who"><span class="dot"></span>Claude on <b>Retry webhook deliveries</b></p>
+          <p class="line dim">› Bash pnpm test webhooks</p>
+          <p class="line bad">✗ charged twice: Stripe sent evt_3P9 again</p>
+          <p class="line tool">› dispatch memory_save</p>
+          <div class="save">
+            <p><span class="kind hazard">hazard</span><span class="scope">team</span></p>
+            <p class="title">Stripe sends events twice; webhook handlers must be idempotent</p>
+          </div>
+        </div>
+      </li>
+
+      <li class="step" data-seq style="--i:1.3">
+        <p class="label"><span class="n">2</span>A person approves it</p>
+        <div class="pane">
+          <p class="proposal">
+            <span class="tag">proposal</span>Team memory from Claude
+          </p>
+          <p class="title">Stripe sends events twice; webhook handlers must be idempotent</p>
+          <p class="acts"><span class="ok">Approve</span><span>Reject</span></p>
+          <ul class="list">
+            <li class="new"><code>#H7</code><span class="kind hazard">hazard</span><span class="t">Stripe sends events twice…</span></li>
+            {
+              entries.map((e) => (
+                <li>
+                  <code>{e.handle}</code>
+                  <span class:list={['kind', e.kind]}>{e.kind}</span>
+                  <span class="t">{e.title}</span>
+                </li>
+              ))
+            }
+            <li class="stale"><code>#F3</code><span class="kind fact">fact</span><span class="t">Staging resets every Sunday</span><span class="fade">stale</span></li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="step" data-seq style="--i:2.6">
+        <p class="label"><span class="n">3</span>The next run knows</p>
+        <div class="pane">
+          <p class="who"><span class="dot codex"></span>Codex on <b>Refund webhooks</b></p>
+          <pre><code><span class="h">## Memory</span>
+<mark>#H7 hazard: Stripe sends events twice;
+    handlers must be idempotent</mark>
+#C2 convention: money is integer cents
+#D1 decision: checkout state in session</code></pre>
+          <p class="line tool">› dispatch memory_read #H7</p>
+          <p class="line good">✓ Dedupes on event id from the start</p>
+        </div>
+      </li>
+    </ol>
+
+    <FeatureList items={features} />
+  </div>
+</section>
+
+<style>
+  .loop {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+    padding: 0;
+    list-style: none;
+    --step: 900ms;
+  }
+  .step {
+    display: flex;
+    flex-direction: column;
+  }
+  .label {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-bottom: 0.7rem;
+    font-weight: 600;
+  }
+  .n {
+    display: grid;
+    place-items: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 50%;
+    background: rgb(139 143 248 / 18%);
+    color: var(--accent);
+    font-size: 0.75rem;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 0.45rem;
+    min-height: 17rem;
+    padding: 1rem;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    background: #0f0f12;
+    box-shadow: 0 40px 100px -40px rgb(0 0 0 / 95%);
+    font-size: 0.82rem;
+  }
+  .who {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--ink-2);
+  }
+  .who b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--working);
+  }
+  .dot.codex {
+    background: var(--review);
+  }
+  .line {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+  }
+  .dim {
+    color: var(--ink-3);
+  }
+  .bad {
+    color: var(--failed);
+  }
+  .good {
+    color: var(--review);
+  }
+  .tool {
+    color: var(--accent);
+  }
+  .save {
+    padding: 0.6rem 0.7rem;
+    border: 1px solid rgb(139 143 248 / 40%);
+    border-radius: 9px;
+    background: rgb(91 95 214 / 12%);
+  }
+  .save p:first-child {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .title {
+    margin-top: 0.3rem;
+    font-weight: 550;
+  }
+  .kind,
+  .scope,
+  .tag {
+    padding: 0 0.4rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+  }
+  .kind {
+    background: rgb(255 255 255 / 8%);
+    color: var(--ink-2);
+  }
+  .kind.hazard {
+    background: rgb(240 96 93 / 16%);
+    color: var(--failed);
+  }
+  .kind.convention {
+    background: rgb(139 143 248 / 16%);
+    color: var(--accent);
+  }
+  .kind.decision {
+    background: rgb(63 207 142 / 14%);
+    color: var(--review);
+  }
+  .kind.preference {
+    background: rgb(242 199 68 / 14%);
+    color: var(--working);
+  }
+  .scope {
+    border: 1px solid var(--line-2);
+    color: var(--ink-3);
+  }
+  .proposal {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--ink-2);
+  }
+  .tag {
+    background: rgb(240 138 60 / 18%);
+    color: #f0a060;
+  }
+  .acts {
+    display: flex;
+    gap: 0.35rem;
+  }
+  .acts span {
+    padding: 0.15rem 0.6rem;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+  }
+  .acts .ok {
+    border-color: transparent;
+    background: var(--accent-strong);
+  }
+  .list {
+    display: grid;
+    gap: 0;
+    margin-top: 0.4rem;
+    padding: 0;
+    list-style: none;
+  }
+  .list li {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    padding: 0.4rem 0;
+    border-top: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .list code {
+    color: var(--ink-3);
+    font-size: 0.7rem;
+  }
+  .t {
+    overflow: hidden;
+    color: var(--ink-2);
+    text-overflow: ellipsis;
+  }
+  .list .new {
+    border-radius: 6px;
+    background: rgb(139 143 248 / 12%);
+  }
+  .list .stale {
+    opacity: 0.45;
+  }
+  .fade {
+    margin-left: auto;
+    color: var(--ink-3);
+    font-size: 0.7rem;
+  }
+  pre {
+    padding: 0.7rem;
+    overflow-x: auto;
+    border-radius: 8px;
+    background: #0a0a0c;
+    color: var(--ink-3);
+    font-size: 0.72rem;
+    line-height: 1.6;
+  }
+  .h {
+    color: var(--ink);
+  }
+  mark {
+    display: inline-block;
+    padding: 0 0.2rem;
+    border-radius: 4px;
+    background: rgb(139 143 248 / 18%);
+    color: var(--ink);
+  }
+
+  @media (max-width: 900px) {
+    .loop {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .pane {
+      min-height: 0;
+    }
+  }
+</style>

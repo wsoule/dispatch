@@ -1,0 +1,135 @@
+---
+import AppDemo from './AppDemo.astro';
+import InstallCommand from './InstallCommand.astro';
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap">
+    <div class="copy">
+      <h1 id="hero-title">Give agents tasks, <em>not chats.</em></h1>
+      <div class="sub">
+        <p class="lede">
+          The task board for teams and their agents. Plan in one sentence, watch agents work
+          through it, and see exactly what stands between you and v1.
+        </p>
+        <a class="new" href="#two-views"><b>New</b> Overseer topic routing</a>
+      </div>
+      <div class="actions" id="install">
+        <a class="btn btn-primary" href="https://github.com/wsoule/dispatch/releases/latest">
+          Download for Mac
+        </a>
+        <InstallCommand />
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="glow" aria-hidden="true"></div>
+    <div class="tilt">
+      <AppDemo />
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    padding: clamp(4rem, 10vw, 8rem) 0 0;
+    overflow: hidden;
+  }
+  h1 {
+    max-width: 12ch;
+  }
+  .sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem 3rem;
+    margin-top: 1.75rem;
+  }
+  .lede {
+    max-width: 36rem;
+    color: var(--ink-2);
+    font-size: clamp(1.05rem, 1.4vw, 1.2rem);
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+  .new {
+    color: var(--ink-2);
+    font-size: 0.95rem;
+    text-decoration: none;
+  }
+  .new b {
+    margin-right: 0.4rem;
+    color: var(--ink);
+    font-weight: 550;
+  }
+  .new:hover {
+    color: var(--ink);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 2.25rem;
+    scroll-margin-top: 6rem;
+  }
+
+  /* The app runs off the right edge of the page and fades into it, so it
+     reads as a window onto something larger than the screen. */
+  .stage {
+    position: relative;
+    width: calc(100% - max(var(--gutter), (100% - var(--max)) / 2));
+    margin: clamp(3.5rem, 7vw, 5rem) 0 0 auto;
+    padding-bottom: clamp(3rem, 6vw, 5rem);
+    perspective: 2400px;
+    mask-image:
+      linear-gradient(to right, #000 82%, transparent),
+      linear-gradient(to bottom, #000 78%, transparent);
+    mask-composite: intersect;
+  }
+  .stage :global(.win) {
+    width: max(100%, 74rem);
+  }
+  .glow {
+    position: absolute;
+    inset: -6% 10% 30% -5%;
+    background:
+      radial-gradient(40% 50% at 35% 30%, rgb(91 95 214 / 50%), transparent 70%),
+      radial-gradient(30% 40% at 15% 70%, rgb(63 207 142 / 14%), transparent 70%),
+      radial-gradient(30% 40% at 70% 65%, rgb(242 199 68 / 12%), transparent 70%);
+    filter: blur(60px);
+    pointer-events: none;
+  }
+  .tilt {
+    position: relative;
+    transform-origin: 0% 0%;
+  }
+  /* The window starts tilted back and lies flat as the reader scrolls to it. */
+  @supports (animation-timeline: view()) {
+    .tilt {
+      animation: flatten linear both;
+      animation-range: entry 0% cover 40%;
+      animation-timeline: view();
+    }
+  }
+  @keyframes flatten {
+    from {
+      transform: rotateX(22deg) rotateY(-8deg) scale(0.92);
+    }
+    to {
+      transform: none;
+    }
+  }
+  @media (max-width: 720px) {
+    .stage {
+      width: calc(100% - var(--gutter));
+      mask-image: linear-gradient(to bottom, #000 85%, transparent);
+    }
+    .stage :global(.win) {
+      width: 100%;
+    }
+  }
+</style>

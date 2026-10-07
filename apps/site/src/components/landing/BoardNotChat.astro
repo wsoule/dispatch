@@ -1,0 +1,220 @@
+---
+// Before and after: a team chat where everyone asks for status, beside the
+// board that already shows it. The pings arrive one by one as it scrolls in.
+const pings = [
+  { who: 'Dami', c: '#e8a35c', time: 'Mon 10:04', text: 'what’s the status on checkout?' },
+  { who: 'Dami', c: '#e8a35c', time: 'Mon 2:31', text: 'anyone??' },
+  { who: 'Priya', c: '#e27ba8', time: 'Wed 11:02', text: 'what was this task again?' },
+  { who: 'Sam', c: '#6fa4ef', time: 'Wed 4:12', text: 'can someone ask payments if the webhook change is in?' },
+  { who: 'Dami', c: '#e8a35c', time: 'Thu 9:15', text: 'are we done here yet?? 🙏' },
+];
+const rows = [
+  { id: 't-0359be', title: 'Apple Pay button' },
+  { id: 't-2c6ebb', title: 'Saved cards' },
+  { id: 't-d91bae', title: 'Address autocomplete' },
+  { id: 't-9a64e9', title: 'Wire Apple Pay into checkout' },
+  { id: 't-f606fb', title: 'Release notes' },
+];
+---
+
+<section class="feature" id="board" aria-labelledby="board-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="board-title">Stop pinging people. <em>Ask the board.</em></h2>
+      <p>
+        A chat thread can’t tell you where checkout stands. A task can: it has an owner, a status,
+        the files it may touch and a record of what the agent found. “Are we done yet?” answers
+        itself.
+      </p>
+    </div>
+
+    <div class="pair" data-seq-root>
+      <figure class="side">
+        <p class="label before">Before</p>
+        <div class="chat" aria-label="A team chat full of status questions">
+          <header><b># checkout</b><span>4 members</span><span class="unread">5</span></header>
+          <ol>
+            {
+              pings.map((p, i) => (
+                <li data-seq style={`--i:${i}`}>
+                  <span class="av" style={`background:${p.c}`}>
+                    {p.who[0]}
+                  </span>
+                  <div>
+                    <p class="meta">
+                      <b>{p.who}</b> {p.time}
+                    </p>
+                    <p>{p.text}</p>
+                  </div>
+                </li>
+              ))
+            }
+          </ol>
+        </div>
+      </figure>
+
+      <figure class="side">
+        <p class="label after">Now</p>
+        <div class="board" aria-label="The Dispatch board answering the same question">
+          <header>
+            <span class="ring" aria-hidden="true"></span>
+            <div>
+              <b>Checkout v2</b>
+              <span>5/5 landed, merged Thursday 9:02</span>
+            </div>
+          </header>
+          <p class="calm">Nothing needs you</p>
+          <ol>
+            {
+              rows.map((r) => (
+                <li>
+                  <span class="tick" aria-hidden="true" />
+                  <code>{r.id}</code>
+                  <span class="t">{r.title}</span>
+                  <span class="landed">Landed</span>
+                </li>
+              ))
+            }
+          </ol>
+        </div>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<style>
+  .pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+    gap: 1.5rem;
+    margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+    --step: 650ms;
+  }
+  .label {
+    display: inline-block;
+    margin-bottom: 0.8rem;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .before {
+    background: rgb(240 96 93 / 14%);
+    color: var(--failed);
+  }
+  .after {
+    background: rgb(139 143 248 / 16%);
+    color: var(--accent);
+  }
+  .chat,
+  .board {
+    height: 23rem;
+    overflow: hidden;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    background: #111113;
+    box-shadow: 0 40px 100px -40px rgb(0 0 0 / 95%);
+    font-size: 0.88rem;
+  }
+  .chat header,
+  .board header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .chat header span {
+    color: var(--ink-3);
+    font-size: 0.8rem;
+  }
+  .chat header .unread {
+    margin-left: auto;
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    background: var(--failed);
+    color: #fff;
+    font-weight: 700;
+  }
+  .chat ol,
+  .board ol {
+    display: grid;
+    gap: 0.9rem;
+    padding: 1rem;
+    list-style: none;
+  }
+  .chat li {
+    display: flex;
+    gap: 0.7rem;
+  }
+  .av {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 7px;
+    color: #111;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+  .meta {
+    color: var(--ink-3);
+    font-size: 0.75rem;
+  }
+  .meta b {
+    color: var(--ink);
+  }
+  .board header div {
+    display: grid;
+  }
+  .board header span:not(.ring) {
+    color: var(--ink-3);
+    font-size: 0.8rem;
+  }
+  .ring {
+    flex: none;
+    width: 1.6rem;
+    height: 1.6rem;
+    border: 3px solid var(--review);
+    border-radius: 50%;
+    box-shadow: 0 0 16px rgb(63 207 142 / 50%);
+  }
+  .calm {
+    padding: 0.7rem 1rem 0;
+    color: var(--ink-3);
+    font-size: 0.8rem;
+  }
+  .board ol {
+    gap: 0;
+    padding-top: 0.4rem;
+  }
+  .board li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .board code {
+    color: var(--ink-3);
+    font-size: 0.72rem;
+  }
+  .t {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tick {
+    flex: none;
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 50%;
+    background: var(--landed);
+  }
+  .landed {
+    margin-left: auto;
+    color: var(--landed);
+    font-size: 0.8rem;
+  }
+</style>

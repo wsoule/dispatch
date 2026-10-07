@@ -1,0 +1,427 @@
+---
+// The statement under the hero and three principles, each drawn from the
+// product's own parts: a task card stepping through its statuses, the status
+// orb with agents circling it, and the memory index taking a new lesson.
+const figs = [
+  {
+    kind: 'task',
+    title: 'Tasks, not chats',
+    text: 'Work has an owner, a scope and a definition of done. It survives the tab closing.',
+  },
+  {
+    kind: 'orbit',
+    title: 'Any agent',
+    text: 'Claude, Codex, Gemini or your own, all on one board through one MCP server.',
+  },
+  {
+    kind: 'memory',
+    title: 'Learns as it goes',
+    text: 'Agents save what they learn, and every run after starts with it.',
+  },
+];
+---
+
+
+<section class="principles" aria-labelledby="statement">
+  <div class="wrap">
+    <p class="statement" id="statement">
+      A new kind of project tool. <span>Agents take the tasks, talk to each other and remember what
+      they learn, while you decide what ships.</span>
+    </p>
+
+    <div class="figs">
+      {
+        figs.map((f) => (
+          <figure class="fig">
+            <div class="art" aria-hidden="true">
+              {f.kind === 'task' && (
+                <div class="task">
+                  <p class="task-top">
+                    <span class="glyph" />
+                    <code>t-0359be</code>
+                    <span class="cost">$0.08</span>
+                  </p>
+                  <p class="task-title">Apple Pay button</p>
+                  <p class="task-status">
+                    <span class="st st-w">Working, turn 7</span>
+                    <span class="st st-r">Ready for review</span>
+                    <span class="st st-l">Landed</span>
+                  </p>
+                  <p class="task-writes">
+                    <code>src/checkout/pay/**</code>
+                  </p>
+                </div>
+              )}
+              {f.kind === 'orbit' && (
+                <div class="orbit">
+                  <span class="ring r1">
+                    <i style="--c: var(--accent)">C</i>
+                  </span>
+                  <span class="ring r2">
+                    <i style="--c: var(--review)">X</i>
+                  </span>
+                  <span class="ring r3">
+                    <i style="--c: var(--working)">G</i>
+                  </span>
+                  <span class="core" />
+                </div>
+              )}
+              {f.kind === 'memory' && (
+                <div class="mem">
+                  <p class="mem-h">## Memory</p>
+                  <p class="mem-row fresh">
+                    <code>#H7</code>Stripe sends events twice
+                  </p>
+                  <p class="mem-row">
+                    <code>#C2</code>Money is integer cents
+                  </p>
+                  <p class="mem-row">
+                    <code>#D1</code>Cart state in the session
+                  </p>
+                  <p class="mem-row old">
+                    <code>#F3</code>Staging resets on Sunday
+                  </p>
+                </div>
+              )}
+            </div>
+            <figcaption>
+              <b>{f.title}</b>
+              <span>{f.text}</span>
+            </figcaption>
+          </figure>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .principles {
+    padding: clamp(5rem, 11vw, 9rem) 0 0;
+    border-top: 1px solid var(--line);
+  }
+  .statement {
+    max-width: 30ch;
+    font-size: clamp(1.8rem, 3.6vw, 2.9rem);
+    font-weight: 560;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    text-wrap: pretty;
+  }
+  .statement span {
+    color: var(--ink-3);
+  }
+  .figs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: clamp(4rem, 8vw, 6rem);
+    border-top: 1px solid var(--line);
+  }
+  .fig {
+    display: flex;
+    flex-direction: column;
+    padding: 1rem 2rem 3.5rem;
+  }
+  .fig + .fig {
+    border-left: 1px solid var(--line);
+  }
+  .fig:first-child {
+    padding-left: 0;
+  }
+  .art {
+    display: grid;
+    place-items: center;
+    height: 16rem;
+    margin: 1.5rem 0 2rem;
+  }
+
+  /* A task card that steps through working, review and landed on a loop. */
+  .task {
+    width: min(100%, 15rem);
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: #111113;
+    font-size: 0.8rem;
+    animation: card 6s infinite;
+  }
+  .task-top {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--ink-3);
+  }
+  .task-top code {
+    font-size: 0.72rem;
+  }
+  .cost {
+    margin-left: auto;
+  }
+  .glyph {
+    width: 0.8rem;
+    height: 0.8rem;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+    animation: glyph 6s infinite;
+  }
+  .task-title {
+    margin-top: 0.35rem;
+    font-weight: 550;
+  }
+  .task-status {
+    display: grid;
+    margin-top: 0.15rem;
+  }
+  .st {
+    grid-area: 1 / 1;
+    opacity: 0;
+  }
+  .st-w {
+    color: var(--working);
+    animation: show-w 6s infinite;
+  }
+  .st-r {
+    color: var(--review);
+    animation: show-r 6s infinite;
+  }
+  .st-l {
+    color: var(--landed);
+    animation: show-l 6s infinite;
+  }
+  .task-writes {
+    margin-top: 0.6rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--line);
+  }
+  .task-writes code {
+    color: var(--ink-3);
+    font-size: 0.7rem;
+  }
+  @keyframes card {
+    0%,
+    40% {
+      border-color: rgb(242 199 68 / 55%);
+      box-shadow: inset 3px 0 0 var(--working);
+    }
+    45%,
+    70% {
+      border-color: rgb(63 207 142 / 50%);
+      box-shadow: none;
+    }
+    75%,
+    100% {
+      border-color: var(--line-2);
+      box-shadow: 0 0 40px -10px rgb(139 143 248 / 50%);
+    }
+  }
+  @keyframes glyph {
+    0%,
+    40% {
+      color: var(--working);
+      background: linear-gradient(90deg, transparent 50%, var(--working) 50%);
+    }
+    45%,
+    70% {
+      color: var(--review);
+      background: radial-gradient(circle, var(--review) 35%, transparent 40%);
+    }
+    75%,
+    100% {
+      color: var(--landed);
+      background: var(--landed);
+    }
+  }
+  @keyframes show-w {
+    0%,
+    40% {
+      opacity: 1;
+    }
+    42%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes show-r {
+    0%,
+    43% {
+      opacity: 0;
+    }
+    45%,
+    70% {
+      opacity: 1;
+    }
+    72%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes show-l {
+    0%,
+    73% {
+      opacity: 0;
+    }
+    75%,
+    100% {
+      opacity: 1;
+    }
+  }
+
+  /* The status orb at the center, with agents circling it at their own pace. */
+  .orbit {
+    position: relative;
+    width: 14rem;
+    height: 14rem;
+  }
+  .core {
+    position: absolute;
+    inset: 41%;
+    border: 3px solid var(--accent);
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 42%, transparent 46%);
+    box-shadow: 0 0 40px 4px rgb(139 143 248 / 45%);
+  }
+  .ring {
+    position: absolute;
+    border: 1px dashed rgb(255 255 255 / 14%);
+    border-radius: 50%;
+    animation: turn linear infinite;
+  }
+  .r1 {
+    inset: 26%;
+    animation-duration: 9s;
+  }
+  .r2 {
+    inset: 13%;
+    animation-duration: 14s;
+    animation-direction: reverse;
+  }
+  .r3 {
+    inset: 0;
+    animation-duration: 20s;
+  }
+  .ring i {
+    position: absolute;
+    top: -0.7rem;
+    left: calc(50% - 0.7rem);
+    display: grid;
+    place-items: center;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 50%;
+    background: var(--c);
+    box-shadow: 0 0 14px var(--c);
+    color: #050506;
+    font-size: 0.65rem;
+    font-style: normal;
+    font-weight: 700;
+    animation: turn linear infinite reverse;
+    animation-duration: inherit;
+  }
+  .r2 i {
+    animation-direction: normal;
+  }
+  @keyframes turn {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* The memory index: a fresh lesson slides in on top, the oldest fades. */
+  .mem {
+    width: min(100%, 15rem);
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: #0d0d10;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+  }
+  .mem-h {
+    margin-bottom: 0.4rem;
+    color: var(--ink);
+  }
+  .mem-row {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.3rem 0.35rem;
+    border-radius: 5px;
+    color: var(--ink-2);
+    white-space: nowrap;
+    animation: push 5s var(--ease) infinite;
+  }
+  .mem-row code {
+    color: var(--ink-3);
+  }
+  .mem-row.fresh {
+    animation-name: arrive;
+  }
+  .mem-row.old {
+    animation-name: decay;
+  }
+  @keyframes arrive {
+    0%,
+    10% {
+      opacity: 0;
+      transform: translateY(-10px);
+      background: rgb(139 143 248 / 30%);
+    }
+    25% {
+      opacity: 1;
+      transform: none;
+      background: rgb(139 143 248 / 22%);
+    }
+    100% {
+      background: transparent;
+    }
+  }
+  @keyframes push {
+    0%,
+    10% {
+      transform: translateY(-1.6rem);
+    }
+    25%,
+    100% {
+      transform: none;
+    }
+  }
+  @keyframes decay {
+    0%,
+    10% {
+      transform: translateY(-1.6rem);
+      opacity: 1;
+    }
+    25% {
+      transform: none;
+    }
+    60%,
+    100% {
+      opacity: 0.25;
+    }
+  }
+  figcaption {
+    display: grid;
+    gap: 0.4rem;
+  }
+  figcaption b {
+    font-weight: 560;
+  }
+  figcaption span {
+    max-width: 22rem;
+    color: var(--ink-2);
+    font-size: 0.95rem;
+  }
+
+  @media (max-width: 820px) {
+    .figs {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .fig,
+    .fig:first-child {
+      padding: 1.5rem 0 2.5rem;
+    }
+    .fig + .fig {
+      border-top: 1px solid var(--line);
+      border-left: 0;
+    }
+  }
+</style>

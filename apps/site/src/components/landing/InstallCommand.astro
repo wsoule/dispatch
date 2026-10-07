@@ -1,0 +1,68 @@
+---
+// The Homebrew install command with a copy button; the hero and the closing
+// section both show it.
+const command = 'brew install --cask wsoule/tap/dispatch';
+---
+
+<div class="install">
+  <code><span class="prompt" aria-hidden="true">$</span> {command}</code>
+  <button type="button" data-copy={command} aria-label="Copy the install command">Copy</button>
+</div>
+
+<style>
+  .install {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    max-width: 100%;
+    padding: 0.4rem 0.4rem 0.4rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+  }
+  code {
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    scrollbar-width: none;
+  }
+  .prompt {
+    color: var(--ink-3);
+    user-select: none;
+  }
+  button {
+    flex: none;
+    min-height: 2rem;
+    padding: 0 0.85rem;
+    border: 0;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 7%);
+    color: var(--ink-2);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 550;
+    cursor: pointer;
+  }
+  button:hover {
+    color: var(--ink);
+  }
+</style>
+
+<script>
+  // Binds every [data-copy] button on the page, not only this one.
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+    const label = btn.textContent ?? 'Copy';
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy ?? '');
+        btn.textContent = 'Copied';
+      } catch {
+        btn.textContent = 'Copy failed';
+      }
+      setTimeout(() => {
+        btn.textContent = label;
+      }, 1500);
+    });
+  }
+</script>

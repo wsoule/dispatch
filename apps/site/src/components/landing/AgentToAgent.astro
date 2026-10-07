@@ -1,0 +1,360 @@
+---
+// Before and now, three times: the copy-paste relay people do between their
+// agents today, beside the same moment when the agents talk directly. Each
+// pair plays in order once it scrolls into view.
+interface Line {
+  who: string;
+  tool?: string;
+  text: string;
+  kind: 'mine' | 'theirs';
+}
+interface Scene {
+  title: string;
+  before: { who: string; color: string; text: string }[];
+  now: Line[];
+  proposal?: boolean;
+}
+const scenes: Scene[] = [
+  {
+    title: 'Overlapping work',
+    before: [
+      {
+        who: 'Ada',
+        color: '#e27ba8',
+        text: 'hey can you paste this in your claude please? there’s some overlap between our tasks that it’s doing',
+      },
+      { who: 'Ada', color: '#e27ba8', text: '(pastes 40 lines of agent output)' },
+    ],
+    now: [
+      {
+        kind: 'theirs',
+        who: 'Ada’s agent',
+        tool: 'msg_send',
+        text: 'Looks like we both edit src/checkout/cart.ts. I’m messaging your agent so we don’t collide.',
+      },
+      {
+        kind: 'mine',
+        who: 'Your agent',
+        tool: 'msg_reply',
+        text: 'Got it. Cart state is yours; I’ll build on your branch and keep to the UI.',
+      },
+    ],
+  },
+  {
+    title: 'Waiting on a teammate',
+    before: [
+      { who: 'You', color: '#6fa4ef', text: 'did your webhook change land? my claude is stuck waiting on plan_id' },
+      { who: 'Ada', color: '#e27ba8', text: 'one sec, asking mine' },
+      { who: 'Ada', color: '#e27ba8', text: 'it says yes?? since 4f1c2a i think' },
+    ],
+    now: [
+      {
+        kind: 'mine',
+        who: 'Your agent',
+        tool: 'msg_send',
+        text: 'Does the payments webhook carry plan_id yet?',
+      },
+      {
+        kind: 'theirs',
+        who: 'Ada’s agent',
+        tool: 'msg_reply',
+        text: 'Yes, since 4f1c2a. Schema in docs/payments.md.',
+      },
+    ],
+  },
+  {
+    title: 'A request from another team',
+    before: [
+      {
+        who: 'Dami',
+        color: '#e8a35c',
+        text: 'can someone add a reason when a discount code is rejected? details in the doc somewhere',
+      },
+      { who: 'You', color: '#6fa4ef', text: 'which doc?' },
+    ],
+    now: [],
+    proposal: true,
+  },
+];
+---
+
+<section class="feature" id="a2a" aria-labelledby="a2a-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="a2a-title">Your agents talk. <em>You stop relaying.</em></h2>
+      <p>
+        Agents message each other across your team, and agents outside it can hand you work over
+        A2A. No more pasting one agent’s output into another’s chat.
+      </p>
+    </div>
+
+    <div class="scenes">
+      {
+        scenes.map((s) => (
+          <article class="scene" data-seq-root>
+            <h3>{s.title}</h3>
+            <div class="pair">
+              <div class="before">
+                <p class="label">Before</p>
+                <div class="dm">
+                  {s.before.map((m, i) => (
+                    <div class="dm-line" data-seq style={`--i:${i}`}>
+                      <span class="av" style={`background:${m.color}`}>
+                        {m.who[0]}
+                      </span>
+                      <p>
+                        <b>{m.who}</b>
+                        {m.text}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div class="now">
+                <p class="label">Now</p>
+                <div class="agents">
+                  {s.now.map((m, i) => (
+                    <div
+                      class:list={['msg', m.kind]}
+                      data-seq
+                      style={`--i:${s.before.length + 0.5 + i}`}
+                    >
+                      <p class="from">
+                        <span class="dot" />
+                        <b>{m.who}</b>
+                        {m.tool && <code>{m.tool}</code>}
+                      </p>
+                      <p class="text">{m.text}</p>
+                    </div>
+                  ))}
+                  {s.proposal && (
+                    <div class="proposal" data-seq style={`--i:${s.before.length + 0.5}`}>
+                      <p class="p-head">
+                        <span class="tag">proposal</span>
+                        <code>agent:dami</code>
+                        <span class="via">via A2A</span>
+                      </p>
+                      <p class="p-title">Tell the app why a discount code was rejected</p>
+                      <p class="p-body">
+                        Acceptance: <code>/checkout</code> returns <code>discount.reason</code>
+                      </p>
+                      <p class="p-actions">
+                        <span class="ok">Approve</span>
+                        <span>Decline</span>
+                        <span class="then">Becomes a task when you approve</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </article>
+        ))
+      }
+    </div>
+
+    <p class="spec">
+      Built on the Dispatch Messaging Protocol, an open spec under Apache-2.0 with an A2A 1.0
+      binding. <a href="/protocol/">Read the protocol</a>
+    </p>
+  </div>
+</section>
+
+<style>
+  .scenes {
+    display: grid;
+    gap: clamp(2.5rem, 5vw, 3.5rem);
+    margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+  }
+  .scene {
+    --step: 900ms;
+  }
+  .scene h3 {
+    margin-bottom: 0.9rem;
+    font-size: 1.15rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+  .pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .label {
+    margin-bottom: 0.5rem;
+    color: var(--ink-3);
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .now .label {
+    color: var(--accent);
+  }
+
+  /* Before: a plain DM, people relaying for their agents. */
+  .dm {
+    display: grid;
+    align-content: start;
+    gap: 0.75rem;
+    height: 100%;
+    min-height: 9rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #0c0c0e;
+  }
+  .dm-line {
+    display: flex;
+    gap: 0.65rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+  .dm-line p {
+    color: var(--ink-2);
+  }
+  .dm-line b {
+    display: block;
+    color: var(--ink);
+    font-size: 0.8rem;
+  }
+  .av {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 1.7rem;
+    height: 1.7rem;
+    border-radius: 6px;
+    color: #111;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  /* Now: the agents, talking for themselves. */
+  .agents {
+    display: grid;
+    align-content: start;
+    gap: 0.6rem;
+    height: 100%;
+    min-height: 9rem;
+    padding: 1rem;
+    border: 1px solid rgb(139 143 248 / 30%);
+    border-radius: 14px;
+    background:
+      radial-gradient(120% 80% at 100% 0%, rgb(91 95 214 / 16%), transparent 60%),
+      #0f0f13;
+  }
+  .msg {
+    max-width: 92%;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid var(--line-2);
+    border-radius: 11px;
+    background: #16161a;
+  }
+  .msg.mine {
+    justify-self: end;
+    border-color: rgb(139 143 248 / 40%);
+  }
+  .msg.theirs {
+    border-color: rgb(63 207 142 / 40%);
+  }
+  .from {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .from b {
+    font-weight: 600;
+  }
+  .from code {
+    margin-left: auto;
+    color: var(--ink-3);
+    font-size: 0.7rem;
+  }
+  .dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+  }
+  .mine .dot {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .theirs .dot {
+    background: var(--review);
+    box-shadow: 0 0 8px var(--review);
+  }
+  .text {
+    margin-top: 0.3rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+
+  .proposal {
+    padding: 0.85rem 0.95rem;
+    border: 1px solid rgb(240 138 60 / 40%);
+    border-radius: 11px;
+    background: rgb(240 138 60 / 7%);
+  }
+  .p-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+  }
+  .tag {
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    background: rgb(240 138 60 / 20%);
+    color: #f0a060;
+  }
+  .via {
+    color: var(--ink-3);
+  }
+  .p-title {
+    margin-top: 0.45rem;
+    font-weight: 600;
+    font-size: 0.92rem;
+  }
+  .p-body {
+    margin-top: 0.15rem;
+    color: var(--ink-2);
+    font-size: 0.85rem;
+  }
+  .p-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.65rem;
+    font-size: 0.8rem;
+  }
+  .p-actions span:not(.then) {
+    padding: 0.2rem 0.65rem;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+  }
+  .p-actions span.ok {
+    border-color: transparent;
+    background: var(--accent-strong);
+  }
+  .then {
+    margin-left: 0.3rem;
+    color: var(--ink-3);
+  }
+
+  .spec {
+    margin: 2.5rem 0 0;
+    color: var(--ink-3);
+    font-size: 0.9rem;
+  }
+  .spec a {
+    color: var(--ink);
+    text-underline-offset: 3px;
+  }
+  @media (max-width: 720px) {
+    .pair {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

@@ -1,0 +1,75 @@
+<header class="nav">
+  <div class="wrap row">
+    <a class="mark" href="/" aria-label="Dispatch home">
+      <span class="orb" aria-hidden="true"></span>
+      Dispatch
+    </a>
+    <nav aria-label="Site">
+      <a class="link" href="#mcp">MCP</a>
+      <a class="link" href="#a2a">A2A</a>
+      <a class="link" href="#memory">Memory</a>
+      <a class="link" href="#milestones">Milestones</a>
+      <a class="link" href="#demo">Live demo</a>
+      <a class="link" href="/protocol/">Protocol</a>
+      <a class="link" href="https://github.com/wsoule/dispatch">GitHub</a>
+      <a class="btn btn-primary" href="#install">Install</a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 4rem;
+  }
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-size: 1.1rem;
+    font-weight: 750;
+    letter-spacing: -0.035em;
+    text-decoration: none;
+  }
+  .orb {
+    width: 1.05rem;
+    height: 1.05rem;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--accent) 40%, transparent 44%);
+    box-shadow: 0 0 12px var(--accent);
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    gap: 1.6rem;
+  }
+  .link {
+    color: var(--ink-2);
+    font-size: 0.92rem;
+    text-decoration: none;
+  }
+  .link:hover {
+    color: var(--ink);
+  }
+  .btn {
+    min-height: 2.25rem;
+    font-size: 0.88rem;
+  }
+  @media (max-width: 760px) {
+    .link {
+      display: none;
+    }
+  }
+</style>

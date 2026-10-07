@@ -1,0 +1,308 @@
+---
+// The milestone map: which milestones hold up the release, and by how many
+// waits. A Graph | Mermaid switch shows the same map as the text the app's
+// "Copy as Mermaid" produces.
+import FeatureList from './FeatureList.astro';
+
+const features: [string, string][] = [
+  ['Milestone map', 'Every milestone and the waits between them, with progress on each.'],
+  ['Critical path and ETA', 'The chain that decides the finish date, and when it should land.'],
+  ['Copy as Mermaid', 'The same map as text that GitHub, docs and READMEs render.'],
+  ['Send agents', 'Start a whole milestone with spend and concurrency caps that pause it.'],
+];
+
+const W = 190;
+const H = 84;
+const milestones = [
+  { id: 'checkout', title: 'Checkout v2', done: 5, total: 5, x: 10, y: 10, path: false },
+  { id: 'payments', title: 'Payments API', done: 2, total: 4, x: 10, y: 118, path: true },
+  { id: 'docs', title: 'Docs site', done: 1, total: 3, x: 10, y: 226, path: false },
+  { id: 'v1', title: 'v1.0 launch', done: 8, total: 12, x: 560, y: 118, path: true },
+];
+const waits = [
+  { from: 'checkout', to: 'v1', count: 0 },
+  { from: 'payments', to: 'v1', count: 2 },
+  { from: 'docs', to: 'v1', count: 1 },
+];
+const byId = new Map(milestones.map((m) => [m.id, m]));
+const edges = waits.map((w) => {
+  const a = byId.get(w.from)!;
+  const b = byId.get(w.to)!;
+  const x1 = a.x + W;
+  const y1 = a.y + H / 2;
+  const x2 = b.x - 8;
+  const y2 = b.y + H / 2;
+  const mid = (x1 + x2) / 2;
+  return {
+    ...w,
+    critical: a.path,
+    clear: w.count === 0,
+    d: `M${x1} ${y1} C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`,
+    lx: mid,
+    ly: (y1 + y2) / 2,
+  };
+});
+const mermaid = [
+  'flowchart LR',
+  ...milestones.map((m) => `  ${m.id}["${m.title}<br/>${m.done}/${m.total} landed"]`),
+  ...waits.filter((w) => w.count > 0).map((w) => `  ${w.from} -->|${w.count}| ${w.to}`),
+].join('\n');
+---
+
+<section class="feature" id="milestones" aria-labelledby="milestones-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="milestones-title">See what blocks v1. <em>Paste it anywhere as Mermaid.</em></h2>
+      <p>
+        The milestone map shows every wait between tasks, the critical path and when it should
+        finish. Copy it as Mermaid and it renders in a README, a pull request or a doc.
+      </p>
+    </div>
+
+    <figure class="map" data-map>
+      <header class="map-head">
+        <div class="seg" role="tablist" aria-label="Show the map as">
+          <button type="button" role="tab" aria-selected="true" data-show="graph">Graph</button>
+          <button type="button" role="tab" aria-selected="false" data-show="mermaid">Mermaid</button>
+        </div>
+        <p class="eta"><i class="cp"></i>Critical path: Payments API, ETA Thursday</p>
+        <button type="button" class="copy" data-copy={mermaid}>Copy as Mermaid</button>
+      </header>
+
+      <div class="view" data-view="graph">
+        <svg viewBox="0 0 760 320" role="img" aria-labelledby="map-desc">
+          <desc id="map-desc">
+            v1.0 launch, 8 of 12 landed, waits on Payments API (2 of 4 landed, 2 waits, on the
+            critical path) and Docs site (1 of 3 landed, 1 wait). Checkout v2 has fully landed.
+          </desc>
+          <defs>
+            <marker id="arrow" viewBox="0 0 8 8" refX="1" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0 0 L8 4 L0 8 Z" fill="context-stroke"></path>
+            </marker>
+          </defs>
+          {
+            edges.map((e) => (
+              <g class:list={['edge', e.critical && 'critical', e.clear && 'clear']}>
+                <path class="line" d={e.d} marker-end="url(#arrow)" />
+                {e.critical && <path class="pulse" d={e.d} />}
+                {!e.clear && (
+                  <>
+                    <rect class="pill" x={e.lx - 13} y={e.ly - 11} width="26" height="22" rx="11" />
+                    <text class="pill-n" x={e.lx} y={e.ly + 4.5}>
+                      {e.count}
+                    </text>
+                  </>
+                )}
+              </g>
+            ))
+          }
+          {
+            milestones.map((m) => (
+              <g
+                class:list={['ms', m.path && 'critical', m.done === m.total && 'landed', m.id === 'v1' && 'goal']}
+                transform={`translate(${m.x} ${m.y})`}
+              >
+                <rect class="box" width={W} height={H} rx="12" />
+                <circle class="ms-dot" cx="20" cy="26" r="5" />
+                <text class="ms-title" x="34" y="31">
+                  {m.title}
+                </text>
+                <rect class="track" x="16" y="46" width={W - 32} height="5" rx="2.5" />
+                <rect class="fill" x="16" y="46" width={((W - 32) * m.done) / m.total} height="5" rx="2.5" />
+                <text class="ms-meta" x="16" y="70">
+                  {m.done}/{m.total} landed
+                </text>
+              </g>
+            ))
+          }
+        </svg>
+      </div>
+
+      <div class="view" data-view="mermaid" hidden>
+        <pre><code>{mermaid}</code></pre>
+      </div>
+    </figure>
+    <FeatureList items={features} />
+  </div>
+</section>
+
+<style>
+  .map {
+    margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+    overflow: hidden;
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    background: var(--panel);
+    box-shadow: 0 50px 120px -40px rgb(0 0 0 / 95%);
+  }
+  .map-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1.25rem;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .seg {
+    display: inline-flex;
+    padding: 0.2rem;
+    border: 1px solid var(--line-2);
+    border-radius: 9px;
+  }
+  .seg button {
+    padding: 0.3rem 0.8rem;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--ink-3);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .seg button[aria-selected='true'] {
+    background: rgb(255 255 255 / 9%);
+    color: var(--ink);
+  }
+  .eta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--ink-2);
+    font-size: 0.85rem;
+  }
+  .cp {
+    width: 1rem;
+    height: 0.25rem;
+    border-radius: 2px;
+    background: var(--accent-strong);
+  }
+  .copy {
+    margin-left: auto;
+    padding: 0.4rem 0.85rem;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent-strong);
+    color: #fff;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .copy:hover {
+    background: #6a6ee0;
+  }
+  .view {
+    padding: clamp(1rem, 3vw, 2.25rem);
+  }
+  .view[hidden] {
+    display: none;
+  }
+  svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  pre {
+    overflow-x: auto;
+    color: var(--ink-2);
+    font-size: 0.9rem;
+    line-height: 1.8;
+  }
+
+  .line {
+    fill: none;
+    stroke: var(--ink-3);
+    stroke-dasharray: 5 5;
+    stroke-width: 1.5;
+  }
+  .edge.clear .line {
+    stroke: var(--landed);
+    stroke-dasharray: none;
+    opacity: 0.5;
+  }
+  .edge.critical .line {
+    stroke: var(--accent-strong);
+    stroke-dasharray: none;
+    stroke-width: 2;
+  }
+  /* A bright dash running along the critical path, toward the release. */
+  .pulse {
+    fill: none;
+    stroke: var(--accent);
+    stroke-dasharray: 40 400;
+    stroke-linecap: round;
+    stroke-width: 3;
+    filter: drop-shadow(0 0 6px var(--accent));
+    animation: run 2.4s linear infinite;
+  }
+  @keyframes run {
+    from {
+      stroke-dashoffset: 440;
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  .pill {
+    fill: #1b1b1f;
+    stroke: var(--line-2);
+  }
+  .edge.critical .pill {
+    stroke: var(--accent);
+  }
+  .pill-n {
+    fill: var(--ink);
+    font-size: 12px;
+    font-weight: 650;
+    text-anchor: middle;
+  }
+  .box {
+    fill: #161619;
+    stroke: var(--line-2);
+  }
+  .ms.critical .box {
+    stroke: rgb(139 143 248 / 60%);
+  }
+  .ms.goal .box {
+    stroke: var(--ink);
+    stroke-width: 1.5;
+  }
+  .ms-dot {
+    fill: none;
+    stroke: var(--working);
+    stroke-width: 2;
+  }
+  .ms.landed .ms-dot {
+    fill: var(--landed);
+    stroke: var(--landed);
+  }
+  .ms-title {
+    fill: var(--ink);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .track {
+    fill: rgb(255 255 255 / 8%);
+  }
+  .fill {
+    fill: var(--landed);
+  }
+  .ms-meta {
+    fill: var(--ink-3);
+    font-size: 12px;
+  }
+</style>
+
+<script>
+  for (const map of document.querySelectorAll<HTMLElement>('[data-map]')) {
+    const tabs = [...map.querySelectorAll<HTMLButtonElement>('[data-show]')];
+    for (const tab of tabs) {
+      tab.addEventListener('click', () => {
+        for (const t of tabs) t.setAttribute('aria-selected', String(t === tab));
+        for (const view of map.querySelectorAll<HTMLElement>('[data-view]')) {
+          view.hidden = view.dataset.view !== tab.dataset.show;
+        }
+      });
+    }
+  }
+</script>

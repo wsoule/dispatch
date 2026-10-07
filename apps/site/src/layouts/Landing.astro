@@ -1,0 +1,42 @@
+---
+import '@fontsource-variable/inter';
+import '@fontsource/jetbrains-mono/400.css';
+import '../styles/landing.css';
+
+// The home page's own frame. The protocol pages keep Base.astro and the app's
+// tokens; the landing page is always dark, in the app's beta look.
+const title = 'Dispatch: Linear, for agents.';
+const description =
+  'Give agents tasks, not chats. Any agent connects over MCP, agents talk to each other across teams, and you see what blocks the release.';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#050506" />
+  </head>
+  <body>
+    <slot />
+    <script>
+      // Starts each [data-seq-root] sequence the first time it is on screen.
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (!e.isIntersecting) continue;
+            e.target.classList.add('play');
+            io.unobserve(e.target);
+          }
+        },
+        { threshold: 0.35 }
+      );
+      for (const el of document.querySelectorAll('[data-seq-root]')) io.observe(el);
+    </script>
+  </body>
+</html>
