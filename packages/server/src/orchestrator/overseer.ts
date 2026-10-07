@@ -41,6 +41,27 @@ function generateOverseerId(
   return `wc-${hash}`;
 }
 
+// One queued message's handle. Random rather than positional, so an edit made
+// against a stale copy of the queue cannot hit a different line.
+function generateQueuedId(): string {
+  return `q-${randomBytes(6).toString('hex')}`;
+}
+
+// Records saved before queued entries carried ids get one on load, so every
+// entry the UI shows can be edited or removed.
+function withQueuedIds(record: OverseerRecord): OverseerRecord {
+  const queued = record.queued;
+  if (queued === undefined || queued.every((q) => typeof q.id === 'string')) {
+    return record;
+  }
+  return {
+    ...record,
+    queued: queued.map((q) =>
+      typeof q.id === 'string' ? q : { ...q, id: generateQueuedId() }
+    ),
+  };
+}
+
 // `running` means a turn is in flight; `ready` means the last turn settled and
 // the conversation is idle (possibly with actions awaiting confirmation);
 // `failed` means the last turn errored. Mirrors PlanState.
@@ -147,8 +168,12 @@ export interface OverseerRecord {
   contextTokens?: number;
   /** What every turn of this conversation has cost so far. */
   spendUsd?: number;
-  /** Messages typed while a turn ran; they go out together when it ends. */
-  queued?: { text: string; at: string }[];
+  /**
+   * Messages typed while a turn ran; they go out together when it ends. `id`
+   * names one entry for an edit or delete, so neither can land on the wrong
+   * line when the queue shifts under it.
+   */
+  queued?: OverseerQueuedMessage[];
   /** The slash commands the session offered on its last turn. */
   commands?: OverseerCommand[];
   /** The bus thread this conversation's lines are posted to, once one is. */
@@ -156,6 +181,13 @@ export interface OverseerRecord {
   error?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** One line on `OverseerRecord.queued`. */
+export interface OverseerQueuedMessage {
+  id: string;
+  text: string;
+  at: string;
 }
 
 export interface OverseerManagerContext {
@@ -307,11 +339,15 @@ export class OverseerManager {
   private readonly turns = new Map<string, AbortController>();
   // Who typed each conversation's queued messages, for posting them when they go.
   private readonly queuedBy = new Map<string, Sender | null>();
+  // Ids of queued entries that already went out in a turn, so a late edit or
+  // delete can say "already sent" instead of "no such entry".
+  private readonly sentQueued = new Set<string>();
 
   constructor(private readonly ctx: OverseerManagerContext) {
     for (const loaded of ctx.store?.load() ?? []) {
-      this.conversations.set(loaded.id, loaded);
-      if (loaded.state === 'running') this.interrupted(loaded);
+      const record = withQueuedIds(loaded);
+      this.conversations.set(record.id, record);
+      if (record.state === 'running') this.interrupted(record);
     }
   }
 
@@ -476,15 +512,78 @@ export class OverseerManager {
       this.updateRecord(conversationId, {
         queued: [
           ...(record.queued ?? []),
-          { text: message, at: new Date().toISOString() },
+          {
+            id: generateQueuedId(),
+            text: message,
+            at: new Date().toISOString(),
+          },
         ],
       });
       return this.get(conversationId);
     }
-    const pending = [...(record.queued ?? []).map((q) => q.text), message];
+    const pending = [
+      ...(record.queued ?? []),
+      { id: generateQueuedId(), text: message, at: new Date().toISOString() },
+    ];
     const [batch, rest] = nextBatch(pending);
     if (rest.length > 0) this.queuedBy.set(conversationId, speaker);
-    return this.beginTurn(record, batch, speaker, rest);
+    return this.beginTurn(
+      record,
+      batch.map((q) => q.text),
+      speaker,
+      rest
+    );
+  }
+
+  /**
+   * Rewrites one queued message before it goes out. Only the record changes:
+   * the agent sees nothing until the turn ends and the queue is sent. 404 for
+   * an id this conversation never queued (or one already removed); 409 once
+   * the entry went out with a turn.
+   */
+  editQueued(
+    conversationId: string,
+    entryId: string,
+    text: string
+  ): OverseerRecord {
+    const record = this.get(conversationId);
+    this.refuseIfRevoked();
+    const queued = this.requireQueued(record, entryId);
+    this.updateRecord(conversationId, {
+      queued: queued.map((q) => (q.id === entryId ? { ...q, text } : q)),
+    });
+    return this.get(conversationId);
+  }
+
+  /**
+   * Drops one queued message. Emptying the queue means nothing goes out when
+   * the turn ends. Same 404/409 rules as editQueued.
+   */
+  removeQueued(conversationId: string, entryId: string): OverseerRecord {
+    const record = this.get(conversationId);
+    this.refuseIfRevoked();
+    const queued = this.requireQueued(record, entryId).filter(
+      (q) => q.id !== entryId
+    );
+    if (queued.length === 0) this.queuedBy.delete(conversationId);
+    this.updateRecord(conversationId, { queued });
+    return this.get(conversationId);
+  }
+
+  // The conversation's queue, once `entryId` is known to be on it.
+  private requireQueued(
+    record: OverseerRecord,
+    entryId: string
+  ): OverseerQueuedMessage[] {
+    const queued = record.queued ?? [];
+    if (queued.some((q) => q.id === entryId)) return queued;
+    if (this.sentQueued.has(entryId)) {
+      throw new OrchestratorConflictError(
+        'already sent: the turn ended and this message went out with it',
+        'overseer_queued_sent'
+      );
+    }
+    throw new OrchestratorNotFoundError(`queued message not found: ${entryId}`);
   }
 
   // Records the human's lines and starts the turn that answers them. A
@@ -495,7 +594,7 @@ export class OverseerManager {
     texts: string[],
     speaker: Sender | null,
     // What still waits behind this turn: messages after a slash command.
-    stillQueued: string[] = []
+    stillQueued: OverseerQueuedMessage[] = []
   ): OverseerRecord {
     const backend = this.requireBackend(record.backendName);
     const conversationId = record.id;
@@ -516,6 +615,11 @@ export class OverseerManager {
         ]
       : [];
     const first = record.messages.length + divider.length;
+    // Every queue drain lands here: whatever leaves the queue is now sent.
+    const waiting = new Set(stillQueued.map((q) => q.id));
+    for (const q of record.queued ?? []) {
+      if (!waiting.has(q.id)) this.sentQueued.add(q.id);
+    }
     const updated: OverseerRecord = {
       ...record,
       state: 'running',
@@ -524,7 +628,7 @@ export class OverseerManager {
         ...divider,
         ...texts.map((text) => ({ role: 'user' as const, text, at: now })),
       ],
-      queued: stillQueued.map((text) => ({ text, at: now })),
+      queued: stillQueued,
       // Handed to the backend below, so they must not be delivered twice.
       undeliveredDecisions: slash ? record.undeliveredDecisions : [],
       // A new turn supersedes any prior failure.
@@ -669,10 +773,15 @@ export class OverseerManager {
     if (record === undefined || queued.length === 0) return;
     if (this.ctx.bus?.revoked() === true) return;
     const speaker = this.queuedBy.get(conversationId) ?? null;
-    const [batch, rest] = nextBatch(queued.map((q) => q.text));
+    const [batch, rest] = nextBatch(queued);
     if (rest.length === 0) this.queuedBy.delete(conversationId);
     try {
-      this.beginTurn(record, batch, speaker, rest);
+      this.beginTurn(
+        record,
+        batch.map((q) => q.text),
+        speaker,
+        rest
+      );
     } catch (err) {
       console.error(`overseer: could not send ${conversationId}'s queue`, err);
     }
@@ -1317,11 +1426,16 @@ function isSlashCommand(text: string): boolean {
 
 // The next turn's messages: a slash command alone, or every plain message up
 // to the next one. The rest waits for that turn to end.
-function nextBatch(texts: string[]): [string[], string[]] {
-  if (texts.length === 0) return [[], []];
-  if (isSlashCommand(texts[0])) return [[texts[0]], texts.slice(1)];
-  const stop = texts.findIndex(isSlashCommand);
-  return stop === -1 ? [texts, []] : [texts.slice(0, stop), texts.slice(stop)];
+// Works on whole queue entries so the ones left waiting keep their ids.
+function nextBatch(
+  queued: OverseerQueuedMessage[]
+): [OverseerQueuedMessage[], OverseerQueuedMessage[]] {
+  if (queued.length === 0) return [[], []];
+  if (isSlashCommand(queued[0].text)) return [[queued[0]], queued.slice(1)];
+  const stop = queued.findIndex((q) => isSlashCommand(q.text));
+  return stop === -1
+    ? [queued, []]
+    : [queued.slice(0, stop), queued.slice(stop)];
 }
 
 // Rejects once `signal` aborts; never settles otherwise.

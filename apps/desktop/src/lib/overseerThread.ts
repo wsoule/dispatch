@@ -52,8 +52,9 @@ export type OverseerThreadItem =
       text: string;
       at: string;
     }
-  /** Typed during a turn; `waiting` once that turn ended without sending it. */
-  | { kind: 'queued'; key: string; text: string; waiting: boolean }
+  /** Typed during a turn; `waiting` once that turn ended without sending it.
+   *  `id` is the queue entry's, for editing or removing it. */
+  | { kind: 'queued'; key: string; id: string; text: string; waiting: boolean }
   /** The agent's show_tasks: a door the human opens, never a jump. */
   | { kind: 'door'; key: string; door: OverseerDoor; at: string };
 
@@ -191,10 +192,11 @@ export function buildOverseerThread(
           : TURN_FAILED_FALLBACK,
     });
   }
-  (record.queued ?? []).forEach((queued, i) => {
+  (record.queued ?? []).forEach((queued) => {
     items.push({
       kind: 'queued',
-      key: `${record.id}-queued-${i}`,
+      key: `${record.id}-queued-${queued.id}`,
+      id: queued.id,
       text: queued.text,
       waiting: record.state !== 'running',
     });

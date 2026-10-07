@@ -45,6 +45,8 @@ function session(over: Partial<OverseerSession>): OverseerSession {
     configuredEffort: undefined,
     reset: () => {},
     stop: () => Promise.resolve(),
+    editQueued: () => Promise.resolve(true),
+    removeQueued: () => Promise.resolve(true),
     setConversationOptions: () => Promise.resolve(),
     submitNew: () => Promise.resolve(),
     open: () => {},

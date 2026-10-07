@@ -228,6 +228,187 @@ describe('POST /api/overseer and GET /api/overseer/:id', () => {
   });
 });
 
+// A backend whose turns end when the test calls `release`, so a queue can be
+// edited mid-turn and then sent; `prompts` is everything the agent was given.
+class ReleasableOverseer implements OverseerBackend {
+  readonly prompts: string[] = [];
+  private finish: ((turn: OverseerTurn) => void) | null = null;
+  start(prompt: string): Promise<OverseerTurn> {
+    return this.turn(prompt);
+  }
+  sendMessage(_session: string | undefined, message: string) {
+    return this.turn(message);
+  }
+  release(): void {
+    const finish = this.finish;
+    this.finish = null;
+    finish?.({ reply: 'ok', sessionId: 's-1' });
+  }
+  private turn(prompt: string): Promise<OverseerTurn> {
+    this.prompts.push(prompt);
+    return new Promise((resolve) => {
+      this.finish = resolve;
+    });
+  }
+}
+
+async function queueMessage(id: string, text: string): Promise<OverseerRecord> {
+  const res = await fetch(`${baseUrl}/api/overseer/${id}/message`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  expect(res.status).toBe(202);
+  return (await json(res)) as OverseerRecord;
+}
+
+function queuedEntry(
+  id: string,
+  entryId: string,
+  init: { method: 'PATCH' | 'DELETE'; text?: string }
+): Promise<Response> {
+  return fetch(`${baseUrl}/api/overseer/${id}/queued/${entryId}`, {
+    method: init.method,
+    ...(init.text !== undefined
+      ? {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: init.text }),
+        }
+      : {}),
+  });
+}
+
+describe('PATCH and DELETE /api/overseer/:id/queued/:entryId', () => {
+  it('edits and removes queued lines; only the final text reaches the agent', async () => {
+    const backend = new ReleasableOverseer();
+    await startWithOverseer(backend);
+    const { record } = await startConversation('first');
+    await queueMessage(record.id, 'teh typo');
+    const queued = await queueMessage(record.id, 'drop me');
+    const [typo, drop] = queued.queued ?? [];
+
+    const edited = await queuedEntry(record.id, typo.id, {
+      method: 'PATCH',
+      text: 'the fix',
+    });
+    expect(edited.status).toBe(200);
+    expect(((await json(edited)) as OverseerRecord).queued?.[0]).toEqual({
+      ...typo,
+      text: 'the fix',
+    });
+    const removed = await queuedEntry(record.id, drop.id, { method: 'DELETE' });
+    expect(removed.status).toBe(200);
+    expect(
+      ((await json(removed)) as OverseerRecord).queued?.map((q) => q.text)
+    ).toEqual(['the fix']);
+    expect(backend.prompts).toEqual(['first']);
+
+    backend.release();
+    await waitFor(() => Promise.resolve(backend.prompts.length === 2));
+    expect(backend.prompts[1]).toBe('the fix');
+
+    // The turn took the line: a late edit or remove is told it already went.
+    const late = await queuedEntry(record.id, typo.id, {
+      method: 'PATCH',
+      text: 'too late',
+    });
+    expect(late.status).toBe(409);
+    expect(await json(late)).toMatchObject({ code: 'overseer_queued_sent' });
+    expect(
+      (await queuedEntry(record.id, typo.id, { method: 'DELETE' })).status
+    ).toBe(409);
+  });
+
+  it('deleting every queued line sends nothing when the turn ends', async () => {
+    const backend = new ReleasableOverseer();
+    await startWithOverseer(backend);
+    const { record } = await startConversation('first');
+    const queued = await queueMessage(record.id, 'only one');
+    const entry = queued.queued?.[0];
+    expect(
+      (await queuedEntry(record.id, entry?.id ?? '', { method: 'DELETE' }))
+        .status
+    ).toBe(200);
+
+    backend.release();
+    const ready = await settled(record.id);
+    expect(backend.prompts).toEqual(['first']);
+    expect(ready.queued).toEqual([]);
+    expect(ready.messages.map((m) => m.text)).toEqual(['first', 'ok']);
+  });
+
+  it('404s an unknown entry or conversation and 400s a blank edit', async () => {
+    await startWithOverseer(new HangingOverseer());
+    const { record } = await startConversation();
+    const entry = (await queueMessage(record.id, 'hello')).queued?.[0];
+
+    expect(
+      (await queuedEntry(record.id, 'q-nope', { method: 'PATCH', text: 'x' }))
+        .status
+    ).toBe(404);
+    expect(
+      (await queuedEntry(record.id, 'q-nope', { method: 'DELETE' })).status
+    ).toBe(404);
+    expect(
+      (await queuedEntry('wc-000000', entry?.id ?? '', { method: 'DELETE' }))
+        .status
+    ).toBe(404);
+    expect(
+      (
+        await queuedEntry(record.id, entry?.id ?? '', {
+          method: 'PATCH',
+          text: '  ',
+        })
+      ).status
+    ).toBe(400);
+  });
+
+  it('broadcasts overseer.changed so other open clients update', async () => {
+    await startWithOverseer(new HangingOverseer());
+    const { record } = await startConversation();
+    const entry = (await queueMessage(record.id, 'hello')).queued?.[0];
+    const ws = new WebSocket(wsUrl(handle));
+    await new Promise((resolve) => ws.addEventListener('open', resolve));
+    const changed = new Promise<void>((resolve) => {
+      ws.addEventListener('message', (event) => {
+        const parsed = JSON.parse(String(event.data)) as {
+          type?: string;
+          conversationId?: string;
+        };
+        if (
+          parsed.type === 'overseer.changed' &&
+          parsed.conversationId === record.id
+        ) {
+          resolve();
+        }
+      });
+    });
+    await queuedEntry(record.id, entry?.id ?? '', { method: 'DELETE' });
+    await changed;
+    ws.close();
+  });
+
+  it('409s an edit while the overseer is revoked', async () => {
+    await startWithOverseer(new HangingOverseer());
+    const { record } = await startConversation();
+    const entry = (await queueMessage(record.id, 'hello')).queued?.[0];
+    const { ref } = (await json(await fetch(`${baseUrl}/api/whoami`))) as {
+      ref: string;
+    };
+    const overseer = `agent:${ref.slice('human:'.length)}/overseer`;
+    await fetch(
+      `${baseUrl}/api/agents/${encodeURIComponent(overseer)}/revoke`,
+      { method: 'POST' }
+    );
+    const refused = await queuedEntry(record.id, entry?.id ?? '', {
+      method: 'PATCH',
+      text: 'edited',
+    });
+    expect(refused.status).toBe(409);
+    expect(await json(refused)).toMatchObject({ code: 'overseer_revoked' });
+  });
+});
+
 describe('POST /api/overseer/:id/message', () => {
   it('202s back to running and settles with the follow-up reply', async () => {
     await startWithOverseer(

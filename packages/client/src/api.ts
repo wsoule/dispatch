@@ -1826,8 +1826,9 @@ export interface OverseerRecord {
   contextTokens?: number;
   /** What every turn of this conversation has cost so far. */
   spendUsd?: number;
-  /** Messages typed while a turn ran; they go out together when it ends. */
-  queued?: { text: string; at: string }[];
+  /** Messages typed while a turn ran; they go out together when it ends.
+   *  `id` names one entry for editQueuedOverseerMessage / removeQueuedOverseerMessage. */
+  queued?: { id: string; text: string; at: string }[];
   /** The slash commands the session offered on its last turn. */
   commands?: OverseerCommand[];
   /** The bus thread this conversation's lines are posted to, once one is. */
@@ -3838,6 +3839,20 @@ export interface ApiClient {
     conversationId: string,
     text: string
   ): Promise<{ newTopic: boolean; confidence: number | null }>;
+  /**
+   * Rewrites one queued message before it goes out; resolves with the record.
+   * Rejects 409 (`overseer_queued_sent`) once the turn ended and sent it.
+   */
+  editQueuedOverseerMessage(
+    conversationId: string,
+    entryId: string,
+    text: string
+  ): Promise<OverseerRecord>;
+  /** Drops one queued message; same 404/409 rules as the edit. */
+  removeQueuedOverseerMessage(
+    conversationId: string,
+    entryId: string
+  ): Promise<OverseerRecord>;
   /** The caller's own conversation on this project, newest first, or null. */
   currentOverseer(): Promise<{ conversation: OverseerRecord | null }>;
   /** What "Allow for this conversation" still covers: per program for Bash, up to four hours. */
@@ -4900,6 +4915,18 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/overseer/${conversationId}/stop`, {
         method: 'POST',
       }),
+    editQueuedOverseerMessage: (conversationId, entryId, text) =>
+      request(
+        target,
+        `/api/overseer/${conversationId}/queued/${encodeURIComponent(entryId)}`,
+        { method: 'PATCH', ...jsonBody({ text }) }
+      ),
+    removeQueuedOverseerMessage: (conversationId, entryId) =>
+      request(
+        target,
+        `/api/overseer/${conversationId}/queued/${encodeURIComponent(entryId)}`,
+        { method: 'DELETE' }
+      ),
     currentOverseer: () => request(target, '/api/overseer/current'),
     judgeOverseerTopic: (conversationId, text) =>
       request(target, `/api/overseer/${conversationId}/topic`, {

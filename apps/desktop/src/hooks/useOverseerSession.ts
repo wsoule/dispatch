@@ -177,6 +177,14 @@ export interface OverseerSession {
   reset: () => void;
   /** Stops the running turn; what was typed during it waits for the next send. */
   stop: () => Promise<void>;
+  /**
+   * Rewrites one queued message (`OverseerRecord.queued[].id`) before the turn
+   * ends and sends it. Resolves `true` once saved; on failure — a 409 when the
+   * turn already sent it — resolves `false` with the reason on `sendError`.
+   */
+  editQueued: (entryId: string, text: string) => Promise<boolean>;
+  /** Drops one queued message; same outcome contract as `editQueued`. */
+  removeQueued: (entryId: string) => Promise<boolean>;
   /** Sends `text` as the opening of a new conversation, whatever is open now. */
   submitNew: (text: string) => Promise<void>;
   /** Makes an existing conversation the open one. */
@@ -581,6 +589,45 @@ export function useOverseerSession(
     [client, conversationId, port, queryClient]
   );
 
+  // Runs one change to the queue and writes the returned record into the
+  // cache. A refusal lands on `sendError`, the composer's error line, since
+  // the bubble it came from is usually gone by then (the turn sent it).
+  const changeQueued = useCallback(
+    async (
+      call: (api: ApiClient, id: string) => Promise<OverseerRecord>
+    ): Promise<boolean> => {
+      if (client === null || conversationId === null) return false;
+      setSendError(null);
+      let ok = true;
+      try {
+        const rec = await call(client, conversationId);
+        queryClient.setQueryData(overseerKey(port, conversationId), rec);
+      } catch (err) {
+        ok = false;
+        setSendError(err instanceof Error ? err.message : String(err));
+      }
+      await queryClient.invalidateQueries({
+        queryKey: overseerKey(port, conversationId),
+      });
+      return ok;
+    },
+    [client, conversationId, port, queryClient]
+  );
+
+  const editQueued = useCallback(
+    (entryId: string, text: string) =>
+      changeQueued((api, id) =>
+        api.editQueuedOverseerMessage(id, entryId, text)
+      ),
+    [changeQueued]
+  );
+
+  const removeQueued = useCallback(
+    (entryId: string) =>
+      changeQueued((api, id) => api.removeQueuedOverseerMessage(id, entryId)),
+    [changeQueued]
+  );
+
   // react-query keeps the last good `data` through a *background* refetch
   // failure, which is right for a hiccup and wrong for a conversation the
   // daemon no longer has (records are in-memory, so a restart 404s every id
@@ -611,6 +658,8 @@ export function useOverseerSession(
     configuredEffort,
     reset,
     stop,
+    editQueued,
+    removeQueued,
     setConversationOptions,
     submitNew,
     open: setConversationId,

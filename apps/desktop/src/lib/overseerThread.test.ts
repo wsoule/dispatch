@@ -412,17 +412,21 @@ describe('one durable conversation', () => {
           at: '2026-10-06T09:00:01Z',
         },
       ],
-      { queued: [{ text: 'and this', at: '2026-10-06T09:00:02Z' }] }
+      { queued: [{ id: 'q-1', text: 'and this', at: '2026-10-06T09:00:02Z' }] }
     );
     const items = buildOverseerThread(record);
     expect(items.map((i) => i.kind)).toEqual(['message', 'notice', 'queued']);
-    expect(items[2]).toMatchObject({ text: 'and this', waiting: true });
+    expect(items[2]).toMatchObject({
+      id: 'q-1',
+      text: 'and this',
+      waiting: true,
+    });
   });
 
   test('a queued message waits on a running turn', () => {
     const record = makeRecord([], {
       state: 'running',
-      queued: [{ text: 'next', at: '2026-10-06T09:00:02Z' }],
+      queued: [{ id: 'q-2', text: 'next', at: '2026-10-06T09:00:02Z' }],
     });
     expect(buildOverseerThread(record).at(-1)).toMatchObject({
       kind: 'queued',

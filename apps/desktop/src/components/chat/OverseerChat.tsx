@@ -47,6 +47,7 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
 import { Separator } from '@/ui/separator';
 import { Spinner } from '@/ui/spinner';
+import { Textarea } from '@/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 /** The models the opening composer offers, in `PromptBar`'s shape. */
@@ -327,6 +328,135 @@ function OverseerApproveCard({
           <X className="size-3.5" />
           Deny
         </PillButton>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A message typed mid-turn and still waiting to go out. Edit swaps the text for
+ * an inline textarea (Enter or Save commits, Shift+Enter is a newline, Esc
+ * cancels); Remove drops it. Neither reaches the agent: only what is left on
+ * the queue when the turn ends is sent. A refused change (the turn already
+ * sent the line) is reported on the session's error line, and the bubble
+ * itself disappears with the queue entry.
+ */
+function OverseerQueuedBubble({
+  text,
+  waiting,
+  onEdit,
+  onRemove,
+}: {
+  text: string;
+  waiting: boolean;
+  onEdit: (text: string) => Promise<boolean>;
+  onRemove: () => Promise<boolean>;
+}) {
+  // The text being edited, or null while the bubble shows the queued line.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+
+  // Opening the editor puts the caret in it, ready to fix the typo.
+  const open = editing !== null;
+  useEffect(() => {
+    if (open) boxRef.current?.focus();
+  }, [open]);
+
+  async function save() {
+    const next = editing?.trim() ?? '';
+    if (next === '' || busy) return;
+    if (next === text) {
+      setEditing(null);
+      return;
+    }
+    setBusy(true);
+    const ok = await onEdit(next);
+    setBusy(false);
+    if (ok) setEditing(null);
+  }
+
+  async function remove() {
+    if (busy) return;
+    setBusy(true);
+    await onRemove();
+    setBusy(false);
+  }
+
+  return (
+    <div
+      data-testid="overseer-queued"
+      className="rounded-control bg-surface-quaternary/60 text-muted-foreground font-book flex max-w-[85%] flex-col gap-1 self-end border-[0.5px] border-dashed px-3 py-1.5 text-[13px]"
+    >
+      {editing === null ? (
+        <span className="whitespace-pre-wrap">{text}</span>
+      ) : (
+        <Textarea
+          ref={boxRef}
+          value={editing}
+          disabled={busy}
+          aria-label="Queued message"
+          className="min-h-0"
+          onChange={(event) => setEditing(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              setEditing(null);
+            } else if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              void save();
+            }
+          }}
+        />
+      )}
+      <div className="flex items-center gap-1 text-[11px]">
+        <span className="min-w-0 flex-1">
+          {waiting
+            ? 'Queued · goes with your next message'
+            : 'Queued · goes out when this turn ends'}
+        </span>
+        {editing === null ? (
+          <>
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={busy}
+              onClick={() => setEditing(text)}
+              aria-label="Edit queued message"
+            >
+              Edit
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={busy}
+              onClick={() => void remove()}
+              aria-label="Remove queued message"
+            >
+              Remove
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={busy}
+              onClick={() => setEditing(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              disabled={busy || editing.trim() === ''}
+              onClick={() => void save()}
+            >
+              {busy && <Spinner className="size-3" />}
+              Save
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -703,18 +833,13 @@ export function OverseerChat({
         );
       case 'queued':
         return (
-          <div
+          <OverseerQueuedBubble
             key={item.key}
-            data-testid="overseer-queued"
-            className="rounded-control bg-surface-quaternary/60 text-muted-foreground font-book max-w-[85%] self-end border-[0.5px] border-dashed px-3 py-1.5 text-[13px]"
-          >
-            <span className="whitespace-pre-wrap">{item.text}</span>
-            <span className="mt-0.5 block text-[11px]">
-              {item.waiting
-                ? 'Queued · goes with your next message'
-                : 'Queued · goes out when this turn ends'}
-            </span>
-          </div>
+            text={item.text}
+            waiting={item.waiting}
+            onEdit={(text) => overseer.editQueued(item.id, text)}
+            onRemove={() => overseer.removeQueued(item.id)}
+          />
         );
     }
   }

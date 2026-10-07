@@ -1649,6 +1649,97 @@ describe('one durable conversation', () => {
     expect(h.backend.prompts[1]).toBe('queued one\n\nnow this');
   });
 
+  it('an edited queued message goes out as edited, a removed one not at all', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.manager.sendMessage(started.id, 'teh typo');
+    const queued = h.manager.sendMessage(started.id, 'never mind this');
+    const [typo, drop] = queued.queued ?? [];
+    expect(typo.id).not.toBe(drop.id);
+
+    h.manager.editQueued(started.id, typo.id, 'the fix');
+    const after = h.manager.removeQueued(started.id, drop.id);
+    expect(after.queued?.map((q) => q.text)).toEqual(['the fix']);
+    // Nothing reaches the agent before the turn ends.
+    expect(h.backend.prompts).toEqual(['first']);
+
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 2);
+    expect(h.backend.prompts[1]).toBe('the fix');
+    expect(h.manager.get(started.id).messages.map((m) => m.text)).toEqual([
+      'first',
+      'ok',
+      'the fix',
+    ]);
+  });
+
+  it('a queue emptied by removes sends nothing when the turn ends', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    const queued = h.manager.sendMessage(started.id, 'one');
+    h.manager.removeQueued(started.id, queued.queued?.[0].id ?? '');
+
+    h.backend.settle();
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    await tick();
+    expect(h.backend.prompts).toEqual(['first']);
+    expect(h.manager.get(started.id).messages.map((m) => m.text)).toEqual([
+      'first',
+      'ok',
+    ]);
+  });
+
+  it('an edit or remove after the queue went out is a 409, an unknown id a 404', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    const entry = h.manager.sendMessage(started.id, 'late').queued?.[0];
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 2);
+
+    expect(() =>
+      h.manager.editQueued(started.id, entry?.id ?? '', 'too late')
+    ).toThrow(OrchestratorConflictError);
+    expect(() => h.manager.removeQueued(started.id, entry?.id ?? '')).toThrow(
+      /already sent/
+    );
+    expect(() => h.manager.editQueued(started.id, 'q-nope', 'x')).toThrow(
+      OrchestratorNotFoundError
+    );
+    expect(h.backend.prompts[1]).toBe('late');
+  });
+
+  it('a message left waiting behind a slash command keeps its id', async () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.manager.sendMessage(started.id, '/compact');
+    const after = h.manager.sendMessage(started.id, 'then this').queued?.[1];
+
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 2);
+    expect(h.backend.prompts[1]).toBe('/compact');
+    expect(h.manager.get(started.id).queued).toEqual([after!]);
+    h.manager.editQueued(started.id, after?.id ?? '', 'then that');
+
+    h.backend.settle();
+    await waitFor(() => h.backend.prompts.length === 3);
+    expect(h.backend.prompts[2]).toBe('then that');
+  });
+
+  it('a queue saved without ids gets them on load', () => {
+    const h = heldManager();
+    const started = h.manager.start('first', 'held');
+    h.store.save({
+      ...h.manager.get(started.id),
+      state: 'ready',
+      queued: [{ text: 'old', at: started.createdAt }],
+    } as unknown as OverseerRecord);
+    const again = heldManager(h.store);
+    const entry = again.manager.get(started.id).queued?.[0];
+    expect(entry?.id).toMatch(/^q-/);
+    again.manager.editQueued(started.id, entry?.id ?? '', 'renewed');
+    expect(again.manager.get(started.id).queued?.[0].text).toBe('renewed');
+  });
+
   it('a full context rolls over: fresh session, recap, divider, grants gone', async () => {
     const h = heldManager();
     const started = h.manager.start('first', 'held');

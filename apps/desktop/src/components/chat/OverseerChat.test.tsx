@@ -59,6 +59,8 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     configuredEffort: undefined,
     reset: () => {},
     stop: () => Promise.resolve(),
+    editQueued: () => Promise.resolve(true),
+    removeQueued: () => Promise.resolve(true),
     setConversationOptions: () => Promise.resolve(),
     submitNew: () => Promise.resolve(),
     open: () => {},
@@ -771,4 +773,128 @@ test('actions queued together share one card, and Approve both decides each in t
     ['act-a', true],
     ['act-b', true],
   ]);
+});
+
+// A running turn with two lines queued behind it, for the edit/remove tests.
+function queuedSession(over: Partial<OverseerSession> = {}): OverseerSession {
+  return overseerSession({
+    conversationId: 'w-1',
+    record: overseerRecord({
+      state: 'running',
+      queued: [
+        { id: 'q-1', text: 'teh typo', at: '2026-08-10T00:00:03Z' },
+        { id: 'q-2', text: 'second line', at: '2026-08-10T00:00:04Z' },
+      ],
+    }),
+    ...over,
+  });
+}
+
+test('a queued line edits in place: Save sends the new text for that entry', async () => {
+  const edits: [string, string][] = [];
+  render(
+    <ChatWithDraft
+      overseer={queuedSession({
+        editQueued: (id, text) => {
+          edits.push([id, text]);
+          return Promise.resolve(true);
+        },
+      })}
+      durable
+    />
+  );
+  const [first] = screen.getAllByRole('button', {
+    name: 'Edit queued message',
+  });
+  fireEvent.click(first);
+  const box = screen.getByRole('textbox', { name: 'Queued message' });
+  expect((box as HTMLTextAreaElement).value).toBe('teh typo');
+  fireEvent.change(box, { target: { value: 'the fix' } });
+  await clickAndSettle(screen.getByRole('button', { name: 'Save' }));
+  expect(edits).toEqual([['q-1', 'the fix']]);
+  // Saved: the editor closes back to the queued line.
+  expect(screen.queryByRole('textbox', { name: 'Queued message' })).toBeNull();
+});
+
+test('Enter commits a queued edit and Esc cancels one without a call', async () => {
+  const edits: [string, string][] = [];
+  render(
+    <ChatWithDraft
+      overseer={queuedSession({
+        editQueued: (id, text) => {
+          edits.push([id, text]);
+          return Promise.resolve(true);
+        },
+      })}
+      durable
+    />
+  );
+  const second = screen.getAllByRole('button', {
+    name: 'Edit queued message',
+  })[1];
+  fireEvent.click(second);
+  const box = screen.getByRole('textbox', { name: 'Queued message' });
+  fireEvent.change(box, { target: { value: 'never mind' } });
+  fireEvent.keyDown(box, { key: 'Escape' });
+  expect(screen.queryByRole('textbox', { name: 'Queued message' })).toBeNull();
+  expect(screen.getByText('second line')).toBeDefined();
+  expect(edits).toEqual([]);
+
+  fireEvent.click(second);
+  const again = screen.getByRole('textbox', { name: 'Queued message' });
+  fireEvent.change(again, { target: { value: 'second, fixed' } });
+  fireEvent.keyDown(again, { key: 'Enter' });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(edits).toEqual([['q-2', 'second, fixed']]);
+});
+
+test('a refused queued edit keeps the editor open', async () => {
+  render(
+    <ChatWithDraft
+      overseer={queuedSession({ editQueued: () => Promise.resolve(false) })}
+      durable
+    />
+  );
+  fireEvent.click(
+    screen.getAllByRole('button', { name: 'Edit queued message' })[0]
+  );
+  fireEvent.change(screen.getByRole('textbox', { name: 'Queued message' }), {
+    target: { value: 'the fix' },
+  });
+  await clickAndSettle(screen.getByRole('button', { name: 'Save' }));
+  expect(screen.getByRole('textbox', { name: 'Queued message' })).toBeDefined();
+});
+
+test('Remove drops that queued entry through the session', async () => {
+  const removed: string[] = [];
+  render(
+    <ChatWithDraft
+      overseer={queuedSession({
+        removeQueued: (id) => {
+          removed.push(id);
+          return Promise.resolve(true);
+        },
+      })}
+      durable
+    />
+  );
+  await clickAndSettle(
+    screen.getAllByRole('button', { name: 'Remove queued message' })[1]
+  );
+  expect(removed).toEqual(['q-2']);
+});
+
+test('an edit the turn beat says so on the error line', () => {
+  render(
+    <ChatWithDraft
+      overseer={queuedSession({
+        sendError:
+          'already sent: the turn ended and this message went out with it',
+      })}
+      durable
+    />
+  );
+  expect(screen.getByText(/already sent/)).toBeDefined();
 });

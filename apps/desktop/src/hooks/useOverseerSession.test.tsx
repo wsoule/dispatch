@@ -804,3 +804,47 @@ test('setConversationOptions patches the open conversation; Default effort clear
     { effort: 'high' },
   ]);
 });
+
+// The turn can end and send the queue between the human clicking Save and the
+// PATCH landing: the daemon 409s, and that must reach the composer's error
+// line rather than vanish with the bubble the edit came from.
+test('a queued edit the turn already sent resolves false with the reason on sendError', async () => {
+  const edits: [string, string, string][] = [];
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: () => Promise.resolve(overseerRecord()),
+    getOverseer: () => Promise.resolve(overseerRecord()),
+    editQueuedOverseerMessage: (id: string, entryId: string, text: string) => {
+      edits.push([id, entryId, text]);
+      return Promise.reject(
+        new ApiError(
+          'already sent: the turn ended and this message went out with it',
+          409,
+          'overseer_queued_sent'
+        )
+      );
+    },
+    removeQueuedOverseerMessage: () => Promise.resolve(overseerRecord()),
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  await act(async () => {
+    await result.current.submit('what is going on?');
+  });
+
+  let ok: boolean | undefined;
+  await act(async () => {
+    ok = await result.current.editQueued('q-1', 'the fix');
+  });
+  expect(ok).toBe(false);
+  expect(edits).toEqual([['w-1', 'q-1', 'the fix']]);
+  expect(result.current.sendError).toMatch(/already sent/);
+
+  await act(async () => {
+    ok = await result.current.removeQueued('q-2');
+  });
+  expect(ok).toBe(true);
+  expect(result.current.sendError).toBeNull();
+});

@@ -3843,6 +3843,28 @@ async function sendOverseerMessage(
   return jsonResponse(record, 202);
 }
 
+// PATCH /api/overseer/:id/queued/:entryId — rewrites one message still waiting
+// on a running turn. The agent sees nothing until the turn ends. 404 for an
+// unknown entry, 409 once it already went out (code `overseer_queued_sent`) or
+// while the overseer is revoked; both raised by editQueued, mapped by
+// handleApi's outer catch.
+async function editOverseerQueued(
+  req: Request,
+  ctx: ApiContext,
+  conversationId: string,
+  entryId: string
+): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.value as { text?: unknown };
+  if (typeof body.text !== 'string' || body.text.trim() === '') {
+    return errorResponse(400, 'invalid text: text is required');
+  }
+  return jsonResponse(
+    ctx.overseerManager.editQueued(conversationId, entryId, body.text)
+  );
+}
+
 // A conversation is its owner's and the operator's; one with no owner (opened by
 // no human, or before owners were kept) stays readable as before.
 function overseerReadable(
@@ -7090,6 +7112,18 @@ export async function handleApi(
         method === 'POST'
       ) {
         return jsonResponse(ctx.overseerManager.stop(conversationId));
+      }
+      // One queued message: rewrite it or drop it before the turn ends.
+      if (segments.length === 4 && segments[2] === 'queued') {
+        const entryId = decodeURIComponent(segments[3]);
+        if (method === 'PATCH') {
+          return await editOverseerQueued(req, ctx, conversationId, entryId);
+        }
+        if (method === 'DELETE') {
+          return jsonResponse(
+            ctx.overseerManager.removeQueued(conversationId, entryId)
+          );
+        }
       }
       if (
         segments.length === 3 &&
