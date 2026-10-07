@@ -14,6 +14,7 @@ import type { RefAction } from '../../lib/threadSources';
 import { replyRoute } from '../../lib/threadSources';
 import { ThreadPane } from '../threads/ThreadPane';
 import { PeekDrawer } from './PeekDrawer';
+import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import { Spinner } from '@/ui/spinner';
 
@@ -64,16 +65,16 @@ export function ThreadPeek({
       onClose={onClose}
       actions={
         home !== null && (
-          <button
-            type="button"
+          <Button
+            size="xs"
+            variant="link"
             onClick={() => {
               onClose();
               onOpenHome(home);
             }}
-            className="text-[12px] text-(--accent) hover:underline"
           >
             Open in its home →
-          </button>
+          </Button>
         )
       }
     >

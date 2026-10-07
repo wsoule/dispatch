@@ -24,9 +24,41 @@ import {
   WakeCard,
 } from '../gates/GateCard';
 import { cn } from '@/lib/utils';
+import { GroupHeader } from '@/ui/ai/group-header';
+import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
+import { SectionLabel } from '@/ui/chrome';
+import { CollapseBar } from '@/ui/chrome/collapse-bar';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/ui/collapsible';
 
 const MAX_ROWS = 8;
+
+// The fixed-width marker leading every row: what sort of ask it is, tinted by state.
+function KindBadge({
+  tone = 'waiting',
+  children,
+}: {
+  tone?: 'waiting' | 'done';
+  children: ReactNode;
+}) {
+  return (
+    <Badge
+      variant="ghost"
+      className={cn(
+        'h-5 w-16 px-1.5 text-[11px] font-normal',
+        tone === 'waiting'
+          ? 'bg-(--state-waiting-surface) text-(--state-waiting-fg)'
+          : 'bg-surface-quaternary'
+      )}
+    >
+      {children}
+    </Badge>
+  );
+}
 
 // The kind marker on a row: what sort of ask it is, in a word.
 function kindLabel(item: DecisionItem): string {
@@ -239,61 +271,67 @@ export function NeedsYouBlock({
         !flush && 'mx-4 mt-3 mb-1'
       )}
     >
-      <button
-        type="button"
-        onClick={() => setFolded(!folded)}
-        aria-expanded={!folded}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-      >
-        {folded ? (
-          <ChevronRight
-            aria-hidden
-            className="text-muted-foreground size-3.5"
-          />
-        ) : (
-          <ChevronDown aria-hidden className="text-muted-foreground size-3.5" />
-        )}
-        <span
-          className="text-[13px] font-semibold"
-          data-testid="needs-you-count"
-        >
-          {needs.count === 0
-            ? 'Nothing needs you'
-            : `Needs you · ${needs.count}`}
-        </span>
-        {needs.count > 0 &&
-          (folded ? (
-            <span
-              data-testid="needs-you-preview"
-              className="text-muted-foreground min-w-0 truncate text-[12px]"
-            >
-              {groups.find((g) => g.items.length > 0)?.items[0]?.summary}
-            </span>
-          ) : (
-            <span className="text-muted-foreground text-[12px]">
-              oldest first · this machine only
-            </span>
+      <Collapsible open={!folded} onOpenChange={(open) => setFolded(!open)}>
+        <GroupHeader
+          className={cn('relative', !folded && 'rounded-b-none')}
+          tint={needs.count > 0 ? 'var(--state-waiting-fg)' : undefined}
+          icon={
+            <ChevronDown
+              aria-hidden
+              className={cn(
+                'text-muted-foreground transition-transform duration-100',
+                folded && '-rotate-90'
+              )}
+            />
+          }
+          name={
+            // The trigger's hit area stretches over the whole bar.
+            <CollapsibleTrigger className="after:rounded-card focus-visible:after:ring-ring block w-full truncate text-left outline-none after:absolute after:inset-0 focus-visible:after:ring-2">
+              <span
+                className="text-foreground font-semibold"
+                data-testid="needs-you-count"
+              >
+                {needs.count === 0
+                  ? 'Nothing needs you'
+                  : `Needs you · ${needs.count}`}
+              </span>
+              {needs.count > 0 &&
+                (folded ? (
+                  <span
+                    data-testid="needs-you-preview"
+                    className="text-muted-foreground ml-2 text-[12px] font-normal"
+                  >
+                    {groups.find((g) => g.items.length > 0)?.items[0]?.summary}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground ml-2 text-[12px] font-normal">
+                    oldest first · this machine only
+                  </span>
+                ))}
+            </CollapsibleTrigger>
+          }
+        />
+        <CollapsibleContent>
+          {groups.map(({ group, items, receipts }) => (
+            <AskGroupSection
+              key={group}
+              group={group}
+              items={items}
+              receipts={receipts}
+              restored={needs.restored}
+              gateById={gateById}
+              card={card}
+              onApproveAll={approveAll}
+              canDecide={access.canDecide}
+              onOpenDecision={onOpenDecision}
+              onOpenTask={(taskId) => onOpenRef({ kind: 'task', taskId })}
+            />
           ))}
-      </button>
-      {!folded &&
-        groups.map(({ group, items, receipts }) => (
-          <AskGroupSection
-            key={group}
-            group={group}
-            items={items}
-            receipts={receipts}
-            restored={needs.restored}
-            gateById={gateById}
-            card={card}
-            onApproveAll={approveAll}
-            canDecide={access.canDecide}
-            onOpenDecision={onOpenDecision}
-            onOpenTask={(taskId) => onOpenRef({ kind: 'task', taskId })}
-          />
-        ))}
-      {!folded && needs.teammates.length > 0 && (
-        <TeammatesFooter items={needs.teammates} />
-      )}
+          {needs.teammates.length > 0 && (
+            <TeammatesFooter items={needs.teammates} />
+          )}
+        </CollapsibleContent>
+      </Collapsible>
     </section>
   );
 }
@@ -325,10 +363,14 @@ function AskGroupSection({
   const shown = all ? items : items.slice(0, MAX_ROWS);
   const hidden = items.length - shown.length;
   return (
-    <div data-testid={`needs-you-group-${group}`}>
-      <h3 className="text-muted-foreground px-3 pt-2 pb-1 text-[11px] font-semibold tracking-wide uppercase">
-        {ASK_GROUP_LABEL[group]} · {items.length}
-      </h3>
+    <div
+      role="group"
+      aria-label={ASK_GROUP_LABEL[group]}
+      data-testid={`needs-you-group-${group}`}
+    >
+      <SectionLabel count={items.length} className="px-3 pt-2 pb-1">
+        {ASK_GROUP_LABEL[group]}
+      </SectionLabel>
       <ul>
         {shown.map((item) =>
           restored.length > 1 && item.id === restored[0]?.id ? (
@@ -359,20 +401,21 @@ function AskGroupSection({
           <li
             key={`receipt:${receipt.item.id}`}
             data-testid="needs-you-receipt"
-            className="border-border text-muted-foreground border-t-[0.5px] px-3 py-1.5 text-[12px]"
+            className="border-border text-muted-foreground flex items-center gap-2.5 border-t-[0.5px] px-3 py-1.5 text-[12px]"
           >
-            {receipt.text}
+            <KindBadge tone="done">{kindLabel(receipt.item)}</KindBadge>
+            <span className="min-w-0 truncate">{receipt.text}</span>
           </li>
         ))}
       </ul>
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setAll(true)}
-          className="text-muted-foreground px-3 pb-2 text-[12px] hover:underline"
-        >
-          +{hidden} more
-        </button>
+      {items.length > MAX_ROWS && (
+        <div className="px-3 pb-2">
+          <CollapseBar
+            label={all ? 'Show fewer' : `+${hidden} more`}
+            collapsed={!all}
+            onToggle={() => setAll(!all)}
+          />
+        </div>
       )}
     </div>
   );
@@ -400,18 +443,12 @@ function AskRow({
       className="border-border animate-in fade-in-0 slide-in-from-left-4 flex flex-col gap-2 border-t-[0.5px] px-3 py-2 duration-300 first:border-t-0 motion-reduce:animate-none"
     >
       <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
-        <span className="rounded-chip w-16 shrink-0 bg-(--state-waiting-surface) px-1.5 text-center text-[11px] text-(--state-waiting-fg)">
-          {kindLabel(item)}
-        </span>
+        <KindBadge>{kindLabel(item)}</KindBadge>
         <span className="min-w-0 flex-1 truncate">{item.summary}</span>
         {taskId !== undefined && (
-          <button
-            type="button"
-            onClick={() => onOpenTask(taskId)}
-            className="text-muted-foreground shrink-0 text-[12px] hover:underline"
-          >
+          <Button size="xs" variant="ghost" onClick={() => onOpenTask(taskId)}>
             › {taskId}
-          </button>
+          </Button>
         )}
         <span className="text-muted-foreground w-14 shrink-0 text-right text-[12px]">
           {formatRelativeTimeFromIso(item.since)}
@@ -457,9 +494,7 @@ function RestoredBatchRow({
       className="border-border flex flex-col gap-2 border-t-[0.5px] px-3 py-2 first:border-t-0"
     >
       <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
-        <span className="rounded-chip w-16 shrink-0 bg-(--state-waiting-surface) px-1.5 text-center text-[11px] text-(--state-waiting-fg)">
-          lessons
-        </span>
+        <KindBadge>lessons</KindBadge>
         <span className="min-w-0 flex-1 truncate">
           Review {lessons.length} restored lessons
         </span>
@@ -496,29 +531,36 @@ function RestoredBatchRow({
 
 // Other people's asks on this daemon: visible, never counted, never answered here.
 function TeammatesFooter({ items }: { items: readonly DecisionItem[] }) {
-  const [open, setOpen] = useState(false);
   const first = items[0];
   return (
-    <div className="border-border border-t-[0.5px] px-3 py-2 text-[12px] text-(--text-ghost)">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        className="hover:underline"
+    <Collapsible className="border-border border-t-[0.5px] px-1.5 py-1 text-[12px] text-(--text-ghost)">
+      <CollapsibleTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            className="group max-w-full text-(--text-ghost)"
+          />
+        }
       >
-        Teammates · {items.length} {items.length === 1 ? 'ask' : 'asks'}
-        {first !== undefined && ` · ${first.summary}`} · not counted{' '}
-        {open ? '▾' : '▸'}
-      </button>
-      {open && (
-        <ul className="mt-1 flex flex-col gap-0.5">
+        <ChevronRight
+          aria-hidden
+          className="transition-transform duration-100 group-data-panel-open:rotate-90"
+        />
+        <span className="truncate">
+          Teammates · {items.length} {items.length === 1 ? 'ask' : 'asks'}
+          {first !== undefined && ` · ${first.summary}`} · not counted
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ul className="flex flex-col gap-0.5 px-1.5 pt-0.5 pb-1">
           {items.map((item) => (
             <li key={item.id}>
               {item.owner ?? 'someone'}: {item.summary}
             </li>
           ))}
         </ul>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

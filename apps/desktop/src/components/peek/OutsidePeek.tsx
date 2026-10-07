@@ -7,6 +7,7 @@ import type { RefAction } from '../../lib/threadSources';
 import { ConversationTimeline } from '../conversation/ConversationTimeline';
 import { PeekChip, PeekDrawer, PresenceLine } from './PeekDrawer';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
+import { Badge } from '@/ui/badge';
 
 const STATUS: Record<string, string> = {
   active: 'active',
@@ -51,9 +52,12 @@ export function OutsidePeek({
       title={
         <span className="flex items-center gap-1.5">
           <span className="truncate">{name}</span>
-          <span className="rounded-chip bg-(--state-landing-surface) px-1.5 text-[11px] font-normal text-(--state-landing-fg)">
+          <Badge
+            variant="ghost"
+            className="h-5 bg-(--state-landing-surface) px-1.5 text-[11px] font-normal text-(--state-landing-fg)"
+          >
             Outside
-          </span>
+          </Badge>
         </span>
       }
       leading={

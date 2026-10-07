@@ -17,10 +17,16 @@ import { participantLabel, type RefAction } from '../../lib/threadSources';
 import { buildTimeline, quoteOf, type TimelineEntry } from '../../lib/timeline';
 import { MessageRow } from '../threads/MessageRow';
 import { HomeComposer } from './HomeComposer';
-import { cn } from '@/lib/utils';
+import { InlineSegmented } from '@/ui/ai/inline-segmented';
+import { Badge } from '@/ui/badge';
 import { EmptyState } from '@/ui/chrome';
+import { CollapseBar } from '@/ui/chrome/collapse-bar';
 
 const NONE: ReadonlySet<string> = new Set();
+const SHOW = [
+  { id: 'people', label: 'People' },
+  { id: 'all', label: 'All' },
+] as const;
 
 function clock(iso: string): string {
   const date = new Date(iso);
@@ -131,9 +137,9 @@ export function ConversationTimeline({
           className="px-3 py-2"
         >
           <div className="text-muted-foreground flex items-center gap-2 text-[12px]">
-            <span className="rounded-chip border-border-chip border-[0.5px] px-1.5 text-[11px]">
+            <Badge variant="outline" className="h-5 px-1.5 text-[11px]">
               comment
-            </span>
+            </Badge>
             <span className="text-foreground font-medium">
               {participantLabel(comment.author, pane.lookups)}
             </span>
@@ -146,11 +152,10 @@ export function ConversationTimeline({
     if (entry.kind === 'fold') {
       const expanded = all || open.has(entry.key);
       return (
-        <li key={entry.key} data-testid="timeline-fold">
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={() =>
+        <li key={entry.key} data-testid="timeline-fold" className="px-3 py-1">
+          <CollapseBar
+            collapsed={!expanded}
+            onToggle={() =>
               setOpen((prev) => {
                 const next = new Set(prev);
                 if (next.has(entry.key)) next.delete(entry.key);
@@ -158,18 +163,13 @@ export function ConversationTimeline({
                 return next;
               })
             }
-            className="text-muted-foreground w-full px-3 py-1.5 text-left text-[12px] hover:underline"
-          >
-            Agent chatter · {entry.messages.length} ·{' '}
-            {entry.between
+            label={`Agent chatter · ${entry.messages.length} · ${entry.between
               .slice(0, 2)
               .map((a) => participantLabel(a, pane.lookups))
-              .join(' ↔ ')}{' '}
-            · {clock(entry.first)}–{clock(entry.last)}{' '}
-            {expanded ? '[hide]' : '[show]'}
-          </button>
+              .join(' ↔ ')} · ${clock(entry.first)}–${clock(entry.last)}`}
+          />
           {expanded && (
-            <ul className="border-border ml-3 border-l-[0.5px]">
+            <ul className="border-border mt-1 border-l-[0.5px]">
               {entry.messages.map((message) => messageRow(message))}
             </ul>
           )}
@@ -213,29 +213,12 @@ export function ConversationTimeline({
     <div data-testid="conversation" className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 px-3 py-2">
         <div className="min-w-0 flex-1">{header}</div>
-        <div
-          role="radiogroup"
-          aria-label="Show"
-          className="rounded-control border-border-chip flex gap-0.5 border-[0.5px] p-0.5"
-        >
-          {(['people', 'all'] as const).map((choice) => (
-            <button
-              key={choice}
-              type="button"
-              role="radio"
-              aria-checked={(choice === 'all') === all}
-              onClick={() => setAll(choice === 'all')}
-              className={cn(
-                'rounded-[6px] px-2 py-0.5 text-[12px] capitalize',
-                (choice === 'all') === all
-                  ? 'bg-surface-active font-medium'
-                  : 'text-muted-foreground'
-              )}
-            >
-              {choice}
-            </button>
-          ))}
-        </div>
+        <InlineSegmented
+          label="Show"
+          options={SHOW}
+          value={all ? 'all' : 'people'}
+          onChange={(choice) => setAll(choice === 'all')}
+        />
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {conversation.error !== null && (
