@@ -1,5 +1,5 @@
 import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
-import { Minus } from 'lucide-react';
+import { Minus, PowerOff } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 import { DockedConversation } from '../components/chat/DockedConversation';
@@ -14,7 +14,10 @@ import type { OverseerSession } from '../hooks/useOverseerSession';
 import { docked, restored, useOverseerDock } from '../lib/overseerDock';
 import type { OverseerDoor } from '../lib/overseerThread';
 import { cn } from '@/lib/utils';
+import { NoticePill } from '@/ui/ai/notice-pill';
+import { Alert, AlertDescription, AlertTitle } from '@/ui/alert';
 import { Button } from '@/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 export interface TwoViewOverseerProps {
   data: DispatchProjectData;
@@ -147,19 +150,16 @@ export function TwoViewOverseer({
   const showAsksAside = asks > 0 && needsBlock !== undefined && !revoked;
   const door =
     revoked || asks === 0 ? null : (
-      <button
-        type="button"
+      <NoticePill
+        tone="waiting"
         onClick={onShowAsks}
         data-testid="overseer-asks-door"
-        className={cn(
-          'rounded-pill self-center bg-(--state-waiting-surface) px-3.5 py-1 text-[12px] text-(--state-waiting-fg) hover:underline',
-          // On a wide window the asks themselves are beside the stream.
-          showAsksAside && 'xl:hidden'
-        )}
+        // On a wide window the asks themselves are beside the stream.
+        className={cn('self-center', showAsksAside && 'xl:hidden')}
       >
         ● {asks} {asks === 1 ? 'ask waits' : 'asks wait'} on you · Show in tasks
         →
-      </button>
+      </NoticePill>
     );
   const dockCards = (compact: boolean) =>
     dock.map((id) => (
@@ -203,15 +203,23 @@ export function TwoViewOverseer({
       >
         {open !== null && (
           <div className="flex justify-end">
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={minimize}
-              data-testid="overseer-minimize"
-              title="Set this conversation aside and start another"
-            >
-              <Minus className="size-3" /> Set aside
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={minimize}
+                    data-testid="overseer-minimize"
+                  />
+                }
+              >
+                <Minus /> Set aside
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                Set this conversation aside and start another
+              </TooltipContent>
+            </Tooltip>
           </div>
         )}
         {setAside !== null && (
@@ -222,26 +230,32 @@ export function TwoViewOverseer({
             <span className="min-w-0 flex-1 truncate">
               New topic, so a new conversation · “{setAside.title}” is set aside
             </span>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => restore(setAside.id)}
-              className="hover:text-foreground shrink-0 hover:underline"
             >
               Put it back
-            </button>
+            </Button>
           </div>
         )}
         {revoked && (
-          <div
-            role="alert"
+          <Alert
             data-testid="overseer-off"
-            className="rounded-card border-border text-muted-foreground flex items-center gap-3 border-[0.5px] border-dashed px-3 py-2 text-[13px]"
+            className="rounded-card border-border border-[0.5px] border-dashed px-3 py-2"
           >
-            <span className="flex-1">The agent is off.</span>
-            <Button size="sm" variant="outline" onClick={onOpenConnectedAgents}>
-              Approve it again in Settings › Connected agents
-            </Button>
-          </div>
+            <PowerOff className="text-muted-foreground size-3.5!" />
+            <AlertTitle className="text-[13px]">The agent is off.</AlertTitle>
+            <AlertDescription className="font-book text-[12px]">
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={onOpenConnectedAgents}
+              >
+                Approve it again in Settings › Connected agents
+              </Button>
+            </AlertDescription>
+          </Alert>
         )}
         <OverseerChat
           overseer={routed}

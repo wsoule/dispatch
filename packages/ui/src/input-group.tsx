@@ -77,6 +77,8 @@ function InputGroupAddon({
   );
 }
 
+// The group draws the focus ring, so the input drops the app's global `:focus-visible`
+// outline (unlayered, hence the `!`) rather than ringing twice.
 function InputGroupInput({
   className,
   ...props
@@ -85,7 +87,7 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        'flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent',
+        'flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:outline-none! dark:bg-transparent',
         className
       )}
       {...props}

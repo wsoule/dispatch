@@ -5,6 +5,7 @@ import type { NarratorLine } from '../../lib/narrator';
 import { doorLabel, type OverseerDoor } from '../../lib/overseerThread';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { SectionLabel } from '@/ui/chrome';
 
 const SEEN_PREFIX = 'dispatch:narrator-seen:';
 
@@ -81,14 +82,16 @@ export function AwayDigest({
       data-testid="away-digest"
       className="rounded-card border-border flex flex-col gap-1 border-[0.5px] px-3 py-2"
     >
-      <div className="text-muted-foreground font-book flex items-center gap-2 text-[11px]">
-        <span className="flex-1">
-          While you were away · since {formatRelativeTimeFromIso(since)}
-        </span>
-        <Button variant="ghost" size="xs" onClick={onDismiss}>
-          Got it
-        </Button>
-      </div>
+      <SectionLabel
+        rule
+        trailing={
+          <Button variant="ghost" size="xs" onClick={onDismiss}>
+            Got it
+          </Button>
+        }
+      >
+        While you were away · since {formatRelativeTimeFromIso(since)}
+      </SectionLabel>
       {lines.map((line) => (
         <div
           key={line.key}
@@ -97,13 +100,13 @@ export function AwayDigest({
           <span className={cn('min-w-0 flex-1 truncate', TONE[line.tone])}>
             {line.text}
           </span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onOpenDoor(line.door)}
-            className="text-muted-foreground hover:text-foreground shrink-0 text-[12px] hover:underline"
           >
             {doorLabel(line.door)}
-          </button>
+          </Button>
         </div>
       ))}
     </section>

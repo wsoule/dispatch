@@ -712,9 +712,10 @@ test('typing a slash suggests the session’s commands and a pick fills the draf
   );
   const box = screen.getByRole('textbox', { name: 'Follow-up message' });
   fireEvent.change(box, { target: { value: '/co' } });
-  fireEvent.click(screen.getByRole('button', { name: /\/compact/ }));
+  expect(screen.queryByRole('button', { name: /^review/ })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /^compact/ }));
   expect((box as HTMLTextAreaElement).value).toBe('/compact ');
-  expect(screen.queryByTestId('overseer-slash')).toBeNull();
+  expect(screen.queryByRole('button', { name: /^compact/ })).toBeNull();
 });
 
 test('actions queued together share one card, and Approve both decides each in turn', async () => {

@@ -9,6 +9,8 @@ import type { TaskTab } from '../lib/appNav';
 import type { RefAction } from '../lib/threadSources';
 import type { OverseerFocus } from './TwoViewOverseer';
 import { IconButton } from '@/ui/ai/icon-button';
+import { Kbd } from '@/ui/kbd';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 /** A task in the middle; a message about it opens on its conversation. */
 function FocusedTask({
@@ -94,9 +96,18 @@ export function OverseerFocusView({
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
             {name(address)}
           </span>
-          <IconButton label="Close" onClick={onClose}>
-            <X />
-          </IconButton>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <IconButton label="Close" onClick={onClose}>
+                  <X />
+                </IconButton>
+              }
+            />
+            <TooltipContent side="bottom">
+              Close <Kbd>Esc</Kbd>
+            </TooltipContent>
+          </Tooltip>
         </div>
       }
       emptyText="No messages yet."

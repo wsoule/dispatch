@@ -1,11 +1,15 @@
 import { type ApiClient, ApiError } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { MessageSquare, X } from 'lucide-react';
 import { useEffect } from 'react';
 
 import { overseerKey } from '../../hooks/useOverseerSession';
 import { cn } from '@/lib/utils';
+import { IconButton } from '@/ui/ai/icon-button';
+import { ListRow } from '@/ui/ai/list-row';
+import { PillButton } from '@/ui/ai/pill';
 import { Spinner } from '@/ui/spinner';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 /** One set-aside Overseer conversation: what it is, where it stands, and a way back. */
 export function DockedConversation({
@@ -38,54 +42,78 @@ export function DockedConversation({
 
   const waiting =
     record.pendingApprovals.length > 0 || record.pendingActions.length > 0;
-  const status = waiting ? (
-    <span className="text-(--state-waiting-fg)">● waiting on you</span>
+  const glyph = waiting ? (
+    <span aria-hidden className="bg-state-waiting size-1.5 rounded-full" />
   ) : record.state === 'running' ? (
-    <span className="inline-flex items-center gap-1">
-      <Spinner className="size-3" /> working
-    </span>
+    <Spinner className="size-3" />
   ) : record.state === 'failed' ? (
-    <span className="text-(--state-failed-fg)">✕ failed</span>
+    <X aria-hidden className="text-state-failed" />
   ) : (
-    (record.messages.findLast((m) => m.role === 'assistant')?.text ?? '')
+    <MessageSquare aria-hidden />
   );
-
-  return (
-    <div
-      data-testid="overseer-docked"
+  const status = waiting
+    ? 'waiting on you'
+    : record.state === 'running'
+      ? 'working'
+      : record.state === 'failed'
+        ? 'failed'
+        : undefined;
+  const reply = record.messages.findLast((m) => m.role === 'assistant')?.text;
+  const close = (
+    <IconButton
+      label="Close this set-aside conversation"
+      onClick={onClose}
       className={cn(
-        'rounded-card border-border group relative flex min-w-0 border-[0.5px]',
-        compact ? 'items-center gap-2 px-2.5 py-1' : 'flex-col gap-1 px-3 py-2'
+        !compact &&
+          'opacity-0 group-hover/docked:opacity-100 focus-visible:opacity-100'
       )}
     >
-      <button
-        type="button"
-        onClick={onRestore}
-        title="Bring this conversation back"
-        className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
-      >
-        <span className="truncate text-[13px] font-medium">
-          {record.prompt}
-        </span>
-        {!compact && (
-          <span className="text-muted-foreground font-book line-clamp-2 text-[12px]">
-            {status}
-          </span>
-        )}
-      </button>
-      {compact && (
-        <span className="text-muted-foreground font-book shrink-0 text-[11px]">
-          {status}
-        </span>
+      <X />
+    </IconButton>
+  );
+  const trigger = compact ? (
+    <PillButton
+      data-testid="overseer-docked"
+      onClick={onRestore}
+      className="max-w-64"
+    >
+      {glyph}
+      <span className="min-w-0 truncate">{record.prompt}</span>
+      {status !== undefined && (
+        <span className="text-muted-foreground font-book">{status}</span>
       )}
-      <button
-        type="button"
-        aria-label="Close this set-aside conversation"
-        onClick={onClose}
-        className="text-muted-foreground hover:text-foreground absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100"
-      >
-        <X className="size-3" />
-      </button>
+    </PillButton>
+  ) : (
+    <ListRow
+      role="listitem"
+      data-testid="overseer-docked"
+      onClick={onRestore}
+      leading={glyph}
+      title={record.prompt}
+      date={status}
+    />
+  );
+
+  // The close button sits beside the row, never inside it: no button within a button.
+  return (
+    <div className="group/docked flex min-w-0 items-center gap-0.5">
+      <Tooltip>
+        <TooltipTrigger
+          render={<div className={cn('min-w-0', !compact && 'flex-1')} />}
+        >
+          {trigger}
+        </TooltipTrigger>
+        <TooltipContent
+          side={compact ? 'top' : 'left'}
+          className="flex max-w-72 flex-col gap-0.5 text-pretty"
+        >
+          <span className="font-medium">{record.prompt}</span>
+          <span className="line-clamp-3 opacity-80">
+            {reply ?? 'Bring this conversation back'}
+          </span>
+        </TooltipContent>
+      </Tooltip>
+      {close}
     </div>
   );
 }

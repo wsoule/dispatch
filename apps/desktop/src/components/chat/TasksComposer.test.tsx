@@ -22,7 +22,9 @@ test('sits as one line until used, carrying the context pill', () => {
   );
   const collapsed = screen.getByTestId('tasks-composer-collapsed');
   expect(collapsed.textContent).toContain('about t-1');
-  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(
+    screen.queryByRole('textbox', { name: 'Say something to your agent' })
+  ).toBeNull();
   fireEvent.click(collapsed);
   expect(
     screen.getByRole('textbox', { name: 'Say something to your agent' })

@@ -1,8 +1,13 @@
+import { X } from 'lucide-react';
 import { useState } from 'react';
 
 import type { OverseerSession } from '../../hooks/useOverseerSession';
 import { overseerTurnLive } from '../../lib/agentPresence';
+import { IconButton } from '@/ui/ai/icon-button';
+import { Pill } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
+import { Button } from '@/ui/button';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
 
 export interface TasksComposerProps {
   overseer: OverseerSession;
@@ -61,39 +66,40 @@ export function TasksComposer({
                 ? 'Your agent is working…'
                 : (reply?.text ?? 'Sent to your agent.'))}
           </p>
-          <button
-            type="button"
-            onClick={onOpenOverseer}
-            className="text-[12px] whitespace-nowrap text-(--accent) hover:underline"
-          >
+          <Button variant="link" size="xs" onClick={onOpenOverseer}>
             Open in Overseer →
-          </button>
-          <button
-            type="button"
-            aria-label="Dismiss"
+          </Button>
+          <IconButton
+            label="Dismiss"
             onClick={() => setSentAt(null)}
-            className="text-muted-foreground text-[12px]"
+            className="size-6"
           >
-            ×
-          </button>
+            <X />
+          </IconButton>
         </div>
       )}
       {!expanded && draft === '' ? (
-        <button
-          type="button"
+        <InputGroup
           data-testid="tasks-composer-collapsed"
-          disabled={disabled}
-          onClick={() => setExpanded(true)}
-          onFocus={() => setExpanded(true)}
-          className="bg-surface-quaternary border-border rounded-control text-muted-foreground hover:text-foreground flex h-9 w-full max-w-[760px] items-center gap-2 border-[0.5px] px-3 text-left text-[13px]"
+          data-disabled={disabled || undefined}
+          onClick={() => {
+            if (!disabled) setExpanded(true);
+          }}
+          className="h-9 max-w-[760px]"
         >
           {pill !== null && (
-            <span className="rounded-pill bg-surface-inset text-foreground shrink-0 px-2 py-0.5 text-[12px]">
-              about {pill.taskId}
-            </span>
+            <InputGroupAddon>
+              <Pill>about {pill.taskId}</Pill>
+            </InputGroupAddon>
           )}
-          <span className="min-w-0 flex-1 truncate">say something</span>
-        </button>
+          <InputGroupInput
+            readOnly
+            disabled={disabled}
+            aria-label="Open the composer"
+            placeholder="say something"
+            onFocus={() => setExpanded(true)}
+          />
+        </InputGroup>
       ) : (
         <div
           className="w-full max-w-[760px]"
