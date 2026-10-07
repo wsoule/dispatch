@@ -181,6 +181,7 @@ test('the page is sentence-case groups in order', () => {
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
   ).toEqual([
     'Models',
+    'Judgments',
     'Limits',
     'Permissions',
     'Defaults',

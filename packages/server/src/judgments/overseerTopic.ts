@@ -16,14 +16,15 @@ export interface TopicReading {
   confidence: number | null;
 }
 
+// "Same work" was too loose: a fresh ask about the same task list read as a follow-up.
 function topicQuestions() {
   return {
     topic: choice(
-      'Is `next` part of the conversation in `recent`, or a different subject the human would want in its own conversation?',
+      'The human is chatting with their coding agent. Does `next` carry on the exchange in `recent`, or is it a separate ask that deserves its own conversation?',
       {
         continues:
-          'it follows up, refers back, answers, or is about the same work as the recent lines',
-        new: 'it is about a different subject the recent lines do not touch',
+          'next reacts to the recent lines: it answers, corrects, pushes back on, retries or extends the request in progress, or points at something they mention (that, it, them, those, the fix, the first one)',
+        new: 'next is its own ask: a different question or request that would make sense to someone who never saw the recent lines, such as asking what to work on next, asking for a status or summary, or starting other work, even in the same project',
       }
     ),
   };

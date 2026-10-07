@@ -1,5 +1,5 @@
 import { loadConfig, resolveTypesafeApiKey } from '@dispatch-foo/core';
-import { TypeSafeClient } from '@typesafe-ai/sdk';
+import { choice, TypeSafeClient } from '@typesafe-ai/sdk';
 import type {
   EntryType,
   Fetch,
@@ -63,12 +63,25 @@ export function capText(text: string, maxChars: number): string {
 
 const warned = new Set<string>();
 
+/** The most recent judgment failure, for Settings' status line. */
+export interface JudgmentFailure {
+  feature: string;
+  message: string;
+  at: string;
+}
+let lastFailure: JudgmentFailure | null = null;
+
+export function lastJudgmentFailure(): JudgmentFailure | null {
+  return lastFailure;
+}
+
 /** Logs a judgment failure once per feature per process — a dead API must
  *  not fill the daemon log with one line per task on every board refresh. */
 export function warnOnce(feature: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  lastFailure = { feature, message, at: new Date().toISOString() };
   if (warned.has(feature)) return;
   warned.add(feature);
-  const message = err instanceof Error ? err.message : String(err);
   console.warn(
     `dispatchd: ${feature} judgment unavailable, falling back: ${message}`
   );
@@ -94,4 +107,28 @@ export async function mapLimit<T, R>(
     Array.from({ length: Math.min(limit, items.length) }, worker)
   );
   return results;
+}
+
+/** One tiny judgment, timed: whether Jev answers right now. */
+export async function probeJudgments(
+  client: JudgmentClient
+): Promise<{ ok: true; latencyMs: number } | { ok: false; error: string }> {
+  const started = Date.now();
+  try {
+    await client.judge(
+      { message: 'ping' },
+      {
+        reachable: choice('Is `message` a greeting or a test?', {
+          yes: 'it is',
+          no: 'it is not',
+        }),
+      }
+    );
+    return { ok: true, latencyMs: Date.now() - started };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }

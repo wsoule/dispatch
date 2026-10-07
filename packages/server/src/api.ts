@@ -184,7 +184,11 @@ import {
   InboxClusterer,
   InboxClusterSnapshotStore,
 } from './inboxClusterer.js';
-import type { JudgmentClient } from './judgments/client.js';
+import {
+  type JudgmentClient,
+  lastJudgmentFailure,
+  probeJudgments,
+} from './judgments/client.js';
 import {
   InboxTriageSnapshotStore,
   splitCapture,
@@ -6891,6 +6895,24 @@ export async function handleApi(
     if (segments[0] === 'labels' && segments.length === 1) {
       if (method === 'GET') return listLabels(ctx);
       if (method === 'PUT') return await putLabelColor(req, ctx);
+    }
+    // GET /api/judgments/status — Jev's key, model and last failure; ?probe=1
+    // also makes one tiny call and times it.
+    if (
+      segments[0] === 'judgments' &&
+      segments[1] === 'status' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      const client = ctx.judgments;
+      return jsonResponse({
+        configured: client !== null,
+        model: client?.model ?? null,
+        lastFailure: lastJudgmentFailure(),
+        ...(client !== null && url.searchParams.get('probe') === '1'
+          ? { probe: await probeJudgments(client) }
+          : {}),
+      });
     }
     // GET /api/executors — what this daemon can dispatch on, so no client has
     // to hard-code executor names.
