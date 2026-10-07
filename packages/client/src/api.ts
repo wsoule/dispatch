@@ -1724,6 +1724,17 @@ export interface OverseerCommand {
   argumentHint: string;
 }
 
+/** What Settings shows about Jev, the TypeSafe judgment service. */
+export interface JudgmentStatus {
+  /** A key resolved when the daemon started. */
+  configured: boolean;
+  model: string | null;
+  /** The latest failed judgment, from any feature. */
+  lastFailure: { feature: string; message: string; at: string } | null;
+  /** Present only when probed. */
+  probe?: { ok: true; latencyMs: number } | { ok: false; error: string };
+}
+
 // Mirrors OverseerApproval in packages/server/src/orchestrator/overseer.ts —
 // a built-in tool call (Bash, Edit, a project MCP tool) the overseer's running
 // turn is blocked on until a human answers its `tool-approval` gate. Allowing
@@ -3372,6 +3383,8 @@ export interface ApiClient {
     }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
+  /** Jev (TypeSafe judgments): key, model and last failure; `probe` also times one call. */
+  judgmentStatus(probe?: boolean): Promise<JudgmentStatus>;
   // The executors this daemon registered (`GET /api/executors`) and which
   // one a dispatch that names none runs on.
   fetchExecutors(): Promise<ExecutorsResponse>;
@@ -4438,6 +4451,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     fetchRuns: () => request(target, '/api/runs'),
     fetchExecutors: () => request(target, '/api/executors'),
+    judgmentStatus: (probe = false) =>
+      request(target, `/api/judgments/status${probe ? '?probe=1' : ''}`),
     fetchAgentSessions: () => request(target, '/api/agents'),
     fetchRun: (id) => request(target, `/api/runs/${id}`),
     fetchRunClaims: () => request(target, '/api/runs/claims'),

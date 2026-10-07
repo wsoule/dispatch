@@ -190,6 +190,7 @@ export type {
   BoardSyncOffReason,
   BoardSyncStatus,
   IssuedTeamToken,
+  JudgmentStatus,
   LicenseStatus,
   TeamAddress,
   JoinedTeam,

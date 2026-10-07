@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import {
   capText,
   createJudgmentClient,
+  lastJudgmentFailure,
+  probeJudgments,
   warnOnce,
 } from '../../src/judgments/client';
 
@@ -123,5 +125,29 @@ describe('warnOnce', () => {
     expect(seen).toHaveLength(2);
     expect(seen[0]).toContain('unit-feature');
     expect(seen[0]).toContain('boom');
+  });
+});
+
+describe('status for Settings', () => {
+  test('warnOnce keeps the latest failure even after it stops logging', () => {
+    warnOnce('status-feature', new Error('first'));
+    warnOnce('status-feature', new Error('second'));
+    expect(lastJudgmentFailure()).toMatchObject({
+      feature: 'status-feature',
+      message: 'second',
+    });
+  });
+
+  test('probeJudgments times a working call and reports a failing one', async () => {
+    const ok = await probeJudgments({
+      model: 'jev-test',
+      judge: () => Promise.resolve({} as never),
+    });
+    expect(ok.ok).toBe(true);
+    const bad = await probeJudgments({
+      model: 'jev-test',
+      judge: () => Promise.reject(new Error('401 Unauthorized')),
+    });
+    expect(bad).toEqual({ ok: false, error: '401 Unauthorized' });
   });
 });

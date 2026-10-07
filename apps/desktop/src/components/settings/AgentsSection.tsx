@@ -5,7 +5,7 @@ import type {
   ModelConfig,
 } from '@dispatch-foo/core/browser';
 import { EFFORT_ROLES, MODEL_ROLES } from '@dispatch-foo/core/browser';
-import type { ExecutorsResponse } from '@dispatch/client';
+import type { ApiClient, ExecutorsResponse } from '@dispatch/client';
 
 import {
   DEFAULT_EFFORT_ID,
@@ -16,6 +16,7 @@ import {
 } from '../../lib/models';
 import { CliAgents } from './AgentsMoreGroups';
 import { ChoiceSetting, NumberSetting } from './fields';
+import { JudgmentStatusRow } from './JudgmentStatusRow';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import {
   Select,
@@ -30,6 +31,9 @@ interface AgentsSectionProps {
   executors: ExecutorsResponse | null;
   onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
+  /** For Jev's status line; without a client the line just says it is checking. */
+  client?: Pick<ApiClient, 'judgmentStatus'> | null;
+  port?: number;
 }
 
 // One row per config.models role, in plain words: what the work is, not the
@@ -101,6 +105,8 @@ export function AgentsSection({
   executors,
   onSave,
   canOperate,
+  client = null,
+  port,
 }: AgentsSectionProps) {
   const agentNames = [
     ...new Set([
@@ -179,6 +185,14 @@ export function AgentsSection({
             />
           );
         })}
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Judgments"
+        hint="Jev answers quick yes/no calls: triage, readiness, run model tier and whether a message starts a new Overseer conversation. Without it, each falls back to the plain behaviour."
+        keywords="typesafe jev"
+      >
+        <JudgmentStatusRow client={client} port={port} />
       </SettingsGroup>
 
       <SettingsGroup title="Limits" keywords="caps">

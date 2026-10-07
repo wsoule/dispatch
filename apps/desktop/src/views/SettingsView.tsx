@@ -182,6 +182,8 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             executors={ctx.data.executors}
             onSave={ctx.save}
             canOperate={ctx.canOperate}
+            client={ctx.data.client}
+            port={ctx.data.port}
           />
         )),
       },
