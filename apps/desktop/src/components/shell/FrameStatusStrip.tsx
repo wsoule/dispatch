@@ -2,6 +2,7 @@ import type { PresenceEntry, SyncStatus } from '@dispatch/client';
 import { CircleHelp, Cog, History } from 'lucide-react';
 
 import { formatUsd } from '../../lib/epicSession';
+import { type LiveCeilings, liveCeilingsLabel } from '../../lib/liveSpend';
 import { PresenceStack } from './PresenceStack';
 import { syncSummary, type SyncTone } from './SyncChip';
 import { cn } from '@/lib/utils';
@@ -40,22 +41,6 @@ interface FrameStatusStripProps {
   /** A task's title by id, for the presence tooltip's "viewing …". */
   taskTitle?: (id: string) => string | undefined;
   className?: string;
-}
-
-export interface LiveCeilings {
-  live: number;
-  settledUsd: number;
-  ceilingUsd: number | null;
-}
-
-/** `2 milestones live · $41.20 of $120 ceilings`, or `… · $41.20 spent` when no live
- * session set a ceiling. */
-export function liveCeilingsLabel(ceilings: LiveCeilings): string {
-  const live = `${ceilings.live} milestone${ceilings.live === 1 ? '' : 's'} live`;
-  const settled = formatUsd(ceilings.settledUsd);
-  return ceilings.ceilingUsd === null
-    ? `${live} · ${settled} spent`
-    : `${live} · ${settled} of ${formatUsd(ceilings.ceilingUsd)} ceilings`;
 }
 
 /**

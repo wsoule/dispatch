@@ -25,6 +25,10 @@ import {
   FlightPlanHostContext,
 } from './components/flightplan/ContainerFlightPlanSection';
 import { MemoryRecent } from './components/memory/MemoryRecent';
+import {
+  DraftsSection,
+  NotificationsSection,
+} from './components/overseer/InflowSections';
 import { OutsidePeek } from './components/peek/OutsidePeek';
 import { PersonPeek } from './components/peek/PersonPeek';
 import { ThreadPeek } from './components/peek/ThreadPeek';
@@ -112,11 +116,13 @@ import { twoViewsAllowed, useBetaFlag } from './lib/betaFeatures';
 import { hasDispatchKey, launchRootKey } from './lib/bootWarm';
 import { mentions, subjectOf } from './lib/conversationScope';
 import { type DecisionItem, decisionTarget } from './lib/decisionFeed';
-import type { InboxTarget } from './lib/inbox';
+import { draftTrayViewModel } from './lib/draftTray';
+import type { InboxEntry, InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
 import type { GlobalKeyCommand } from './lib/keyboard';
 import { liveCeilingsOf, spendToday } from './lib/liveSpend';
+import { countMergeReady } from './lib/mergeReady';
 import { awayDigest } from './lib/narrator';
 import { needsYou } from './lib/needsYou';
 import type { OverseerDoor } from './lib/overseerThread';
@@ -817,6 +823,19 @@ function App() {
       statusModel,
     ]
   );
+
+  // Finished runs "Merge all ready" would queue: Going out's Landing action.
+  const mergeReadyCount = useMemo(() => {
+    const queued = new Set(
+      (data.mergeQueue?.entries ?? []).map((e) => e.runId)
+    );
+    return countMergeReady(
+      data.runs,
+      data.tasksIncludingArchived,
+      queued,
+      statusModel
+    );
+  }, [data.runs, data.tasksIncludingArchived, data.mergeQueue, statusModel]);
 
   // One set of numbers: the orb, "tasks ●" and the Needs you header all read `needs.count`.
   const mailbox = useMailbox(
@@ -1897,6 +1916,33 @@ function App() {
         : { kind: 'address', address: post.subject }
     );
   };
+  // Two views has no drafts tray, so a draft started from the composer opens
+  // its page straight away; it stays listed under Coming in's Drafts.
+  const startDraftAndOpen = async (
+    prompt: string,
+    options?: { parent?: string | null }
+  ) => {
+    const record = await rawData.handleStartDraft(prompt, options);
+    dispatchNav({ type: 'openDraft', draftId: record.id });
+    return record;
+  };
+  // A notification opened from Coming in: a task or run opens in the middle;
+  // anything else goes where the Inbox would send it.
+  const openNotification = (entry: InboxEntry) => {
+    const { target } = entry;
+    const taskId =
+      target.kind === 'task'
+        ? target.taskId
+        : target.kind === 'run'
+          ? data.runs.find((run) => run.id === target.runId)?.taskId
+          : undefined;
+    if (taskId === undefined) {
+      navigateFromInbox(target);
+      return;
+    }
+    markNotificationRead(entry.id);
+    setOverseerFocus({ kind: 'task', taskId });
+  };
   const replyToPost = async (post: Post, body: string) => {
     if (data.client === null) throw new Error('dispatchd client not ready');
     await data.client.sendMessage(
@@ -1984,6 +2030,33 @@ function App() {
             postsCount={posts.length}
             runs={data.runs}
             merges={data.mergeQueue?.entries ?? []}
+            drafts={
+              <DraftsSection
+                drafts={data.drafts}
+                onOpen={(draftId) =>
+                  dispatchNav({ type: 'openDraft', draftId })
+                }
+                onDismiss={(id) => void data.handleDismissDraft(id)}
+              />
+            }
+            draftsCount={draftTrayViewModel(data.drafts).badgeCount}
+            notifications={
+              <NotificationsSection
+                entries={notificationInboxValue.entries}
+                unreadCount={notificationInboxValue.unreadCount}
+                onMarkAllRead={markNotificationInboxRead}
+                onOpen={openNotification}
+              />
+            }
+            outflow={{
+              sessions: data.liveEpicSessions,
+              epicTitle: (id) =>
+                data.epics.find((e) => e.meta.id === id)?.meta.title ?? id,
+              mergeReady: mergeReadyCount,
+              onMergeAll: data.handleMergeAllReady,
+              spendToday: todaySpend,
+              ceilings: liveCeilings,
+            }}
             focus={overseerFocus}
             onFocus={setOverseerFocus}
             renderFocus={(focus, onClose) => (
@@ -2707,7 +2780,11 @@ function App() {
                         <AiTaskComposer
                           projectName={activeProject?.name}
                           data={data}
-                          onStartDraft={rawData.handleStartDraft}
+                          onStartDraft={
+                            twoViews
+                              ? startDraftAndOpen
+                              : rawData.handleStartDraft
+                          }
                           onQuickAdd={(preset) => {
                             setAiComposerOpen(false);
                             openQuickAddTask(preset);

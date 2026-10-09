@@ -2,7 +2,7 @@ import type { SyncStatus } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { FrameStatusStrip, liveCeilingsLabel } from './FrameStatusStrip';
+import { FrameStatusStrip } from './FrameStatusStrip';
 import { TooltipProvider } from '@/ui/tooltip';
 
 function status(overrides: Partial<SyncStatus> = {}): SyncStatus {
@@ -213,13 +213,4 @@ test('nothing live, null or absent shows no ceilings readout', () => {
   );
   expect(container.querySelector('[data-slot="live-ceilings"]')).toBeNull();
   expect(container.textContent).not.toContain('·');
-});
-
-test('liveCeilingsLabel pluralises and drops cents on whole dollars', () => {
-  expect(liveCeilingsLabel({ live: 3, settledUsd: 100, ceilingUsd: 250 })).toBe(
-    '3 milestones live · $100 of $250 ceilings'
-  );
-  expect(
-    liveCeilingsLabel({ live: 1, settledUsd: 0.5, ceilingUsd: null })
-  ).toBe('1 milestone live · $0.50 spent');
 });

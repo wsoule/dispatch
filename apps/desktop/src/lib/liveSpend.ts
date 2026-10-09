@@ -1,6 +1,6 @@
 import type { EpicProgress, RunMeta } from '@dispatch/client';
 
-import type { LiveCeilings } from '../components/shell/FrameStatusStrip';
+import { formatUsd } from './epicSession';
 
 // What the fleet has spent, for the status strip and the Live view's header: settled run
 // cost today, and the live fan-outs' spend against their ceilings.
@@ -40,4 +40,20 @@ export function liveCeilingsOf(
     if (ceiling !== null) ceilingUsd = (ceilingUsd ?? 0) + ceiling;
   }
   return { live: sessions.length, settledUsd, ceilingUsd };
+}
+
+export interface LiveCeilings {
+  live: number;
+  settledUsd: number;
+  ceilingUsd: number | null;
+}
+
+/** `2 milestones live · $41.20 of $120 ceilings`, or `… · $41.20 spent` when no live
+ * session set a ceiling. */
+export function liveCeilingsLabel(ceilings: LiveCeilings): string {
+  const live = `${ceilings.live} milestone${ceilings.live === 1 ? '' : 's'} live`;
+  const settled = formatUsd(ceilings.settledUsd);
+  return ceilings.ceilingUsd === null
+    ? `${live} · ${settled} spent`
+    : `${live} · ${settled} of ${formatUsd(ceilings.ceilingUsd)} ceilings`;
 }
