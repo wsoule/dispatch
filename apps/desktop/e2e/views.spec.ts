@@ -5,7 +5,7 @@ import { APP_TOKEN } from './paths';
 // Each shot opens its page the way a person does: Tasks and Threads from the
 // top bar, every other page under Tasks from its command-menu row (the label
 // `buildPaletteEntries` gives it), so a renamed or dropped page fails here
-// rather than silently screenshotting another one.
+// rather than silently capturing another one.
 const VIEWS: { name: string; open: (page: Page) => Promise<void> }[] = [
   { name: 'tasks', open: (page) => clickTopBar(page, 'two-views-tasks') },
   { name: 'threads', open: (page) => clickTopBar(page, 'two-views-threads') },
