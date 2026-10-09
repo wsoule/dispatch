@@ -61,6 +61,18 @@ function reasonMessage(reason: string | undefined): string | null {
  * carto) lives in `summarizeImpact`; this component only renders what that
  * pure function already decided.
  */
+// The words for a failed impact read. A 409 means the run has neither a
+// worktree nor a saved diff to measure; the daemon's own wording for that is
+// internal ("run has no worktree to diff: r-…"), so it is not shown.
+export function impactErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 409) {
+    return 'Nothing to measure: this run has no checkout or saved changes.';
+  }
+  return error instanceof ApiError
+    ? error.message
+    : "Couldn't load the blast radius.";
+}
+
 export function ImpactPanel({
   client,
   subject,
@@ -121,15 +133,7 @@ export function ImpactPanel({
         </div>
       )}
 
-      {isError && (
-        <EmptyState
-          message={
-            error instanceof ApiError
-              ? error.message
-              : "Couldn't load the blast radius."
-          }
-        />
-      )}
+      {isError && <EmptyState message={impactErrorMessage(error)} />}
 
       {!pending && !isError && message !== null && (
         <EmptyState message={message} />

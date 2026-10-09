@@ -797,7 +797,14 @@ describe('keyboard', () => {
       fakeHost(newLog(), {
         tasks: [task('t-1')],
         body: BODY,
-        client: { getTaskPresence } as Partial<ApiClient>,
+        // Presence is only asked for once the project is on a team.
+        client: {
+          getTaskPresence,
+          getTeamStatus: () =>
+            Promise.resolve({ state: 'member' } as Awaited<
+              ReturnType<ApiClient['getTeamStatus']>
+            >),
+        } as Partial<ApiClient>,
       })
     );
     expect(

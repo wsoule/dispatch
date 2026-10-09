@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useTaskComments } from '../../../hooks/useTaskComments';
 import { useTaskDoc } from '../../../hooks/useTaskDoc';
+import { useTeamOn } from '../../../hooks/useTeamOn';
 import { parseActivity } from '../../../lib/activityFeed';
 import type { TaskTab } from '../../../lib/appNav';
 import { liveClaimsFrom } from '../../../lib/dispatchPreview';
@@ -140,13 +141,15 @@ function TeamPresenceLine({
   port: number | undefined;
   taskId: string;
 }) {
+  // Presence only exists on a team; without one the route answers 409.
+  const teamOn = useTeamOn(client);
   const query = useQuery({
     queryKey: ['task-presence', port, taskId],
     queryFn: () => {
       if (client === null) throw new Error('no client');
       return client.getTaskPresence(taskId);
     },
-    enabled: client !== null,
+    enabled: client !== null && teamOn,
     retry: false,
   });
   const line =

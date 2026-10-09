@@ -51,9 +51,11 @@ export function TasksStrip({
   onPreset: (preset: TasksPreset) => void;
 }) {
   return (
+    // One line always: when the window is too narrow it scrolls sideways
+    // rather than wrapping and pushing the list down.
     <div
       data-testid="tasks-strip"
-      className="flex min-w-0 flex-wrap items-center gap-1.5 text-[12px]"
+      className="flex min-w-0 [scrollbar-width:none] flex-nowrap items-center gap-1.5 overflow-x-auto text-[12px] [&::-webkit-scrollbar]:hidden"
     >
       {ORDER.map((bucket) => {
         const n = counts.buckets[bucket];
@@ -70,7 +72,7 @@ export function TasksStrip({
             data-testid={`tasks-strip-${bucket}`}
             pressed={active}
             onPressedChange={() => onPreset(active ? 'all' : chipPreset)}
-            className={cn('px-2', tone)}
+            className={cn('shrink-0 px-2', tone)}
           >
             {spec.label(n)}
           </Toggle>
@@ -78,13 +80,13 @@ export function TasksStrip({
           <Pill
             key={bucket}
             data-testid={`tasks-strip-${bucket}`}
-            className={cn('text-muted-foreground', tone)}
+            className={cn('text-muted-foreground shrink-0', tone)}
           >
             {spec.label(n)}
           </Pill>
         );
       })}
-      <span className="text-muted-foreground px-1 whitespace-nowrap">
+      <span className="text-muted-foreground shrink-0 px-1 whitespace-nowrap">
         ✓ {counts.landed}/{counts.total} landed
       </span>
     </div>

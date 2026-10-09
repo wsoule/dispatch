@@ -107,13 +107,53 @@ const LIST_GROUPS: ShortcutGroup[] = [
   },
 ];
 
+// Two views has no sidebar and only two views, so its shell keys are fewer:
+// ⌘1 / ⌘2 and the `g` chords that land somewhere of their own (App's
+// twoViewsCommand, then lib/twoViews.ts for `g m`).
+const TWO_VIEWS_SHELL_GROUPS: ShortcutGroup[] = [
+  {
+    heading: 'Shell',
+    rows: [
+      { label: 'Command menu', keys: ['⌘K'] },
+      { label: 'New task', keys: ['C'] },
+      { label: 'Drop a thought', keys: ['⌘D'] },
+      { label: 'Keyboard shortcuts', keys: ['?'] },
+      { label: 'Close / back out', keys: ['Esc'] },
+    ],
+  },
+  {
+    heading: 'Go to',
+    rows: [
+      { label: 'Overseer', keys: ['G', 'O'], chord: true },
+      { label: 'Tasks', keys: ['G', 'T'], chord: true },
+      { label: 'Threads', keys: ['G', 'M'], chord: true },
+      { label: 'Settings', keys: ['G', 'S'], chord: true },
+      { label: 'Overseer / Tasks', keys: ['⌘1', '⌘2'] },
+      { label: 'Back / forward', keys: ['⌘[', '⌘]'] },
+    ],
+  },
+  SHELL_GROUPS[SHELL_GROUPS.length - 1],
+];
+
+// The Home lanes and the Live graph are Classic views.
+const CLASSIC_ONLY = new Set(['Home', 'Live']);
+const TWO_VIEWS_LIST_GROUPS = LIST_GROUPS.filter(
+  (g) => !CLASSIC_ONLY.has(g.heading)
+);
+
 interface ShortcutsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Lists the Two views keys instead of Classic's sidebar and views. */
+  twoViews?: boolean;
 }
 
 /** The `?` reference: every global and list key, two columns of 28px rows with keycaps. */
-export function ShortcutsDialog({ open, onOpenChange }: ShortcutsDialogProps) {
+export function ShortcutsDialog({
+  open,
+  onOpenChange,
+  twoViews = false,
+}: ShortcutsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -126,8 +166,12 @@ export function ShortcutsDialog({ open, onOpenChange }: ShortcutsDialogProps) {
           Every global and list shortcut.
         </DialogDescription>
         <DialogBody className="grid grid-cols-1 gap-x-8 gap-y-4 pb-5 sm:grid-cols-2">
-          <ShortcutColumn groups={SHELL_GROUPS} />
-          <ShortcutColumn groups={LIST_GROUPS} />
+          <ShortcutColumn
+            groups={twoViews ? TWO_VIEWS_SHELL_GROUPS : SHELL_GROUPS}
+          />
+          <ShortcutColumn
+            groups={twoViews ? TWO_VIEWS_LIST_GROUPS : LIST_GROUPS}
+          />
         </DialogBody>
       </DialogContent>
     </Dialog>

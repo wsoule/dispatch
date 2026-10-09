@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { a2aQueryKey } from '../lib/a2a';
 import { type AdminItem, adminItems } from '../lib/adminItems';
 import { memoryQueryKey } from '../lib/memory';
+import { useTeamOn } from './useTeamOn';
 
 // The same keys and fetches the Settings pages use, so both read one cache.
 export function useAdminItems(
@@ -12,10 +13,11 @@ export function useAdminItems(
   enabled: boolean
 ): AdminItem[] {
   const on = client !== null && enabled;
+  const teamOn = useTeamOn(client, on);
   const machines = useQuery({
     queryKey: ['team-keys', client?.baseUrl],
     queryFn: () => ready(client).getTeamKeys(),
-    enabled: on,
+    enabled: on && teamOn,
     retry: false,
     refetchInterval: 30_000,
   });

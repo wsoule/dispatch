@@ -339,12 +339,16 @@ export function twoViewsReducer(
     case 'tv/showOverseer':
       return applyDestination(state, { kind: 'overseer' });
     case 'tv/showTasks':
-      return action.preset === undefined
-        ? {
+      if (action.preset !== undefined)
+        return { ...toTasks(state, LIST), tasksPreset: action.preset };
+      // Coming from Overseer returns to where Tasks was left; pressing Tasks
+      // while already there goes back to the list, like any tab pressed twice.
+      return state.mainView === 'tasks'
+        ? { ...toTasks(state, LIST), tasksPreset: 'all' }
+        : {
             ...go(state, { mainView: 'tasks', tasksPage: state.tasksPage }),
             tasksPreset: 'all',
-          }
-        : { ...toTasks(state, LIST), tasksPreset: action.preset };
+          };
     case 'tv/setTasksPreset':
       return { ...state, tasksPreset: action.preset };
     case 'tv/setTasksMode':

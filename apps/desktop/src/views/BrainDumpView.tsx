@@ -305,7 +305,7 @@ export function BrainDumpView({
     openItemIds.length < CLUSTER_MIN_ITEMS
       ? 'Capture a few more to enable grouping.'
       : groups === null
-        ? 'Group asks a model which captures are one piece of work.'
+        ? 'Group finds notes that belong to the same piece of work.'
         : 'Nothing here looks related.';
 
   return (
