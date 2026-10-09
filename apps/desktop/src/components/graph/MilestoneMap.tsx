@@ -411,8 +411,9 @@ export function MilestoneMapView({
       <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto px-4 pb-4">
         {mode === 'milestones' ? (
           <div className="flex min-h-full">
+            {/* Centred across, but read from the top like every other page. */}
             <DependencyGraph
-              className="m-auto"
+              className="mx-auto mt-6 mb-auto"
               tasks={map.nodes}
               direction="LR"
               wrap={WRAP}

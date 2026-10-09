@@ -119,11 +119,21 @@ test('full mode: the start card takes an opening question through overseer.submi
   });
   render(<ChatWithDraft overseer={overseer} />);
 
-  // Full-page copy, and no compact-only reset control.
+  // Full-page welcome, and no compact-only reset control.
+  expect(screen.getByText('What should we work on?')).toBeDefined();
   expect(
-    screen.getByText(/every mutation waits for your explicit approval/)
+    screen.getByText(/changes the project waits for your approval/)
   ).toBeDefined();
   expect(screen.queryByLabelText('Start a new conversation')).toBeNull();
+
+  // A starter fills the composer rather than sending on its own.
+  fireEvent.click(screen.getByRole('button', { name: 'What needs me?' }));
+  expect(asked).toEqual([]);
+  expect(
+    screen
+      .getByDisplayValue('What needs me right now?')
+      .getAttribute('aria-label')
+  ).toBe('Overseer opening question');
 
   fireEvent.change(screen.getByLabelText('Overseer opening question'), {
     target: { value: 'status?' },

@@ -50,6 +50,18 @@ import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
+// Ways into an empty Overseer: each fills the composer, so the question can be
+// edited before it goes.
+const STARTERS: readonly { label: string; text: string }[] = [
+  { label: 'What needs me?', text: 'What needs me right now?' },
+  { label: 'Plan a milestone', text: 'Plan a milestone: ' },
+  {
+    label: 'What blocks the release?',
+    text: 'What is blocking the next release?',
+  },
+  { label: 'What landed today?', text: 'What did the agents land today?' },
+];
+
 /** The models the opening composer offers, in `PromptBar`'s shape. */
 const COMPOSER_MODELS = MODELS.map((m) => ({ id: m.id, label: m.label }));
 
@@ -847,11 +859,31 @@ export function OverseerChat({
   if (overseer.conversationId === null) {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-muted-foreground font-book text-[13px]">
-          {compact
-            ? 'Ask about runs, tasks, the queue — or the code. Actions wait for your approval.'
-            : 'Ask about this project — runs, tasks, the merge queue, what needs you — or about the code itself: the overseer is a full agent session in the checkout and can read, search, run commands and edit. It can also act on the project (dispatch, cancel, approve), but every mutation waits for your explicit approval here first, and tool calls the permission policy does not settle pause for you to allow.'}
-        </p>
+        <div className="flex flex-col gap-1">
+          {!compact && (
+            <p className="text-[15px] font-medium">What should we work on?</p>
+          )}
+          <p className="text-muted-foreground font-book text-[13px]">
+            Ask about runs, tasks or the code. Anything that changes the project
+            waits for your approval.
+          </p>
+        </div>
+        {!compact && (
+          <div
+            className="flex flex-wrap gap-1.5"
+            aria-label="Starter questions"
+            role="group"
+          >
+            {STARTERS.map((starter) => (
+              <PillButton
+                key={starter.label}
+                onClick={() => setDraft(starter.text)}
+              >
+                {starter.label}
+              </PillButton>
+            ))}
+          </div>
+        )}
         {sendError !== null && <ErrorLine>{sendError}</ErrorLine>}
         {aboveComposer}
         {/* Which model the conversation opens on — remembered per device, so

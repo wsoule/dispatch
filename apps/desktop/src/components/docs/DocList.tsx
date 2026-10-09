@@ -6,6 +6,14 @@ import type { DocFilter } from '../../lib/docs';
 import { docBadges } from '../../lib/docs';
 import { resolveListKeyCommand } from '../../lib/keyboard';
 import { cn } from '@/lib/utils';
+import { Button } from '@/ui/button';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from '@/ui/empty';
 import { Input } from '@/ui/input';
 import { Toggle } from '@/ui/toggle';
 import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
@@ -27,6 +35,19 @@ interface DocListProps {
   loading?: boolean;
   /** `page` (Two views' All docs): filters on one line over full-width rows. */
   layout?: 'rail' | 'page';
+  /** Starts a new doc; the empty page state offers it when given. */
+  onNew?: () => void;
+}
+
+// Whether the filter is narrowing the list, so an empty result means "nothing
+// matches" rather than "no docs yet".
+function isNarrowed(f: DocFilter): boolean {
+  return (
+    f.query.trim() !== '' ||
+    f.scope !== 'all' ||
+    f.status !== 'active' ||
+    f.unreviewedOnly
+  );
 }
 
 // One All docs row at the Tasks list's density: glyph, title, then its tags.
@@ -79,6 +100,7 @@ export function DocList({
   error,
   loading = false,
   layout = 'rail',
+  onNew,
 }: DocListProps) {
   const page = layout === 'page';
   const idPrefix = useId();
@@ -159,11 +181,34 @@ export function DocList({
           Loading docs…
         </p>
       )}
-      {!loading && docs.length === 0 && error === null && (
-        <p className="p-3 text-xs text-[var(--color-muted-foreground)]">
-          No docs.
-        </p>
-      )}
+      {!loading &&
+        docs.length === 0 &&
+        error === null &&
+        (page ? (
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>
+                {isNarrowed(filter) ? 'No docs match' : 'No docs yet'}
+              </EmptyTitle>
+              <EmptyDescription>
+                {isNarrowed(filter)
+                  ? 'Try another search, or clear the filters.'
+                  : 'Specs and plans your agents save land here, linked to their tasks.'}
+              </EmptyDescription>
+            </EmptyHeader>
+            {!isNarrowed(filter) && onNew !== undefined && (
+              <EmptyContent>
+                <Button size="sm" onClick={onNew}>
+                  New doc
+                </Button>
+              </EmptyContent>
+            )}
+          </Empty>
+        ) : (
+          <p className="p-3 text-xs text-[var(--color-muted-foreground)]">
+            {isNarrowed(filter) ? 'No docs match.' : 'No docs yet.'}
+          </p>
+        ))}
       <ul
         aria-label="Docs"
         tabIndex={0}
