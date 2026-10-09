@@ -2,7 +2,7 @@ import { expect, type Page, test } from '@playwright/test';
 
 import { APP_TOKEN } from './paths';
 
-// Two views never mounts a list whose rows are conversations.
+// Overseer and Tasks never mount a list whose rows are conversations.
 const CONVERSATION_LISTS = [
   '[role=listbox][aria-label*=Thread]',
   '[aria-label*=Channel]',
@@ -33,15 +33,12 @@ async function expectOneSetOfNumbers(page: Page, asks: number): Promise<void> {
   );
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(() => {
   // The run's first load pays Vite's cold dependency bundling.
   test.setTimeout(90_000);
-  await page.addInitScript(() => {
-    localStorage.setItem('dispatch:beta', JSON.stringify(['two-views']));
-  });
 });
 
-test('Two views opens on Overseer, with no sidebar and one set of numbers', async ({
+test('the app opens on Overseer, with no sidebar and one set of numbers', async ({
   page,
   baseURL,
 }) => {
@@ -58,9 +55,13 @@ test('Two views opens on Overseer, with no sidebar and one set of numbers', asyn
   await expectNoConversationLists(page);
 
   await page.getByTestId('overseer-asks-door').click();
-  await expect(page.getByTestId('tasks-view')).toBeVisible();
-  await expect(page.getByTestId('needs-you-count')).toHaveText('Needs you · 2');
-  await expect(page.getByTestId('needs-you-row')).toHaveCount(2);
+  const tasks = page.getByTestId('tasks-view');
+  await expect(tasks).toBeVisible();
+  // Overseer's own Needs you block stays mounted beside Tasks; count Tasks'.
+  await expect(tasks.getByTestId('needs-you-count')).toHaveText(
+    'Needs you · 2'
+  );
+  await expect(tasks.getByTestId('needs-you-row')).toHaveCount(2);
   // Both asks are on one task, and the strip counts tasks.
   await expect(page.getByTestId('tasks-strip-need-you')).toHaveText(
     '● 1 task needs you'
@@ -96,7 +97,9 @@ test('keys switch views and open Settings without leaving the view', async ({
   await page.keyboard.press('ControlOrMeta+,');
   const panel = page.getByTestId('settings-panel');
   await expect(panel).toBeVisible();
-  await expect(panel.getByText('Two views', { exact: true })).toBeVisible();
+  await expect(
+    panel.getByRole('heading', { name: 'General', level: 1 })
+  ).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
   await expect(page.getByTestId('tasks-view')).toBeVisible();
@@ -121,7 +124,7 @@ test('a task’s conversation is one flat timeline with a composer locked to it'
   await page.goto(authedUrl(baseURL));
   await page.getByTestId('two-views-tasks').click();
   await page.getByText('Add address autocomplete').first().click();
-  await page.getByRole('button', { name: 'Thread' }).click();
+  await page.getByRole('button', { name: 'Conversation', exact: true }).click();
   await expect(page.getByTestId('conversation')).toBeVisible();
   await expect(page.getByTestId('timeline-message').first()).toBeVisible();
   await expect(

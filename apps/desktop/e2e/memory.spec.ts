@@ -157,8 +157,7 @@ test.describe('memory end to end', () => {
       .toBe('finished');
 
     await page.goto(authedUrl(baseURL));
-    const rail = page.locator('#dispatch-sidebar');
-    await rail.getByRole('button', { name: /^Threads/ }).click();
+    await page.getByTestId('two-views-threads').click();
     // Scoped to this run: a gate an earlier failed attempt left open stays in Needs you.
     const gate = page
       .getByRole('group', { name: 'Needs you', exact: true })
@@ -166,7 +165,10 @@ test.describe('memory end to end', () => {
       .filter({ hasText: 'proposes a team memory (hazard)' })
       .filter({ hasText: proposer });
     await gate.click();
-    const card = page.locator('[data-slot="memory-gate-card"]');
+    // Overseer keeps its own Needs you mounted; the opened gate is under Tasks.
+    const card = page
+      .getByTestId('tasks-view')
+      .locator('[data-slot="memory-gate-card"]');
     await expect(card.getByText(TITLE, { exact: true })).toBeVisible();
     await card.getByRole('radio', { name: 'Approve' }).click();
     await expect(gate).toHaveCount(0);

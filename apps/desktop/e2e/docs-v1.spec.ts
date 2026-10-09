@@ -82,20 +82,19 @@ test("v1 exit: an agent's edit to an accepted spec waits as a gate the human app
   expect(proposed).toMatch(/proposal|proposed/i);
 
   await page.goto(daemon.appUrl);
-  await page
-    .locator('#dispatch-sidebar')
-    .getByRole('button', { name: /^Threads/ })
-    .click();
+  await page.getByTestId('two-views-threads').click();
   await page
     .getByRole('group', { name: 'Needs you', exact: true })
     .getByRole('option', { name: /proposes an edit to an accepted doc/ })
     .first()
     .click();
+  // Overseer keeps its own Needs you mounted; the opened gate is under Tasks.
+  const tasks = page.getByTestId('tasks-view');
   await expect(
-    page.getByText('Apply this edit to an accepted doc?')
+    tasks.getByText('Apply this edit to an accepted doc?')
   ).toBeVisible();
-  await expect(page.getByText('merges cleanly')).toBeVisible();
-  await page.getByRole('radio', { name: 'Approve' }).click();
+  await expect(tasks.getByText('merges cleanly')).toBeVisible();
+  await tasks.getByRole('radio', { name: 'Approve' }).click();
 
   await expect
     .poll(
@@ -135,7 +134,7 @@ test('Publish to repo from the doc page creates the elevated publish task', asyn
   });
 
   await page.goto(daemon.appUrl);
-  await page.locator('#dispatch-sidebar [data-nav-item="docs"]').click();
+  await page.getByTestId('two-views-docs').click();
   await page.getByRole('button', { name: 'Publish spec', exact: true }).click();
   await page.getByRole('button', { name: 'Publish to repo' }).click();
   await page.getByLabel('Path in the repo').fill('docs/publish-spec.md');

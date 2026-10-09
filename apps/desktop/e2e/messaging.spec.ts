@@ -99,8 +99,7 @@ test.describe('messaging end to end', () => {
     expect(asked.status()).toBe(201);
 
     await page.goto(requireDaemon().appUrl);
-    const rail = page.locator('#dispatch-sidebar');
-    await rail.getByRole('button', { name: /^Threads/ }).click();
+    await page.getByTestId('two-views-threads').click();
     // Scoped to this run, among the fixture's own open questions.
     const question = page
       .getByRole('group', { name: 'Needs you', exact: true })
@@ -144,9 +143,9 @@ test.describe('messaging end to end', () => {
     await expect(log.getByText('new cart', { exact: true })).toBeVisible();
     await expect(log).not.toContainText('[message from');
 
-    // The link returns to Threads on the question it answered.
+    // The link opens the question it answered in a thread peek.
     await answerLink.click();
-    const thread = page.getByRole('region', { name: 'Thread', exact: true });
+    const thread = page.getByTestId('thread-peek');
     await expect(
       thread.getByText('Which cart should the checkout read?')
     ).toBeVisible();

@@ -84,26 +84,20 @@ test.describe('overseer chat end to end', () => {
     const baselineRunIds = await listRunIds(request);
 
     // Route new conversations to the daemon's 'fake' overseer backend — set
-    // before load, same as any localStorage-keyed devtool. The live rail
+    // before load, same as any localStorage-keyed devtool.
     await page.addInitScript(() => {
       window.localStorage.setItem('dispatch.devFakeOverseer', '1');
     });
     await page.goto(requireDaemon().appUrl);
-    await page.locator('#dispatch-sidebar').waitFor();
-
-    // The overseer's row, labelled Assistant, sits in the rail's top group;
-    // other "Assistant" labels would make an unscoped lookup ambiguous.
-    const rail = page.locator('#dispatch-sidebar');
-    const overseerRow = rail.getByRole('button', { name: /^Assistant/ });
-    await overseerRow.click();
+    // The app opens on the Overseer.
+    await expect(page.getByTestId('overseer-view')).toBeVisible();
     await expect(page.getByLabel('Overseer opening question')).toBeVisible();
 
     // --- Status round trip (scripted turn 0) ---------------------------
     await page
       .getByLabel('Overseer opening question')
       .fill("What's going on in this project?");
-    // `exact` matters: role-name matching is substring-based, and "Ask"
-    // otherwise also matches the sidebar's "Tasks" row.
+    // `exact` matters: role-name matching is substring-based.
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     // The reply is derived from a real list_runs read against the fixture —
     // the exact counts belong to the fixture, so pin the shape, not the sum.
@@ -121,11 +115,6 @@ test.describe('overseer chat end to end', () => {
 
     const confirmHeader = page.getByText('Needs your approval');
     await expect(confirmHeader).toBeVisible({ timeout: 15_000 });
-
-    // While the approval waits, the rail's Overseer row carries the pending
-    // count — the only rail surface the parked overseer has now that the
-    // Runs | Overseer tab strip is gone.
-    await expect(overseerRow).toContainText('1');
 
     // The card's summary comes from dispatch_task.describe:
     //   Dispatch <id> "<title>" with the fake executor
@@ -159,18 +148,26 @@ test.describe('overseer chat end to end', () => {
     const titlePattern = new RegExp(
       taskTitle.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
     );
-    // All agents lists one row per run on record, so the task's title count
-    // there is the number of runs it has.
-    const allAgents = rail.getByRole('button', { name: /^All agents/ });
-    const runRows = page.getByText(titlePattern);
-    await allAgents.click();
+    // Settings › Runs lists one row per run on record, so the task's title
+    // count there is the number of runs it has.
+    const settings = page.getByTestId('settings-panel');
+    const openRuns = async (): Promise<void> => {
+      await page.getByTestId('two-views-settings').click();
+      await settings
+        .getByRole('navigation', { name: 'Settings' })
+        .getByRole('button', { name: 'Runs', exact: true })
+        .click();
+    };
+    const runRows = settings.getByText(titlePattern);
+    await openRuns();
     // A row every fixture seeds — once it is up, the runs list has rendered
     // and counting is meaningful.
     await expect(
-      page.getByText(/Rate limit the search endpoint/).first()
+      settings.getByText(/Rate limit the search endpoint/).first()
     ).toBeVisible();
     const rowsBefore = await runRows.count();
-    await overseerRow.click();
+    await page.keyboard.press('Escape');
+    await expect(settings).toHaveCount(0);
 
     // --- Ask again (scripted turn 2), approve this time ----------------
     await page
@@ -193,8 +190,8 @@ test.describe('overseer chat end to end', () => {
     expect(dispatched.meta.taskId).toBe(taskId);
 
     // --- The approved dispatch is visible elsewhere in the app ---------
-    // All agents: the task the summary named gains exactly one row.
-    await allAgents.click();
+    // Settings › Runs: the task the summary named gains exactly one row.
+    await openRuns();
     await expect(runRows).toHaveCount(rowsBefore + 1, { timeout: 15_000 });
   });
 });

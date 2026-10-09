@@ -47,7 +47,7 @@ function authedUrl(baseURL: string | undefined): string {
  *
  * FIXME (branch: the task-centric consolidation, 98bf1858): the Review page
  * this drives was retired; the run review surface now lives on a task's Diff
- * tab, reached via Inbox → a "Needs review" row. That navigation is
+ * tab, reached from the task's row in the Tasks list. That navigation is
  * mechanical, but the file-selection step below is not: `RunReviewView`
  * renders no changed-files tree and passes no `only` narrowing to
  * `PierreReviewDiff`, so there is no `treeitem` to click and no guarantee of
@@ -64,27 +64,21 @@ test.describe('editing a run diff end to end', () => {
     page,
     baseURL,
   }) => {
-    // Collapses the live-agents rail, same as `review detail` in
-    // views.spec.ts — it is not part of what this test checks and would
-    // otherwise compete for width alongside the widened viewport above.
-    await page.addInitScript(() => {
-      window.localStorage.setItem('dispatch:live-rail', '1');
-    });
     await page.goto(authedUrl(baseURL));
-    await page.getByText('Dispatch').first().waitFor();
-    await page.locator('#dispatch-sidebar [data-nav-item="inbox"]').click();
+    await page.getByTestId('two-views-shell').waitFor();
+    await page.getByTestId('two-views-tasks').click();
 
     // Same fixture run views.spec.ts's `review detail` test already relies
     // on: "Rate limit the search endpoint" is seeded `finished` with no
     // `reviewedAt`, which is exactly what `PierreReviewDiff`'s `canEdit`
     // gate requires (`isTerminalRunState(meta.state) && meta.reviewedAt ===
     // undefined`) for the pencil to render at all.
-    const queueRow = page.getByRole('button', {
-      name: /Rate limit the search endpoint/,
-    });
+    const queueRow = page
+      .getByTestId('tasks-view')
+      .getByRole('gridcell', { name: 'Rate limit the search endpoint' });
     await expect(
       queueRow,
-      'the "Rate limit the search endpoint" run is not in the review queue — ' +
+      'the "Rate limit the search endpoint" task is not in the Tasks list — ' +
         "this machine's seeded fixture (.agents/ignore/storefront-home) may " +
         'be stale, un-generated, or already reviewed by an earlier manual ' +
         'pass, rather than this being a real regression'
