@@ -113,7 +113,6 @@ import {
   type TaskTab,
 } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
-import { twoViewsAllowed, useBetaFlag } from './lib/betaFeatures';
 import { hasDispatchKey, launchRootKey } from './lib/bootWarm';
 import { mentions, subjectOf } from './lib/conversationScope';
 import { type DecisionItem, decisionTarget } from './lib/decisionFeed';
@@ -543,10 +542,8 @@ function App() {
     onRunDispatched,
   });
 
-  const [twoViewsOn, setTwoViewsOn] = useBetaFlag('two-views');
-  const twoViews =
-    twoViewsOn &&
-    twoViewsAllowed({ teamLocal: isTeamLocalPage(), tier: rawData.myTier });
+  // Two views is the app; Classic is gone.
+  const twoViews = true;
   // Settings or a peek opened under Classic must not pop up when Two views turns on.
   useEffect(() => {
     dispatchNav({ type: 'tv/closeSettings' });
@@ -1372,18 +1369,6 @@ function App() {
           : (navState.activeTaskId ?? navState.peekTaskId),
         twoViews,
         hideHostViews,
-        beta: twoViewsAllowed({
-          teamLocal: isTeamLocalPage(),
-          tier: data.myTier,
-        })
-          ? [
-              {
-                id: 'two-views',
-                label: `Turn ${twoViewsOn ? 'off' : 'on'} beta: Two views`,
-                run: () => setTwoViewsOn(!twoViewsOn),
-              },
-            ]
-          : [],
         actions: {
           openCreateTask: () => openCreateTask(),
           openQuickAddTask: () => openQuickAddTask(),
@@ -1432,8 +1417,6 @@ function App() {
       copyTaskLink,
       twoViews,
       hideHostViews,
-      twoViewsOn,
-      setTwoViewsOn,
       data.myTier,
       data.people,
       data.me,

@@ -194,7 +194,7 @@ test('a page renders its sections as level-2 headings', () => {
   render(<SettingsView activeProject={project} data={data} />);
   expect(
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-  ).toEqual(['Board columns', 'Pull requests', 'Beta']);
+  ).toEqual(['Board columns', 'Pull requests']);
 });
 
 // Search renders every page, so the client needs what the Autonomy page reads.

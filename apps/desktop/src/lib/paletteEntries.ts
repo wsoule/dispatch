@@ -47,8 +47,6 @@ export interface PaletteEntriesContext {
   savedViews?: { id: string; name: string }[];
   /** The task page or peek showing right now, which earns a `Copy link` row. */
   currentTaskId?: string | null;
-  /** One row per beta feature, turning it on or off. */
-  beta?: { id: string; label: string; run: () => void }[];
   /** Two views: navigation is Overseer, Tasks and Settings, and there is no sidebar. */
   twoViews?: boolean;
   /** A teammate below the operator tier: Terminals and Design are left out,
@@ -145,15 +143,6 @@ export function buildPaletteEntries(
         run: () => copyTaskLink(currentTaskId),
       });
     }
-  }
-  for (const beta of ctx.beta ?? []) {
-    entries.push({
-      id: `beta-${beta.id}`,
-      label: beta.label,
-      kind: 'action',
-      section: 'actions',
-      run: beta.run,
-    });
   }
   if (ctx.twoViews !== true) {
     entries.push({
