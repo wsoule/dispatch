@@ -229,16 +229,16 @@ under the Elastic License 2.0; see [LICENSING.md](LICENSING.md).
 
 Ada opens the printed address, pastes her token, and is signed in. From then on
 her findings, notes, scope decisions and dispatched runs are credited to
-`human:ada`, not to you; the status strip shows who is connected and what each
-is running; the Inbox badge counts only what is yours to answer, with teammates'
-asks under **Teammates**; and the dispatch dialog warns, by name, before you
-start work on files someone else's live run has claimed.
+`human:ada`, not to you; the presence stack beside the project name shows who is
+connected; the waiting-on-you count holds only what is yours to answer, with
+teammates' asks under **Teammates** in Needs you; and the dispatch dialog warns,
+by name, before you start work on files someone else's live run has claimed.
 
 The same controls are in the app under **Settings → Team**: invite by email with
 a tier and an expiry, copy the token and the address to send, see who is online
-and when each token was last used, and remove someone. The status strip's
-presence stack also says which task each person has open, and a task's header
-shows who else has it open right now.
+and when each token was last used, and remove someone. The presence stack also
+says which task each person has open, and a task's header shows who else has it
+open right now.
 
     dispatch team invite ada --tier decide  # let Ada approve, too
     dispatch team tokens                    # who holds a credential
@@ -449,18 +449,18 @@ An entry has one of three scopes:
 
 - **Personal** belongs to one human and follows them across projects unless it
   is saved for one project only. A run writes its operator's personal memory
-  directly, and the Inbox can undo it. Nobody else sees it. A run's operator is
-  whoever started, continued or woke it; the owner only on the app token, and no
-  one when an agent, a run or policy did. An epic's auto-fill acts for whoever
-  last started or resumed the epic, and only on tasks that person created and
-  last edited. The desktop app and a signed-in browser present the app token;
-  the CLI presents the daemon file's agent token, so a run the owner starts from
-  the CLI acts for no one unless the CLI is given the app token (`--token` or
-  `DISPATCH_APP_TOKEN`). A teammate below `decide` cannot message a live run
-  that acts for someone else; they message its task or that person instead. An
-  agent registered in your name reads your personal memory only once you approve
-  it with the app token, so one approved before that rule must be approved
-  again.
+  directly, and **Settings → Memory** can undo it. Nobody else sees it. A run's
+  operator is whoever started, continued or woke it; the owner only on the app
+  token, and no one when an agent, a run or policy did. An epic's auto-fill acts
+  for whoever last started or resumed the epic, and only on tasks that person
+  created and last edited. The desktop app and a signed-in browser present the
+  app token; the CLI presents the daemon file's agent token, so a run the owner
+  starts from the CLI acts for no one unless the CLI is given the app token
+  (`--token` or `DISPATCH_APP_TOKEN`). A teammate below `decide` cannot message
+  a live run that acts for someone else; they message its task or that person
+  instead. An agent registered in your name reads your personal memory only once
+  you approve it with the app token, so one approved before that rule must be
+  approved again.
 - **Team** is the default for a code lesson: the constraints, hazards and
   decisions every run of this project should know. The ledger's old lessons were
   imported here; the ledger keeps the audit receipts. Replicating team memory to
