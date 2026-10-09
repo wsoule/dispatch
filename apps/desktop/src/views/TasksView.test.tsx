@@ -173,6 +173,10 @@ function Harness({ initialMode = 'list' }: { initialMode?: TasksMode }) {
       onOpenDecision={noop}
       renderPage={() => null}
       onClosePage={noop}
+      onNewProject={noop}
+      onDispatchTask={() => Promise.resolve()}
+      onDispatchFailed={noop}
+      onPeekTask={noop}
       onOpenPr={noop}
       onOpenDoc={noop}
       onOpenAllDocs={noop}

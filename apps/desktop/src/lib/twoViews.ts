@@ -9,7 +9,19 @@ import type {
 } from './appNav';
 import { initialNavState, navReducer } from './appNav';
 import type { GlobalKeyCommand } from './keyboard';
-import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
+import type { TasksPreset } from './tasksPresets';
+
+// ⌘3–⌘9: the status chips' presets, in strip order. Listed rather than
+// sliced from TASKS_PRESETS so a new preset (Mine, Starred) never shifts a key.
+const DIGIT_PRESETS: readonly TasksPreset[] = [
+  'needs-you',
+  'failed',
+  'moving',
+  'review',
+  'ready',
+  'landing',
+  'landed',
+];
 
 // Two views' navigation: App dispatches every legacy NavAction here as well as to
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
@@ -200,7 +212,7 @@ export function twoViewsKeyAction(
       return { type: 'setProjectView', view: 'threads' };
     case 'goto-settings':
       return { type: 'tv/openSettings' };
-    // ⌘3–⌘9 walk the Tasks presets after All, in chip order.
+    // ⌘3–⌘9 walk the status presets, in chip order.
     case 'goto-3':
     case 'goto-4':
     case 'goto-5':
@@ -208,10 +220,10 @@ export function twoViewsKeyAction(
     case 'goto-7':
     case 'goto-8':
     case 'goto-9': {
-      const preset = TASKS_PRESETS[Number(command.slice(5)) - 2];
+      const preset = DIGIT_PRESETS[Number(command.slice(5)) - 3];
       return preset === undefined
         ? 'swallow'
-        : { type: 'tv/showTasks', preset: preset.id };
+        : { type: 'tv/showTasks', preset };
     }
     // There is no sidebar.
     case 'toggle-sidebar':

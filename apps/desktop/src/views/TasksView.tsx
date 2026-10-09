@@ -494,7 +494,7 @@ export function TasksView({
                         <MilestoneBranchesView
                           data={data}
                           onOpenTask={onSelectTask}
-                          display={BY_MILESTONE}
+                          display={TWO_VIEWS_TASKS_DISPLAY}
                           taskFilter={taskFilter}
                         />
                       ),
