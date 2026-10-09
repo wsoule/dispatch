@@ -27,6 +27,9 @@ import {
 import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
 import type { TasksMode, TasksPage } from '../lib/twoViews';
+import { LiveView } from './LiveView';
+import { MilestoneBranchesView } from './MilestoneBranchesView';
+import { ProjectsView } from './ProjectsView';
 import { TasksListView } from './TasksListView';
 import { SelectPill } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
@@ -98,6 +101,12 @@ export interface TasksViewProps {
   presetContext: PresetContext;
   onSelectTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   onNewTask: () => void;
+  /** The creator, set to make a project (Graph mode's Projects layout). */
+  onNewProject: () => void;
+  /** Graph mode's Live layout dispatches in place, rejecting on failure. */
+  onDispatchTask: (taskId: string) => Promise<void>;
+  onDispatchFailed: (taskId: string, message: string) => void;
+  onPeekTask: (taskId: string) => void;
   onOpenRef: (action: RefAction) => void;
   onOpenDecision: (item: DecisionItem) => void;
   renderPage: (page: TasksSidePage) => ReactNode;
@@ -127,6 +136,10 @@ export function TasksView({
   presetContext,
   onSelectTask,
   onNewTask,
+  onNewProject,
+  onDispatchTask,
+  onDispatchFailed,
+  onPeekTask,
   onOpenRef,
   onOpenDecision,
   renderPage,
@@ -311,6 +324,51 @@ export function TasksView({
                   asksByTask={needs.byTask}
                   projectKey={projectKey}
                   dueDateOf={(id) => epicById.get(id)?.meta.dueDate ?? null}
+                  layouts={{
+                    projects: {
+                      body: (
+                        <ProjectsView
+                          showHeader={false}
+                          projectName={null}
+                          data={data}
+                          onOpenTask={(id) => onSelectTask(id)}
+                        />
+                      ),
+                      actions: (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={onNewProject}
+                        >
+                          <Plus className="size-3.5" />
+                          New project
+                        </Button>
+                      ),
+                    },
+                    branches: {
+                      body: (
+                        <MilestoneBranchesView
+                          data={data}
+                          onOpenTask={onSelectTask}
+                          display={BY_MILESTONE}
+                          taskFilter={taskFilter}
+                        />
+                      ),
+                    },
+                    live: {
+                      body: (
+                        <LiveView
+                          showHeader={false}
+                          projectName={null}
+                          data={data}
+                          dispatchTask={onDispatchTask}
+                          onDispatchFailed={onDispatchFailed}
+                          onOpenTask={onSelectTask}
+                          onPeekTask={onPeekTask}
+                        />
+                      ),
+                    },
+                  }}
                   onOpenTask={onSelectTask}
                 />
               ) : (

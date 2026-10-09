@@ -1,5 +1,5 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 import type { TaskTab } from '../../lib/appNav';
 import {
@@ -30,7 +30,23 @@ import { TextButton } from '@/ui/ai/text-button';
 import { Button } from '@/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
-type GraphMode = 'milestones' | 'tasks';
+/** Layouts drawn by another view's component rather than by the map itself. */
+type GraphLayoutId = 'projects' | 'branches' | 'live';
+type GraphMode = 'milestones' | 'tasks' | GraphLayoutId;
+
+/** One of those layouts: its body, and controls for the toolbar while it shows. */
+interface GraphLayout {
+  body: ReactNode;
+  actions?: ReactNode;
+}
+
+const GRAPH_MODES: { id: GraphMode; label: string }[] = [
+  { id: 'projects', label: 'Projects' },
+  { id: 'milestones', label: 'Milestones' },
+  { id: 'branches', label: 'Branches' },
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'live', label: 'Live' },
+];
 
 // Nodes stretch to share the width between these bounds; the height fits the body below.
 const NODE_MIN_WIDTH = 280;
@@ -43,9 +59,13 @@ const NODE_MAX_ROWS = 4;
 const WRAP = 6;
 
 // Remembered per project; storage that throws just means it is not remembered.
-function storedMode(key: string): GraphMode {
+function storedMode(
+  key: string,
+  offered: readonly { id: GraphMode }[]
+): GraphMode {
   try {
-    return localStorage.getItem(key) === 'tasks' ? 'tasks' : 'milestones';
+    const stored = localStorage.getItem(key);
+    return offered.find((m) => m.id === stored)?.id ?? 'milestones';
   } catch {
     return 'milestones';
   }
@@ -274,8 +294,10 @@ export interface MilestoneMapViewProps {
   groups: readonly ListGroup[];
   bucketOf: (doc: TaskListItem) => TaskBucket | null;
   asksByTask: ReadonlyMap<string, number>;
-  /** Keys the remembered Milestones | Tasks choice. */
+  /** Keys the remembered layout choice (Milestones, Tasks, Projects…). */
   projectKey: string;
+  /** Extra layouts for the toggle; each shows only when given. */
+  layouts?: Partial<Record<GraphLayoutId, GraphLayout>>;
   /** A milestone's due date, if it has one. */
   dueDateOf?: (milestoneId: string) => string | null;
   onOpenTask: (taskId: string, tab?: TaskTab) => void;
@@ -288,10 +310,19 @@ export function MilestoneMapView({
   asksByTask,
   projectKey,
   dueDateOf,
+  layouts,
   onOpenTask,
 }: MilestoneMapViewProps) {
   const storageKey = `dispatch:graph-mode:${projectKey}`;
-  const [mode, setMode] = useState<GraphMode>(() => storedMode(storageKey));
+  const offered = GRAPH_MODES.filter(
+    (m) =>
+      m.id === 'milestones' || m.id === 'tasks' || layouts?.[m.id] !== undefined
+  );
+  const [mode, setMode] = useState<GraphMode>(() =>
+    storedMode(storageKey, offered)
+  );
+  const layout =
+    mode === 'milestones' || mode === 'tasks' ? undefined : layouts?.[mode];
   const [copied, setCopied] = useState(false);
   const map = useMemo(() => milestoneMap(groups), [groups]);
   const statusOf = useMemo(() => {
@@ -386,113 +417,135 @@ export function MilestoneMapView({
           size="sm"
           value={[mode]}
           onValueChange={([next]) => {
-            if (next === 'milestones' || next === 'tasks') pick(next);
+            const picked = offered.find((m) => m.id === next);
+            if (picked !== undefined) pick(picked.id);
           }}
         >
-          <ToggleGroupItem value="milestones">Milestones</ToggleGroupItem>
-          <ToggleGroupItem value="tasks">Tasks</ToggleGroupItem>
+          {offered.map((m) => (
+            <ToggleGroupItem key={m.id} value={m.id}>
+              {m.label}
+            </ToggleGroupItem>
+          ))}
         </ToggleGroup>
-        <span
-          data-testid="milestone-map-summary"
-          className="text-muted-foreground text-[12px] tabular-nums"
-        >
-          {map.nodes.length}{' '}
-          {map.nodes.length === 1 ? 'milestone' : 'milestones'} ·{' '}
-          {waits === 0
-            ? 'no waits between them'
-            : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`}{' '}
-          · {landed}/{total} landed
-        </span>
+        {layout === undefined && (
+          <span
+            data-testid="milestone-map-summary"
+            className="text-muted-foreground text-[12px] tabular-nums"
+          >
+            {map.nodes.length}{' '}
+            {map.nodes.length === 1 ? 'milestone' : 'milestones'} ·{' '}
+            {waits === 0
+              ? 'no waits between them'
+              : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`}{' '}
+            · {landed}/{total} landed
+          </span>
+        )}
         <span className="flex-1" />
-        <Button size="sm" variant="outline" onClick={copy}>
-          {copied ? 'Copied' : 'Copy as Mermaid'}
-        </Button>
-      </div>
-      <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto px-4 pb-4">
-        {mode === 'milestones' ? (
-          <div className="flex min-h-full">
-            {/* Centred across, but read from the top like every other page. */}
-            <DependencyGraph
-              className="mx-auto mt-6 mb-auto"
-              tasks={map.nodes}
-              direction="LR"
-              wrap={WRAP}
-              nodeSize={nodeSize}
-              ariaLabel="Milestone map"
-              edgeLabel={(edge) =>
-                edgeOf.get(`${edge.from}\u0000${edge.to}`)?.count.toString()
-              }
-              edgeHint={(edge) => {
-                const found = edgeOf.get(`${edge.from}\u0000${edge.to}`);
-                return found === undefined
-                  ? undefined
-                  : `${titleOf.get(edge.to)} waits on ${titleOf.get(edge.from)} ${found.count} ${found.count === 1 ? 'time' : 'times'}`;
-              }}
-              edgeTone={(edge) =>
-                statusOf.get(edge.from)?.health === 'attention'
-                  ? 'attention'
-                  : 'default'
-              }
-              renderNode={(node) => (
-                <MilestoneNode
-                  title={node.title}
-                  status={
-                    statusOf.get(node.id) ??
-                    containerStatus([], { bucketOf, asksByTask })
-                  }
-                  {...(mixOf.get(node.id) ?? milestoneMix([], { bucketOf }))}
-                  rows={rows}
-                  waitsOn={waitsOnOf(node.id)}
-                  bucketOf={bucketOf}
-                  onOpenTask={(id) => onOpenTask(id)}
-                  dueDate={dueDateOf?.(node.id) ?? null}
-                  onOpen={() => onOpenTask(node.id, 'plan')}
-                />
-              )}
-              empty={{
-                heading: 'No milestones yet',
-                description:
-                  'Group tasks under milestones to see how they wait on each other.',
-              }}
-            />
-          </div>
+        {layout === undefined ? (
+          <Button size="sm" variant="outline" onClick={copy}>
+            {copied ? 'Copied' : 'Copy as Mermaid'}
+          </Button>
         ) : (
-          <div className="flex flex-col gap-6">
-            {map.nodes.map((node) => {
-              const status = statusOf.get(node.id);
-              return (
-                <section key={node.id} aria-label={titleOf.get(node.id)}>
-                  <div className="flex items-center gap-3 py-2">
-                    <TextButton
-                      onClick={() => onOpenTask(node.id, 'plan')}
-                      title={`Open the flight plan for ${node.title}`}
-                      className="text-[13px] font-semibold"
-                    >
-                      {node.title}
-                    </TextButton>
-                    {status !== undefined && (
-                      <MilestoneStatusCells
-                        status={status}
-                        dueDate={dueDateOf?.(node.id) ?? null}
-                      />
-                    )}
-                  </div>
-                  <DependencyGraph
-                    tasks={(map.childrenOf.get(node.id) ?? []).map(
-                      dagTaskFromDoc
-                    )}
-                    direction="LR"
-                    wrap={WRAP}
-                    refFor={(id) => id}
-                    onOpenNode={(id) => onOpenTask(id)}
-                    ariaLabel={`Tasks in ${node.title}`}
-                  />
-                </section>
-              );
-            })}
-          </div>
+          layout.actions
         )}
       </div>
+      {layout !== undefined ? (
+        <div
+          data-testid={`graph-layout-${mode}`}
+          className="min-h-0 flex-1 overflow-hidden"
+        >
+          {layout.body}
+        </div>
+      ) : (
+        <div
+          ref={scrollerRef}
+          className="min-h-0 flex-1 overflow-auto px-4 pb-4"
+        >
+          {mode === 'milestones' ? (
+            <div className="flex min-h-full">
+              {/* Centred across, but read from the top like every other page. */}
+              <DependencyGraph
+                className="mx-auto mt-6 mb-auto"
+                tasks={map.nodes}
+                direction="LR"
+                wrap={WRAP}
+                nodeSize={nodeSize}
+                ariaLabel="Milestone map"
+                edgeLabel={(edge) =>
+                  edgeOf.get(`${edge.from}\u0000${edge.to}`)?.count.toString()
+                }
+                edgeHint={(edge) => {
+                  const found = edgeOf.get(`${edge.from}\u0000${edge.to}`);
+                  return found === undefined
+                    ? undefined
+                    : `${titleOf.get(edge.to)} waits on ${titleOf.get(edge.from)} ${found.count} ${found.count === 1 ? 'time' : 'times'}`;
+                }}
+                edgeTone={(edge) =>
+                  statusOf.get(edge.from)?.health === 'attention'
+                    ? 'attention'
+                    : 'default'
+                }
+                renderNode={(node) => (
+                  <MilestoneNode
+                    title={node.title}
+                    status={
+                      statusOf.get(node.id) ??
+                      containerStatus([], { bucketOf, asksByTask })
+                    }
+                    {...(mixOf.get(node.id) ?? milestoneMix([], { bucketOf }))}
+                    rows={rows}
+                    waitsOn={waitsOnOf(node.id)}
+                    bucketOf={bucketOf}
+                    onOpenTask={(id) => onOpenTask(id)}
+                    dueDate={dueDateOf?.(node.id) ?? null}
+                    onOpen={() => onOpenTask(node.id, 'plan')}
+                  />
+                )}
+                empty={{
+                  heading: 'No milestones yet',
+                  description:
+                    'Group tasks under milestones to see how they wait on each other.',
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-6">
+              {map.nodes.map((node) => {
+                const status = statusOf.get(node.id);
+                return (
+                  <section key={node.id} aria-label={titleOf.get(node.id)}>
+                    <div className="flex items-center gap-3 py-2">
+                      <TextButton
+                        onClick={() => onOpenTask(node.id, 'plan')}
+                        title={`Open the flight plan for ${node.title}`}
+                        className="text-[13px] font-semibold"
+                      >
+                        {node.title}
+                      </TextButton>
+                      {status !== undefined && (
+                        <MilestoneStatusCells
+                          status={status}
+                          dueDate={dueDateOf?.(node.id) ?? null}
+                        />
+                      )}
+                    </div>
+                    <DependencyGraph
+                      tasks={(map.childrenOf.get(node.id) ?? []).map(
+                        dagTaskFromDoc
+                      )}
+                      direction="LR"
+                      wrap={WRAP}
+                      refFor={(id) => id}
+                      onOpenNode={(id) => onOpenTask(id)}
+                      ariaLabel={`Tasks in ${node.title}`}
+                    />
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

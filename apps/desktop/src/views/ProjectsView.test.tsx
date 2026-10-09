@@ -1,5 +1,10 @@
 import type { TaskDoc } from '@dispatch-foo/core/browser';
-import { fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup as cleanupAll,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 
 import {
@@ -57,7 +62,7 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
-function renderProjects(data: DispatchProjectData) {
+function renderProjects(data: DispatchProjectData, showHeader?: boolean) {
   const opened: string[] = [];
   const creates: (CreateTaskPreset | undefined)[] = [];
   const actions = {
@@ -69,6 +74,7 @@ function renderProjects(data: DispatchProjectData) {
         projectName="Acme"
         data={data}
         onOpenTask={(id) => opened.push(id)}
+        showHeader={showHeader}
       />
     </ShellActionsProvider>
   );
@@ -204,4 +210,13 @@ test('2000 tasks mount only a window of rows', () => {
   const mounted = container.querySelectorAll('[data-row-key]').length;
   expect(mounted).toBeGreaterThan(10);
   expect(mounted).toBeLessThan(100);
+});
+
+test('a host drawing its own header drops the page header, tree intact', () => {
+  const { container } = renderProjects(dataWith(hierarchy), false);
+  expect(container.querySelector('[data-slot=page-header]')).toBeNull();
+  expect(rowKeys(container)).toEqual(['i-1', 'i-1/p-1', 'i-1/p-1/m-1']);
+  cleanupAll();
+  const shown = renderProjects(dataWith(hierarchy));
+  expect(shown.container.querySelector('[data-slot=page-header]')).toBeTruthy();
 });
