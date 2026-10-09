@@ -1,5 +1,6 @@
 import {
   isCanceledStatus,
+  isCompletedStatus,
   isDoneStatus,
   statusLabel,
 } from '@dispatch-foo/core/browser';
@@ -23,6 +24,7 @@ import { mergeLadderState } from '../../../lib/mergeLadder';
 import { modelLabel } from '../../../lib/models';
 import { formatShortDate } from '../../../lib/taskDates';
 import { taskIndexOf } from '../../../lib/taskIndex';
+import { taskOutcome } from '../../../lib/taskOutcome';
 import { taskTimeline } from '../../../lib/taskTimeline';
 import { flightScope } from '../../flightplan/flightScope';
 import { LandedAs } from '../../runs/LandedAs';
@@ -33,6 +35,7 @@ import { TaskLessonsSection } from '../detail/TaskLessonsSection';
 import { VerificationSection } from '../detail/VerificationSection';
 import { StatusIcon } from '../StatusIcon';
 import { ActivityTimeline } from './ActivityTimeline';
+import { OutcomeCard } from './OutcomeCard';
 import type { TaskPageModel } from './pageModel';
 import { FilesTouched } from './RunStrip';
 import { formatElapsed } from '@/ui/ai/use-elapsed';
@@ -158,6 +161,16 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
     ? epicLedger
     : taskLedgerEntries(projectLedger, meta.id);
 
+  // A single task's ending, as the outcome card says it; containers keep
+  // their rollup line instead.
+  const ending =
+    rollup === null
+      ? taskOutcome({
+          completed: isCompletedStatus(meta.status, page.statusModel),
+          canceled,
+          runs,
+        })
+      : null;
   const outcome =
     rollup !== null
       ? rollupOutcome(rollup)
@@ -173,25 +186,36 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
   return (
     <div data-slot="summary-mode" className="flex flex-col gap-6 px-4 pb-10">
       <section className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <StatusIcon status={meta.status} className="size-4" />
-          <h3 className="text-foreground text-[15px] font-semibold">
-            {statusLabel(meta.status)}
-          </h3>
-          <span className="text-muted-foreground font-book text-[13px]">
-            {formatShortDate(meta.updated)}
-          </span>
-        </div>
-        <div className="font-book flex flex-wrap items-center gap-2 text-[13px] text-(--text-secondary)">
-          {outcome !== null && <span>{outcome}</span>}
-          {landed !== undefined && (
-            <LandedAs
-              run={landed}
-              originWebUrl={project.health?.originWebUrl}
-              onPublish={project.handlePublishRun}
-            />
-          )}
-        </div>
+        {ending !== null ? (
+          <OutcomeCard
+            outcome={ending}
+            page={page}
+            place="summary"
+            updatedAt={meta.updated}
+          />
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <StatusIcon status={meta.status} className="size-4" />
+              <h3 className="text-foreground text-[15px] font-semibold">
+                {statusLabel(meta.status)}
+              </h3>
+              <span className="text-muted-foreground font-book text-[13px]">
+                {formatShortDate(meta.updated)}
+              </span>
+            </div>
+            <div className="font-book flex flex-wrap items-center gap-2 text-[13px] text-(--text-secondary)">
+              {outcome !== null && <span>{outcome}</span>}
+              {landed !== undefined && (
+                <LandedAs
+                  run={landed}
+                  originWebUrl={project.health?.originWebUrl}
+                  onPublish={project.handlePublishRun}
+                />
+              )}
+            </div>
+          </>
+        )}
         {runs.length > 0 && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Figure label={runs.length === 1 ? 'run' : 'runs'}>
