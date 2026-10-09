@@ -1,3 +1,7 @@
+import {
+  isCanceledStatus,
+  isCompletedStatus,
+} from '@dispatch-foo/core/browser';
 import type { Finding, RunMeta, Snippet } from '@dispatch/client';
 import { canPostReviewToPr } from '@dispatch/client';
 import {
@@ -36,6 +40,7 @@ import {
   liveReviewAgentFor,
   postFailWorkLabel,
 } from '../../../lib/runState';
+import { taskOutcome } from '../../../lib/taskOutcome';
 import { reviewedRun } from '../../../lib/taskPageMode';
 import { diffStat } from '../../../lib/taskTimeline';
 import { DiffEmptyState } from '../../runs/DiffEmptyState';
@@ -51,6 +56,7 @@ import { FindingsPanel } from '../detail/FindingsPanel';
 import { FixLoopSection } from '../detail/FixLoopSection';
 import { VerificationSection } from '../detail/VerificationSection';
 import { TabSkeleton } from '../TabSkeleton';
+import { OutcomeCard } from './OutcomeCard';
 import type { TaskPageModel } from './pageModel';
 import { RunStrip } from './RunStrip';
 import { cn } from '@/lib/utils';
@@ -215,6 +221,9 @@ function Verdict({
     );
   }
   const canOpenPr = project.health?.pr === true;
+  // A failed run's work is rarely what should land, so Re-run leads and
+  // landing waits in the menu as "Land anyway".
+  const failed = run.state === 'failed' || run.state === 'interrupted-dirty';
   return (
     <>
       <Button
@@ -227,7 +236,7 @@ function Verdict({
         Request changes
       </Button>
       <Button
-        variant="ghost"
+        variant={failed ? 'default' : 'ghost'}
         size="sm"
         disabled={busy || live}
         title="Start a fresh run of this task"
@@ -239,18 +248,20 @@ function Verdict({
       <div className="flex items-center">
         <Button
           size="sm"
+          variant={failed ? 'outline' : 'default'}
           disabled={busy}
           className="rounded-r-none"
           onClick={() => act(() => project.handleReview(run.id, 'merge'))}
         >
           <GitMerge />
-          {landButtonLabel(run)}
+          {failed ? 'Land anyway' : landButtonLabel(run)}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
               <Button
                 size="sm"
+                variant={failed ? 'outline' : 'default'}
                 aria-label="More ways to land"
                 disabled={busy}
                 className="shadow-hairline-left rounded-l-none px-1.5"
@@ -394,6 +405,20 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
     }
   }
   const orphanWork = postFailWorkLabel(meta);
+  // How the task ended, when it has: settled work (landed, merged, dropped)
+  // drops the tools for reviewing work still in flight.
+  const ending = taskOutcome({
+    completed: isCompletedStatus(item.meta.status, page.statusModel),
+    canceled: isCanceledStatus(item.meta.status, page.statusModel),
+    runs: page.runs,
+  });
+  const settled =
+    meta.reviewedAt !== undefined ||
+    ending?.kind === 'landed' ||
+    ending?.kind === 'merged-local' ||
+    ending?.kind === 'dropped';
+  const showCard =
+    ending !== null && ending.kind !== 'ready' && ending.kind !== 'pr-open';
   const reviewAgentLive = liveReviewAgentFor(project.runs, meta.branch);
 
   const side = (
@@ -432,14 +457,16 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
           </ul>
         </section>
       )}
-      <FixLoopSection
-        fixLoop={fixLoop}
-        escalation={project.config?.fixLoop.escalation ?? []}
-        onStart={() => void startFix()}
-        onStop={() => void stopFixLoop(item.meta.id)}
-        starting={startingFix}
-        startError={fixError}
-      />
+      {!settled && (
+        <FixLoopSection
+          fixLoop={fixLoop}
+          escalation={project.config?.fixLoop.escalation ?? []}
+          onStart={() => void startFix()}
+          onStop={() => void stopFixLoop(item.meta.id)}
+          starting={startingFix}
+          startError={fixError}
+        />
+      )}
       <FindingsPanel
         findings={findings}
         needsRuling={fixLoopNeedsRuling(fixLoop)}
@@ -447,43 +474,49 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
           await adjudicate(item.meta.id, findingId, input);
         }}
       />
-      <VerificationSection
-        exercised={item.meta.exercised}
-        result={verification}
-        error={verificationError}
-      />
-      {detail !== undefined && detail.meta.id === run.id && (
-        <ReviewCasePanel
-          evidence={detail.evidence}
-          mutations={detail.mutations}
-          findings={findings}
-          decisions={[]}
-          onStartAiReview={
-            project.client === null
-              ? undefined
-              : async () => {
-                  await project.client?.startReview(meta.taskId, {
-                    base: meta.baseBranch,
-                    head: meta.branch,
-                    runId: meta.id,
-                  });
-                }
-          }
-          reviewAgentLive={reviewAgentLive !== undefined}
-          onFixFindings={
-            isTerminalRunState(meta.state) && meta.reviewedAt === undefined
-              ? (selected) =>
-                  project.handleRequestChanges(
-                    meta.id,
-                    fixFindingsRequest(selected)
-                  )
-              : undefined
-          }
-          client={project.client}
-          runId={meta.id}
-          onOpenImpact={page.host.openImpact}
+      {!settled && (
+        <VerificationSection
+          exercised={item.meta.exercised}
+          result={verification}
+          error={verificationError}
         />
       )}
+      {/* Settled work keeps the case only when there is evidence or a finding
+          to read; an empty one just reads as a warning about finished work. */}
+      {detail !== undefined &&
+        detail.meta.id === run.id &&
+        (!settled || detail.evidence.length > 0 || findings.length > 0) && (
+          <ReviewCasePanel
+            evidence={detail.evidence}
+            mutations={detail.mutations}
+            findings={findings}
+            decisions={[]}
+            onStartAiReview={
+              project.client === null
+                ? undefined
+                : async () => {
+                    await project.client?.startReview(meta.taskId, {
+                      base: meta.baseBranch,
+                      head: meta.branch,
+                      runId: meta.id,
+                    });
+                  }
+            }
+            reviewAgentLive={reviewAgentLive !== undefined}
+            onFixFindings={
+              isTerminalRunState(meta.state) && meta.reviewedAt === undefined
+                ? (selected) =>
+                    project.handleRequestChanges(
+                      meta.id,
+                      fixFindingsRequest(selected)
+                    )
+                : undefined
+            }
+            client={project.client}
+            runId={meta.id}
+            onOpenImpact={page.host.openImpact}
+          />
+        )}
       {threads.comments.length > 0 && (
         <ReviewCommentsPanel
           comments={threads.comments}
@@ -506,7 +539,15 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
       />
     );
   } else if (diffError !== null) {
-    diffPane = <DiffEmptyState message="This run has no changes to review." />;
+    diffPane = (
+      <DiffEmptyState
+        message={
+          settled
+            ? "This work has landed, and its diff wasn't kept."
+            : 'This run has no changes to review.'
+        }
+      />
+    );
   } else if (diff === undefined) {
     diffPane = <TabSkeleton />;
   } else {
@@ -534,6 +575,14 @@ export function ReviewMode({ page }: { page: TaskPageModel }) {
       className="@container/review flex h-full min-h-0 flex-col gap-2"
     >
       <div className="flex shrink-0 flex-col gap-2">
+        {showCard && (
+          <OutcomeCard
+            outcome={ending}
+            page={page}
+            place="review"
+            updatedAt={item.meta.updated}
+          />
+        )}
         <RunStrip
           run={meta}
           runs={page.runs}
