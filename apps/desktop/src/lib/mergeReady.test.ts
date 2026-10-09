@@ -144,4 +144,14 @@ describe('countMergeReady', () => {
     const tasks = [makeTask('t1', 'review'), makeTask('t2', 'review')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(2);
   });
+
+  test('several finished runs of one task count once, as the server lands one', () => {
+    const runs = [
+      run({ id: 'r1', taskId: 't1' }),
+      run({ id: 'r2', taskId: 't1' }),
+      run({ id: 'r3', taskId: 't2' }),
+    ];
+    const tasks = [makeTask('t1', 'review'), makeTask('t2', 'review')];
+    expect(countMergeReady(runs, tasks, new Set())).toBe(2);
+  });
 });
