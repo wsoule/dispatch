@@ -7,6 +7,7 @@ import { OverseerChat } from '../components/chat/OverseerChat';
 import {
   InflowColumn,
   OutflowColumn,
+  type OutflowExtras,
 } from '../components/overseer/FlowColumns';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
@@ -42,6 +43,14 @@ export interface TwoViewOverseerProps {
   /** Live and recent runs, and the merge queue's entries, for the Going out column. */
   runs?: readonly RunMeta[];
   merges?: readonly MergeQueueEntry[];
+  /** AI task drafts, under the asks and posts in Coming in. */
+  drafts?: ReactNode;
+  /** How many drafts are drafting, ready or waiting on answers, for the Coming in count. */
+  draftsCount?: number;
+  /** The notification history, at the foot of Coming in. */
+  notifications?: ReactNode;
+  /** Live milestones, Merge all ready and today's spend, for Going out. */
+  outflow?: OutflowExtras;
 
   /** Opens one of the agent's "Show in tasks" doors. */
   onOpenDoor: (door: OverseerDoor) => void;
@@ -71,6 +80,10 @@ export function TwoViewOverseer({
   postsCount = 0,
   runs = [],
   merges = [],
+  drafts,
+  draftsCount = 0,
+  notifications,
+  outflow,
   focus = null,
   onFocus = () => {},
   renderFocus,
@@ -180,9 +193,13 @@ export function TwoViewOverseer({
       className="flex h-full min-h-0 gap-6 px-6 pt-3 pb-4"
     >
       {/* Wide windows read left to right: what comes to you, the talk, what leaves. */}
-      <InflowColumn count={(showAsksAside ? asks : 0) + postsCount}>
+      <InflowColumn
+        count={(showAsksAside ? asks : 0) + postsCount + draftsCount}
+      >
         {showAsksAside && needsBlock}
         {posts}
+        {drafts}
+        {notifications}
       </InflowColumn>
       {/* Before the first message the composer sits at the bottom, as it will after. */}
       {focused !== null && (
@@ -281,6 +298,7 @@ export function TwoViewOverseer({
         merges={merges}
         setAside={dockCards(false)}
         onOpenTask={(taskId) => onFocus({ kind: 'task', taskId })}
+        {...outflow}
       />
     </div>
   );

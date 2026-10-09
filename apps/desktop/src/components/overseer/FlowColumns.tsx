@@ -1,13 +1,17 @@
-import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
-import type { ReactNode } from 'react';
+import type { EpicProgress, MergeQueueEntry, RunMeta } from '@dispatch/client';
+import { type ReactNode, useState } from 'react';
 
 import { useRunStep } from '../../hooks/useRunStep';
+import { formatUsd, spendPillLabel } from '../../lib/epicSession';
 import { type FlowRow, useFlowRows } from '../../lib/flowList';
+import { type LiveCeilings, liveCeilingsLabel } from '../../lib/liveSpend';
 import { isTerminalRunState } from '../../lib/runState';
 import { cn } from '@/lib/utils';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { ListRow } from '@/ui/ai/list-row';
+import { Button } from '@/ui/button';
 import { MetaText, SectionLabel } from '@/ui/chrome';
+import { StateMark } from '@/ui/chrome/state-mark';
 import { ScrollArea } from '@/ui/scroll-area';
 
 // Entering slides in from the column's outer edge; leaving keeps going outward.
@@ -55,11 +59,14 @@ function Column({
   label,
   count,
   testId,
+  sub,
   children,
 }: {
   label: string;
   count: number;
   testId: string;
+  /** A quiet line under the head, e.g. what the work is costing. */
+  sub?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -69,6 +76,7 @@ function Column({
       className="hidden min-h-0 w-[300px] shrink-0 flex-col gap-2 min-[1440px]:w-[340px] xl:flex"
     >
       <ColumnHead label={label} count={count} />
+      {sub}
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3">{children}</div>
       </ScrollArea>
@@ -161,32 +169,140 @@ function Rows<T>({
   ));
 }
 
+/** Today's spend and the live milestones against their ceilings, in one line. */
+export function spendLine(
+  today: number | null,
+  ceilings: LiveCeilings | null
+): string | null {
+  const parts: string[] = [];
+  if (today !== null && today > 0) parts.push(`${formatUsd(today)} today`);
+  if (ceilings !== null && ceilings.live > 0) {
+    parts.push(liveCeilingsLabel(ceilings));
+  }
+  return parts.length === 0 ? null : parts.join(' · ');
+}
+
+/** One live milestone session: its title, how many of its runs are live, and its spend. */
+function SessionRow({
+  progress,
+  title,
+  onOpen,
+}: {
+  progress: EpicProgress;
+  title: string;
+  onOpen: () => void;
+}) {
+  const live = progress.liveRuns.length;
+  const paused = progress.session?.state === 'paused';
+  return (
+    <ListRow
+      role="listitem"
+      data-testid="overseer-session-row"
+      onClick={onOpen}
+      // A paused session still drains its last runs; held, not working.
+      leading={<StateMark state={paused ? 'blocked' : 'working'} />}
+      title={title}
+      crumb={paused ? 'paused' : `${live} running`}
+      date={spendPillLabel(progress.spend)}
+    />
+  );
+}
+
+/** What Going out shows beyond runs and merges, handed through from App. */
+export interface OutflowExtras {
+  /** Milestones with an active or paused fan-out session. */
+  sessions?: readonly EpicProgress[];
+  /** A milestone's title by id. */
+  epicTitle?: (epicId: string) => string;
+  /** Finished runs "Merge all ready" would queue. */
+  mergeReady?: number;
+  onMergeAll?: () => Promise<void>;
+  /** Settled spend across today's runs; `null` or zero shows nothing. */
+  spendToday?: number | null;
+  /** The live sessions' spend against their ceilings, summed. */
+  ceilings?: LiveCeilings | null;
+}
+
+interface OutflowColumnProps extends OutflowExtras {
+  runs: readonly RunMeta[];
+  merges: readonly MergeQueueEntry[];
+  setAside: ReactNode[];
+  onOpenTask: (taskId: string) => void;
+}
+
 /**
- * What is leaving your hands: live runs, merges landing and set-aside
- * conversations. New work slides in; finished work slides out to the right.
+ * What is leaving your hands: live milestone sessions, live runs, merges
+ * landing and set-aside conversations. New work slides in; finished work
+ * slides out to the right. The head carries today's spend, and Landing offers
+ * "Merge all ready" while finished work waits to be queued.
  */
 export function OutflowColumn({
   runs,
   merges,
   setAside,
   onOpenTask,
-}: {
-  runs: readonly RunMeta[];
-  merges: readonly MergeQueueEntry[];
-  setAside: ReactNode[];
-  onOpenTask: (taskId: string) => void;
-}) {
+  sessions = [],
+  epicTitle = (id) => id,
+  mergeReady = 0,
+  onMergeAll,
+  spendToday = null,
+  ceilings = null,
+}: OutflowColumnProps) {
+  const [merging, setMerging] = useState(false);
   const live = runs.filter(
     (r) => !isTerminalRunState(r.state) && (r.kind ?? 'execute') === 'execute'
   );
   const landing = merges.filter((m) => LANDING.has(m.state));
   const liveRows = useFlowRows(live, (r) => r.id);
   const landingRows = useFlowRows(landing, (m) => m.runId);
-  const count = live.length + landing.length + setAside.length;
+  const sessionRows = useFlowRows(sessions, (p) => p.epicId);
+  const count =
+    sessions.length + live.length + landing.length + setAside.length;
+  const canMergeAll = onMergeAll !== undefined && mergeReady > 0;
+  const spend = spendLine(spendToday, ceilings);
+  const mergeAll = () => {
+    if (onMergeAll === undefined) return;
+    setMerging(true);
+    void onMergeAll().finally(() => setMerging(false));
+  };
   return (
-    <Column label="Going out" count={count} testId="overseer-outflow">
-      {count === 0 && liveRows.length === 0 && landingRows.length === 0 && (
-        <EmptyLine>Nothing is running.</EmptyLine>
+    <Column
+      label="Going out"
+      count={count}
+      testId="overseer-outflow"
+      sub={
+        spend !== null && (
+          <p
+            data-testid="overseer-spend"
+            className="truncate px-2 pb-1 leading-none"
+            title={spend}
+          >
+            <MetaText>{spend}</MetaText>
+          </p>
+        )
+      }
+    >
+      {count === 0 &&
+        liveRows.length === 0 &&
+        landingRows.length === 0 &&
+        sessionRows.length === 0 &&
+        !canMergeAll && <EmptyLine>Nothing is running.</EmptyLine>}
+      {sessionRows.length > 0 && (
+        <section className="flex flex-col">
+          <SectionLabel className="px-2 pb-0.5">Milestones</SectionLabel>
+          <div role="list" className="flex flex-col">
+            <Rows
+              rows={sessionRows}
+              render={(progress) => (
+                <SessionRow
+                  progress={progress}
+                  title={epicTitle(progress.epicId)}
+                  onOpen={() => onOpenTask(progress.epicId)}
+                />
+              )}
+            />
+          </div>
+        </section>
       )}
       {liveRows.length > 0 && (
         <section className="flex flex-col">
@@ -201,9 +317,27 @@ export function OutflowColumn({
           </div>
         </section>
       )}
-      {landingRows.length > 0 && (
+      {(landingRows.length > 0 || canMergeAll) && (
         <section className="flex flex-col">
-          <SectionLabel className="px-2 pb-0.5">Landing</SectionLabel>
+          <SectionLabel
+            className="h-6 px-2 pb-0.5"
+            trailing={
+              canMergeAll && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="ml-auto"
+                  disabled={merging}
+                  onClick={mergeAll}
+                  data-testid="overseer-merge-all"
+                >
+                  Merge all ready ({mergeReady})
+                </Button>
+              )
+            }
+          >
+            Landing
+          </SectionLabel>
           <div role="list" className="flex flex-col">
             <Rows
               rows={landingRows}
