@@ -17,10 +17,15 @@ test('no em-dashes anywhere on the page', () => {
   expect(html).not.toContain('—');
 });
 
-test('live demo iframe points at the demo service in embed mode', () => {
-  expect(html).toContain(
-    'dispatch-demo-production-aed7.up.railway.app/?embed=1'
+test('the tour shows a real screenshot for every tab', async () => {
+  const ids = [...html.matchAll(/src="\/app\/([a-z]+)\.webp"/g)].map(
+    (m) => m[1]
   );
+  expect(ids).toEqual(['tasks', 'live', 'review', 'board', 'overseer']);
+  for (const id of ids) {
+    const file = Bun.file(new URL(`../dist/app/${id}.webp`, import.meta.url));
+    expect({ id, exists: await file.exists() }).toEqual({ id, exists: true });
+  }
 });
 
 test('positioning survives', () => {
