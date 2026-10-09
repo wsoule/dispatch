@@ -1,7 +1,7 @@
 import type { EpicProgress, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { liveCeilingsOf, spendToday } from './liveSpend';
+import { liveCeilingsLabel, liveCeilingsOf, spendToday } from './liveSpend';
 
 function run(id: string, overrides: Partial<RunMeta> = {}): RunMeta {
   return {
@@ -75,4 +75,13 @@ describe('liveCeilingsOf', () => {
     });
     expect(liveCeilingsOf([])).toBeNull();
   });
+});
+
+test('liveCeilingsLabel pluralises and drops cents on whole dollars', () => {
+  expect(liveCeilingsLabel({ live: 3, settledUsd: 100, ceilingUsd: 250 })).toBe(
+    '3 milestones live · $100 of $250 ceilings'
+  );
+  expect(
+    liveCeilingsLabel({ live: 1, settledUsd: 0.5, ceilingUsd: null })
+  ).toBe('1 milestone live · $0.50 spent');
 });
