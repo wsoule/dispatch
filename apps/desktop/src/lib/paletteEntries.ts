@@ -79,6 +79,7 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; shortcut?: string }[] = [
 
 // Two views' pages under Tasks with no other way in from the top bar.
 const TWO_VIEWS_PAGES: PaletteView[] = [
+  { id: 'plans', label: 'Plans' },
   { id: 'brain-dump', label: 'Notes' },
   { id: 'branches', label: 'Git' },
   { id: 'files', label: 'Files' },

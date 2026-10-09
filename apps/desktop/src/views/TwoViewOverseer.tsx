@@ -1,5 +1,5 @@
 import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
-import { Minus, PowerOff } from 'lucide-react';
+import { Minus, NotebookPen, PowerOff } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 import { DockedConversation } from '../components/chat/DockedConversation';
@@ -54,6 +54,10 @@ export interface TwoViewOverseerProps {
 
   /** Opens one of the agent's "Show in tasks" doors. */
   onOpenDoor: (door: OverseerDoor) => void;
+  /** Opens the Plans page: plan history and the planner's editable proposals. */
+  onOpenPlans?: () => void;
+  /** An empty project's first-run prompt, shown in place of a fresh conversation. */
+  firstRun?: ReactNode;
 }
 
 const isSlash = (text: string) => text.trimStart().startsWith('/');
@@ -88,6 +92,8 @@ export function TwoViewOverseer({
   onFocus = () => {},
   renderFocus,
   onOpenDoor,
+  onOpenPlans,
+  firstRun,
 }: TwoViewOverseerProps) {
   // Whatever a side column opened takes the middle; Esc hands it back to the talk.
   useEffect(() => {
@@ -160,6 +166,8 @@ export function TwoViewOverseer({
     );
   }
 
+  // Only a fresh conversation gives way to the first-run prompt.
+  const showFirstRun = firstRun !== undefined && open === null;
   const showAsksAside = asks > 0 && needsBlock !== undefined && !revoked;
   const door =
     revoked || asks === 0 ? null : (
@@ -214,29 +222,44 @@ export function TwoViewOverseer({
       <div
         className={cn(
           'mx-auto flex h-full min-h-0 w-full max-w-[760px] min-w-0 flex-col gap-3',
-          open === null && 'justify-end',
+          open === null && !showFirstRun && 'justify-end',
           focused !== null && 'hidden'
         )}
       >
-        {open !== null && (
-          <div className="flex justify-end">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={minimize}
-                    data-testid="overseer-minimize"
-                  />
-                }
+        {(open !== null || onOpenPlans !== undefined) && (
+          // Pinned to the top, even while a fresh composer sits at the bottom.
+          <div
+            className={cn('flex justify-end gap-1', open === null && 'mb-auto')}
+          >
+            {onOpenPlans !== undefined && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={onOpenPlans}
+                data-testid="overseer-open-plans"
               >
-                <Minus /> Set aside
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                Set this conversation aside and start another
-              </TooltipContent>
-            </Tooltip>
+                <NotebookPen /> Plans
+              </Button>
+            )}
+            {open !== null && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={minimize}
+                      data-testid="overseer-minimize"
+                    />
+                  }
+                >
+                  <Minus /> Set aside
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  Set this conversation aside and start another
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         )}
         {setAside !== null && (
@@ -274,24 +297,30 @@ export function TwoViewOverseer({
             </AlertDescription>
           </Alert>
         )}
-        <OverseerChat
-          overseer={routed}
-          placeholder="say something"
-          aboveComposer={
-            <>
-              <div className="xl:hidden">{posts}</div>
-              {dock.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 xl:hidden">
-                  {dockCards(true)}
-                </div>
-              )}
-              {door}
-            </>
-          }
-          disabled={revoked}
-          durable
-          onOpenDoor={onOpenDoor}
-        />
+        {showFirstRun ? (
+          <div data-testid="overseer-first-run" className="min-h-0 flex-1">
+            {firstRun}
+          </div>
+        ) : (
+          <OverseerChat
+            overseer={routed}
+            placeholder="say something"
+            aboveComposer={
+              <>
+                <div className="xl:hidden">{posts}</div>
+                {dock.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 xl:hidden">
+                    {dockCards(true)}
+                  </div>
+                )}
+                {door}
+              </>
+            }
+            disabled={revoked}
+            durable
+            onOpenDoor={onOpenDoor}
+          />
+        )}
       </div>
       <OutflowColumn
         runs={runs}

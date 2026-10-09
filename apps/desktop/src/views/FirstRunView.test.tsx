@@ -100,3 +100,24 @@ test('offers a way past the prompt to the ordinary board', () => {
   // textarea.
   expect(onBrowseBoard).toHaveBeenCalled();
 });
+
+test('Two views can set the prompt aside for the agent', () => {
+  const onTalkToAgent = mock(() => {});
+  render(
+    <FirstRunView
+      projectName="dispatch"
+      onStartDraft={() => Promise.resolve(draft)}
+      onBrowseBoard={() => {}}
+      onTalkToAgent={onTalkToAgent}
+    />
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Talk to the agent' }));
+  expect(onTalkToAgent).toHaveBeenCalledTimes(1);
+});
+
+test('Classic offers no agent escape', () => {
+  setup();
+  expect(
+    screen.queryByRole('button', { name: 'Talk to the agent' })
+  ).toBeNull();
+});

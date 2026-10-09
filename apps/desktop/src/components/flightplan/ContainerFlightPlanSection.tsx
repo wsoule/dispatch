@@ -16,6 +16,10 @@ export interface FlightPlanHost {
   onDispatchFailed: (taskId: string, message: string) => void;
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   onPeekTask: (taskId: string) => void;
+  /** A pending "open Send agents on this container" ask, from Plans' "Create &
+   * send agents…" in Two views. */
+  sendAgents?: { epicId: string; nonce: number } | null;
+  onSendAgentsServed?: (nonce: number) => void;
 }
 
 export const FlightPlanHostContext = createContext<FlightPlanHost | null>(null);
@@ -55,6 +59,10 @@ export function ContainerFlightPlanSection({
       onDispatchFailed={host.onDispatchFailed}
       onOpenTask={host.onOpenTask}
       onPeekTask={host.onPeekTask}
+      sendAgentsRequest={
+        host.sendAgents?.epicId === containerId ? host.sendAgents : null
+      }
+      onSendAgentsServed={host.onSendAgentsServed}
       openIn={openIn}
       showBranches={showBranches}
       focusOnMount={focusOnMount}

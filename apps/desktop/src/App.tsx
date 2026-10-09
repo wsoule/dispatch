@@ -1229,6 +1229,16 @@ function App() {
 
   // What a `<ContainerFlightPlanSection>` draws a plan with: the project's data and the
   // Cockpit's stay-in-place dispatch.
+  // Two views' "Create & send agents…": the milestone's Plan tab opens Send agents once.
+  const [sendAgents, setSendAgents] = useState<{
+    epicId: string;
+    nonce: number;
+  } | null>(null);
+  const onSendAgentsServed = useCallback(
+    (nonce: number) =>
+      setSendAgents((prev) => (prev?.nonce === nonce ? null : prev)),
+    []
+  );
   const flightPlanHost = useMemo<FlightPlanHost>(
     () => ({
       data,
@@ -1236,8 +1246,18 @@ function App() {
       onDispatchFailed: onCockpitDispatchFailed,
       onOpenTask: openTaskView,
       onPeekTask: peekTask,
+      sendAgents,
+      onSendAgentsServed,
     }),
-    [data, cockpitDispatch, onCockpitDispatchFailed, openTaskView, peekTask]
+    [
+      data,
+      cockpitDispatch,
+      onCockpitDispatchFailed,
+      openTaskView,
+      peekTask,
+      sendAgents,
+      onSendAgentsServed,
+    ]
   );
 
   const openOverseer = useCallback(
@@ -1459,6 +1479,17 @@ function App() {
     data.tasksReady &&
     data.tasksIncludingArchived.length === 0;
 
+  // Two views' first run: an empty project's Overseer opens on the same prompt
+  // box until it is set aside for a conversation, for this project only.
+  const [firstRunSetAsideFor, setFirstRunSetAsideFor] = useState<string | null>(
+    null
+  );
+  const twoViewsFirstRun =
+    activeProject !== null &&
+    firstRunSetAsideFor !== activeProject.path &&
+    data.tasksReady &&
+    data.tasksIncludingArchived.length === 0;
+
   // Resolution, first-project and get-started screens take precedence over any view.
   const gateScreen: ReactNode =
     resolutionError !== null ? (
@@ -1607,6 +1638,22 @@ function App() {
             data={data}
             onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
             onPlanText={openOverseer}
+            onBack={closeTwoViewsPage}
+          />
+        );
+      case 'plans':
+        return (
+          <PlansView
+            projectName={activeProject?.name}
+            data={data}
+            onGoToBoard={() => dispatchNav({ type: 'tv/showTasks' })}
+            // A milestone opens on its Plan tab, where Send agents lives.
+            onOpenMilestone={(epicId, opts) => {
+              if (opts?.dispatch === true) {
+                setSendAgents({ epicId, nonce: Date.now() });
+              }
+              openTaskView(epicId, 'plan');
+            }}
             onBack={closeTwoViewsPage}
           />
         );
@@ -2100,6 +2147,28 @@ function App() {
             revoked={overseer.revoked}
             onShowAsks={() => dispatchNav({ type: 'tv/showTasks' })}
             onOpenDoor={openDoor}
+            onOpenPlans={
+              activeProject === null
+                ? undefined
+                : () => dispatchNav({ type: 'setProjectView', view: 'plans' })
+            }
+            firstRun={
+              twoViewsFirstRun ? (
+                <FirstRunView
+                  projectName={activeProject?.name ?? null}
+                  // The draft opens under Tasks: Two views has no drafts tray.
+                  onStartDraft={async (prompt) => {
+                    const draft = await rawData.handleStartDraft(prompt);
+                    dispatchNav({ type: 'openDraft', draftId: draft.id });
+                    return draft;
+                  }}
+                  onBrowseBoard={() => dispatchNav({ type: 'tv/showTasks' })}
+                  onTalkToAgent={() =>
+                    setFirstRunSetAsideFor(activeProject?.path ?? null)
+                  }
+                />
+              ) : undefined
+            }
             onOpenConnectedAgents={() =>
               dispatchNav({
                 type: 'tv/openSettings',

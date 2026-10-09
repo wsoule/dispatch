@@ -103,8 +103,11 @@ describe('projectViewDestination', () => {
     });
   });
 
-  test('plans fold into Overseer', () => {
-    expect(projectViewDestination('plans')).toEqual({ kind: 'overseer' });
+  test('plans is a page under Tasks: history, the proposal, send agents', () => {
+    expect(projectViewDestination('plans')).toEqual({
+      kind: 'page',
+      page: { kind: 'view', view: 'plans' },
+    });
   });
 
   test.each(['task', 'pr', 'draft', 'new-task'] as const)(

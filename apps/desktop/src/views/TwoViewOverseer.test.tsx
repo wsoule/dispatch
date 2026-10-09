@@ -6,7 +6,11 @@ import { useState } from 'react';
 
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
-import { type OverseerFocus, TwoViewOverseer } from './TwoViewOverseer';
+import {
+  type OverseerFocus,
+  TwoViewOverseer,
+  type TwoViewOverseerProps,
+} from './TwoViewOverseer';
 
 function record(id: string, prompt: string): OverseerRecord {
   return {
@@ -59,9 +63,11 @@ function session(over: Partial<OverseerSession>): OverseerSession {
 function Harness({
   overseer,
   client,
+  extra = {},
 }: {
   overseer: OverseerSession;
   client: Partial<ApiClient>;
+  extra?: Partial<TwoViewOverseerProps>;
 }) {
   const [draft, setDraft] = useState('');
   const [queryClient] = useState(() => new QueryClient());
@@ -82,6 +88,7 @@ function Harness({
         onShowAsks={() => {}}
         onOpenConnectedAgents={() => {}}
         onOpenDoor={() => {}}
+        {...extra}
       />
     </QueryClientProvider>
   );
@@ -243,4 +250,48 @@ test('a run on the right opens its task in the middle; Esc gives the talk back',
   ).toBeTruthy();
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByTestId('overseer-focus')).toBeNull();
+});
+
+test('an empty project opens on its first-run prompt instead of a fresh conversation', () => {
+  render(
+    <Harness
+      overseer={session({ conversationId: null, record: null })}
+      client={{}}
+      extra={{ firstRun: <p>first run</p> }}
+    />
+  );
+  expect(screen.getByTestId('overseer-first-run').textContent).toBe(
+    'first run'
+  );
+  expect(
+    screen.queryByRole('textbox', { name: 'Overseer opening question' })
+  ).toBeNull();
+});
+
+test('an open conversation keeps the talk over the first-run prompt', () => {
+  render(
+    <Harness
+      overseer={session({})}
+      client={{ getOverseer: (id: string) => Promise.resolve(record(id, 'x')) }}
+      extra={{ firstRun: <p>first run</p> }}
+    />
+  );
+  expect(screen.queryByTestId('overseer-first-run')).toBeNull();
+});
+
+test('Plans opens the Plans page', () => {
+  let opened = 0;
+  render(
+    <Harness
+      overseer={session({})}
+      client={{ getOverseer: (id: string) => Promise.resolve(record(id, 'x')) }}
+      extra={{
+        onOpenPlans: () => {
+          opened++;
+        },
+      }}
+    />
+  );
+  fireEvent.click(screen.getByTestId('overseer-open-plans'));
+  expect(opened).toBe(1);
 });
