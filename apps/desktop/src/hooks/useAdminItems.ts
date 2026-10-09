@@ -9,10 +9,9 @@ import { useTeamOn } from './useTeamOn';
 // The same keys and fetches the Settings pages use, so both read one cache.
 export function useAdminItems(
   client: ApiClient | null,
-  port: number | undefined,
-  enabled: boolean
+  port: number | undefined
 ): AdminItem[] {
-  const on = client !== null && enabled;
+  const on = client !== null;
   const teamOn = useTeamOn(client, on);
   const machines = useQuery({
     queryKey: ['team-keys', client?.baseUrl],

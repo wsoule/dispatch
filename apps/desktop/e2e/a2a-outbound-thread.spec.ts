@@ -34,10 +34,7 @@ test.describe('an outbound A2A thread', () => {
     expect(added.status()).toBe(201);
 
     await page.goto(daemon.appUrl);
-    await page
-      .locator('#dispatch-sidebar')
-      .getByRole('button', { name: /^Threads/ })
-      .click();
+    await page.getByTestId('two-views-threads').click();
     await page.getByRole('button', { name: 'New thread' }).first().click();
 
     // `@a2a:` completes the peer; Enter turns it into a recipient pill.

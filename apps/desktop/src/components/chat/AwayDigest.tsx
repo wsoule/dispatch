@@ -48,7 +48,7 @@ export function useNarratorSince(projectPath: string | null): {
 
 function initial(key: string): string {
   const now = new Date().toISOString();
-  // No project (or Classic): nothing to remember.
+  // No project: nothing to remember.
   if (key === '') return now;
   const seen = readSeen(key);
   if (seen !== null) return seen;

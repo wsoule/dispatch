@@ -64,12 +64,12 @@ interface TaskCardTileProps {
   /** Dispatches this task directly from the card. Omitted (no action rendered) for cards that
    * aren't ready to start. */
   onDispatch?: (id: string) => Promise<void>;
-  /** True when the Board's own j/k roving-focus cursor (see `BoardView`) is on this card —
+  /** True when the Board's own j/k roving-focus cursor (see `BoardPane`) is on this card —
    * moves real DOM focus onto the card so `:focus-visible` and screen readers agree with
    * what j/k just did. */
   focused?: boolean;
   /** Called whenever real DOM focus lands on this card (click, Tab, or the `focused` effect
-   * above) — lets `BoardView` sync its `focusedTaskId` cursor to wherever focus actually is. */
+   * above) — lets `BoardPane` sync its `focusedTaskId` cursor to wherever focus actually is. */
   onFocus?: (id: string) => void;
   /** See `CardDragProps` — omitted for a card that isn't draggable. */
   drag?: CardDragProps;

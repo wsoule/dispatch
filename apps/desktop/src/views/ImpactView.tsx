@@ -55,7 +55,7 @@ interface ImpactViewProps {
    *  (Review case panel, task detail, Git file pane), or `null` when this
    *  view was reached from the sidebar with nothing chosen yet. */
   initialSubject: ImpactSubjectRef | null;
-  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  /** Starts the header with "‹ tasks", back to the Tasks list. */
   onBack?: () => void;
 }
 

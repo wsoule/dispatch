@@ -33,7 +33,7 @@ interface FilesViewProps {
   data: DispatchProjectData;
   /** The run whose worktree to browse, or null for the project checkout. */
   runId?: string | null;
-  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  /** Starts the header with "‹ tasks", back to the Tasks list. */
   onBack?: () => void;
 }
 

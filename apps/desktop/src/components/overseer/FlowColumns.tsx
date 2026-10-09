@@ -1,5 +1,5 @@
 import type { EpicProgress, MergeQueueEntry, RunMeta } from '@dispatch/client';
-import { type ReactNode, useState } from 'react';
+import { createContext, type ReactNode, useContext, useState } from 'react';
 
 import { useRunStep } from '../../hooks/useRunStep';
 import { formatUsd, spendPillLabel } from '../../lib/epicSession';
@@ -54,6 +54,15 @@ function ColumnHead({ label, count }: { label: string; count: number }) {
   );
 }
 
+// True inside a narrow window's sheet: the column fills the sheet instead of
+// sitting beside the stream at xl and up.
+const InSheet = createContext(false);
+
+/** Renders a column full-width inside a sheet, for windows narrower than xl. */
+export function ColumnInSheet({ children }: { children: ReactNode }) {
+  return <InSheet.Provider value>{children}</InSheet.Provider>;
+}
+
 /** A column: the head pinned on top, the rest scrolling under it. */
 function Column({
   label,
@@ -69,11 +78,16 @@ function Column({
   sub?: ReactNode;
   children: ReactNode;
 }) {
+  const inSheet = useContext(InSheet);
   return (
     <aside
       aria-label={label}
-      data-testid={testId}
-      className="hidden min-h-0 w-[300px] shrink-0 flex-col gap-2 min-[1440px]:w-[340px] xl:flex"
+      data-testid={inSheet ? `${testId}-sheet` : testId}
+      className={
+        inSheet
+          ? 'flex min-h-0 flex-1 flex-col gap-2'
+          : 'hidden min-h-0 w-[300px] shrink-0 flex-col gap-2 min-[1440px]:w-[340px] xl:flex'
+      }
     >
       <ColumnHead label={label} count={count} />
       {sub}

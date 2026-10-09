@@ -11,7 +11,7 @@ let peer: FixturePeerProcess | null = null;
 
 // Settings → A2A, through the `G S` shortcut and the Settings page list.
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.locator('#dispatch-sidebar').waitFor();
+  await page.getByTestId('two-views-shell').waitFor();
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page

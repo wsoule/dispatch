@@ -18,7 +18,7 @@ interface TaskFilterMenu {
   aiFilter: ((sentence: string) => Promise<TaskFilterSet>) | undefined;
 }
 
-/** The Filter menu's inputs for one project, shared by Classic's board and Two views' Tasks. */
+/** The Filter menu's inputs for one project, for the Tasks page's header. */
 export function useTaskFilterMenu(data: DispatchProjectData): TaskFilterMenu {
   const epicTitleById = useMemo(
     () => new Map(data.epics.map((e) => [e.meta.id, e.meta.title])),

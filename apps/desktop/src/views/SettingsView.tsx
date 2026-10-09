@@ -37,7 +37,6 @@ import {
 } from '../components/settings/access';
 import { AgentRosterSection } from '../components/settings/AgentRosterSection';
 import { AgentsSection } from '../components/settings/AgentsSection';
-import { BetaGroup } from '../components/settings/BetaGroup';
 import { BoardSyncGroup } from '../components/settings/BoardSyncGroup';
 import { ChecksSection } from '../components/settings/ChecksSection';
 import {
@@ -165,7 +164,6 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
                 canOperate={ctx.canOperate}
               />
             )}
-            <BetaGroup tier={ctx.data.myTier} />
           </>
         ),
       },

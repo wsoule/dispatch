@@ -83,7 +83,7 @@ import {
 } from '@/ui/dropdown-menu';
 
 interface TaskBoardProps {
-  /** The cards, already in the order a column shows them (`BoardView` sorts once with
+  /** The cards, already in the order a column shows them (`BoardPane` sorts once with
    * `sortTasks` so its j/k cursor and these columns walk the same sequence). */
   tasks: TaskListItem[];
   /** The status columns to render, in config order — already narrowed by the Display
@@ -118,7 +118,7 @@ interface TaskBoardProps {
   display?: TasksDisplayPrefs;
   /** Lane keys (`BoardLane.key`) folded up right now. */
   collapsedLaneKeys: ReadonlySet<string>;
-  /** Flips one lane between expanded and collapsed — owned by `BoardView`, which also needs the
+  /** Flips one lane between expanded and collapsed — owned by `BoardPane`, which also needs the
    * collapsed set to keep j/k off hidden cards. */
   onToggleLane: (key: string) => void;
   /** Statuses whose column is folded to a narrow strip (a column's `···` › Collapse). */
@@ -161,7 +161,7 @@ interface TaskBoardProps {
    * render dimmed and can't be dragged. Defaults to empty. */
   archivedTaskIds?: ReadonlySet<string>;
   /** Called whenever real DOM focus lands on any card (click, Tab, or the roving-focus
-   * effect) — lets `BoardView` sync `focusedTaskId` to wherever focus actually is. */
+   * effect) — lets `BoardPane` sync `focusedTaskId` to wherever focus actually is. */
   onCardFocus?: (taskId: string) => void;
 }
 
@@ -701,7 +701,7 @@ export function TaskBoard({
   // Each card's last measured height, by task id — what its fling placeholder takes.
   const [cardHeights] = useState(() => new Map<string, number>());
 
-  // The same lanes `BoardView` derives for its j/k order, from the same pure function and the
+  // The same lanes `BoardPane` derives for its j/k order, from the same pure function and the
   // same (pre-sorted) input — deliberately recomputed here rather than passed down, so the two
   // never have to be kept in sync as a pair of props that could disagree.
   const lanes = useMemo<BoardLane[]>(

@@ -33,7 +33,6 @@ import type { TasksDisplayPrefs } from '../../lib/tasksPrefs';
 import { DispatchDialog } from './DispatchDialog';
 import { TaskBoard } from './TaskBoard';
 import { liveClaimsFrom } from '@/lib/dispatchPreview';
-import { Skeleton } from '@/ui/skeleton';
 
 /** Session keys for the columns folded to a strip or hidden from a column's `···` menu —
  * the same "out of my way for now" lifetime as collapsed epic lanes. */
@@ -44,37 +43,6 @@ const HIDDEN_COLUMNS_STORAGE_KEY = 'dispatch:board-hidden-columns';
 // stub `window` away.
 function readSessionSet(key: string): Set<string> {
   return typeof window === 'undefined' ? new Set() : readCollapsedGroups(key);
-}
-
-/** Skeleton placeholder for the board while tasks/config load: the column geometry the
- * real board renders (348px columns, 44px headers, 322px cards with 8px corners). */
-export function BoardSkeleton() {
-  return (
-    <div
-      data-slot="board-skeleton"
-      className="flex h-full min-h-0 overflow-hidden px-4 py-3"
-    >
-      {Array.from({ length: 4 }, (_, columnIndex) => (
-        <div
-          key={columnIndex}
-          className="flex w-[348px] shrink-0 flex-col px-3"
-        >
-          <div className="flex h-11 items-center gap-2">
-            <Skeleton className="size-3.5 rounded-full" />
-            <Skeleton className="h-3 w-16" />
-          </div>
-          <div className="flex flex-col gap-2">
-            {Array.from({ length: 3 }, (_, cardIndex) => (
-              <Skeleton
-                key={cardIndex}
-                className="rounded-card h-[104px] w-[322px]"
-              />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 interface BoardPaneProps {
@@ -91,7 +59,7 @@ interface BoardPaneProps {
 }
 
 /**
- * The Kanban layout of the Tasks page, shared by Classic's board and Two views' Tasks:
+ * The Kanban layout of the Tasks page:
  * status columns (fold to a strip, hide from a column's menu), swim lanes by Display ›
  * Sub-grouping that fold too, the fan-out dialog a lane's Send agents… opens, and j/k
  * roving focus that runs lane by lane, column-major inside a lane, over the cards on

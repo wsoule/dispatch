@@ -1,6 +1,6 @@
 import type { ApiClient, OverseerRecord, RunMeta } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 import { useState } from 'react';
 
@@ -250,6 +250,30 @@ test('a run on the right opens its task in the middle; Esc gives the talk back',
   ).toBeTruthy();
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByTestId('overseer-focus')).toBeNull();
+});
+
+test('a narrow window opens Going out as a sheet, and a run there opens its task', () => {
+  render(
+    <FocusHarness
+      runs={[
+        {
+          id: 'r-1',
+          taskId: 't-9',
+          taskTitle: 'Warm the cache',
+          state: 'running',
+          createdAt: '2026-10-06T09:00:00Z',
+          updatedAt: '2026-10-06T09:00:00Z',
+        } as RunMeta,
+      ]}
+    />
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Going out' }));
+  const sheet = screen.getByTestId('overseer-outflow-sheet');
+  expect(sheet.textContent).toContain('Warm the cache');
+  fireEvent.click(within(sheet).getByText('Warm the cache'));
+  expect(screen.getByTestId('overseer-focus').textContent).toContain(
+    'focused t-9'
+  );
 });
 
 test('an empty project opens on its first-run prompt instead of a fresh conversation', () => {

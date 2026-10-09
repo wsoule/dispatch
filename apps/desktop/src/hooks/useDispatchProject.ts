@@ -235,9 +235,7 @@ export function repoPrsKey(
 
 // The unified-PR-table query key (`GET /api/landing`), exported so
 // `LandingTableView` can invalidate it itself after a worktree create/remove.
-export function landingKey(
-  port: number | undefined
-): [string, number | undefined] {
+function landingKey(port: number | undefined): [string, number | undefined] {
   return ['dispatch-landing', port];
 }
 

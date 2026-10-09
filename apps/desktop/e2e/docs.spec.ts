@@ -139,7 +139,7 @@ test('an agent writes a spec, the human edits it in Docs, and a concurrent ops s
   });
 
   await page.goto(daemon.appUrl);
-  await page.locator('#dispatch-sidebar [data-nav-item="docs"]').click();
+  await page.getByTestId('two-views-docs').click();
   await page.getByRole('button', { name: 'E2E spec', exact: true }).click();
   const editor = page.getByLabel(`Editing ${SLUG}`);
   await expect(editor).toHaveValue(/agent v1/);

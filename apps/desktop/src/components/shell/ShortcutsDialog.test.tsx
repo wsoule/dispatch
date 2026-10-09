@@ -5,8 +5,8 @@ import { ShortcutsDialog } from './ShortcutsDialog';
 
 afterEach(cleanup);
 
-test('Two views lists only the places it has', () => {
-  render(<ShortcutsDialog open twoViews onOpenChange={() => undefined} />);
+test('lists only the places the app has', () => {
+  render(<ShortcutsDialog open onOpenChange={() => undefined} />);
   for (const label of [
     'Overseer',
     'Tasks',
@@ -20,7 +20,6 @@ test('Two views lists only the places it has', () => {
   }
   for (const label of [
     'Inbox',
-    'Live',
     'Overview',
     'Assistant',
     'Projects',
@@ -31,8 +30,8 @@ test('Two views lists only the places it has', () => {
   expect(screen.queryByRole('region', { name: 'Home' })).toBeNull();
 });
 
-test('Classic keeps its sidebar and views', () => {
+test("lists the Live graph's keys, since Tasks' graph hosts it", () => {
   render(<ShortcutsDialog open onOpenChange={() => undefined} />);
-  expect(screen.getByText('Inbox')).toBeDefined();
-  expect(screen.getByText('Toggle sidebar')).toBeDefined();
+  expect(screen.getByRole('region', { name: 'Live' })).toBeDefined();
+  expect(screen.getByText('Next / previous band')).toBeDefined();
 });

@@ -37,8 +37,6 @@ interface CommandPaletteProps {
   /** The Docs rows for a non-empty query, searched on the daemon; omitted when
    * this caller cannot read docs. */
   searchDocs?: (query: string) => Promise<PaletteEntry[]>;
-  /** Two views: Tab hands the query to "your agent", not the Assistant. */
-  twoViews?: boolean;
 }
 
 // How long typing must pause before the palette searches docs.
@@ -86,9 +84,7 @@ export function CommandPalette({
   entries,
   onClose,
   searchDocs,
-  twoViews = false,
 }: CommandPaletteProps) {
-  const agent = twoViews ? 'your agent' : 'the Assistant';
   const { openOverseer } = useShellActions();
   const [query, setQuery] = useState('');
   // Ids of the rows run most recently, newest first; they lead their section while the
@@ -162,7 +158,7 @@ export function CommandPalette({
             placeholder="Type a command or search…"
             hint={
               <>
-                <span>{twoViews ? 'Ask your agent' : 'Ask the Assistant'}</span>
+                <span>Ask your agent</span>
                 <Kbd>Tab</Kbd>
               </>
             }
@@ -171,7 +167,7 @@ export function CommandPalette({
             <CommandEmpty className="p-0">
               <EmptyState
                 heading="No results"
-                description={`Try another task id or title, or press Tab to ask ${agent}.`}
+                description="Try another task id or title, or press Tab to ask your agent."
                 className="py-6"
               />
             </CommandEmpty>

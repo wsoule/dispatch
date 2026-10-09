@@ -37,9 +37,6 @@ export interface ShellActions {
   createPreset: CreateTaskPreset | null;
   closeCreateTask: () => void;
   openPalette: () => void;
-  /** Hides or shows the rail (`[`). */
-  toggleSidebar: () => void;
-  sidebarHidden: boolean;
   /** The Overseer page; `prompt` pre-fills its composer. */
   openOverseer: (prompt?: string) => void;
   setProjectView: (view: ProjectView) => void;

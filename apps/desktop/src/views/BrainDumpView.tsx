@@ -32,7 +32,7 @@ interface BrainDumpViewProps {
   data: DispatchProjectData;
   onPlanText: (text: string) => void;
   onOpenTask: (taskId: string) => void;
-  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  /** Starts the header with "‹ tasks", back to the Tasks list. */
   onBack?: () => void;
 }
 

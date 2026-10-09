@@ -63,10 +63,12 @@ state derivation).
 
 ## What is here that the app does not have
 
-Every screen in the mockup now maps onto an existing view. The two that used to
-be missing have both been built: **Brain dump** (`BrainDumpView.tsx`) and
-**Landing**, its own sidebar destination (`LandingTableView.tsx`) — the unified
-table of every run, PR, and queue entry in flight, plus what recently landed.
+The app has since moved to two views, Overseer and Tasks, so the mockup's
+screens no longer map one to one. **Brain dump** is built (`BrainDumpView.tsx`,
+Notes under Tasks). The **Control room** and **Landing** screens were built and
+then retired with the old sidebar layout: what waits on you leads Tasks and the
+Overseer, and the merge queue shows in the Overseer's outflow column and on each
+task's review.
 
 ## What not to build
 

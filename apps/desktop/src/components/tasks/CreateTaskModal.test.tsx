@@ -50,8 +50,6 @@ function shellActions(createPreset: CreateTaskPreset | null): ShellActions {
     createPreset,
     closeCreateTask: unexpected,
     openPalette: unexpected,
-    toggleSidebar: unexpected,
-    sidebarHidden: false,
     openOverseer: unexpected,
     setProjectView: unexpected,
     setGlobalView: unexpected,

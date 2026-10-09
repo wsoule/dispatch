@@ -17,7 +17,6 @@ export {
   FEED_STATE_LABEL,
   FEED_STATE_ORDER,
   feedStateToTaskRowState,
-  feedTier,
   isInFlightState,
   isUrgentState,
   type FeedState,

@@ -70,7 +70,6 @@ export interface TasksDisplayPrefs {
   dateField: TaskDateField;
 }
 
-export const TASK_FILTERS_STORAGE_KEY = 'dispatch:tasks-filters-v1';
 export const TASKS_DISPLAY_STORAGE_KEY = 'dispatch:tasks-display-v1';
 /** Stamped into every serialised display model. Payloads without it (or below it) were
  * written before board lanes moved to `subGrouping` and go through that migration once. */

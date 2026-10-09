@@ -25,7 +25,7 @@ async function settle(work: () => void | Promise<void>) {
   });
 }
 
-// The way BoardView mounts it: controlled open state, filters in state.
+// The way the Tasks header mounts it: controlled open state, filters in state.
 function Harness({
   onAiFilter,
   onChange,

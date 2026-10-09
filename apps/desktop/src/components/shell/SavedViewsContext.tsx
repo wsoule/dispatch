@@ -4,9 +4,8 @@ import type { SavedViewsApi } from '../../hooks/useSavedViews';
 
 /**
  * The active project's saved views and favorites (`useSavedViews`), provided by `App` so the
- * Tasks header's view tabs, the star on a task page and the sidebar's favorites all read one
- * instance. Null outside the provider on purpose — unlike `useNotificationInbox`, which
- * throws — so the Tasks page still renders in the browser-dev harness and in view tests that
+ * Tasks header's view tabs and the star on a task page read one instance. Null outside
+ * the provider on purpose, so the Tasks page still renders in the browser-dev harness and in view tests that
  * mount none of App's providers; consumers show no star or saved-view tabs then.
  */
 const SavedViewsContext = createContext<SavedViewsApi | null>(null);

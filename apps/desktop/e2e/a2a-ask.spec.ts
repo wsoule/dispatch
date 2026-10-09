@@ -128,10 +128,7 @@ test.describe('A2A ask end to end', () => {
     }).then(readEvents);
 
     await page.goto(authedUrl(baseURL));
-    await page
-      .locator('#dispatch-sidebar')
-      .getByRole('button', { name: /^Threads/ })
-      .click();
+    await page.getByTestId('two-views-threads').click();
     const question = page
       .getByRole('group', { name: 'Needs you', exact: true })
       .getByRole('option', {

@@ -24,8 +24,9 @@ interface ShortcutGroup {
 }
 
 // The left column: the shell. The right column: a focused list row. Mirrors
-// `lib/keyboard.ts` — a key listed here that the resolver doesn't know is a bug in one of
-// the two.
+// `lib/keyboard.ts` and `twoViewsKeyAction` (lib/twoViews.ts) — a key listed here
+// that the resolver doesn't know is a bug in one of the two. `g h` and `g c` are
+// unlisted aliases of `g o`, as `g a` is.
 const SHELL_GROUPS: ShortcutGroup[] = [
   {
     heading: 'Shell',
@@ -33,7 +34,6 @@ const SHELL_GROUPS: ShortcutGroup[] = [
       { label: 'Command menu', keys: ['⌘K'] },
       { label: 'New task', keys: ['C'] },
       { label: 'Drop a thought', keys: ['⌘D'] },
-      { label: 'Toggle sidebar', keys: ['['] },
       { label: 'Keyboard shortcuts', keys: ['?'] },
       { label: 'Close / back out', keys: ['Esc'] },
     ],
@@ -41,16 +41,15 @@ const SHELL_GROUPS: ShortcutGroup[] = [
   {
     heading: 'Go to',
     rows: [
-      { label: 'Home', keys: ['G', 'H'], chord: true },
-      { label: 'Inbox', keys: ['G', 'I'], chord: true },
-      { label: 'Threads', keys: ['G', 'M'], chord: true },
+      { label: 'Overseer', keys: ['G', 'O'], chord: true },
       { label: 'Tasks', keys: ['G', 'T'], chord: true },
-      { label: 'Projects', keys: ['G', 'R'], chord: true },
-      { label: 'Live', keys: ['G', 'F'], chord: true },
-      { label: 'Overview', keys: ['G', 'C'], chord: true },
-      { label: 'Assistant', keys: ['G', 'A'], chord: true },
+      { label: 'Needs you', keys: ['G', 'I'], chord: true },
+      { label: 'Moving', keys: ['G', 'F'], chord: true },
+      { label: 'Review', keys: ['G', 'R'], chord: true },
+      { label: 'Threads', keys: ['G', 'M'], chord: true },
       { label: 'Settings', keys: ['G', 'S'], chord: true },
-      { label: 'Nth rail entry', keys: ['⌘1'] },
+      { label: 'Overseer / Tasks', keys: ['⌘1', '⌘2'] },
+      { label: 'Presets, in chip order', keys: ['⌘3–9'] },
       { label: 'Back / forward', keys: ['⌘[', '⌘]'] },
     ],
   },
@@ -77,15 +76,6 @@ const LIST_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
-    heading: 'Home',
-    rows: [
-      { label: 'Change lane', keys: ['H', 'L'] },
-      { label: 'Open beside', keys: ['↵'] },
-      { label: 'Mine / team', keys: ['T'] },
-      { label: 'Group by person', keys: ['G', 'P'], chord: true },
-    ],
-  },
-  {
     heading: 'Live',
     rows: [
       { label: 'Next / previous node', keys: ['J', 'K'] },
@@ -107,57 +97,13 @@ const LIST_GROUPS: ShortcutGroup[] = [
   },
 ];
 
-// Two views has no sidebar and only two views, so its shell keys land on
-// Overseer, a Tasks preset or a page. Mirrors `twoViewsKeyAction` (lib/twoViews.ts);
-// `g h` and `g c` are unlisted aliases of `g o`, as `g a` is.
-const TWO_VIEWS_SHELL_GROUPS: ShortcutGroup[] = [
-  {
-    heading: 'Shell',
-    rows: [
-      { label: 'Command menu', keys: ['⌘K'] },
-      { label: 'New task', keys: ['C'] },
-      { label: 'Drop a thought', keys: ['⌘D'] },
-      { label: 'Keyboard shortcuts', keys: ['?'] },
-      { label: 'Close / back out', keys: ['Esc'] },
-    ],
-  },
-  {
-    heading: 'Go to',
-    rows: [
-      { label: 'Overseer', keys: ['G', 'O'], chord: true },
-      { label: 'Tasks', keys: ['G', 'T'], chord: true },
-      { label: 'Needs you', keys: ['G', 'I'], chord: true },
-      { label: 'Moving', keys: ['G', 'F'], chord: true },
-      { label: 'Review', keys: ['G', 'R'], chord: true },
-      { label: 'Threads', keys: ['G', 'M'], chord: true },
-      { label: 'Settings', keys: ['G', 'S'], chord: true },
-      { label: 'Overseer / Tasks', keys: ['⌘1', '⌘2'] },
-      { label: 'Presets, in chip order', keys: ['⌘3–9'] },
-      { label: 'Back / forward', keys: ['⌘[', '⌘]'] },
-    ],
-  },
-  SHELL_GROUPS[SHELL_GROUPS.length - 1],
-];
-
-// The Home lanes and the Live graph are Classic views.
-const CLASSIC_ONLY = new Set(['Home', 'Live']);
-const TWO_VIEWS_LIST_GROUPS = LIST_GROUPS.filter(
-  (g) => !CLASSIC_ONLY.has(g.heading)
-);
-
 interface ShortcutsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Lists the Two views keys instead of Classic's sidebar and views. */
-  twoViews?: boolean;
 }
 
 /** The `?` reference: every global and list key, two columns of 28px rows with keycaps. */
-export function ShortcutsDialog({
-  open,
-  onOpenChange,
-  twoViews = false,
-}: ShortcutsDialogProps) {
+export function ShortcutsDialog({ open, onOpenChange }: ShortcutsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -170,12 +116,8 @@ export function ShortcutsDialog({
           Every global and list shortcut.
         </DialogDescription>
         <DialogBody className="grid grid-cols-1 gap-x-8 gap-y-4 pb-5 sm:grid-cols-2">
-          <ShortcutColumn
-            groups={twoViews ? TWO_VIEWS_SHELL_GROUPS : SHELL_GROUPS}
-          />
-          <ShortcutColumn
-            groups={twoViews ? TWO_VIEWS_LIST_GROUPS : LIST_GROUPS}
-          />
+          <ShortcutColumn groups={SHELL_GROUPS} />
+          <ShortcutColumn groups={LIST_GROUPS} />
         </DialogBody>
       </DialogContent>
     </Dialog>

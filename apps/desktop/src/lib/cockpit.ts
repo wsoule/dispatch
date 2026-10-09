@@ -44,12 +44,7 @@ export type CockpitScope =
   | { kind: 'person'; ref: string };
 
 /** Why a row sits in Needs you, most pressing first. */
-export type NeedsReason =
-  | 'waiting'
-  | 'failed'
-  | 'review'
-  | 'in-review'
-  | 'unclear';
+type NeedsReason = 'waiting' | 'failed' | 'review' | 'in-review' | 'unclear';
 
 const NEEDS_ORDER: Record<NeedsReason, number> = {
   waiting: 0,

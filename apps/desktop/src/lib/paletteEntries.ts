@@ -27,8 +27,8 @@ export interface PaletteEntry extends PaletteItem {
   run: () => void;
 }
 
-/** One rail destination, in ⌘N order. */
-export interface PaletteView {
+/** A page the palette can open. */
+interface PaletteView {
   id: ProjectView;
   label: string;
 }
@@ -36,23 +36,14 @@ export interface PaletteView {
 export interface PaletteEntriesContext {
   /** Whether a project is active — the task and project-view rows need one. */
   hasProject: boolean;
-  /** The rail's project views in rail order; the index is the ⌘N shortcut. */
-  views: PaletteView[];
   tasks: { meta: { id: string; title: string } }[];
   /** Tasks with every dependency landed — the ones a "Dispatch …" row makes sense for. */
   readyIds: ReadonlySet<string>;
-  /** `import.meta.env.DEV` — the Gallery row exists only in a dev build. */
-  dev: boolean;
   /** The project's saved views — one `Open view …` row each under `Views`. */
   savedViews?: { id: string; name: string }[];
   /** The task page or peek showing right now, which earns a `Copy link` row. */
   currentTaskId?: string | null;
-  /** One row per beta feature, turning it on or off. */
-  beta?: { id: string; label: string; run: () => void }[];
-  /** Two views: navigation is Overseer, Tasks and Settings, and there is no sidebar. */
-  twoViews?: boolean;
-  /** A teammate below the operator tier: Terminals and Design are left out,
-   * as the Classic rail leaves them out. */
+  /** A teammate below the operator tier: Terminals and Design are left out. */
   hideHostViews?: boolean;
   actions: {
     openCreateTask: () => void;
@@ -62,7 +53,6 @@ export interface PaletteEntriesContext {
     peekTask: (taskId: string) => void;
     dispatchTask: (taskId: string) => void;
     openQuickCapture: () => void;
-    toggleSidebar: () => void;
     openShortcuts: () => void;
     openSavedView?: (id: string) => void;
     /** Copies the task's `dispatch://` link. */
@@ -70,15 +60,8 @@ export interface PaletteEntriesContext {
   };
 }
 
-const GLOBAL_VIEWS: { id: GlobalView; label: string; shortcut?: string }[] = [
-  { id: 'all-agents', label: 'All agents' },
-  { id: 'sessions', label: 'Sessions' },
-  { id: 'overseer', label: 'Assistant', shortcut: 'G A' },
-  { id: 'settings', label: 'Settings', shortcut: 'G S' },
-];
-
-// Two views' pages under Tasks with no other way in from the top bar.
-const TWO_VIEWS_PAGES: PaletteView[] = [
+// The pages under Tasks with no other way in from the top bar.
+const TASKS_PAGES: PaletteView[] = [
   { id: 'plans', label: 'Plans' },
   { id: 'brain-dump', label: 'Notes' },
   { id: 'branches', label: 'Git' },
@@ -146,25 +129,6 @@ export function buildPaletteEntries(
       });
     }
   }
-  for (const beta of ctx.beta ?? []) {
-    entries.push({
-      id: `beta-${beta.id}`,
-      label: beta.label,
-      kind: 'action',
-      section: 'actions',
-      run: beta.run,
-    });
-  }
-  if (ctx.twoViews !== true) {
-    entries.push({
-      id: 'action-toggle-sidebar',
-      label: 'Toggle sidebar',
-      kind: 'action',
-      section: 'actions',
-      shortcut: '[',
-      run: actions.toggleSidebar,
-    });
-  }
   entries.push({
     id: 'action-shortcuts',
     label: 'Keyboard shortcuts',
@@ -174,78 +138,43 @@ export function buildPaletteEntries(
     run: actions.openShortcuts,
   });
 
-  if (ctx.twoViews === true) {
-    entries.push(
-      {
-        id: 'go-overseer',
-        label: 'Go to Overseer',
-        kind: 'go to',
-        section: 'navigation',
-        shortcut: '⌘1',
-        run: () => actions.setGlobalView('overseer'),
-      },
-      {
-        id: 'go-board',
-        label: 'Go to Tasks',
-        kind: 'go to',
-        section: 'navigation',
-        shortcut: '⌘2',
-        run: () => actions.setProjectView('board'),
-      },
-      {
-        id: 'go-settings',
-        label: 'Go to Settings',
-        kind: 'go to',
-        section: 'navigation',
-        shortcut: '⌘,',
-        run: () => actions.setGlobalView('settings'),
-      }
-    );
-    if (ctx.hasProject) {
-      for (const page of TWO_VIEWS_PAGES) {
-        if (ctx.hideHostViews === true && HOST_VIEWS.has(page.id)) continue;
-        entries.push({
-          id: `go-${page.id}`,
-          label: `Open ${page.label}`,
-          kind: 'go to',
-          section: 'navigation',
-          run: () => actions.setProjectView(page.id),
-        });
-      }
+  entries.push(
+    {
+      id: 'go-overseer',
+      label: 'Go to Overseer',
+      kind: 'go to',
+      section: 'navigation',
+      shortcut: '⌘1',
+      run: () => actions.setGlobalView('overseer'),
+    },
+    {
+      id: 'go-board',
+      label: 'Go to Tasks',
+      kind: 'go to',
+      section: 'navigation',
+      shortcut: '⌘2',
+      run: () => actions.setProjectView('board'),
+    },
+    {
+      id: 'go-settings',
+      label: 'Go to Settings',
+      kind: 'go to',
+      section: 'navigation',
+      shortcut: '⌘,',
+      run: () => actions.setGlobalView('settings'),
     }
-  } else if (ctx.hasProject) {
-    ctx.views.forEach((view, index) => {
-      if (ctx.hideHostViews === true && HOST_VIEWS.has(view.id)) return;
+  );
+  if (ctx.hasProject) {
+    for (const page of TASKS_PAGES) {
+      if (ctx.hideHostViews === true && HOST_VIEWS.has(page.id)) continue;
       entries.push({
-        id: `go-${view.id}`,
-        label: `Go to ${view.label}`,
+        id: `go-${page.id}`,
+        label: `Open ${page.label}`,
         kind: 'go to',
         section: 'navigation',
-        shortcut: index < 9 ? `⌘${index + 1}` : undefined,
-        run: () => actions.setProjectView(view.id),
+        run: () => actions.setProjectView(page.id),
       });
-    });
-  }
-  // Two views folds every global view into Settings or Overseer.
-  for (const view of ctx.twoViews === true ? [] : GLOBAL_VIEWS) {
-    entries.push({
-      id: `go-${view.id}`,
-      label: `Go to ${view.label}`,
-      kind: 'go to',
-      section: 'navigation',
-      shortcut: view.shortcut,
-      run: () => actions.setGlobalView(view.id),
-    });
-  }
-  // Dev-only primitive review surface — never registered in a production build.
-  if (ctx.dev && ctx.twoViews !== true) {
-    entries.push({
-      id: 'go-gallery',
-      label: 'Go to Gallery',
-      kind: 'go to',
-      section: 'navigation',
-      run: () => actions.setGlobalView('gallery'),
-    });
+    }
   }
 
   if (ctx.hasProject) {
@@ -302,7 +231,7 @@ export function docHitEntries(
   }));
 }
 
-/** Two views' rows for talking to someone or opening a room; homes are never listed elsewhere. */
+/** The rows for talking to someone or opening a room; homes are never listed elsewhere. */
 export function addressEntries(input: {
   people: readonly { ref: string; name: string }[];
   rooms: readonly string[];

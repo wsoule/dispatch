@@ -13,9 +13,19 @@ let a: IsolatedDaemon | null = null;
 let b: IsolatedDaemon | null = null;
 let scratch: string | null = null;
 
+// Threads, from the top bar; Settings is a dialog over it, so close it first.
+async function openThreads(page: Page): Promise<void> {
+  const settings = page.getByTestId('settings-panel');
+  if ((await settings.count()) > 0) {
+    await page.keyboard.press('Escape');
+    await expect(settings).toHaveCount(0);
+  }
+  await page.getByTestId('two-views-threads').click();
+}
+
 // Settings → A2A, through the `G S` shortcut and the Settings page list.
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.locator('#dispatch-sidebar').waitFor();
+  await page.getByTestId('two-views-shell').waitFor();
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page
@@ -103,10 +113,7 @@ test.describe('pairing over a teammate link', () => {
     ).toBeVisible();
 
     // B writes to a2a:alice; it reaches A's threads with the A2A pill.
-    await pageB
-      .locator('#dispatch-sidebar')
-      .getByRole('button', { name: /^Threads/ })
-      .click();
+    await openThreads(pageB);
     await pageB.getByRole('button', { name: 'New thread' }).first().click();
     const box = pageB.getByLabel('New message');
     await box.fill('@a2a:ali');
@@ -120,10 +127,7 @@ test.describe('pairing over a teammate link', () => {
     await box.fill(`Hello over the link (${stamp})`);
     await box.press('Enter');
 
-    await page
-      .locator('#dispatch-sidebar')
-      .getByRole('button', { name: /^Threads/ })
-      .click();
+    await openThreads(page);
     await page
       .getByRole('listbox', { name: 'Threads' })
       .getByRole('option', {

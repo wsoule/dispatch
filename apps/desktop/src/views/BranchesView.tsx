@@ -91,7 +91,7 @@ interface BranchesViewProps {
   /** Navigates to `ImpactView` with the selected file preselected — the
    *  Git file pane's "open in Impact" action. */
   onOpenImpact: (subject: ImpactSubjectRef) => void;
-  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  /** Starts the header with "‹ tasks", back to the Tasks list. */
   onBack?: () => void;
 }
 

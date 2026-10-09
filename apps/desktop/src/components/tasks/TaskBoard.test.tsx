@@ -155,8 +155,6 @@ function shellWith(
     createPreset: null,
     closeCreateTask: noop,
     openPalette: noop,
-    toggleSidebar: noop,
-    sidebarHidden: false,
     openOverseer: noop,
     setProjectView: noop,
     setGlobalView: noop,
@@ -170,7 +168,7 @@ function shellWith(
   };
 }
 
-/** Owns the collapsed-lane state the same way `BoardView` does, so a click on a lane header
+/** Owns the collapsed-lane state the same way `BoardPane` does, so a click on a lane header
  * actually folds the lane in the test rather than being swallowed by a static prop. */
 function Harness({
   presets = [],

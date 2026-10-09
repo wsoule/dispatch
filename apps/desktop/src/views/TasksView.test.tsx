@@ -130,8 +130,6 @@ const shellActions = {
   createPreset: null,
   closeCreateTask: noop,
   openPalette: noop,
-  toggleSidebar: noop,
-  sidebarHidden: false,
   openOverseer: noop,
   setProjectView: noop,
   setGlobalView: noop,
