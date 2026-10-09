@@ -84,6 +84,8 @@ interface ProjectsViewProps {
   data: DispatchProjectData;
   /** Opens a container's page (its Flight Plan) or an issue's. */
   onOpenTask: (taskId: string) => void;
+  /** False drops the page header, for a host that draws its own (Tasks' Graph mode). */
+  showHeader?: boolean;
 }
 
 /**
@@ -98,6 +100,7 @@ export function ProjectsView({
   projectName,
   data,
   onOpenTask,
+  showHeader = true,
 }: ProjectsViewProps) {
   const shell = useShellActions();
   const attention = useMemo(
@@ -219,7 +222,7 @@ export function ProjectsView({
   }
 
   const crumb = [...(projectName === null ? [] : [projectName]), 'Projects'];
-  const header = <PageHeader crumb={crumb} />;
+  const header = showHeader ? <PageHeader crumb={crumb} /> : null;
 
   if (!showTree) {
     return (

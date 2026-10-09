@@ -118,6 +118,8 @@ export interface LiveViewProps {
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
   /** The peek dialog (Space). */
   onPeekTask: (taskId: string) => void;
+  /** False drops the page header, for a host that draws its own (Tasks' Graph mode). */
+  showHeader?: boolean;
 }
 
 /**
@@ -140,6 +142,7 @@ export function LiveView({
   onDispatchFailed,
   onOpenTask,
   onPeekTask,
+  showHeader = true,
 }: LiveViewProps) {
   const directory = usePeople();
   const me = directory.me;
@@ -672,7 +675,7 @@ export function LiveView({
 
   return (
     <div data-slot="live-view" className="flex h-full min-h-0 flex-col">
-      <PageHeader crumb={crumb} />
+      {showHeader && <PageHeader crumb={crumb} />}
       <LiveHeader
         totals={totals}
         spendToday={today}

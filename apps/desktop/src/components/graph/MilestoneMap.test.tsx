@@ -1,12 +1,12 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 
 import type { TaskTab } from '../../lib/appNav';
 import type { ListGroup } from '../../lib/listGrouping';
 import { taskDoc } from '../../lib/taskDoc.test-helper';
 import type { TaskBucket } from '../../lib/taskStatus';
-import { MilestoneMapView } from './MilestoneMap';
+import { MilestoneMapView, type MilestoneMapViewProps } from './MilestoneMap';
 
 function task(id: string, status = 'ready', blockedBy: string[] = []) {
   return taskDoc({
@@ -38,9 +38,16 @@ const BUCKETS: Record<string, TaskBucket> = {
   b2: 'working',
 };
 
-function mount() {
+function mount(layouts?: MilestoneMapViewProps['layouts']) {
   const opened: [string, TaskTab | undefined][] = [];
-  render(
+  return { opened, ...mountWith(opened, layouts) };
+}
+
+function mountWith(
+  opened: [string, TaskTab | undefined][],
+  layouts?: MilestoneMapViewProps['layouts']
+) {
+  return render(
     <MilestoneMapView
       groups={[
         group('m1', 'Checkout', [task('a1', 'landed'), task('a2'), task('a3')]),
@@ -50,10 +57,10 @@ function mount() {
       asksByTask={new Map([['b1', 2]])}
       projectKey="test"
       dueDateOf={(id) => (id === 'm2' ? '2026-11-03' : null)}
+      layouts={layouts}
       onOpenTask={(id, tab) => opened.push([id, tab])}
     />
   );
-  return opened;
 }
 
 function node(title: string): HTMLElement {
@@ -63,6 +70,8 @@ function node(title: string): HTMLElement {
   if (found === undefined) throw new Error(`no node ${title}`);
   return found;
 }
+
+beforeEach(() => localStorage.clear());
 
 describe('MilestoneMapView', () => {
   test('a node shows landed over total and the four urgent counts', () => {
@@ -88,7 +97,7 @@ describe('MilestoneMapView', () => {
   });
 
   test('the title drills into the flight plan; a row opens its task', () => {
-    const opened = mount();
+    const { opened } = mount();
     fireEvent.click(within(node('Search')).getByTestId('milestone-node-open'));
     fireEvent.click(
       within(node('Search')).getAllByTestId('milestone-node-task')[0]
@@ -107,5 +116,65 @@ describe('MilestoneMapView', () => {
     expect(node('Search').textContent).toContain('waits on Checkout');
     const label = document.querySelector('[data-slot="graph-edge"] text');
     expect(label?.textContent).toBe('1');
+  });
+});
+
+const LAYOUTS: MilestoneMapViewProps['layouts'] = {
+  projects: {
+    body: <div data-testid="projects-body" />,
+    actions: <span data-testid="projects-action" />,
+  },
+  branches: { body: <div data-testid="branches-body" /> },
+  live: { body: <div data-testid="live-body" /> },
+};
+
+function layoutNames(): string[] {
+  const group = screen.getByRole('group', { name: 'Graph of' });
+  return within(group)
+    .getAllByRole('button')
+    .map((b) => b.textContent ?? '');
+}
+
+describe('MilestoneMapView layouts', () => {
+  test('the toggle offers only the layouts it was given', () => {
+    mount();
+    expect(layoutNames()).toEqual(['Milestones', 'Tasks']);
+  });
+
+  test('every layout is offered, map modes in between', () => {
+    mount(LAYOUTS);
+    expect(layoutNames()).toEqual([
+      'Projects',
+      'Milestones',
+      'Branches',
+      'Tasks',
+      'Live',
+    ]);
+  });
+
+  test('a layout swaps the map, its summary and Copy for its own body and actions', () => {
+    mount(LAYOUTS);
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }));
+    expect(screen.getByTestId('projects-body')).toBeTruthy();
+    expect(screen.getByTestId('projects-action')).toBeTruthy();
+    expect(screen.queryByTestId('milestone-map-summary')).toBeNull();
+    expect(screen.queryByText('Copy as Mermaid')).toBeNull();
+    expect(screen.queryAllByTestId('milestone-node')).toHaveLength(0);
+  });
+
+  test('the choice is remembered per project and restored', () => {
+    const first = mount(LAYOUTS);
+    fireEvent.click(screen.getByRole('button', { name: 'Live' }));
+    first.unmount();
+    mount(LAYOUTS);
+    expect(screen.getByTestId('live-body')).toBeTruthy();
+  });
+
+  test('a remembered layout no longer offered falls back to Milestones', () => {
+    const first = mount(LAYOUTS);
+    fireEvent.click(screen.getByRole('button', { name: 'Branches' }));
+    first.unmount();
+    mount();
+    expect(screen.getAllByTestId('milestone-node')).toHaveLength(2);
   });
 });

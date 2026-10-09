@@ -2070,6 +2070,10 @@ function App() {
             presetContext={presetContext}
             onSelectTask={selectBoardTask}
             onNewTask={() => openCreateTask()}
+            onNewProject={() => openCreateTask({ kind: 'project' })}
+            onDispatchTask={cockpitDispatch}
+            onDispatchFailed={onCockpitDispatchFailed}
+            onPeekTask={peekTask}
             onOpenRef={openRef}
             onOpenDecision={onOpenDecision}
             onClosePage={closeTwoViewsPage}

@@ -111,7 +111,8 @@ function dataWith(
 
 function mount(
   data: DispatchProjectData,
-  dispatchTask: (taskId: string) => Promise<void> = () => Promise.resolve()
+  dispatchTask: (taskId: string) => Promise<void> = () => Promise.resolve(),
+  showHeader?: boolean
 ) {
   const calls = { opened: [] as string[], peeked: [] as string[] };
   const view = (d: DispatchProjectData) => (
@@ -124,6 +125,7 @@ function mount(
         calls.opened.push(tab === undefined ? id : `${id}:${tab}`)
       }
       onPeekTask={(id) => calls.peeked.push(id)}
+      showHeader={showHeader}
     />
   );
   const result = render(view(data));
@@ -164,6 +166,12 @@ describe('LiveView', () => {
     expect(node('t-c')?.textContent).toContain('Auto-starts when t-b finishes');
     expect(node('t-e')?.textContent).toContain('won’t auto-start');
     expect(node('l-1')?.getAttribute('data-state')).toBe('running');
+  });
+
+  test('a host drawing its own header drops the page header, bands intact', () => {
+    mount(dataWith(), undefined, false);
+    expect(document.querySelector('[data-slot=page-header]')).toBeNull();
+    expect(bands()).toEqual(['m-1', '__loose', 'm-2', 'm-3']);
   });
 
   test('the header adds every band up', () => {
