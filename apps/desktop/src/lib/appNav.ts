@@ -57,6 +57,14 @@ export type ProjectView =
   | 'task'
   | 'new-task';
 
+/** Views that act on the host machine as the person running the daemon — a
+ * shell, and a browser carrying their cookies. The daemon holds both to the
+ * operator tier, so a teammate below it is not shown doors that only 403. */
+export const HOST_VIEWS: ReadonlySet<ProjectView> = new Set([
+  'terminals',
+  'design',
+]);
+
 /** Which mode the task page shows: `auto` follows the task's state (see
  * defaultTaskPageMode); `thread` is the task's message threads; `preview` is the
  * run's live app, full page only. */

@@ -27,6 +27,7 @@ import { Markdown } from '../components/runs/Markdown';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useToasts } from '../components/shell/Toasts';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
+import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import {
@@ -426,6 +427,8 @@ interface PlansViewProps {
    * does not fight the prop on every re-render.
    */
   initialPrompt?: string;
+  /** Two views: the page sits under Tasks and leads back to it. */
+  onBack?: () => void;
 }
 
 /**
@@ -442,6 +445,7 @@ export function PlansView({
   onGoToBoard,
   onOpenMilestone,
   initialPrompt,
+  onBack,
 }: PlansViewProps) {
   const toasts = useToasts();
   const [prompt, setPrompt] = useState(initialPrompt ?? '');
@@ -593,11 +597,12 @@ export function PlansView({
   // the same daemon-unavailable state every other primary view shows instead of a live
   // composer with nothing behind it (I4).
   const crumb = projectName !== undefined ? [projectName, 'Plans'] : ['Plans'];
+  const back = onBack && <TasksBackButton onBack={onBack} />;
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={crumb} />
+        <PageHeader crumb={crumb} leading={back} />
         <div className="px-6 py-4">
           <DaemonUnavailable
             starting={data.portLoading}
@@ -638,6 +643,7 @@ export function PlansView({
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         crumb={crumb}
+        leading={back}
         actions={
           <>
             {data.planRecord?.model !== undefined && (

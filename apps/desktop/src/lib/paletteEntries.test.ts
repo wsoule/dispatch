@@ -226,6 +226,7 @@ describe('beta and Two views rows', () => {
       ['Go to Overseer', '⌘1'],
       ['Go to Tasks', '⌘2'],
       ['Go to Settings', '⌘,'],
+      ['Open Plans', undefined],
       ['Open Notes', undefined],
       ['Open Git', undefined],
       ['Open Files', undefined],
@@ -239,6 +240,7 @@ describe('beta and Two views rows', () => {
       'global:overseer',
       'project:board',
       'global:settings',
+      'project:plans',
       'project:brain-dump',
       'project:branches',
       'project:files',
@@ -246,6 +248,37 @@ describe('beta and Two views rows', () => {
       'project:design',
       'project:impact',
     ]);
+  });
+});
+
+describe('host views below the operator tier', () => {
+  test('Two views leaves out Terminals and Design', () => {
+    const { ctx } = context({ twoViews: true, hideHostViews: true });
+    const ids = buildPaletteEntries(ctx).map((e) => e.id);
+    expect(ids).toContain('go-files');
+    expect(ids).not.toContain('go-terminals');
+    expect(ids).not.toContain('go-design');
+  });
+
+  test('Classic leaves them out too, keeping the other rows ⌘N', () => {
+    const { ctx } = context({
+      hideHostViews: true,
+      views: [
+        { id: 'board', label: 'Tasks' },
+        { id: 'terminals', label: 'Terminals' },
+        { id: 'files', label: 'Files' },
+      ],
+    });
+    const nav = buildPaletteEntries(ctx).filter((e) => e.kind === 'go to');
+    expect(nav.map((e) => e.id)).not.toContain('go-terminals');
+    expect(nav.find((e) => e.id === 'go-files')?.shortcut).toBe('⌘3');
+  });
+
+  test('the operator sees both', () => {
+    const { ctx } = context({ twoViews: true });
+    const ids = buildPaletteEntries(ctx).map((e) => e.id);
+    expect(ids).toContain('go-terminals');
+    expect(ids).toContain('go-design');
   });
 });
 

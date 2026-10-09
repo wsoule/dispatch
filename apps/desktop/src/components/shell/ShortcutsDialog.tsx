@@ -107,9 +107,9 @@ const LIST_GROUPS: ShortcutGroup[] = [
   },
 ];
 
-// Two views has no sidebar and only two views, so its shell keys are fewer:
-// ⌘1 / ⌘2 and the `g` chords that land somewhere of their own (App's
-// twoViewsCommand, then lib/twoViews.ts for `g m`).
+// Two views has no sidebar and only two views, so its shell keys land on
+// Overseer, a Tasks preset or a page. Mirrors `twoViewsKeyAction` (lib/twoViews.ts);
+// `g h` and `g c` are unlisted aliases of `g o`, as `g a` is.
 const TWO_VIEWS_SHELL_GROUPS: ShortcutGroup[] = [
   {
     heading: 'Shell',
@@ -126,9 +126,13 @@ const TWO_VIEWS_SHELL_GROUPS: ShortcutGroup[] = [
     rows: [
       { label: 'Overseer', keys: ['G', 'O'], chord: true },
       { label: 'Tasks', keys: ['G', 'T'], chord: true },
+      { label: 'Needs you', keys: ['G', 'I'], chord: true },
+      { label: 'Moving', keys: ['G', 'F'], chord: true },
+      { label: 'Review', keys: ['G', 'R'], chord: true },
       { label: 'Threads', keys: ['G', 'M'], chord: true },
       { label: 'Settings', keys: ['G', 'S'], chord: true },
       { label: 'Overseer / Tasks', keys: ['⌘1', '⌘2'] },
+      { label: 'Presets, in chip order', keys: ['⌘3–9'] },
       { label: 'Back / forward', keys: ['⌘[', '⌘]'] },
     ],
   },

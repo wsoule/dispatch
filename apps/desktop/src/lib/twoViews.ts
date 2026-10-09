@@ -8,7 +8,8 @@ import type {
   TaskTab,
 } from './appNav';
 import { initialNavState, navReducer } from './appNav';
-import type { TasksPreset } from './tasksPresets';
+import type { GlobalKeyCommand } from './keyboard';
+import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 
 // Two views' navigation: App dispatches every legacy NavAction here as well as to
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
@@ -22,7 +23,13 @@ type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs' | 'developer';
 /** Classic project views Two views shows as a page under Tasks, led by "‹ tasks". */
 export type HostedView = Extract<
   ProjectView,
-  'branches' | 'files' | 'terminals' | 'design' | 'brain-dump' | 'threads'
+  | 'branches'
+  | 'files'
+  | 'terminals'
+  | 'design'
+  | 'brain-dump'
+  | 'threads'
+  | 'plans'
 >;
 
 /** What the Tasks view shows beside or instead of its list. */
@@ -127,12 +134,12 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
     case 'design':
     case 'brain-dump':
     case 'threads':
+    // The planner's page: plan history, an editable proposal, "Create & send
+    // agents…". Overseer's create_plan card covers none of the three.
+    case 'plans':
       return { kind: 'page', page: { kind: 'view', view } };
     case 'impact':
       return { kind: 'page', page: { kind: 'impact', subject: null } };
-    // Planning is a conversation with the agent, ending in one create_plan card.
-    case 'plans':
-      return { kind: 'overseer' };
     // These name a record; without its id there is nowhere to go.
     case 'task':
     case 'pr':
@@ -166,6 +173,51 @@ export function globalViewDestination(
       const unhandled: never = view;
       return unhandled;
     }
+  }
+}
+
+/** What a global key does in Two views: a navigation, `'swallow'` for a key
+ * with nothing to do here, or `null` to fall through to the shared handling. */
+export function twoViewsKeyAction(
+  command: GlobalKeyCommand
+): NavAction | TwoViewsAction | 'swallow' | null {
+  switch (command) {
+    case 'goto-1':
+    case 'goto-overseer':
+    case 'goto-home':
+    case 'goto-control-room':
+      return { type: 'tv/showOverseer' };
+    case 'goto-2':
+    case 'goto-tasks':
+      return { type: 'tv/showTasks' };
+    case 'goto-inbox':
+      return { type: 'tv/showTasks', preset: 'needs-you' };
+    case 'goto-live':
+      return { type: 'tv/showTasks', preset: 'moving' };
+    case 'goto-projects':
+      return { type: 'tv/showTasks', preset: 'review' };
+    case 'goto-threads':
+      return { type: 'setProjectView', view: 'threads' };
+    case 'goto-settings':
+      return { type: 'tv/openSettings' };
+    // ⌘3–⌘9 walk the Tasks presets after All, in chip order.
+    case 'goto-3':
+    case 'goto-4':
+    case 'goto-5':
+    case 'goto-6':
+    case 'goto-7':
+    case 'goto-8':
+    case 'goto-9': {
+      const preset = TASKS_PRESETS[Number(command.slice(5)) - 2];
+      return preset === undefined
+        ? 'swallow'
+        : { type: 'tv/showTasks', preset: preset.id };
+    }
+    // There is no sidebar.
+    case 'toggle-sidebar':
+      return 'swallow';
+    default:
+      return null;
   }
 }
 

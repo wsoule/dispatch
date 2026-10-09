@@ -6,7 +6,7 @@
 import type { DocHit } from '@dispatch/client';
 import type { ReactNode } from 'react';
 
-import type { GlobalView, ProjectView } from './appNav';
+import { type GlobalView, HOST_VIEWS, type ProjectView } from './appNav';
 import type { PaletteItem } from './paletteMatch';
 
 export type PaletteSection =
@@ -51,6 +51,9 @@ export interface PaletteEntriesContext {
   beta?: { id: string; label: string; run: () => void }[];
   /** Two views: navigation is Overseer, Tasks and Settings, and there is no sidebar. */
   twoViews?: boolean;
+  /** A teammate below the operator tier: Terminals and Design are left out,
+   * as the Classic rail leaves them out. */
+  hideHostViews?: boolean;
   actions: {
     openCreateTask: () => void;
     openQuickAddTask: () => void;
@@ -76,6 +79,7 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; shortcut?: string }[] = [
 
 // Two views' pages under Tasks with no other way in from the top bar.
 const TWO_VIEWS_PAGES: PaletteView[] = [
+  { id: 'plans', label: 'Plans' },
   { id: 'brain-dump', label: 'Notes' },
   { id: 'branches', label: 'Git' },
   { id: 'files', label: 'Files' },
@@ -199,6 +203,7 @@ export function buildPaletteEntries(
     );
     if (ctx.hasProject) {
       for (const page of TWO_VIEWS_PAGES) {
+        if (ctx.hideHostViews === true && HOST_VIEWS.has(page.id)) continue;
         entries.push({
           id: `go-${page.id}`,
           label: `Open ${page.label}`,
@@ -210,6 +215,7 @@ export function buildPaletteEntries(
     }
   } else if (ctx.hasProject) {
     ctx.views.forEach((view, index) => {
+      if (ctx.hideHostViews === true && HOST_VIEWS.has(view.id)) return;
       entries.push({
         id: `go-${view.id}`,
         label: `Go to ${view.label}`,

@@ -93,6 +93,11 @@ export interface FlightPlanProps {
   showBranches?: boolean;
   /** Take keyboard focus once the plan is on screen. */
   focusOnMount?: boolean;
+  /** A one-shot ask to open Send agents on this container, as Plans' "Create &
+   * send agents…" leaves it; `nonce` tells two asks apart. */
+  sendAgentsRequest?: { nonce: number } | null;
+  /** Called once the ask above opened the dialog, so it is not replayed. */
+  onSendAgentsServed?: (nonce: number) => void;
   className?: string;
 }
 
@@ -159,10 +164,18 @@ export function FlightPlan({
   openIn = 'pane',
   showBranches = true,
   focusOnMount = false,
+  sendAgentsRequest = null,
+  onSendAgentsServed,
   className,
 }: FlightPlanProps) {
   const directory = usePeople();
   const [dialog, setDialog] = useState<FanoutDialogState | null>(null);
+  const sendAgentsNonce = sendAgentsRequest?.nonce ?? null;
+  useEffect(() => {
+    if (sendAgentsNonce === null) return;
+    setDialog({ epicId: containerId, mode: 'start' });
+    onSendAgentsServed?.(sendAgentsNonce);
+  }, [sendAgentsNonce, containerId, onSendAgentsServed]);
 
   const model = useMemo(
     () =>

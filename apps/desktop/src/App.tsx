@@ -105,11 +105,12 @@ import {
 } from './lib/actionFeedback';
 import { orbLabel, orbState, overseerTurnLive } from './lib/agentPresence';
 import { overseerOf } from './lib/agentRoster';
-import type {
-  GlobalView,
-  ProjectView,
-  SettingsPage,
-  TaskTab,
+import {
+  type GlobalView,
+  HOST_VIEWS,
+  type ProjectView,
+  type SettingsPage,
+  type TaskTab,
 } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
 import { twoViewsAllowed, useBetaFlag } from './lib/betaFeatures';
@@ -158,6 +159,7 @@ import {
   appNavReducer,
   type HostedView,
   initialAppNavState,
+  twoViewsKeyAction,
 } from './lib/twoViews';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
@@ -982,31 +984,10 @@ function App() {
 
   // Two views' own meaning for a global key; true when it handled the command.
   const twoViewsCommand = (command: GlobalKeyCommand): boolean => {
-    switch (command) {
-      case 'goto-1':
-      case 'goto-overseer':
-        dispatchNav({ type: 'tv/showOverseer' });
-        return true;
-      case 'goto-2':
-      case 'goto-tasks':
-        dispatchNav({ type: 'tv/showTasks' });
-        return true;
-      case 'goto-settings':
-        dispatchNav({ type: 'tv/openSettings' });
-        return true;
-      // There is no sidebar and no third view.
-      case 'toggle-sidebar':
-      case 'goto-3':
-      case 'goto-4':
-      case 'goto-5':
-      case 'goto-6':
-      case 'goto-7':
-      case 'goto-8':
-      case 'goto-9':
-        return true;
-      default:
-        return false;
-    }
+    const action = twoViewsKeyAction(command);
+    if (action === null) return false;
+    if (action !== 'swallow') dispatchNav(action);
+    return true;
   };
 
   useGlobalKeyboard({
@@ -1248,6 +1229,16 @@ function App() {
 
   // What a `<ContainerFlightPlanSection>` draws a plan with: the project's data and the
   // Cockpit's stay-in-place dispatch.
+  // Two views' "Create & send agents…": the milestone's Plan tab opens Send agents once.
+  const [sendAgents, setSendAgents] = useState<{
+    epicId: string;
+    nonce: number;
+  } | null>(null);
+  const onSendAgentsServed = useCallback(
+    (nonce: number) =>
+      setSendAgents((prev) => (prev?.nonce === nonce ? null : prev)),
+    []
+  );
   const flightPlanHost = useMemo<FlightPlanHost>(
     () => ({
       data,
@@ -1255,8 +1246,18 @@ function App() {
       onDispatchFailed: onCockpitDispatchFailed,
       onOpenTask: openTaskView,
       onPeekTask: peekTask,
+      sendAgents,
+      onSendAgentsServed,
     }),
-    [data, cockpitDispatch, onCockpitDispatchFailed, openTaskView, peekTask]
+    [
+      data,
+      cockpitDispatch,
+      onCockpitDispatchFailed,
+      openTaskView,
+      peekTask,
+      sendAgents,
+      onSendAgentsServed,
+    ]
   );
 
   const openOverseer = useCallback(
@@ -1353,6 +1354,9 @@ function App() {
     data.client,
     twoViews && data.messageAccess.canMessage
   );
+  // A teammate below the operator tier never gets Terminals or Design: the
+  // daemon would 403 both. Classic's rail, the palette and Two views' pages agree.
+  const hideHostViews = isTeamLocalPage() && data.myTier !== 'operator';
   const paletteEntries = useMemo(
     () => [
       ...buildPaletteEntries({
@@ -1366,6 +1370,7 @@ function App() {
           ? twoViewsTaskId
           : (navState.activeTaskId ?? navState.peekTaskId),
         twoViews,
+        hideHostViews,
         beta: twoViewsAllowed({
           teamLocal: isTeamLocalPage(),
           tier: data.myTier,
@@ -1425,6 +1430,7 @@ function App() {
       openSavedView,
       copyTaskLink,
       twoViews,
+      hideHostViews,
       twoViewsOn,
       setTwoViewsOn,
       data.myTier,
@@ -1470,6 +1476,17 @@ function App() {
   const showFirstRun =
     navState.section === 'project' &&
     navState.projectView === 'cockpit' &&
+    data.tasksReady &&
+    data.tasksIncludingArchived.length === 0;
+
+  // Two views' first run: an empty project's Overseer opens on the same prompt
+  // box until it is set aside for a conversation, for this project only.
+  const [firstRunSetAsideFor, setFirstRunSetAsideFor] = useState<string | null>(
+    null
+  );
+  const twoViewsFirstRun =
+    activeProject !== null &&
+    firstRunSetAsideFor !== activeProject.path &&
     data.tasksReady &&
     data.tasksIncludingArchived.length === 0;
 
@@ -1566,6 +1583,20 @@ function App() {
         </div>
       );
     }
+    if (hideHostViews && HOST_VIEWS.has(view)) {
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="px-4 pt-2">
+            <TasksBackButton onBack={closeTwoViewsPage} />
+          </div>
+          <EmptyState
+            className="flex-1"
+            heading="Only the operator can open this"
+            description="Terminals and Design act on the host machine as the person running Dispatch."
+          />
+        </div>
+      );
+    }
     switch (view) {
       case 'branches':
         return (
@@ -1607,6 +1638,22 @@ function App() {
             data={data}
             onOpenTask={(taskId) => dispatchNav({ type: 'openPeek', taskId })}
             onPlanText={openOverseer}
+            onBack={closeTwoViewsPage}
+          />
+        );
+      case 'plans':
+        return (
+          <PlansView
+            projectName={activeProject?.name}
+            data={data}
+            onGoToBoard={() => dispatchNav({ type: 'tv/showTasks' })}
+            // A milestone opens on its Plan tab, where Send agents lives.
+            onOpenMilestone={(epicId, opts) => {
+              if (opts?.dispatch === true) {
+                setSendAgents({ epicId, nonce: Date.now() });
+              }
+              openTaskView(epicId, 'plan');
+            }}
             onBack={closeTwoViewsPage}
           />
         );
@@ -2100,6 +2147,28 @@ function App() {
             revoked={overseer.revoked}
             onShowAsks={() => dispatchNav({ type: 'tv/showTasks' })}
             onOpenDoor={openDoor}
+            onOpenPlans={
+              activeProject === null
+                ? undefined
+                : () => dispatchNav({ type: 'setProjectView', view: 'plans' })
+            }
+            firstRun={
+              twoViewsFirstRun ? (
+                <FirstRunView
+                  projectName={activeProject?.name ?? null}
+                  // The draft opens under Tasks: Two views has no drafts tray.
+                  onStartDraft={async (prompt) => {
+                    const draft = await rawData.handleStartDraft(prompt);
+                    dispatchNav({ type: 'openDraft', draftId: draft.id });
+                    return draft;
+                  }}
+                  onBrowseBoard={() => dispatchNav({ type: 'tv/showTasks' })}
+                  onTalkToAgent={() =>
+                    setFirstRunSetAsideFor(activeProject?.path ?? null)
+                  }
+                />
+              ) : undefined
+            }
             onOpenConnectedAgents={() =>
               dispatchNav({
                 type: 'tv/openSettings',
@@ -2226,9 +2295,7 @@ function App() {
                           >
                             <Sidebar
                               hasActiveProject={activeProject !== null}
-                              hideHostViews={
-                                isTeamLocalPage() && data.myTier !== 'operator'
-                              }
+                              hideHostViews={hideHostViews}
                               section={navState.section}
                               projectView={navState.projectView}
                               globalView={navState.globalView}

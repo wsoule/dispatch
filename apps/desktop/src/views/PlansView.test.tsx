@@ -235,3 +235,23 @@ test('a history row with an epic links → milestone without opening the entry',
   fireEvent.click(rows[1]);
   expect(log.planIds).toEqual(['p-8']);
 });
+
+test('under Tasks the page leads back with ‹ tasks; Classic has no back', () => {
+  const log = newLog();
+  const { unmount } = renderPlans(dataWith(log), log);
+  expect(screen.queryByTestId('tasks-back')).toBeNull();
+  unmount();
+  let back = 0;
+  render(
+    <ToastProvider>
+      <PlansView
+        data={dataWith(log)}
+        onGoToBoard={() => {}}
+        onOpenMilestone={() => {}}
+        onBack={() => (back += 1)}
+      />
+    </ToastProvider>
+  );
+  fireEvent.click(screen.getByTestId('tasks-back'));
+  expect(back).toBe(1);
+});

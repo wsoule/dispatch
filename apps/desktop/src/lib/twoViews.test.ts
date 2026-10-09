@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { GlobalView, NavAction, ProjectView } from './appNav';
+import { resolveChordKey } from './keyboard';
 import {
   appNavReducer,
   globalViewDestination,
@@ -9,6 +10,7 @@ import {
   projectViewDestination,
   type TwoViewsAction,
   type TwoViewsDestination,
+  twoViewsKeyAction,
   twoViewsReducer,
   type TwoViewsState,
 } from './twoViews';
@@ -101,8 +103,11 @@ describe('projectViewDestination', () => {
     });
   });
 
-  test('plans fold into Overseer', () => {
-    expect(projectViewDestination('plans')).toEqual({ kind: 'overseer' });
+  test('plans is a page under Tasks: history, the proposal, send agents', () => {
+    expect(projectViewDestination('plans')).toEqual({
+      kind: 'page',
+      page: { kind: 'view', view: 'plans' },
+    });
   });
 
   test.each(['task', 'pr', 'draft', 'new-task'] as const)(
@@ -465,5 +470,66 @@ describe('opening an address', () => {
     expect(run([{ type: 'tv/openAddress', address: 'run:r-1' }])).toBe(
       initialTwoViewsState
     );
+  });
+});
+
+describe('twoViewsKeyAction', () => {
+  test.each([
+    ['goto-overseer', { type: 'tv/showOverseer' }],
+    ['goto-home', { type: 'tv/showOverseer' }],
+    ['goto-control-room', { type: 'tv/showOverseer' }],
+    ['goto-tasks', { type: 'tv/showTasks' }],
+    ['goto-inbox', { type: 'tv/showTasks', preset: 'needs-you' }],
+    ['goto-live', { type: 'tv/showTasks', preset: 'moving' }],
+    ['goto-projects', { type: 'tv/showTasks', preset: 'review' }],
+    ['goto-threads', { type: 'setProjectView', view: 'threads' }],
+    ['goto-settings', { type: 'tv/openSettings' }],
+  ] as const)('%p', (command, action) => {
+    expect(twoViewsKeyAction(command)).toEqual(action);
+  });
+
+  test('every g chord lands somewhere of its own', () => {
+    const ctx = {
+      isTyping: false,
+      modalOpen: false,
+      pendingPrefix: 'g' as const,
+    };
+    for (const letter of ['h', 's', 'i', 'm', 't', 'r', 'f', 'c', 'a', 'o']) {
+      const command = resolveChordKey(
+        { key: letter, metaKey: false, ctrlKey: false },
+        ctx
+      );
+      expect(command).not.toBeNull();
+      if (command === null) continue;
+      const action = twoViewsKeyAction(command);
+      expect(action).not.toBeNull();
+      expect(action).not.toBe('swallow');
+    }
+  });
+
+  test('⌘1 and ⌘2 are the two views; ⌘3–⌘9 walk the presets after All', () => {
+    expect(twoViewsKeyAction('goto-1')).toEqual({ type: 'tv/showOverseer' });
+    expect(twoViewsKeyAction('goto-2')).toEqual({ type: 'tv/showTasks' });
+    const presets = (['3', '4', '5', '6', '7', '8', '9'] as const).map((n) => {
+      const action = twoViewsKeyAction(`goto-${n}`);
+      return typeof action === 'object' && action?.type === 'tv/showTasks'
+        ? action.preset
+        : action;
+    });
+    expect(presets).toEqual([
+      'needs-you',
+      'failed',
+      'moving',
+      'review',
+      'ready',
+      'landing',
+      'landed',
+    ]);
+  });
+
+  test('the sidebar key does nothing, and other keys fall through', () => {
+    expect(twoViewsKeyAction('toggle-sidebar')).toBe('swallow');
+    expect(twoViewsKeyAction('new-task')).toBeNull();
+    expect(twoViewsKeyAction('open-palette')).toBeNull();
   });
 });

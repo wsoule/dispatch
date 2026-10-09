@@ -16,6 +16,8 @@ export interface FirstRunViewProps {
    *  matters: someone who opened the app to look around, not to describe
    *  work, must not be stuck behind a textarea. */
   onBrowseBoard: () => void;
+  /** Two views: set the prompt aside for a conversation with the agent. */
+  onTalkToAgent?: () => void;
 }
 
 /**
@@ -35,6 +37,7 @@ export function FirstRunView({
   projectName,
   onStartDraft,
   onBrowseBoard,
+  onTalkToAgent,
 }: FirstRunViewProps) {
   const [prompt, setPrompt] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -108,9 +111,16 @@ export function FirstRunView({
           <span className="text-text-secondary text-xs">
             <Kbd>Enter</Kbd> to draft
           </span>
-          <Button variant="ghost" className="ml-auto" onClick={onBrowseBoard}>
-            Browse the board
-          </Button>
+          <div className="ml-auto flex items-center gap-1">
+            {onTalkToAgent !== undefined && (
+              <Button variant="ghost" onClick={onTalkToAgent}>
+                Talk to the agent
+              </Button>
+            )}
+            <Button variant="ghost" onClick={onBrowseBoard}>
+              Browse the board
+            </Button>
+          </div>
         </div>
       </div>
     </div>
