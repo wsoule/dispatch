@@ -1,6 +1,8 @@
 ---
 import InstallCommand from './InstallCommand.astro';
 
+const demo = 'https://dispatch-demo-production-aed7.up.railway.app';
+
 // Real screenshots of the desktop app on the demo project, one per tab.
 const shots = [
   ['tasks', 'Tasks', 'Every task grouped by milestone, with what needs you pinned on top.'],
@@ -16,7 +18,8 @@ const shots = [
     <div class="section-head">
       <h2 id="demo-title">The real app. <em>Nothing here is a mockup.</em></h2>
       <p>
-        Screenshots of Dispatch on a demo project, the same build you download. Pick a view.
+        Screenshots of Dispatch on a demo project, the same build you download. Pick a view, or{' '}
+        <a href={demo} target="_blank" rel="noopener">try it live in your browser</a>.
       </p>
     </div>
     <div class="tour" data-tour>
@@ -78,6 +81,10 @@ const shots = [
 
 
 <style>
+  .section-head a {
+    color: var(--ink);
+    text-underline-offset: 3px;
+  }
   .tour {
     margin: 3rem 0 0;
   }
