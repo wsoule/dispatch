@@ -1,12 +1,14 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { isCompletedStatus } from '@dispatch-foo/core/browser';
 
+import { personOf } from './cockpit';
 import { activeStatusModel } from './statusModel';
 import type { TaskBucket } from './taskStatus';
 
 /** The Tasks view's presets: one question each about the work. */
 export type TasksPreset =
   | 'all'
+  | 'mine'
   | 'needs-you'
   | 'failed'
   | 'moving'
@@ -18,6 +20,7 @@ export type TasksPreset =
 
 export const TASKS_PRESETS: readonly { id: TasksPreset; label: string }[] = [
   { id: 'all', label: 'All' },
+  { id: 'mine', label: 'Mine' },
   { id: 'needs-you', label: 'Needs you' },
   { id: 'failed', label: 'Failed' },
   { id: 'moving', label: 'Moving' },
@@ -59,6 +62,8 @@ function bucketForPreset(preset: TasksPreset): TaskBucket | null {
 export interface PresetContext {
   bucketOf: (doc: TaskListItem) => TaskBucket | null;
   starred: ReadonlySet<string>;
+  /** This window's own ref, for Mine; null until the daemon says (Mine then matches none). */
+  me?: string | null;
 }
 
 /** A list predicate for a preset, or `undefined` for All. */
@@ -69,6 +74,11 @@ export function presetMatcher(
   switch (preset) {
     case 'all':
       return undefined;
+    case 'mine': {
+      // The Cockpit's Mine: work assigned to me, the legacy bare `human` included.
+      const me = ctx.me ?? null;
+      return (doc) => me !== null && personOf(doc.meta.assignee, me) === me;
+    }
     case 'starred':
       return (doc) => ctx.starred.has(doc.meta.id);
     case 'landed':
