@@ -13,7 +13,7 @@ import {
 import type { TasksViewMode } from './tasksViewMode';
 import type { TasksMode } from './twoViews';
 
-// Two views keeps its own copies so Classic's board-by-status default never leaks in.
+// Its own keys, so the retired board's by-status default never leaks in.
 const DISPLAY_KEY = 'dispatch:two-views-tasks-display-v1';
 const FILTERS_KEY = 'dispatch:two-views-tasks-filters-v1';
 

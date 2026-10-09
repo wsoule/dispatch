@@ -587,8 +587,8 @@ interface OverseerChatProps {
 
 /**
  * The overseer conversation itself — transcript, composer, and the approve/deny
- * confirm cards — extracted from OverseerView so the LiveRail's Overseer tab and
- * the full page render the one `useOverseerSession` the App mounts. Status
+ * confirm cards — so every surface that shows it renders the one
+ * `useOverseerSession` the App mounts. Status
  * questions are answered directly; anything mutating shows up as a confirm
  * card in the transcript and runs only once approved there.
  */
@@ -981,7 +981,7 @@ export function OverseerChat({
                 : compact
                   ? 'Actions wait for your approval.'
                   : 'Ask a follow-up. Actions always wait for your approval.'}
-            {/* The picker below names the model; the classic rail has none. */}
+            {/* A durable conversation's picker names the model; otherwise it is named here. */}
             {!durable && overseer.record?.model !== undefined && (
               <> · {modelLabel(overseer.record.model)}</>
             )}

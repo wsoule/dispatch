@@ -31,7 +31,7 @@ const PICK_POLL_MS = 300;
 
 interface DesignViewProps {
   data: DispatchProjectData;
-  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  /** Starts the header with "‹ tasks", back to the Tasks list. */
   onBack?: () => void;
 }
 

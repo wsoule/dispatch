@@ -32,7 +32,7 @@ export type TasksMode = 'list' | 'board' | 'graph';
 /** Settings' own pages plus the three global views that fold into it. */
 type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs' | 'developer';
 
-/** Classic project views Two views shows as a page under Tasks, led by "‹ tasks". */
+/** Project views shown as a page under Tasks, led by "‹ tasks". */
 export type HostedView = Extract<
   ProjectView,
   | 'branches'
@@ -124,7 +124,7 @@ export const initialTwoViewsState: TwoViewsState = {
   historyIndex: 0,
 };
 
-/** Where a classic project view lives in Two views. */
+/** Where a project view lives: Overseer, Tasks, or a page under Tasks. */
 export function projectViewDestination(view: ProjectView): TwoViewsDestination {
   switch (view) {
     case 'cockpit':
@@ -165,7 +165,7 @@ export function projectViewDestination(view: ProjectView): TwoViewsDestination {
   }
 }
 
-/** Where a classic global view lives in Two views. */
+/** Where a global view lives: Overseer, or a Settings page. */
 export function globalViewDestination(
   view: GlobalView,
   page?: SettingsPage

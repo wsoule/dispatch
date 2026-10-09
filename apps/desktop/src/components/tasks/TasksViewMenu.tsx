@@ -35,7 +35,7 @@ export interface TasksViewMenuProps {
 
 /**
  * The Tasks header's `view:` pill: the presets (All, Mine, Needs you…), the starred saved
- * views (Classic's sidebar Favorites), every saved view, then Save view…, Update when the
+ * views, every saved view, then Save view…, Update when the
  * open view has drifted, and Rename… / Star / Delete / Close for it. Picking a saved view
  * only selects it; the page applies it, as it does the palette's Open view.
  */

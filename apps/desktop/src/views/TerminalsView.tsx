@@ -40,7 +40,7 @@ interface TerminalsViewProps {
   data: DispatchProjectData;
   /** Pre-selects a run's worktree when the view is opened from a run. */
   runId?: string | null;
-  /** Two views: starts the header with "‹ tasks"; Classic leaves it out. */
+  /** Starts the header with "‹ tasks", back to the Tasks list. */
   onBack?: () => void;
 }
 

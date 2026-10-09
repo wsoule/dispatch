@@ -183,7 +183,7 @@ export interface TasksViewProps {
 
 /**
  * Tasks: the strip, every ask pinned on top, the work by milestone, and its pages. The
- * header carries Classic's board controls: saved and starred views, the Filter menu (AI
+ * header carries the board controls: saved and starred views, the Filter menu (AI
  * filter included), the Display popover, group by person and List | Board | Graph. The
  * preset and the filter clauses narrow every layout; Display shapes the list and board.
  */
