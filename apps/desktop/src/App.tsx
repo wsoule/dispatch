@@ -159,6 +159,7 @@ import {
   appNavReducer,
   type HostedView,
   initialAppNavState,
+  twoViewsKeyAction,
 } from './lib/twoViews';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
@@ -983,31 +984,10 @@ function App() {
 
   // Two views' own meaning for a global key; true when it handled the command.
   const twoViewsCommand = (command: GlobalKeyCommand): boolean => {
-    switch (command) {
-      case 'goto-1':
-      case 'goto-overseer':
-        dispatchNav({ type: 'tv/showOverseer' });
-        return true;
-      case 'goto-2':
-      case 'goto-tasks':
-        dispatchNav({ type: 'tv/showTasks' });
-        return true;
-      case 'goto-settings':
-        dispatchNav({ type: 'tv/openSettings' });
-        return true;
-      // There is no sidebar and no third view.
-      case 'toggle-sidebar':
-      case 'goto-3':
-      case 'goto-4':
-      case 'goto-5':
-      case 'goto-6':
-      case 'goto-7':
-      case 'goto-8':
-      case 'goto-9':
-        return true;
-      default:
-        return false;
-    }
+    const action = twoViewsKeyAction(command);
+    if (action === null) return false;
+    if (action !== 'swallow') dispatchNav(action);
+    return true;
   };
 
   useGlobalKeyboard({

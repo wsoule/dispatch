@@ -8,7 +8,8 @@ import type {
   TaskTab,
 } from './appNav';
 import { initialNavState, navReducer } from './appNav';
-import type { TasksPreset } from './tasksPresets';
+import type { GlobalKeyCommand } from './keyboard';
+import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 
 // Two views' navigation: App dispatches every legacy NavAction here as well as to
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
@@ -166,6 +167,51 @@ export function globalViewDestination(
       const unhandled: never = view;
       return unhandled;
     }
+  }
+}
+
+/** What a global key does in Two views: a navigation, `'swallow'` for a key
+ * with nothing to do here, or `null` to fall through to the shared handling. */
+export function twoViewsKeyAction(
+  command: GlobalKeyCommand
+): NavAction | TwoViewsAction | 'swallow' | null {
+  switch (command) {
+    case 'goto-1':
+    case 'goto-overseer':
+    case 'goto-home':
+    case 'goto-control-room':
+      return { type: 'tv/showOverseer' };
+    case 'goto-2':
+    case 'goto-tasks':
+      return { type: 'tv/showTasks' };
+    case 'goto-inbox':
+      return { type: 'tv/showTasks', preset: 'needs-you' };
+    case 'goto-live':
+      return { type: 'tv/showTasks', preset: 'moving' };
+    case 'goto-projects':
+      return { type: 'tv/showTasks', preset: 'review' };
+    case 'goto-threads':
+      return { type: 'setProjectView', view: 'threads' };
+    case 'goto-settings':
+      return { type: 'tv/openSettings' };
+    // ⌘3–⌘9 walk the Tasks presets after All, in chip order.
+    case 'goto-3':
+    case 'goto-4':
+    case 'goto-5':
+    case 'goto-6':
+    case 'goto-7':
+    case 'goto-8':
+    case 'goto-9': {
+      const preset = TASKS_PRESETS[Number(command.slice(5)) - 2];
+      return preset === undefined
+        ? 'swallow'
+        : { type: 'tv/showTasks', preset: preset.id };
+    }
+    // There is no sidebar.
+    case 'toggle-sidebar':
+      return 'swallow';
+    default:
+      return null;
   }
 }
 
