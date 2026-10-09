@@ -54,6 +54,11 @@ interface ProjectSwitcherProps {
  * colour, the name, a tiny chevron. Its menu is where Settings lives now that it has left
  * the rail, alongside adding a project and switching to another.
  */
+/** A project path with the home folder written as `~`. */
+export function shortPath(path: string): string {
+  return path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');
+}
+
 export function ProjectSwitcher({
   projectName,
   projectPath,
@@ -155,9 +160,16 @@ export function ProjectSwitcher({
           </>
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled className="text-muted-foreground">
+        <DropdownMenuItem
+          disabled
+          className="text-muted-foreground"
+          title={projectPath}
+        >
           <FolderGit2 />
-          <span className="min-w-0 flex-1 truncate">{projectPath}</span>
+          {/* Trimmed from the start, so the project's own folder stays visible. */}
+          <span className="min-w-0 flex-1 truncate [direction:rtl]">
+            <span dir="ltr">{shortPath(projectPath)}</span>
+          </span>
         </DropdownMenuItem>
         {teamSession !== undefined && (
           <>

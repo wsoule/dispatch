@@ -2668,6 +2668,7 @@ function App() {
                       />
 
                       <ShortcutsDialog
+                        twoViews={twoViews}
                         open={navState.shortcutsOpen}
                         onOpenChange={(open) => {
                           if (!open) dispatchNav({ type: 'closeShortcuts' });

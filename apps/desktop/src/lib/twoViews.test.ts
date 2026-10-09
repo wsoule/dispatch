@@ -413,6 +413,16 @@ describe('the Tasks preset', () => {
     expect(state.tasksPage).toMatchObject({ kind: 'task', taskId: 't-1' });
   });
 
+  test('pressing Tasks while on a page under it goes back to the list', () => {
+    const state = run([
+      { type: 'tv/showTasks' },
+      { type: 'setProjectView', view: 'docs' },
+      { type: 'tv/showTasks' },
+    ]);
+    expect(state.mainView).toBe('tasks');
+    expect(state.tasksPage).toEqual({ kind: 'list' });
+  });
+
   test('clearing the filter keeps everything else', () => {
     const state = run([
       { type: 'tv/showTasks', preset: 'moving' },
