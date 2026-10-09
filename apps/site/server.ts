@@ -13,6 +13,7 @@ import { fileFor } from './serverPaths';
 const PORT = Number(process.env.PORT ?? 3000);
 const ROOT = fileURLToPath(new URL('./dist/', import.meta.url));
 const INDEX = resolve(ROOT, 'index.html');
+const NOT_FOUND = resolve(ROOT, '404.html');
 
 Bun.serve({
   port: PORT,
@@ -29,12 +30,16 @@ Bun.serve({
       });
     }
 
-    // Everything that is not a real file falls back to index.html, so the site cannot 404 on a
-    // path someone shared with a trailing slash or a stale link.
-    return new Response(Bun.file(INDEX), {
-      status: 404,
-      headers: { 'content-type': 'text/html' },
-    });
+    // Anything that is not a real file gets the 404 page, which links home; a build without one
+    // falls back to index.html.
+    const notFound = Bun.file(NOT_FOUND);
+    return new Response(
+      (await notFound.exists()) ? notFound : Bun.file(INDEX),
+      {
+        status: 404,
+        headers: { 'content-type': 'text/html' },
+      }
+    );
   },
 });
 

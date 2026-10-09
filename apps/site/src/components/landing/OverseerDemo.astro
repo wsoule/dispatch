@@ -7,9 +7,10 @@
 ---
 
 <figure class="ow" data-ov aria-label="The Dispatch Overseer starting a new conversation when the subject changes">
-  <div class="chrome" aria-hidden="true">
-    <span class="lights"><i></i><i></i><i></i></span>
-    <span class="chrome-title"><b>Dispatch</b> storefront</span>
+  <div class="chrome">
+    <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="chrome-title" aria-hidden="true"><b>Dispatch</b> storefront</span>
+    <button type="button" class="pause" data-pause aria-pressed="false">Pause</button>
   </div>
 
   <div class="cols" aria-hidden="true">
@@ -99,6 +100,27 @@
     line-height: 1.4;
     text-align: left;
   }
+  /* Pause / Play: freezes the story and every animation in the window. */
+  .pause {
+    margin-left: auto;
+    padding: 0.1rem 0.55rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    background: none;
+    color: var(--ink-3);
+    font: inherit;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+  .pause:hover {
+    color: var(--ink);
+  }
+  .paused *,
+  .paused *::before,
+  .paused *::after {
+    animation-play-state: paused !important;
+  }
+
   .ow [hidden] {
     display: none;
   }
@@ -535,6 +557,25 @@
       landing: landing.innerHTML,
       people: people.innerHTML,
     };
+    // Pause / Play. A paused story holds at its next step; reduced-motion
+    // readers start paused and can press Play.
+    const pauseBtn = ow.querySelector<HTMLButtonElement>('[data-pause]')!;
+    let paused = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const showPause = () => {
+      pauseBtn.textContent = paused ? 'Play' : 'Pause';
+      pauseBtn.setAttribute('aria-pressed', String(paused));
+      ow.classList.toggle('paused', paused);
+    };
+    pauseBtn.addEventListener('click', () => {
+      paused = !paused;
+      showPause();
+    });
+    showPause();
+    const unpaused = () =>
+      new Promise<void>((resolve) => {
+        const check = () => (paused ? setTimeout(check, 150) : resolve());
+        check();
+      });
     // Every pause in the story is scaled by this; lower plays faster.
     const PACE = 0.65;
     let run = 0;
@@ -578,7 +619,10 @@
       const mine = ++run;
       const wait = (ms: number) =>
         new Promise<void>((resolve, reject) =>
-          setTimeout(() => (mine === run ? resolve() : reject(new Error('restarted'))), ms * PACE)
+          setTimeout(
+            () => void unpaused().then(() => (mine === run ? resolve() : reject(new Error('restarted')))),
+            ms * PACE
+          )
         );
       reset();
       await wait(1400);

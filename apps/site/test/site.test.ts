@@ -27,6 +27,32 @@ test('positioning survives', () => {
   expect(html).toContain('for agents.');
 });
 
+test('link previews carry an image and the tab an icon', async () => {
+  expect(html).toContain(
+    '<meta property="og:image" content="https://dispatch.foo/og.png"'
+  );
+  expect(html).toContain(
+    '<meta name="twitter:card" content="summary_large_image"'
+  );
+  expect(html).toContain('<link rel="icon" href="/favicon.svg"');
+  for (const asset of ['og.png', 'favicon.svg']) {
+    const file = Bun.file(new URL(`../dist/${asset}`, import.meta.url));
+    expect({ asset, exists: await file.exists() }).toEqual({
+      asset,
+      exists: true,
+    });
+  }
+});
+
+test('the 404 page links home and stays out of search', async () => {
+  const notFound = await Bun.file(
+    new URL('../dist/404.html', import.meta.url)
+  ).text();
+  expect(notFound).toContain('<meta name="robots" content="noindex"');
+  expect(notFound).not.toContain('rel="canonical"');
+  expect(notFound).toContain('href="/"');
+});
+
 const manifest = JSON.parse(
   readFileSync(
     new URL(

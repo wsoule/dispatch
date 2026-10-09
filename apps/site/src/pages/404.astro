@@ -1,0 +1,39 @@
+---
+import Footer from '../components/landing/Footer.astro';
+import Nav from '../components/landing/Nav.astro';
+import Landing from '../layouts/Landing.astro';
+---
+
+<Landing notFound>
+  <Nav />
+  <main class="missing">
+    <div class="wrap">
+      <p class="code">404</p>
+      <h1>Nothing is here. <em>The board is, though.</em></h1>
+      <p class="lede">That page moved or never existed. Everything Dispatch does is on the home page.</p>
+      <a class="btn btn-primary" href="/">Go to the home page</a>
+    </div>
+  </main>
+  <Footer />
+</Landing>
+
+<style>
+  .missing {
+    padding: clamp(6rem, 14vw, 10rem) 0;
+  }
+  .code {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 0.9rem;
+  }
+  h1 {
+    max-width: 14ch;
+    margin-top: 1rem;
+  }
+  .lede {
+    max-width: 32rem;
+    margin: 1.5rem 0 2.25rem;
+    color: var(--ink-2);
+    font-size: 1.1rem;
+  }
+</style>
