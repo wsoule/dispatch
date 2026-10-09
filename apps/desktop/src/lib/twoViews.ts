@@ -15,7 +15,7 @@ import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 // navReducer, and this reducer maps each destination to Overseer, Tasks or a peek.
 
 export type MainView = 'overseer' | 'tasks';
-export type TasksMode = 'list' | 'graph';
+export type TasksMode = 'list' | 'board' | 'graph';
 
 /** Settings' own pages plus the three global views that fold into it. */
 type TwoViewsSettingsPage = SettingsPage | 'usage' | 'runs' | 'developer';

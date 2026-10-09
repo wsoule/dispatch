@@ -169,7 +169,8 @@ function Section({
 export interface DisplayPopoverProps {
   /** Which layout is showing; the segmented control at the top switches it. */
   mode: TasksViewMode;
-  onModeChange: (mode: TasksViewMode) => void;
+  /** Omitted hides the segmented control, for a header that switches layouts itself. */
+  onModeChange?: (mode: TasksViewMode) => void;
   prefs: TasksDisplayPrefs;
   onPrefsChange: (prefs: TasksDisplayPrefs) => void;
   /** `Show archived` — the project hook's own toggle, not part of the display prefs. */
@@ -227,21 +228,23 @@ export function DisplayPopover({
         data-slot="display-popover"
         className="w-[260px] p-0"
       >
-        <Section>
-          {/* Four cells: at the control's own `px-2` their min-content widths (~241px in
-              Inter 500) overrun the 260px card's content box, so the cells tighten to `px-1`. */}
-          <SegmentedControl
-            label="Layout"
-            value={mode}
-            className="[&_[role=radio]]:px-1"
-            onChange={(id) => onModeChange(id as TasksViewMode)}
-            options={TASKS_VIEW_TABS.map((tab) => ({
-              id: tab.id,
-              label: tab.label,
-              icon: LAYOUT_ICON[tab.id],
-            }))}
-          />
-        </Section>
+        {onModeChange !== undefined && (
+          <Section>
+            {/* Four cells: at the control's own `px-2` their min-content widths (~241px in
+                Inter 500) overrun the 260px card's content box, so the cells tighten to `px-1`. */}
+            <SegmentedControl
+              label="Layout"
+              value={mode}
+              className="[&_[role=radio]]:px-1"
+              onChange={(id) => onModeChange(id as TasksViewMode)}
+              options={TASKS_VIEW_TABS.map((tab) => ({
+                id: tab.id,
+                label: tab.label,
+                icon: LAYOUT_ICON[tab.id],
+              }))}
+            />
+          </Section>
+        )}
         <Section>
           <Row label="Grouping">
             <SelectMenu

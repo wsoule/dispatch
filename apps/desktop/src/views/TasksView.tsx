@@ -1,13 +1,28 @@
-import { Plus } from 'lucide-react';
-import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
+import { Plus, Users } from 'lucide-react';
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { MilestoneMapView } from '../components/graph/MilestoneMap';
+import { useSavedViewsContext } from '../components/shell/SavedViewsContext';
+import { AppliedFilters } from '../components/tasks/AppliedFilters';
+import { BoardPane } from '../components/tasks/BoardPane';
+import { DisplayPopover } from '../components/tasks/DisplayPopover';
+import { FilterMenu } from '../components/tasks/FilterMenu';
 import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
 import { TasksBackButton } from '../components/tasks/TasksPageHeader';
 import { TasksStrip } from '../components/tasks/TasksStrip';
+import { TasksViewMenu } from '../components/tasks/TasksViewMenu';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useTaskFilterMenu } from '../hooks/useTaskFilterMenu';
 import type { TaskTab } from '../lib/appNav';
 import { containerStatus } from '../lib/containerStatus';
 import type { DecisionItem } from '../lib/decisionFeed';
@@ -15,9 +30,11 @@ import { groupTasks, type ListGroup } from '../lib/listGrouping';
 import type { NeedsYou } from '../lib/needsYou';
 import { useStatusModelOf } from '../lib/statusModel';
 import {
-  DEFAULT_TASKS_DISPLAY,
-  type TasksDisplayPrefs,
-} from '../lib/tasksPrefs';
+  hasActiveTaskFilters,
+  matchesTaskFilterSet,
+  type TaskFilterSet,
+} from '../lib/taskFilters';
+import type { TasksDisplayPrefs } from '../lib/tasksPrefs';
 import {
   type PresetContext,
   presetMatcher,
@@ -27,32 +44,74 @@ import {
 import type { TaskStatusCounts } from '../lib/taskStatus';
 import type { RefAction } from '../lib/threadSources';
 import type { TasksMode, TasksPage } from '../lib/twoViews';
+import {
+  layoutForMode,
+  modeForLayout,
+  readTwoViewsDisplay,
+  readTwoViewsFilters,
+  TWO_VIEWS_TASKS_DISPLAY,
+  writeTwoViewsDisplay,
+  writeTwoViewsFilters,
+} from '../lib/twoViewsTasksPrefs';
 import { LiveView } from './LiveView';
 import { MilestoneBranchesView } from './MilestoneBranchesView';
 import { ProjectsView } from './ProjectsView';
 import { TasksListView } from './TasksListView';
-import { SelectPill } from '@/ui/ai/pill';
+import { IconButton } from '@/ui/ai/icon-button';
 import { Button } from '@/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
 import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
-
-// One list grouped by milestone, the No milestone group included.
-const BY_MILESTONE: TasksDisplayPrefs = {
-  ...DEFAULT_TASKS_DISPLAY,
-  layout: 'list',
-  grouping: 'milestone',
-};
 
 const MODES: { id: TasksMode; label: string }[] = [
   { id: 'list', label: 'List' },
+  { id: 'board', label: 'Board' },
   { id: 'graph', label: 'Graph' },
 ];
+
+/** Session key for the saved view this page last applied, so a remount keeps edits. */
+const APPLIED_VIEW_STORAGE_KEY = 'dispatch:two-views-applied-view';
+
+function readAppliedView(): string | null {
+  try {
+    return window.sessionStorage.getItem(APPLIED_VIEW_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeAppliedView(id: string | null): void {
+  try {
+    if (id === null) window.sessionStorage.removeItem(APPLIED_VIEW_STORAGE_KEY);
+    else window.sessionStorage.setItem(APPLIED_VIEW_STORAGE_KEY, id);
+  } catch {
+    // A blocked store just means a remount re-applies the view.
+  }
+}
+
+// Group by person, as the Cockpit's `g p` did: the list's groups or the board's lanes.
+function groupedByPerson(prefs: TasksDisplayPrefs, mode: TasksMode): boolean {
+  return mode === 'board'
+    ? prefs.subGrouping === 'assignee'
+    : prefs.grouping === 'assignee';
+}
+
+function toggleGroupByPerson(
+  prefs: TasksDisplayPrefs,
+  mode: TasksMode
+): TasksDisplayPrefs {
+  if (mode === 'board') {
+    return {
+      ...prefs,
+      subGrouping: prefs.subGrouping === 'assignee' ? 'none' : 'assignee',
+    };
+  }
+  return {
+    ...prefs,
+    grouping:
+      prefs.grouping === 'assignee'
+        ? TWO_VIEWS_TASKS_DISPLAY.grouping
+        : 'assignee',
+  };
+}
 
 // Pages that lead their own header with "‹ tasks"; the rest get a bare one here.
 const OWN_HEADER: ReadonlySet<TasksPage['kind']> = new Set([
@@ -122,7 +181,12 @@ export interface TasksViewProps {
   composer: ReactNode;
 }
 
-/** Tasks: the strip, every ask pinned on top, the work by milestone, and its pages. */
+/**
+ * Tasks: the strip, every ask pinned on top, the work by milestone, and its pages. The
+ * header carries Classic's board controls: saved and starred views, the Filter menu (AI
+ * filter included), the Display popover, group by person and List | Board | Graph. The
+ * preset and the filter clauses narrow every layout; Display shapes the list and board.
+ */
 export function TasksView({
   data,
   needs,
@@ -158,10 +222,61 @@ export function TasksView({
     setGraphFolded(folded);
     storeGraphFold(folded);
   }, []);
-  const taskFilter = useMemo(
-    () => presetMatcher(preset, presetContext),
-    [preset, presetContext]
+  const [filters, setFilters] = useState<TaskFilterSet>(readTwoViewsFilters);
+  const [prefs, setPrefs] = useState<TasksDisplayPrefs>(readTwoViewsDisplay);
+  // Open state lives here so `f` and `⇧V` on the list or board can open the menus.
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [displayOpen, setDisplayOpen] = useState(false);
+  useEffect(() => writeTwoViewsFilters(filters), [filters]);
+  useEffect(() => writeTwoViewsDisplay(prefs), [prefs]);
+  // The model as a saved view stores it: the layout is the toggle's.
+  const display = useMemo(
+    () => ({ ...prefs, layout: layoutForMode(mode) }),
+    [prefs, mode]
   );
+  const full = page.kind !== 'list' && !split;
+
+  // Applies the active saved view when a pick changes it — from the header's menu or the
+  // palette's Open view, which may land before this mounts. The session marker keeps edits
+  // made on top of a view across a remount; read through a ref so the view object's
+  // changing identity never re-applies it.
+  const savedViews = useSavedViewsContext();
+  const activeViewId = savedViews?.activeViewId ?? null;
+  const applyViewRef = useRef<(id: string) => void>(() => {});
+  applyViewRef.current = (id) => {
+    const view = savedViews?.views.find((v) => v.id === id);
+    if (view === undefined) return;
+    setFilters(view.filters);
+    setPrefs(view.display);
+    onModeChange(modeForLayout(view.display.layout));
+    if (preset !== 'all') onPreset('all');
+    if (full) onClosePage();
+  };
+  useEffect(() => {
+    if (activeViewId === null) {
+      writeAppliedView(null);
+      return;
+    }
+    if (activeViewId === readAppliedView()) return;
+    applyViewRef.current(activeViewId);
+    writeAppliedView(activeViewId);
+  }, [activeViewId]);
+
+  const { filterContext, menuContext, aiFilter } = useTaskFilterMenu(data);
+  const filtersActive = hasActiveTaskFilters(filters);
+  // The preset and the filter clauses as one predicate; `undefined` when neither narrows.
+  const taskFilter = useMemo(() => {
+    const byPreset = presetMatcher(preset, presetContext);
+    if (!filtersActive) return byPreset;
+    const byClauses = (doc: TaskListItem) =>
+      matchesTaskFilterSet(doc, filters, filterContext);
+    return byPreset === undefined
+      ? byClauses
+      : (doc: TaskListItem) => byPreset(doc) && byClauses(doc);
+  }, [preset, presetContext, filtersActive, filters, filterContext]);
+  const requestFilter = useCallback(() => setFilterOpen(true), []);
+  const requestDisplay = useCallback(() => setDisplayOpen(true), []);
+  const byPerson = groupedByPerson(prefs, mode);
   const epicById = useMemo(
     () => new Map(data.epics.map((e) => [e.meta.id, e])),
     [data.epics]
@@ -205,14 +320,13 @@ export function TasksView({
             taskFilter === undefined
               ? data.tasks
               : data.tasks.filter(taskFilter),
-            BY_MILESTONE,
+            TWO_VIEWS_TASKS_DISPLAY,
             { statuses: data.config.statuses, epics: data.epics, model }
           ),
     [mode, data.config, data.tasks, data.epics, taskFilter, model]
   );
   const presetLabel =
     TASKS_PRESETS.find((p) => p.id === preset)?.label ?? 'All';
-  const full = page.kind !== 'list' && !split;
 
   return (
     <div data-testid="tasks-view" className="flex h-full min-h-0 flex-col">
@@ -220,6 +334,35 @@ export function TasksView({
         <span className="shrink-0 text-[13px] font-medium">All work</span>
         <TasksStrip counts={counts} preset={preset} onPreset={onPreset} />
         <span className="flex-1" />
+        <span className="flex shrink-0 items-center gap-0.5">
+          <FilterMenu
+            filters={filters}
+            onChange={setFilters}
+            context={menuContext}
+            open={filterOpen}
+            onOpenChange={setFilterOpen}
+            onAiFilter={aiFilter}
+          />
+          <DisplayPopover
+            mode={display.layout}
+            prefs={display}
+            onPrefsChange={setPrefs}
+            showArchived={data.showArchived}
+            archivedCount={data.archivedTasks.length}
+            onShowArchivedChange={data.setShowArchived}
+            open={displayOpen}
+            onOpenChange={setDisplayOpen}
+          />
+          <IconButton
+            data-testid="tasks-group-by-person"
+            label={byPerson ? 'Stop grouping by person' : 'Group by person'}
+            active={byPerson}
+            disabled={mode === 'graph'}
+            onClick={() => setPrefs((prev) => toggleGroupByPerson(prev, mode))}
+          >
+            <Users aria-hidden />
+          </IconButton>
+        </span>
         {/* On a full page (a task, docs, a PR) neither layout is showing, so
             nothing is selected, and picking one goes back to the list. */}
         <ToggleGroup
@@ -241,34 +384,24 @@ export function TasksView({
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            data-testid="tasks-preset"
-            render={<SelectPill />}
-          >
-            view: {presetLabel}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[160px]">
-            <DropdownMenuRadioGroup
-              value={preset}
-              onValueChange={(value) => {
-                const next = TASKS_PRESETS.find((p) => p.id === value);
-                if (next !== undefined) onPreset(next.id);
-              }}
-            >
-              {TASKS_PRESETS.map((p) => (
-                <DropdownMenuRadioItem key={p.id} value={p.id}>
-                  {p.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <TasksViewMenu
+          preset={preset}
+          onPreset={onPreset}
+          savedViews={savedViews}
+          filters={filters}
+          display={display}
+        />
         <Button size="sm" onClick={onNewTask} className="shrink-0">
           <Plus className="size-3.5" />
           New task
         </Button>
       </div>
+      <AppliedFilters
+        filters={filters}
+        onChange={setFilters}
+        context={filterContext}
+        className="border-border shrink-0 border-b-[0.5px] px-4 py-1.5"
+      />
       {full ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {!OWN_HEADER.has(page.kind) && (
@@ -317,7 +450,18 @@ export function TasksView({
               </div>
             )}
             <div className="min-h-0 flex-1 overflow-hidden">
-              {mode === 'graph' ? (
+              {mode === 'board' ? (
+                <div className="flex h-full min-h-0 flex-col">
+                  <BoardPane
+                    data={data}
+                    display={display}
+                    taskFilter={taskFilter}
+                    onSelectTask={(taskId) => onSelectTask(taskId)}
+                    onRequestFilter={requestFilter}
+                    onRequestDisplay={requestDisplay}
+                  />
+                </div>
+              ) : mode === 'graph' ? (
                 <MilestoneMapView
                   groups={graphGroups}
                   bucketOf={presetContext.bucketOf}
@@ -375,8 +519,10 @@ export function TasksView({
                 <TasksListView
                   data={data}
                   onSelectTask={(taskId) => onSelectTask(taskId)}
-                  display={BY_MILESTONE}
+                  display={display}
                   taskFilter={taskFilter}
+                  onRequestFilter={requestFilter}
+                  onRequestDisplay={requestDisplay}
                   needsYouIds={needs.taskIds}
                   groupAccessory={groupAccessory}
                   speechByTask={speechByTask}
