@@ -1,3 +1,17 @@
+---
+// The sticky site header. On phones the links fold into a Menu disclosure
+// (a plain <details>, so it works without script).
+const links: [string, string][] = [
+  ['MCP', '/#mcp'],
+  ['A2A', '/#a2a'],
+  ['Memory', '/#memory'],
+  ['Milestones', '/#milestones'],
+  ['Live demo', '/#demo'],
+  ['Protocol', '/protocol/'],
+  ['GitHub', 'https://github.com/wsoule/dispatch'],
+];
+---
+
 <header class="nav">
   <div class="wrap row">
     <a class="mark" href="/" aria-label="Dispatch home">
@@ -5,14 +19,20 @@
       Dispatch
     </a>
     <nav aria-label="Site">
-      <a class="link" href="#mcp">MCP</a>
-      <a class="link" href="#a2a">A2A</a>
-      <a class="link" href="#memory">Memory</a>
-      <a class="link" href="#milestones">Milestones</a>
-      <a class="link" href="#demo">Live demo</a>
-      <a class="link" href="/protocol/">Protocol</a>
-      <a class="link" href="https://github.com/wsoule/dispatch">GitHub</a>
-      <a class="btn btn-primary" href="#install">Install</a>
+      {
+        links.map(([label, href]) => (
+          <a class="link" href={href}>
+            {label}
+          </a>
+        ))
+      }
+      <a class="btn btn-primary" href="/#install">Install</a>
+      <details class="menu">
+        <summary aria-label="Menu"><span class="bars" aria-hidden="true"></span></summary>
+        <div class="sheet">
+          {links.map(([label, href]) => <a href={href}>{label}</a>)}
+        </div>
+      </details>
     </nav>
   </div>
 </header>
@@ -22,8 +42,8 @@
     position: sticky;
     top: 0;
     z-index: 20;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
     border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
@@ -38,8 +58,8 @@
     align-items: center;
     gap: 0.55rem;
     font-size: 1.1rem;
-    font-weight: 750;
-    letter-spacing: -0.035em;
+    font-weight: 650;
+    letter-spacing: -0.03em;
     text-decoration: none;
   }
   .orb {
@@ -59,6 +79,7 @@
     color: var(--ink-2);
     font-size: 0.92rem;
     text-decoration: none;
+    transition: color 150ms var(--ease);
   }
   .link:hover {
     color: var(--ink);
@@ -67,9 +88,84 @@
     min-height: 2.25rem;
     font-size: 0.88rem;
   }
-  @media (max-width: 760px) {
+  .menu {
+    display: none;
+    position: relative;
+  }
+  summary {
+    display: grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    list-style: none;
+    cursor: pointer;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  .bars,
+  .bars::before {
+    display: block;
+    width: 0.9rem;
+    height: 1.5px;
+    background: var(--ink);
+    transition: transform 200ms var(--ease);
+  }
+  .bars {
+    transform: translateY(-3px);
+  }
+  .bars::before {
+    content: '';
+    transform: translateY(5px);
+  }
+  .menu[open] .bars {
+    transform: rotate(45deg);
+  }
+  .menu[open] .bars::before {
+    transform: rotate(-90deg);
+  }
+  .sheet {
+    position: absolute;
+    top: calc(100% + 0.6rem);
+    right: 0;
+    display: grid;
+    min-width: 12rem;
+    padding: 0.4rem;
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    background: #111113;
+    box-shadow: 0 20px 50px -10px rgb(0 0 0 / 80%);
+  }
+  .sheet a {
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+    color: var(--ink-2);
+    text-decoration: none;
+  }
+  .sheet a:hover {
+    background: rgb(255 255 255 / 6%);
+    color: var(--ink);
+  }
+  @media (max-width: 860px) {
     .link {
       display: none;
     }
+    .menu {
+      display: block;
+    }
+    nav {
+      gap: 0.6rem;
+    }
   }
 </style>
+
+<script>
+  // Close the phone menu once a link in it is followed.
+  for (const menu of document.querySelectorAll<HTMLDetailsElement>('.menu')) {
+    menu.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('a')) menu.open = false;
+    });
+  }
+</script>

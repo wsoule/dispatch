@@ -10,7 +10,7 @@
   --line-2: rgb(255 255 255 / 14%);
   --ink: #f4f4f5;
   --ink-2: #a1a1aa;
-  --ink-3: #6b6b74;
+  --ink-3: #7d7d87;
   --accent: #8b8ff8;
   --accent-strong: #5b5fd6;
   --working: #f2c744;
@@ -97,8 +97,14 @@ a {
   color: inherit;
 }
 
+/* Anchored sections land below the sticky nav, not under it. */
+[id] {
+  scroll-margin-top: 5rem;
+}
+
 a:focus-visible,
-button:focus-visible {
+button:focus-visible,
+summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
   border-radius: 6px;

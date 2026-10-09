@@ -28,10 +28,11 @@ const waves = [1, 2, 3].map((n) => ({ n, cards: cards.filter((c) => c.wave === n
   data-scene="overseer"
   aria-label="The Dispatch app: a one-sentence project becomes five tasks, which agents work wave by wave"
 >
-  <div class="chrome" aria-hidden="true">
-    <span class="lights"><i></i><i></i><i></i></span>
-    <span class="chrome-title"><b>Dispatch</b> storefront</span>
-    <span class="chrome-tag">Two views</span>
+  <div class="chrome">
+    <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="chrome-title" aria-hidden="true"><b>Dispatch</b> storefront</span>
+    <button type="button" class="pause" data-pause aria-pressed="false">Pause</button>
+    <span class="chrome-tag" aria-hidden="true">Two views</span>
   </div>
 
   <header class="top">
@@ -221,6 +222,27 @@ const waves = [1, 2, 3].map((n) => ({ n, cards: cards.filter((c) => c.wave === n
     line-height: 1.35;
     text-align: left;
   }
+  /* Pause / Play: freezes the story and every animation in the window. */
+  .pause {
+    margin-left: auto;
+    padding: 0.1rem 0.55rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    background: none;
+    color: var(--ink-3);
+    font: inherit;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+  .pause:hover {
+    color: var(--ink);
+  }
+  .paused *,
+  .paused *::before,
+  .paused *::after {
+    animation-play-state: paused !important;
+  }
+
   .dim {
     color: var(--ink-3);
   }
@@ -254,7 +276,6 @@ const waves = [1, 2, 3].map((n) => ({ n, cards: cards.filter((c) => c.wave === n
     font-weight: 600;
   }
   .chrome-tag {
-    margin-left: auto;
     font-family: var(--mono);
     font-size: 0.68rem;
   }
@@ -1233,6 +1254,25 @@ const waves = [1, 2, 3].map((n) => ({ n, cards: cards.filter((c) => c.wave === n
     const costs = new Map<HTMLElement, number>();
     const prompt =
       'Plan a milestone “Checkout v2”: an Apple Pay button, saved cards and address autocomplete, then wire Apple Pay into checkout, then release notes.';
+    // Pause / Play. A paused story holds at its next step; reduced-motion
+    // readers start paused and can press Play.
+    const pauseBtn = win.querySelector<HTMLButtonElement>('[data-pause]')!;
+    let paused = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const showPause = () => {
+      pauseBtn.textContent = paused ? 'Play' : 'Pause';
+      pauseBtn.setAttribute('aria-pressed', String(paused));
+      win.classList.toggle('paused', paused);
+    };
+    pauseBtn.addEventListener('click', () => {
+      paused = !paused;
+      showPause();
+    });
+    showPause();
+    const unpaused = () =>
+      new Promise<void>((resolve) => {
+        const check = () => (paused ? setTimeout(check, 150) : resolve());
+        check();
+      });
     // Every pause in the story is scaled by this; lower plays faster.
     const PACE = 0.6;
     let run = 0;
@@ -1341,7 +1381,10 @@ const waves = [1, 2, 3].map((n) => ({ n, cards: cards.filter((c) => c.wave === n
       const mine = ++run;
       const wait = (ms: number) =>
         new Promise<void>((resolve, reject) =>
-          setTimeout(() => (mine === run ? resolve() : reject(new Error('restarted'))), ms * PACE)
+          setTimeout(
+            () => void unpaused().then(() => (mine === run ? resolve() : reject(new Error('restarted')))),
+            ms * PACE
+          )
         );
       reset();
       // Overseer: type the project, send it, get a plan back, approve it.
@@ -1415,6 +1458,7 @@ const waves = [1, 2, 3].map((n) => ({ n, cards: cards.filter((c) => c.wave === n
 
     // Working agents take a turn now and then, and each turn costs a little.
     const tick = () => {
+      if (paused) return;
       let any = false;
       for (const c of cards) {
         if (c.dataset.state !== 'working') continue;
