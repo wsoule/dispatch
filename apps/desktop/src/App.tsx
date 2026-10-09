@@ -105,11 +105,12 @@ import {
 } from './lib/actionFeedback';
 import { orbLabel, orbState, overseerTurnLive } from './lib/agentPresence';
 import { overseerOf } from './lib/agentRoster';
-import type {
-  GlobalView,
-  ProjectView,
-  SettingsPage,
-  TaskTab,
+import {
+  type GlobalView,
+  HOST_VIEWS,
+  type ProjectView,
+  type SettingsPage,
+  type TaskTab,
 } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
 import { twoViewsAllowed, useBetaFlag } from './lib/betaFeatures';
@@ -1353,6 +1354,9 @@ function App() {
     data.client,
     twoViews && data.messageAccess.canMessage
   );
+  // A teammate below the operator tier never gets Terminals or Design: the
+  // daemon would 403 both. Classic's rail, the palette and Two views' pages agree.
+  const hideHostViews = isTeamLocalPage() && data.myTier !== 'operator';
   const paletteEntries = useMemo(
     () => [
       ...buildPaletteEntries({
@@ -1366,6 +1370,7 @@ function App() {
           ? twoViewsTaskId
           : (navState.activeTaskId ?? navState.peekTaskId),
         twoViews,
+        hideHostViews,
         beta: twoViewsAllowed({
           teamLocal: isTeamLocalPage(),
           tier: data.myTier,
@@ -1425,6 +1430,7 @@ function App() {
       openSavedView,
       copyTaskLink,
       twoViews,
+      hideHostViews,
       twoViewsOn,
       setTwoViewsOn,
       data.myTier,
@@ -1562,6 +1568,20 @@ function App() {
             starting={data.portLoading}
             errorDetail={data.portErrorDetail}
             onRetry={data.retryEnsureDispatchd}
+          />
+        </div>
+      );
+    }
+    if (hideHostViews && HOST_VIEWS.has(view)) {
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="px-4 pt-2">
+            <TasksBackButton onBack={closeTwoViewsPage} />
+          </div>
+          <EmptyState
+            className="flex-1"
+            heading="Only the operator can open this"
+            description="Terminals and Design act on the host machine as the person running Dispatch."
           />
         </div>
       );
@@ -2226,9 +2246,7 @@ function App() {
                           >
                             <Sidebar
                               hasActiveProject={activeProject !== null}
-                              hideHostViews={
-                                isTeamLocalPage() && data.myTier !== 'operator'
-                              }
+                              hideHostViews={hideHostViews}
                               section={navState.section}
                               projectView={navState.projectView}
                               globalView={navState.globalView}

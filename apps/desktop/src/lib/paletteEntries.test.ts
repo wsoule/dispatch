@@ -249,6 +249,37 @@ describe('beta and Two views rows', () => {
   });
 });
 
+describe('host views below the operator tier', () => {
+  test('Two views leaves out Terminals and Design', () => {
+    const { ctx } = context({ twoViews: true, hideHostViews: true });
+    const ids = buildPaletteEntries(ctx).map((e) => e.id);
+    expect(ids).toContain('go-files');
+    expect(ids).not.toContain('go-terminals');
+    expect(ids).not.toContain('go-design');
+  });
+
+  test('Classic leaves them out too, keeping the other rows ⌘N', () => {
+    const { ctx } = context({
+      hideHostViews: true,
+      views: [
+        { id: 'board', label: 'Tasks' },
+        { id: 'terminals', label: 'Terminals' },
+        { id: 'files', label: 'Files' },
+      ],
+    });
+    const nav = buildPaletteEntries(ctx).filter((e) => e.kind === 'go to');
+    expect(nav.map((e) => e.id)).not.toContain('go-terminals');
+    expect(nav.find((e) => e.id === 'go-files')?.shortcut).toBe('⌘3');
+  });
+
+  test('the operator sees both', () => {
+    const { ctx } = context({ twoViews: true });
+    const ids = buildPaletteEntries(ctx).map((e) => e.id);
+    expect(ids).toContain('go-terminals');
+    expect(ids).toContain('go-design');
+  });
+});
+
 describe('addressEntries', () => {
   test('people but me, active outside peers, and named rooms but milestones', () => {
     const opened: string[] = [];

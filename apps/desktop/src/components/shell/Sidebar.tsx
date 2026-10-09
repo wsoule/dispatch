@@ -35,7 +35,11 @@ import {
   useState,
 } from 'react';
 
-import type { GlobalView, ProjectView } from '../../lib/appNav';
+import {
+  type GlobalView,
+  HOST_VIEWS,
+  type ProjectView,
+} from '../../lib/appNav';
 import type { PaletteView } from '../../lib/paletteEntries';
 import { isTauri } from '../../lib/tauri';
 import { DraftTrayPopover } from './DraftTray';
@@ -75,11 +79,6 @@ const WORK_VIEWS: ViewRow<ProjectView>[] = [
 /** Code: the repository itself, rather than the work being done to it — its
  *  history, its files, a shell on it, the running app, and what a change would
  *  touch. */
-/** Code rows that act on the host machine as the person running the daemon —
- *  a shell, and a browser carrying their cookies. The daemon holds both to the
- *  operator tier, so a teammate below it is not shown doors that only 403. */
-const HOST_VIEWS: ReadonlySet<ProjectView> = new Set(['terminals', 'design']);
-
 const CODE_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'branches', label: 'Git', icon: GitBranch },
   { id: 'files', label: 'Files', icon: FileCode2 },
