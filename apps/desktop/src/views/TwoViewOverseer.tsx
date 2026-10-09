@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { DockedConversation } from '../components/chat/DockedConversation';
 import { OverseerChat } from '../components/chat/OverseerChat';
 import {
+  ColumnInSheet,
   InflowColumn,
   OutflowColumn,
   type OutflowExtras,
@@ -16,8 +17,10 @@ import { docked, restored, useOverseerDock } from '../lib/overseerDock';
 import type { OverseerDoor } from '../lib/overseerThread';
 import { cn } from '@/lib/utils';
 import { NoticePill } from '@/ui/ai/notice-pill';
+import { PillButton } from '@/ui/ai/pill';
 import { Alert, AlertDescription, AlertTitle } from '@/ui/alert';
 import { Button } from '@/ui/button';
+import { Sheet, SheetContent, SheetTitle } from '@/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 export interface TwoViewOverseerProps {
@@ -87,7 +90,7 @@ export function TwoViewOverseer({
   drafts,
   draftsCount = 0,
   notifications,
-  outflow,
+  outflow: outflow_,
   focus = null,
   onFocus = () => {},
   renderFocus,
@@ -115,6 +118,8 @@ export function TwoViewOverseer({
     [stored, open]
   );
   // The conversation Jev just set aside for a new topic, for "Put it back".
+  // Which column a narrow window has open as a sheet.
+  const [sheet, setSheet] = useState<'in' | 'out' | null>(null);
   const [setAside, setSetAside] = useState<{
     id: string;
     title: string;
@@ -195,20 +200,44 @@ export function TwoViewOverseer({
       />
     ));
 
+  const inflowCount = (showAsksAside ? asks : 0) + postsCount + draftsCount;
+  const inflow = (
+    <InflowColumn count={inflowCount}>
+      {showAsksAside && needsBlock}
+      {posts}
+      {drafts}
+      {notifications}
+    </InflowColumn>
+  );
+  const outflow = (
+    <OutflowColumn
+      runs={runs}
+      merges={merges}
+      setAside={dockCards(false)}
+      onOpenTask={(taskId) => {
+        setSheet(null);
+        onFocus({ kind: 'task', taskId });
+      }}
+      {...outflow_}
+    />
+  );
+  // Below xl the columns are hidden; these open the same columns in a sheet.
+  const columnDoors = (
+    <div className="flex gap-1.5 xl:hidden" data-testid="overseer-column-doors">
+      <PillButton onClick={() => setSheet('in')}>
+        Coming in{inflowCount > 0 && ` · ${inflowCount}`}
+      </PillButton>
+      <PillButton onClick={() => setSheet('out')}>Going out</PillButton>
+    </div>
+  );
+
   return (
     <div
       data-testid="overseer-view"
       className="flex h-full min-h-0 gap-6 px-6 pt-3 pb-4"
     >
       {/* Wide windows read left to right: what comes to you, the talk, what leaves. */}
-      <InflowColumn
-        count={(showAsksAside ? asks : 0) + postsCount + draftsCount}
-      >
-        {showAsksAside && needsBlock}
-        {posts}
-        {drafts}
-        {notifications}
-      </InflowColumn>
+      {inflow}
       {/* Before the first message the composer sits at the bottom, as it will after. */}
       {focused !== null && (
         <div
@@ -314,6 +343,7 @@ export function TwoViewOverseer({
                   </div>
                 )}
                 {door}
+                {columnDoors}
               </>
             }
             disabled={revoked}
@@ -322,13 +352,23 @@ export function TwoViewOverseer({
           />
         )}
       </div>
-      <OutflowColumn
-        runs={runs}
-        merges={merges}
-        setAside={dockCards(false)}
-        onOpenTask={(taskId) => onFocus({ kind: 'task', taskId })}
-        {...outflow}
-      />
+      {outflow}
+      <Sheet
+        open={sheet !== null}
+        onOpenChange={(next) => {
+          if (!next) setSheet(null);
+        }}
+      >
+        <SheetContent
+          side={sheet === 'out' ? 'right' : 'left'}
+          className="w-[340px] p-4"
+        >
+          <SheetTitle className="sr-only">
+            {sheet === 'out' ? 'Going out' : 'Coming in'}
+          </SheetTitle>
+          <ColumnInSheet>{sheet === 'out' ? outflow : inflow}</ColumnInSheet>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
