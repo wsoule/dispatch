@@ -168,12 +168,15 @@ export function NotificationsSection({
                 />
               )
             }
+            // The subject (the task or question) leads; the generic kind
+            // ("An agent needs your answer") is the tooltip, so two rows of
+            // the same kind still read differently in a narrow column.
             title={
               <span
-                title={entry.body}
+                title={entry.body === '' ? undefined : entry.title}
                 className={entry.read ? 'text-muted-foreground' : undefined}
               >
-                {entry.title}
+                {entry.body === '' ? entry.title : entry.body}
               </span>
             }
             date={formatRelativeTimeFromIso(entry.ts)}

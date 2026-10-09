@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Inbox, OctagonAlert, X } from 'lucide-react';
+import { Coins, Inbox, OctagonAlert, X } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 
 import { ExportControl } from '../components/sessions/ExportControl';
@@ -17,6 +17,7 @@ import {
   exportReport,
   generateReport,
   getDashboardStats,
+  isTauri,
   listProjects,
   listSessions,
 } from '../lib/tauri';
@@ -65,7 +66,26 @@ function FetchError({
  * the "Spend (Nd)" tile and the export cover. Everything here reads the app's own local
  * session/project data — no dispatch task/plan state lives on this page.
  */
+/**
+ * Usage reads the agent session logs on this machine through the desktop
+ * app's native side; a browser (a teammate on team-local, or dev) has no way
+ * to, so it says so instead of loading forever.
+ */
 export function SessionsHubView() {
+  if (!isTauri()) {
+    return (
+      <EmptyState
+        icon={Coins}
+        heading="Usage lives in the desktop app"
+        description="It reads the agent session logs on the machine running Dispatch, which a browser can't. Open Dispatch on that machine to see spend by model and project."
+        className="h-full justify-center"
+      />
+    );
+  }
+  return <SessionsHubBody />;
+}
+
+function SessionsHubBody() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );

@@ -194,8 +194,10 @@ export function DispatchCard({
         tone === 'live' && 'shadow-[inset_2px_0_0_var(--state-working-fg)]'
       )}
     >
+      {/* The headline keeps a readable width; the pickers wrap below it
+          in a narrow pane instead of squeezing it to a word per line. */}
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-foreground min-w-0 flex-1 text-[13px] font-semibold">
+        <p className="text-foreground min-w-40 flex-1 text-[13px] font-semibold">
           {headline(readiness, live, starting)}
         </p>
         {live ? (

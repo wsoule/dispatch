@@ -5,8 +5,9 @@ import type { RunMeta } from '@dispatch/client';
 import { activeStatusModel } from './statusModel';
 
 /**
- * How many runs the "Merge all ready" toolbar button would enqueue right
- * now: finished, unreviewed, not routed to PR review, not already sitting
+ * How many tasks the "Merge all ready" toolbar button would land right now,
+ * one run each (the server's enqueueReady takes each task's latest eligible
+ * run): finished, unreviewed, not routed to PR review, not already sitting
  * in the merge queue, and belonging to a task that isn't itself done/
  * cancelled — this part mirrors enqueueReady's own admission checks
  * server-side exactly. The blockedBy check on top of that is a
@@ -30,7 +31,9 @@ export function countMergeReady(
   const isTaskDone = (task: TaskListItem) =>
     isDoneStatus(task.meta.status, model);
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
-  let count = 0;
+  // The server queues one run per task (its latest eligible one), so the
+  // count is of tasks, not runs.
+  const counted = new Set<string>();
   for (const run of runs) {
     if (run.state !== 'finished') continue;
     if (run.reviewedAt !== undefined) continue;
@@ -44,7 +47,7 @@ export function countMergeReady(
       return blocker === undefined || isTaskDone(blocker);
     });
     if (!blockersDone) continue;
-    count++;
+    counted.add(run.taskId);
   }
-  return count;
+  return counted.size;
 }

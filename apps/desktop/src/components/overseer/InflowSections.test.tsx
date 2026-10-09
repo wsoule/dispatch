@@ -78,7 +78,7 @@ function entry(id: string, read: boolean): InboxEntry {
     id,
     ts: '2026-10-09T09:00:00Z',
     title: `Run ${id} finished`,
-    body: 'body',
+    body: `Ship task ${id}`,
     target: { kind: 'task', taskId: `t-${id}` },
     read,
   };
@@ -104,7 +104,7 @@ test('Notifications marks unread rows, opens one and marks all read', () => {
   ).toHaveLength(2);
   fireEvent.click(screen.getByText('+2 more'));
   expect(screen.getAllByTestId('overseer-notification-row')).toHaveLength(7);
-  fireEvent.click(screen.getByText('Run 3 finished'));
+  fireEvent.click(screen.getByText('Ship task 3'));
   expect(opened).toEqual(['3']);
   fireEvent.click(screen.getByTestId('overseer-notifications-read-all'));
   expect(markedAll).toBe(1);
@@ -120,5 +120,8 @@ test('Notifications hides Mark all read once everything is read', () => {
     />
   );
   expect(screen.queryByTestId('overseer-notifications-read-all')).toBeNull();
-  expect(screen.getByText('Run a finished')).toBeTruthy();
+  // The subject leads the row; the generic kind is its tooltip.
+  expect(screen.getByText('Ship task a').getAttribute('title')).toBe(
+    'Run a finished'
+  );
 });
