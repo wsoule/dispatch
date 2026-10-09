@@ -207,14 +207,18 @@ export function TasksView({
         <span className="shrink-0 text-[13px] font-medium">All work</span>
         <TasksStrip counts={counts} preset={preset} onPreset={onPreset} />
         <span className="flex-1" />
+        {/* On a full page (a task, docs, a PR) neither layout is showing, so
+            nothing is selected, and picking one goes back to the list. */}
         <ToggleGroup
           aria-label="Tasks layout"
           variant="outline"
           size="sm"
-          value={[mode]}
+          value={full ? [] : [mode]}
           onValueChange={(next) => {
             const picked = MODES.find((m) => m.id === next[0]);
-            if (picked !== undefined) onModeChange(picked.id);
+            if (picked === undefined) return;
+            onModeChange(picked.id);
+            if (full) onClosePage();
           }}
           className="shrink-0"
         >

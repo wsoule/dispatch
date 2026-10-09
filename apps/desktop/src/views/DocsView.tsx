@@ -211,6 +211,7 @@ export function DocsView({
           selected={open}
           onSelect={select}
           error={error}
+          onNew={() => setCreating(true)}
         />
       </>,
       ['All docs'],

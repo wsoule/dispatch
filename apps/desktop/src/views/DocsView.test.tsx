@@ -966,7 +966,7 @@ function renderList(
 test('says the list is loading until it arrives', async () => {
   renderList((() => new Promise(() => undefined)) as never);
   expect(await screen.findByText('Loading docs…')).toBeDefined();
-  expect(screen.queryByText('No docs.')).toBeNull();
+  expect(screen.queryByText('No docs yet.')).toBeNull();
 });
 
 test('search finds a doc by its text through the daemon, not only its title', async () => {

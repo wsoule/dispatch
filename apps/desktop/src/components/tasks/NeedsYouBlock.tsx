@@ -441,21 +441,28 @@ function AskRow({
       data-testid="needs-you-row"
       title={gate === undefined ? undefined : 'this machine only'}
       // A new ask arrives from the left, where everything coming in flows from.
-      className="border-border animate-in fade-in-0 slide-in-from-left-4 flex flex-col gap-2 border-t-[0.5px] px-3 py-2 duration-300 first:border-t-0 motion-reduce:animate-none"
+      // In a narrow column (Overseer's Coming in) the question takes its own
+      // line under the badge, link and time instead of truncating to a word.
+      className="border-border animate-in fade-in-0 slide-in-from-left-4 @container flex flex-col gap-2 border-t-[0.5px] px-3 py-2 duration-300 first:border-t-0 motion-reduce:animate-none"
     >
-      <div className="flex min-w-0 items-center gap-2.5 text-[13px]">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px]">
         <KindBadge>{kindLabel(item)}</KindBadge>
-        <span className="min-w-0 flex-1 truncate">{item.summary}</span>
+        <span
+          title={item.summary}
+          className="min-w-0 flex-1 truncate @max-md:order-last @max-md:line-clamp-2 @max-md:basis-full @max-md:whitespace-normal"
+        >
+          {item.summary}
+        </span>
         {taskId !== undefined && (
           <Button size="xs" variant="ghost" onClick={() => onOpenTask(taskId)}>
             › {taskId}
           </Button>
         )}
-        <span className="text-muted-foreground w-14 shrink-0 text-right text-[12px]">
+        <span className="text-muted-foreground ml-auto w-14 shrink-0 text-right text-[12px]">
           {formatRelativeTimeFromIso(item.since)}
         </span>
       </div>
-      <div className="pl-[74px]">
+      <div className="pl-[74px] @max-md:pl-0">
         {gate !== undefined ? (
           card(item, gate)
         ) : (
