@@ -942,8 +942,8 @@ function App() {
     [savedViews.favorites]
   );
   const presetContext = useMemo(
-    () => ({ bucketOf, starred: starredTaskIds }),
-    [bucketOf, starredTaskIds]
+    () => ({ bucketOf, starred: starredTaskIds, me: data.me }),
+    [bucketOf, starredTaskIds, data.me]
   );
   const admin = useAdminItems(data.client, data.port, twoViews);
   const daemonDown = data.portLoading || data.portError || data.client === null;
@@ -1151,7 +1151,8 @@ function App() {
   }, [paletteTasks]);
 
   // Opens the Tasks board on one saved view — the rail's nested view rows, a favourite,
-  // and the palette's `Open view …` rows all route here.
+  // and the palette's `Open view …` rows all route here. In Two views `board` lands on
+  // the Tasks list, whose header applies the selected view.
   const openSavedView = useCallback(
     (id: string) => {
       selectProjectView('board');

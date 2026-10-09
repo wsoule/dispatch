@@ -75,3 +75,35 @@ describe('presetForBucket', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+describe('the Mine preset', () => {
+  const ME = 'human:wyat';
+  const doc = (id: string, assignee: string) =>
+    taskDoc({ id, title: id, status: 'ready', assignee }) as TaskListItem;
+  const docs = [
+    doc('mine', ME),
+    doc('legacy', 'human'),
+    doc('theirs', 'human:maya'),
+    doc('agent', 'agent'),
+  ];
+
+  test('keeps the work assigned to me, the legacy bare human included', () => {
+    const match = presetMatcher('mine', {
+      bucketOf: () => null,
+      starred: new Set(),
+      me: ME,
+    });
+    expect(docs.filter((d) => match?.(d)).map((d) => d.meta.id)).toEqual([
+      'mine',
+      'legacy',
+    ]);
+  });
+
+  test('matches nothing until the daemon says who I am', () => {
+    const match = presetMatcher('mine', {
+      bucketOf: () => null,
+      starred: new Set(),
+    });
+    expect(docs.filter((d) => match?.(d))).toHaveLength(0);
+  });
+});
