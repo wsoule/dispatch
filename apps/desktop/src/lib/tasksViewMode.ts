@@ -1,5 +1,3 @@
-import { useCallback, useState } from 'react';
-
 /**
  * Which layout the Tasks view opens in.
  *
@@ -45,28 +43,4 @@ export function parseViewMode(stored: string | null): TasksViewMode {
     return stored;
   }
   return 'board';
-}
-
-/**
- * The Tasks view mode as state: read once from storage, written only on an explicit change —
- * never on mount, which is exactly the auto-save-the-default flaw that poisoned the v1 key
- * (see `VIEW_MODE_STORAGE_KEY`). `initial` is the first-launch default only: it applies when
- * nothing is stored yet, so a remembered choice survives the view unmounting and remounting
- * under a parent that resolved `initial` once and never again.
- */
-export function useTasksViewMode(
-  initial?: TasksViewMode
-): [TasksViewMode, (mode: TasksViewMode) => void] {
-  const [mode, setMode] = useState<TasksViewMode>(() => {
-    const stored =
-      typeof window === 'undefined'
-        ? null
-        : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-    return stored !== null ? parseViewMode(stored) : (initial ?? 'board');
-  });
-  const set = useCallback((next: TasksViewMode) => {
-    setMode(next);
-    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, next);
-  }, []);
-  return [mode, set];
 }

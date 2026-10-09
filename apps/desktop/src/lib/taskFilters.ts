@@ -40,8 +40,6 @@ export interface TaskFilterSet {
   join: FilterJoin;
 }
 
-export const TASK_FILTERS_V2_STORAGE_KEY = 'dispatch:tasks-filters-v2';
-
 export const EMPTY_TASK_FILTER_SET: TaskFilterSet = {
   clauses: [],
   join: 'and',

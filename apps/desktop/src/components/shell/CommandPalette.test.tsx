@@ -15,8 +15,6 @@ function shellActions(overrides: Partial<ShellActions> = {}): ShellActions {
     createPreset: null,
     closeCreateTask: () => {},
     openPalette: () => {},
-    toggleSidebar: () => {},
-    sidebarHidden: false,
     openOverseer: () => {},
     setProjectView: () => {},
     setGlobalView: () => {},
@@ -77,13 +75,11 @@ function mount({
   ran = [],
   onClose = () => {},
   searchDocs,
-  twoViews,
 }: {
   actions?: ShellActions;
   ran?: string[];
   onClose?: () => void;
   searchDocs?: (query: string) => Promise<PaletteEntry[]>;
-  twoViews?: boolean;
 } = {}) {
   return render(
     <ShellActionsProvider value={actions}>
@@ -92,7 +88,6 @@ function mount({
         entries={entries(ran)}
         onClose={onClose}
         searchDocs={searchDocs}
-        twoViews={twoViews}
       />
     </ShellActionsProvider>
   );
@@ -146,17 +141,17 @@ test('rows carry an icon, a sans task id, and keycaps — never the kind text', 
   expect(keycaps).toEqual(['⌘1', 'G', 'S', 'C']);
 });
 
-test('the input shows the Ask Overseer Tab hint and is described by it', () => {
+test('the input shows the Ask your agent Tab hint and is described by it', () => {
   mount();
   const hint = document.querySelector('[data-slot="command-input-hint"]');
-  expect(hint?.textContent).toContain('Ask the Assistant');
+  expect(hint?.textContent).toContain('Ask your agent');
   expect(hint?.querySelector('[data-slot="kbd"]')?.textContent).toBe('Tab');
   expect(hint?.id).not.toBe('');
   expect(input().getAttribute('aria-describedby')).toBe(hint?.id);
 });
 
-test('in Two views the Tab hint and the empty state name your agent', () => {
-  mount({ twoViews: true });
+test('the Tab hint and the empty state name your agent', () => {
+  mount();
   const hint = document.querySelector('[data-slot="command-input-hint"]');
   expect(hint?.textContent).toContain('Ask your agent');
   expect(hint?.textContent).not.toContain('Assistant');

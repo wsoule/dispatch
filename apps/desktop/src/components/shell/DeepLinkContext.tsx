@@ -16,7 +16,7 @@ const DeepLinkContext = createContext<DeepLinkActions | null>(null);
 
 export const DeepLinkProvider = DeepLinkContext.Provider;
 
-/** `null` outside the provider, unlike `useNotificationInbox` — the Tasks
+/** `null` outside the provider — the Tasks
  * page also renders in the browser-dev harness and in view tests that never
  * mount App's providers, and a consumer simply shows no `Copy link` then. */
 export function useDeepLinkActions(): DeepLinkActions | null {

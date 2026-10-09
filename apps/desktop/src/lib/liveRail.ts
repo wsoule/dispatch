@@ -6,7 +6,7 @@ import { isTerminalRunState } from './runState';
  * row is actually doing from a glance. */
 export type RunKindLabel = 'agent' | 'review' | 'verify';
 
-export interface LiveRailRow {
+interface LiveRailRow {
   run: RunMeta;
   kindLabel: RunKindLabel;
 }

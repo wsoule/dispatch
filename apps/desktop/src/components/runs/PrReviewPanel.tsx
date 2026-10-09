@@ -226,7 +226,7 @@ interface PrReviewPanelProps {
 // the user is agreeing to execution, not to a checkbox.
 // Exported so Landing's worktree "Check out" reuses this surface for the
 // same fork gate, instead of a second copy of the wording.
-export function ForkConfirm({
+function ForkConfirm({
   owner,
   busy,
   onCancel,
