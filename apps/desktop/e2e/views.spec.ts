@@ -28,6 +28,8 @@ async function openFromPalette(page: Page, label: string): Promise<void> {
   await row.click();
 }
 
+const FIXED_NOW = new Date('2026-10-09T12:00:00Z');
+
 // global-setup.ts resolves the daemon's per-run token before any test worker
 // starts and hands it over via the environment; this fails loudly rather than
 // letting a test silently visit an unauthenticated URL if that ever changes.
@@ -65,14 +67,19 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
   await expect(page.getByTestId('two-views-count-failed')).toHaveText('✕ 1');
 }
 
-// Every baseline here predates the Overseer/Tasks layout and the inbox,
-// overview and landing pages it retired; each needs a reviewed refresh, never
-// a local one.
+// Baselines are Two views on the storefront fixture, refreshed with
+// `e2e:update` on macOS (CI does not run this suite); review every PNG first.
 for (const view of VIEWS) {
   test(`${view.name} renders`, async ({ page, baseURL }) => {
+    // Rows show ages like "78d ago"; a fixed clock keeps them from drifting
+    // a day at a time out of the baseline.
+    await page.clock.setFixedTime(FIXED_NOW);
     await page.goto(authedUrl(baseURL));
     await assertFixtureDataLoaded(page);
     await view.open(page);
+    // Opening from the command menu leaves the pointer over the page, where
+    // it can reveal a row's hover actions; park it off to the side.
+    await page.mouse.move(0, 0);
     // The pulse on in-flight rows is the only animation these surfaces have;
     // let it settle so it can't shift a screenshot.
     await page.waitForTimeout(1000);
