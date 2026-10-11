@@ -71,7 +71,10 @@ import '../styles/page.css';
         <p>
           The Dispatch.foo plugin for Claude Code and Cowork downloads the{' '}
           <code>@dispatch-foo/mcp</code> package from npm once, then talks only to the Dispatch
-          daemon on your own machine over local HTTP. It sends nothing to us or anyone else.
+          daemon on your own machine over local HTTP. When Claude messages someone through it,
+          Dispatch delivers the message: to a teammate through your team’s sync, as described
+          above, or to an outside A2A agent your project owner registered. Nothing else leaves
+          your machine.
         </p>
 
         <h2>The website and the hosted demo</h2>
