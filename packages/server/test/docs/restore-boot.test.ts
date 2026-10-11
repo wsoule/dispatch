@@ -81,7 +81,11 @@ it('v1 exit: a receipt log restores team docs on a clean machine as unreviewed, 
     const list = (await (await fetch(`${api}/docs`)).json()) as {
       docs: { handle: string; unreviewed: boolean }[];
     };
-    expect(list.docs.map((d) => [d.handle, d.unreviewed]).sort()).toEqual([
+    expect(
+      list.docs
+        .toSorted((a, b) => a.handle.localeCompare(b.handle))
+        .map((d) => [d.handle, d.unreviewed])
+    ).toEqual([
       ['auth-spec', true],
       ['notes', true],
     ]);

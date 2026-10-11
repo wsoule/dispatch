@@ -1,6 +1,6 @@
 import type { InboxItem, InboxKind } from '@dispatch/client';
 import { Bot, CircleHelp, Inbox, RefreshCw, Sparkles, X } from 'lucide-react';
-import { Fragment, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useToasts } from '../components/shell/Toasts';
@@ -92,6 +92,13 @@ export function BrainDumpView({
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(
     null
   );
+  // Opening a row's editor (Add detail, or tapping its text) puts the caret in it; keyed on
+  // the row, so typing into the open editor never re-runs this.
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const editingId = editing?.id;
+  useEffect(() => {
+    if (editingId !== undefined) editorRef.current?.focus();
+  }, [editingId]);
   // Grouping runs only when asked (the Group button) — a model call is a bill, and typing
   // into your own inbox must never ring one up on a timer. The rendered groups come from
   // `data.inboxClusters`, the pass persisted server-side, so a page load shows the last
@@ -510,8 +517,8 @@ export function BrainDumpView({
                       <div className={cn(CARD_CLASS, 'my-1 ml-9')}>
                         <Textarea
                           variant="borderless"
+                          ref={editorRef}
                           value={editing.text}
-                          autoFocus
                           aria-label={`Edit "${firstLine(it.text)}"`}
                           onChange={(e) =>
                             setEditing({ id: it.id, text: e.target.value })

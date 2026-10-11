@@ -96,17 +96,16 @@ async function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
 
 // Answers the git/gh invocations the merge queue makes, so no test here
 // depends on a real rebase/push (copied in shape from overseerTools.test.ts).
-const stubRunner = async (
-  _cwd: string,
-  cmd: string[]
-): Promise<CommandResult> => {
+function stubResult(cmd: string[]): CommandResult {
   const ok = { ok: true, stdout: '', stderr: '' };
   if (cmd[0] === 'git' && cmd[1] === 'fetch') return ok;
   if (cmd[0] === 'git' && cmd[1] === 'rebase') return ok;
   if (cmd[0] === 'bash' && cmd[1] === '-lc') return ok;
   if (cmd[0] === 'git' && cmd[1] === 'push') return ok;
   return { ok: false, stdout: '', stderr: 'unhandled stub command' };
-};
+}
+const stubRunner = (_cwd: string, cmd: string[]): Promise<CommandResult> =>
+  Promise.resolve(stubResult(cmd));
 
 interface Harness extends OverseerToolContext {
   registry: OverseerToolRegistry;
@@ -363,11 +362,11 @@ describe('OverseerManager turns', () => {
     const h = makeManager({ ok: true, reply: 'ok' });
     let offered: OverseerToolset | undefined;
     h.manager.registerBackend('spy', {
-      start: async (_prompt, toolset) => {
+      start: (_prompt, toolset) => {
         offered = toolset;
-        return { reply: 'ok' };
+        return Promise.resolve({ reply: 'ok' });
       },
-      sendMessage: async () => ({ reply: 'ok' }),
+      sendMessage: () => Promise.resolve({ reply: 'ok' }),
     });
 
     const started = h.manager.start('hi', 'spy');

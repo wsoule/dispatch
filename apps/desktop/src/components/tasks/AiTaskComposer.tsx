@@ -121,7 +121,6 @@ export function AiTaskComposer({
             <DialogBody className="gap-3 pt-1 pb-4">
               <Textarea
                 variant="borderless"
-                autoFocus
                 placeholder="What should change, and how you'll know it's done…"
                 aria-label="Describe the task"
                 value={prompt}

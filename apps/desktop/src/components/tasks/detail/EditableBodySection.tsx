@@ -1,7 +1,9 @@
+import { Pencil } from 'lucide-react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
+import { IconButton } from '@/ui/ai/icon-button';
 import { Textarea } from '@/ui/textarea';
 
 // The click-to-edit wrapper the task page's prose sections share (Description, Acceptance
@@ -12,7 +14,7 @@ import { Textarea } from '@/ui/textarea';
 // when the text actually changed. `value` is the persisted section text; the draft resets
 // whenever it (or the task) changes. Rendered prose stays real prose: it can be selected
 // and copied, its links and checklist boxes keep working, and assistive tech reads the
-// text itself rather than an edit label.
+// text itself; a hover-revealed Edit button is the keyboard's way into the editor.
 export function EditableBodySection({
   value,
   placeholder,
@@ -24,7 +26,7 @@ export function EditableBodySection({
   value: string;
   placeholder: string;
   onSave: (next: string) => void;
-  /** Accessible name for the textarea and the empty-state edit button. */
+  /** Accessible name for the textarea; the edit buttons read `Edit <label>`. */
   label: string;
   /** The rendered read-mode body. */
   children?: ReactNode;
@@ -84,19 +86,15 @@ export function EditableBodySection({
     );
   }
 
-  // A click on a link or a checklist box is that control's own; a click that ends a
-  // drag-select is a copy, not an edit request.
-  function onReadClick(event: MouseEvent<HTMLDivElement>) {
+  // Keyboard and assistive tech reach the editor through the Edit button below; a pointer
+  // press anywhere in the prose is the same request, made where the eye already is. A press
+  // on a link or a checklist box is that control's own, and one that ends a drag-select is a
+  // copy, not an edit request.
+  function onReadMouseUp(event: MouseEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
     if (!(event.target instanceof Element)) return;
-    if (event.target.closest('a, input') !== null) return;
+    if (event.target.closest('a, input, button') !== null) return;
     if (window.getSelection()?.isCollapsed === false) return;
-    setEditing(true);
-  }
-
-  function onReadKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
     setEditing(true);
   }
 
@@ -124,15 +122,22 @@ export function EditableBodySection({
 
   return (
     <div
-      role="button"
-      tabIndex={0}
       data-slot="editable-body"
       data-field={label}
-      onClick={onReadClick}
-      onKeyDown={onReadKeyDown}
-      className={cn(readClass, 'cursor-text text-foreground', className)}
+      onMouseUp={onReadMouseUp}
+      className={cn(
+        'group/editable relative min-h-6 w-full cursor-text text-left text-[15px] leading-6 font-book text-foreground',
+        className
+      )}
     >
       {children}
+      <IconButton
+        label={`Edit ${label.toLowerCase()}`}
+        onClick={() => setEditing(true)}
+        className="absolute -top-0.5 right-0 opacity-0 group-hover/editable:opacity-100 focus-visible:opacity-100"
+      >
+        <Pencil />
+      </IconButton>
     </div>
   );
 }

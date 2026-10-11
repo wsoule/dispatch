@@ -103,16 +103,19 @@ export class FakeHost implements MessagingHost {
     if (this.pushBarrier !== null) await this.pushBarrier;
     if (this.failPushFor.has(runId)) throw new Error('run went away');
   }
-  async notify(runId: string, digest: string): Promise<void> {
+  notify(runId: string, digest: string): Promise<void> {
     this.calls.push({ hook: 'notify', args: [runId, digest] });
-    if (this.failPushFor.has(runId)) throw new Error('run went away');
+    if (this.failPushFor.has(runId)) {
+      return Promise.reject(new Error('run went away'));
+    }
+    return Promise.resolve();
   }
   notifyHuman(actor: Address, message: Message): void {
     this.calls.push({ hook: 'notifyHuman', args: [actor, message.id] });
   }
-  async wake(target: Address, message: Message): Promise<WakeResult> {
+  wake(target: Address, message: Message): Promise<WakeResult> {
     this.calls.push({ hook: 'wake', args: [target, message.id] });
-    return this.wakeResult;
+    return Promise.resolve(this.wakeResult);
   }
   decide(request: PolicyRequest): PolicyRuling {
     this.calls.push({ hook: 'decide', args: [request.type, request.target] });
@@ -131,12 +134,15 @@ export class FakeHost implements MessagingHost {
   implicitMembers(channel: string): Address[] {
     return this.implicit.get(channel) ?? [];
   }
-  async onAnswered(question: Message, answer: Message): Promise<void> {
+  onAnswered(question: Message, answer: Message): Promise<void> {
     this.calls.push({
       hook: 'onAnswered',
       args: [question.id, answer.choice ?? null],
     });
-    if (this.failOnAnswered) throw new Error('onAnswered blew up');
+    if (this.failOnAnswered) {
+      return Promise.reject(new Error('onAnswered blew up'));
+    }
+    return Promise.resolve();
   }
   now(): Date {
     return this.clock;

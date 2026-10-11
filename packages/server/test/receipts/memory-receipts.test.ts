@@ -530,13 +530,20 @@ describe('a staged memory restore', () => {
       restoreDir
     );
     expect(report?.restored).toBe(1);
-    expect(report?.problems.map((p) => [p.file, p.detail]).sort()).toEqual(
-      [
-        [`${link.id}.md`, 'not a regular file'],
-        [`${huge.id}.md`, `over ${MEMORY_RECEIPT_FILE_BYTES} bytes`],
-        ['notes.md', 'not a memory receipt file name'],
-        [`${long.id}.md`, 'body: over the 8192-byte limit'],
-      ].sort()
+    // Each problem names a distinct file, so ordering by file is total.
+    type Problem = [file: string, detail: string];
+    const byFile = (a: Problem, b: Problem) => a[0].localeCompare(b[0]);
+    expect(
+      report?.problems.map((p): Problem => [p.file, p.detail]).sort(byFile)
+    ).toEqual(
+      (
+        [
+          [`${link.id}.md`, 'not a regular file'],
+          [`${huge.id}.md`, `over ${MEMORY_RECEIPT_FILE_BYTES} bytes`],
+          ['notes.md', 'not a memory receipt file name'],
+          [`${long.id}.md`, 'body: over the 8192-byte limit'],
+        ] satisfies Problem[]
+      ).sort(byFile)
     );
     expect(report?.pending).toContain(restoreDir);
     expect(existsSync(restoreDir)).toBe(true);

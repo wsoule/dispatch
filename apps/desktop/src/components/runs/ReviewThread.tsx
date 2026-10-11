@@ -2,7 +2,7 @@ import type { ReviewComment } from '@dispatch/client';
 import type { CodeViewFileItem } from '@pierre/diffs';
 import { CodeView } from '@pierre/diffs/react';
 import { Check, CornerDownRight } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
 import {
@@ -391,6 +391,12 @@ export function ReviewComposer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const start = startLine ?? line;
+  // The composer only exists because the reviewer just asked to comment on this range, so
+  // the caret goes straight into the body — again if they re-aim it at another range.
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    bodyRef.current?.focus();
+  }, [file, start, line]);
   const seed = useMemo(
     () =>
       fileContents === null ? '' : seedFromRange(fileContents, start, line),
@@ -477,7 +483,7 @@ export function ReviewComposer({
           : `Comment on line ${line}`}
       </div>
       <Textarea
-        autoFocus
+        ref={bodyRef}
         variant="borderless"
         value={body}
         onChange={(e) => setBody(e.target.value)}

@@ -12,7 +12,6 @@ import type {
 } from '@pierre/diffs';
 import type { CodeViewHandle } from '@pierre/diffs/react';
 import {
-  Check,
   Copy,
   MessageSquarePlus,
   MessagesSquare,
@@ -46,8 +45,8 @@ import {
 } from '@/lib/reviewDiffItems';
 import { isTerminalRunState } from '@/lib/runState';
 import type { ApplySuggestionOutcome } from '@/lib/suggestionRange';
-import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
 
 interface PierreReviewDiffProps {
   /** Backs the contents loader that fills in what a patch's own hunks don't carry — omitted
@@ -714,28 +713,15 @@ export function PierreReviewDiff({
       const isViewed = viewed?.has(item.id) ?? false;
       const tick =
         onToggleViewed === undefined ? null : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            role="checkbox"
-            aria-checked={isViewed}
+          <Checkbox
+            checked={isViewed}
             aria-label={`Mark ${item.id} viewed`}
-            onClick={(event) => {
-              // The header itself toggles the file's collapse on click; the tick must not
-              // also do that, or ticking a file would collapse it and immediately re-open it.
-              event.stopPropagation();
-              onToggleViewed(item.id);
-            }}
-            className={cn(
-              'size-3.5 shrink-0 rounded-sm p-0 hover:bg-transparent',
-              isViewed
-                ? 'bg-state-review text-background hover:bg-state-review'
-                : 'shadow-hairline'
-            )}
-          >
-            {isViewed && <Check className="size-2.5" />}
-          </Button>
+            onCheckedChange={() => onToggleViewed(item.id)}
+            // The header itself toggles the file's collapse on click; the tick must not
+            // also do that, or ticking a file would collapse it and immediately re-open it.
+            onClick={(event) => event.stopPropagation()}
+            className="data-checked:border-state-review data-checked:bg-state-review data-checked:text-background"
+          />
         );
       if (edit === null && tick === null) return null;
       return (

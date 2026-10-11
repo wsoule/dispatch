@@ -81,7 +81,6 @@ export function DispatchAgentDialog({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Task title"
-            autoFocus
           />
           <Textarea
             rows={4}

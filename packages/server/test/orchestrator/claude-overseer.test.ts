@@ -53,9 +53,11 @@ function stubToolset(result?: OverseerToolResult): {
         mutating: true,
       },
     ],
-    call: async (name, input) => {
+    call: (name, input) => {
       calls.push({ name, input });
-      return result ?? { content: { ok: true }, isError: false };
+      return Promise.resolve(
+        result ?? { content: { ok: true }, isError: false }
+      );
     },
   };
   return { toolset, calls };
@@ -64,8 +66,8 @@ function stubToolset(result?: OverseerToolResult): {
 // One `result` message is the minimum a turn needs to settle.
 function successStream(
   fields: Record<string, unknown> = {}
-): () => AsyncGenerator<unknown> {
-  return async function* stream() {
+): () => Iterable<unknown> {
+  return function* stream() {
     yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
     yield {
       type: 'result',
@@ -78,9 +80,10 @@ function successStream(
 }
 
 // Runs one turn against a scripted message stream, returning both the turn and
-// the Options the backend handed to `query()`.
+// the Options the backend handed to `query()`. The stream is a plain iterable:
+// the backend reads it with `for await`, which accepts sync iterables too.
 async function runTurn(
-  stream: () => AsyncGenerator<unknown>,
+  stream: () => Iterable<unknown>,
   toolset: OverseerToolset,
   send?: (
     overseer: ClaudeOverseer,
@@ -335,7 +338,7 @@ describe('ClaudeOverseer session wiring', () => {
 
   it('reports built-in tool calls from assistant messages, not its own', async () => {
     const { toolset } = stubToolset();
-    const stream = async function* stream() {
+    const stream = function* stream() {
       yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
       yield {
         type: 'assistant',
@@ -391,14 +394,14 @@ describe('ClaudeOverseer session wiring', () => {
 
   it('fails the turn on a non-success result and on a stream with no result', async () => {
     const { toolset } = stubToolset();
-    const errored = async function* stream() {
+    const errored = function* stream() {
       yield { type: 'result', subtype: 'error_max_turns', session_id: 's' };
     };
     await expect(runTurn(errored, toolset)).rejects.toThrow(
       'overseer turn failed: error_max_turns'
     );
 
-    const silent = async function* stream() {
+    const silent = function* stream() {
       yield { type: 'system', subtype: 'init', session_id: 's' };
     };
     await expect(runTurn(silent, toolset)).rejects.toThrow(

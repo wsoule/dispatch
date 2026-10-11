@@ -55,6 +55,9 @@ const inputGroupAddonVariants = cva(
   }
 );
 
+// The addon is decoration beside the input, not a control: keyboard users Tab straight to
+// the input. A pointer press on the addon (outside its own buttons) just widens the input's
+// hit area, focusing it on mousedown so focus never detours through the body.
 function InputGroupAddon({
   className,
   align = 'inline-start',
@@ -66,11 +69,14 @@ function InputGroupAddon({
       data-slot="input-group-addon"
       data-align={align}
       className={cn(inputGroupAddonVariants({ align }), className)}
-      onClick={(e) => {
-        if ((e.target as HTMLElement).closest('button')) {
+      onMouseDown={(e) => {
+        if (e.button !== 0 || (e.target as HTMLElement).closest('button')) {
           return;
         }
-        e.currentTarget.parentElement?.querySelector('input')?.focus();
+        const input = e.currentTarget.parentElement?.querySelector('input');
+        if (input == null) return;
+        e.preventDefault();
+        input.focus();
       }}
       {...props}
     />

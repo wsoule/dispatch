@@ -362,19 +362,3 @@ export function resolveGitKeyCommand(
       return null;
   }
 }
-
-export type CardKeyAction = 'activate' | null;
-
-/** Decides what a keydown on a Board card's root element should do, given which key was
- * pressed and whether the keydown originated directly on the card (`isDirectTarget`, the
- * caller's `e.target === e.currentTarget`) rather than bubbling up from a nested interactive
- * child — a card's own inline "Dispatch →" button is exactly such a child: pressing
- * Enter/Space to activate *that* button still fires a keydown that bubbles through the
- * card's own `onKeyDown`, and without this guard also opened the card's peek panel. */
-export function resolveCardKeyAction(
-  key: string,
-  isDirectTarget: boolean
-): CardKeyAction {
-  if (!isDirectTarget) return null;
-  return key === 'Enter' || key === ' ' ? 'activate' : null;
-}

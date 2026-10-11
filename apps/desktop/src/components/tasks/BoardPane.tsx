@@ -235,12 +235,15 @@ export function BoardPane({
   function handleBoardKeyDown(e: React.KeyboardEvent) {
     // A keydown that lands on (or inside) one of the track's own interactive controls — an
     // epic lane header's buttons or pickers, a column's menu, a card's Dispatch button.
-    // Task cards are role="button" divs (not real <button>s), so they fall through to the
-    // roving-cursor logic as intended.
+    // A card's own open button (`data-task-card-open`) is the roving cursor's target, not one
+    // of those controls, so its keys fall through to the roving-cursor logic.
     const controlEl = (e.target as HTMLElement).closest(
       'button, a, select, input, textarea, [contenteditable="true"]'
     );
-    const onControl = controlEl !== null && controlEl !== e.currentTarget;
+    const onControl =
+      controlEl !== null &&
+      controlEl !== e.currentTarget &&
+      !controlEl.hasAttribute('data-task-card-open');
     const command = resolveListKeyCommand(
       { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
       { isTyping: isTypingTarget(e.target) }

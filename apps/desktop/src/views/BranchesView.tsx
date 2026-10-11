@@ -1105,7 +1105,6 @@ function NewBranchDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="branch-name"
-            autoFocus
           />
         </DialogBody>
         <DialogFooter>

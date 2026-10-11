@@ -99,17 +99,16 @@ async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
 // jj is available and take a revision-resolving path that then fails on the
 // empty stdout. The queue's own mechanics are merge-queue.test.ts's subject;
 // these tests only need entries that exist and settle predictably.
-const stubRunner = async (
-  _cwd: string,
-  cmd: string[]
-): Promise<CommandResult> => {
+function stubResult(cmd: string[]): CommandResult {
   const ok = { ok: true, stdout: '', stderr: '' };
   if (cmd[0] === 'git' && cmd[1] === 'fetch') return ok;
   if (cmd[0] === 'git' && cmd[1] === 'rebase') return ok;
   if (cmd[0] === 'bash' && cmd[1] === '-lc') return ok;
   if (cmd[0] === 'git' && cmd[1] === 'push') return ok;
   return { ok: false, stdout: '', stderr: 'unhandled stub command' };
-};
+}
+const stubRunner = (_cwd: string, cmd: string[]): Promise<CommandResult> =>
+  Promise.resolve(stubResult(cmd));
 
 interface Harness extends OverseerToolContext {
   registry: OverseerToolRegistry;

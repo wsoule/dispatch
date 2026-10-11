@@ -122,6 +122,7 @@ test('Add detail opens an editor pre-filled with the row text and calls nothing'
   fireEvent.click(addDetailButtons()[0]);
 
   expect(editor(item).value).toBe(item.text);
+  expect(document.activeElement).toBe(editor(item));
   expect(calls).toEqual([]);
 });
 

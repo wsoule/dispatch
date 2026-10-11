@@ -21,6 +21,10 @@ describe('ApprovalCard — composing a deny reason', () => {
     fireEvent.click(
       screen.getByRole('radio', { name: /deny and tell it why/i })
     );
+    // Choosing Deny moves the caret into the reason box it just revealed.
+    expect(document.activeElement).toBe(
+      screen.getByLabelText('Reason for denying')
+    );
 
     const approveOnce = screen.getByRole('radio', { name: /approve once/i });
     const allowForRun = screen.getByRole('radio', {

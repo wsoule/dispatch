@@ -327,7 +327,7 @@ export function sanitizeAiFilter(
  * round-trip — request, chips, persistence — without a model call.
  */
 export class FakeAiTaskFilter implements AiTaskFilterPort {
-  async toFilters(
+  toFilters(
     sentence: string,
     vocab: AiFilterVocabulary
   ): Promise<AiTaskFilterResult> {
@@ -356,6 +356,6 @@ export class FakeAiTaskFilter implements AiTaskFilterPort {
     if (labels.length > 0) {
       clauses.push({ facet: 'labels', op: 'includes', values: labels });
     }
-    return { clauses, join: has('or') ? 'or' : 'and' };
+    return Promise.resolve({ clauses, join: has('or') ? 'or' : 'and' });
   }
 }

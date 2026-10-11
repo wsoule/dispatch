@@ -76,7 +76,6 @@ export function FirstRunView({
         </div>
 
         <Textarea
-          autoFocus
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={(e) => {

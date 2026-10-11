@@ -132,7 +132,6 @@ export function SignInView({ baseUrl, onSignedIn, notice }: SignInViewProps) {
           <p className="text-sm text-(--state-waiting-fg)">{notice}</p>
         )}
         <Input
-          autoFocus
           type="password"
           autoComplete="off"
           value={token}

@@ -93,7 +93,10 @@ class FakeRunner {
     };
   }
 
-  run = async (_cwd: string, cmd: string[]): Promise<CommandResult> => {
+  run = (_cwd: string, cmd: string[]): Promise<CommandResult> =>
+    Promise.resolve(this.respond(cmd));
+
+  private respond(cmd: string[]): CommandResult {
     this.calls.push(cmd);
     if (cmd[0] === 'git' && cmd[1] === 'push') {
       return { ok: true, stdout: '', stderr: '' };
@@ -113,7 +116,7 @@ class FakeRunner {
       if (jsonArg === 'state') return this.viewStateResult;
     }
     return { ok: false, stdout: '', stderr: 'unhandled stub command' };
-  };
+  }
 }
 
 interface Harness {

@@ -820,11 +820,14 @@ test('a drop in a priority lane column still moves status', async () => {
     column.getBoundingClientRect = () => rect(i * 348);
   });
   // Card two (low, todo) lives in the Low lane's first column; drag it two columns right.
+  // The title button is the drag handle; the card around it is what @dnd-kit measures.
   const card = screen
     .getByText('Card two')
     .closest<HTMLElement>('[aria-roledescription="draggable"]');
-  if (card === null) throw new Error('no card');
+  const tile = card?.closest<HTMLElement>('[data-slot=task-card]');
+  if (card == null || tile == null) throw new Error('no card');
   card.getBoundingClientRect = () => rect(0);
+  tile.getBoundingClientRect = () => rect(0);
   const press = async (key: string, code: string) => {
     await act(async () => {
       fireEvent.keyDown(card, { key, code });
@@ -986,12 +989,13 @@ test('the keyboard cursor keeps its card mounted far down a column', () => {
 test('a dragged card stays mounted when the board scrolls it out of view', async () => {
   render(<Harness tasks={LONG_COLUMN} epics={[]} display={display('none')} />);
   const card = document.querySelector<HTMLElement>('[data-slot=task-card]');
-  if (card === null) throw new Error('no card');
+  const handle = card?.querySelector<HTMLElement>('[data-task-card-open]');
+  if (card == null || handle == null) throw new Error('no card');
   expect(card.textContent).toContain('t-000');
   // Pick it up with the keyboard sensor, as someone dragging with Space would.
   await settle(() => {
-    card.focus();
-    fireEvent.keyDown(card, { key: ' ', code: 'Space' });
+    handle.focus();
+    fireEvent.keyDown(handle, { key: ' ', code: 'Space' });
   });
   const board = document.querySelector<HTMLElement>('[data-slot=task-board]');
   if (board === null) throw new Error('no board');

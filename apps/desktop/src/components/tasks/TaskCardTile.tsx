@@ -13,7 +13,6 @@ import { ArrowRight } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 
 import { readinessBadges } from '../../lib/judgmentBadges';
-import { resolveCardKeyAction } from '../../lib/keyboard';
 import { colorForLabel } from '../../lib/labelColor';
 import { formatCreated } from '../../lib/taskDates';
 import { TASK_PROPERTIES, type TaskProperty } from '../../lib/tasksPrefs';
@@ -28,6 +27,7 @@ import {
 } from './PropertyControls';
 import { cn } from '@/lib/utils';
 import { LabelPill, Pill } from '@/ui/ai/pill';
+import { TextButton } from '@/ui/ai/text-button';
 import { Button } from '@/ui/button';
 import { Spinner } from '@/ui/spinner';
 
@@ -130,11 +130,11 @@ export const TaskCardTile = memo(function TaskCardTile({
 }: TaskCardTileProps) {
   const id = doc.meta.id;
   const [dispatching, setDispatching] = useState(false);
-  const cardRef = useRef<HTMLDivElement>(null);
+  const openRef = useRef<HTMLButtonElement>(null);
   const has = (p: TaskProperty) => properties.has(p);
 
   useEffect(() => {
-    if (focused) cardRef.current?.focus();
+    if (focused) openRef.current?.focus();
   }, [focused]);
 
   async function dispatchNow(e: React.MouseEvent) {
@@ -157,49 +157,31 @@ export const TaskCardTile = memo(function TaskCardTile({
   const showCrumb = has('epic') && epicTitle !== undefined;
 
   return (
+    // The card is a container, not a button: its title is the real `<button>` that opens the
+    // task, stretched over the whole tile (and carrying the drag handle), while the pickers and
+    // Dispatch sit above that hit area as controls of their own. No button nests in another.
     <div
-      ref={(node) => {
-        cardRef.current = node;
-        drag?.setNodeRef(node);
-      }}
+      ref={drag?.setNodeRef}
       style={drag?.style}
-      {...drag?.attributes}
-      {...drag?.listeners}
-      role="button"
-      tabIndex={0}
       data-slot="task-card"
       data-focused={focused}
       className={cn(
-        'group bg-surface-quaternary rounded-card shadow-card flex w-[322px] max-w-full cursor-pointer flex-col gap-1.5 p-3 text-left transition-[background-color,box-shadow] duration-100',
+        'group bg-surface-quaternary rounded-card shadow-card relative flex w-[322px] max-w-full cursor-pointer flex-col gap-1.5 p-3 text-left transition-[background-color,box-shadow] duration-100',
         // 3% of the text colour into the card surface: a lift in dark, a dip in light.
         'hover:bg-[color-mix(in_srgb,var(--surface-quaternary),var(--text-primary)_3%)]',
-        'focus-visible:shadow-raised focus-visible:outline-none',
+        'has-[[data-task-card-open]:focus-visible]:shadow-raised',
         'data-[focused=true]:shadow-raised',
+        // Every nested control rides above the stretched open button.
+        '[&_button:not([data-task-card-open])]:relative [&_button:not([data-task-card-open])]:z-10',
         drag?.isDragging === true && 'opacity-40',
         archived && 'cursor-default opacity-55 hover:bg-surface-quaternary'
       )}
-      onClick={() => onClick(id)}
       onFocus={onFocus === undefined ? undefined : () => onFocus(id)}
       onKeyDown={(e) => {
-        const isDirectTarget = e.target === e.currentTarget;
-        if (drag !== undefined && e.key === ' ' && isDirectTarget) {
-          // Space belongs to @dnd-kit's keyboard sensor (pick up / move / drop) when this
-          // card is draggable — Enter is still the "open" key below. `drag.listeners` was
-          // spread onto this element above, but that spread's own `onKeyDown` is overwritten
-          // by this handler, so the sensor's Space is forwarded by hand.
-          drag.listeners?.onKeyDown?.(e);
-          return;
-        }
-        if (resolveCardKeyAction(e.key, isDirectTarget) === 'activate') {
-          e.preventDefault();
-          onClick(id);
-          return;
-        }
-        if (!isDirectTarget) {
-          // A keydown from a nested control (a picker, the Dispatch button) owns its own
-          // Enter/Space; stop it before it reaches the Board's roving-focus track.
-          e.stopPropagation();
-        }
+        // A keydown from a nested control (a picker, the Dispatch button) owns its own keys;
+        // stop it before it reaches the Board's roving-focus track. The open button's keys
+        // travel on, so j/k and Enter keep driving the board from the card.
+        if (e.target !== openRef.current) e.stopPropagation();
       }}
     >
       <div
@@ -241,9 +223,32 @@ export const TaskCardTile = memo(function TaskCardTile({
             />
           </span>
         )}
-        <span className="text-foreground line-clamp-2 text-[13px] leading-5 font-medium">
-          {doc.meta.title}
-        </span>
+        <TextButton
+          ref={openRef}
+          stretch
+          data-task-card-open=""
+          {...drag?.attributes}
+          {...drag?.listeners}
+          onClick={() => onClick(id)}
+          onKeyDown={(e) => {
+            if (drag !== undefined && e.key === ' ') {
+              // Space belongs to @dnd-kit's keyboard sensor (pick up / move / drop) when the
+              // card is draggable; Enter still opens. The sensor's own `onKeyDown`, spread
+              // above, also starts on Enter, so only Space is forwarded to it (left un-prevented:
+              // the sensor ignores a handled event, and prevents the button's own click itself).
+              drag.listeners?.onKeyDown?.(e);
+            }
+          }}
+          // The keyboard cursor is the card's neutral raised ring (above), never the accent.
+          className={cn(
+            'cursor-pointer focus-visible:after:ring-0',
+            archived && 'cursor-default'
+          )}
+        >
+          <span className="text-foreground line-clamp-2 text-[13px] leading-5 font-medium whitespace-normal">
+            {doc.meta.title}
+          </span>
+        </TextButton>
       </div>
 
       <div

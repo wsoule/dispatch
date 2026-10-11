@@ -84,6 +84,7 @@ import {
 import { useTrafficLightInset } from './hooks/useTrafficLightInset';
 import {
   type ActionFeedbackCache,
+  describeError,
   withActionFeedback,
 } from './lib/actionFeedback';
 import { orbLabel, orbState, overseerTurnLive } from './lib/agentPresence';
@@ -241,7 +242,7 @@ function App() {
             void installUpdateAndRelaunch(update).catch((err: unknown) => {
               toasts.push({
                 title: 'Update failed',
-                description: err instanceof Error ? err.message : String(err),
+                description: describeError(err),
                 tone: 'error',
               });
             });
@@ -1067,7 +1068,7 @@ function App() {
         .catch((err: unknown) =>
           toasts.push({
             title: 'Copy failed',
-            description: err instanceof Error ? err.message : String(err),
+            description: describeError(err),
             tone: 'error',
           })
         );

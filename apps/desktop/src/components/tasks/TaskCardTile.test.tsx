@@ -52,6 +52,12 @@ function card(): HTMLElement {
   return el;
 }
 
+function openButton(): HTMLElement {
+  const el = card().querySelector<HTMLElement>('[data-task-card-open]');
+  if (el === null) throw new Error('no open button');
+  return el;
+}
+
 function slot(name: string): HTMLElement {
   const el = card().querySelector<HTMLElement>(`[data-slot=task-card-${name}]`);
   if (el === null) throw new Error(`no ${name} row`);
@@ -113,7 +119,7 @@ test('the keyboard cursor is a neutral raised ring, never the accent', () => {
   expect(el.dataset['focused']).toBe('true');
   expect(el.className).toContain('data-[focused=true]:shadow-raised');
   expect(el.className).not.toContain('ring-ring');
-  expect(document.activeElement).toBe(el);
+  expect(document.activeElement).toBe(openButton());
 });
 
 test('attention and blocked read as pills on row 3', () => {
@@ -173,10 +179,15 @@ test('an archived card dims and says so', () => {
   expect(slot('pills').textContent).toContain('Archived');
 });
 
-test('Enter opens the card; a nested control keeps its own keys', () => {
+test('the title is the real button that opens the card; a nested control keeps its own keys', () => {
   let opened = 0;
   renderCard({ onClick: () => (opened += 1) });
-  fireEvent.keyDown(card(), { key: 'Enter' });
+  const open = openButton();
+  expect(open.tagName).toBe('BUTTON');
+  expect(open.textContent).toBe('Cache the search index in redis');
+  // No control nests inside it: the pickers sit beside it, above its stretched hit area.
+  expect(open.querySelector('button')).toBeNull();
+  fireEvent.click(open);
   expect(opened).toBe(1);
   fireEvent.keyDown(screen.getByRole('button', { name: 'Change status' }), {
     key: 'Enter',

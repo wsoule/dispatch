@@ -140,6 +140,11 @@ export function ApprovalCard({
   // what it did wrong, which usually means it guesses again.
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState('');
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  // Picking Deny reveals the reason box, so the caret follows that choice into it.
+  useEffect(() => {
+    if (denying) reasonRef.current?.focus();
+  }, [denying]);
 
   async function decide(
     allow: boolean,
@@ -245,7 +250,7 @@ export function ApprovalCard({
       <Collapsible open={denying}>
         <CollapsibleContent className="flex flex-col gap-2">
           <Textarea
-            autoFocus
+            ref={reasonRef}
             aria-label="Reason for denying"
             value={reason}
             onChange={(e) => setReason(e.target.value)}

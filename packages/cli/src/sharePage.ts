@@ -37,8 +37,8 @@ export interface RunPacket {
 /** HTML-escapes text going into the page. Every value below is repo content —
  *  commit messages, file paths, agent output — so none of it may be trusted
  *  as markup. */
-function esc(value: unknown): string {
-  return String(value ?? '')
+function esc(value: string | number | null | undefined): string {
+  return (value === null || value === undefined ? '' : String(value))
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

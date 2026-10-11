@@ -445,15 +445,25 @@ export function SettingsView({
 
   // Rows hide themselves, so whether anything matched is only known after
   // render: read it from the DOM rather than keeping a second index of rows.
+  // Checked as each query renders, then watched, because a section can add or
+  // drop rows on its own later (data that loads after the keystroke).
   useLayoutEffect(() => {
-    if (!searching) {
+    const results = resultsRef.current;
+    if (!searching || results === null) {
       setNoMatches(false);
-      return;
+      return undefined;
     }
-    setNoMatches(
-      resultsRef.current?.querySelector('[data-settings-row]') === null
-    );
-  });
+    const check = () =>
+      setNoMatches(results.querySelector('[data-settings-row]') === null);
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(results, {
+      childList: true,
+      subtree: true,
+      attributeFilter: ['data-settings-row'],
+    });
+    return () => observer.disconnect();
+  }, [searching, query]);
 
   // What this viewer may change, handed to every group and row below.
   const access = accessFor(

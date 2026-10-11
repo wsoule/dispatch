@@ -83,7 +83,7 @@ async function presence(): Promise<{ handle: string; connections: number }[]> {
   return (await res.json()) as { handle: string; connections: number }[];
 }
 
-async function until(check: () => Promise<boolean>): Promise<void> {
+async function until(check: () => boolean | Promise<boolean>): Promise<void> {
   for (let i = 0; i < 100; i++) {
     if (await check()) return;
     await new Promise((r) => setTimeout(r, 20));
@@ -119,13 +119,12 @@ it('two people on one daemon are two entries, not one', async () => {
 it('everyone else hears someone arrive and leave', async () => {
   const watcher = await connect(handle.tokens.appToken);
   const { ws } = await connect(ada);
-  await until(async () => watcher.events.includes('presence.changed'));
+  await until(() => watcher.events.includes('presence.changed'));
 
   const before = watcher.events.filter((e) => e === 'presence.changed').length;
   ws.close();
   await until(
-    async () =>
-      watcher.events.filter((e) => e === 'presence.changed').length > before
+    () => watcher.events.filter((e) => e === 'presence.changed').length > before
   );
 });
 
@@ -151,7 +150,7 @@ it('says which task each person has open, and forgets it when they leave', async
     ).find((p) => p.handle === 'ada')?.viewing;
   expect(await viewing()).toBe('t-abc123');
   // Everyone else's stack updates off the same event as a connection.
-  await until(async () => events.includes('presence.changed'));
+  await until(() => events.includes('presence.changed'));
 
   expect((await focus('../../etc')).status).toBe(400);
 

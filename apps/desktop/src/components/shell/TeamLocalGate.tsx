@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 
+import { describeError } from '../../lib/actionFeedback';
 import {
   clearTeamSession,
   isTeamLocalPage,
@@ -54,7 +55,7 @@ function TeamLocalSignIn({ children }: TeamLocalGateProps) {
       .catch((err: unknown) => {
         if (cancelled) return;
         clearTeamSession();
-        setNotice(err instanceof Error ? err.message : String(err));
+        setNotice(describeError(err));
         setState('signed-out');
       });
     return () => {

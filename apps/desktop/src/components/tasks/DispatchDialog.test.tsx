@@ -1,5 +1,5 @@
 import type { TaskDoc } from '@dispatch-foo/core/browser';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
 import type { WorkEpicOptions } from '../../lib/epicSession';
@@ -49,6 +49,15 @@ function mount(
         name: overrides.confirmLabel ?? /Send \d+ agents?|Raise ceiling/,
       }),
   };
+}
+
+// Confirm marks the dialog busy until onConfirm settles; waiting for the button to
+// re-enable lets that promise's catch/finally render before the assertions run.
+async function confirmAndSettle(button: HTMLElement) {
+  fireEvent.click(button);
+  await waitFor(() => {
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+  });
 }
 
 function openConcurrency() {
@@ -181,9 +190,7 @@ describe('DispatchDialog', () => {
     const { confirmed, spend, confirmButton } = mount();
     expect(confirmButton().textContent).toContain('Send 12 agents');
     fireEvent.change(spend(), { target: { value: '50' } });
-    await act(async () => {
-      fireEvent.click(confirmButton());
-    });
+    await confirmAndSettle(confirmButton());
     expect(confirmed).toEqual([
       { concurrency: 3, maxSpendUsd: 50, maxRuns: 12 },
     ]);
@@ -193,9 +200,7 @@ describe('DispatchDialog', () => {
     const { confirmed, spend, runs, confirmButton } = mount();
     fireEvent.change(spend(), { target: { value: '' } });
     fireEvent.change(runs(), { target: { value: '' } });
-    await act(async () => {
-      fireEvent.click(confirmButton());
-    });
+    await confirmAndSettle(confirmButton());
     expect(confirmed).toEqual([
       { concurrency: 3, maxSpendUsd: null, maxRuns: null },
     ]);
@@ -244,9 +249,7 @@ describe('DispatchDialog', () => {
     expect((confirmButton() as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(spend(), { target: { value: '150' } });
     expect((confirmButton() as HTMLButtonElement).disabled).toBe(false);
-    await act(async () => {
-      fireEvent.click(confirmButton());
-    });
+    await confirmAndSettle(confirmButton());
     expect(confirmed).toEqual([
       { concurrency: 4, maxSpendUsd: 150, maxRuns: null },
     ]);
@@ -256,9 +259,7 @@ describe('DispatchDialog', () => {
     const { confirmButton, cancelled } = mount({
       onConfirm: () => Promise.reject(new Error('daemon offline')),
     });
-    await act(async () => {
-      fireEvent.click(confirmButton());
-    });
+    await confirmAndSettle(confirmButton());
     expect(screen.getByRole('alert').textContent).toBe('daemon offline');
     expect(cancelled()).toBe(0);
   });

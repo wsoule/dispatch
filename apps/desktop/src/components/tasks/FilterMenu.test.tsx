@@ -99,7 +99,9 @@ describe('FilterMenu AI filter', () => {
   });
 
   test('with the prop the row comes first, above Status', async () => {
-    const menu = await mountOpen({ onAiFilter: async () => URGENT_UNASSIGNED });
+    const menu = await mountOpen({
+      onAiFilter: () => Promise.resolve(URGENT_UNASSIGNED),
+    });
     const rows = within(menu).getAllByRole('menuitem');
     expect(rows[0]?.textContent).toBe('AI filter');
     expect(rows[0]?.dataset['facet']).toBe('ai');
@@ -122,9 +124,9 @@ describe('FilterMenu AI filter', () => {
     const changes: TaskFilterSet[] = [];
     const opens: boolean[] = [];
     const menu = await mountOpen({
-      onAiFilter: async (sentence) => {
+      onAiFilter: (sentence) => {
         sentences.push(sentence);
-        return URGENT_UNASSIGNED;
+        return Promise.resolve(URGENT_UNASSIGNED);
       },
       onChange: (next) => changes.push(next),
       opens,
@@ -184,7 +186,7 @@ describe('FilterMenu AI filter', () => {
     const changes: TaskFilterSet[] = [];
     const opens: boolean[] = [];
     const menu = await mountOpen({
-      onAiFilter: async () => EMPTY_TASK_FILTER_SET,
+      onAiFilter: () => Promise.resolve(EMPTY_TASK_FILTER_SET),
       onChange: (next) => changes.push(next),
       opens,
     });
@@ -239,7 +241,9 @@ describe('FilterMenu AI filter', () => {
   });
 
   test('arrow keys still walk the rows with the AI row in front', async () => {
-    const menu = await mountOpen({ onAiFilter: async () => URGENT_UNASSIGNED });
+    const menu = await mountOpen({
+      onAiFilter: () => Promise.resolve(URGENT_UNASSIGNED),
+    });
     const rows = within(menu).getAllByRole('menuitem');
     rows[0]?.focus();
     fireEvent.keyDown(within(menu).getByRole('menu'), { key: 'ArrowDown' });

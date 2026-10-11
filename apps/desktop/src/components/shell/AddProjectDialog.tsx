@@ -1,5 +1,5 @@
 import { ChevronLeft, FolderOpen, GitBranch, Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   cloneGithubRepo,
@@ -53,6 +53,12 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
   const [repos, setRepos] = useState<GithubRepo[] | null>(null);
   const [reposLoading, setReposLoading] = useState(false);
   const [filter, setFilter] = useState('');
+  // Choosing "From GitHub" swaps the dialog's body for the repo list; the caret follows
+  // that choice into its search box.
+  const filterRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (mode === 'github') filterRef.current?.focus();
+  }, [mode]);
 
   useEffect(() => {
     if (mode !== 'github' || repos !== null || reposLoading) return;
@@ -215,7 +221,7 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder="Search repositories…"
-                autoFocus
+                ref={filterRef}
               />
             </InputGroup>
 

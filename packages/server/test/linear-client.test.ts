@@ -610,7 +610,10 @@ describe('HttpLinearClient documents', () => {
   // Answers each request in turn from `replies`, recording what was sent.
   function sequence(replies: unknown[], sent: GraphqlSent[]): typeof fetch {
     return ((_url: string, init: RequestInit) => {
-      sent.push(JSON.parse(String(init.body)) as GraphqlSent);
+      if (typeof init.body !== 'string') {
+        throw new Error('expected a JSON string request body');
+      }
+      sent.push(JSON.parse(init.body) as GraphqlSent);
       return Promise.resolve(
         new Response(JSON.stringify({ data: replies.shift() }), {
           status: 200,
