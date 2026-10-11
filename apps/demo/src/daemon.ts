@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // startServer comes from @dispatch/server's own './embed' subpath (see
 // packages/server/src/embed.ts) — a narrow re-export kept separate from a
-// root export so @dispatch/cli/@dispatch/mcp still cannot resolve this
+// root export so @dispatch/cli/@dispatch-foo/mcp still cannot resolve this
 // Bun-only package at all.
 import { startServer } from '@dispatch/server/embed';
 // FakeExecutor/FakePlanner come from @dispatch/server's own './testing'

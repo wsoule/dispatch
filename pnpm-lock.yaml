@@ -466,7 +466,7 @@ importers:
       '@dispatch-foo/core':
         specifier: workspace:*
         version: link:../core
-      '@dispatch/mcp':
+      '@dispatch-foo/mcp':
         specifier: workspace:*
         version: link:../mcp
       commander:
@@ -648,12 +648,12 @@ importers:
       '@dispatch-foo/federation':
         specifier: workspace:*
         version: link:../federation
+      '@dispatch-foo/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@dispatch-foo/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@dispatch/mcp':
-        specifier: workspace:*
-        version: link:../mcp
       '@dispatch/memory':
         specifier: workspace:*
         version: link:../memory

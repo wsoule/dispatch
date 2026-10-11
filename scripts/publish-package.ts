@@ -38,6 +38,7 @@ export const PUBLISHABLE: Readonly<Record<string, string>> = {
   a2a: 'packages/a2a',
   'protocol-spec': 'packages/protocol-spec',
   federation: 'packages/federation',
+  mcp: 'packages/mcp',
 };
 
 const SCOPE = '@dispatch-foo/';

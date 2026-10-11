@@ -4,7 +4,7 @@
 // spawned `dispatchd` process. Kept as its own subpath, re-exporting exactly
 // the three names a caller needs to boot and hold onto a server, rather than
 // widening the root export (mirrors testing.ts's own reasoning): importing
-// this stays an explicit, visible choice, and @dispatch/cli/@dispatch/mcp
+// this stays an explicit, visible choice, and @dispatch/cli/@dispatch-foo/mcp
 // still cannot resolve `@dispatch/server` at all — there is no "." export.
 export { startServer } from './index.js';
 export type { ServerHandle, StartServerOptions } from './index.js';

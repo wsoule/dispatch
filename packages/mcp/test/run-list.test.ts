@@ -14,7 +14,7 @@ import { createDispatchMcpServer } from '../src/index.js';
 // do (packages/cli/src/commands/daemon.ts's `resolveDaemonBin`): via Node's
 // own module resolution against `@dispatch/server`'s one exported subpath
 // (`./package.json` — the package is Bun-only, so nothing else in it is
-// statically importable), never a hardcoded relative path. `@dispatch/mcp`
+// statically importable), never a hardcoded relative path. `@dispatch-foo/mcp`
 // only needs this for its own tests — run_list itself never imports
 // `@dispatch/server`, only ever talks to a running daemon over HTTP — hence
 // the workspace dependency living in devDependencies.

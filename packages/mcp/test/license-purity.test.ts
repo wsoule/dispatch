@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
-// @dispatch/mcp is MIT; @dispatch/server (the daemon) is FSL. The MCP server
+// @dispatch-foo/mcp is MIT; @dispatch/server (the daemon) is FSL. The MCP server
 // only ever talks to a running daemon over HTTP (src/daemon.ts) and keeps
 // hand-kept mirrors of the few server types it needs (src/tools.ts), so no
 // server code reaches the published artifact — server is a devDependency,

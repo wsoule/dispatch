@@ -16,7 +16,7 @@ beforeEach(() => {
 
 describe('dispatch mcp', () => {
   // `mcp`'s action hands off to a real StdioServerTransport attached to
-  // process stdio (via a dynamic import of @dispatch/mcp) and never
+  // process stdio (via a dynamic import of @dispatch-foo/mcp) and never
   // resolves on its own, so it can't be exercised through parseAsync() in
   // this process the way other commands are — doing so would hang the test
   // run. There is deliberately no requireStore() gate here either: per the

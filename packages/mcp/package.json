@@ -1,11 +1,32 @@
 {
-  "name": "@dispatch/mcp",
+  "name": "@dispatch-foo/mcp",
   "version": "0.24.0",
-  "private": true,
+  "description": "Dispatch's MCP server: lets Claude Code, Codex, Gemini CLI or any MCP agent read and work the Dispatch task board, message other agents, and save memory.",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "coding-agents",
+    "dispatch",
+    "mcp",
+    "model-context-protocol",
+    "task-board"
+  ],
+  "homepage": "https://dispatch.foo/docs",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wsoule/dispatch.git",
+    "directory": "packages/mcp"
+  },
   "bin": {
     "dispatch-mcp": "./dist/bin.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "server.json"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -13,6 +34,9 @@
       "import": "./dist/index.js"
     },
     "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsdown --clean",
@@ -30,5 +54,6 @@
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"
-  }
+  },
+  "mcpName": "io.github.wsoule/dispatch"
 }

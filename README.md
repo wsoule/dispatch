@@ -507,7 +507,7 @@ personal memory under `~/.dispatch/memory`. See
 
 Pass `--no-mcp` to skip this. Start the server directly with `dispatch mcp`
 (reads the current directory) or the standalone `dispatch-mcp --root <dir>`
-binary from `@dispatch/mcp`.
+binary from `@dispatch-foo/mcp`.
 
 On the file backend the five `task_*` tools operate directly on
 `.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
@@ -660,7 +660,7 @@ plain-language map:
 
 - **MIT** — the integration surface: `@dispatch-foo/core`,
   `@dispatch-foo/protocol`, `@dispatch/client`, `@dispatch/cli`,
-  `@dispatch/mcp`. Build on the task model, embed the message bus, drive the
+  `@dispatch-foo/mcp`. Build on the task model, embed the message bus, drive the
   daemon, or embed the MCP tools without a license review.
 - **[FSL-1.1-ALv2](LICENSE)** — the desktop app and the daemon/orchestrator.
   Source-available, not OSI open source: read, build, modify, self-host, and

@@ -19,7 +19,7 @@ const EXPECTED: Record<string, string> = {
   '@dispatch-foo/core': 'MIT',
   '@dispatch/client': 'MIT',
   '@dispatch/cli': 'MIT',
-  '@dispatch/mcp': 'MIT',
+  '@dispatch-foo/mcp': 'MIT',
   '@dispatch-foo/protocol': 'MIT',
   '@dispatch/memory': 'MIT',
   '@dispatch-foo/protocol-spec': 'Apache-2.0',

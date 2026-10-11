@@ -8,7 +8,7 @@ import { join } from 'node:path';
 //
 // Mirrors the read side of packages/server/src/daemonfile.ts: same hash
 // scheme, same `$DISPATCH_HOME`/homedir fallback (including treating an
-// empty string as unset), same on-disk layout. `@dispatch/mcp` can't import
+// empty string as unset), same on-disk layout. `@dispatch-foo/mcp` can't import
 // `@dispatch/server` directly — same reason `@dispatch/cli` can't (server is
 // Bun-only: bun:sqlite, Bun.serve) — so this is a small standalone reader
 // with just what `run_list` needs: is a daemon running for this rootDir, and

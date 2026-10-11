@@ -121,7 +121,7 @@ async function registerAndApprove(
   return registered;
 }
 
-// @dispatch/mcp's identity.ts keeps a copy of this function; its `agentName`
+// @dispatch-foo/mcp's identity.ts keeps a copy of this function; its `agentName`
 // tests run these same fixtures so the two cannot drift apart.
 describe('normalizeAgentName', () => {
   it('lowercases and replaces invalid characters with -', () => {

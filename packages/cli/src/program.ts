@@ -309,7 +309,7 @@ export function makeProgram(ctx: CliContext): Command {
       // Dynamic import keeps `@modelcontextprotocol/sdk` and its transitive
       // deps out of the CLI's startup path — every other command pays
       // nothing for this one existing.
-      const { runStdioServer } = await import('@dispatch/mcp');
+      const { runStdioServer } = await import('@dispatch-foo/mcp');
       // A background daemon exits after it sits unused, so a quiet agent
       // session can outlive it; this lets the task tools start a fresh one
       // the same way every other command does. `ensureDaemon` keys on the

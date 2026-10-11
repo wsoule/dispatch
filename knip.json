@@ -65,7 +65,11 @@
   // lint-staged runs via `pnpm exec lint-staged` in `.moon/workspace.yml`'s
   // `vcs.hooks.pre-commit`; the moonrepo plugin only scans moon.yml and
   // .moon/tasks/*.yml, not .moon/workspace.yml, so it cannot see this usage.
-  "ignoreDependencies": ["@dispatch/mcp", "@dispatch/server", "lint-staged"],
+  "ignoreDependencies": [
+    "@dispatch-foo/mcp",
+    "@dispatch/server",
+    "lint-staged"
+  ],
 
   // pgrep/pkill are spawned by ensure-daemon-race.test.ts to inspect and clean
   // up stray daemon processes. carto is probed by the demo's preflight and is

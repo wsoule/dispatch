@@ -109,7 +109,7 @@ none of your runs or memory; replicating team memory is team-server work.
 | `@dispatch/memory`       | ~4.6k                 | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                |
 | `@dispatch/server`       | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
 | `@dispatch/cli`          | ~6.4k                 | The `dispatch` binary                                                                                                                          |
-| `@dispatch/mcp`          | ~2.8k                 | Stdio MCP server, 21 tools                                                                                                                     |
+| `@dispatch-foo/mcp`      | ~2.8k                 | Stdio MCP server, 21 tools                                                                                                                     |
 | `@dispatch/client`       | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
 | `@dispatch/ui`           | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
 | `@dispatch/tokens`       | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |

@@ -321,7 +321,7 @@ interface PageArgs {
 // only exists in dispatchd's in-memory registry, so a daemon proxy is the
 // only way to answer this at all (see the Phase 4 plan's collaboration
 // half). The response shape is passed through as-is (RunMeta objects,
-// typed loosely here since @dispatch/mcp intentionally has no dependency on
+// typed loosely here since @dispatch-foo/mcp intentionally has no dependency on
 // @dispatch/server, which is Bun-only).
 async function runList(rootDir: string, args: PageArgs): Promise<ToolOutcome> {
   const daemon = readDaemonFile(projectRoot(rootDir));

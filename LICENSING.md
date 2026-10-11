@@ -84,12 +84,12 @@ Four tiers, one rule each:
 
 - **Releases up to and including v0.13.1 were published under Apache-2.0** and
   remain Apache-2.0 forever.
-- **`@dispatch/cli` and `@dispatch/mcp` currently depend on `@dispatch/server`
-  (FSL).** The MIT grant covers those packages' own source; a built artifact
-  that bundles the daemon includes FSL-licensed code, so the bundle as a whole
-  is governed by FSL's terms until that dependency is severed (tracked on the
-  board). Talking _to_ a running daemon or MCP server is not affected — using a
-  program over its API is not redistribution.
+- **`@dispatch/cli` and `@dispatch-foo/mcp` currently depend on
+  `@dispatch/server` (FSL).** The MIT grant covers those packages' own source; a
+  built artifact that bundles the daemon includes FSL-licensed code, so the
+  bundle as a whole is governed by FSL's terms until that dependency is severed
+  (tracked on the board). Talking _to_ a running daemon or MCP server is not
+  affected — using a program over its API is not redistribution.
 - **Never call the FSL code "open source."** It is source-available; the OSI
   definition does not admit a non-compete. The accurate sentence is: "the
   integration packages are MIT; the app is source-available and becomes Apache

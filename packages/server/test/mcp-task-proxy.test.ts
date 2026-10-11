@@ -23,7 +23,7 @@ import { runGitSync, StallingExecutor } from './orchestrator/helpers.js';
 // Driven as a child process against the built `dispatch-mcp` bin, the same
 // way packages/mcp/test/e2e.test.ts does, rather than through the SDK's
 // in-memory transport: @modelcontextprotocol/sdk is a dependency of
-// @dispatch/mcp, not of this package, and spawning the real binary is closer
+// @dispatch-foo/mcp, not of this package, and spawning the real binary is closer
 // to how a dispatched agent actually reaches these tools anyway.
 //
 // Note there is no `useTestAuth` here on purpose: the tools present the agent
@@ -224,7 +224,7 @@ afterEach(async () => {
 });
 
 describe('the built dispatch-mcp bin', () => {
-  it('exists — build @dispatch/mcp before running this suite', () => {
+  it('exists — build @dispatch-foo/mcp before running this suite', () => {
     expect(existsSync(MCP_BIN)).toBe(true);
   });
 });

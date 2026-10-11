@@ -1,6 +1,6 @@
 name: Publish packages
 
-# Tags core@*, protocol@*, a2a@*, protocol-spec@*, federation@* stage one
+# Tags core@*, protocol@*, a2a@*, protocol-spec@*, federation@*, mcp@* stage one
 # package for the owner's 2FA approval (npm stage approve). A manual run is a
 # dry run only: no environment, no id-token, never stages. The desktop's v*
 # tags never match.
@@ -12,13 +12,14 @@ on:
       - 'a2a@*'
       - 'protocol-spec@*'
       - 'federation@*'
+      - 'mcp@*'
   workflow_dispatch:
     inputs:
       package:
         description: 'Package to dry-run'
         required: true
         type: choice
-        options: [core, protocol, a2a, protocol-spec, federation]
+        options: [core, protocol, a2a, protocol-spec, federation, mcp]
 
 env:
   NO_COLOR: 1

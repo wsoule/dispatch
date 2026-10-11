@@ -42,11 +42,11 @@ export const DISPATCH_MCP_TOOL_TIMEOUT_MS = 31 * 60_000;
 
 // Locates the dispatch MCP server's stdio entry point via module resolution
 // rather than a relative path (same pattern as the CLI's resolveDaemonBin).
-// `@dispatch/mcp`'s exports map exposes `./package.json` for exactly this;
+// `@dispatch-foo/mcp`'s exports map exposes `./package.json` for exactly this;
 // the bin sits alongside it at `src/bin.ts`, which Bun runs directly.
 function resolveMcpBin(): string {
   const pkgJsonPath = createRequire(import.meta.url).resolve(
-    '@dispatch/mcp/package.json'
+    '@dispatch-foo/mcp/package.json'
   );
   return join(dirname(pkgJsonPath), 'src', 'bin.ts');
 }

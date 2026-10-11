@@ -16,7 +16,7 @@
   "dependencies": {
     "@dispatch-foo/a2a": "workspace:*",
     "@dispatch-foo/core": "workspace:*",
-    "@dispatch/mcp": "workspace:*",
+    "@dispatch-foo/mcp": "workspace:*",
     "commander": "catalog:"
   },
   "devDependencies": {

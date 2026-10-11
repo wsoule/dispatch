@@ -1,4 +1,4 @@
-// Every tool the dispatch MCP server registers. @dispatch/mcp's tests hold its
+// Every tool the dispatch MCP server registers. @dispatch-foo/mcp's tests hold its
 // registrations to this list; executors that gate MCP tools by name use it.
 export const DISPATCH_MCP_TOOLS = [
   'agent_list',

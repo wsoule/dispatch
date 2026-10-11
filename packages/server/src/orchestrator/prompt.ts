@@ -11,7 +11,7 @@ import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
 import type { RunMeta, RunSurvey } from './types.js';
 
-// Re-exported from core (where @dispatch/mcp can reach them too) because
+// Re-exported from core (where @dispatch-foo/mcp can reach them too) because
 // every prompt builder in this package imports them from './prompt.js'.
 export { untrustedBlock, untrustedFenced, untrustedInline };
 
