@@ -126,7 +126,10 @@ interface Harness extends OverseerToolContext {
  * and one that parks on an approval gate.
  */
 function makeHarness(
-  opts: { docs?: OverseerToolContext['docs'] } = {}
+  opts: {
+    docs?: OverseerToolContext['docs'];
+    epics?: OverseerToolContext['epics'];
+  } = {}
 ): Harness {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
@@ -187,6 +190,7 @@ function makeHarness(
     ownerRef: 'human:test',
     overseer: 'agent:test/overseer',
     docs: opts.docs ?? null,
+    ...(opts.epics === undefined ? {} : { epics: opts.epics }),
     tasks: {
       create: (input) => {
         const doc = store.create(input);
@@ -1675,6 +1679,64 @@ describe('the agent drives everything behind cards', () => {
     expect(byTitle('Schema').parent).toBe(milestone?.meta.id ?? null);
     expect(byTitle('Endpoints').blockedBy).toEqual([byTitle('Schema').id]);
     expect(byTitle('UI').blockedBy).toEqual([byTitle('Endpoints').id]);
+  });
+
+  it('create_plan sends agents on its new milestone once approved, and says so first', async () => {
+    const started: { epicId: string; operator?: string }[] = [];
+    const h = makeHarness({
+      epics: {
+        start: (epicId, opts) => {
+          started.push({ epicId, operator: opts.operator });
+          return Promise.resolve();
+        },
+      },
+    });
+    const action = h.registry.callMutatingTool('create_plan', {
+      milestone: { title: 'Checkout v2' },
+      tasks: [{ title: 'Apple Pay' }, { title: 'Wire it', blockedBy: ['#1'] }],
+    });
+    expect(action.summary).toBe(
+      'Create milestone "Checkout v2" with 2 tasks: "Apple Pay", "Wire it", then send agents on it'
+    );
+    expect(started).toEqual([]);
+    await h.registry.applyAction(action.id, CONFIRMED);
+    const milestone = h.cache
+      .query()
+      .find((t) => t.meta.title === 'Checkout v2');
+    expect(started).toEqual([
+      { epicId: milestone?.meta.id ?? '', operator: 'human:test' },
+    ]);
+  });
+
+  it('create_plan leaves the agents to the human when asked to, or when nothing can send them', async () => {
+    const started: string[] = [];
+    const h = makeHarness({
+      epics: {
+        start: (epicId) => {
+          started.push(epicId);
+          return Promise.resolve();
+        },
+      },
+    });
+    const held = h.registry.callMutatingTool('create_plan', {
+      milestone: { title: 'Later' },
+      send: false,
+      tasks: [{ title: 'a' }],
+    });
+    expect(held.summary).toBe('Create milestone "Later" with 1 task: "a"');
+    await h.registry.applyAction(held.id, CONFIRMED);
+    expect(started).toEqual([]);
+
+    const bare = makeHarness();
+    const plain = bare.registry.callMutatingTool('create_plan', {
+      milestone: { title: 'No engine' },
+      tasks: [{ title: 'a' }],
+    });
+    expect(plain.summary).toBe('Create milestone "No engine" with 1 task: "a"');
+    await bare.registry.applyAction(plain.id, CONFIRMED);
+    expect(bare.cache.query().some((t) => t.meta.title === 'No engine')).toBe(
+      true
+    );
   });
 
   it('create_plan refuses a forward reference and an ambiguous home', () => {

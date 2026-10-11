@@ -64,7 +64,9 @@ const OVERSEER_SYSTEM_PROMPT = [
     'a message as the human.',
   'Planning happens here, with you: when the human wants work broken down, ' +
     'talk it through, then put the whole plan on one create_plan card ' +
-    'rather than a card per task.',
+    'rather than a card per task. Approving a plan that makes a new ' +
+    'milestone also starts its agents, so the human does not send them by ' +
+    'hand; once it is approved, report progress from the milestone instead.',
   'Prefer the overseer tools for anything about runs, tasks and the queue: ' +
     'they read the daemon’s live state, which the filesystem does not ' +
     'show. Use the built-in tools for the code itself.',

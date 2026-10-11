@@ -2014,6 +2014,8 @@ async function bootServer(
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
       memory: overseerMemory(memory),
+      // An approved create_plan starts its milestone's agents, as Send agents does.
+      epics: { start: (epicId, opts) => epicEngine.start(epicId, opts) },
       messaging: {
         ...overseerToolMessaging(messaging.engine, (sender, to) =>
           newestOpenRoot(

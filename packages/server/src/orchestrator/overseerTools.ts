@@ -128,6 +128,16 @@ export interface OverseerToolContext {
   };
   /** The daemon's human: the overseer acts for them, so its runs do too. */
   ownerRef: string;
+  /**
+   * Starts a milestone's agents wave by wave, as Send agents does. Absent where
+   * no epic engine is wired; create_plan then only files the work.
+   */
+  epics?: {
+    start(
+      epicId: string,
+      opts: { operator?: string; startedBy?: string }
+    ): Promise<unknown>;
+  };
   /** The overseer's own address, credited as drafter of what it sends as a human. */
   overseer?: string;
   /** Team docs, read as the owner; absent or null when the docs service is not wired. */
@@ -1322,6 +1332,12 @@ const createPlanInput = z.strictObject({
     .string()
     .optional()
     .describe('An existing milestone to add the tasks to, instead.'),
+  send: z
+    .boolean()
+    .optional()
+    .describe(
+      'With a new milestone: start its agents as soon as the human approves (default). False only when the human wants to start them later.'
+    ),
   tasks: z
     .array(
       z.strictObject({
@@ -1341,7 +1357,7 @@ const createPlanInput = z.strictObject({
 const createPlan: OverseerMutatingTool<z.infer<typeof createPlanInput>> = {
   name: 'create_plan',
   description:
-    'Turn a plan into work on one card: optionally a new milestone, then its tasks in order, with dependencies between them (#n) or on existing tasks.',
+    'Turn a plan into work on one card: optionally a new milestone, then its tasks in order, with dependencies between them (#n) or on existing tasks. Approving a plan with a new milestone also starts its agents, wave by wave; blocked tasks start as their blockers finish.',
   inputSchema: createPlanInput,
   describe(ctx, input) {
     if (input.milestone !== undefined && input.parent !== undefined) {
@@ -1370,14 +1386,15 @@ const createPlan: OverseerMutatingTool<z.infer<typeof createPlanInput>> = {
     const titles = titleList(input.tasks.map((t) => t.title));
     const count = `${input.tasks.length} ${input.tasks.length === 1 ? 'task' : 'tasks'}`;
     if (input.milestone !== undefined) {
-      return `Create milestone "${safeTitle(input.milestone.title)}" with ${count}: ${titles}`;
+      const send = sendsAgents(ctx, input) ? ', then send agents on it' : '';
+      return `Create milestone "${safeTitle(input.milestone.title)}" with ${count}: ${titles}${send}`;
     }
     if (parent !== null) {
       return `Add ${count} to ${parent.meta.id} ("${safeTitle(parent.meta.title)}"): ${titles}`;
     }
     return `Create ${count}: ${titles}`;
   },
-  apply(ctx, input) {
+  async apply(ctx, input) {
     const tasks = requireTasks(ctx);
     const milestone =
       input.milestone === undefined
@@ -1410,8 +1427,29 @@ const createPlan: OverseerMutatingTool<z.infer<typeof createPlanInput>> = {
       });
       created.push(doc.meta.id);
     }
+    // The approved card promised agents; start them the way Send agents does,
+    // acting for the human who approved it.
+    if (milestone !== null && sendsAgents(ctx, input)) {
+      await ctx.epics?.start(milestone.meta.id, {
+        operator: ctx.ownerRef,
+        startedBy: ctx.ownerRef,
+      });
+    }
   },
 };
+
+// Whether an approved plan starts its new milestone's agents: by default,
+// whenever something is wired to start them.
+function sendsAgents(
+  ctx: OverseerToolContext,
+  input: z.infer<typeof createPlanInput>
+): boolean {
+  return (
+    input.milestone !== undefined &&
+    input.send !== false &&
+    ctx.epics !== undefined
+  );
+}
 
 const updateTaskInput = z
   .strictObject({
