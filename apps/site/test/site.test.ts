@@ -62,7 +62,7 @@ test('positioning survives, and the retired tagline stays gone', () => {
 });
 
 test('pricing, docs and changelog pages exist with their own canonical', async () => {
-  for (const page of ['pricing', 'docs', 'changelog']) {
+  for (const page of ['pricing', 'docs', 'changelog', 'privacy']) {
     const file = Bun.file(
       new URL(`../dist/${page}/index.html`, import.meta.url)
     );

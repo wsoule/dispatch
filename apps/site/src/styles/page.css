@@ -48,6 +48,7 @@
   text-underline-offset: 3px;
 }
 .prose code {
+  overflow-wrap: anywhere;
   padding: 0.1rem 0.35rem;
   border-radius: 6px;
   background: var(--panel-2);

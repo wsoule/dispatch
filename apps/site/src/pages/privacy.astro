@@ -1,0 +1,104 @@
+---
+import Footer from '../components/landing/Footer.astro';
+import Nav from '../components/landing/Nav.astro';
+import Landing from '../layouts/Landing.astro';
+import '../styles/page.css';
+---
+
+<Landing
+  title="Privacy: Dispatch"
+  description="What Dispatch, its website, the hosted demo and the Claude plugin collect, and where your data goes."
+  path="/privacy"
+>
+  <Nav />
+  <main class="page">
+    <div class="wrap">
+      <div class="head">
+        <h1>Privacy</h1>
+        <p class="lede">
+          Dispatch runs on your machine. We don’t have accounts, analytics or telemetry, and we
+          never see your code or your board. Last updated 11 October 2026.
+        </p>
+      </div>
+
+      <div class="prose">
+        <h2>The app and its daemon</h2>
+        <ul>
+          <li>
+            Your code, tasks, runs, messages and memory stay on your machine: in your repository,
+            or in a local database with a git receipt log you own.
+          </li>
+          <li>
+            The app sends us nothing. There is no account, no telemetry and no crash reporting.
+          </li>
+          <li>
+            To check for updates, the app downloads a release manifest from GitHub
+            (<code>github.com/wsoule/dispatch/releases</code>). GitHub sees that request.
+          </li>
+          <li>
+            License keys are checked on your machine, with no network call.
+          </li>
+        </ul>
+
+        <h2>Services you choose to connect</h2>
+        <p>
+          Dispatch talks to these only when you set them up, using your own accounts and keys.
+          Their own privacy policies apply.
+        </p>
+        <ul>
+          <li>
+            <strong>Your coding agent’s provider</strong>, such as Anthropic or OpenAI, through the
+            agent you run (Claude Code, Codex and others). Agents see the code and tasks you give
+            them.
+          </li>
+          <li><strong>GitHub or your git host</strong>, when you push, pull or open pull requests.</li>
+          <li><strong>Linear</strong>, if you turn on Linear sync.</li>
+          <li>
+            <strong>TypeSafe</strong>, if you add a TypeSafe key: task and message text is sent to
+            TypeSafe for judgments, such as telling a new topic from a follow-up.
+          </li>
+        </ul>
+
+        <h2>Teams</h2>
+        <p>
+          Teammates sync a board through a git branch you host, or through the Dispatch relay if
+          your team switches to it. The relay stores and forwards signed, sealed operations
+          between your team’s machines and can’t read what is sealed. Nothing goes to the relay
+          unless your team chooses it.
+        </p>
+
+        <h2>The Claude plugin</h2>
+        <p>
+          The Dispatch.foo plugin for Claude Code and Cowork downloads the{' '}
+          <code>@dispatch-foo/mcp</code> package from npm once, then talks only to the Dispatch
+          daemon on your own machine over local HTTP. It sends nothing to us or anyone else.
+        </p>
+
+        <h2>The website and the hosted demo</h2>
+        <ul>
+          <li>
+            dispatch.foo sets no cookies and runs no analytics. Our host keeps standard server
+            logs, such as IP address and browser, to run the site.
+          </li>
+          <li>
+            The hosted demo gives you a sandbox for 30 minutes. It resets after 30 minutes without
+            activity, and nothing you do there is kept.
+          </li>
+        </ul>
+
+        <h2>Email</h2>
+        <p>
+          If you write to <a href="mailto:hello@dispatch.foo">hello@dispatch.foo</a>, we keep the
+          conversation to reply to you, and use it for nothing else.
+        </p>
+
+        <h2>Questions</h2>
+        <p>
+          Email <a href="mailto:hello@dispatch.foo">hello@dispatch.foo</a>. If this policy
+          changes, the date at the top will too.
+        </p>
+      </div>
+    </div>
+  </main>
+  <Footer />
+</Landing>

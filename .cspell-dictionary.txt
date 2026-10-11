@@ -671,3 +671,4 @@ tailnet
 cloudflared
 linkkeys
 LINKKEYS
+Cowork
