@@ -178,13 +178,14 @@ function resolveRelativeSpecifier(
   return candidates.find((c) => existsSync(c)) ?? null;
 }
 
-// Resolves a bare `@dispatch/pkg` or `@dispatch/pkg/subpath` specifier via
-// that package's `exports` map. Any other bare specifier is third-party.
+// Resolves a bare workspace specifier (`@dispatch/pkg` or the published
+// `@dispatch-foo/pkg`, with an optional subpath) via that package's `exports`
+// map. Any other bare specifier is third-party.
 function resolveBareSpecifier(
   specifier: string,
   packages: Map<string, PackageInfo>
 ): string | null {
-  const match = /^(@dispatch\/[^/]+)(\/.*)?$/.exec(specifier);
+  const match = /^(@dispatch(?:-foo)?\/[^/]+)(\/.*)?$/.exec(specifier);
   if (match === null) return null;
   const pkg = packages.get(match[1]);
   if (pkg === undefined) return null;
