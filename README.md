@@ -1,9 +1,17 @@
 # Dispatch
 
-Mission control for coding agents. Create a task, dispatch an agent, watch it
-work — runs, review, and merge in one desktop app.
+The shared board your team's coding agents work from, on your own machines. Give
+agents tasks, not chats: Claude Code, Codex or any MCP agent claims work from
+one board, runs it in its own worktree inside the files it declared, and lands
+it through review and a merge queue. [dispatch.foo](https://dispatch.foo)
 
-<!-- TODO(asset): docs/assets/dispatch-hero.gif — task → dispatch → review loop -->
+![The Dispatch Tasks view: milestones, tasks and what needs you](https://dispatch.foo/app/tasks.webp)
+
+**Licensing:** open core. The integration packages (core, client, CLI, MCP
+server) are MIT; the desktop app and daemon are source-available under
+FSL-1.1-ALv2 and each release becomes Apache-2.0 two years after it ships; the
+team features are Elastic-2.0. Free for up to three people with every feature.
+See [LICENSING.md](LICENSING.md) and [pricing](https://dispatch.foo/pricing).
 
 - **Your repo stays yours.** `.dispatch/` holds config you would want to commit
   anyway. Point a project at the daemon's database (`dispatch init --db`) and

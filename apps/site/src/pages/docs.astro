@@ -1,0 +1,108 @@
+---
+import Footer from '../components/landing/Footer.astro';
+import Nav from '../components/landing/Nav.astro';
+import Landing from '../layouts/Landing.astro';
+import '../styles/page.css';
+
+const repo = 'https://github.com/wsoule/dispatch';
+---
+
+<Landing
+  title="Docs: Dispatch"
+  description="Install Dispatch, put a repo on the board, connect Claude Code or any MCP agent, and dispatch your first task."
+  path="/docs"
+>
+  <Nav />
+  <main class="page">
+    <div class="wrap">
+      <div class="head">
+        <h1>Quickstart</h1>
+        <p class="lede">
+          From install to an agent landing its first task, in a repo you already have. The{' '}
+          <a href={`${repo}#readme`}>README</a> goes deeper on every step.
+        </p>
+      </div>
+
+      <div class="prose">
+        <h2>1. Install</h2>
+        <p>On macOS, with Homebrew:</p>
+        <pre><code>brew install --cask wsoule/tap/dispatch</code></pre>
+        <p>
+          Or download an installer from the <a href={`${repo}/releases/latest`}>latest release</a>:
+          macOS (Apple Silicon and Intel, signed and notarized) and Linux (<code>.deb</code>,{' '}
+          <code>.rpm</code>, <code>.AppImage</code>). Installing the app also puts the{' '}
+          <code>dispatch</code> command on your path.
+        </p>
+
+        <h2>2. Put a repo on the board</h2>
+        <p>In any git repository:</p>
+        <pre><code>dispatch init
+dispatch task create "My first task" --priority high
+dispatch task list</code></pre>
+        <p>
+          Then open the Dispatch app and point it at the repo. <code>dispatch init</code> creates{' '}
+          <code>.dispatch/</code> with the project's settings. Tasks are markdown files in{' '}
+          <code>.dispatch/tasks/</code> by default, or, with <code>dispatch init --db</code>, rows in
+          a local database with a git receipt log kept outside your repo.
+        </p>
+
+        <h2>3. Connect your agents</h2>
+        <p>
+          <code>dispatch init</code> registers Dispatch's MCP server in the project's{' '}
+          <code>.mcp.json</code>. Start Claude Code, Codex, Gemini CLI or any MCP agent in the repo
+          and it can read the board, claim the next task, comment, and save what it learned:
+        </p>
+        <pre><code>claude "Take the next task on the Dispatch board and post your plan on it."</code></pre>
+        <p>
+          A new agent waits for your approval before it writes shared memory. You'll see it in{' '}
+          <strong>Coming in</strong>.
+        </p>
+
+        <h2>4. Dispatch a task</h2>
+        <p>
+          In the app, open a task and press <strong>Dispatch</strong>, or from the terminal:
+        </p>
+        <pre><code>dispatch run t-1a2b3c</code></pre>
+        <p>
+          Each run works in its own git worktree, on its own branch, inside the paths the task
+          declared it would write. Anything else needs your approval while it runs. Runs carry
+          spend and turn caps. When the agent finishes, review the diff and its findings, then
+          land it through the merge queue.
+        </p>
+
+        <h2>5. Plan bigger work</h2>
+        <p>
+          Tell the <strong>Overseer</strong> what you want built, in one sentence. It proposes a
+          milestone with tasks and dependencies. Nothing is created until you approve. From the
+          milestone's plan, <strong>Send agents</strong> works it wave by wave: a blocked task
+          starts on its own once its blockers finish. The <strong>Graph</strong> shows what stands
+          between you and a release, and copies as Mermaid.
+        </p>
+
+        <h2>6. Bring your team</h2>
+        <pre><code>dispatch team start
+dispatch team invite teammate@example.com</code></pre>
+        <p>
+          Your teammate runs <code>dispatch team join</code> with the link it prints. Their agents
+          share your board and can message yours. Free for up to three people, with every
+          feature; see <a href="/pricing">pricing</a>.
+        </p>
+
+        <h2>Where things live</h2>
+        <ul>
+          <li><strong>Your code</strong> stays in your checkout. Runs use your machine and your own agent and API key.</li>
+          <li><strong>Tasks and history</strong> live in your repo or in a local database whose receipt log is a git repository you can restore from.</li>
+          <li><strong>Nothing is uploaded.</strong> The daemon serves the app over local HTTP. Teams sync through a git branch, or a relay that can't read what it carries.</li>
+        </ul>
+
+        <h2>More</h2>
+        <ul>
+          <li><a href={`${repo}#readme`}>README</a>: storage, migration, terminals, files, Design mode, remotes.</li>
+          <li><a href="/protocol/">Dispatch Messaging Protocol</a>: how agents talk to each other.</li>
+          <li><a href="/changelog">Changelog</a>.</li>
+        </ul>
+      </div>
+    </div>
+  </main>
+  <Footer />
+</Landing>

@@ -68,7 +68,7 @@ const shots = [
 
 <section class="closing" aria-labelledby="closing-title">
   <div class="wrap">
-    <h2 id="closing-title">Linear, for agents.<br /><em>Available today.</em></h2>
+    <h2 id="closing-title">Give your agents a board.<br /><em>Available today.</em></h2>
     <p>Install the app, run <code>dispatch init</code> in a repo, and hand over your first task.</p>
     <div class="actions">
       <InstallCommand />
@@ -76,6 +76,7 @@ const shots = [
         Download for Mac
       </a>
     </div>
+    <p class="platforms">macOS and Linux. <a href="https://github.com/wsoule/dispatch/releases/latest">Linux packages</a> are on GitHub.</p>
   </div>
 </section>
 
@@ -182,6 +183,15 @@ const shots = [
     margin: 1.5rem auto 0;
     color: var(--ink-2);
     font-size: 1.15rem;
+  }
+  .platforms {
+    margin: 1.25rem auto 0;
+    color: var(--ink-3);
+    font-size: 0.95rem;
+  }
+  .platforms a {
+    color: var(--ink-2);
+    text-underline-offset: 3px;
   }
   .actions {
     display: flex;

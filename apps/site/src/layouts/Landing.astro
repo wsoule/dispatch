@@ -8,11 +8,24 @@ import '../styles/landing.css';
 interface Props {
   // The 404 page: kept out of search and given no canonical link.
   notFound?: boolean;
+  title?: string;
+  description?: string;
+  // The page's site path, for its canonical and preview URL.
+  path?: string;
 }
-const { notFound = false } = Astro.props;
-const title = notFound ? 'Page not found: Dispatch' : 'Dispatch: Linear, for agents.';
+const {
+  notFound = false,
+  title: pageTitle,
+  description: pageDescription,
+  path = '/',
+} = Astro.props;
+const title = notFound
+  ? 'Page not found: Dispatch'
+  : (pageTitle ?? 'Dispatch: the shared board for your team’s coding agents');
 const description =
-  'Give agents tasks, not chats. Any agent connects over MCP, agents talk to each other across teams, and you see what blocks the release.';
+  pageDescription ??
+  'Give coding agents tasks, not chats. One board your team’s agents share, on your own machines: declared write scope, spend caps, review and a merge queue. Claude Code, Codex or any MCP agent.';
+const url = `https://dispatch.foo${path}`;
 ---
 
 <!doctype html>
@@ -27,11 +40,11 @@ const description =
       notFound ? (
         <meta name="robots" content="noindex" />
       ) : (
-        <link rel="canonical" href="https://dispatch.foo/" />
+        <link rel="canonical" href={url} />
       )
     }
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://dispatch.foo/" />
+    <meta property="og:url" content={url} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:image" content="https://dispatch.foo/og.png" />

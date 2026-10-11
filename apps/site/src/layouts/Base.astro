@@ -22,7 +22,7 @@ const { title, description, canonical } = Astro.props;
 const ogTitle = title ?? 'Dispatch';
 const ogDescription =
   description ??
-  'Linear, for agents. A board, reviews, and a merge queue in your repo.';
+  'The shared board for your team’s coding agents: tasks, reviews and a merge queue in your repo.';
 ---
 
 <!doctype html>
@@ -30,11 +30,11 @@ const ogDescription =
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title ?? 'Dispatch: Linear, for agents'}</title>
+    <title>{title ?? 'Dispatch: the shared board for your team’s coding agents'}</title>
     <meta
       name="description"
       content={description ??
-        'Linear, for agents. A board, reviews, and a merge queue, all markdown in your repo.'}
+        'The shared board for your team’s coding agents: tasks, reviews and a merge queue, all in your repo.'}
     />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <meta property="og:title" content={ogTitle} />

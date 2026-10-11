@@ -34,8 +34,32 @@ test('the tour links to the hosted demo', () => {
   );
 });
 
-test('positioning survives', () => {
-  expect(html).toContain('for agents.');
+test('positioning survives, and the retired tagline stays gone', () => {
+  expect(html).toContain('Give agents tasks,');
+  expect(html).toContain('shared board');
+  expect(html).not.toContain('Linear, for agents');
+});
+
+test('pricing, docs and changelog pages exist with their own canonical', async () => {
+  for (const page of ['pricing', 'docs', 'changelog']) {
+    const file = Bun.file(
+      new URL(`../dist/${page}/index.html`, import.meta.url)
+    );
+    expect({ page, exists: await file.exists() }).toEqual({
+      page,
+      exists: true,
+    });
+    const text = await file.text();
+    expect(text).toContain(
+      `<link rel="canonical" href="https://dispatch.foo/${page}"`
+    );
+    expect(text).not.toContain('Linear, for agents');
+    // A line break before a link or code span must not swallow the space.
+    expect({
+      page,
+      glued: text.match(/[A-Za-z,.]<(a|code|strong)[ >]/)?.[0] ?? null,
+    }).toEqual({ page, glued: null });
+  }
 });
 
 test('link previews carry an image and the tab an icon', async () => {

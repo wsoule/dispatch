@@ -1,11 +1,8 @@
 ---
-// Recent releases, from the repo's v* tags and their release commits.
-const releases = [
-  { v: 'v0.41.0', date: 'Oct 7, 2026', title: 'Origin-first merges', text: 'Landing merges through your remote first, and queued Overseer messages can be edited.' },
-  { v: 'v0.40.2', date: 'Oct 6, 2026', title: 'Sharper topic routing', text: 'The Overseer is better at telling a new subject from a follow-up.' },
-  { v: 'v0.40.0', date: 'Oct 6, 2026', title: 'Two views everywhere', text: 'Task pages, the graph, docs and peeks all move to Overseer and Tasks.' },
-  { v: 'v0.39.0', date: 'Oct 6, 2026', title: 'Set conversations aside', text: 'Topic routing, model and effort controls, and slash commands.' },
-];
+import { releases as all } from '../../data/releases';
+
+// The four newest releases; /changelog has the rest.
+const releases = all.slice(0, 4);
 ---
 
 <section class="feature" id="changelog" aria-labelledby="changelog-title">
@@ -25,7 +22,7 @@ const releases = [
         ))
       }
     </ol>
-    <a class="all" href="https://github.com/wsoule/dispatch/releases">All releases</a>
+    <a class="all" href="/changelog">All releases</a>
   </div>
 </section>
 

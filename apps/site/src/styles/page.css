@@ -1,0 +1,73 @@
+/* Shared frame for the text pages (/docs, /pricing, /changelog) on the landing look. */
+.page {
+  padding: clamp(4rem, 9vw, 7rem) 0 clamp(5rem, 10vw, 8rem);
+}
+.page .head {
+  max-width: 44rem;
+}
+.page h1 {
+  font-size: clamp(2.6rem, 6vw, 4.25rem);
+}
+.page .lede {
+  margin: 1.25rem 0 0;
+  color: var(--ink-2);
+  font-size: 1.15rem;
+  line-height: 1.55;
+}
+.prose {
+  max-width: 44rem;
+  margin-top: clamp(2.5rem, 5vw, 3.5rem);
+  color: var(--ink-2);
+  line-height: 1.65;
+}
+.prose h2 {
+  margin: 3rem 0 0.75rem;
+  color: var(--ink);
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+.prose h3 {
+  margin: 1.75rem 0 0.5rem;
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+.prose p,
+.prose ul,
+.prose ol {
+  margin: 0.75rem 0;
+}
+.prose li {
+  margin: 0.35rem 0;
+}
+.prose strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.prose a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+.prose code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.88em;
+}
+.prose pre {
+  margin: 1rem 0;
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.prose pre code {
+  padding: 0;
+  background: none;
+}
