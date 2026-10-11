@@ -1,0 +1,89 @@
+---
+import Footer from '../components/landing/Footer.astro';
+import Nav from '../components/landing/Nav.astro';
+import Landing from '../layouts/Landing.astro';
+import '../styles/page.css';
+
+// Short demo clips, each filmed in the real app on a demo project.
+const clips = [
+  ['one-sentence-to-landed', 'One sentence, a whole milestone', 'The Overseer plans five tasks with their dependencies, agents work them wave by wave, and the milestone lands.'],
+  ['blocked-work-starts-itself', 'Blocked work starts itself', 'A task waits on its blocker, then picks up the moment the blocker finishes.'],
+  ['any-agent-mcp', 'Any agent, one board', 'A plain Claude Code session claims a task over MCP and posts its plan; the new agent waits for your OK.'],
+  ['overseer', 'The Overseer', 'What needs you comes in, running work goes out, and a new subject starts a fresh conversation.'],
+  ['what-blocks-v1', 'See what blocks v1', 'The milestone map, copied as Mermaid and rendered in a README.'],
+  ['agents-talk-to-each-other', 'Agents talk to each other', 'One agent hands work to another over A2A, without anyone relaying.'],
+  ['before-and-after', 'Before and after', 'From pasting between chats to agents that coordinate.'],
+] as const;
+---
+
+<Landing
+  title="Clips: Dispatch"
+  description="Short clips of Dispatch, each filmed in the real app: planning, agents working in waves, any MCP agent, and agents talking to each other."
+  path="/clips"
+>
+  <Nav />
+  <main class="page">
+    <div class="wrap">
+      <div class="head">
+        <h1>Clips</h1>
+        <p class="lede">
+          Each one is under 30 seconds and filmed in the real app on a demo project.
+        </p>
+      </div>
+      <div class="clips">
+        {
+          clips.map(([id, title, text]) => (
+            <figure id={id}>
+              <video
+                src={`/clips/${id}.mp4`}
+                poster={`/clips/${id}.jpg`}
+                controls
+                playsinline
+                muted
+                preload="none"
+              />
+              <figcaption>
+                <b>{title}</b>
+                <span>{text}</span>
+              </figcaption>
+            </figure>
+          ))
+        }
+      </div>
+    </div>
+  </main>
+  <Footer />
+</Landing>
+
+<style>
+  .clips {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));
+    gap: 2.5rem 1.5rem;
+    margin-top: clamp(2.5rem, 5vw, 3.5rem);
+  }
+  figure {
+    margin: 0;
+    scroll-margin-top: 6rem;
+  }
+  video {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--panel);
+  }
+  figcaption {
+    display: grid;
+    gap: 0.3rem;
+    margin-top: 0.9rem;
+  }
+  figcaption b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  figcaption span {
+    color: var(--ink-2);
+  }
+</style>

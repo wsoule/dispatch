@@ -34,6 +34,27 @@ test('the tour links to the hosted demo', () => {
   );
 });
 
+test('every clip on /clips ships its video and poster', async () => {
+  const page = await Bun.file(
+    new URL('../dist/clips/index.html', import.meta.url)
+  ).text();
+  const ids = [...page.matchAll(/src="\/clips\/([a-z0-9-]+)\.mp4"/g)].map(
+    (m) => m[1]
+  );
+  expect(ids.length).toBe(7);
+  for (const id of ids)
+    for (const ext of ['mp4', 'jpg']) {
+      const file = Bun.file(
+        new URL(`../dist/clips/${id}.${ext}`, import.meta.url)
+      );
+      expect({ id, ext, exists: await file.exists() }).toEqual({
+        id,
+        ext,
+        exists: true,
+      });
+    }
+});
+
 test('positioning survives, and the retired tagline stays gone', () => {
   expect(html).toContain('Give agents tasks,');
   expect(html).toContain('shared board');
