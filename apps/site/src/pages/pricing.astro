@@ -5,8 +5,8 @@ import Landing from '../layouts/Landing.astro';
 import '../styles/page.css';
 
 const repo = 'https://github.com/wsoule/dispatch';
-// No public inbox yet: a prefilled issue reaches the founder.
-const contact = `${repo}/issues/new?title=${encodeURIComponent('Team license for Dispatch')}`;
+const contact = (subject: string) =>
+  `mailto:hello@dispatch.foo?subject=${encodeURIComponent(subject)}`;
 
 const faq: [string, string][] = [
   ['Is Dispatch open source?', 'It is open core. The pieces other tools integrate with (the core library, CLI, API client and MCP server) are MIT. The messaging protocol spec is Apache-2.0. The desktop app and daemon are source-available under FSL-1.1, and every release becomes Apache-2.0 two years after it ships. The team features are under the Elastic License 2.0.'],
@@ -56,7 +56,7 @@ const faq: [string, string][] = [
             <li>A license key for as many seats as you need</li>
             <li>Early access while team pricing is set</li>
           </ul>
-          <a class="btn" href={contact}>Ask about a license</a>
+          <a class="btn" href={contact('Team license for Dispatch')}>Ask about a license</a>
         </section>
         <section class="plan panel">
           <h2>Organizations</h2>
@@ -67,7 +67,7 @@ const faq: [string, string][] = [
             <li>Help rolling out agent guardrails: write scope, spend caps, review</li>
             <li>Shape what governance features come next</li>
           </ul>
-          <a class="btn" href={contact}>Get in touch</a>
+          <a class="btn" href={contact('Dispatch for our organization')}>Get in touch</a>
         </section>
       </div>
 
@@ -85,7 +85,8 @@ const faq: [string, string][] = [
         </dl>
         <p>
           The full map is in <a href={`${repo}/blob/main/LICENSING.md`}>LICENSING.md</a>; where it
-          and a license text disagree, the license text wins.
+          and a license text disagree, the license text wins. Questions:{' '}
+          <a href="mailto:hello@dispatch.foo">hello@dispatch.foo</a>.
         </p>
       </div>
     </div>
