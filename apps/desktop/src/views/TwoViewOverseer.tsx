@@ -1,5 +1,5 @@
 import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
-import { Minus, PowerOff } from 'lucide-react';
+import { LockIcon, Minus, PowerOff } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 import { DockedConversation } from '../components/chat/DockedConversation';
@@ -10,6 +10,7 @@ import {
   OutflowColumn,
   type OutflowExtras,
 } from '../components/overseer/FlowColumns';
+import { TakeOverDaemon } from '../components/settings/TakeOverDaemon';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
@@ -63,6 +64,10 @@ export interface TwoViewOverseerProps {
 
 const isSlash = (text: string) => text.trimStart().startsWith('/');
 
+/** Why the composer is locked: the daemon refuses the Overseer to the agent token this window fell back to. */
+export const OVERSEER_ATTACHED_EXPLANATION =
+  "Something else started Dispatch for this project, so this window only holds the agents' token, and the Overseer only talks to you.";
+
 /** What a side column can open in the middle: a task (maybe on its conversation) or someone's talk. */
 export type OverseerFocus =
   | { kind: 'task'; taskId: string; conversation?: boolean }
@@ -108,6 +113,8 @@ export function TwoViewOverseer({
     focus !== null && renderFocus !== undefined
       ? renderFocus(focus, () => onFocus(null))
       : null;
+  // Attached to a daemon this app didn't start: the Overseer refuses the agent token we hold.
+  const attached = data.attachedWithoutAppToken;
   const { dock: stored, setDock } = useOverseerDock(projectPath);
   const open = overseer.conversationId;
   const dock = useMemo(
@@ -308,6 +315,26 @@ export function TwoViewOverseer({
             </AlertDescription>
           </Alert>
         )}
+        {attached && (
+          <Alert
+            data-testid="overseer-attached"
+            className="rounded-card border-border border-[0.5px] border-dashed px-3 py-2"
+          >
+            <LockIcon className="text-muted-foreground size-3.5!" />
+            <AlertTitle className="text-[13px]">
+              This window can't talk to the Overseer.
+            </AlertTitle>
+            <AlertDescription className="font-book flex flex-col gap-2 text-[12px]">
+              {OVERSEER_ATTACHED_EXPLANATION}
+              {data.takeover !== null && (
+                <TakeOverDaemon
+                  takeover={data.takeover}
+                  onRestart={data.handleRestartDaemon}
+                />
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
         {showFirstRun ? (
           <div data-testid="overseer-first-run" className="min-h-0 flex-1">
             {firstRun}
@@ -328,7 +355,7 @@ export function TwoViewOverseer({
                 {columnDoors}
               </>
             }
-            disabled={revoked}
+            disabled={revoked || attached}
             durable
             onOpenDoor={onOpenDoor}
           />

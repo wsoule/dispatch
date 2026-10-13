@@ -7,6 +7,7 @@ import { useState } from 'react';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { OverseerSession } from '../hooks/useOverseerSession';
 import {
+  OVERSEER_ATTACHED_EXPLANATION,
   type OverseerFocus,
   TwoViewOverseer,
   type TwoViewOverseerProps,
@@ -69,10 +70,12 @@ function Harness({
   overseer,
   client,
   extra = {},
+  project = {},
 }: {
   overseer: OverseerSession;
   client: Partial<ApiClient>;
   extra?: Partial<TwoViewOverseerProps>;
+  project?: Partial<DispatchProjectData>;
 }) {
   const [draft, setDraft] = useState('');
   const [queryClient] = useState(() => new QueryClient());
@@ -81,6 +84,7 @@ function Harness({
     port: 4321,
     portLoading: false,
     portError: false,
+    ...project,
   } as unknown as DispatchProjectData;
   return (
     <QueryClientProvider client={queryClient}>
@@ -306,4 +310,24 @@ test('an open conversation keeps the talk over the first-run prompt', () => {
     />
   );
   expect(screen.queryByTestId('overseer-first-run')).toBeNull();
+});
+
+test('a window on the agent token locks the composer and offers the takeover', () => {
+  render(
+    <Harness
+      overseer={session({})}
+      client={{}}
+      project={{
+        attachedWithoutAppToken: true,
+        takeover: { background: true, busy: [], parked: 0, waiting: 0 },
+        handleRestartDaemon: () => Promise.resolve(),
+      }}
+    />
+  );
+  expect(screen.getByTestId('overseer-attached').textContent).toContain(
+    OVERSEER_ATTACHED_EXPLANATION
+  );
+  expect(screen.getByTestId('daemon-takeover')).toBeTruthy();
+  const box = screen.getByRole('textbox', { name: 'Follow-up message' });
+  expect((box as HTMLTextAreaElement).disabled).toBe(true);
 });

@@ -886,15 +886,19 @@ pub async fn ensure_dispatchd(
     // `resolveRaceWinner` in packages/cli/src/commands/daemon.ts — harmless
     // here for the same reason: whichever daemon's write lands last is the
     // one every subsequent health check and root lookup will find anyway.
+    let attach = |info: DaemonFileInfo| DaemonConnection {
+        port: info.port,
+        app_token: app_tokens.get(root, info.pid),
+        agent_token: info.agent_token,
+        background: is_background(&info.background),
+    };
+    // A background daemon (started by the CLI, usually for an agent) printed its
+    // app token to nobody; attaching would leave this window on the agent token.
+    let mut auto_takeover = false;
     if !needs_init(root) && !force_spawn {
         if let Some(info) = read_daemon_file(root) {
-            let attach = |info: DaemonFileInfo| DaemonConnection {
-                port: info.port,
-                app_token: app_tokens.get(root, info.pid),
-                agent_token: info.agent_token,
-                background: is_background(&info.background),
-            };
             match reuse_decision(probe_health(&client, info.port).await, pid_alive(info.pid)) {
+                ReuseDecision::Reuse if is_background(&info.background) => auto_takeover = true,
                 ReuseDecision::Reuse => return Ok(attach(info)),
                 ReuseDecision::WaitForStalled => {
                     let (pid, port) = (info.pid, info.port);
@@ -920,11 +924,17 @@ pub async fn ensure_dispatchd(
     // in flight, and then offers its port to the replacement.
     let mut stopped_pid = None;
     let mut port_choice = None;
-    if force_spawn {
+    if force_spawn || auto_takeover {
         if let Some(info) = read_daemon_file(root) {
-            if let Some(port) = stop_for_takeover(&client, root, &info).await? {
-                stopped_pid = Some(info.pid);
-                port_choice = Some(port);
+            // Unasked, only an idle daemon is replaced; otherwise attach as before.
+            match stop_for_takeover(&client, root, &info, force_spawn).await {
+                Ok(Some(port)) => {
+                    stopped_pid = Some(info.pid);
+                    port_choice = Some(port);
+                }
+                Ok(None) => {}
+                Err(_) if auto_takeover => return Ok(attach(info)),
+                Err(refusal) => return Err(refusal),
             }
         }
     } else if let Some(info) = read_daemon_file(root) {
@@ -1059,25 +1069,34 @@ async fn wait_for_spawned_daemon(
 /// How long a stopped daemon gets to shut down before a takeover gives up.
 const STOP_WAIT: Duration = Duration::from_secs(15);
 
-/// Parses `GET /api/live-work`'s `busy`: what stopping the daemon would cut
-/// short. Its `parked` runs (waiting on a human) resume after a restart, so
-/// they never block one; the UI confirms those first.
-fn parse_live_work(body: &str) -> Result<Vec<String>, String> {
-    #[derive(Deserialize)]
-    struct LiveWork {
-        busy: Vec<String>,
-    }
+/// `GET /api/live-work`: `busy` is what stopping the daemon would cut short;
+/// `parked` runs (waiting on a human) resume after a restart, so only an
+/// unasked takeover holds back for them.
+#[derive(Debug, Deserialize, PartialEq)]
+struct LiveWork {
+    busy: Vec<String>,
+    #[serde(default)]
+    parked: u32,
+}
+
+fn parse_live_work(body: &str) -> Result<LiveWork, String> {
     serde_json::from_str::<LiveWork>(body)
-        .map(|parsed| parsed.busy)
         .map_err(|e| format!("invalid /api/live-work response: {e}"))
 }
 
 /// Why a takeover is refused while the daemon has work in flight, or `None`.
-fn live_work_refusal(live: &[String]) -> Option<String> {
-    (!live.is_empty()).then(|| {
-        format!(
+/// Parked runs block only an unasked takeover, since the user never confirmed.
+fn live_work_refusal(live: &LiveWork, allow_parked: bool) -> Option<String> {
+    if !live.busy.is_empty() {
+        return Some(format!(
             "Dispatch for this project is busy with {}. Restarting it from this app would stop that, so try again once it finishes.",
-            live.join(", ")
+            live.busy.join(", ")
+        ));
+    }
+    (!allow_parked && live.parked > 0).then(|| {
+        format!(
+            "{} run(s) are waiting on you; restart from this app to resume them.",
+            live.parked
         )
     })
 }
@@ -1086,7 +1105,7 @@ fn live_work_refusal(live: &[String]) -> Option<String> {
 async fn fetch_live_work(
     client: &reqwest::Client,
     info: &DaemonFileInfo,
-) -> Result<Vec<String>, String> {
+) -> Result<LiveWork, String> {
     let mut request = client
         .get(format!("http://127.0.0.1:{}/api/live-work", info.port))
         .timeout(Duration::from_secs(5));
@@ -1143,6 +1162,7 @@ async fn stop_for_takeover(
     client: &reqwest::Client,
     root: &str,
     info: &DaemonFileInfo,
+    allow_parked: bool,
 ) -> Result<Option<u16>, String> {
     match probe_health(client, info.port).await {
         HealthProbe::Healthy => {}
@@ -1160,7 +1180,7 @@ async fn stop_for_takeover(
     if !should_kill_superseded_daemon(root, &info.root_dir, health_ok, health_root_dir.as_deref()) {
         return Ok(None);
     }
-    if let Some(refusal) = live_work_refusal(&fetch_live_work(client, info).await?) {
+    if let Some(refusal) = live_work_refusal(&fetch_live_work(client, info).await?, allow_parked) {
         return Err(refusal);
     }
     kill_pid_best_effort(info.pid);
@@ -1691,18 +1711,40 @@ mod tests {
     fn parse_live_work_reads_the_list_and_rejects_garbage() {
         assert_eq!(
             parse_live_work(r#"{"busy":["1 live run","2 terminals"],"parked":1,"waiting":3}"#),
-            Ok(vec!["1 live run".to_string(), "2 terminals".to_string()])
+            Ok(LiveWork {
+                busy: vec!["1 live run".to_string(), "2 terminals".to_string()],
+                parked: 1,
+            })
         );
+        assert_eq!(parse_live_work(r#"{"busy":[]}"#).map(|w| w.parked), Ok(0));
         assert!(parse_live_work("not json").is_err());
     }
 
     #[test]
     fn live_work_refusal_names_what_would_stop() {
-        assert_eq!(live_work_refusal(&[]), None);
+        let idle = LiveWork {
+            busy: vec![],
+            parked: 0,
+        };
+        assert_eq!(live_work_refusal(&idle, false), None);
+        let busy = LiveWork {
+            busy: vec!["1 live run".to_string(), "1 browser".to_string()],
+            parked: 0,
+        };
         assert_eq!(
-            live_work_refusal(&["1 live run".to_string(), "1 browser".to_string()]),
+            live_work_refusal(&busy, true),
             Some("Dispatch for this project is busy with 1 live run, 1 browser. Restarting it from this app would stop that, so try again once it finishes.".to_string())
         );
+    }
+
+    #[test]
+    fn live_work_refusal_holds_parked_runs_only_for_an_unasked_takeover() {
+        let parked = LiveWork {
+            busy: vec![],
+            parked: 2,
+        };
+        assert_eq!(live_work_refusal(&parked, true), None);
+        assert!(live_work_refusal(&parked, false).is_some());
     }
 
     /// A process that is not this test's child, so it never lingers as a
@@ -1779,13 +1821,25 @@ mod tests {
             ),
         ]);
         let pid = spawn_orphan_sleeper();
-        let result =
-            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        let result = stop_for_takeover(
+            &reqwest::Client::new(),
+            root,
+            &file_info(port, pid, root),
+            true,
+        )
+        .await;
         let alive = pid_alive(pid);
         kill_pid_best_effort(pid);
         assert_eq!(
             result,
-            Err(live_work_refusal(&["1 live run".to_string()]).unwrap())
+            Err(live_work_refusal(
+                &LiveWork {
+                    busy: vec!["1 live run".to_string()],
+                    parked: 0
+                },
+                true
+            )
+            .unwrap())
         );
         assert!(alive, "a refused takeover must not stop the daemon");
     }
@@ -1795,8 +1849,13 @@ mod tests {
         let root = "/tmp/dispatch-takeover-old";
         let port = fake_daemon(vec![healthy(root)]);
         let pid = spawn_orphan_sleeper();
-        let result =
-            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        let result = stop_for_takeover(
+            &reqwest::Client::new(),
+            root,
+            &file_info(port, pid, root),
+            true,
+        )
+        .await;
         let alive = pid_alive(pid);
         kill_pid_best_effort(pid);
         let err = result.expect_err("an older daemon is left alone");
@@ -1816,8 +1875,13 @@ mod tests {
             ),
         ]);
         let pid = spawn_orphan_sleeper();
-        let result =
-            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        let result = stop_for_takeover(
+            &reqwest::Client::new(),
+            root,
+            &file_info(port, pid, root),
+            true,
+        )
+        .await;
         assert_eq!(result, Ok(Some(port)));
         assert!(!pid_alive(pid));
     }
@@ -1827,8 +1891,13 @@ mod tests {
         let port = fake_daemon(vec![healthy("/tmp/someone-else")]);
         let pid = spawn_orphan_sleeper();
         let root = "/tmp/dispatch-takeover-mine";
-        let result =
-            stop_for_takeover(&reqwest::Client::new(), root, &file_info(port, pid, root)).await;
+        let result = stop_for_takeover(
+            &reqwest::Client::new(),
+            root,
+            &file_info(port, pid, root),
+            true,
+        )
+        .await;
         let alive = pid_alive(pid);
         kill_pid_best_effort(pid);
         assert_eq!(result, Ok(None));
