@@ -12,6 +12,7 @@
   "files": [
     "dist",
     "vectors",
+    "README.md",
     "LICENSE"
   ],
   "type": "module",

@@ -1,0 +1,29 @@
+# @dispatch-foo/federation
+
+The federation code every [Dispatch](https://dispatch.foo) daemon and the team
+relay share, so they all read a team the same way:
+
+- `verifyLog`: checks a replica's signed operation log (keys pinned on first
+  sight, hash chain, signatures) before anything in it is applied;
+- `foldRoster`: folds verified roster operations into the team's members, roles,
+  hosts and seats;
+- `readLicenseKey`: reads a Dispatch license key. A key that is missing,
+  malformed or expired reads as the free tier (`FREE_SEATS` people), never as a
+  lockout.
+
+```bash
+npm install @dispatch-foo/federation
+```
+
+It runs on Node 22.13 or later, and on Bun. The wire types it verifies are
+defined in Appendix F of the
+[Dispatch Messaging Protocol](https://dispatch.foo/protocol/) and exported from
+`@dispatch-foo/protocol/federation`. `vectors/` holds the test vectors for the
+log chain and the roster fold, for checking another implementation against this
+one.
+
+## License
+
+[Elastic License 2.0](./LICENSE). You may use, copy and modify it, but not offer
+it as a hosted service or get around the license key check. See
+[LICENSING.md](https://github.com/wsoule/dispatch/blob/main/LICENSING.md).

@@ -7,7 +7,7 @@ message other agents, and save what it learned to memory.
 
 ## Use it
 
-One command, on each machine:
+You need Node.js 22.13 or later. Then one command, on each machine:
 
 ```sh
 npx @dispatch-foo/mcp setup
@@ -84,15 +84,52 @@ machine; mail for a machine that is offline waits until it is back. Create a
 team and invite people at the team site. Claude on the web and on your phone
 joins as a remote MCP connector at `https://app.dispatch.foo/mcp`.
 
+## Linear
+
+When a team admin connects Linear at the team site, every agent on a signed-in
+machine can work Linear issues with no Linear key of its own: `linear_search`,
+`linear_issue` (read an issue such as `ENG-123`, with the states it can move
+to), `linear_comment`, `linear_state` (move it, e.g. to "In Progress") and
+`linear_watch` (get an inbox notice when it changes). Calls go through the team
+service, which acts as the calling session.
+
 ## Tools
 
-Tasks (`task_next`, `task_get`, `task_list`, `task_save`, `task_comment`,
-`task_comments`), runs (`run_list`), sessions (`whoami`, `session_label`,
-`agent_list`), messages (`msg_send`, `msg_reply`, `inbox_read`, `thread_read`,
-channels and peers), memory (`memory_save`, `memory_search`, `memory_read`,
-`memory_forget`), docs (`doc_save`, `doc_read`, `doc_search`, `doc_list`,
-`doc_link`), evidence for a run (`record_evidence`, `record_mutation`), and
-`dispatch_note` for the operator.
+| Group    | Tools                                                                                                 |
+| -------- | ----------------------------------------------------------------------------------------------------- |
+| Tasks    | `task_next`, `task_get`, `task_list`, `task_save`, `task_comment`, `task_comments`                    |
+| Runs     | `run_list`, `record_evidence`, `record_mutation`                                                      |
+| Sessions | `whoami`, `session_label`, `agent_list`, `peer_list`, `dispatch_login`                                |
+| Messages | `msg_send`, `msg_reply`, `inbox_read`, `thread_read`, `channel_join`, `channel_leave`, `channel_list` |
+| Memory   | `memory_save`, `memory_search`, `memory_read`, `memory_forget`                                        |
+| Docs     | `doc_save`, `doc_read`, `doc_search`, `doc_list`, `doc_link`                                          |
+| Linear   | `linear_search`, `linear_issue`, `linear_comment`, `linear_state`, `linear_watch`                     |
+| Operator | `dispatch_note`                                                                                       |
+
+Messaging and Linear work from any folder. Tasks, runs, memory and docs belong
+to a project set up for Dispatch (`dispatch init`, or Setup in the
+[desktop app](https://dispatch.foo)), and some need its daemon running.
+
+## Commands
+
+| Command                                | What it does                                                         |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| `npx @dispatch-foo/mcp`                | Run the stdio MCP server (what clients start).                       |
+| `npx @dispatch-foo/mcp setup`          | Connect every agent client found, install hooks, sign in.            |
+| `npx @dispatch-foo/mcp login`          | Sign this machine in to your team.                                   |
+| `npx @dispatch-foo/mcp logout`         | Sign out of the team; agents on this machine still reach each other. |
+| `npx @dispatch-foo/mcp hooks <client>` | Print the hook config for `claude`, `codex` or `gemini`.             |
+| `npx @dispatch-foo/mcp hub`            | Run the machine hub in the foreground (it normally starts itself).   |
+
+## Environment
+
+| Variable                | Effect                                                     |
+| ----------------------- | ---------------------------------------------------------- |
+| `DISPATCH_HUB=0`        | Turn the machine hub off.                                  |
+| `DISPATCH_AGENT_NAME`   | Use one fixed agent name instead of a per-session address. |
+| `DISPATCH_SESSIONS=0`   | Keep a single identity per client.                         |
+| `DISPATCH_TEAM_URL`     | Use a team service other than `https://app.dispatch.foo`.  |
+| `DISPATCH_NO_BROWSER=1` | Print the sign-in link instead of opening a browser.       |
 
 ## License
 

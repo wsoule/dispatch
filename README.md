@@ -510,8 +510,19 @@ personal memory under `~/.dispatch/memory`. See
 
 ## MCP server
 
-`dispatch init` registers a stdio MCP server in the project's `.mcp.json`
-(created or merged — existing servers and keys are preserved):
+To give any coding agent Dispatch without the app, run this on each machine:
+
+    npx @dispatch-foo/mcp setup
+
+It connects every agent client it finds (Claude Code, Codex, Cursor, Gemini CLI,
+Claude Desktop, Windsurf), installs Claude Code's wake hooks and signs the
+machine in to your team. On claude.ai, add the custom connector
+`https://app.dispatch.foo/mcp`. See the [package README](packages/mcp/README.md)
+for sessions, teammates, Linear and the full tool list.
+
+Inside a Dispatch project, `dispatch init` registers a stdio MCP server in the
+project's `.mcp.json` (created or merged — existing servers and keys are
+preserved):
 
     {
       "mcpServers": {
@@ -526,11 +537,14 @@ binary from `@dispatch-foo/mcp`.
 On the file backend the five `task_*` tools operate directly on
 `.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
 file changes through its watcher like any other edit); on the database backend
-they go through the daemon like everything else. The other fifteen always talk
-to `dispatchd` over its local HTTP API, and return a clear error when it isn't
-running.
+they go through the daemon like everything else. Agent messaging goes to the
+project's `dispatchd` when one runs and to the per-user machine hub otherwise;
+the remaining tools talk to `dispatchd` over its local HTTP API, and return a
+clear error when it isn't running.
 
-Tools (server name `dispatch`):
+The core tools (server name `dispatch`; the
+[package README](packages/mcp/README.md#tools) lists the session, docs and
+Linear tools as well):
 
 | Tool              | Input                                                                                                        | Output                                                  |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
