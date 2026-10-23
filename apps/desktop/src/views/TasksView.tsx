@@ -459,6 +459,9 @@ export function TasksView({
                 </div>
               ) : mode === 'graph' ? (
                 <MilestoneMapView
+                  // A project switch remounts the chart, so its selection, view, display
+                  // toggles and framing come from the new project, not the last one.
+                  key={projectKey}
                   groups={graphGroups}
                   bucketOf={presetContext.bucketOf}
                   asksByTask={needs.byTask}

@@ -23,28 +23,61 @@ export interface MilestoneMap {
   childrenOf: ReadonlyMap<string, TaskListItem[]>;
 }
 
-/** The milestone map from the list's milestone groups; loose tasks are not nodes. */
-export function milestoneMap(groups: readonly ListGroup[]): MilestoneMap {
+/**
+ * Every task wait between two milestones, as [blocker, blocked] pairs keyed
+ * `${from}\u0000${to}`: each non-canceled row of a non-archived milestone group, and each of
+ * its blockedBy entries whose blocker is a non-canceled row of a different milestone (a
+ * repeated entry counts twice). Canceled work blocks nothing (the board's blocked rule and the
+ * Tasks chart drop it too), so it never draws a line. `milestoneMap` counts these and the
+ * dependency chart lists them behind each line, so the two always agree.
+ */
+export function milestoneWaits(
+  groups: readonly ListGroup[],
+  model: StatusModel = activeStatusModel()
+): Map<string, [string, string][]> {
   const milestoneOf = new Map<string, string>();
+  const live: [string, TaskListItem][] = [];
+  for (const group of groups) {
+    if (group.epicId === null || group.archived) continue;
+    for (const { doc } of group.rows) {
+      if (isCanceledStatus(doc.meta.status, model)) continue;
+      milestoneOf.set(doc.meta.id, group.epicId);
+      live.push([group.epicId, doc]);
+    }
+  }
+  const pairs = new Map<string, [string, string][]>();
+  for (const [to, doc] of live) {
+    for (const blocker of doc.meta.blockedBy) {
+      const from = milestoneOf.get(blocker);
+      if (from === undefined || from === to) continue;
+      const key = `${from}\u0000${to}`;
+      const list = pairs.get(key);
+      if (list === undefined) pairs.set(key, [[blocker, doc.meta.id]]);
+      else list.push([blocker, doc.meta.id]);
+    }
+  }
+  return pairs;
+}
+
+/** The milestone map from the list's milestone groups; loose tasks are not nodes, and
+ * waits on or from canceled tasks are not counted (see `milestoneWaits`). */
+export function milestoneMap(
+  groups: readonly ListGroup[],
+  ctx: { model?: StatusModel } = {}
+): MilestoneMap {
   const childrenOf = new Map<string, TaskListItem[]>();
   for (const group of groups) {
     if (group.epicId === null || group.archived) continue;
-    const children = group.rows.map((row) => row.doc);
-    childrenOf.set(group.epicId, children);
-    for (const doc of children) milestoneOf.set(doc.meta.id, group.epicId);
+    childrenOf.set(
+      group.epicId,
+      group.rows.map((row) => row.doc)
+    );
   }
 
   // Counted per blocking task, so "3" means three waits cross the line.
   const counts = new Map<string, number>();
-  for (const [to, children] of childrenOf) {
-    for (const doc of children) {
-      for (const blocker of doc.meta.blockedBy) {
-        const from = milestoneOf.get(blocker);
-        if (from === undefined || from === to) continue;
-        const key = `${from}\u0000${to}`;
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      }
-    }
+  for (const [key, pairs] of milestoneWaits(groups, ctx.model)) {
+    counts.set(key, pairs.length);
   }
   const edges: MilestoneEdge[] = [...counts].map(([key, count]) => {
     const [from, to] = key.split('\u0000');

@@ -10,6 +10,14 @@ function task(id: string, blockedBy: string[] = []): TaskListItem {
   return taskDoc({ id, title: id, blockedBy }) as TaskListItem;
 }
 
+function taskWith(
+  id: string,
+  status: string,
+  blockedBy: string[] = []
+): TaskListItem {
+  return taskDoc({ id, title: id, status, blockedBy }) as TaskListItem;
+}
+
 function group(
   epicId: string | null,
   label: string,
@@ -52,6 +60,19 @@ describe('milestoneMap', () => {
       { from: 'm2', to: 'm3', count: 1 },
     ]);
     expect(map.nodes.find((n) => n.id === 'm2')?.blockedBy).toEqual(['m1']);
+  });
+
+  test('a wait on or from a dropped task draws no line', () => {
+    const map = milestoneMap([
+      group('m1', 'M1', [task('a'), taskWith('x', 'dropped')]),
+      group('m2', 'M2', [
+        task('b', ['x']),
+        taskWith('y', 'dropped', ['a']),
+        task('c', ['a']),
+      ]),
+    ]);
+    expect(map.edges).toEqual([{ from: 'm1', to: 'm2', count: 1 }]);
+    expect(map.childrenOf.get('m1')?.map((t) => t.meta.id)).toEqual(['a', 'x']);
   });
 
   test('waits inside one milestone are not edges', () => {

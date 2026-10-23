@@ -317,8 +317,8 @@ export interface BranchGraphProps {
  * `branchLayout`, and each line beside it is real DOM — a selectable title, a focusable
  * button — never SVG text. The critical path is lane 0 drawn strong; everything else is
  * muted, so the path reads without colour. Sized to its rows and left to the caller's
- * container to scroll — no pan/zoom, for `DependencyGraph`'s reason (a milestone's task
- * count never approaches needing it).
+ * container to scroll — no pan/zoom, since one milestone's task count never approaches
+ * needing it.
  */
 export function BranchGraph({
   tasks,

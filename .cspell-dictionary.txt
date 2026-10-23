@@ -148,6 +148,7 @@ dunder
 dupdup
 DWIM
 eabi
+elkjs
 emnapi
 emphasised
 emphasises
@@ -190,6 +191,9 @@ frontmatter
 fullwidth
 futex
 gelato
+gesturechange
+gestureend
+gesturestart
 getcwd
 GHSA
 Ghsas
@@ -267,6 +271,7 @@ lacolhost
 Lamport
 landable
 lede
+lerp
 Lesk
 lfsconfig
 libc
