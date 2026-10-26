@@ -2,6 +2,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { APP_TOKEN, DAEMON_PORT } from './paths';
+import { openDestination } from './shell';
 
 const DAEMON = `http://localhost:${DAEMON_PORT}`;
 // Deciding a memory gate is decide tier, so the daemon is driven with the app token.
@@ -157,7 +158,7 @@ test.describe('memory end to end', () => {
       .toBe('finished');
 
     await page.goto(authedUrl(baseURL));
-    await page.getByTestId('two-views-threads').click();
+    await openDestination(page, 'Threads');
     // Scoped to this run: a gate an earlier failed attempt left open stays in Needs you.
     const gate = page
       .getByRole('group', { name: 'Needs you', exact: true })

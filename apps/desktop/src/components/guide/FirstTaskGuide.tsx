@@ -17,7 +17,7 @@ import {
   type GuideView,
 } from '../../lib/firstTaskGuide';
 import { FailureNotice } from '../failure/FailureNotice';
-import { useNarrowMain } from '../shell/TwoViewShell';
+import { useNarrowMain } from '../shell/DispatchShell';
 import { GlossaryTerm } from './GlossaryTerm';
 import {
   type SendChoice,

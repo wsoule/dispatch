@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import { REPO } from './paths';
+import { openDestination, waitForShell } from './shell';
 
 // Two daemons with no A2A listener, paired over a bare repo in the e2e
 // scratch dir: pair, ask, answer, unpair (T55).
@@ -20,12 +21,12 @@ async function openThreads(page: Page): Promise<void> {
     await page.keyboard.press('Escape');
     await expect(settings).toHaveCount(0);
   }
-  await page.getByTestId('two-views-threads').click();
+  await openDestination(page, 'Threads');
 }
 
 // Settings → A2A, through the `G S` shortcut and the Settings page list.
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.getByTestId('two-views-shell').waitFor();
+  await waitForShell(page);
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page

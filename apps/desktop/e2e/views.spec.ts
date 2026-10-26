@@ -1,20 +1,17 @@
 import { expect, type Page, test } from '@playwright/test';
 
 import { APP_TOKEN } from './paths';
+import { expectNeedsYouCount, openDestination, waitForShell } from './shell';
 
-// Each shot opens its page the way a person does: Tasks and Threads from the
-// top bar, every other page under Tasks from its command-menu row (the label
+// Each shot opens its page the way a person does: Issues and Threads from the
+// sidebar, every other page under Tasks from its command-menu row (the label
 // `buildPaletteEntries` gives it), so a renamed or dropped page fails here
 // rather than silently capturing another one.
 const VIEWS: { name: string; open: (page: Page) => Promise<void> }[] = [
-  { name: 'tasks', open: (page) => clickTopBar(page, 'two-views-tasks') },
-  { name: 'threads', open: (page) => clickTopBar(page, 'two-views-threads') },
+  { name: 'tasks', open: (page) => openDestination(page, 'Issues') },
+  { name: 'threads', open: (page) => openDestination(page, 'Threads') },
   { name: 'files', open: (page) => openFromPalette(page, 'Open Files') },
 ];
-
-async function clickTopBar(page: Page, testId: string): Promise<void> {
-  await page.getByTestId(testId).click();
-}
 
 // Runs one command-menu row by its exact label.
 async function openFromPalette(page: Page, label: string): Promise<void> {
@@ -50,17 +47,18 @@ function authedUrl(baseURL: string | undefined): string {
   return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
 }
 
-// The app opens on Overseer, whose top bar carries the fixture's counts. This
-// checks them before a test opens whatever page it actually screenshots,
-// guarding every shot against the same failure: an unauthenticated fetch
-// renders zero counts no matter which page ends up on screen. A blank render
-// must fail the suite, not become the new baseline.
+// The app opens on Overseer, whose sidebar and asks door carry the fixture's
+// counts. This checks them before a test opens whatever page it actually
+// screenshots, guarding every shot against the same failure: an
+// unauthenticated fetch renders zero counts no matter which page ends up on
+// screen. A blank render must fail the suite, not become the new baseline.
 async function assertFixtureDataLoaded(page: Page): Promise<void> {
-  await expect(page.getByTestId('two-views-shell')).toBeVisible();
+  await waitForShell(page);
   // The seeded r-88bf02 run asks the owner two questions on t-9b2d14.
-  await expect(page.getByTestId('two-views-count-asks')).toHaveText('● 2');
-  await expect(page.getByTestId('two-views-count-review')).toHaveText('◇ 4');
-  await expect(page.getByTestId('two-views-count-failed')).toHaveText('✕ 1');
+  await expectNeedsYouCount(page, 2);
+  await expect(page.getByTestId('overseer-asks-door')).toContainText(
+    '2 asks wait on you'
+  );
 }
 
 // Baselines are Two views on the storefront fixture, refreshed with
@@ -121,7 +119,7 @@ test.describe('review detail', () => {
   test.fixme('renders an open diff', async ({ page, baseURL }) => {
     await page.goto(authedUrl(baseURL));
     await assertFixtureDataLoaded(page);
-    await page.getByTestId('two-views-tasks').click();
+    await openDestination(page, 'Issues');
 
     // The task's row in the Tasks list opens its page beside the list.
     const taskRow = page

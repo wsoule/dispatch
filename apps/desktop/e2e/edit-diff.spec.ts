@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+import { openDestination, waitForShell } from './shell';
+
 // Duplicated verbatim from `views.spec.ts` rather than factored into a shared
 // module — the same call already reasons that this token resolution is small
 // enough to duplicate per call site (its own comment on `global-setup.ts`
@@ -65,8 +67,8 @@ test.describe('editing a run diff end to end', () => {
     baseURL,
   }) => {
     await page.goto(authedUrl(baseURL));
-    await page.getByTestId('two-views-shell').waitFor();
-    await page.getByTestId('two-views-tasks').click();
+    await waitForShell(page);
+    await openDestination(page, 'Issues');
 
     // Same fixture run views.spec.ts's `review detail` test already relies
     // on: "Rate limit the search endpoint" is seeded `finished` with no

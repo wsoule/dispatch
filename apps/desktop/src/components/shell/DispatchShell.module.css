@@ -1,0 +1,45 @@
+/* The desktop app is one window, not a scrolling page: every view is a
+   full-height column that scrolls inside itself (a list, a transcript), so
+   the shell's main area is sized to the window instead of growing with its
+   content, which is what AppShell's page mode does by default. */
+
+.frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* AppShell's <main>, by the id the shell gives it (`mainId`): the viewport
+   under the topbar (the Gr8r --topbar-h token, which the shell's own topbar
+   is sized by), laid out as a column so the banner keeps its own height and
+   the views take the rest. On a phone the shell pads it for its tab bar,
+   inside this height. */
+.frame :global(#dispatch-main) {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--topbar-h));
+  min-height: 0;
+}
+
+/* The views' box: Overseer and Tasks fill it, the peek drawer and the guide
+   card float over it. */
+.content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The first-task guide card, bottom right over either view. */
+.guideSlot {
+  position: absolute;
+  right: 12px;
+  bottom: 64px;
+  z-index: 30;
+  max-width: calc(100% - 24px);
+}
+
+/* Tasks pages pin action footers (a draft's Send, a run review) above the dock. */
+.guideSlotTasks {
+  bottom: 112px;
+}

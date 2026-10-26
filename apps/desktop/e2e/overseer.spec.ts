@@ -2,6 +2,7 @@ import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
+import { openSettings } from './shell';
 
 // This spec's own daemon on a copy of the fixture, so the run it dispatches
 // never shifts the counts and rows views.spec.ts screenshots.
@@ -152,7 +153,7 @@ test.describe('overseer chat end to end', () => {
     // count there is the number of runs it has.
     const settings = page.getByTestId('settings-panel');
     const openRuns = async (): Promise<void> => {
-      await page.getByTestId('two-views-settings').click();
+      await openSettings(page);
       await settings
         .getByRole('navigation', { name: 'Settings' })
         .getByRole('button', { name: 'Runs', exact: true })

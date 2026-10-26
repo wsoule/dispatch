@@ -5,6 +5,7 @@ import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import type { StdioMcp } from './mcp';
 import { startAgentMcp } from './mcp';
 import { APP_TOKEN } from './paths';
+import { openDestination } from './shell';
 
 // Docs v1, end to end: an agent's edit to an accepted spec waits as a doc gate
 // the human approves from its card, and Publish to repo from the doc page
@@ -82,7 +83,7 @@ test("v1 exit: an agent's edit to an accepted spec waits as a gate the human app
   expect(proposed).toMatch(/proposal|proposed/i);
 
   await page.goto(daemon.appUrl);
-  await page.getByTestId('two-views-threads').click();
+  await openDestination(page, 'Threads');
   await page
     .getByRole('group', { name: 'Needs you', exact: true })
     .getByRole('option', { name: /proposes an edit to an accepted doc/ })
@@ -134,7 +135,7 @@ test('Publish to repo from the doc page creates the elevated publish task', asyn
   });
 
   await page.goto(daemon.appUrl);
-  await page.getByTestId('two-views-docs').click();
+  await openDestination(page, 'Docs');
   await page.getByRole('button', { name: 'Publish spec', exact: true }).click();
   await page.getByRole('button', { name: 'Publish to repo' }).click();
   await page.getByLabel('Path in the repo').fill('docs/publish-spec.md');

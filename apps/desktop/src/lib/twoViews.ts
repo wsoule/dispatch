@@ -218,9 +218,7 @@ export function twoViewsKeyAction(
         ? 'swallow'
         : { type: 'tv/showTasks', preset };
     }
-    // There is no sidebar.
-    case 'toggle-sidebar':
-      return 'swallow';
+    // `toggle-sidebar` is the shell's: App collapses the rail itself.
     default:
       return null;
   }

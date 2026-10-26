@@ -4,6 +4,7 @@ import { createServer } from 'node:net';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import { APP_TOKEN } from './paths';
+import { waitForShell } from './shell';
 
 // Listener and pairing setup are operator-tier on loopback: the app token.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
@@ -27,7 +28,7 @@ function freePort(): Promise<number> {
 }
 
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.getByTestId('two-views-shell').waitFor();
+  await waitForShell(page);
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page

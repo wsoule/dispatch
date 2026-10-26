@@ -4,6 +4,7 @@ import { createServer } from 'node:net';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import { APP_TOKEN } from './paths';
+import { openDestination, waitForShell } from './shell';
 
 // Opening a loopback listener is operator-tier: the app token drives it.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
@@ -47,12 +48,12 @@ async function openThreads(page: Page): Promise<void> {
     await page.keyboard.press('Escape');
     await expect(settings).toHaveCount(0);
   }
-  await page.getByTestId('two-views-threads').click();
+  await openDestination(page, 'Threads');
 }
 
 // Settings → A2A, through the `G S` shortcut and the Settings page list.
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.getByTestId('two-views-shell').waitFor();
+  await waitForShell(page);
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page

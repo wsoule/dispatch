@@ -1,0 +1,242 @@
+import { canonicalKind, type TaskListItem } from '@dispatch-foo/core/browser';
+import type {
+  ShellCrumb,
+  ShellNavItem,
+  ShellSection,
+  ShellSectionItem,
+  ShellSettingsLink,
+  ShellTab,
+  UiStatus,
+  UiTone,
+} from '@dispatch/ui';
+
+import type { AdminItem } from '../lib/adminItems';
+import type { OrbTone } from '../lib/agentPresence';
+import type { ContainerStatus } from '../lib/containerStatus';
+import {
+  PROJECTS_HREF,
+  SHELL_ROUTES,
+  type ShellDestination,
+  shellRoute,
+  shellShortcut,
+  taskHref,
+} from '../lib/shellRoutes';
+import { dueDateInfo } from '../lib/taskDates';
+
+// The desktop's app-state → @dispatch/ui shell mapping: the sidebar's primary
+// nav with its counts, the Projects section with a status diamond per project,
+// the footer's Settings link, the phone tabs and the topbar crumbs. Pure
+// functions over plain data so App and DispatchShell stay thin and the
+// mapping is unit-tested without React.
+
+/** The Overseer row's badge: what the orb used to say, as a count in a tone. */
+export interface OverseerBadge {
+  /** Asks or reviews waiting; null when the agent is idle, off or broken. */
+  count: number | null;
+  tone: OrbTone;
+  /** The orb's sentence ("Overseer · 2 waiting on you (work 2)"). */
+  label: string;
+}
+
+// The orb's hues in the shell's status vocabulary: amber asks, green reviews,
+// blue motion, red broken, grey off; idle shows nothing.
+const ORB_TONE: Record<OrbTone, UiTone | undefined> = {
+  amber: 'warning',
+  green: 'success',
+  motion: 'info',
+  broken: 'danger',
+  off: 'muted',
+  idle: undefined,
+};
+
+/** The count badge's tone for an orb tone (undefined: a quiet number). */
+export function orbCountTone(tone: OrbTone): UiTone | undefined {
+  return ORB_TONE[tone];
+}
+
+export interface ShellNavInput {
+  destination: ShellDestination;
+  overseer: OverseerBadge;
+  /** Asks waiting on this person: the Needs you row's amber count. */
+  needsYou: number;
+  /** Messages to this person not yet read: the Threads row's accent count. */
+  threadsUnread: number;
+  /** "⌘" or "Ctrl", for the shortcut hints. */
+  modLabel: string;
+}
+
+const NAV_DESTINATIONS: readonly ShellDestination[] = [
+  'overseer',
+  'issues',
+  'needs-you',
+  'threads',
+  'docs',
+  'runs',
+];
+
+/** The sidebar's primary rows (Settings sits in the footer). */
+export function buildShellNav(input: ShellNavInput): ShellNavItem[] {
+  return NAV_DESTINATIONS.map((id) => {
+    const route = shellRoute(id);
+    const item: ShellNavItem = {
+      id,
+      label: route.label,
+      href: route.href,
+      icon: route.icon,
+      current: input.destination === id,
+      shortcut: shellShortcut(route, input.modLabel),
+    };
+    if (id === 'overseer' && input.overseer.count !== null) {
+      item.count = input.overseer.count;
+      item.countLabel = input.overseer.label;
+      item.countTone = orbCountTone(input.overseer.tone);
+    } else if (id === 'needs-you') {
+      item.count = input.needsYou;
+      item.countLabel = `${input.needsYou} waiting on you`;
+      item.countTone = 'warning';
+    } else if (id === 'threads') {
+      item.count = input.threadsUnread;
+      item.countLabel = `${input.threadsUnread} unread`;
+      item.countTone = 'accent';
+    }
+    return item;
+  });
+}
+
+/** The footer's Settings link, carrying the muted admin count the old
+ * "settings ·n" showed, and naming those items in its title. */
+export function buildSettingsLink(input: {
+  destination: ShellDestination;
+  adminItems: readonly AdminItem[];
+}): ShellSettingsLink {
+  const count = input.adminItems.reduce((n, item) => n + item.count, 0);
+  const route = shellRoute('settings');
+  return {
+    href: route.href,
+    label: count > 0 ? `${route.label} · ${count}` : route.label,
+    current: input.destination === 'settings',
+  };
+}
+
+const TAB_DESTINATIONS: readonly ShellDestination[] = [
+  'overseer',
+  'issues',
+  'threads',
+  'docs',
+];
+
+/** The phone tab bar's cells; the shell appends "More". */
+export function buildShellTabs(destination: ShellDestination): ShellTab[] {
+  return TAB_DESTINATIONS.map((id) => {
+    const route = shellRoute(id);
+    return {
+      id,
+      label: route.label,
+      href: route.href,
+      icon: route.icon,
+      current: destination === id,
+    };
+  });
+}
+
+/** How many projects the sidebar lists before "All" is the way to the rest. */
+const PROJECTS_SECTION_LIMIT = 12;
+
+export interface ProjectsSectionInput {
+  tasks: readonly TaskListItem[];
+  /** A container's rolled-up status, or null when nothing is known about it. */
+  containerStatusOf: (id: string) => ContainerStatus | null;
+  now?: Date;
+  limit?: number;
+}
+
+/** A project's sidebar diamond and the words assistive tech reads for it. */
+export function projectMark(
+  status: ContainerStatus | null,
+  dueDate: string | null,
+  now: Date
+): { status: UiStatus; label: string } {
+  if (status === null || status.total === 0) {
+    return { status: 'missing', label: 'No issues yet' };
+  }
+  if (status.health === 'finished') {
+    return { status: 'done', label: 'All issues done' };
+  }
+  if (dueDate !== null && dueDateInfo(dueDate, now).overdue) {
+    return { status: 'overdue', label: 'Overdue' };
+  }
+  if (status.health === 'attention') {
+    return { status: 'at_risk', label: 'Needs attention' };
+  }
+  return status.health === 'moving'
+    ? { status: 'on_track', label: 'In progress' }
+    : { status: 'on_track', label: 'On track' };
+}
+
+/**
+ * The sidebar's Projects section: one row per project-kind container, in
+ * list order, each opening the project's own page; "All" opens the Issues
+ * graph, where every project is drawn.
+ */
+export function buildProjectsSection(
+  input: ProjectsSectionInput
+): ShellSection {
+  const now = input.now ?? new Date();
+  const limit = input.limit ?? PROJECTS_SECTION_LIMIT;
+  const items: ShellSectionItem[] = [];
+  for (const doc of input.tasks) {
+    if (canonicalKind(doc.meta.kind) !== 'project') continue;
+    if (items.length >= limit) break;
+    const mark = projectMark(
+      input.containerStatusOf(doc.meta.id),
+      doc.meta.dueDate,
+      now
+    );
+    items.push({
+      id: doc.meta.id,
+      label: doc.meta.title,
+      href: taskHref(doc.meta.id),
+      status: mark.status,
+      statusLabel: mark.label,
+    });
+  }
+  return {
+    id: 'projects',
+    title: 'Projects',
+    items,
+    emptyLabel: 'No projects yet',
+    action: { label: 'All', href: PROJECTS_HREF },
+  };
+}
+
+export interface CrumbsInput {
+  /** The active project, the first crumb; null while none has resolved. */
+  projectName: string | null;
+  destination: ShellDestination;
+  /** The task open under Issues, the last crumb. */
+  taskTitle?: string | null;
+}
+
+/** The topbar breadcrumb: project / destination / open task. */
+export function buildCrumbs(input: CrumbsInput): ShellCrumb[] {
+  const crumbs: ShellCrumb[] = [];
+  if (input.projectName !== null && input.projectName !== '') {
+    crumbs.push({
+      label: input.projectName,
+      href: shellRoute('overseer').href,
+    });
+  }
+  const route = shellRoute(input.destination);
+  crumbs.push({ label: route.label, href: route.href });
+  if (input.taskTitle !== undefined && input.taskTitle !== null) {
+    crumbs.push({ label: input.taskTitle });
+  }
+  return crumbs;
+}
+
+/** Every destination's label, for a palette or a test. */
+export const SHELL_DESTINATION_LABELS: Readonly<
+  Record<ShellDestination, string>
+> = Object.fromEntries(
+  SHELL_ROUTES.map((route) => [route.id, route.label])
+) as Record<ShellDestination, string>;

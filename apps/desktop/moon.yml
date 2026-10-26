@@ -4,9 +4,13 @@ language: 'typescript'
 layer: 'application'
 
 # ui-legacy is consumed via the Vite '@/ui' source alias, not the package specifier;
-# build scope keeps the edge on the moon graph without manifest syncing.
+# build scope keeps the edge on the moon graph without manifest syncing. ui
+# (@dispatch/ui) is a real workspace dependency consumed as source, with no
+# build of its own; build scope keeps it on the graph the same way.
 dependsOn:
   - id: 'ui-legacy'
+    scope: 'build'
+  - id: 'ui'
     scope: 'build'
 
 tasks:
@@ -25,11 +29,13 @@ tasks:
       - 'tsconfig.app.json'
       - 'tsconfig.node.json'
       - 'public/**/*'
-      # src/main.tsx inlines this into the bundle. moon does NOT fold a
-      # dependency task's hash into a dependent's, so the workspace edge to
-      # `tokens` is not enough on its own — without this line, editing the
-      # palette leaves this build cache-valid and it ships the old colours.
-      - '/packages/tokens/tokens.css'
+      # src/main.tsx inlines @dispatch/ui's styles.css into the bundle and
+      # Vite compiles its components from source (the package has no build).
+      # moon does NOT fold a dependency task's hash into a dependent's, so
+      # the workspace edge to `ui` is not enough on its own — without this
+      # line, editing a token or a component there leaves this build
+      # cache-valid and it ships the old UI.
+      - '/packages/ui/src/**/*'
     outputs:
       - 'dist'
 

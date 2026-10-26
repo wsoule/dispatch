@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 
 import { type FixturePeerProcess, startFixturePeer } from './a2aPeer';
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
+import { waitForShell } from './shell';
 
 // This spec's own daemon on a copy of the fixture, and its own scripted peer
 // on loopback, so the peer it adds never reaches the shared fixture.
@@ -11,7 +12,7 @@ let peer: FixturePeerProcess | null = null;
 
 // Settings → A2A, through the `G S` shortcut and the Settings page list.
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.getByTestId('two-views-shell').waitFor();
+  await waitForShell(page);
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page

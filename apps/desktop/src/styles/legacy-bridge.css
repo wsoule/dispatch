@@ -1,0 +1,233 @@
+/* The legacy token bridge. TEMPORARY: it dies with packages/ui-legacy (Phase 7 of the
+   Better-Tracker UI migration, once the last Dispatch-only view is restyled on @dispatch/ui).
+
+   The views in apps/desktop and the library in packages/ui-legacy (imported as `@/ui/*`) still
+   read the Linear-era token names of packages/tokens/tokens.css (`--surface-quaternary`,
+   `--text-primary`, `--border-default`, `--state-waiting-fg`, `--hairline-bottom`, ...), either
+   in a `var()` of their own or through the Tailwind forwarders in tailwind.css
+   (`bg-surface-quaternary` is `--color-surface-quaternary: var(--surface-quaternary)`). The
+   desktop no longer loads that palette: @dispatch/ui's tokens.css (Gr8r Studio's set,
+   packages/ui/src/styles/tokens.css) is the design system now. This sheet declares each old
+   name once, on `:root`, as an alias onto the Gr8r token of the same role, so one declaration
+   follows the theme (light, `html[data-theme='dark']`, or `'system'` plus the OS setting) and no
+   colour is restated here: gr8r-rules.test.ts forbids a hex literal in this file, and
+   legacy-bridge.test.ts checks that every name the legacy code reads resolves.
+
+   Not declared here because Gr8r's tokens.css already declares the same name: `--accent`,
+   `--accent-hover`, `--focus-ring`, `--border-strong`, `--red`, `--amber`, `--green`, `--blue`,
+   `--teal`, `--violet`, `--gray`, `--overlay`, `--shadow-card`, `--shadow-raised`, `--row-h`
+   (40px now, Gr8r's row; the old one was 36px, and the change is intended), `--font-sans` and
+   `--font-mono` (Geist, see global.css). Redeclaring one of those here would shadow Gr8r's
+   value or, written as `--x: var(--x)`, make it a cycle. main.tsx loads this sheet after
+   @dispatch/ui/styles.css, so an alias never fights the token it points at. */
+:root {
+  /* Surfaces. Linear's frame-and-panel model is gone: the sidebar sits on `--bg-side`, the page
+     on `--bg`, and everything that was a card, popover or raised panel is the one `--surface`.
+     The layered greys collapse onto Gr8r's three fills: hover (`--surface-2`), pressed and
+     selected (`--surface-3`). `--surface-hover` keeps its alpha so it still reads on a card;
+     mixing `--text` makes it flip with the theme. */
+  --surface-frame: var(--bg-side);
+  --surface-panel: var(--bg);
+  --surface-page: var(--bg);
+  --surface-quaternary: var(--surface);
+  --surface-card: var(--surface);
+  --surface-popover: var(--surface);
+  --surface-raised: var(--surface);
+  --surface-secondary: var(--surface-2);
+  --surface-muted: var(--surface-2);
+  --surface-tertiary: var(--surface-2);
+  --surface-inset: var(--surface-2);
+  --field: var(--surface-2);
+  --surface-control: var(--surface-3);
+  --surface-selected: var(--surface-3);
+  --surface-hover-strong: var(--surface-3);
+  --surface-active: var(--surface-3);
+  --surface-hover: color-mix(in srgb, var(--text) 4%, transparent);
+
+  /* Text: four steps either side. */
+  --text-primary: var(--text);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --text-ghost: var(--text-4);
+
+  /* Borders. Gr8r has three weights; the old panel and chip rings sit on the container edge,
+     the popover ring on the strong one, and a selected edge is the accent. */
+  --border-subtle: var(--divider);
+  --border-default: var(--border);
+  --border-panel: var(--border);
+  --border-chip: var(--border);
+  --border-popover: var(--border-strong);
+  --border-selected: var(--accent);
+
+  /* The accent's companions (`--accent`, `--accent-hover` and `--focus-ring` are Gr8r's own). */
+  --accent-contrast: var(--on-accent);
+  --accent-tint: var(--accent-soft);
+  --accent-muted: var(--accent-soft);
+  --accent-subtle: var(--accent-soft);
+  --accent-border: var(--accent-line);
+
+  /* The per-project categorical palette (src/lib/projectColor.ts picks an index): Gr8r's four
+     avatar and swatch hues, then the status hues, which stay distinguishable from each other.
+     Gr8r has no eight-step categorical set, so the status hues fill the second half. */
+  --project-color-1: var(--violet);
+  --project-color-2: var(--teal);
+  --project-color-3: var(--rose);
+  --project-color-4: var(--orange);
+  --project-color-5: var(--blue);
+  --project-color-6: var(--green);
+  --project-color-7: var(--amber);
+  --project-color-8: var(--red);
+
+  /* Status and priority glyphs: Gr8r's StateGlyph colours (`--st-*`), with blocked red and
+     urgent amber per the status mapping (docs/architecture.md §8.2 in packages/ui). */
+  --status-backlog: var(--st-backlog);
+  --status-todo: var(--st-todo);
+  --status-progress: var(--st-progress);
+  --status-done: var(--st-done);
+  --status-cancelled: var(--st-canceled);
+  --status-blocked: var(--red);
+  --status-green: var(--green);
+  --priority-urgent: var(--amber);
+
+  /* Semantic hues: the base hue is Gr8r's; `-bg` is its soft tint and `-border` its tinted line.
+     Teal and violet are categorical hues in Gr8r with no tint of their own, so theirs are mixed
+     here at the same ratios the status tints use. Grey has no tint either: its fills are the
+     hover surface and the container edge. */
+  --green-bg: var(--green-soft);
+  --green-border: var(--green-line);
+  --blue-bg: var(--blue-soft);
+  --blue-border: var(--blue-line);
+  --red-bg: var(--red-soft);
+  --red-border: var(--red-line);
+  --amber-bg: var(--amber-soft);
+  --amber-border: var(--amber-line);
+  --teal-bg: color-mix(in srgb, var(--teal) 10%, transparent);
+  --teal-border: color-mix(in srgb, var(--teal) 38%, transparent);
+  --violet-bg: color-mix(in srgb, var(--violet) 10%, transparent);
+  --violet-border: color-mix(in srgb, var(--violet) 38%, transparent);
+  --gray-bg: var(--surface-2);
+  --gray-border: var(--border);
+
+  /* Tooltip chrome: Gr8r's inverted fill (`--text`, with `--text-inv` words), as its toasts and
+     bulk bar draw it. Gr8r has no tooltip edge token; the strong border is the nearest line. */
+  --tooltip-bg: var(--text);
+  --tooltip-fg: var(--text-inv);
+  --tooltip-muted: var(--text-4);
+  --tooltip-border: var(--border-strong);
+
+  /* Elevation. Gr8r shadows only what floats, so the panel and field shadows become a no-op
+     shadow rather than `none`: `0 0 0 0 transparent` is valid on its own and inside a
+     comma-composed list, where `none` is not. The ring is a full pixel: Gr8r draws 1px soft
+     borders, never Linear's half pixel. */
+  --shadow-hairline-ring: 0 0 0 1px var(--border);
+  --shadow-panel: 0 0 0 0 transparent;
+  --shadow-btn: var(--shadow-sm);
+  --shadow-overlay: var(--shadow-pop);
+  --shadow-inset-field: 0 0 0 0 transparent;
+
+  /* Radii: chips 5px, controls and cards 8px, popovers 12px, pills round. */
+  --radius-chip: var(--r-chip);
+  --radius-control: var(--r);
+  --radius-card: var(--r);
+  --radius-popover: var(--r-xl);
+  --radius-pill: var(--r-full);
+
+  /* Geometry. Controls take Gr8r's 30px, the header its topbar, the sidebar its width. The inbox
+     row, icon and avatar sizes have no Gr8r token; the old px stay until those views are
+     restyled. */
+  --control-h: var(--h-md);
+  --header-h: var(--topbar-h);
+  --inbox-row-h: 48px;
+  --sidebar-w: var(--side-w);
+  --icon-size: 14px;
+  --avatar-size: 18px;
+
+  /* Motion: Gr8r's one easing and one duration (140ms), the slower steps as multiples. */
+  --ease-out-expo: var(--ease);
+  --dur-quick: var(--dur);
+  --dur-regular: calc(var(--dur) * 2);
+  --dur-slow: calc(var(--dur) * 2.5);
+
+  /* `.status-tint` in global.css: a group header washes its left edge with `--tint-strength` of
+     `--tint`. The wash is stronger than Linear's 4% so it still shows on Gr8r's soft surfaces,
+     and a header that sets no `--tint` of its own gets the accent instead of nothing. Both
+     names are retired in Gr8r (`RETIRED` in packages/ui/test/contrast-helpers.ts) and go with
+     `.status-tint` in Phase 7. */
+  --tint-strength: 10%;
+  --tint: var(--accent);
+
+  /* Run-state roles ("what does this run want from a human", lib/runState.ts): `-fg` is the
+     text and dot, `-surface` the row tint, `-edge` its line. Working, review and landing are in
+     progress (blue), waiting and blocked want a person (amber), failed is red, ready is green,
+     in Gr8r's status mapping. */
+  --state-working-fg: var(--blue);
+  --state-working-surface: var(--blue-soft);
+  --state-working-edge: var(--blue-line);
+  --state-waiting-fg: var(--amber);
+  --state-waiting-surface: var(--amber-soft);
+  --state-waiting-edge: var(--amber-line);
+  --state-failed-fg: var(--red);
+  --state-failed-surface: var(--red-soft);
+  --state-failed-edge: var(--red-line);
+  --state-review-fg: var(--blue);
+  --state-review-surface: var(--blue-soft);
+  --state-review-edge: var(--blue-line);
+  --state-landing-fg: var(--blue);
+  --state-landing-surface: var(--blue-soft);
+  --state-landing-edge: var(--blue-line);
+  --state-ready-fg: var(--green);
+  --state-ready-surface: var(--green-soft);
+  --state-ready-edge: var(--green-line);
+  --state-blocked-fg: var(--amber);
+  --state-blocked-surface: var(--amber-soft);
+  --state-blocked-edge: var(--amber-line);
+
+  /* The task peek's lighter scrim: a quarter of Gr8r's modal scrim (`--overlay` is Gr8r's). */
+  --overlay-light: color-mix(in srgb, var(--overlay) 25%, transparent);
+
+  /* Typography. The families are Gr8r's (`--font-sans`, `--font-mono`); the weights map onto
+     its steps (450 is Gr8r's "soft" body weight). The old px scale snaps onto the nearest
+     `--fs-*` step while keeping the steps distinct: 11 → 11, 12 → 12, 13 → 13.5, 15 → 14.5,
+     18 → 16, 20 → 19, 24 → 23. Tracked labels stay untracked; ids take Gr8r's `.mono` tracking
+     (primitives.css) in place of Linear's -0.26px. */
+  --weight-body: var(--fw-soft);
+  --weight-medium: var(--fw-medium);
+  --weight-semibold: var(--fw-semibold);
+  --text-2xs: var(--fs-2xs);
+  --text-xs: var(--fs-2xs);
+  --text-meta: var(--fs-xs);
+  --text-sm: var(--fs-xs);
+  --text-base: var(--fs);
+  --text-md: var(--fs-md);
+  --text-lg: var(--fs-lg);
+  --text-xl: var(--fs-xl);
+  --text-micro: var(--fs-2xs);
+  --text-mini: var(--fs-xs);
+  --text-small: var(--fs);
+  --text-regular: var(--fs-md);
+  --text-large: var(--fs-lg);
+  --text-title3: var(--fs-xl);
+  --text-title2: var(--fs-2xl);
+  --label-tracking: 0;
+  --meta-tracking: 0;
+  --id-tracking: -0.01em;
+
+  /* Hairlines as inset shadows (outside layout, so a row carries an edge without moving a
+     pixel), now a full pixel in Gr8r's soft border colours. */
+  --hairline: inset 0 0 0 1px var(--border);
+  --hairline-strong: inset 0 0 0 1px var(--border-strong);
+  --hairline-top: inset 0 1px 0 var(--border);
+  --hairline-bottom: inset 0 -1px 0 var(--border);
+  --hairline-left: inset 1px 0 0 var(--border);
+  --hairline-right: inset -1px 0 0 var(--border);
+
+  /* Spacing: both scales are 4pt with the same steps. */
+  --space-1: var(--s-1);
+  --space-2: var(--s-2);
+  --space-3: var(--s-3);
+  --space-4: var(--s-4);
+  --space-5: var(--s-5);
+  --space-6: var(--s-6);
+  --space-8: var(--s-8);
+  --space-10: var(--s-10);
+}

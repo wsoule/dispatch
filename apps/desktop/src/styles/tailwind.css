@@ -1,57 +1,72 @@
 /* `@import 'tailwindcss'` spelled out, with ./preflight.css in place of Tailwind's own (see
-   there for the one difference). */
+   there for the one difference), and the utilities OUTSIDE their layer. @dispatch/ui/styles.css
+   loads after this file (main.tsx) and carries Gr8r's unlayered element reset
+   (`button { padding: 0; background: none; border: 0 }`, `a { color: inherit }`,
+   `p { margin: 0 }`, `svg { display: block }`): an unlayered declaration beats a layered one
+   whatever its specificity, so utilities kept in `@layer utilities` would lose `px-3`,
+   `bg-primary` and `border` on every legacy button, and `underline` on every legacy link.
+   Unlayered, one utility class (0,1,0) beats the one-element reset (0,0,1), the way it always
+   beat the preflight, which stays layered under everything. The layer statement stays so
+   theme, base and components keep their order. Goes with legacy-bridge.css when
+   packages/ui-legacy does. */
 @layer theme, base, components, utilities;
 @import 'tailwindcss/theme.css' layer(theme);
 @import './preflight.css' layer(base);
-@import 'tailwindcss/utilities.css' layer(utilities);
+@import 'tailwindcss/utilities.css';
 @import 'tw-animate-css';
 
 /* The component library (packages/ui-legacy) sits outside this app's auto-detected content roots,
    so its class names must be scanned explicitly or its styles silently vanish. */
 @source '../../../../packages/ui-legacy/src';
 
-/* Dark mode follows the OS setting (this app has no in-app toggle), so the `dark:` variant is
-   wired to the media query rather than a `.dark` class. shadcn components mostly theme through
-   the semantic CSS variables below, which are overridden in the same media query. */
+/* Dark mode follows the OS setting (this app has no in-app toggle; index.html sets
+   `data-theme="system"`, which is how @dispatch/ui's tokens follow the OS too), so the `dark:`
+   variant is wired to the media query rather than a `.dark` class. shadcn components mostly
+   theme through the semantic CSS variables below, which flip with the Gr8r tokens they alias. */
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
-/* shadcn semantic theme, aliased onto styles/tokens.css so shadcn/ui primitives match the
-   hand-rolled components. Only aliases — no literals — so tokens.css's own dark block flips
-   these for free and this file never restates the palette. */
+/* shadcn semantic theme, aliased onto @dispatch/ui's Gr8r tokens (packages/ui/src/styles/
+   tokens.css) so shadcn/ui primitives match the design system. Only aliases, no literals, so the
+   tokens' own dark block flips these for free and this file never restates a palette.
+
+   Cascade note: this file loads BEFORE @dispatch/ui/styles.css (main.tsx), and both declare
+   custom properties on `:root` at the same specificity, so any name both declared would end up
+   Gr8r's. That is why `--border` is not here: Gr8r's tokens.css declares `--border` (the
+   container edge, the value shadcn wants) and a different value here would be overwritten
+   silently. Every other shadcn name is declared only here. */
 :root {
   /* 8px so `rounded-sm/md/lg/xl` land on 4/6/8/12. */
   --radius: 8px;
 
-  --background: var(--surface-page);
-  --foreground: var(--text-primary);
-  --card: var(--surface-card);
-  --card-foreground: var(--text-primary);
-  --popover: var(--surface-popover);
-  --popover-foreground: var(--text-primary);
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
   --primary: var(--accent);
-  --primary-foreground: var(--accent-contrast);
-  --secondary: var(--surface-control);
-  --secondary-foreground: var(--text-primary);
-  --muted: var(--surface-muted);
-  --muted-foreground: var(--text-muted);
-  /* Namespaced so it doesn't collide with tokens.css's `--accent`. shadcn's `accent` is a
-     *subtle* hover/fill, distinct from `primary`; tokens.css loads after this file, so an
-     unprefixed `--accent` here would be overwritten and turn every shadcn skeleton/hover the
-     wrong shade. */
-  --sh-accent: var(--surface-hover);
-  --sh-accent-foreground: var(--text-primary);
+  --primary-foreground: var(--on-accent);
+  --secondary: var(--surface-3);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-2);
+  /* Namespaced so it doesn't collide with Gr8r's `--accent` (the purple). shadcn's `accent` is
+     a *subtle* hover/fill, distinct from `primary`: Gr8r's pressed and selected fill. */
+  --sh-accent: var(--surface-3);
+  --sh-accent-foreground: var(--text);
   --destructive: var(--red);
-  --destructive-foreground: var(--accent-contrast);
-  --border: var(--border-default);
-  --input: var(--border-default);
+  --destructive-foreground: var(--on-red);
+  /* The edge of a field you type in: Gr8r's 3:1 control border, not the soft container edge. */
+  --input: var(--control-border);
   --ring: var(--focus-ring);
-  --sidebar: var(--surface-frame);
-  --sidebar-foreground: var(--text-primary);
-  --sidebar-primary: var(--focus-ring);
-  --sidebar-primary-foreground: var(--accent-contrast);
-  --sidebar-accent: var(--surface-selected);
-  --sidebar-accent-foreground: var(--text-primary);
-  --sidebar-border: var(--border-default);
+  --sidebar: var(--bg-side);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--on-accent);
+  /* Hover on the grey sidebar is the pressed fill, one step up from the page's hover. */
+  --sidebar-accent: var(--surface-3);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
   --sidebar-ring: var(--focus-ring);
 }
 
@@ -83,20 +98,21 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --font-sans:
-    'Inter Variable', 'SF Pro Display', -apple-system, BlinkMacSystemFont,
-    system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
-  /* Inter Variable's optical body weight: `font-book`. */
+  /* Gr8r's font stacks (Geist, Geist Mono; @dispatch/ui's tokens.css declares both on :root
+     and global.css names the variable face), so `font-sans` and `font-mono` resolve to them.
+     `inline`, so the utilities carry the var() rather than a copy of the stack. */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  /* Geist's soft body weight (Gr8r's `--fw-soft`): `font-book`. */
   --font-weight-book: 450;
 
-  /* Tailwind's stock sizes snapped onto the Linear scale (micro/small/regular) so a bare
-     `text-xs`/`text-sm`/`text-base` sits on the same steps as the tokens.css scale. */
+  /* Tailwind's stock sizes snapped onto the legacy scale (micro/small/regular) so a bare
+     `text-xs`/`text-sm`/`text-base` keeps the steps the legacy views were laid out on. */
   --text-xs: 11px;
   --text-sm: 13px;
   --text-base: 15px;
 
-  /* Run-state palette, forwarded from tokens.css so dense rows can say
+  /* Run-state palette, forwarded from legacy-bridge.css so dense rows can say
      `text-state-waiting bg-state-waiting-surface` instead of carrying an inline style object.
      Defined there, not here — this block only re-exports. */
   --color-state-working: var(--state-working-fg);
@@ -123,14 +139,14 @@
 
   /* Semantic hues — addition, deletion, conflict, landing — re-exported here so a diff stat
      or a changed-line marker can say `text-green` instead of carrying an inline style.
-     Defined in tokens.css. */
+     Gr8r's own hues (@dispatch/ui's tokens.css). */
   --color-green: var(--green);
   --color-red: var(--red);
   --color-blue: var(--blue);
   --color-teal: var(--teal);
 
   /* Status and priority glyph colours (Linear's status vocabulary), forwarded from
-     tokens.css. */
+     legacy-bridge.css. */
   --color-status-backlog: var(--status-backlog);
   --color-status-todo: var(--status-todo);
   --color-status-progress: var(--status-progress);
@@ -148,8 +164,9 @@
   --shadow-hairline-left: var(--hairline-left);
   --shadow-hairline-right: var(--hairline-right);
 
-  /* Linear surfaces and chrome, forwarded from tokens.css the same way the run-state
-     palette above is: this block only re-exports, tokens.css owns the values. */
+  /* The legacy surfaces and chrome, forwarded from legacy-bridge.css the same way the
+     run-state palette above is: this block only re-exports, the bridge owns the aliases (and
+     Gr8r's tokens.css the values). */
   --color-frame: var(--surface-frame);
   --color-surface-panel: var(--surface-panel);
   --color-surface-secondary: var(--surface-secondary);

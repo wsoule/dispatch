@@ -521,8 +521,8 @@ describe('twoViewsKeyAction', () => {
     ]);
   });
 
-  test('the sidebar key does nothing, and other keys fall through', () => {
-    expect(twoViewsKeyAction('toggle-sidebar')).toBe('swallow');
+  test('the sidebar key and other keys fall through to the app', () => {
+    expect(twoViewsKeyAction('toggle-sidebar')).toBeNull();
     expect(twoViewsKeyAction('new-task')).toBeNull();
     expect(twoViewsKeyAction('open-palette')).toBeNull();
   });

@@ -1,9 +1,11 @@
 import {
   type CreateInput,
+  fanoutScope,
   providerById,
   type TaskListItem,
 } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
+import { toggleShellCollapsed } from '@dispatch/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, Coins, TriangleAlert } from 'lucide-react';
 import {
@@ -17,6 +19,7 @@ import {
   useState,
 } from 'react';
 
+import { buildProjectsSection } from './adapters/shell';
 import { AwayDigest, useNarratorSince } from './components/chat/AwayDigest';
 import { CapturedNotes } from './components/chat/CapturedNotes';
 import { ForYouPosts } from './components/chat/ForYouPosts';
@@ -47,7 +50,7 @@ import { ThreadPeek } from './components/peek/ThreadPeek';
 import { PeopleProvider } from './components/people/PeopleContext';
 import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AgentStep } from './components/setup/AgentStep';
-import { SetupBanner } from './components/setup/SetupBanner';
+import { SetupBanner, setupProblem } from './components/setup/SetupBanner';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
 import { DaemonUnavailable } from './components/shell/DaemonUnavailable';
@@ -55,6 +58,10 @@ import {
   DeepLinkProvider,
   useCopyTaskLink,
 } from './components/shell/DeepLinkContext';
+import {
+  DispatchShell,
+  SHELL_STORAGE_KEY,
+} from './components/shell/DispatchShell';
 import { PresenceStack } from './components/shell/PresenceStack';
 import { ProjectSwitcher } from './components/shell/ProjectSwitcher';
 import { QuickCaptureDialog } from './components/shell/QuickCaptureDialog';
@@ -71,7 +78,6 @@ import {
   viewTaskLink,
 } from './components/shell/toastContract';
 import { useToasts } from './components/shell/Toasts';
-import { TwoViewShell } from './components/shell/TwoViewShell';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
 import { CreateTaskModal } from './components/tasks/CreateTaskModal';
 import { NeedsYouBlock } from './components/tasks/NeedsYouBlock';
@@ -119,6 +125,7 @@ import { hideArchivedRuns } from './lib/archiveFilter';
 import { hasDispatchKey, launchRootKey } from './lib/bootWarm';
 import { openCaptures } from './lib/capturedNotes';
 import { dispatchConfigKey } from './lib/configEvents';
+import { containerStatus } from './lib/containerStatus';
 import { mentions, subjectOf } from './lib/conversationScope';
 import { type DecisionItem, decisionTarget } from './lib/decisionFeed';
 import { draftTrayViewModel } from './lib/draftTray';
@@ -148,6 +155,7 @@ import {
   setupReportKey,
   writeSetupComplete,
 } from './lib/setupState';
+import { currentShellDestination } from './lib/shellRoutes';
 import { useStatusModelOf } from './lib/statusModel';
 import { computeBlockedIds } from './lib/taskGraph';
 import { itemBucket, queuedTaskIds, taskStatusCounts } from './lib/taskStatus';
@@ -156,6 +164,7 @@ import {
   currentProjectRoot,
   ensureDispatchd,
   hasDispatch,
+  isTauri,
   listProjects,
   listRegisteredProjects,
   touchProjectOpened,
@@ -213,7 +222,7 @@ function SurfaceHosts({
   );
 }
 
-// There is no sidebar to toggle, and the top bar owns the drag region.
+// The shell owns the sidebar and the window's drag region; page headers draw neither.
 const TWO_VIEWS_PAGE_HEADER = {
   sidebarHidden: false,
   onToggleSidebar: () => {},
@@ -237,7 +246,7 @@ function App() {
   // `navState`) so it renders on top of whatever view is underneath instead of replacing it.
   const [aiComposerOpen, setAiComposerOpen] = useState(false);
 
-  // Whether the top bar clears the macOS traffic lights.
+  // Whether the shell's brand row clears the macOS traffic lights.
   const trafficLightInset = useTrafficLightInset();
 
   const toasts = useToasts();
@@ -829,6 +838,25 @@ function App() {
     () => ({ bucketOf, starred: starredTaskIds, me: data.me }),
     [bucketOf, starredTaskIds, data.me]
   );
+  // The sidebar's Projects section: every project with the rolled-up status of
+  // the issues under its milestones, in the top bar's old units (asks, failures).
+  const projectsSection = useMemo(() => {
+    const childrenOf = new Map<string, TaskListItem[]>();
+    for (const doc of data.tasks) {
+      if (doc.meta.parent === null) continue;
+      const siblings = childrenOf.get(doc.meta.parent);
+      if (siblings === undefined) childrenOf.set(doc.meta.parent, [doc]);
+      else siblings.push(doc);
+    }
+    return buildProjectsSection({
+      tasks: data.tasks,
+      containerStatusOf: (id) =>
+        containerStatus(
+          fanoutScope(id, (parent) => childrenOf.get(parent) ?? []),
+          { bucketOf, asksByTask: needs.byTask, model: statusModel }
+        ),
+    });
+  }, [data.tasks, bucketOf, needs.byTask, statusModel]);
   const admin = useAdminItems(data.client, data.port);
   const daemonDown = data.portLoading || data.portError || data.client === null;
   const orb = orbState({
@@ -866,7 +894,7 @@ function App() {
     // dialog — so SessionDetailModal/DiffModal mounted deep inside the Sessions hub also
     // suppress the global commands while open, the same as CreateTaskModal always did.
     onCommand: (command) => {
-      // The `goto-*` keys and `[` resolve through `twoViewsKeyAction`.
+      // The `goto-*` keys resolve through `twoViewsKeyAction`.
       const action = twoViewsKeyAction(command);
       if (action !== null) {
         if (action !== 'swallow') dispatchNav(action);
@@ -888,7 +916,10 @@ function App() {
           )
         );
       } else if (command === 'brain-dump') openQuickCapture();
-      else if (command === 'new-task') {
+      // `[` and ⌘B: the shell leaves the key to the app (`sidebarShortcut` off).
+      else if (command === 'toggle-sidebar') {
+        toggleShellCollapsed(SHELL_STORAGE_KEY);
+      } else if (command === 'new-task') {
         if (activeProject !== null) openCreateTask();
       } else if (command === 'open-shortcuts') openShortcuts();
     },
@@ -1768,6 +1799,8 @@ function App() {
   };
 
   const tasksPage = twoViewsState.tasksPage;
+  // Which sidebar row is current, read off the same state the views render from.
+  const shellDestination = currentShellDestination(twoViewsState);
   const aboutTask =
     tasksPage.kind === 'task'
       ? {
@@ -1985,12 +2018,51 @@ function App() {
 
   const twoViewsFrame = (
     <>
-      <TwoViewShell
+      <DispatchShell
+        projectName={activeProject?.name ?? null}
         view={twoViewsState.mainView}
+        destination={shellDestination}
+        taskTitle={aboutTask?.title ?? null}
+        overseerBadge={{ count: orb.count, tone: orb.tone, label: orbTitle }}
+        needsYou={needs.count}
+        threadsUnread={unreadToMe}
+        adminItems={admin}
+        projects={projectsSection}
+        tier={data.myTier}
+        teamSession={teamSession}
+        windowChrome={{ dragRegion: isTauri(), trafficLightInset }}
+        onNavigate={dispatchNav}
+        // A project row opens the project's own page, on its Flight Plan.
+        onOpenTask={(taskId) => openTaskView(taskId, 'plan')}
+        // "All": the Issues graph, where every project is drawn.
+        onOpenProjects={() => {
+          dispatchNav({ type: 'tv/showTasks' });
+          dispatchNav({ type: 'tv/setTasksMode', mode: 'graph' });
+        }}
+        onSearch={() => dispatchNav({ type: 'openPalette' })}
+        topbarActions={
+          <>
+            {projectSwitcher}
+            {activeProject !== null && (
+              <PresenceStack
+                presence={data.presence}
+                onOpenPerson={(ref) =>
+                  dispatchNav({ type: 'tv/openAddress', address: ref })
+                }
+                taskTitle={(id) =>
+                  data.tasksIncludingArchived.find((t) => t.meta.id === id)
+                    ?.meta.title
+                }
+              />
+            )}
+          </>
+        }
         gate={gateScreen ?? agentSetupScreen}
         guide={guideCard}
+        // Only while a step wants a person: the shell's banner slot is a styled
+        // strip, and an empty SetupBanner inside it would still draw a band.
         banner={
-          setupComplete ? (
+          setupComplete && setupProblem(setupBannerReport) !== undefined ? (
             <SetupBanner
               report={setupBannerReport}
               onOpen={() =>
@@ -1999,68 +2071,6 @@ function App() {
             />
           ) : undefined
         }
-        topBar={{
-          view: twoViewsState.mainView,
-          orb,
-          orbLabel: orbTitle,
-          postsDot: posts.some((post) => post.unread),
-          onShowOverseer: () => dispatchNav({ type: 'tv/showOverseer' }),
-          onShowTasks: () => dispatchNav({ type: 'tv/showTasks' }),
-          onCount: (count) =>
-            dispatchNav(
-              count === 'asks'
-                ? { type: 'tv/showTasks' }
-                : {
-                    type: 'tv/showTasks',
-                    preset: count === 'working' ? 'moving' : count,
-                  }
-            ),
-          counts: {
-            asks: needs.count,
-            review: statusCounts.buckets.review,
-            failed: statusCounts.buckets.failed,
-            working: statusCounts.buckets.working,
-          },
-          settingsCount: admin.reduce((n, item) => n + item.count, 0),
-          settingsTitle:
-            admin.length === 0
-              ? undefined
-              : admin.map((item) => item.label).join(' · '),
-          onOpenSettings: () =>
-            dispatchNav({ type: 'tv/openSettings', page: admin[0]?.page }),
-          settingsOpen: twoViewsState.settings !== null,
-          onOpenDocs: () =>
-            dispatchNav({ type: 'setProjectView', view: 'docs' }),
-          onOpenThreads: () =>
-            dispatchNav({ type: 'setProjectView', view: 'threads' }),
-          threadsUnread: unreadToMe,
-          page:
-            twoViewsState.mainView !== 'tasks'
-              ? null
-              : tasksPage.kind === 'docs'
-                ? 'docs'
-                : tasksPage.kind === 'view' && tasksPage.view === 'threads'
-                  ? 'threads'
-                  : null,
-          projectMenu: (
-            <div className="flex items-center gap-1">
-              {projectSwitcher}
-              {activeProject !== null && (
-                <PresenceStack
-                  presence={data.presence}
-                  onOpenPerson={(ref) =>
-                    dispatchNav({ type: 'tv/openAddress', address: ref })
-                  }
-                  taskTitle={(id) =>
-                    data.tasksIncludingArchived.find((t) => t.meta.id === id)
-                      ?.meta.title
-                  }
-                />
-              )}
-            </div>
-          ),
-          trafficLightInset,
-        }}
         overseer={
           <TwoViewOverseer
             data={data}

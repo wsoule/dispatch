@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { createServer } from 'node:net';
 
 import { APP_TOKEN, DAEMON_PORT } from './paths';
+import { openDestination } from './shell';
 
 const DAEMON = `http://localhost:${DAEMON_PORT}`;
 // The listener and client routes are decide-tier, so the daemon is driven with the app token.
@@ -128,7 +129,7 @@ test.describe('A2A ask end to end', () => {
     }).then(readEvents);
 
     await page.goto(authedUrl(baseURL));
-    await page.getByTestId('two-views-threads').click();
+    await openDestination(page, 'Threads');
     const question = page
       .getByRole('group', { name: 'Needs you', exact: true })
       .getByRole('option', {

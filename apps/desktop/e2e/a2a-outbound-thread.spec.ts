@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import { type FixturePeerProcess, startFixturePeer } from './a2aPeer';
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import { APP_TOKEN } from './paths';
+import { openDestination } from './shell';
 
 // Adding a loopback peer is operator-tier, so the daemon is driven with the app token.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
@@ -34,7 +35,7 @@ test.describe('an outbound A2A thread', () => {
     expect(added.status()).toBe(201);
 
     await page.goto(daemon.appUrl);
-    await page.getByTestId('two-views-threads').click();
+    await openDestination(page, 'Threads');
     await page.getByRole('button', { name: 'New thread' }).first().click();
 
     // `@a2a:` completes the peer; Enter turns it into a recipient pill.

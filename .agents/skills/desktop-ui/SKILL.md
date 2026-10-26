@@ -14,6 +14,17 @@ feel inconsistent. `packages/ui-legacy` (`@dispatch/ui-legacy`) is the shadcn
 library that used to live at `packages/ui`; the new `@dispatch/ui` landing at
 `packages/ui` will be Better-Tracker's library.
 
+## The app shell
+
+The frame around every view is `@dispatch/ui`'s `AppShell` (sidebar with the
+destinations and the Projects section, topbar with crumbs and search), mounted
+by `apps/desktop/src/components/shell/DispatchShell.tsx` and fed by the pure
+adapters in `src/adapters/shell.ts` and `src/lib/shellRoutes.ts`. New shell and
+adapter code uses `@dispatch/ui` (its components, tokens and a CSS module beside
+the component), never Tailwind or `@/ui` (ui-legacy). The rest of this skill
+describes the legacy library the views still use; it is rewritten when
+`packages/ui-legacy` is deleted.
+
 ## Where to look first
 
 - **shadcn primitives** (`packages/ui-legacy/src/*.tsx`): `Button` (variants

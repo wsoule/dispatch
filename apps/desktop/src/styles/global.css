@@ -2,9 +2,17 @@ html {
   /* Fixed scale: the type and spacing tokens are px, so the UI never grows with the window.
      ⌘+/⌘− webview zoom (lib/zoom.ts) is how the whole UI scales. */
   font-size: 16px;
-  /* Lets native form controls (select, scrollbars, etc.) render in the matching OS theme
-     instead of defaulting to light chrome inside a dark-themed page. */
+  /* A fallback that lets native form controls (select, scrollbars, etc.) render in the matching
+     OS theme. @dispatch/ui's tokens.css sets the exact scheme per theme on :root (`light`, or
+     `dark` under html[data-theme='dark'] and under 'system' when the OS is dark), and :root
+     outranks this element selector, so this only covers an element that escapes those rules. */
   color-scheme: light dark;
+  /* The typeface @dispatch/ui's font stacks read: `--font-sans` is
+     `var(--font-geist, Geist), ui-sans-serif, ...`, and @fontsource-variable/geist (loaded in
+     main.tsx) registers the family as 'Geist Variable', not Geist, so the variable has to name
+     it. Geist Mono needs nothing: @fontsource/geist-mono registers 'Geist Mono', the name
+     `--font-mono` already falls back to. */
+  --font-geist: 'Geist Variable';
 }
 
 html,
@@ -14,14 +22,14 @@ body,
   height: 100%;
 }
 
+/* Gr8r's page: Geist at its body size on the page surface (`--bg`, the colour behind the shell;
+   the sidebar sits on `--bg-side` and panels on `--surface`). The weight, line height and font
+   features come from @dispatch/ui's own body rule. Linear's frame-and-panel model is gone. */
 body {
   font-family: var(--font-sans);
-  font-size: var(--text-base);
-  font-weight: var(--weight-body);
-  color: var(--text-primary);
-  /* The frame, not the panel: the main panel is a rounded rect inset into this. */
-  background: var(--surface-frame);
-  -webkit-font-smoothing: antialiased;
+  font-size: var(--fs);
+  color: var(--text);
+  background: var(--bg);
 }
 
 button,
@@ -35,24 +43,21 @@ button {
   cursor: pointer;
 }
 
-/* One global focus ring for every interactive element, `:focus-visible` only so a mouse click
-   doesn't trigger it. Indigo is reserved for exactly this kind of interactive signal. No
-   forced radius — controls keep their own 8px / 9999px. */
-:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
-}
+/* No focus ring here: @dispatch/ui's tokens.css draws Gr8r's (2px `--focus-ring`, 1px off) on
+   every `:focus-visible` element in page mode, and a second declaration would only fight it. */
 
 /* Text selection tinted with the accent instead of the OS default, so highlighting a passage
    for the Selection Actions menu (ui/ai/selection-actions.tsx) reads as part of the system
    rather than a generic browser selection. */
 ::selection {
-  background: var(--accent-tint);
+  background: var(--accent-soft);
 }
 
 /* A group header tinted with its status colour: the left edge picks up `--tint-strength` of
-   `--tint` and fades to the plain quaternary surface. Set `--tint` to the group's status
-   colour on the element. Mixed in lch so the ramp matches Linear's. */
+   `--tint` and fades to the plain surface. Set `--tint` to the group's status colour on the
+   element (legacy-bridge.css gives both names a fallback). Mixed in lch so the ramp matches
+   Linear's. TODO 2026-10-26: `--tint` is a retired Gr8r name (gr8r-rules.test.ts exempts this
+   one read); the recipe goes with ui-legacy's GroupHeader in Phase 7. */
 .status-tint {
   background: linear-gradient(
     90deg,
