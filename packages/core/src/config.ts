@@ -1924,6 +1924,25 @@ function parseConfig(parsed: unknown): DispatchConfig {
   };
 }
 
+// `doc.setIn`, able to write under a block the file names with no value. A
+// block whose only key is commented out (`overseer:` over `# stream: off`)
+// reads as null, which the loader takes as absent but the library refuses to
+// set a key under ("Expected YAML collection at overseer"). Each such parent
+// on the path becomes an empty mapping first, keeping the comments it held.
+function setIn(doc: YAML.Document, path: string[], value: unknown): void {
+  for (let depth = 1; depth < path.length; depth += 1) {
+    const parent = path.slice(0, depth);
+    const node = doc.getIn(parent, true);
+    if (YAML.isScalar(node) && node.value === null) {
+      const block = doc.createNode({}) as YAML.YAMLMap;
+      block.commentBefore = node.commentBefore;
+      block.comment = node.comment;
+      doc.setIn(parent, block);
+    }
+  }
+  doc.setIn(path, value);
+}
+
 // Writes the `notifications:` keys a patch names. `kinds` is written
 // key-by-key so a toggle the patch omits survives; `webhook: null` deletes the
 // key, and an empty string counts as clearing too, since a form cannot send
@@ -1935,7 +1954,7 @@ function applyNotificationsPatch(
   if (patch.kinds !== undefined) {
     const kinds = parseNotificationKinds(patch.kinds, 'notifications.kinds');
     for (const [kind, enabled] of Object.entries(kinds)) {
-      doc.setIn(['notifications', 'kinds', kind], enabled);
+      setIn(doc, ['notifications', 'kinds', kind], enabled);
     }
   }
   if (patch.webhook !== undefined) {
@@ -1947,7 +1966,8 @@ function applyNotificationsPatch(
       }
       return;
     }
-    doc.setIn(
+    setIn(
+      doc,
       ['notifications', 'webhook'],
       validateWebhookUrl(patch.webhook, 'notifications.webhook')
     );
@@ -1964,7 +1984,7 @@ function applyLinearPatch(
     if (typeof patch.enabled !== 'boolean') {
       throw new ConfigError('invalid linear.enabled: must be a boolean');
     }
-    doc.setIn(['linear', 'enabled'], patch.enabled);
+    setIn(doc, ['linear', 'enabled'], patch.enabled);
   }
   // Either key writes both: `teamIds` in full, and `teamId` as its first
   // entry, which is all a build predating several teams reads.
@@ -1985,14 +2005,14 @@ function applyLinearPatch(
     teams = [...new Set(patch.teamIds)];
   }
   if (teams !== undefined) {
-    doc.setIn(['linear', 'teamIds'], teams);
-    doc.setIn(['linear', 'teamId'], teams[0] ?? null);
+    setIn(doc, ['linear', 'teamIds'], teams);
+    setIn(doc, ['linear', 'teamId'], teams[0] ?? null);
   }
   if (patch.intervalSec !== undefined) {
     if (!Number.isFinite(patch.intervalSec) || patch.intervalSec < 30) {
       throw new ConfigError('invalid linear.intervalSec: must be >= 30');
     }
-    doc.setIn(['linear', 'intervalSec'], patch.intervalSec);
+    setIn(doc, ['linear', 'intervalSec'], patch.intervalSec);
   }
   if (patch.direction !== undefined) {
     if (!LINEAR_DIRECTIONS.includes(patch.direction)) {
@@ -2000,7 +2020,7 @@ function applyLinearPatch(
         `invalid linear.direction: must be one of ${LINEAR_DIRECTIONS.join('|')}`
       );
     }
-    doc.setIn(['linear', 'direction'], patch.direction);
+    setIn(doc, ['linear', 'direction'], patch.direction);
   }
   if (patch.includeAcceptanceCriteria !== undefined) {
     if (typeof patch.includeAcceptanceCriteria !== 'boolean') {
@@ -2008,7 +2028,8 @@ function applyLinearPatch(
         'invalid linear.includeAcceptanceCriteria: must be a boolean'
       );
     }
-    doc.setIn(
+    setIn(
+      doc,
       ['linear', 'includeAcceptanceCriteria'],
       patch.includeAcceptanceCriteria
     );
@@ -2027,7 +2048,7 @@ function applyLinearPatch(
           `invalid linear.statusMap.${status}: must be a non-empty string`
         );
       }
-      doc.setIn(['linear', 'statusMap', status], state.trim());
+      setIn(doc, ['linear', 'statusMap', status], state.trim());
     }
   }
 }
@@ -2042,13 +2063,13 @@ function applyFixLoopPatch(
     if (typeof patch.auto !== 'boolean') {
       throw new ConfigError('invalid fixLoop.auto: must be a boolean');
     }
-    doc.setIn(['fixLoop', 'auto'], patch.auto);
+    setIn(doc, ['fixLoop', 'auto'], patch.auto);
   }
   if (patch.cap !== undefined) {
     if (!Number.isInteger(patch.cap) || patch.cap < 1) {
       throw new ConfigError('invalid fixLoop.cap: must be an integer >= 1');
     }
-    doc.setIn(['fixLoop', 'cap'], patch.cap);
+    setIn(doc, ['fixLoop', 'cap'], patch.cap);
   }
   if (patch.escalation !== undefined) {
     if (!Array.isArray(patch.escalation)) {
@@ -2057,7 +2078,7 @@ function applyFixLoopPatch(
     const steps = patch.escalation.map((entry, index) =>
       parseEscalationStep(entry, `fixLoop.escalation[${index}]`)
     );
-    doc.setIn(['fixLoop', 'escalation'], steps);
+    setIn(doc, ['fixLoop', 'escalation'], steps);
   }
 }
 
@@ -2075,7 +2096,7 @@ function setOrDelete(doc: YAML.Document, path: string[], value: unknown): void {
     if (doc.hasIn(path)) doc.deleteIn(path);
     return;
   }
-  doc.setIn(path, typeof value === 'string' ? value.trim() : value);
+  setIn(doc, path, typeof value === 'string' ? value.trim() : value);
 }
 
 // The blocks Settings edits whole or field by field (ConfigPatch's second
@@ -2205,7 +2226,7 @@ export function updateConfig(
     if (!Number.isInteger(value) || value < 1) {
       throw new ConfigError(`invalid ${key}: must be a positive integer`);
     }
-    doc.setIn(['orchestrator', key], value);
+    setIn(doc, ['orchestrator', key], value);
   }
 
   // Checked before the write, like permissionMode: a cap over the hard limit
@@ -2239,7 +2260,7 @@ export function updateConfig(
         'invalid runCostEstimateUsd: must be a positive number'
       );
     }
-    doc.setIn(['orchestrator', 'runCostEstimateUsd'], value);
+    setIn(doc, ['orchestrator', 'runCostEstimateUsd'], value);
   }
 
   // Positive *numbers*, not integers: a budget is money and a turn cap is
@@ -2258,7 +2279,7 @@ export function updateConfig(
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
       throw new ConfigError(`invalid ${key}: must be a positive number`);
     }
-    doc.setIn(['orchestrator', key], value);
+    setIn(doc, ['orchestrator', key], value);
   }
   if (patch.permissionMode !== undefined) {
     // Validated before the write: an unknown mode on disk would make every
@@ -2272,7 +2293,7 @@ export function updateConfig(
         `invalid permissionMode: must be one of ${KNOWN_PERMISSION_MODES.join('|')}`
       );
     }
-    doc.setIn(['orchestrator', 'permissionMode'], patch.permissionMode);
+    setIn(doc, ['orchestrator', 'permissionMode'], patch.permissionMode);
   }
   if (patch.models !== undefined) {
     // Same validate-before-write rule as permissionMode: a bad role must never
@@ -2288,7 +2309,7 @@ export function updateConfig(
           `invalid models.${role}: must be a non-empty string`
         );
       }
-      doc.setIn(['models', role], value.trim());
+      setIn(doc, ['models', role], value.trim());
     }
   }
   if (patch.effort !== undefined) {
@@ -2313,7 +2334,7 @@ export function updateConfig(
     if (typeof patch.executor !== 'string' || patch.executor.trim() === '') {
       throw new ConfigError('invalid executor: must be a non-empty string');
     }
-    doc.setIn(['orchestrator', 'executor'], patch.executor.trim());
+    setIn(doc, ['orchestrator', 'executor'], patch.executor.trim());
   }
   if (patch.executors !== undefined) {
     for (const [name, entry] of Object.entries(patch.executors)) {
@@ -2327,11 +2348,12 @@ export function updateConfig(
       if (entry.models !== undefined) {
         const models = parseExecutorModels(name, entry.models, 'invalid patch');
         for (const [role, value] of Object.entries(models)) {
-          doc.setIn(['executors', name, 'models', role], value);
+          setIn(doc, ['executors', name, 'models', role], value);
         }
       }
       if (entry.pricing !== undefined) {
-        doc.setIn(
+        setIn(
+          doc,
           ['executors', name, 'pricing'],
           parseExecutorPricing(name, entry.pricing, 'invalid patch')
         );
@@ -2357,7 +2379,8 @@ export function updateConfig(
       // with an explicit `undefined`; that means "not in this patch", not "set
       // it to nothing", so skip rather than reject the whole write.
       if (value === undefined) continue;
-      doc.setIn(
+      setIn(
+        doc,
         ['queue', 'weights', key],
         parseWeight(value, `queue.weights.${key}`)
       );
@@ -2377,7 +2400,7 @@ export function updateConfig(
           `invalid policy.rung: must be an integer between ${MIN_POLICY_RUNG} and ${MAX_POLICY_RUNG}`
         );
       }
-      doc.setIn(['policy', 'rung'], rung);
+      setIn(doc, ['policy', 'rung'], rung);
     }
     if (gates !== undefined) {
       // Written key-by-key so a pin the patch omits survives; `null` clears a
@@ -2407,7 +2430,7 @@ export function updateConfig(
             `invalid policy.gates.${gate}: must be one of ${POLICY_GATE_MODES.join('|')}`
           );
         }
-        doc.setIn(['policy', 'gates', gate], mode);
+        setIn(doc, ['policy', 'gates', gate], mode);
       }
     }
   }
@@ -2425,7 +2448,7 @@ export function updateConfig(
           `invalid verify.${field}: must be a non-empty string`
         );
       }
-      doc.setIn(['verify', field], value.trim());
+      setIn(doc, ['verify', field], value.trim());
     }
   }
 

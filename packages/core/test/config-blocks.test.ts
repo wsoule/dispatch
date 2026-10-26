@@ -145,6 +145,25 @@ describe('updateConfig blocks', () => {
     expect(loadConfig(dir).executors?.gemini).toBeUndefined();
   });
 
+  // A block whose keys are all commented out holds null, which the loader
+  // reads as absent; a save into it used to be refused by the YAML library.
+  test('writes into a block left with no value, keeping its comments', () => {
+    const dir = root(
+      'carto:\n  # enabled: detect\norchestrator: # tuned later\npolicy:\n  gates:\n'
+    );
+    const cfg = updateConfig(dir, {
+      carto: { enabled: 'off' },
+      epicConcurrency: 2,
+      policy: { gates: { merge: 'auto' } },
+    });
+    expect(cfg.carto.enabled).toBe('off');
+    expect(cfg.orchestrator.epicConcurrency).toBe(2);
+    expect(cfg.policy?.gates.merge).toBe('auto');
+    const text = read(dir);
+    expect(text).toContain('# enabled: detect');
+    expect(text).toContain('# tuned later');
+  });
+
   test('a patch the loader would refuse throws, and the file stays as it was', () => {
     const before = 'sync:\n  enabled: true\n  remote: origin\n';
     for (const bad of [
