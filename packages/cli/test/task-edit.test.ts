@@ -101,4 +101,25 @@ describe('task edit', () => {
     expect(doc.meta.priority).toBe('urgent');
     expect(doc.meta.labels).toContain('infra');
   });
+
+  // `--assignee` takes any actor ref, not only the legacy agent|human|none
+  // triple: the daemon and the desktop assign named people and agents.
+  it('accepts a named assignee', async () => {
+    const id = await createTask('Assign me');
+    await run('task', 'edit', id, '--assignee', 'human:wyat');
+    await run('task', 'edit', id, '--assignee', 'agent:wyat/claude');
+    lines = [];
+    await run('task', 'show', id, '--json');
+    const doc = JSON.parse(lines.join('\n'));
+    expect(doc.meta.assignee).toBe('agent:wyat/claude');
+  });
+
+  it('rejects an assignee that is not an actor ref', async () => {
+    const id = await createTask('Assign me');
+    for (const assignee of ['robot', 'human:', 'agent:/x']) {
+      await expect(
+        run('task', 'edit', id, '--assignee', assignee)
+      ).rejects.toThrow(`invalid assignee: ${assignee} (expected an actor ref`);
+    }
+  });
 });

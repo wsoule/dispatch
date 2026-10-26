@@ -1,10 +1,10 @@
 import {
   ACCEPTED_KINDS,
   ActorContext,
-  ASSIGNEES,
   canonicalStatus,
   childEnv,
   DISPATCH_DIR,
+  isValidAssignee,
   loadConfig,
   PRIORITIES,
   readProjectBackend,
@@ -181,6 +181,20 @@ function validate<T extends string>(
     );
   }
   return value as T;
+}
+
+// Validates `--assignee` against core's actor-ref grammar rather than the
+// legacy agent|human|none enum, so the named refs the daemon accepts
+// (`human:<handle>`, `agent:<operator>/<handle>`) work from the CLI too. The
+// message mirrors the daemon's (packages/server/src/api.ts).
+function validateAssignee(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isValidAssignee(value)) {
+    throw new CliError(
+      `invalid assignee: ${value} (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)`
+    );
+  }
+  return value;
 }
 
 // `--milestone` names a project or milestone to file under. Through the
@@ -382,7 +396,10 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .argument('<id>')
     .option('--title <title>')
     .option('--priority <priority>')
-    .option('--assignee <assignee>', 'agent|human|none')
+    .option(
+      '--assignee <assignee>',
+      'none, human, agent, human:<handle> or agent:<operator>/<handle>'
+    )
     .option('--parent <id>')
     .option(
       '--milestone <name>',
@@ -415,11 +432,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
             PRIORITIES,
             'priority'
           ),
-          assignee: validate(
-            opts.assignee as string | undefined,
-            ASSIGNEES,
-            'assignee'
-          ),
+          assignee: validateAssignee(opts.assignee as string | undefined),
           // With --milestone the parent comes from it (and must agree with
           // an explicit --parent), so the current one is not resent.
           parent:
