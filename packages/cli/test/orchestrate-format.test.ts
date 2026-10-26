@@ -267,6 +267,24 @@ describe('formatEntry', () => {
     expect(formatEntry(entry)).toBe('[message from user] use the v2 endpoint');
   });
 
+  it('skips a message entry redacted for this caller, in a watch and in run show', () => {
+    const redacted: NormalizedEntry = {
+      ts: '2026-07-20T00:00:00Z',
+      kind: 'message',
+      redacted: true,
+    };
+    expect(formatEntry(redacted)).toBeNull();
+    expect(
+      formatLastEntries(
+        [
+          redacted,
+          { ts: '2026-07-20T00:00:01Z', kind: 'assistant', text: 'on it' },
+        ],
+        20
+      )
+    ).toEqual(['[assistant] on it']);
+  });
+
   it('returns null for an entry with no text and no special handling', () => {
     const entry: NormalizedEntry = {
       ts: '2026-07-20T00:00:00Z',
