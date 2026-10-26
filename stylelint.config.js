@@ -19,6 +19,11 @@ export default {
         ],
       },
     ],
+    // For CSS modules, which scope selectors with :global and :local
+    'selector-pseudo-class-no-unknown': [
+      true,
+      { ignorePseudoClasses: ['global', 'local'] },
+    ],
     'selector-class-pattern': null,
     'no-descending-specificity': null,
 
