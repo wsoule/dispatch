@@ -23,9 +23,21 @@ const PORT = 4100;
 const RUN = 'r-000001';
 
 afterEach(() => {
-  // The live text store is one per window, so each test starts it empty.
+  // The live text store is one per window, so each test starts it empty, and
+  // with no notification waiting for a frame.
   resetLiveText(PORT);
+  liveTextStore.flush();
 });
+
+// Runs `deliver` and then the animation frame the live text store waits for
+// before it tells its views (see LiveTextStore), under act, so the view shows
+// what was delivered once this returns.
+function inFrame(deliver: () => void): void {
+  act(() => {
+    deliver();
+    liveTextStore.flush();
+  });
+}
 
 function entry(text: string): NormalizedEntry {
   return { ts: '2026-10-25T10:00:00.000Z', kind: 'assistant', text };
@@ -402,7 +414,7 @@ describe('a run’s live text', () => {
     ).toBe(false);
 
     // The next frame follows on from the snapshot.
-    act(() => {
+    inFrame(() => {
       applyRunEvent(qc, PORT, delta(4, 'msg_1:1', 'Next.'));
     });
     expect(result.current.live?.segments.map((s) => s.id)).toEqual([
@@ -421,7 +433,7 @@ describe('a run’s live text', () => {
     await waitFor(() => {
       expect(first.result.current.detail).toBeDefined();
     });
-    act(() => {
+    inFrame(() => {
       applyRunEvent(qc, PORT, delta(1, 'msg_A:0', 'Half a sen'));
     });
     expect(first.result.current.live?.segments.map((s) => s.id)).toEqual([
@@ -453,7 +465,7 @@ describe('a run’s live text', () => {
     await waitFor(() => {
       expect(result.current.detail).toBeDefined();
     });
-    act(() => {
+    inFrame(() => {
       applyRunEvent(qc, PORT, delta(1, 'msg_1:0', 'Done reading.'));
       applyRunEvent(qc, PORT, delta(2, 'msg_1:1', 'Now'));
     });

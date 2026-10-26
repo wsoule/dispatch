@@ -1,7 +1,7 @@
 import './dom-env';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { type ReactNode, StrictMode } from 'react';
 
 import {
@@ -28,8 +28,10 @@ const PORT = 4321;
 
 afterEach(() => {
   cleanup();
-  // The live text store is one per window, so each test starts it empty.
+  // The live text store is one per window, so each test starts it empty, and
+  // with no notification waiting for a frame.
   resetLiveText(PORT);
+  liveTextStore.flush();
 });
 
 function overseerRecord(): OverseerRecord {
@@ -1010,6 +1012,16 @@ function delta(seq: number, segmentId: string, text: string) {
   return { conversationId: 'w-1', turnId: 't1', seq, segmentId, text };
 }
 
+// Runs `deliver` and then the animation frame the live text store waits for
+// before it tells its views (see LiveTextStore), under act, so the view shows
+// what was delivered once this returns.
+function inFrame(deliver: () => void): void {
+  act(() => {
+    deliver();
+    liveTextStore.flush();
+  });
+}
+
 test('live shows the snapshot’s text minus the segments the record already holds', async () => {
   const { result } = openWith([
     runningRecord({
@@ -1047,7 +1059,7 @@ test('live follows delta frames, and is null once the turn is not running', asyn
       { id: 't1:b', text: 'Two' },
     ]);
   });
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(2, 't1:b', ' runs'));
   });
   expect(result.current.live?.segments).toEqual([
@@ -1079,7 +1091,7 @@ test('an abandoning frame takes its segment off the live text at once', async ()
       { id: 't1:x', text: 'Let me lo' },
     ]);
   });
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, {
       ...delta(2, 't1:x', ''),
       abandoned: true,
@@ -1110,7 +1122,7 @@ test('a missed frame refetches the record once, and its snapshot repairs the tex
   expect(calls()).toBe(1);
 
   // Frame 2 never arrives: 3 and 4 wait, and only one refetch goes out.
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(3, 't1:b', ' are'));
     applyOverseerDelta(queryClient, PORT, delta(4, 't1:b', ' live'));
   });
@@ -1123,7 +1135,7 @@ test('a missed frame refetches the record once, and its snapshot repairs the tex
   expect(calls()).toBe(2);
 
   // Back in step: the next frame appends without a fetch.
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(5, 't1:b', ' now'));
   });
   expect(result.current.live?.segments).toEqual([
@@ -1219,7 +1231,7 @@ test('a segment never vanishes between its live text and its row', async () => {
 
   // The reply streams, then lands as the turn settles.
   watch = 't1:c';
-  act(() => {
+  inFrame(() => {
     applyOverseerDelta(queryClient, PORT, delta(3, 't1:c', 'Both wait'));
   });
   expect(result.current.live?.segments).toEqual([
@@ -1245,6 +1257,7 @@ const NONE: ReadonlySet<string> = new Set();
 
 afterEach(() => {
   resetLiveText(LIVE_PORT);
+  liveTextStore.flush();
 });
 
 function frame(seq: number, segmentId: string, text: string) {
@@ -1252,7 +1265,7 @@ function frame(seq: number, segmentId: string, text: string) {
 }
 
 function apply(seq: number, segmentId: string, text: string): void {
-  act(() => {
+  inFrame(() => {
     liveTextStore.applyDelta(
       LIVE_PORT,
       LIVE_KEY,
@@ -1299,7 +1312,7 @@ test('keeps a shown segment until the record holds its row', () => {
   apply(1, 'a', 'Said');
   expect(result.current?.segments).toEqual([{ id: 'a', text: 'Said' }]);
 
-  act(() => {
+  inFrame(() => {
     liveTextStore.mergeSnapshot(
       LIVE_PORT,
       LIVE_KEY,
@@ -1321,7 +1334,7 @@ test('drops a shown segment at once when its stream abandons it', () => {
   );
   apply(1, 'a', 'Half a sen');
   expect(result.current?.segments).toEqual([{ id: 'a', text: 'Half a sen' }]);
-  act(() => {
+  inFrame(() => {
     liveTextStore.applyDelta(
       LIVE_PORT,
       LIVE_KEY,
@@ -1330,6 +1343,49 @@ test('drops a shown segment at once when its stream abandons it', () => {
     );
   });
   expect(result.current?.segments).toEqual([]);
+});
+
+// A burst of deltas, each a websocket message of its own, renders the view
+// once per painted frame (it rendered once per delta before), while the store
+// itself holds every delta at once.
+test('renders a burst of deltas once per animation frame', () => {
+  const frames: FrameRequestCallback[] = [];
+  const raf = spyOn(globalThis, 'requestAnimationFrame').mockImplementation(
+    (cb) => frames.push(cb)
+  );
+  try {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useLiveText(LIVE_PORT, LIVE_KEY, true, NONE);
+    });
+    const mounted = renders;
+    for (let seq = 1; seq <= 100; seq += 1) {
+      act(() => {
+        liveTextStore.applyDelta(
+          LIVE_PORT,
+          LIVE_KEY,
+          frame(seq, 'a', 'x'),
+          () => {}
+        );
+      });
+      expect(
+        liveTextStore.get(LIVE_PORT, LIVE_KEY)?.segments[0]?.text
+      ).toHaveLength(seq);
+      // The window paints a frame after every fourth delta.
+      if (seq % 4 === 0) {
+        act(() => {
+          for (const paint of frames.splice(0)) paint(0);
+        });
+      }
+    }
+    expect(renders - mounted).toBe(25);
+    expect(result.current?.segments).toEqual([
+      { id: 'a', text: 'x'.repeat(100) },
+    ]);
+  } finally {
+    raf.mockRestore();
+  }
 });
 
 test('reads nothing for no key', () => {

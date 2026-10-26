@@ -12,6 +12,13 @@ import type { LiveSegment, LiveText } from './api';
  * the caller is asked once to refetch the record, and its snapshot plus the
  * held frames rebuild the text. The reducer is pure; `LiveTextStore` holds the
  * states for `useSyncExternalStore` and runs the repair callbacks.
+ *
+ * A streaming turn sends a frame every few tokens, each in a websocket message
+ * of its own, and the Overseer's live text is read at the App root
+ * (useOverseerSession), so telling the views about every frame re-rendered
+ * the whole app per delta. The store applies each frame at once but tells its
+ * listeners at most once per animation frame: a burst renders a view once per
+ * painted frame.
  */
 
 /** One delta frame as the store reads it: `text` extends segment `segmentId` of turn `turnId`. */
@@ -201,11 +208,35 @@ export function runLiveKey(runId: string): string {
 }
 
 /**
+ * How a LiveTextStore puts off telling its listeners: `flush` is to run once,
+ * soon. The default waits for the next animation frame; a test passes its own
+ * to decide when frames happen.
+ */
+export type LiveTextScheduler = (flush: () => void) => void;
+
+// Runs `flush` on the next animation frame, or on the next macrotask where
+// there are no frames (Bun, a test without a DOM). Looked up on each call, so
+// a DOM set up after this module loaded still gets frames. A hidden window
+// paints no frames; its views catch up on the first one it paints again.
+function nextFrame(flush: () => void): void {
+  if (typeof globalThis.requestAnimationFrame === 'function') {
+    globalThis.requestAnimationFrame(() => flush());
+  } else {
+    setTimeout(flush, 0);
+  }
+}
+
+/**
  * Every key's live text for each daemon (by port), shared by every surface of
  * a window: the websocket handler feeds it, the record queries repair it, and
  * views read it through `subscribe`/`get` (`useSyncExternalStore`). A state
  * object is replaced on every change and kept otherwise, so `get` is a stable
  * snapshot.
+ *
+ * `get` is always current; the listeners hear about changes later, once for
+ * all the changes `schedule` lets pile up (by default, one animation frame's).
+ * A view that renders in between for its own reasons reads the newer state
+ * anyway, and is not rendered again for the same state when the flush comes.
  */
 export class LiveTextStore {
   private readonly ports = new Map<
@@ -213,6 +244,10 @@ export class LiveTextStore {
     Map<string, LiveTextState>
   >();
   private readonly listeners = new Set<() => void>();
+  // True from a change until the listeners hear about it.
+  private pending = false;
+
+  constructor(private readonly schedule: LiveTextScheduler = nextFrame) {}
 
   get(port: number | undefined, key: string): LiveTextState | undefined {
     return this.ports.get(port)?.get(key);
@@ -289,8 +324,23 @@ export class LiveTextStore {
     if (repair) requestRepair();
   }
 
-  private notify(): void {
+  /**
+   * Tells the listeners now about every change they have not heard of, instead
+   * of at the next frame; a no-op when there is none. The scheduled flush
+   * calls it, and so may a test, under `act`, to render a frame's changes.
+   */
+  flush = (): void => {
+    if (!this.pending) return;
+    this.pending = false;
     for (const listener of this.listeners) listener();
+  };
+
+  // Asks for one flush per batch of changes: the first change since the last
+  // flush schedules it, the rest ride along.
+  private notify(): void {
+    if (this.pending) return;
+    this.pending = true;
+    this.schedule(this.flush);
   }
 }
 
