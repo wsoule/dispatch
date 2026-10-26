@@ -188,7 +188,8 @@ export interface OverseerRecord {
    * Mutating tool calls this conversation has queued that nobody has decided
    * on yet — the confirmation queue the chat UI renders. Snapshots taken when
    * the call was made; the registry stays the source of truth for whether an
-   * action has since been applied.
+   * action has since been applied. The registry is in memory, so the next
+   * boot drops whatever is still here (see dropOrphanedActions).
    */
   pendingActions: OverseerAction[];
   /**
@@ -296,6 +297,9 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 // What a parked built-in call is refused with when its turn ends before a
 // human decided — the backend threw, or the conversation is gone.
 const TURN_ENDED_DENIAL = 'the turn ended before this call was decided';
+
+// Why a queued action an earlier daemon left on the record was dropped at boot.
+const RESTART_DENIAL = 'Dispatch restarted before anyone decided';
 
 /** Past this many tokens of context, the next turn starts a fresh session from a recap. */
 export const ROLLOVER_TOKENS = 150_000;
@@ -422,7 +426,48 @@ export class OverseerManager {
       const record = withQueuedIds(loaded);
       this.conversations.set(record.id, record);
       if (record.state === 'running') this.interrupted(record);
+      this.dropOrphanedActions(record.id);
     }
+  }
+
+  // Actions an earlier daemon queued: the registry that held them lives in
+  // memory and the boot sweep closed their gates, so a confirm card for one
+  // could never be answered. Each leaves the queue with a denied row, and the
+  // model hears on its next turn that it did not happen.
+  private dropOrphanedActions(conversationId: string): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined || record.pendingActions.length === 0) return;
+    const at = new Date().toISOString();
+    for (const action of record.pendingActions) {
+      this.ctx.bus?.closeGate(
+        conversationId,
+        { actionId: action.id },
+        RESTART_DENIAL
+      );
+    }
+    this.updateRecord(conversationId, {
+      pendingActions: [],
+      messages: [
+        ...record.messages,
+        ...record.pendingActions.map(
+          (action): OverseerMessage => ({
+            role: 'action',
+            tool: action.tool,
+            actionId: action.id,
+            outcome: 'denied',
+            text: `Denied: ${action.summary} — ${RESTART_DENIAL}`,
+            at,
+          })
+        ),
+      ],
+      undeliveredDecisions: [
+        ...record.undeliveredDecisions,
+        ...record.pendingActions.map(
+          (action) =>
+            `${action.summary} — nobody decided this before Dispatch restarted, so it was dropped. It did not happen.`
+        ),
+      ],
+    });
   }
 
   // A turn the daemon died in: nothing can answer its parked calls now.

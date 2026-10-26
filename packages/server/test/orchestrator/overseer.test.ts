@@ -1652,6 +1652,84 @@ describe('one durable conversation', () => {
     });
   });
 
+  // A conversation that queued `dispatch_task`, saved to a file store, and the
+  // manager the next daemon builds over that store: a fresh registry, as
+  // index.ts makes one per boot, so the action it queued is not in it.
+  async function queuedThenRestarted(settle: boolean) {
+    const h = makeHarness();
+    const taskId = makeTask(h, 'Ship it');
+    const store = fileOverseerStore(overseerDir(repo));
+    const manager = new OverseerManager({
+      rootDir: repo,
+      registry: h.registry,
+      events: h.events,
+      store,
+    });
+    const held = new HeldBackend();
+    manager.registerBackend('fake', {
+      start: async (prompt, toolset, options) => {
+        await toolset.call('dispatch_task', { taskId });
+        return held.start(prompt, toolset, options);
+      },
+      sendMessage: (sessionId, message, toolset, options) =>
+        held.sendMessage(sessionId, message, toolset, options),
+    });
+    const started = manager.start('dispatch it', 'fake');
+    await waitFor(() => manager.get(started.id).pendingActions.length === 1);
+    if (settle) {
+      held.settle({ reply: 'queued it' });
+      await waitFor(() => manager.get(started.id).state === 'ready');
+    }
+    const [action] = manager.get(started.id).pendingActions;
+    const again = new OverseerManager({
+      rootDir: repo,
+      registry: new OverseerToolRegistry(h),
+      events: h.events,
+      store,
+    });
+    return { h, store, action, id: started.id, again };
+  }
+
+  it('an action queued before a restart loads as dropped, not as a card nothing can answer', async () => {
+    const { h, store, action, id, again } = await queuedThenRestarted(true);
+    const loaded = again.get(id);
+    expect(loaded.state).toBe('ready');
+    expect(loaded.pendingActions).toEqual([]);
+    expect(loaded.messages.at(-1)).toEqual({
+      role: 'action',
+      tool: 'dispatch_task',
+      actionId: action.id,
+      outcome: 'denied',
+      text: `Denied: ${action.summary} — Dispatch restarted before anyone decided`,
+      at: expect.any(String),
+    });
+    // The model hears it on the next turn, so it never says the action waits.
+    expect(loaded.undeliveredDecisions).toEqual([
+      `${action.summary} — nobody decided this before Dispatch restarted, so it was dropped. It did not happen.`,
+    ]);
+    expect(h.orchestrator.list()).toEqual([]);
+
+    // Written through: the boot after that has nothing left to drop.
+    const third = new OverseerManager({
+      rootDir: repo,
+      registry: new OverseerToolRegistry(h),
+      events: h.events,
+      store,
+    });
+    expect(third.get(id).messages).toEqual(loaded.messages);
+  });
+
+  it('a turn that died with an action queued loads as restarted, the action dropped after the notice', async () => {
+    const { action, id, again } = await queuedThenRestarted(false);
+    const loaded = again.get(id);
+    expect(loaded.state).toBe('failed');
+    expect(loaded.pendingActions).toEqual([]);
+    expect(
+      loaded.messages.map((m) => `${m.role}:${m.notice ?? m.outcome ?? ''}`)
+    ).toEqual(['user:', 'action:pending', 'notice:restarted', 'action:denied']);
+    expect(loaded.messages.at(-1)?.actionId).toBe(action.id);
+  });
+
   it('daemon shutdown aborts the running turn and leaves it for the next boot', async () => {
     const h = heldManager();
     const started = h.manager.start('do a long thing', 'held');
