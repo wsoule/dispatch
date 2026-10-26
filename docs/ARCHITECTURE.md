@@ -462,10 +462,13 @@ one `overseer.changed`: Claude reports each top-level `tool_result` for a call
 it reported (`is_error` is an error), Codex a tool item's `item/completed`
 status (`failed` or `declined` is an error). A registry call's row lands `done`
 or `error` once the call ran. A row still `running` when its turn ends (a Stop,
-a failed turn, a result that never came) stays as stored, and the desktop shows
-a `running` row on a record that is not `running` as ended: no spinner, a plain
-chip. Rows from before `status` keep the old reading, failed when the text
-starts with `error:`.
+a failed turn, a result that never came) is settled `done` in the update that
+ends the turn, and at boot for a turn the daemon died in: `done` there says the
+call is over, not that it worked, and a result that comes later changes nothing.
+One turn runs at a time, so a `running` row is always the running turn's; the
+desktop still shows one on a record that is not `running` as ended: no spinner,
+a plain chip. Rows from before `status` keep the old reading, failed when the
+text starts with `error:`.
 
 **Rendering.** Both chats render live text through `StreamingText`
 (`packages/ui`) with the app's Markdown: text that grows continues its reveal

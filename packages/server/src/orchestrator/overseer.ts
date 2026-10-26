@@ -371,6 +371,20 @@ function describeToolResult(data: unknown): string {
   return capToolResult(JSON.stringify(data) ?? String(data));
 }
 
+// A conversation's rows once its turn is over. A call the turn reported and
+// got no result for (a Stop, a failed turn, a result that never came, a
+// restart) is settled `done`, which says the call is over, not that it
+// worked: one turn runs at a time, so a row left `running` would read as
+// running again while the next turn does.
+function settleRunningCalls(messages: OverseerMessage[]): OverseerMessage[] {
+  const running = (m: OverseerMessage) =>
+    m.role === 'tool' && m.status === 'running';
+  if (!messages.some(running)) return messages;
+  return messages.map((m) =>
+    running(m) ? { ...m, status: 'done' as const } : m
+  );
+}
+
 /**
  * Owns the overseer's chat conversations (epic: the project assistant tab):
  * drives a `OverseerBackend` as a multi-turn, tool-calling conversation and
@@ -426,7 +440,8 @@ export class OverseerManager {
   private readonly narrated = new Map<string, Map<string, OverseerMessage>>();
   // The built-in calls the running turn reported by id and has no result for
   // yet, per conversation: what `onToolResult` may settle. Cleared when the
-  // turn ends, so a result that comes later leaves its row as stored.
+  // turn ends, which settles their rows `done` (settleRunningCalls), so a
+  // result that comes later changes nothing.
   private readonly runningCalls = new Map<string, Set<string>>();
   // Set by shutdown(): turns still settling write nothing more.
   private shuttingDown = false;
@@ -499,7 +514,7 @@ export class OverseerManager {
       error: 'Dispatch restarted during this turn',
       pendingApprovals: [],
       messages: [
-        ...record.messages,
+        ...settleRunningCalls(record.messages),
         {
           role: 'notice',
           notice: 'restarted',
@@ -613,7 +628,7 @@ export class OverseerManager {
 
   // Settles a running call's row in place with how it ended, in one update.
   // A result for a call this turn is not running, or one that lands after
-  // the turn ended, changes nothing: that row stays as stored.
+  // the turn ended and settled its row, changes nothing.
   private toolResult(
     conversationId: string,
     turnId: string,
@@ -1078,7 +1093,9 @@ export class OverseerManager {
           : this.narrated
               .get(conversationId)
               ?.get(streamIdOf(stream.turnId, turn.streamId));
-      const earlier = current.messages.filter((m) => m !== narratedReply);
+      const earlier = settleRunningCalls(
+        current.messages.filter((m) => m !== narratedReply)
+      );
       this.updateRecord(conversationId, {
         state: 'ready',
         sessionId: turn.sessionId ?? current.sessionId,
@@ -1118,7 +1135,7 @@ export class OverseerManager {
           state: 'ready',
           undeliveredDecisions,
           messages: [
-            ...(current?.messages ?? []),
+            ...settleRunningCalls(current?.messages ?? []),
             {
               role: 'notice',
               notice: 'stopped',
@@ -1132,6 +1149,9 @@ export class OverseerManager {
           state: 'failed',
           error: (err as Error).message,
           undeliveredDecisions,
+          ...(current !== undefined
+            ? { messages: settleRunningCalls(current.messages) }
+            : {}),
         });
       }
     } finally {

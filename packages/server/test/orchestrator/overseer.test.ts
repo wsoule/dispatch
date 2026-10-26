@@ -1686,20 +1686,56 @@ describe('Overseer tool rows', () => {
     expect(toolRows(h.manager.get(started.id))).toEqual(['Bash::']);
   });
 
-  it('a call still running when the turn stops stays as stored, and a late result changes nothing', async () => {
+  it('a call still running when the turn stops ends with it, and a late result changes nothing', async () => {
     const h = heldManager();
     const started = h.manager.start('look around', 'held');
     const options = h.backend.options;
     options?.onToolUse?.('Bash', { command: 'sleep 60' }, 'toolu_1');
     h.manager.stop(started.id);
     await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(toolRows(h.manager.get(started.id))).toEqual(['Bash:done:toolu_1']);
 
-    options?.onToolResult?.('toolu_1', 'done');
-    // The next turn's calls are its own: the stopped turn's id is not one.
+    options?.onToolResult?.('toolu_1', 'error');
+    // The next turn's calls are its own: the stopped turn's id is not one,
+    // and its row does not run again while the next turn does.
     h.manager.sendMessage(started.id, 'go on');
-    h.backend.options?.onToolResult?.('toolu_1', 'done');
+    h.backend.options?.onToolResult?.('toolu_1', 'error');
+    h.backend.options?.onToolUse?.('Read', { file_path: 'a.ts' }, 'toolu_2');
     const record = h.manager.get(started.id);
-    expect(toolRows(record)).toEqual(['Bash:running:toolu_1']);
+    expect(record.state).toBe('running');
+    expect(toolRows(record)).toEqual([
+      'Bash:done:toolu_1',
+      'Read:running:toolu_2',
+    ]);
+  });
+
+  it('a turn that fails or replies before a call settles ends that call too', async () => {
+    const h = heldManager();
+    const started = h.manager.start('look around', 'held');
+    h.backend.options?.onToolUse?.('Bash', { command: 'make' }, 'toolu_1');
+    h.backend.fail('model went away');
+    await waitFor(() => h.manager.get(started.id).state === 'failed');
+    expect(toolRows(h.manager.get(started.id))).toEqual(['Bash:done:toolu_1']);
+
+    h.manager.sendMessage(started.id, 'again');
+    h.backend.options?.onToolUse?.('Bash', { command: 'make' }, 'toolu_2');
+    h.backend.settle({ reply: 'built' });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(toolRows(h.manager.get(started.id))).toEqual([
+      'Bash:done:toolu_1',
+      'Bash:done:toolu_2',
+    ]);
+  });
+
+  it('a call running when the daemon died loads as ended', () => {
+    const h = heldManager();
+    const started = h.manager.start('look around', 'held');
+    h.backend.options?.onToolUse?.('Bash', { command: 'sleep 60' }, 'toolu_1');
+
+    const again = heldManager(h.store);
+    const loaded = again.manager.get(started.id);
+    expect(loaded.state).toBe('failed');
+    expect(toolRows(loaded)).toEqual(['Bash:done:toolu_1']);
   });
 });
 
