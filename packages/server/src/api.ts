@@ -1,6 +1,5 @@
 import {
   ACCEPTED_KINDS,
-  ASSIGNEES,
   canonicalStatus,
   ConfigError,
   CredentialsUnreadableError,
@@ -521,9 +520,9 @@ export interface ApiContext {
 // the cli/server package boundary — cli is the one that depends on server
 // for `dispatch serve`, not the other way around, and this check is small
 // enough that duplicating it beats introducing a dependency edge for it.
-// Used for status (against the project's configured list), kind, priority,
-// and assignee (against core's fixed enums) — `undefined` means the field
-// was omitted, which every caller here treats as "no change requested."
+// Used for status (against the project's configured list), kind and priority
+// (against core's fixed enums) — `undefined` means the field was omitted,
+// which every caller here treats as "no change requested."
 function validateEnumField(
   value: unknown,
   allowed: readonly string[],
@@ -532,6 +531,21 @@ function validateEnumField(
   if (value === undefined) return null;
   if (typeof value !== 'string' || !allowed.includes(value)) {
     return `invalid ${label}: ${describeValue(value)} (expected ${allowed.join('|')})`;
+  }
+  return null;
+}
+
+// Validates an optional `assignee` against core's actor-ref grammar
+// (packages/core/src/actor.ts) rather than the legacy ASSIGNEES enum: `none`,
+// the bare `human`/`agent` kinds, and the named refs `human:<handle>` and
+// `agent:<operator>/<handle>` that the desktop's assignee picker sends and
+// Linear sync writes. The store applies the same gate at write (taskfile.ts),
+// so a value accepted here never fails later as a 500. Same message shape as
+// validateEnumField, with the grammar in place of a fixed list.
+function validateAssigneeField(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !isValidAssignee(value)) {
+    return `invalid assignee: ${describeValue(value)} (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)`;
   }
   return null;
 }
@@ -684,11 +698,7 @@ function validateTaskFields(
     'priority'
   );
   if (priorityError) return priorityError;
-  const assigneeError = validateEnumField(
-    value.assignee,
-    ASSIGNEES,
-    'assignee'
-  );
+  const assigneeError = validateAssigneeField(value.assignee);
   if (assigneeError) return assigneeError;
   const parentError = validateStringOrNullField(value.parent, 'parent');
   if (parentError) return parentError;

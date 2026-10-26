@@ -540,8 +540,45 @@ describe('error paths', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error).toBe(
-      'invalid assignee: robot (expected agent|human|none)'
+      'invalid assignee: robot (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)'
     );
+    expect(taskFileNames(root)).toEqual([]);
+  });
+
+  // The desktop's assignee picker and Linear sync send registry refs
+  // (`human:<handle>`, `agent:<operator>/<handle>`), not the legacy bare
+  // kinds — the daemon must accept exactly what core's isValidAssignee does.
+  it('creates a task with a named human assignee (201) and stores the ref', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'X', assignee: 'human:wyat' }),
+    });
+    expect(res.status).toBe(201);
+    const created = await json(res);
+    expect(created.meta.assignee).toBe('human:wyat');
+    expect(taskFileNames(root)).toHaveLength(1);
+    const stored = await json(
+      await fetch(`${baseUrl}/api/tasks/${created.meta.id}`)
+    );
+    expect(stored.meta.assignee).toBe('human:wyat');
+  });
+
+  it('400s creating a task with a malformed actor ref, and writes no file', async () => {
+    // An empty handle, an empty operator, and an operator on a human are
+    // each refused by core's parseActorRef; the daemon must say so as a 400
+    // rather than let the store throw on write.
+    for (const assignee of ['human:', 'agent:/x', 'human:a/b']) {
+      const res = await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'X', assignee }),
+      });
+      expect(res.status).toBe(400);
+      expect((await json(res)).error).toBe(
+        `invalid assignee: ${assignee} (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)`
+      );
+    }
     expect(taskFileNames(root)).toEqual([]);
   });
 
@@ -731,8 +768,52 @@ describe('error paths', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error).toBe(
-      'invalid assignee: robot (expected agent|human|none)'
+      'invalid assignee: robot (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)'
     );
+  });
+
+  it('patches a task to a named agent assignee (200) and stores the ref', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'X' }),
+      })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignee: 'agent:wyat/claude' }),
+    });
+    expect(res.status).toBe(200);
+    expect((await json(res)).meta.assignee).toBe('agent:wyat/claude');
+    const stored = await json(
+      await fetch(`${baseUrl}/api/tasks/${created.meta.id}`)
+    );
+    expect(stored.meta.assignee).toBe('agent:wyat/claude');
+  });
+
+  it('400s patching a task with a malformed actor ref, and leaves the file untouched', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'X', assignee: 'human:wyat' }),
+      })
+    );
+    const res = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignee: 'agent:wyat/' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe(
+      'invalid assignee: agent:wyat/ (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)'
+    );
+    const after = await json(
+      await fetch(`${baseUrl}/api/tasks/${created.meta.id}`)
+    );
+    expect(after.meta.assignee).toBe('human:wyat');
   });
 
   it('400s patching a task with non-array labels', async () => {
