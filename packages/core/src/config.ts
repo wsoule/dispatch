@@ -141,6 +141,7 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   verifyTimeoutSec: 600,
   maxConcurrency: 16,
   runCostEstimateUsd: 10,
+  unlimitedSpend: false,
 };
 
 // `escalation` holds objects, so a shallow spread would share rows between the
@@ -568,6 +569,13 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { unlimitedSpend } = obj;
+  if (unlimitedSpend !== undefined && typeof unlimitedSpend !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: orchestrator.unlimitedSpend must be a boolean'
+    );
+  }
+
   const { permissionMode } = obj;
   if (
     permissionMode !== undefined &&
@@ -642,7 +650,9 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
 
   return {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
-    maxBudgetUsd,
+    // Dropped here rather than at each consumer, so no executor can miss it.
+    maxBudgetUsd: unlimitedSpend === true ? undefined : maxBudgetUsd,
+    unlimitedSpend: unlimitedSpend ?? DEFAULT_ORCHESTRATOR.unlimitedSpend,
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
     milestoneConcurrency: resolvedMilestoneConcurrency,
     verifyTimeoutSec: verifyTimeoutSec ?? DEFAULT_ORCHESTRATOR.verifyTimeoutSec,
@@ -2617,6 +2627,13 @@ export function updateConfig(
       );
     }
     setIn(doc, ['orchestrator', 'runCostEstimateUsd'], value);
+  }
+
+  if (patch.unlimitedSpend !== undefined) {
+    if (typeof patch.unlimitedSpend !== 'boolean') {
+      throw new ConfigError('invalid unlimitedSpend: must be a boolean');
+    }
+    doc.setIn(['orchestrator', 'unlimitedSpend'], patch.unlimitedSpend);
   }
 
   // Positive *numbers*, not integers: a budget is money and a turn cap is
