@@ -10,13 +10,18 @@ import type { SignedOutFrameProps } from './types';
    warm page background with a plain top row — the brand tile and product
    name, an optional quiet badge ("Demo") inside the brand link so the
    link keeps main's name ("Milestone Planner Demo"), the theme toggle —
-   above the content column. */
+   above the content column, and, when given, a quiet row of footer links
+   (privacy · terms · contact) under it. The dots between the links are
+   drawn by CSS and hidden from assistive technology; the links sit in a
+   list inside a named navigation landmark. */
 export default function SignedOutFrame({
   appName,
   brandHref,
   label,
   themeStorageKey,
   actions,
+  footerLinks,
+  footerLabel = 'About this site',
   mainId = 'main',
   children,
 }: SignedOutFrameProps): ReactNode {
@@ -45,6 +50,21 @@ export default function SignedOutFrame({
       <main id={mainId} tabIndex={-1} className={styles.main}>
         {children}
       </main>
+      {footerLinks !== undefined && footerLinks.length > 0 ? (
+        <footer className={styles.footer}>
+          <nav aria-label={footerLabel}>
+            <ul className={styles.footerLinks}>
+              {footerLinks.map((link) => (
+                <li key={link.href} className={styles.footerItem}>
+                  <Link href={link.href} className={styles.footerLink}>
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </footer>
+      ) : null}
     </div>
   );
 }

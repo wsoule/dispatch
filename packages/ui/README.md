@@ -388,9 +388,9 @@ the types for the rest.
 |          | `DeadlineList`, `StatsStrip`, `ProgressRule`                                                                           | `groups`; `cells`; `done`/`total`                                  |
 |          | `Register`, `RegisterRow`, `RegisterCell`                                                                              | `columns`, `label`, `children`                                     |
 |          | `Notice`, `EmptyState` (a centred icon, optional `label` title, the sentence, an action), `NavTabs`, `Checklist`       | see `tasks/types.ts`                                               |
-| shell    | `AppShell` (sidebar, topbar, phone tab bar)                                                                            | `appName`, `brandHref`, `nav`                                      |
+| shell    | `AppShell` (sidebar, topbar, phone tab bar; `workspaceSwitcher` makes the brand row a workspace menu, below)           | `appName`, `brandHref`, `nav`                                      |
 |          | `CommandPaletteProvider` + `CommandPalette`                                                                            | none; pass `navigate` (the default is `window.location.assign`)    |
-|          | `ToastProvider` + `useToast()`                                                                                         | none                                                               |
+|          | `ToastProvider` + `useToast()` (`useOptionalToast()`: null without a provider)                                         | none                                                               |
 |          | `SlideOver` (`contentKey` names what it shows: a new key while open moves focus to the panel)                          | `open`, `onClose`, `title`                                         |
 |          | `SignedOutFrame`, `PropertyList`, `AlertStrip`                                                                         | see `shell/types.ts`                                               |
 |          | `Skeleton*`, `Kbd`, `KbdKeys`                                                                                          | see `shell/types.ts`                                               |
@@ -966,6 +966,53 @@ Comments, Activity, `children`.
   `content` set to a `TextAreaEditor`; the composer for a new comment stays
   `TaskCommentsData.composer`.
 
+### Shell: the workspace switcher
+
+`AppShellProps.workspaceSwitcher` (`ShellWorkspaceSwitcher`: `workspaces`,
+`onSwitch`, optional `connect` and `label`) turns the brand row into Gr8r's
+workspace switcher; without it the brand row is the link to `brandHref`, exactly
+as before. The row keeps the brand link's face (the product's initials tile, the
+product name over the workspace name) plus a 13px chevrons-up-down mark on the
+right, and opens a `PickerPopover` menu (`searchable={false}`, single choice,
+the `brand` appearance). Its accessible name puts the visible words first
+("Milestone Planner Acme, switch workspace"; `label` changes the action's
+words), and its rail tooltip reads "Acme · Switch workspace".
+
+- **Rows**: the `ShellWorkspace` list sorted by name (whatever the order given)
+  under a "Workspaces" heading: a 20px initials tile (the current workspace in
+  the brand tile's colours, the others `--surface-3` / `--text-2`; in forced
+  colours each keeps a `CanvasText` edge and the current one a `CanvasText`
+  fill, as the brand row's tile keeps its edge), the name, the `hint` ("Guest",
+  "linear.app/acme"), the accent tick on the `current` one, where the menu
+  opens. `connect` adds a last row under a bare divider ("Connect another
+  workspace", a plus icon) that is a full page load of its `href`.
+- **Switching**: picking another workspace calls `onSwitch(id)` through the edit
+  family's save contract. While its promise runs the workspace line reads
+  "Switching to Globex" (the polite status says "Switching Workspace"); a
+  rejection prints "Not switched" and the Error's message under the row, and the
+  menu's foot repeats it. The menu reloads nothing: on success the host
+  navigates (a full page load), and a host that reloads can leave the promise
+  pending so the line stays until the page goes. Picking the current workspace
+  calls nothing; the connect row never shows "Switching".
+- **Collapsed rail**: only the tile shows (dimmed while a switch runs). A
+  refused switch also goes to a toast when a `ToastProvider` is mounted, and the
+  line under the tile is then dropped; without a provider it stays for assistive
+  tech and the menu's foot. On a phone the menu is the picker's bottom sheet
+  over the drawer.
+- Keys pressed inside the open menu (or any picker) never reach the shell's `[`
+  or the palette's shortcuts.
+
+The palette has no switcher of its own: give `CommandPaletteProvider` plain
+items in a section of your own (the planner's "Workspaces": "Switch to <name>"
+with `onSelect`, "Connect another workspace" with `href`) and place it with
+`sectionOrder`.
+
+A host holding several workspaces usually names the one its footer signs out of:
+`AppShellProps.signOut` takes an optional `label` ("Sign out of Acme", the
+button's name and tooltip) and `fields`, hidden inputs the form posts (the
+planner's `{ scope: 'current', workspace: '<org id>' }`, so a tab left on one
+workspace never signs out another).
+
 ### Edit controls
 
 Every edit control is controlled and saves through one contract: `onChange` /
@@ -976,13 +1023,23 @@ it rejects the control rolls back and prints the error beside itself
 default). Returning nothing means "saved".
 
 `PickerPopover` is also the family's menu: `searchable={false}` drops the search
-row (the list takes focus; ↑/↓, ↵ and Space pick, Esc closes) and the key-hint
-foot, and with `action` every pick is an action rather than a value (a row's
-"…", Filter, Sort, Group). Two more trigger appearances serve lists: `cell` (the
-trigger takes the cell's own voice, so its text sits where the plain value
-would, with a soft `--surface-3` pill on hover) and `bar` (a ghost action on the
-bulk bar's inverted pill: `--text-inv` at 0.85 opacity, with a faint light wash
-on hover and while its popover is open). A multiple picker whose groups each
+row (the list takes focus; ↑/↓, Home / End, ↵ and Space pick, Esc closes) and
+the key-hint foot, and with `action` every pick is an action rather than a value
+(a row's "…", Filter, Sort, Group). The trigger appearances are `value` (the
+default, the property sheet's), `mono` (the status line's bordered pill),
+`quiet` (a small ghost button, "+ Add"), and three more for particular places:
+`cell` (the trigger takes the cell's own voice, so its text sits where the plain
+value would, with a soft `--surface-3` pill on hover), `bar` (a ghost action on
+the bulk bar's inverted pill: `--text-inv` at 0.85 opacity, with a faint light
+wash on hover and while its popover is open) and `brand` (the app shell's brand
+row, the workspace switcher above: a row as wide as its container with the brand
+link's padding, the `--surface-3` fill on hover and while open, an outline in
+forced colours while open, no outset, a 280px menu; pass the face as `trigger`).
+A `PickerOption.href` makes a row a link out: picking it closes the popover and
+loads the URL (`window.location.assign`) instead of choosing it, so it is never
+ticked, never calls `onChange` and shows no pending note. `groupTitleHidden` on
+a group's first option draws that group under Gr8r's bare divider (its title
+still names the group for assistive tech). A multiple picker whose groups each
 hold one choice (Sort, Group) takes `marks="tick"`: the single picker's trailing
 tick instead of checkbox squares. A `PickerOption.tone` colours the trigger's
 face text (from the `data-tone` hook) while that option is the value shown, a
@@ -1005,14 +1062,18 @@ touches none of it.
 
 - `ThemeToggle` writes `html[data-theme]` and `localStorage`.
 - `AppShell` writes `html[data-shell-collapsed]` (and removes it on unmount),
-  binds `[` to collapse the sidebar (unless `sidebarShortcut` is false), and
-  locks `<html>` scrolling while the phone drawer is open.
-  `sidebarCollapseScript(key)` is its pre-paint script.
+  binds `[` to collapse the sidebar (unless `sidebarShortcut` is false; never
+  from inside an open picker, a `[data-picker-popup]`), and locks `<html>`
+  scrolling while the phone drawer is open. `sidebarCollapseScript(key)` is its
+  pre-paint script. Its workspace switcher's connect row calls
+  `window.location.assign`.
 - `CommandPaletteProvider` binds Ctrl/⌘ K, `?` and two-key `G …` shortcuts on
-  `document`. Do not mount it in a host that has its own command palette. Its
-  API's `isSequencePending()` is true between a sequence's first key and its
-  second (1.2 s): React handlers run before that document listener, so a host's
-  own single keys can check it and stay out of a chord's way.
+  `document`, none of them from inside an open picker (whose popover sits in the
+  top layer, over the palette). Do not mount it in a host that has its own
+  command palette. Its API's `isSequencePending()` is true between a sequence's
+  first key and its second (1.2 s): React handlers run before that document
+  listener, so a host's own single keys can check it and stay out of a chord's
+  way.
 - `TaskGroupTable` with `drag` reads `(hover: hover) and (pointer: fine)`
   through a media query and appends (then removes) a drag-image element.
   `BulkBar` is `position: fixed` and lifts itself above

@@ -68,6 +68,7 @@ const OUTSETS: Record<PickerAppearance, Outset> = {
   quiet: { x: 0, y: 0 },
   cell: { x: 7, y: 4 },
   bar: { x: 0, y: 0 },
+  brand: { x: 0, y: 0 },
 };
 
 function isList(value: PickerValue): value is readonly string[] {
@@ -194,10 +195,11 @@ function keepInView(scroller: HTMLElement, el: HTMLElement): void {
  * search box; typing filters (every word must match the label, hint or
  * keywords); ↑/↓ move the active option; Enter picks it (single: closes;
  * multiple: toggles and stays open); Esc closes and returns focus to the
- * trigger; Tab closes and moves on from the trigger. ARIA: the trigger is a
- * button with aria-haspopup="dialog"; the popover is a non-modal dialog
- * holding a combobox input (aria-activedescendant) that controls the
- * listbox; groups are role="group".
+ * trigger; Tab closes and moves on from the trigger. An option with an
+ * `href` is a link out: picking it closes the popover and loads the URL.
+ * ARIA: the trigger is a button with aria-haspopup="dialog"; the popover
+ * is a non-modal dialog holding a combobox input (aria-activedescendant)
+ * that controls the listbox; groups are role="group".
  *
  * Saving: `onChange` may return a promise. The picked value shows at once
  * with a "Saving" note; on rejection it rolls back to `value` and the error
@@ -210,7 +212,8 @@ function keepInView(scroller: HTMLElement, el: HTMLElement): void {
  * Menus: `searchable={false}` drops the search row, so a short list of
  * actions (Filter, Sort, a row's "…") reads as a menu. The listbox itself
  * then takes focus (aria-activedescendant on it), with the same keys plus
- * Space to pick.
+ * Space to pick and Home / End for the first and last option (Gr8r's
+ * menus; a search box keeps them for its caret).
  */
 export function PickerPopover(props: PickerPopoverProps): ReactNode {
   const {
@@ -325,6 +328,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
 
   function isChosen(row: Row): boolean {
     if (row.kind === 'retry' || action) return false;
+    if (row.kind === 'option' && row.option.href !== undefined) return false;
     if (row.kind === 'none') {
       return multiple ? shownList.length === 0 : shownSingle === null;
     }
@@ -462,6 +466,13 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       onRetry?.();
       return;
     }
+    // A link out is followed, never chosen: no save, so no pending note.
+    if (row.kind === 'option' && row.option.href !== undefined) {
+      const href = row.option.href;
+      close('select');
+      window.location.assign(href);
+      return;
+    }
     if (props.multiple === true) {
       const next =
         row.kind === 'none'
@@ -489,6 +500,14 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     setKeyboardNav(true);
   }
 
+  /** Makes the first (0) or the last (-1) row active: Home and End. */
+  function jump(to: 0 | -1): void {
+    const row = to === 0 ? rows[0] : rows[rows.length - 1];
+    if (row === undefined) return;
+    setActiveKey(row.key);
+    setKeyboardNav(true);
+  }
+
   // The search box's keys, and the list's when there is no search box
   // (where Space picks too, as in any menu).
   function onListKeyDown(event: KeyboardEvent<HTMLElement>): void {
@@ -506,6 +525,14 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       case 'ArrowUp':
         event.preventDefault();
         move(-1);
+        break;
+      case 'Home':
+      case 'End':
+        // A menu's list holds focus, so Home and End are its own; in a
+        // search box they move the caret.
+        if (searchable) break;
+        event.preventDefault();
+        jump(event.key === 'Home' ? 0 : -1);
         break;
       case 'Enter':
         event.preventDefault();
@@ -860,7 +887,15 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
                   aria-labelledby={`${baseId}-group-${gi}`}
                   className={styles.group}
                 >
-                  <div className={styles.groupTitle} aria-hidden="true">
+                  <div
+                    className={cx(
+                      styles.groupTitle,
+                      group.options[0]?.groupTitleHidden === true
+                        ? 'srOnly'
+                        : undefined
+                    )}
+                    aria-hidden="true"
+                  >
                     <span id={`${baseId}-group-${gi}`}>{group.heading}</span>
                   </div>
                   {renderOptions(group.options)}
@@ -928,7 +963,11 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   return (
     <span
       ref={rootRef}
-      className={cx(styles.root, className)}
+      className={cx(
+        styles.root,
+        appearance === 'brand' ? styles.brandRoot : undefined,
+        className
+      )}
       data-picker=""
       data-open={isOpen ? 'true' : undefined}
     >

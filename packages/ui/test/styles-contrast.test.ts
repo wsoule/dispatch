@@ -565,3 +565,64 @@ describe('the sidebar hover', () => {
     }
   });
 });
+
+// The brand row as the workspace switcher (AppShellProps.workspaceSwitcher):
+// the picker's 'brand' trigger takes the brand link's --surface-3 fill on
+// hover and while its menu is open; its chevrons-up-down mark is --text-4
+// at rest (3:1 on the sidebar) and --text-3 on that fill (--text-4 would
+// fall under 3:1 there in dark); the menu's workspace tiles carry their
+// initials at 4.5:1, the current one in the brand tile's colours.
+describe('the workspace switcher', () => {
+  test('the brand trigger fills like the brand link on hover and while open', () => {
+    expect(
+      cssRule('edit/picker-popover.module.css', ".brand[aria-expanded='true']")
+    ).toBe('background: var(--surface-3);');
+    expect(
+      cssRule('edit/picker-popover.module.css', '.brand:not(:disabled):hover')
+    ).toBe('background: var(--surface-3);');
+  });
+
+  test('the chevron is a 3:1 mark at rest and on the hover and open fill', () => {
+    const file = 'shell/app-shell.module.css';
+    expect(cssRule(file, '.brandChevron')).toContain('color: var(--text-4);');
+    for (const selector of [
+      ".switcher [aria-expanded='true'] .brandChevron",
+      '.switcher button:hover .brandChevron',
+    ]) {
+      expect([selector, cssRule(file, selector)]).toEqual([
+        selector,
+        'color: var(--text-3);',
+      ]);
+    }
+    for (const [, tokens] of THEMES) {
+      expect(
+        below(3, tokens, [
+          ['--text-4', '--bg-side'],
+          ['--text-3', '--surface-3'],
+        ])
+      ).toEqual([]);
+    }
+  });
+
+  test('the menu tiles hold their initials at 4.5:1, on the menu and its active row', () => {
+    const file = 'shell/app-shell.module.css';
+    const tile = cssRule(file, '.workspaceTile');
+    expect(tile).toContain('background: var(--surface-3);');
+    expect(tile).toContain('color: var(--text-2);');
+    const current = cssRule(file, '.workspaceTileCurrent');
+    expect(current).toContain('background: var(--brand-tile-bg, var(--text));');
+    expect(current).toContain('color: var(--brand-tile-ink, var(--text-inv));');
+    for (const [, tokens] of THEMES) {
+      expect(
+        below(4.5, tokens, [
+          ['--text-2', '--surface-3'],
+          ['--brand-tile-ink', '--brand-tile-bg'],
+          // The rows' hints ("Guest", "linear.app/acme") on the menu and
+          // on its active row's fill.
+          ['--text-3', '--surface'],
+          ['--text-3', '--surface-2'],
+        ])
+      ).toEqual([]);
+    }
+  });
+});

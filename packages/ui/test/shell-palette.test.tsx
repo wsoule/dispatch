@@ -185,6 +185,55 @@ describe('CommandPalette', () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  // The planner's Workspaces section (multi-workspace spec §3.4): plain
+  // items whose onSelect switches and whose href connects, placed right
+  // after Suggestions by the host's sectionOrder; Tab reaches it.
+  test('a Workspaces section sits where sectionOrder puts it, after Suggestions', () => {
+    const onSwitch = mock(() => undefined);
+    const { navigate } = setup({
+      items: [
+        ...ITEMS,
+        {
+          id: 'workspace-org-globex',
+          label: 'Switch to Globex',
+          hint: 'linear.app/globex',
+          section: 'Workspaces',
+          onSelect: onSwitch,
+        },
+        {
+          id: 'workspace-connect',
+          label: 'Connect another workspace',
+          hint: 'Sign in with Linear',
+          section: 'Workspaces',
+          href: '/setup/connect',
+        },
+      ],
+      sectionOrder: ['Suggestions', 'Workspaces', 'Jump to', 'Navigation'],
+    });
+    fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true });
+    const groups = screen
+      .getAllByRole('group')
+      .map((group) =>
+        document.getElementById(group.getAttribute('aria-labelledby') ?? '')
+      )
+      .map((title) => title?.textContent);
+    expect(groups).toEqual([
+      'Suggestions',
+      'Workspaces',
+      'Jump to',
+      'Navigation',
+    ]);
+    fireEvent.keyDown(input(), { key: 'Tab' });
+    expect(selectedLabel()).toContain('Switch to Globex');
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    expect(onSwitch).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true });
+    fireEvent.change(input(), { target: { value: 'connect' } });
+    fireEvent.keyDown(input(), { key: 'Enter' });
+    expect(navigate).toHaveBeenCalledWith('/setup/connect');
+  });
+
   test('Tab cycles to the first option of the next section and wraps', () => {
     setup();
     fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true });

@@ -65,6 +65,17 @@ export interface PickerOption {
       (pending included), from the data-tone hook: a status tone such as
       danger for "Urgent" in a list cell. Default: the trigger's own. */
   tone?: UiTone;
+  /** Draws this option's group without its visible title: Gr8r's menu
+      separator alone above it (a menu's closing actions, such as the
+      workspace switcher's "Connect another workspace"). The title still
+      names the group for assistive tech. The group's first option
+      decides. */
+  groupTitleHidden?: boolean;
+  /** A row that leaves the page: picking it closes the popover and loads
+      this URL as a full page navigation (window.location.assign) instead
+      of choosing it. It is never shown as chosen, never calls onChange
+      and shows no pending note. */
+  href?: string;
 }
 
 /**
@@ -73,9 +84,18 @@ export interface PickerOption {
  * mono = the status line's bordered pill (the name is historical: it is
  * no longer mono); quiet = a small ghost button ("+ Add"); cell = a list
  * cell's value in the cell's own voice, the pill on hover; bar = a ghost
- * button on the inverted bulk bar, in --text-inv.
+ * button on the inverted bulk bar, in --text-inv; brand = the app shell's
+ * brand row (AppShell's workspace switcher, Gr8r's .ws): a row as wide as
+ * its container, padded like the brand link, the --surface-3 fill on hover
+ * and while open, with the host's face (pass `trigger`).
  */
-export type PickerAppearance = 'value' | 'mono' | 'quiet' | 'cell' | 'bar';
+export type PickerAppearance =
+  | 'value'
+  | 'mono'
+  | 'quiet'
+  | 'cell'
+  | 'bar'
+  | 'brand';
 
 /** Wording of every built-in label in the edit family. */
 export interface EditLabels {
@@ -150,7 +170,7 @@ interface PickerBaseProps {
   filter?: boolean;
   /** Draw the search row. Default true; false for a short menu (Filter,
       Sort, a row's "…"): the list itself takes focus and the arrow keys,
-      Enter and Space work on it. */
+      Home and End, Enter and Space work on it. */
   searchable?: boolean;
   appearance?: PickerAppearance;
   /** Which trigger edge the popover lines up with. Default 'start'; 'end'

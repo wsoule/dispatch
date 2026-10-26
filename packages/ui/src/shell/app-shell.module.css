@@ -118,6 +118,79 @@
   color: var(--text-3);
 }
 
+/* The brand row as the workspace switcher (AppShellProps
+   .workspaceSwitcher): the picker's 'brand' trigger (the brand link's
+   padding, radius and --surface-3 fill on hover and while open) holds the
+   same tile and names, plus Gr8r's chevrons-up-down pushed to the right
+   in --text-4 (3:1 on the sidebar), a step darker (--text-3) on the hover
+   and open fill, where --text-4 would fall under 3:1 in dark. */
+/* The picker's own box gives way, so its parts are the brand row's: the
+   trigger row beside the collapse button, and a failed switch's line
+   ("Not switched …") wrapping under both, so the button stays centred on
+   the trigger. The workspace line says "Switching to <name>" while a
+   switch runs (WorkspaceSwitcher), so the picker's "Switching" note
+   beside the row (which would squeeze the names) is not drawn, and the
+   face keeps its full strength for that line's 4.5:1. */
+.brand > .switcher {
+  display: contents;
+}
+
+.brand:has(> .switcher) {
+  flex-wrap: wrap;
+}
+
+.switcher [data-edit-pending] {
+  display: none;
+}
+
+.switcher [data-appearance='brand'][data-pending='true'] > span {
+  opacity: 1;
+}
+
+.brandChevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-4);
+  transition: color var(--dur) ease;
+}
+
+.switcher [aria-expanded='true'] .brandChevron {
+  color: var(--text-3);
+}
+
+/* A failed switch's line ("Not switched …"): its own line under the
+   row, starting under the tile. Only the trigger's own line, a direct
+   child of the picker's root: the open menu is a descendant too, and its
+   foot repeats the line, which stays where it is. */
+.switcher > [data-edit-error] {
+  order: 1;
+  flex: 1 0 100%;
+  padding: 0 6px 2px;
+}
+
+/* The menu's 20px workspace tiles: initials on the project tile's quiet
+   fill (--surface-3, --text-2), the current workspace in the brand tile's
+   colours. */
+.workspaceTile {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 9px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+
+.workspaceTileCurrent {
+  background: var(--brand-tile-bg, var(--text));
+  box-shadow: inset 0 0 0 1px var(--brand-tile-edge, transparent);
+  color: var(--brand-tile-ink, var(--text-inv));
+}
+
 .collapseWrap {
   flex: 0 0 auto;
   display: flex;
@@ -286,6 +359,21 @@
   .countAccent,
   .countToned {
     border: 1px solid CanvasText;
+  }
+
+  /* The initials tiles (the brand row's and the menu's) lose their fill
+     and inset ring too: give each an edge, so the square stays, and the
+     current workspace's a filled one, so it stays apart from the others
+     (border-box keeps both at their size). */
+  .logo,
+  .workspaceTile {
+    border: 1px solid CanvasText;
+  }
+
+  .workspaceTileCurrent {
+    forced-color-adjust: none;
+    background: CanvasText;
+    color: Canvas;
   }
 }
 
@@ -617,6 +705,10 @@
     color: var(--text-2);
   }
 
+  .switcher button:hover .brandChevron {
+    color: var(--text-3);
+  }
+
   .item:hover .hint,
   .item:focus-visible .hint {
     display: inline-flex;
@@ -683,8 +775,50 @@
     padding: 5px 0;
   }
 
-  :global(html[data-shell-collapsed='true']) .brandText {
+  :global(html[data-shell-collapsed='true']) .brandText,
+  :global(html[data-shell-collapsed='true']) .brandChevron {
     display: none;
+  }
+
+  /* The switcher keeps only its tile in the rail, centred like the link's;
+     its rail tooltip reads "<workspace> · Switch workspace". */
+  :global(html[data-shell-collapsed='true'])
+    .switcher
+    [data-appearance='brand'] {
+    padding: 5px 0;
+  }
+
+  :global(html[data-shell-collapsed='true']) .switcher .logo {
+    margin-inline: auto;
+  }
+
+  :global(html[data-shell-collapsed='true']) .brand:has(> .switcher) {
+    flex-wrap: nowrap;
+  }
+
+  /* No room beside or under a 22px tile: the tile dims while it switches
+     (the polite "Switching" still speaks), and a failure's line leaves the
+     layout but stays for assistive tech, or goes once a toast says it. */
+  :global(html[data-shell-collapsed='true'])
+    .switcher
+    [data-pending='true']
+    .logo {
+    opacity: 0.55;
+  }
+
+  :global(html[data-shell-collapsed='true'])
+    .switcherToasted
+    > [data-edit-error] {
+    display: none;
+  }
+
+  :global(html[data-shell-collapsed='true']) .switcher > [data-edit-error] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   :global(html[data-shell-collapsed='true']) .scroll {
@@ -980,6 +1114,7 @@
   .shell[data-drawer='open'] .sidebar,
   .scrim,
   .brandLink,
+  .brandChevron,
   .item,
   .icon,
   .iconButton,

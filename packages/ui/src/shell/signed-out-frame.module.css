@@ -93,6 +93,48 @@
   outline: none;
 }
 
+/* The footer links: one quiet row under the content, centred, the links
+   in --text-2 (4.5:1 on --bg) separated by --text-4 dots (decoration:
+   the list itself says where one link ends). */
+.footer {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
+}
+
+.footerLinks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.footerItem + .footerItem::before {
+  /* The alternative text after the slash is empty: not announced. */
+  content: '·' / '';
+  padding: 0 8px;
+  color: var(--text-4);
+}
+
+.footerLink {
+  border-radius: var(--r-xs);
+  color: var(--text-2);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+.footerLink:hover,
+.footerLink:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 @media (hover: hover) and (width >= 901px) {
   .brand:hover {
     background: var(--surface-3);
@@ -103,6 +145,9 @@
   .bar {
     min-height: 54px;
     padding: 8px 12px 8px 16px;
+  }
+  .footer {
+    padding: 16px 16px 24px;
   }
   .brandName {
     font-size: var(--fs);

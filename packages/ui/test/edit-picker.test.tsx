@@ -797,6 +797,83 @@ describe('PickerPopover as a menu (searchable={false})', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  test('Home and End jump to the first and last option (disabled skipped)', () => {
+    render(<Menu onPick={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for ENG-12' }));
+    const list = screen.getByRole('listbox');
+    const active = () =>
+      document.getElementById(list.getAttribute('aria-activedescendant') ?? '');
+    fireEvent.keyDown(list, { key: 'End' });
+    expect(active()?.textContent).toBe('Copy link');
+    fireEvent.keyDown(list, { key: 'Home' });
+    expect(active()?.textContent).toContain('Open');
+  });
+
+  test('a search box keeps Home and End for its caret', () => {
+    render(<Host />);
+    fireEvent.click(trigger());
+    const box = combobox();
+    const before = box.getAttribute('aria-activedescendant');
+    const notPrevented = fireEvent.keyDown(box, { key: 'End' });
+    // Not prevented, and the active option did not move.
+    expect(notPrevented).toBe(true);
+    expect(box.getAttribute('aria-activedescendant')).toBe(before);
+  });
+
+  test('an option with an href is followed, never chosen or saved', () => {
+    const picks: (string | null)[] = [];
+    const assign = mock((_href: string) => undefined);
+    const original = window.location.assign;
+    Object.defineProperty(window.location, 'assign', {
+      configurable: true,
+      value: assign,
+    });
+    try {
+      render(
+        <PickerPopover
+          label="Workspace"
+          searchable={false}
+          value="a"
+          options={[
+            { value: 'a', label: 'Acme' },
+            {
+              value: 'more',
+              label: 'Connect another workspace',
+              href: '/setup/connect',
+              group: 'Connect',
+              groupTitleHidden: true,
+            },
+          ]}
+          onChange={(value) => {
+            picks.push(value);
+          }}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: /^Workspace/ }));
+      const link = screen.getByRole('option', {
+        name: 'Connect another workspace',
+      });
+      expect(link.getAttribute('aria-selected')).toBe('false');
+      // The group shows only its divider; its title still names it.
+      const group = screen.getByRole('group');
+      const title = document.getElementById(
+        group.getAttribute('aria-labelledby') ?? ''
+      );
+      expect(title?.textContent).toBe('Connect');
+      expect(title?.parentElement?.className).toContain('srOnly');
+      fireEvent.click(link);
+      expect(assign.mock.calls).toEqual([['/setup/connect']]);
+      expect(picks).toEqual([]);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(document.querySelector('[data-edit-pending]')).toBeNull();
+    } finally {
+      Object.defineProperty(window.location, 'assign', {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
 });
 
 describe('PickerPopover review additions', () => {
@@ -917,6 +994,8 @@ describe('PickerPopover appearances for lists', () => {
     );
     expect(css).toMatch(/^\.cell \{/m);
     expect(css).toMatch(/^\.bar \{/m);
+    // brand: the shell's brand row (the workspace switcher), full width.
+    expect(css).toMatch(/^\.brand \{[^}]*flex: 1 1 auto;/m);
     // The bulk bar is Gr8r's inverted pill: its actions are ghost buttons
     // in --text-inv at 0.85 opacity (4.5:1 on the fill: tasks-contrast),
     // in the sentence-case sans, with a faint light wash on hover (never

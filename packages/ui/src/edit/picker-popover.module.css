@@ -6,8 +6,9 @@
    value's would and the row keeps its height; the popover lines up with
    the pill. The status line's trigger (mono, the old name) is a bordered
    pill, an "+ Add" (quiet) a ghost button, a list cell's (cell) the pill
-   in the cell's own voice, and the bulk bar's (bar) a ghost button in
-   --text-inv. The popover is Gr8r's .pop: a white 10px-radius card on
+   in the cell's own voice, the bulk bar's (bar) a ghost button in
+   --text-inv, and the app shell's brand row (brand) Gr8r's workspace
+   switcher row. The popover is Gr8r's .pop: a white 10px-radius card on
    --shadow-pop with 4px of padding, a search row on top, 30px rows that
    fill --surface-2 with a 2px accent bar when active, eyebrow group titles
    and an accent check. On phones it is a bottom sheet over the --overlay
@@ -232,6 +233,55 @@
   opacity: 0.85;
 }
 
+/* brand: the app shell's brand row as the trigger (AppShell's workspace
+   switcher, Gr8r's .ws): as wide as its container, padded like the brand
+   link (5px 6px, 6px radius), the --surface-3 fill on hover and while
+   open, the focus ring on the button itself. The host draws the face
+   (the tile, the names, the chevron); the popover lines up with the
+   row's own edge (no outset) and is a little wider than a picker's, so a
+   workspace's "linear.app/<key>" hint fits. */
+.brandRoot {
+  flex: 1 1 auto;
+  align-items: stretch;
+}
+
+/* A zero basis: the row takes the space its container leaves, never
+   pushing a neighbour (the collapse button) onto another line. */
+.brandRoot > .triggerRow {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.brandRoot .panel {
+  width: clamp(280px, var(--picker-anchor-width, 280px), 400px);
+}
+
+.brand {
+  flex: 1 1 auto;
+  padding: 5px 6px;
+  font: inherit;
+  color: var(--text);
+}
+
+.brand .face {
+  flex: 1 1 auto;
+  gap: 8px;
+}
+
+.brand[aria-expanded='true'] {
+  background: var(--surface-3);
+}
+
+/* Forced colours drop the open fill: outline the row while its menu is
+   open. */
+@media (forced-colors: active) {
+  .brand[aria-expanded='true'] {
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
+
 @media (hover: hover) and (width >= 901px) {
   .value:not(:disabled):hover::before {
     background: var(--surface-2);
@@ -254,6 +304,10 @@
   .bar:not(:disabled):hover {
     background: color-mix(in srgb, var(--text-inv) 14%, transparent);
     opacity: 1;
+  }
+
+  .brand:not(:disabled):hover {
+    background: var(--surface-3);
   }
 }
 
@@ -758,7 +812,8 @@
   }
 
   .panel,
-  .layer[data-side='above'] .panel {
+  .layer[data-side='above'] .panel,
+  .brandRoot .panel {
     width: 100%;
     max-width: none;
     max-height: min(78vh, 560px);

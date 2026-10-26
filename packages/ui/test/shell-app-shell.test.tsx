@@ -191,6 +191,31 @@ describe('AppShell', () => {
     expect(form?.getAttribute('action')).toBe('/api/auth/logout');
     expect(form?.getAttribute('method')).toBe('post');
     expect(button.getAttribute('type')).toBe('submit');
+    expect(form?.querySelectorAll('input')).toHaveLength(0);
+  });
+
+  test('sign out can name itself and post hidden fields (one of several workspaces)', () => {
+    render(
+      <AppShell
+        {...PROPS}
+        signOut={{
+          action: '/api/auth/logout',
+          method: 'post',
+          label: 'Sign out of Acme',
+          fields: { scope: 'current', workspace: 'org-acme' },
+        }}
+      />
+    );
+    const button = screen.getByRole('button', { name: 'Sign out of Acme' });
+    const inputs = [
+      ...(button.closest('form')?.querySelectorAll('input') ?? []),
+    ];
+    expect(
+      inputs.map((input) => [input.type, input.name, input.value])
+    ).toEqual([
+      ['hidden', 'scope', 'current'],
+      ['hidden', 'workspace', 'org-acme'],
+    ]);
   });
 
   test('sign out as a callback is a plain button, no form', () => {

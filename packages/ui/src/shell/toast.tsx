@@ -93,6 +93,13 @@ function ToastIcon({ kind }: { kind: ToastKind }): ReactNode {
   }
 }
 
+/** The toast API, or null without a ToastProvider: for a component that
+    toasts when it can and falls back to its own inline message (the
+    shell's workspace switcher on the collapsed rail). */
+export function useOptionalToast(): ToastApi | null {
+  return useContext(ToastContext);
+}
+
 /* One toast. Owns its timer so hover/focus can pause it: the remaining time
    is banked when paused and the countdown resumes from there. */
 function ToastItem({

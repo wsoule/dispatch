@@ -83,8 +83,38 @@ function render(): string {
   );
 }
 
+// The brand row as the workspace switcher: a PickerPopover trigger, so the
+// picker's media queries and save state must render on the server too.
+const switcher = renderToString(
+  <ToastProvider>
+    <AppShell
+      appName="Milestone Planner"
+      workspaceName="Northwind"
+      brandHref="/week"
+      workspaceSwitcher={{
+        workspaces: [
+          { id: 'org-northwind', name: 'Northwind', current: true },
+          { id: 'org-globex', name: 'Globex', hint: 'Guest' },
+        ],
+        onSwitch: () => undefined,
+        connect: { label: 'Connect another workspace', href: '/setup/connect' },
+      }}
+      nav={[{ id: 'week', label: 'My week', href: '/week', icon: null }]}
+    />
+  </ToastProvider>
+);
+
 const signedOut = renderToString(
-  <SignedOutFrame appName="Milestone Planner" brandHref="/" label="Sign in">
+  <SignedOutFrame
+    appName="Milestone Planner"
+    brandHref="/"
+    label="Sign in"
+    footerLinks={[
+      { label: 'Privacy', href: '/privacy' },
+      { label: 'Terms', href: '/terms' },
+      { label: 'Contact', href: '/contact' },
+    ]}
+  >
     <p>Sign in</p>
   </SignedOutFrame>
 );
@@ -94,6 +124,7 @@ console.log(
     hasWindow: typeof window !== 'undefined',
     hasDocument: typeof document !== 'undefined',
     shell: render(),
+    switcher,
     signedOut,
   })
 );

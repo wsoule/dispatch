@@ -9,6 +9,7 @@ interface SsrResult {
   hasWindow: boolean;
   hasDocument: boolean;
   shell: string;
+  switcher: string;
   signedOut: string;
 }
 
@@ -41,5 +42,28 @@ describe('shell family server render', () => {
     expect(result.shell).toContain('Collapse sidebar');
     expect(result.shell).toContain('(Ctrl K)');
     expect(result.signedOut).toContain('Milestone Planner');
+  });
+
+  test('the signed-out frame lists its footer links in a named landmark', () => {
+    const { signedOut } = serverRender();
+    expect(signedOut).toContain('<footer');
+    expect(signedOut).toContain('<nav aria-label="About this site">');
+    const links = [...signedOut.matchAll(/<a [^>]*href="([^"]+)"/g)].map(
+      (m) => m[1]
+    );
+    expect(links).toEqual(['#main', '/', '/privacy', '/terms', '/contact']);
+  });
+
+  test('the workspace switcher renders as a closed menu button', () => {
+    const { switcher } = serverRender();
+    expect(switcher).toContain(
+      'aria-label="Milestone Planner Northwind, switch workspace"'
+    );
+    expect(switcher).toContain('aria-haspopup="dialog"');
+    expect(switcher).toContain('aria-expanded="false"');
+    expect(switcher).toContain('data-appearance="brand"');
+    expect(switcher).toContain('data-tip="Northwind · Switch workspace"');
+    // Closed: no menu rows in the markup.
+    expect(switcher).not.toContain('Connect another workspace');
   });
 });

@@ -825,3 +825,6 @@ rekinded
 serialise
 sublabels
 recents
+Globex
+Initech
+uppercases

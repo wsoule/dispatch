@@ -147,7 +147,7 @@ export {
   SkeletonText,
 } from './shell/skeleton';
 export { default as SlideOver, SLIDE_OVER_WIDTH } from './shell/slide-over';
-export { ToastProvider, useToast } from './shell/toast';
+export { ToastProvider, useOptionalToast, useToast } from './shell/toast';
 export type {
   AlertStripAction,
   AlertStripProps,
@@ -155,6 +155,7 @@ export type {
   CommandPaletteApi,
   CommandPaletteProps,
   CommandPaletteProviderProps,
+  FooterLink,
   KbdKeysProps,
   KbdProps,
   PaletteItem,
@@ -174,6 +175,8 @@ export type {
   ShellSignOutForm,
   ShellTab,
   ShellUser,
+  ShellWorkspace,
+  ShellWorkspaceSwitcher,
   ShortcutGroup,
   ShortcutRow,
   ShortcutSheetProps,

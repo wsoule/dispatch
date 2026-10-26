@@ -682,9 +682,10 @@ type LoadState =
 
 /**
  * Owns the palette: open state, the lazy loadItems() fetch (once, on first
- * open), the global keys (Ctrl/⌘ K anywhere; "?" and the items' one- and
- * two-key shortcuts when not typing and no modal is open) and the "?"
- * sheet. Renders children plus the open overlay.
+ * open), the global keys (Ctrl/⌘ K anywhere but inside an open picker;
+ * "?" and the items' one- and two-key shortcuts when not typing, not in a
+ * picker and no modal is open) and the "?" sheet. Renders children plus
+ * the open overlay.
  */
 export function CommandPaletteProvider({
   items,
@@ -802,6 +803,16 @@ export function CommandPaletteProvider({
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.defaultPrevented) return;
+      // Keys pressed inside an open picker or menu (the popover sits in
+      // the top layer, over anything the palette would open) are the
+      // picker's: no shortcut fires from there, Ctrl/⌘ K included.
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[data-picker-popup]') !== null
+      ) {
+        sequence.current = null;
+        return;
+      }
       const state = latest.current;
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && !event.altKey && key === 'k') {
