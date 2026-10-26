@@ -1,5 +1,5 @@
-// The relative-time formatters moved to @dispatch/ui (packages/ui), whose components render
-// them; re-exported so app callers keep their `@/lib/format` import path.
+// The relative-time formatters moved to @dispatch/ui-legacy (packages/ui-legacy), whose
+// components render them; re-exported so app callers keep their `@/lib/format` import path.
 export { formatRelativeTime, formatRelativeTimeFromIso } from '@/ui/lib/format';
 
 /** A session's best available display name: Claude Code's own auto-generated title first

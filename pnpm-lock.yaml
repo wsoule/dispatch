@@ -731,7 +731,7 @@ importers:
 
   packages/tokens: {}
 
-  packages/ui:
+  packages/ui-legacy:
     dependencies:
       '@base-ui/react':
         specifier: 'catalog:'

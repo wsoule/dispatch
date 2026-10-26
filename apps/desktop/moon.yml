@@ -3,10 +3,10 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 language: 'typescript'
 layer: 'application'
 
-# ui is consumed via the Vite '@/ui' source alias, not the package specifier;
+# ui-legacy is consumed via the Vite '@/ui' source alias, not the package specifier;
 # build scope keeps the edge on the moon graph without manifest syncing.
 dependsOn:
-  - id: 'ui'
+  - id: 'ui-legacy'
     scope: 'build'
 
 tasks:

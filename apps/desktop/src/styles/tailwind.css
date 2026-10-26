@@ -6,9 +6,9 @@
 @import 'tailwindcss/utilities.css' layer(utilities);
 @import 'tw-animate-css';
 
-/* The component library (packages/ui) sits outside this app's auto-detected content roots,
+/* The component library (packages/ui-legacy) sits outside this app's auto-detected content roots,
    so its class names must be scanned explicitly or its styles silently vanish. */
-@source '../../../../packages/ui/src';
+@source '../../../../packages/ui-legacy/src';
 
 /* Dark mode follows the OS setting (this app has no in-app toggle), so the `dark:` variant is
    wired to the media query rather than a `.dark` class. shadcn components mostly theme through

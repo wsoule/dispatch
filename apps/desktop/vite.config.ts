@@ -25,9 +25,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      // The component library lives in packages/ui (@dispatch/ui) but keeps its historical
-      // `@/ui/…` import path; this must precede the bare `@` alias so it wins the match.
-      '@/ui': fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
+      // The component library lives in packages/ui-legacy (@dispatch/ui-legacy) but keeps its
+      // historical `@/ui/…` import path; this must precede the bare `@` alias so it wins the
+      // match.
+      '@/ui': fileURLToPath(
+        new URL('../../packages/ui-legacy/src', import.meta.url)
+      ),
       // shadcn/ui components import from `@/…`; map it to src/.
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },

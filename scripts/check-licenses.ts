@@ -29,7 +29,7 @@ const EXPECTED: Record<string, string> = {
   // The daemon is FSL, except its team features (see LICENSED_DIRS).
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
-  '@dispatch/ui': 'FSL-1.1-ALv2',
+  '@dispatch/ui-legacy': 'FSL-1.1-ALv2',
   '@dispatch/web': 'FSL-1.1-ALv2',
   '@dispatch/demo': 'FSL-1.1-ALv2',
   '@dispatch/sandbox': 'FSL-1.1-ALv2',

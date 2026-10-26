@@ -9,10 +9,10 @@ import type { FeedState } from '@/ui/lib/feedState';
 import { feedTier } from '@/ui/lib/feedState';
 
 // The vocabulary (states, tiers, labels, order, TaskRow mapping) lives in
-// @dispatch/ui (packages/ui) with the components keyed on it. This module
-// keeps the app-domain half: deriving a state from runs and merge-queue
-// entries. The re-export keeps `@/lib/feedState` the one import path app code
-// needs.
+// @dispatch/ui-legacy (packages/ui-legacy) with the components keyed on it.
+// This module keeps the app-domain half: deriving a state from runs and
+// merge-queue entries. The re-export keeps `@/lib/feedState` the one import
+// path app code needs.
 export {
   FEED_STATE_LABEL,
   FEED_STATE_ORDER,

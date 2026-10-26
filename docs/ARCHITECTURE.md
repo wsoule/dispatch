@@ -111,7 +111,7 @@ none of your runs or memory; replicating team memory is team-server work.
 | `@dispatch/cli`          | ~6.4k                 | The `dispatch` binary                                                                                                                          |
 | `@dispatch-foo/mcp`      | ~2.8k                 | Stdio MCP server, 21 tools                                                                                                                     |
 | `@dispatch/client`       | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
-| `@dispatch/ui`           | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
+| `@dispatch/ui-legacy`    | ~8.8k                 | The shadcn-style component library plus `ai/`, `chrome/`, `hooks/`, `lib/`; being replaced by Better-Tracker's `@dispatch/ui`                  |
 | `@dispatch/tokens`       | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |
 | `apps/desktop`           | ~67.4k TS + 8.6k Rust | The Tauri app: ~25 views, Rust shell, sidecar management                                                                                       |
 | `apps/demo`              | —                     | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                              |
