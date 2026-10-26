@@ -1,9 +1,9 @@
 import {
   ACCEPTED_KINDS,
-  ASSIGNEES,
   canonicalStatus,
   ConfigError,
   FileCommentStore,
+  isValidAssignee,
   KINDS,
   loadConfig,
   PRIORITIES,
@@ -84,6 +84,20 @@ function validate<T extends string>(
   return value as T;
 }
 
+// Validates `assignee` against core's actor-ref grammar rather than the
+// legacy agent|human|none enum, so task_save accepts the named refs the
+// daemon and the desktop use (`human:<handle>`, `agent:<operator>/<handle>`).
+// Mirrors the CLI's validateAssignee message-for-message.
+function validateAssignee(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isValidAssignee(value)) {
+    throw new ToolError(
+      `invalid assignee: ${value} (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)`
+    );
+  }
+  return value;
+}
+
 // TaskSummary: the fields task_list/task_next return, chosen to keep list
 // payloads small (no body, and none of taskMetaShape's extras below).
 const taskSummaryShape = {
@@ -99,8 +113,8 @@ const taskSummaryShape = {
   labels: z.array(z.string()),
   priority: z.enum(PRIORITIES as unknown as [string, ...string[]]),
   // A named assignee (e.g. `human:wyat`, `agent:wyat/claude`) is valid on
-  // disk but not one of the legacy ASSIGNEES enum values — same reasoning
-  // as `status` above, which already widened for custom statuses.
+  // disk but not one of the legacy agent|human|none enum values — same
+  // reasoning as `status` above, which already widened for custom statuses.
   assignee: z.string(),
   // Drives review depth and model tier, so an agent picking work needs it.
   risk: z.enum(TASK_RISKS as unknown as [string, ...string[]]),
@@ -559,7 +573,7 @@ async function taskSave(
     'status'
   );
   const priority = validate(input.priority, PRIORITIES, 'priority');
-  const assignee = validate(input.assignee, ASSIGNEES, 'assignee');
+  const assignee = validateAssignee(input.assignee);
 
   if (input.id === undefined) {
     if (input.title === undefined || input.title.trim() === '') {
