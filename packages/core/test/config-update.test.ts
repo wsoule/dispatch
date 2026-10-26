@@ -47,6 +47,29 @@ describe('updateConfig', () => {
     expect(text).toContain('make check');
   });
 
+  // The YAML library's defaults wrap a plain value past 80 columns and write
+  // LF only; either would rewrite lines of the checked-in file that the
+  // patch never named.
+  test('keeps a long line it did not change on one line', () => {
+    const verify =
+      'verifyCommand: pnpm install --frozen-lockfile && pnpm run build && pnpm run test --reporter dot\n';
+    const dir = root(`${verify}autoCommit: false\n`);
+    updateConfig(dir, { autoCommit: true });
+    expect(read(dir)).toBe(`${verify}autoCommit: true\n`);
+  });
+
+  test('keeps CRLF line ends when the file uses them', () => {
+    const dir = root('# shared\r\nautoCommit: false\r\ncustom:\r\n  a: 1\r\n');
+    updateConfig(dir, { epicConcurrency: 2 });
+    expect(read(dir)).toBe(
+      '# shared\r\nautoCommit: false\r\ncustom:\r\n  a: 1\r\norchestrator:\r\n  epicConcurrency: 2\r\n'
+    );
+    // A file that mixes the two is written with plain newlines.
+    const mixed = root('autoCommit: false\r\ncustom: 1\n');
+    updateConfig(mixed, { autoCommit: true });
+    expect(read(mixed)).not.toContain('\r');
+  });
+
   test('leaves statuses alone — they are not settings-editable', () => {
     const dir = root('statuses:\n  - todo\n  - shipped\n');
     const cfg = updateConfig(dir, { autoCommit: true });

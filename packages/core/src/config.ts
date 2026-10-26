@@ -2165,14 +2165,26 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
   setOrDelete(doc, ['prWorktreeDir'], patch.prWorktreeDir);
 }
 
+// The patched document as text, written the way the file on disk was, so a
+// line the patch did not touch stays as it is. Two of the library's defaults
+// would rewrite one: it wraps a plain value longer than 80 columns onto a
+// second line (a long verify command nobody changed), and it writes `\n`
+// where a file used `\r\n` throughout (the parser reads both as newlines).
+function configText(doc: YAML.Document, source: string | null): string {
+  const text = doc.toString({ lineWidth: 0 });
+  const crlf =
+    source !== null && source.includes('\r\n') && !/(?<!\r)\n/.test(source);
+  return crlf ? text.replace(/\n/g, '\r\n') : text;
+}
+
 export function updateConfig(
   rootDir: string,
   patch: ConfigPatch
 ): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
-  const doc = existsSync(path)
-    ? YAML.parseDocument(readFileSync(path, 'utf8'))
-    : new YAML.Document({});
+  const source = existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const doc =
+    source === null ? new YAML.Document({}) : YAML.parseDocument(source);
 
   if (patch.verifyCommand !== undefined) {
     if (patch.verifyCommand === null || patch.verifyCommand.trim() === '') {
@@ -2437,7 +2449,7 @@ export function updateConfig(
   // every later load rejects.
   parseConfig(doc.toJS());
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, doc.toString());
+  writeFileSync(path, configText(doc, source));
   // Re-read rather than returning a locally-patched object, so the caller gets exactly what the
   // next loadConfig() will see — including any validation the parser applies.
   return loadConfig(rootDir);
