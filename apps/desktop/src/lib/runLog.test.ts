@@ -63,6 +63,18 @@ describe('groupLogEntries', () => {
       { kind: 'message', entries: [entries[1]] },
     ]);
   });
+
+  test('shows nothing for a message entry redacted for this viewer', () => {
+    const entries = [
+      entry({ kind: 'message', from: 'user', text: 'mine', messageId: 'm-1' }),
+      entry({ kind: 'message', messageId: 'm-2', redacted: true }),
+      entry({ kind: 'assistant', text: 'on it' }),
+    ];
+    expect(groupLogEntries(entries)).toEqual([
+      { kind: 'message', entries: [entries[0]] },
+      { kind: 'message', entries: [entries[2]] },
+    ]);
+  });
 });
 
 describe('liveCostUsd', () => {

@@ -59,16 +59,17 @@ export function reportsToolResults(entries: NormalizedEntry[]): boolean {
 // entries are excluded here — they don't render as log lines at all, only
 // feed `liveCostUsd` below — and so are a sub-agent's `progress` ticks, which
 // arrive with every tool call it makes and only feed the fan-out tree
-// (`foldSubagents`). A sub-agent's start and finish do render, as the spawn
-// and the report are events in the run's own story. A tool call's result is
-// folded into the call (foldToolResults). Everything else becomes its own
-// group, except runs of consecutive `tool` entries, which collapse into one
-// `tools` group so the log view can render them as a single collapsible
-// cluster.
+// (`foldSubagents`), and `redacted` message entries, which hold the place of
+// a message this viewer may not read and have nothing to show. A sub-agent's
+// start and finish do render, as the spawn and the report are events in the
+// run's own story. A tool call's result is folded into the call
+// (foldToolResults). Everything else becomes its own group, except runs of
+// consecutive `tool` entries, which collapse into one `tools` group so the
+// log view can render them as a single collapsible cluster.
 export function groupLogEntries(entries: NormalizedEntry[]): LogGroup[] {
   const groups: LogGroup[] = [];
   for (const entry of foldToolResults(entries)) {
-    if (entry.kind === 'usage') continue;
+    if (entry.kind === 'usage' || entry.redacted === true) continue;
     if (entry.kind === 'agent' && entry.agent?.phase === 'progress') continue;
     const groupKind: LogGroup['kind'] =
       entry.kind === 'tool' ? 'tools' : 'message';
