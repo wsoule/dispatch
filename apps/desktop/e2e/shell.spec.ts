@@ -87,10 +87,12 @@ test('the app opens on Overseer inside the shell, with one set of numbers', asyn
     'Needs you · 2'
   );
   await expect(tasks.getByTestId('needs-you-row')).toHaveCount(2);
-  // Both asks are on one task, and the strip counts tasks.
-  await expect(page.getByTestId('tasks-strip-need-you')).toHaveText(
-    '● 1 task needs you'
-  );
+  // Both asks are on one task, and the Needs you preset tab counts tasks.
+  await expect(
+    tasks
+      .getByRole('navigation', { name: 'Presets' })
+      .getByRole('link', { name: /^Needs you/ })
+  ).toHaveText('Needs you1');
   await expectNoConversationLists(page);
 });
 

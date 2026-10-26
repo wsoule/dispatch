@@ -1,8 +1,4 @@
-import type {
-  ContainerHealth,
-  ContainerStatus,
-} from '../../lib/containerStatus';
-import { cn } from '@/lib/utils';
+import type { ContainerHealth } from '../../lib/containerStatus';
 
 export const HEALTH: Record<ContainerHealth, { label: string; tone: string }> =
   {
@@ -49,45 +45,4 @@ export function shortDate(iso: string): string {
   return Number.isNaN(date.getTime())
     ? iso
     : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-/** A milestone's folded status: urgent counts, health, done/total, due date. */
-export function MilestoneStatusCells({
-  status,
-  dueDate,
-}: {
-  status: ContainerStatus;
-  dueDate: string | null;
-}) {
-  const health = HEALTH[status.health];
-  return (
-    <span
-      data-testid="milestone-status"
-      className="flex items-center gap-2.5 text-[12px] tabular-nums"
-    >
-      {CELLS.map((cell) => {
-        const n = status[cell.key];
-        return (
-          <span
-            key={cell.key}
-            title={`${n} ${cell.label}`}
-            className={cn(
-              n > 0 ? cn(cell.tone, 'font-semibold') : 'text-(--text-ghost)'
-            )}
-          >
-            {cell.glyph} {n}
-          </span>
-        );
-      })}
-      <span className={cn('rounded-pill px-2 py-px text-[11px]', health.tone)}>
-        {health.label}
-      </span>
-      <span className="text-muted-foreground" title="landed / total">
-        ◔ {status.done}/{status.total}
-      </span>
-      {dueDate !== null && (
-        <span className="text-muted-foreground">due {shortDate(dueDate)}</span>
-      )}
-    </span>
-  );
 }

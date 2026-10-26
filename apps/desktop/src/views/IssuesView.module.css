@@ -1,0 +1,93 @@
+/* Layout of the Issues hub (views/IssuesView.tsx): the toolbar, tabs and
+   chips stack over the body; the body is the list column (fixed-width beside
+   an open task) and the task pane. Colours and type come from @dispatch/ui's
+   components and tokens; this sheet only places them. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* The toolbar and chips rows pad by the hub's gutter, not the page's. */
+  --view-toolbar-gutter: 16px;
+}
+
+.tabs {
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.column[data-split] {
+  flex: none;
+  width: 520px;
+  border-right: 1px solid var(--border);
+}
+
+.needs {
+  flex: none;
+  max-height: 45%;
+  overflow-y: auto;
+  padding: 8px 8px 0;
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The table's own scroller (IssuesViewTable): the sticky column header
+   sticks to its top. */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 16px 16px;
+}
+
+.toolbarGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.full {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.back {
+  padding: 8px 16px 0;
+}
+
+.page {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}

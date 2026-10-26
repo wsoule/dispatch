@@ -23,6 +23,12 @@ const GR8R_FILES = [
   'components/shell/DispatchShell.tsx',
   'components/shell/DispatchShell.module.css',
   'lib/shellRoutes.ts',
+  'lib/fanoutVerbs.ts',
+  'lib/issueSearch.ts',
+  'views/IssuesView.tsx',
+  'views/IssuesView.module.css',
+  'views/IssuesViewMenus.tsx',
+  'views/IssuesViewTable.tsx',
 ].map((name) => path.join(srcDir, name));
 
 /** The transitional sheets: the legacy alias layer and the host's global sheet. */
@@ -150,6 +156,8 @@ describe('the Gr8r code and the transitional sheets follow the design system', (
         'components/shell/DispatchShell.tsx',
         'components/shell/DispatchShell.module.css',
         'lib/shellRoutes.ts',
+        'views/IssuesView.tsx',
+        'views/IssuesViewTable.tsx',
       ])
     );
   });

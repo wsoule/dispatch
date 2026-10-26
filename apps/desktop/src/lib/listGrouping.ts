@@ -33,7 +33,7 @@ import type { TasksDisplayPrefs, TasksGrouping } from './tasksPrefs';
 
 /** What the group's 14px glyph is — the view maps this to a `StatusIcon`, an epic swatch, a
  * milestone target, an avatar or a priority glyph. */
-export type GroupIcon =
+type GroupIcon =
   | { kind: 'status'; status: string }
   | { kind: 'epic'; epicId: string | null }
   | { kind: 'milestone'; status: string }

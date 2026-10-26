@@ -1,4 +1,16 @@
-import type { TaskListItem } from '@dispatch-foo/core/browser';
+import type { Priority, TaskListItem } from '@dispatch-foo/core/browser';
+import { PRIORITY_ORDER, statusType } from '@dispatch-foo/core/browser';
+import type { RunState } from '@dispatch/client';
+import {
+  Button,
+  type FilterChipData,
+  FilterChips,
+  NavTabs,
+  type PickerOption,
+  PickerPopover,
+  SegmentedControl,
+  ViewToolbar,
+} from '@dispatch/ui';
 import { Plus, Users } from 'lucide-react';
 import {
   type ReactNode,
@@ -9,36 +21,44 @@ import {
   useState,
 } from 'react';
 
+import {
+  type FilterChipModel,
+  filterChips,
+  presetTabs,
+  toTaskPriority,
+} from '../adapters/rows';
 import { MilestoneMapView } from '../components/graph/MilestoneMap';
 import { useSavedViewsContext } from '../components/shell/SavedViewsContext';
-import { AppliedFilters } from '../components/tasks/AppliedFilters';
 import { BoardPane } from '../components/tasks/BoardPane';
 import { DisplayPopover } from '../components/tasks/DisplayPopover';
 import { FilterMenu } from '../components/tasks/FilterMenu';
-import { MilestoneStatusCells } from '../components/tasks/MilestoneStatusCells';
 import { NeedsYouBlock } from '../components/tasks/NeedsYouBlock';
 import { TasksExtraGroups } from '../components/tasks/TasksExtraGroups';
 import { TasksBackButton } from '../components/tasks/TasksPageHeader';
-import { TasksStrip } from '../components/tasks/TasksStrip';
 import { TasksViewMenu } from '../components/tasks/TasksViewMenu';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { useTaskFilterMenu } from '../hooks/useTaskFilterMenu';
 import type { TaskTab } from '../lib/appNav';
-import { containerStatus } from '../lib/containerStatus';
 import type { DecisionItem } from '../lib/decisionFeed';
-import { groupTasks, type ListGroup } from '../lib/listGrouping';
+import { groupTasks } from '../lib/listGrouping';
 import type { NeedsYou } from '../lib/needsYou';
+import { hrefFor } from '../lib/shellRoutes';
 import { useStatusModelOf } from '../lib/statusModel';
 import {
+  EMPTY_TASK_FILTER_SET,
+  FILTER_NONE,
+  type FilterFacet,
+  filterValueLabel,
   hasActiveTaskFilters,
   matchesTaskFilterSet,
+  removeFilterClause,
   type TaskFilterSet,
+  toggleFilterValue,
 } from '../lib/taskFilters';
 import type { TasksDisplayPrefs } from '../lib/tasksPrefs';
 import {
   type PresetContext,
   presetMatcher,
-  TASKS_PRESETS,
   type TasksPreset,
 } from '../lib/tasksPresets';
 import type { TaskStatusCounts } from '../lib/taskStatus';
@@ -53,18 +73,27 @@ import {
   writeTwoViewsDisplay,
   writeTwoViewsFilters,
 } from '../lib/twoViewsTasksPrefs';
+import styles from './IssuesView.module.css';
+import { assigneeChoices } from './IssuesViewMenus';
+import { IssuesTable } from './IssuesViewTable';
 import { LiveView } from './LiveView';
 import { ProjectsView } from './ProjectsView';
-import { TasksListView } from './TasksListView';
-import { IconButton } from '@/ui/ai/icon-button';
-import { Button } from '@/ui/button';
-import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
+
+// The Issues hub in Gr8r's layout (architecture §8.4 "Issues"): the view
+// toolbar (search, the Filter menu, the Display popover, group by person,
+// List | Board | Graph, the saved views, New task), the preset tabs with their
+// counts, the applied filters as chips, every ask of mine pinned on top, then
+// the list (IssuesViewTable on @dispatch/ui's TaskGroupTable), the board or the
+// graph, a task open beside the list, and the composer at the foot. The preset
+// and the filter clauses narrow every layout; Display shapes the list and board.
 
 const MODES: { id: TasksMode; label: string }[] = [
   { id: 'list', label: 'List' },
   { id: 'board', label: 'Board' },
   { id: 'graph', label: 'Graph' },
 ];
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 /** Session key for the saved view this page last applied, so a remount keeps edits. */
 const APPLIED_VIEW_STORAGE_KEY = 'dispatch:two-views-applied-view';
@@ -141,10 +170,35 @@ function storeGraphFold(folded: boolean): void {
   }
 }
 
+/** The live run states the Run state facet's chip offers. */
+const RUN_STATES: readonly RunState[] = [
+  'provisioning',
+  'running',
+  'awaiting-approval',
+  'finished',
+  'failed',
+  'cancelled',
+  'interrupted-dirty',
+];
+
+const PRIORITIES = Object.keys(PRIORITY_ORDER) as Priority[];
+
+/** The one value a multi-picker's new list differs from the old one by: what
+ * was added, else what was removed (a toggle changes one value at a time). */
+function toggledValue(
+  before: readonly string[],
+  after: readonly string[]
+): string | undefined {
+  return (
+    after.find((value) => !before.includes(value)) ??
+    before.find((value) => !after.includes(value))
+  );
+}
+
 /** A page that is not the list: a task, a doc, a PR, a draft, a room or a hosted view. */
 export type TasksSidePage = Exclude<TasksPage, { kind: 'list' }>;
 
-export interface TasksViewProps {
+export interface IssuesViewProps {
   data: DispatchProjectData;
   needs: NeedsYou;
   /** Asks of mine decided elsewhere a moment ago. */
@@ -180,12 +234,12 @@ export interface TasksViewProps {
 }
 
 /**
- * Tasks: the strip, every ask pinned on top, the work by milestone, and its pages. The
- * header carries the board controls: saved and starred views, the Filter menu (AI
- * filter included), the Display popover, group by person and List | Board | Graph. The
- * preset and the filter clauses narrow every layout; Display shapes the list and board.
+ * Issues: the toolbar, the preset tabs, the filter chips, every ask pinned on
+ * top, the work by group, and its pages. The toolbar carries the board
+ * controls: the Filter menu (AI filter included), the Display popover, group
+ * by person, List | Board | Graph, the saved and starred views and New task.
  */
-export function TasksView({
+export function IssuesView({
   data,
   needs,
   decided,
@@ -212,7 +266,7 @@ export function TasksView({
   projectKey,
   speechByTask,
   composer,
-}: TasksViewProps) {
+}: IssuesViewProps) {
   const split = page.kind === 'task' && !page.full;
   const [graphFolded, setGraphFolded] = useState(storedGraphFold);
   const onGraphFold = useCallback((folded: boolean) => {
@@ -221,6 +275,8 @@ export function TasksView({
   }, []);
   const [filters, setFilters] = useState<TaskFilterSet>(readTwoViewsFilters);
   const [prefs, setPrefs] = useState<TasksDisplayPrefs>(readTwoViewsDisplay);
+  const [search, setSearch] = useState('');
+  const searchInput = useRef<HTMLInputElement>(null);
   // Open state lives here so `f` and `⇧V` on the list or board can open the menus.
   const [filterOpen, setFilterOpen] = useState(false);
   const [displayOpen, setDisplayOpen] = useState(false);
@@ -233,9 +289,9 @@ export function TasksView({
   );
   const full = page.kind !== 'list' && !split;
 
-  // Applies the active saved view when a pick changes it — from the header's menu or the
-  // palette's Open view, which may land before this mounts. The session marker keeps edits
-  // made on top of a view across a remount; read through a ref so the view object's
+  // Applies the active saved view when a pick changes it — from the toolbar's menu or
+  // the palette's Open view, which may land before this mounts. The session marker keeps
+  // edits made on top of a view across a remount; read through a ref so the view object's
   // changing identity never re-applies it.
   const savedViews = useSavedViewsContext();
   const activeViewId = savedViews?.activeViewId ?? null;
@@ -278,34 +334,6 @@ export function TasksView({
     () => new Map(data.epics.map((e) => [e.meta.id, e])),
     [data.epics]
   );
-  // Every group's folded status, in the same units as the top bar.
-  const groupAccessory = useCallback(
-    (group: ListGroup) => (
-      <MilestoneStatusCells
-        status={containerStatus(
-          group.rows.map((row) => row.doc),
-          {
-            bucketOf: presetContext.bucketOf,
-            asksByTask: needs.byTask,
-          }
-        )}
-        dueDate={
-          group.epicId === null
-            ? null
-            : (epicById.get(group.epicId)?.meta.dueDate ?? null)
-        }
-      />
-    ),
-    [presetContext.bucketOf, needs.byTask, epicById]
-  );
-  const footer = (
-    <TasksExtraGroups
-      data={data}
-      onOpenPr={onOpenPr}
-      onOpenDoc={onOpenDoc}
-      onOpenAllDocs={onOpenAllDocs}
-    />
-  );
   const model = useStatusModelOf(data.config);
   // The list's milestone groups, so the map and the list agree on membership.
   const graphGroups = useMemo(
@@ -321,104 +349,243 @@ export function TasksView({
           ),
     [mode, data.config, data.tasks, data.epics, taskFilter, model]
   );
-  const presetLabel =
-    TASKS_PRESETS.find((p) => p.id === preset)?.label ?? 'All';
+
+  // ---- the preset tabs ----------------------------------------------------
+
+  const mineCount = useMemo(() => {
+    const mine = presetMatcher('mine', presetContext);
+    return mine === undefined ? 0 : data.tasks.filter(mine).length;
+  }, [data.tasks, presetContext]);
+  const issuesHref = hrefFor('issues');
+  const tabs = useMemo(
+    () =>
+      presetTabs(counts, {
+        current: preset,
+        mine: mineCount,
+        starred: presetContext.starred.size,
+        hrefFor: () => issuesHref,
+      }).map((tab) => ({
+        ...tab,
+        onFollow: () => onPreset(tab.id as TasksPreset),
+      })),
+    [counts, preset, mineCount, presetContext.starred, issuesHref, onPreset]
+  );
+
+  // ---- the filter chips ---------------------------------------------------
+
+  // The values a facet's chip offers when clicked: the project's own
+  // vocabulary (as the Filter menu lists it), in the clause's reading labels.
+  const facetOptions = useCallback(
+    (facet: FilterFacet): PickerOption[] | undefined => {
+      const label = (value: string) =>
+        filterValueLabel(facet, value, filterContext);
+      switch (facet) {
+        case 'status':
+          return menuContext.statuses.map((status) => ({
+            value: status,
+            label: label(status),
+            mark: { kind: 'state', state: statusType(status, model) },
+          }));
+        case 'priority':
+          return PRIORITIES.map((priority) => ({
+            value: priority,
+            label: label(priority),
+            mark: { kind: 'priority', priority: toTaskPriority(priority) },
+          }));
+        case 'assignee':
+          return [
+            { value: 'none', label: 'Unassigned' },
+            ...assigneeChoices({
+              people: data.people,
+              executors: data.executors?.executors ?? [],
+              me: data.me,
+            }).map((choice) => ({
+              value: choice.id,
+              label: choice.name,
+              hint: choice.hint,
+              keywords: choice.keywords,
+              group: choice.group,
+              mark: choice.mark,
+            })),
+          ];
+        case 'labels':
+          return menuContext.labels.map((value) => ({ value, label: value }));
+        case 'epic':
+          return [
+            { value: FILTER_NONE, label: label(FILTER_NONE) },
+            ...menuContext.epics.map((epic) => ({
+              value: epic.meta.id,
+              label: epic.meta.title,
+            })),
+          ];
+        case 'milestone':
+          return [
+            { value: FILTER_NONE, label: label(FILTER_NONE) },
+            ...menuContext.milestones.map((value) => ({ value, label: value })),
+          ];
+        case 'run':
+          return [FILTER_NONE, ...RUN_STATES].map((value) => ({
+            value,
+            label: label(value),
+          }));
+        case 'created':
+        case 'updated':
+          return undefined;
+      }
+    },
+    [filterContext, menuContext, model, data.people, data.executors, data.me]
+  );
+  const chips = useMemo<FilterChipData[]>(
+    () =>
+      filterChips(filters, filterContext).map((chip: FilterChipModel) => {
+        const clause = filters.clauses[chip.index];
+        const options = facetOptions(chip.facet);
+        const item: FilterChipData = {
+          id: chip.id,
+          field: chip.field,
+          summary: chip.summary,
+          unknown: chip.unknown,
+          removeLabel: chip.removeLabel,
+          onRemove: () =>
+            setFilters((prev) => removeFilterClause(prev, chip.index)),
+        };
+        if (options !== undefined && clause !== undefined) {
+          item.renderEditor = (face) => (
+            <PickerPopover
+              multiple
+              label={`${chip.field} filter`}
+              appearance="quiet"
+              value={clause.values}
+              options={options}
+              trigger={face}
+              triggerLabel={`Edit ${chip.field.toLowerCase()} filter`}
+              onChange={(values) => {
+                const toggled = toggledValue(clause.values, values);
+                if (toggled !== undefined) {
+                  setFilters((prev) =>
+                    toggleFilterValue(prev, chip.facet, toggled)
+                  );
+                }
+              }}
+            />
+          );
+        }
+        return item;
+      }),
+    [filters, filterContext, facetOptions]
+  );
+
+  // ---- render -------------------------------------------------------------
+
+  const footer = (
+    <TasksExtraGroups
+      data={data}
+      onOpenPr={onOpenPr}
+      onOpenDoc={onOpenDoc}
+      onOpenAllDocs={onOpenAllDocs}
+    />
+  );
 
   return (
-    <div data-testid="tasks-view" className="flex h-full min-h-0 flex-col">
-      <div className="border-border flex items-center gap-3 border-b-[0.5px] px-4 py-2">
-        <span className="shrink-0 text-[13px] font-medium">All work</span>
-        <TasksStrip counts={counts} preset={preset} onPreset={onPreset} />
-        <span className="flex-1" />
-        <span className="flex shrink-0 items-center gap-0.5">
-          <FilterMenu
-            filters={filters}
-            onChange={setFilters}
-            context={menuContext}
-            open={filterOpen}
-            onOpenChange={setFilterOpen}
-            onAiFilter={aiFilter}
-          />
-          <DisplayPopover
-            mode={display.layout}
-            prefs={display}
-            onPrefsChange={setPrefs}
-            showArchived={data.showArchived}
-            archivedCount={data.archivedTasks.length}
-            onShowArchivedChange={data.setShowArchived}
-            open={displayOpen}
-            onOpenChange={setDisplayOpen}
-          />
-          <IconButton
-            data-testid="tasks-group-by-person"
-            label={byPerson ? 'Stop grouping by person' : 'Group by person'}
-            active={byPerson}
-            disabled={mode === 'graph'}
-            onClick={() => setPrefs((prev) => toggleGroupByPerson(prev, mode))}
+    <div data-testid="tasks-view" className={styles.root}>
+      <ViewToolbar
+        label="Issue view options"
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: 'Search issues',
+          label: 'Search issues',
+          inputRef: searchInput,
+        }}
+        controls={
+          <span className={styles.toolbarGroup}>
+            <FilterMenu
+              filters={filters}
+              onChange={setFilters}
+              context={menuContext}
+              open={filterOpen}
+              onOpenChange={setFilterOpen}
+              onAiFilter={aiFilter}
+            />
+            <DisplayPopover
+              mode={display.layout}
+              prefs={display}
+              onPrefsChange={setPrefs}
+              showArchived={data.showArchived}
+              archivedCount={data.archivedTasks.length}
+              onShowArchivedChange={data.setShowArchived}
+              open={displayOpen}
+              onOpenChange={setDisplayOpen}
+            />
+            <Button
+              variant="quiet"
+              size="sm"
+              icon={<Users {...ICON} />}
+              aria-label={
+                byPerson ? 'Stop grouping by person' : 'Group by person'
+              }
+              title={byPerson ? 'Stop grouping by person' : 'Group by person'}
+              aria-pressed={byPerson}
+              disabled={mode === 'graph'}
+              onClick={() =>
+                setPrefs((prev) => toggleGroupByPerson(prev, mode))
+              }
+            />
+            {/* On a full page (a task, docs, a PR) neither layout is showing, so
+                nothing is selected, and picking one goes back to the list. */}
+            <SegmentedControl
+              label="Tasks layout"
+              size="sm"
+              options={MODES}
+              value={full ? '' : mode}
+              onChange={(next) => {
+                const picked = MODES.find((m) => m.id === next);
+                if (picked === undefined) return;
+                onModeChange(picked.id);
+                if (full) onClosePage();
+              }}
+            />
+            <TasksViewMenu
+              preset={preset}
+              onPreset={onPreset}
+              savedViews={savedViews}
+              filters={filters}
+              display={display}
+            />
+          </span>
+        }
+        end={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Plus {...ICON} />}
+            onClick={onNewTask}
           >
-            <Users aria-hidden />
-          </IconButton>
-        </span>
-        {/* On a full page (a task, docs, a PR) neither layout is showing, so
-            nothing is selected, and picking one goes back to the list. */}
-        <ToggleGroup
-          aria-label="Tasks layout"
-          variant="outline"
-          size="sm"
-          value={full ? [] : [mode]}
-          onValueChange={(next) => {
-            const picked = MODES.find((m) => m.id === next[0]);
-            if (picked === undefined) return;
-            onModeChange(picked.id);
-            if (full) onClosePage();
-          }}
-          className="shrink-0"
-        >
-          {MODES.map((m) => (
-            <ToggleGroupItem key={m.id} value={m.id}>
-              {m.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-        <TasksViewMenu
-          preset={preset}
-          onPreset={onPreset}
-          savedViews={savedViews}
-          filters={filters}
-          display={display}
-        />
-        <Button size="sm" onClick={onNewTask} className="shrink-0">
-          <Plus className="size-3.5" />
-          New task
-        </Button>
+            New task
+          </Button>
+        }
+      />
+      <div className={styles.tabs}>
+        <NavTabs label="Presets" size="sm" items={tabs} />
       </div>
-      <AppliedFilters
-        filters={filters}
-        onChange={setFilters}
-        context={filterContext}
-        className="border-border shrink-0 border-b-[0.5px] px-4 py-1.5"
+      <FilterChips
+        chips={chips}
+        onClearAll={() => setFilters(EMPTY_TASK_FILTER_SET)}
+        clearDisabled={!filtersActive}
       />
       {full ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className={styles.full}>
           {!OWN_HEADER.has(page.kind) && (
-            <div className="px-4 pt-2">
+            <div className={styles.back}>
               <TasksBackButton onBack={onClosePage} />
             </div>
           )}
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {renderPage(page as TasksSidePage)}
-          </div>
+          <div className={styles.page}>{renderPage(page as TasksSidePage)}</div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1">
-          <div
-            className={
-              split
-                ? 'border-border flex w-[520px] shrink-0 flex-col border-r-[0.5px]'
-                : 'flex min-w-0 flex-1 flex-col'
-            }
-          >
-            <div className="max-h-[45%] shrink-0 overflow-y-auto px-2 pt-2">
+        <div className={styles.body}>
+          <div className={styles.column} data-split={split ? '' : undefined}>
+            <div className={styles.needs}>
               <NeedsYouBlock
                 flush
                 data={data}
@@ -430,33 +597,16 @@ export function TasksView({
                 onFoldedChange={mode === 'graph' ? onGraphFold : undefined}
               />
             </div>
-            {preset !== 'all' && (
-              <div
-                data-testid="tasks-filter"
-                className="text-muted-foreground flex items-center gap-2 px-4 pt-1 pb-1 text-[12px]"
-              >
-                <span>Showing {presetLabel} only</span>
-                <Button
-                  variant="link"
-                  size="xs"
-                  onClick={() => onPreset('all')}
-                >
-                  Clear
-                </Button>
-              </div>
-            )}
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className={styles.main}>
               {mode === 'board' ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  <BoardPane
-                    data={data}
-                    display={display}
-                    taskFilter={taskFilter}
-                    onSelectTask={(taskId) => onSelectTask(taskId)}
-                    onRequestFilter={requestFilter}
-                    onRequestDisplay={requestDisplay}
-                  />
-                </div>
+                <BoardPane
+                  data={data}
+                  display={display}
+                  taskFilter={taskFilter}
+                  onSelectTask={(taskId) => onSelectTask(taskId)}
+                  onRequestFilter={requestFilter}
+                  onRequestDisplay={requestDisplay}
+                />
               ) : mode === 'graph' ? (
                 <MilestoneMapView
                   // A project switch remounts the chart, so its selection, view, display
@@ -479,11 +629,11 @@ export function TasksView({
                       ),
                       actions: (
                         <Button
+                          variant="secondary"
                           size="sm"
-                          variant="outline"
+                          icon={<Plus {...ICON} />}
                           onClick={onNewProject}
                         >
-                          <Plus className="size-3.5" />
                           New project
                         </Button>
                       ),
@@ -505,23 +655,25 @@ export function TasksView({
                   onOpenTask={onSelectTask}
                 />
               ) : (
-                <TasksListView
+                <IssuesTable
                   data={data}
-                  onSelectTask={(taskId) => onSelectTask(taskId)}
-                  display={display}
                   taskFilter={taskFilter}
+                  search={search}
+                  prefs={display}
+                  needs={needs}
+                  bucketOf={presetContext.bucketOf}
+                  speechByTask={speechByTask}
+                  activeTaskId={page.kind === 'task' ? page.taskId : undefined}
+                  onSelectTask={(taskId) => onSelectTask(taskId)}
                   onRequestFilter={requestFilter}
                   onRequestDisplay={requestDisplay}
-                  needsYouIds={needs.taskIds}
-                  groupAccessory={groupAccessory}
-                  speechByTask={speechByTask}
                   footer={footer}
                 />
               )}
             </div>
           </div>
           {split && (
-            <section aria-label="Task" className="flex min-w-0 flex-1 flex-col">
+            <section aria-label="Task" className={styles.pane}>
               {renderPage(page)}
             </section>
           )}

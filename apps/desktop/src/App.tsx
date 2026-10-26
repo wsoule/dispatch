@@ -188,12 +188,12 @@ import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
 import { FirstRunView } from './views/FirstRunView';
+import { IssuesView, type TasksSidePage } from './views/IssuesView';
 import { OverseerFocusView } from './views/OverseerFocusView';
 import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import type { HostedSettingsPage } from './views/SettingsView';
 import { SetupView } from './views/SetupView';
-import { type TasksSidePage, TasksView } from './views/TasksView';
 import { TerminalsView } from './views/TerminalsView';
 import { ThreadsView } from './views/ThreadsView';
 import { type OverseerFocus, TwoViewOverseer } from './views/TwoViewOverseer';
@@ -2236,7 +2236,7 @@ function App() {
           />
         }
         tasks={
-          <TasksView
+          <IssuesView
             data={data}
             needs={needs}
             decided={recentlyDecided}

@@ -77,7 +77,7 @@ test.describe('editing a run diff end to end', () => {
     // undefined`) for the pencil to render at all.
     const queueRow = page
       .getByTestId('tasks-view')
-      .getByRole('gridcell', { name: 'Rate limit the search endpoint' });
+      .getByRole('link', { name: 'Rate limit the search endpoint' });
     await expect(
       queueRow,
       'the "Rate limit the search endpoint" task is not in the Tasks list — ' +

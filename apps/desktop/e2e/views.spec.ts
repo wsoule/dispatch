@@ -124,7 +124,7 @@ test.describe('review detail', () => {
     // The task's row in the Tasks list opens its page beside the list.
     const taskRow = page
       .getByTestId('tasks-view')
-      .getByRole('gridcell', { name: 'Rate limit the search endpoint' });
+      .getByRole('link', { name: 'Rate limit the search endpoint' });
     await expect(
       taskRow,
       'the "Rate limit the search endpoint" task is not in the Tasks list — ' +
