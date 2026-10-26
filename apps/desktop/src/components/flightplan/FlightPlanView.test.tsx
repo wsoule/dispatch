@@ -811,4 +811,43 @@ describe('FlightPlan', () => {
     expect(served).toEqual([7]);
     expect(screen.getByRole('dialog').textContent).toContain('Send agents');
   });
+
+  test('with unlimited spend, a send-agents ask starts the fan-out without a dialog', async () => {
+    const started: [string, unknown][] = [];
+    const data = {
+      ...dataWith(plan()),
+      config: {
+        ...testConfig,
+        orchestrator: {
+          ...testConfig.orchestrator,
+          milestoneConcurrency: 4,
+          unlimitedSpend: true,
+        },
+      },
+      handleWorkMilestone: (milestoneId: string, opts: unknown) => {
+        started.push([milestoneId, opts]);
+        return Promise.resolve();
+      },
+    } as unknown as DispatchProjectData;
+    render(
+      <FlightPlanHostContext.Provider
+        value={{
+          data,
+          dispatchTask: () => Promise.resolve(),
+          onDispatchFailed: () => {},
+          onOpenTask: () => {},
+          onPeekTask: () => {},
+          sendAgents: { milestoneId: 'e-1', nonce: 3 },
+          onSendAgentsServed: () => {},
+        }}
+      >
+        <ContainerFlightPlanSection containerId="e-1" />
+      </FlightPlanHostContext.Provider>
+    );
+    await waitFor(() => expect(started).toHaveLength(1));
+    expect(started).toEqual([
+      ['e-1', { concurrency: 4, maxSpendUsd: null, maxRuns: null }],
+    ]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
 });

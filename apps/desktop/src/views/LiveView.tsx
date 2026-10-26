@@ -55,7 +55,10 @@ import { landingStateByTaskId } from '../lib/landingBadge';
 import { resolveLinearLink } from '../lib/linearSettings';
 import { groupTasks } from '../lib/listGrouping';
 import { liveCeilingsOf, spendToday } from '../lib/liveSpend';
-import type { WorkMilestoneOptions } from '../lib/milestoneSession';
+import {
+  unlimitedFanoutOptions,
+  type WorkMilestoneOptions,
+} from '../lib/milestoneSession';
 import { pendingStarts } from '../lib/optimisticDispatch';
 import { tasksWithFinishedRun } from '../lib/runState';
 import { LIVE_PAGE_TITLE } from '../lib/shellRoutes';
@@ -376,12 +379,44 @@ export function LiveView({
     handleLandMilestone,
     handleWorkMilestone,
   } = data;
+  const unlimitedSpend = data.config?.orchestrator.unlimitedSpend === true;
+  const milestoneConcurrency =
+    data.config?.orchestrator.milestoneConcurrency ?? 3;
+  // Send agents… opens the fan-out dialog, unless the project has turned on unlimited
+  // spend: then there is no ceiling to choose, so the session starts at the default
+  // concurrency straight away and a refusal is toasted. Raise ceiling… is hidden then,
+  // and a paused session's Resume ignores its old ceilings daemon-side.
+  const sendAgents = useCallback(
+    (id: string) => {
+      if (!unlimitedSpend) {
+        setDialog({ milestoneId: id, mode: 'start' });
+        return;
+      }
+      handleWorkMilestone(
+        id,
+        unlimitedFanoutOptions(milestoneConcurrency)
+      ).catch((err: unknown) =>
+        onDispatchFailed(
+          id,
+          err instanceof Error ? err.message : 'The daemon refused the fan-out.'
+        )
+      );
+    },
+    [
+      unlimitedSpend,
+      milestoneConcurrency,
+      handleWorkMilestone,
+      onDispatchFailed,
+    ]
+  );
   const actions = useMemo<LiveBandActions>(
     () => ({
       model,
       progressOf: (id) => milestoneProgressById.get(id),
-      onSendAgents: (id) => setDialog({ milestoneId: id, mode: 'start' }),
-      onRaiseCeiling: (id) => setDialog({ milestoneId: id, mode: 'raise' }),
+      onSendAgents: sendAgents,
+      onRaiseCeiling: unlimitedSpend
+        ? undefined
+        : (id) => setDialog({ milestoneId: id, mode: 'raise' }),
       onPause: handlePauseMilestone,
       onResume: handleResumeMilestone,
       onStop: handleStopMilestone,
@@ -392,6 +427,8 @@ export function LiveView({
     [
       model,
       milestoneProgressById,
+      sendAgents,
+      unlimitedSpend,
       handlePauseMilestone,
       handleResumeMilestone,
       handleStopMilestone,
@@ -561,7 +598,7 @@ export function LiveView({
         <LiveReady
           containers={ready}
           refFor={refFor}
-          onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
+          onSendAgents={sendAgents}
           onOpenPlan={openPlan}
         />
       ) : (

@@ -982,6 +982,7 @@ export function IssuesTable({
           maxConcurrency={data.config?.orchestrator.maxConcurrency}
           runCostEstimateUsd={data.config?.orchestrator.runCostEstimateUsd}
           fixLoopAuto={data.config?.fixLoop.auto}
+          ceilings={data.config?.orchestrator.unlimitedSpend !== true}
           onCancel={() => setDialog(null)}
           onConfirm={async (opts: WorkMilestoneOptions) => {
             if (dialog.kind === 'milestone') {

@@ -31,6 +31,7 @@ export const testConfig: DispatchConfig = {
     verifyTimeoutSec: 600,
     maxConcurrency: 16,
     runCostEstimateUsd: 10,
+    unlimitedSpend: false,
     executor: 'claude',
   },
   models: DEFAULT_MODELS,
