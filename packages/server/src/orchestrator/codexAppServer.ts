@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 
+import { withProtoPath } from './protoShims.js';
+
 type JsonRpcId = number | string;
 
 interface JsonRpcError {
@@ -51,7 +53,7 @@ export function spawnCodexAppServer(
 ): ChildProcessWithoutNullStreams {
   return spawn(binary, binary === 'codex' ? ['app-server', '--stdio'] : [], {
     cwd,
-    env: agentEnv(),
+    env: withProtoPath(cwd, agentEnv()),
     stdio: 'pipe',
     windowsHide: true,
   });

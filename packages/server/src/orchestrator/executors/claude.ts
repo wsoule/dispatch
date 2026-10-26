@@ -35,6 +35,7 @@ import { activeExperiments } from '../experiments.js';
 import type { ExperimentName } from '../experiments.js';
 import { floorGuard } from '../floorHook.js';
 import type { FloorPolicy } from '../floorHook.js';
+import { withProtoPath } from '../protoShims.js';
 import { DEFAULT_EXECUTOR_PROFILE } from '../types.js';
 import type {
   ApprovalDecision,
@@ -192,9 +193,11 @@ export const LEAN_TOOL_EXCLUSIONS = [
 
 // The SDK options each active experiment changes. `env` replaces the CLI's
 // environment wholesale rather than merging into it (sdk.d.ts), so it is
-// always set: this process's environment without its tokens.
+// always set: this process's environment without its tokens, with the
+// worktree's proto shims first on PATH (see withProtoPath).
 export function experimentOptions(
   experiments: readonly ExperimentName[],
+  cwd: string,
   account?: RunAccount
 ): Pick<Options, 'disallowedTools' | 'env'> {
   const disallowed: string[] = [...UNUSABLE_IN_DISPATCHED_RUN];
@@ -204,10 +207,13 @@ export function experimentOptions(
   return {
     disallowedTools: disallowed,
     env: withAccount(
+      withProtoPath(
+        cwd,
       agentEnv(
         experiments.includes('cache-1h')
           ? { ENABLE_PROMPT_CACHING_1H: '1' }
           : {}
+        )
       ),
       account
     ),
@@ -1185,7 +1191,7 @@ export class ClaudeExecutor implements Executor {
       settingSources: ['user', 'project', 'local'],
       // Stream events only when someone shows the text as it is written.
       ...(events.onDelta !== undefined ? { includePartialMessages: true } : {}),
-      ...experimentOptions(experiments, opts.account),
+      ...experimentOptions(experiments, opts.cwd, opts.account),
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
       // project's committed `.mcp.json` the way the interactive `claude` CLI
       // does — without this, a dispatched run has no dispatch MCP tools at
