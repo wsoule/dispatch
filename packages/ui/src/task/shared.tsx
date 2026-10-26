@@ -35,6 +35,7 @@ export const DEFAULT_TASK_LABELS: TaskDetailLabels = {
   noComments: 'No comments yet.',
   loadingComments: 'Loading comments',
   openComment: 'Open comment',
+  reply: 'Reply',
   notSaved: 'Not saved',
 };
 

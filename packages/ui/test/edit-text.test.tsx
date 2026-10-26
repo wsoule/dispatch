@@ -368,6 +368,35 @@ describe('TextAreaEditor: edit mode', () => {
   });
 });
 
+describe('TextAreaEditor: a declining view', () => {
+  test('a function view that returns nothing gets the default rendering', () => {
+    const view = (text: string) =>
+      text === '' ? undefined : <em data-testid="rendered">{text}</em>;
+    const { rerender } = render(
+      <TextAreaEditor
+        label="Description"
+        value=""
+        emptyLabel="No description"
+        view={view}
+        onSave={() => undefined}
+      />
+    );
+    expect(screen.getByText('No description')).toBeTruthy();
+    expect(screen.queryByTestId('rendered')).toBeNull();
+    rerender(
+      <TextAreaEditor
+        label="Description"
+        value="Some text"
+        emptyLabel="No description"
+        view={view}
+        onSave={() => undefined}
+      />
+    );
+    expect(screen.getByTestId('rendered').textContent).toBe('Some text');
+    expect(screen.queryByText('No description')).toBeNull();
+  });
+});
+
 describe('TextAreaEditor: compose mode', () => {
   test('always open; Comment is off while empty; a save clears it', async () => {
     const onSave = mock((_text: string) => undefined);

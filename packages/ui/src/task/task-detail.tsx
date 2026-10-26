@@ -323,6 +323,7 @@ export function TaskDetail({
             retryLabel={labels.retry}
             openLabel={labels.openComment}
             newTabLabel={labels.opensInNewTab}
+            replyLabel={labels.reply}
           />
           {hasNode(comments.composer) ? (
             <div className={commentStyles.composer}>{comments.composer}</div>

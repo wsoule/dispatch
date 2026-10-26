@@ -47,11 +47,14 @@ export function likelyOverflows(text: string, lines: number): boolean {
  * Loading shows skeleton lines, an error shows one line with an
  * optional retry, and blank text says "No description". Each paragraph
  * takes its own direction, so a right-to-left line reads right to left.
- * A host that renders the description itself passes `content` instead.
+ * A host that renders the description itself passes `content` instead;
+ * with `clampContent` that body is clamped too, by height (the browser's
+ * measurement, with `text` as the first guess), with its own Show more.
  */
 export function TaskDescription({
   text,
   content,
+  clampContent = false,
   loading = false,
   error = null,
   sourceLabel,
@@ -76,7 +79,9 @@ export function TaskDescription({
 
   // Measures the full text against the clamp height (scrollHeight counts
   // the clipped lines too, so this works collapsed or expanded) and again
-  // whenever the column width changes.
+  // whenever the column width changes. A host-rendered body is measured
+  // the same way on every render (its node is new each time, and a
+  // clamped box does not resize when what is inside it changes).
   useEffect(() => {
     const el = textRef.current;
     if (el === null) return undefined;
@@ -91,7 +96,7 @@ export function TaskDescription({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [body, clampLines, loading, error]);
+  }, [body, content, clampLines, loading, error]);
 
   if (loading) {
     return (
@@ -125,12 +130,44 @@ export function TaskDescription({
       <p className={styles.source}>{sourceLabel}</p>
     ) : null;
 
-  // The host's own rendering (markdown, an editor) stands in for the text.
+  const clamped = overflows && !expanded;
+  const style = { '--clamp-lines': clampLines } as CSSProperties;
+  const toggle = overflows ? (
+    <button
+      type="button"
+      className={styles.toggle}
+      aria-expanded={expanded}
+      aria-controls={textId}
+      onClick={() => setExpanded((open) => !open)}
+    >
+      {expanded ? showLessLabel : showMoreLabel}
+    </button>
+  ) : null;
+
+  // The host's own rendering (markdown, an editor) stands in for the text:
+  // unclamped unless asked, since an editor must never be clipped.
   if (content !== undefined && content !== null && content !== false) {
+    const clampedContent = clampContent && clamped;
     return (
       <div className={styles.wrap}>
-        <div className={styles.content}>{content}</div>
-        {footer !== null ? <div className={styles.foot}>{footer}</div> : null}
+        <div
+          ref={clampContent ? textRef : undefined}
+          id={textId}
+          className={cx(
+            styles.content,
+            clampedContent ? styles.clampedContent : undefined
+          )}
+          data-clamped={clampedContent ? 'true' : undefined}
+          style={clampContent ? style : undefined}
+        >
+          {content}
+        </div>
+        {(clampContent && overflows) || footer !== null ? (
+          <div className={styles.foot}>
+            {clampContent ? toggle : null}
+            {footer}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -144,8 +181,6 @@ export function TaskDescription({
     );
   }
 
-  const clamped = overflows && !expanded;
-  const style = { '--clamp-lines': clampLines } as CSSProperties;
   return (
     <div className={styles.wrap}>
       <div
@@ -159,17 +194,7 @@ export function TaskDescription({
       </div>
       {overflows || footer !== null ? (
         <div className={styles.foot}>
-          {overflows ? (
-            <button
-              type="button"
-              className={styles.toggle}
-              aria-expanded={expanded}
-              aria-controls={textId}
-              onClick={() => setExpanded((open) => !open)}
-            >
-              {expanded ? showLessLabel : showMoreLabel}
-            </button>
-          ) : null}
+          {toggle}
           {footer}
         </div>
       ) : null}

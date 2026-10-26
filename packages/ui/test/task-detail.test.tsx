@@ -10,6 +10,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { useState } from 'react';
 
 import {
+  Checklist,
   type TaskActivityItem,
   TaskActivityList,
   TaskDescription,
@@ -916,5 +917,165 @@ describe('review fixes', () => {
     expect(
       within(heading).getByRole('textbox', { name: 'Task title' })
     ).toBeTruthy();
+  });
+});
+
+// A host that renders the description itself (Dispatch's markdown) and
+// wants the drawer kept short: `clampContent` clamps that body too, with
+// the same Show more, and nested elements render as given.
+describe('TaskDescription: a host-rendered body', () => {
+  const RICH = (
+    <div data-testid="md">
+      <h4>Goal</h4>
+      <ul>
+        <li>
+          Nested <strong>item</strong>
+        </li>
+      </ul>
+    </div>
+  );
+
+  test('clampContent clamps the rendered body behind Show more; expanding keeps it', () => {
+    render(
+      <TaskDescription
+        text={LONG_TEXT}
+        content={RICH}
+        clampContent
+        sourceLabel="Markdown"
+      />
+    );
+    // The raw text is the guess only; the body is the host's node.
+    expect(screen.queryByText(/Line 1 of the spec/)).toBeNull();
+    expect(screen.getByText('item').tagName).toBe('STRONG');
+    const toggle = screen.getByRole('button', { name: 'Show more' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    const box = document.getElementById(
+      toggle.getAttribute('aria-controls') ?? ''
+    );
+    expect(box?.getAttribute('data-clamped')).toBe('true');
+    expect(box?.contains(screen.getByTestId('md'))).toBe(true);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.textContent).toBe('Show less');
+    expect(box?.hasAttribute('data-clamped')).toBe(false);
+    expect(screen.getByText('item').tagName).toBe('STRONG');
+    // The source note shares the foot with the toggle.
+    expect(toggle.parentElement).toBe(
+      screen.getByText('Markdown').parentElement
+    );
+  });
+
+  test('without clampContent a host body is never clamped; without text the clamp waits for the browser', () => {
+    const { rerender } = render(
+      <TaskDescription text={LONG_TEXT} content={RICH} />
+    );
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(document.querySelector('[data-clamped]')).toBeNull();
+    rerender(<TaskDescription text={null} content={RICH} clampContent />);
+    // No text to guess from and no layout here: nothing claims overflow.
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByTestId('md')).toBeTruthy();
+  });
+
+  test('TaskDetail passes clampContent through the description', () => {
+    render(
+      <TaskDetail
+        {...baseProps({
+          description: { text: LONG_TEXT, content: RICH, clampContent: true },
+        })}
+      />
+    );
+    const section = screen.getByRole('region', { name: 'Description' });
+    expect(
+      within(section).getByRole('button', { name: 'Show more' })
+    ).toBeTruthy();
+    expect(within(section).getByTestId('md')).toBeTruthy();
+  });
+});
+
+// Where a host's own sections land, in Gr8r's drawer order: `rail` right
+// after the properties (Dispatch's Work block: dispatch, latest runs),
+// `children` after Activity (an Acceptance criteria checklist), with
+// `sectionMeta` for the built-in headings.
+describe('TaskDetail: host sections', () => {
+  const work = (
+    <TaskDetailSection
+      title="Work"
+      headingLevel={3}
+      meta={<button type="button">Dispatch</button>}
+    >
+      <p>Latest run: succeeded 2h ago</p>
+    </TaskDetailSection>
+  );
+  const criteria = (
+    <TaskDetailSection
+      title="Acceptance criteria"
+      headingLevel={3}
+      count={3}
+      meta={<span>2 of 3 met</span>}
+    >
+      <Checklist
+        label="Acceptance criteria"
+        items={[
+          { label: 'Events are hashed', met: true },
+          { label: 'Sampling is configurable', met: true },
+          { label: 'Dashboard shows latency', met: false },
+        ]}
+      />
+    </TaskDetailSection>
+  );
+
+  test('in the drawer: Work follows the properties, Acceptance criteria follows Activity', () => {
+    render(
+      <TaskDetail {...baseProps({ comments: { items: [] } })} rail={work}>
+        {criteria}
+      </TaskDetail>
+    );
+    expect(
+      screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)
+    ).toEqual([
+      'Properties',
+      'Work',
+      'Description',
+      'Blocked by, 1',
+      'Blocks, 0',
+      'Comments, 0',
+      'Activity',
+      'Acceptance criteria, 3',
+    ]);
+    const region = screen.getByRole('region', {
+      name: /^Acceptance criteria\W+3$/,
+    });
+    expect(within(region).getByText('2 of 3 met')).toBeTruthy();
+    expect(
+      within(
+        within(region).getByRole('list', { name: 'Acceptance criteria' })
+      ).getAllByRole('listitem')
+    ).toHaveLength(3);
+    expect(
+      within(screen.getByRole('region', { name: 'Work' })).getByRole('button', {
+        name: 'Dispatch',
+      })
+    ).toBeTruthy();
+  });
+
+  test('on the page: Work sits in the rail with the properties, Acceptance criteria in the main column after Activity', () => {
+    render(
+      <TaskDetail {...baseProps()} layout="page" rail={work}>
+        {criteria}
+      </TaskDetail>
+    );
+    const section = (name: string | RegExp) =>
+      screen.getByRole('heading', { name }).closest('section');
+    const properties = section('Properties');
+    const workSection = section('Work');
+    const activity = section('Activity');
+    const acceptance = section(/^Acceptance criteria/);
+    expect(workSection?.parentElement).toBe(properties?.parentElement ?? null);
+    expect(acceptance?.parentElement).toBe(activity?.parentElement ?? null);
+    expect(acceptance?.parentElement).not.toBe(
+      properties?.parentElement ?? null
+    );
+    expect(activity?.nextElementSibling).toBe(acceptance ?? null);
   });
 });

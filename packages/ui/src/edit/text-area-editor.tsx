@@ -199,9 +199,12 @@ export function TextAreaEditor({
 
   if (!editing) {
     let body: ReactNode;
-    if (typeof view === 'function') body = view(shownText);
-    else if (view !== undefined && view !== null) body = view;
-    else if (shownText.trim() === '') {
+    // A function view may decline a text (return nothing) and get the
+    // default rendering for it: the empty label when blank, else the text.
+    const custom = typeof view === 'function' ? view(shownText) : view;
+    if (custom !== undefined && custom !== null && custom !== false) {
+      body = custom;
+    } else if (shownText.trim() === '') {
       body = <p className={styles.empty}>{emptyLabel ?? placeholder ?? ''}</p>;
     } else {
       body = (

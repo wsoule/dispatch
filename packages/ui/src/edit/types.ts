@@ -409,7 +409,9 @@ export interface TextAreaEditorProps {
    * What edit mode shows while not editing: a node, or a function of the
    * text (so a host's markdown renderer also draws a just-saved text before
    * the host's own value catches up). Default: the text as typed (line
-   * breaks kept, nothing parsed), or `emptyLabel` when blank.
+   * breaks kept, nothing parsed), or `emptyLabel` when blank. A function
+   * that returns nothing for a text gets that default for it, so a markdown
+   * view can leave the blank case to `emptyLabel`.
    */
   view?: ReactNode | ((text: string) => ReactNode);
   emptyLabel?: string;

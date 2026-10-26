@@ -10,13 +10,16 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { useState } from 'react';
 
 import {
+  Button,
   InlineTextField,
+  PickerPopover,
   type TaskComment,
   TaskCommentList,
   TaskDetail,
   type TaskDetailProps,
   type TaskRelation,
   TaskRelationList,
+  TaskSlideOver,
   TextAreaEditor,
 } from '../src/index';
 
@@ -393,5 +396,256 @@ describe('TaskRelationList: async removal', () => {
         .getByRole('button', { name: 'Remove ENG-12' })
         .getAttribute('aria-busy')
     ).toBeNull();
+  });
+});
+
+// What Dispatch's slide-over adds to the comments: threads one level deep
+// (a reply steps in under the comment it answers), the author's own "⋯"
+// menu at the end of a comment's head row, and a reply box under a body.
+describe('TaskCommentList: threads and actions', () => {
+  const ROOT: TaskComment = {
+    id: 'c1',
+    author: 'Ana Moreno',
+    at: 'Oct 19',
+    body: 'Can we log both forms of the query?',
+  };
+  const REPLY: TaskComment = {
+    id: 'c2',
+    author: 'Dev Patel',
+    at: 'Oct 20',
+    body: 'Yes, once typo tolerance lands.',
+    reply: true,
+  };
+
+  test('a reply steps in under its parent, is announced as one, and the list stays flat', () => {
+    render(<TaskCommentList items={[ROOT, REPLY]} />);
+    const list = screen.getByRole('list', { name: 'Comments' });
+    const [root, reply] = within(list).getAllByRole('listitem');
+    expect(root.hasAttribute('data-reply')).toBe(false);
+    expect(reply.getAttribute('data-reply')).toBe('true');
+    // One flat list: no nested list, both items direct children.
+    expect(within(list).queryAllByRole('list')).toHaveLength(0);
+    expect(reply.parentElement).toBe(list);
+    // Spoken as "Reply, Dev Patel, Oct 20"; the root says no such thing.
+    expect(reply.textContent).toContain('Reply, Dev Patel');
+    expect(root.textContent).not.toContain('Reply');
+    // The reply's avatar is still the author's.
+    expect(reply.querySelector('[data-mark="avatar"]')?.textContent).toBe('DP');
+  });
+
+  test('TaskDetail words the reply lead-in through its labels', () => {
+    render(
+      <TaskDetail
+        {...props({ comments: { items: [ROOT, REPLY] } })}
+        labels={{ reply: 'In reply' }}
+      />
+    );
+    const [, reply] = within(
+      screen.getByRole('list', { name: 'Comments' })
+    ).getAllByRole('listitem');
+    expect(reply.textContent).toContain('In reply, Dev Patel');
+  });
+
+  test('host actions end the head row (a menu nests validly) and a footer follows the body', async () => {
+    const picked: (string | null)[] = [];
+    render(
+      <TaskCommentList
+        items={[
+          {
+            ...ROOT,
+            actions: (
+              <PickerPopover
+                label="Actions for this comment"
+                options={[
+                  { value: 'reply', label: 'Reply' },
+                  { value: 'edit', label: 'Edit' },
+                  { value: 'delete', label: 'Delete…' },
+                ]}
+                value={null}
+                action
+                searchable={false}
+                trigger="…"
+                triggerLabel="Actions for this comment"
+                onChange={(value) => {
+                  picked.push(value);
+                }}
+              />
+            ),
+          },
+          {
+            ...REPLY,
+            footer: (
+              <TextAreaEditor
+                mode="compose"
+                label="Reply to Dev Patel"
+                onSave={() => undefined}
+              />
+            ),
+          },
+        ]}
+      />
+    );
+    const [root, reply] = screen.getAllByRole('listitem');
+    const menu = within(root).getByRole('button', {
+      name: 'Actions for this comment',
+    });
+    // In the head row beside the author, never inside a <p> (the menu's
+    // layer is a div) and never inside the tracker link.
+    const author = within(root).getByText('Ana Moreno');
+    expect(menu.closest('p')).toBeNull();
+    expect(author.parentElement?.contains(menu)).toBe(true);
+    expect(menu.closest('a')).toBeNull();
+    // The menu works as a menu: open, pick, closed.
+    fireEvent.click(menu);
+    const list = screen.getByRole('listbox', {
+      name: 'Actions for this comment',
+    });
+    fireEvent.keyDown(list, { key: 'ArrowDown' });
+    await act(async () => {
+      fireEvent.keyDown(list, { key: 'Enter' });
+      await Promise.resolve();
+    });
+    expect(picked).toEqual(['edit']);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    // The reply's footer holds the host's reply box, under its body.
+    const box = within(reply).getByRole('textbox', {
+      name: 'Reply to Dev Patel',
+    });
+    const body = within(reply).getByText('Yes, once typo tolerance lands.');
+    expect(
+      body.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    // The root has no footer and no reply box of its own.
+    expect(within(root).queryByRole('textbox')).toBeNull();
+  });
+});
+
+// The slide-over as Dispatch hosts it: the host's buttons and its "⋯" menu
+// (a PickerPopover with `action`) in the drawer's bar beside Close, an
+// InlineTextField as the h2, and Esc going to the nearest thing first.
+describe('TaskSlideOver: a desktop host’s header', () => {
+  function Drawer({ onClose }: { onClose: () => void }) {
+    return (
+      <TaskSlideOver
+        {...props()}
+        open
+        onClose={onClose}
+        titleControl={
+          <InlineTextField
+            label="Title"
+            value="Search analytics events"
+            onSave={() => undefined}
+          />
+        }
+        headerActions={
+          <>
+            <Button size="sm" variant="quiet">
+              Open page
+            </Button>
+            <PickerPopover
+              label="More actions"
+              options={[
+                { value: 'copy-id', label: 'Copy id' },
+                { value: 'copy-link', label: 'Copy link' },
+                { value: 'archive', label: 'Archive' },
+                { value: 'drop', label: 'Drop…' },
+              ]}
+              value={null}
+              action
+              searchable={false}
+              align="end"
+              trigger="…"
+              triggerLabel="More actions"
+              onChange={() => undefined}
+            />
+            <button
+              type="button"
+              onKeyDown={(event) => {
+                // A host control that takes Esc for itself.
+                if (event.key === 'Escape') event.preventDefault();
+              }}
+            >
+              Host menu
+            </button>
+          </>
+        }
+      />
+    );
+  }
+
+  test('host actions sit in the bar beside Close; the title control is the h2 and the title still names the dialog', () => {
+    render(<Drawer onClose={() => undefined} />);
+    const dialog = screen.getByRole('dialog', {
+      name: 'Search analytics events',
+    });
+    const close = within(dialog).getByRole('button', { name: 'Close' });
+    const bar = close.parentElement;
+    expect(bar).not.toBeNull();
+    // Each host action is in the bar (the picker's trigger inside its own
+    // root), before Close, which is the bar's last control.
+    for (const name of ['Open page', 'More actions', 'Host menu']) {
+      const action = within(dialog).getByRole('button', { name });
+      expect([name, bar?.contains(action)]).toEqual([name, true]);
+      expect(
+        action.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+    }
+    expect(bar?.lastElementChild).toBe(close);
+    const heading = within(dialog).getByRole('heading', { level: 2 });
+    expect(
+      within(heading).getByRole('button', { name: 'Search analytics events' })
+    ).toBeTruthy();
+    // The actions are in the header, above the body (and its sections).
+    const body = within(dialog).getByRole('heading', {
+      level: 3,
+      name: 'Properties',
+    });
+    expect(
+      bar!.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  test('Esc closes the nearest thing first: an open menu, a title being edited, a host control that took it; then the drawer', () => {
+    const onClose = mock(() => undefined);
+    render(<Drawer onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', {
+      name: 'Search analytics events',
+    });
+    // The "⋯" menu: Esc closes it and the drawer stays.
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'More actions' })
+    );
+    const list = screen.getByRole('listbox', { name: 'More actions' });
+    fireEvent.keyDown(list, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(0);
+    expect(
+      screen.getByRole('dialog', { name: 'Search analytics events' })
+    ).toBe(dialog);
+    // The title editor: Esc cancels the edit and the drawer stays.
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Search analytics events' })
+    );
+    const field = within(dialog).getByRole('textbox', { name: 'Title' });
+    fireEvent.change(field, { target: { value: 'Renamed' } });
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(
+      within(dialog).getByRole('button', { name: 'Search analytics events' })
+    ).toBeTruthy();
+    expect(onClose).toHaveBeenCalledTimes(0);
+    // A host control that prevented the default: not the drawer's Esc.
+    const host = within(dialog).getByRole('button', { name: 'Host menu' });
+    host.focus();
+    fireEvent.keyDown(host, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(0);
+    // Nothing nearer: the drawer closes.
+    fireEvent.keyDown(
+      within(dialog).getByRole('button', { name: 'Open page' }),
+      {
+        key: 'Escape',
+      }
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

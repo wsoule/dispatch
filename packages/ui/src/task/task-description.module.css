@@ -36,6 +36,20 @@
   overflow: hidden;
 }
 
+/* A host-rendered body (clampContent) is clamped by height, not by line
+   count: its headings, lists and code have line heights of their own and
+   -webkit-box would lay its blocks out as box items. The cut fades over
+   the last two lines instead of ending mid-glyph. */
+.clampedContent {
+  max-height: calc(var(--clamp-lines, 12) * var(--lh-long) * 1em);
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to bottom,
+    currentcolor calc(100% - 2.5em),
+    transparent
+  );
+}
+
 .foot {
   display: flex;
   flex-wrap: wrap;

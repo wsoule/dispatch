@@ -904,6 +904,51 @@ or middle click still opens the link.
   `PickerMark`, e.g. `{ kind: 'node', node }` for an agent's glyph) in place of
   the initials avatar.
 
+### Task detail slots for a desktop host
+
+How Dispatch's 620px slide-over (a row click, Space, "quick look") and its full
+page host their controls in `TaskSlideOver` and `TaskDetail`. The order of the
+sections is Gr8r's task drawer and is not configurable: header bar, title,
+status line, alerts, properties, `rail`, Description, Blocked by, Blocks,
+Comments, Activity, `children`.
+
+- **Header.** `headerActions` render in the drawer's 46px bar before the Close
+  button (`SlideOver`'s `actions` slot): Open page, Copy id / Copy link as quiet
+  `Button`s, and a "⋯" `PickerPopover` with `action` and `searchable={false}`
+  for Archive and Drop (`align="end"`); on a phone a worded action with an icon
+  shows the icon only. `titleControl` (an `InlineTextField`) is the drawer's h2,
+  and `title` still names the dialog. Nothing to add here: the slots exist.
+- **Esc closes the nearest thing first.** `SlideOver` listens on `document` and
+  closes only when the Esc keydown is not `defaultPrevented`: an open
+  `PickerPopover` (the "⋯" menu, a property picker), an `InlineTextField` or
+  `TextAreaEditor` being edited, and any host control that calls
+  `preventDefault()` on Esc take it first; the next Esc closes the drawer.
+- **Work.** Dispatch's Work block (the dispatch button, the latest runs) goes in
+  `rail` as a `TaskDetailSection`: right after the properties in the drawer, so
+  above the description and the relations, and in the properties rail beside the
+  main column on the page. There is deliberately no slot between Description and
+  Blocked by.
+- **Acceptance criteria** (and any other host section) are `children`: a
+  `TaskDetailSection` (title, `count`, `meta` such as "2 of 3 met") holding a
+  `Checklist`, after Activity in the main column at the sections' heading level.
+  `sectionMeta` puts a control in a built-in heading (an Edit button on
+  Description, "+ Add" on the relations).
+- **Description.** `content` is the host's rendered body (its markdown). With
+  `clampContent` it is clamped to `clampLines` too, by height with a fade over
+  the last lines (its blocks have line heights of their own), with the same Show
+  more / Show less, measured in the browser (`text` is the first guess, so pass
+  the source too). Off by default, since `content` may be an editor (the
+  planner's `TextAreaEditor`, whose read view clamps itself).
+- **Comments.** `TaskComment.reply` draws a reply one avatar column in under the
+  comment it answers and speaks "Reply," before its author (`labels.reply`, or
+  `TaskCommentList`'s `replyLabel`); the host orders each root before its
+  replies, and the list stays one flat `<ol>`. `actions` render at the end of
+  the comment's head row (the viewer's own "⋯" menu: Reply, Edit, Delete; the
+  head is a `div`, so a menu's layer nests validly), and `footer` under the body
+  (a reply box opened from that menu, a "Not saved" line). Editing a comment is
+  `content` set to a `TextAreaEditor`; the composer for a new comment stays
+  `TaskCommentsData.composer`.
+
 ### Edit controls
 
 Every edit control is controlled and saves through one contract: `onChange` /

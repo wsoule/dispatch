@@ -104,9 +104,17 @@ export interface TaskDescriptionData {
   /** null or blank shows the empty state. */
   text: string | null;
   /** A body the host renders itself (its markdown renderer, or an
-      editor) in place of `text`. No clamp applies, and the package never
-      parses anything: whatever is safe here is the host's call. */
+      editor) in place of `text`. The package never parses anything:
+      whatever is safe here is the host's call. Unclamped unless
+      `clampContent` is set. */
   content?: ReactNode;
+  /** Clamp `content` to `clampLines` too, with the same Show more: for a
+      rendered markdown body (its blocks have their own line heights, so
+      the count is approximate; the cut fades out). Off by default, since
+      `content` may be an editor that must never be clipped. The first
+      paint guesses from `text` when it is given, and the browser's
+      measurement then decides. */
+  clampContent?: boolean;
   /** Shows a skeleton instead of the text. */
   loading?: boolean;
   /** Shows an error line instead of the text. */
@@ -151,6 +159,19 @@ export interface TaskComment {
   href?: string;
   /** muted = written by a bot or an integration, not a person. */
   tone?: 'default' | 'muted';
+  /** A reply in a thread: drawn one step in under the comment it answers
+      and announced as a reply (`replyLabel`). The host orders the list,
+      each root followed by its replies (Dispatch threads one level; the
+      planner's comments are flat). The list stays one flat list. */
+  reply?: boolean;
+  /** Controls at the end of the comment's header, e.g. the host's "⋯"
+      menu (a PickerPopover with `action`: Reply, Edit, Delete) on the
+      viewer's own comments. A sibling of the author and date, never
+      inside a link. */
+  actions?: ReactNode;
+  /** Under the body: a reply box opened from `actions`, or a note ("Not
+      saved"). The host owns its state. */
+  footer?: ReactNode;
 }
 
 /** The task's comments, plus the box to add one. */
@@ -178,6 +199,9 @@ export interface TaskCommentListProps {
   /** Screen-reader name of a comment's link to the tracker. */
   openLabel?: string;
   newTabLabel?: string;
+  /** Screen-reader lead-in of a reply, spoken before its author.
+      Default "Reply". */
+  replyLabel?: string;
 }
 
 /** Right-aligned controls or notes in the heading of each built-in
@@ -272,6 +296,7 @@ export interface TaskDetailLabels {
   noComments: string;
   loadingComments: string;
   openComment: string;
+  reply: string;
   notSaved: string;
 }
 
@@ -303,9 +328,10 @@ export interface TaskDetailProps {
       they may be plain text or editors. */
   properties: PropertyListItem[];
   /** Host sections that belong with the properties (labels, hierarchy,
-      links, an editable relations list): in the rail under the property
-      sheet in page layout, right after it in drawer layout. Build them
-      with TaskDetailSection. */
+      links, an editable relations list, Dispatch's Work block: the
+      dispatch button and the latest runs): in the rail under the property
+      sheet in page layout, right after it in drawer layout, so above the
+      description and the relations. Build them with TaskDetailSection. */
   rail?: ReactNode;
   /** Omit to leave out the section; pass empty lists to say there are
       none. */
@@ -324,7 +350,9 @@ export interface TaskDetailProps {
   activity?: TaskActivityItem[];
   /** Items shown before "Show all N". */
   activityLimit?: number;
-  /** Extra host sections, after the built-in ones in the main column. */
+  /** Extra host sections, after the built-in ones in the main column (an
+      "Acceptance criteria" Checklist, a note about relations outside the
+      view). Build them with TaskDetailSection at the sections' level. */
   children?: ReactNode;
   /** Default 'drawer'. */
   layout?: TaskDetailLayout;
