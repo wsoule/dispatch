@@ -806,6 +806,12 @@ or middle click still opens the link.
   brand row also reads `--shell-brand-inset` (default 0) as extra left padding,
   expanded and collapsed, so a window with an overlay title bar can set the row
   in from macOS's traffic lights: set it on the shell's wrapper or above.
+- `toggleShellCollapsed(storageKey?, defaultCollapsed?)` collapses or expands
+  the rail from outside the component, exactly as the brand-row button does (it
+  flips `html[data-shell-collapsed]`, saves the choice under `storageKey` and
+  returns the new state; the shell re-renders through its attribute observer),
+  for a host that keeps "[" for itself and binds the key in its own keyboard
+  layer.
 - `AppShell` `signOut` is either the form post (`{ action, method: 'post' }`, a
   real `<form>` that works before JS) or a callback
   (`{ onSignOut: () => void }`, the same icon button as `type="button"`);

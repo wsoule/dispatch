@@ -116,7 +116,7 @@ export type {
 // slide-over, property list, alert strip, skeletons, key caps. Props are
 // typed in ./shell/types.
 export { default as AlertStrip } from './shell/alert-strip';
-export { default as AppShell } from './shell/app-shell';
+export { default as AppShell, toggleShellCollapsed } from './shell/app-shell';
 export {
   CommandPalette,
   CommandPaletteProvider,

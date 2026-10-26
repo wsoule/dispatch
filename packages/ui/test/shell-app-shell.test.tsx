@@ -1,10 +1,16 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { CalendarCheck, ChartGantt } from 'lucide-react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import AppShell from '../src/shell/app-shell';
+import AppShell, { toggleShellCollapsed } from '../src/shell/app-shell';
 import { CommandPaletteProvider } from '../src/shell/command-palette';
 import type { AppShellProps } from '../src/shell/types';
 
@@ -226,6 +232,33 @@ describe('AppShell', () => {
     fireEvent.keyDown(document.body, { key: '[' });
     expect(document.documentElement.dataset.shellCollapsed).toBe('false');
     expect(localStorage.getItem(KEY)).toBe('0');
+  });
+
+  test('toggleShellCollapsed drives the rail from a host, as the button does', async () => {
+    render(<AppShell {...PROPS} sidebarShortcut={false} />);
+    expect(collapseButton().getAttribute('aria-label')).toBe(
+      'Collapse sidebar'
+    );
+    // The host's own "[" handler: the attribute, the saved choice and the
+    // button's label all move together, through the shell's attribute observer.
+    let next = false;
+    act(() => {
+      next = toggleShellCollapsed(KEY);
+    });
+    expect(next).toBe(true);
+    expect(document.documentElement.dataset.shellCollapsed).toBe('true');
+    expect(localStorage.getItem(KEY)).toBe('1');
+    expect(
+      await screen.findByRole('button', { name: 'Expand sidebar' })
+    ).toBeTruthy();
+    act(() => {
+      next = toggleShellCollapsed(KEY);
+    });
+    expect(next).toBe(false);
+    expect(localStorage.getItem(KEY)).toBe('0');
+    expect(
+      await screen.findByRole('button', { name: 'Collapse sidebar' })
+    ).toBeTruthy();
   });
 
   test('chromeAttributes land on the brand row and the topbar', () => {

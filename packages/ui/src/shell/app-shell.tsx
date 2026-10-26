@@ -201,6 +201,23 @@ function readCollapsed(
   return saved === '1' ? true : saved === '0' ? false : fallback;
 }
 
+/**
+ * Collapses or expands the rail from outside the component: flips
+ * html[data-shell-collapsed] and saves the choice under `storageKey`, exactly
+ * as the brand-row button does (the shell re-renders through its attribute
+ * observer). For a host that keeps "[" for itself (`sidebarShortcut` false)
+ * and binds the key in its own keyboard layer. Returns the new state.
+ */
+export function toggleShellCollapsed(
+  storageKey?: string,
+  defaultCollapsed = false
+): boolean {
+  const next = !readCollapsed(storageKey, defaultCollapsed);
+  document.documentElement.dataset.shellCollapsed = next ? 'true' : 'false';
+  if (storageKey !== undefined) writeStorage(storageKey, next ? '1' : '0');
+  return next;
+}
+
 /** Re-renders when anything (a script, another shell) flips the attribute. */
 function subscribeCollapsed(onChange: () => void): () => void {
   const observer = new MutationObserver(onChange);
@@ -295,9 +312,7 @@ export default function AppShell({
   }, [storageKey, defaultCollapsed]);
 
   const toggleCollapsed = useCallback(() => {
-    const next = !readCollapsed(storageKey, defaultCollapsed);
-    document.documentElement.dataset.shellCollapsed = next ? 'true' : 'false';
-    if (storageKey !== undefined) writeStorage(storageKey, next ? '1' : '0');
+    toggleShellCollapsed(storageKey, defaultCollapsed);
     setTip(null);
     rerender();
   }, [storageKey, defaultCollapsed]);
