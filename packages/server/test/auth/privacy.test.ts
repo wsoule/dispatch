@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { World } from './world.js';
-import { call, invite, liveRun, useWorld } from './world.js';
+import { call, invite, liveRun, useWorld, waitFor } from './world.js';
 
 // XH-R4: the decision feed shows each item to its participants and to
 // deciders only, and a run's DM to a human never reaches other sockets as a
@@ -105,5 +105,138 @@ describe("a run's DM", () => {
     ).toBe(true);
     ws.close();
     ows.close();
+  });
+});
+
+// A run.log message frame as one socket heard it.
+interface HeardEntry {
+  index?: number;
+  entry: { kind: string; text?: string; redacted?: boolean };
+}
+
+// Opens /ws as `token` and keeps the run.log message frames it hears.
+async function listen(
+  w: World,
+  token: string
+): Promise<{ heard: HeardEntry[]; close: () => void }> {
+  const heard: HeardEntry[] = [];
+  const ws = new WebSocket(`ws://127.0.0.1:${w.handle.port}/ws?token=${token}`);
+  await new Promise((r) => (ws.onopen = r));
+  ws.onmessage = (e) => {
+    const frame = JSON.parse(String(e.data)) as HeardEntry & { type: string };
+    if (frame.type === 'run.log' && frame.entry.kind === 'message')
+      heard.push({ index: frame.index, entry: frame.entry });
+  };
+  return { heard, close: () => ws.close() };
+}
+
+// A request-tier teammate's message to the owner's run, and the run's DM back
+// to them: one entry delivered to the run, one it sent.
+async function privateExchange(w: World) {
+  const req = await invite(w, 'req@x.io', 'request');
+  const run = await liveRun(w, w.app, 'owner work');
+  return {
+    req,
+    run,
+    async send() {
+      const sent = await call(w, req.token, 'POST', '/api/messages', {
+        to: [`task:${run.taskId}`],
+        kind: 'message',
+        body: 'PRIVATE-IN: the staging password is hunter2',
+      });
+      expect(sent.status).toBe(201);
+      const dm = await call(w, run.runToken, 'POST', '/api/messages', {
+        to: [`human:${req.handle}`],
+        kind: 'message',
+        body: 'PRIVATE-OUT: rotated it',
+      });
+      expect(dm.status).toBe(201);
+    },
+  };
+}
+
+describe("a run transcript's message entries", () => {
+  // The free plan's three seats: the owner (who decides), the teammate in
+  // the conversation and one outside it.
+  it('reach sockets outside the message redacted, at the same index', async () => {
+    const w = world();
+    const outsider = await invite(w, 'out@x.io', 'request');
+    const exchange = await privateExchange(w);
+    const sockets = {
+      participant: await listen(w, exchange.req.token),
+      decider: await listen(w, w.app),
+      outsider: await listen(w, outsider.token),
+      agent: await listen(w, w.agent),
+    };
+    await exchange.send();
+    await waitFor(() =>
+      Object.values(sockets).every((s) => s.heard.length === 2)
+    );
+
+    const texts = (s: { heard: HeardEntry[] }) =>
+      s.heard.map((h) => secrets(h.entry.text ?? ''));
+    expect(texts(sockets.participant)).toEqual([
+      ['PRIVATE-IN'],
+      ['PRIVATE-OUT'],
+    ]);
+    expect(texts(sockets.decider)).toEqual([['PRIVATE-IN'], ['PRIVATE-OUT']]);
+    for (const s of [sockets.outsider, sockets.agent]) {
+      expect(texts(s)).toEqual([[], []]);
+      for (const h of s.heard) {
+        expect(Object.keys(h.entry).sort()).toEqual([
+          'kind',
+          'messageId',
+          'redacted',
+          'ts',
+        ]);
+      }
+    }
+    const indexes = sockets.participant.heard.map((h) => h.index);
+    expect(indexes.every((i) => typeof i === 'number')).toBe(true);
+    for (const s of Object.values(sockets)) {
+      expect(s.heard.map((h) => h.index)).toEqual(indexes);
+      s.close();
+    }
+  });
+
+  it('GET /api/runs/:id redacts the ones its caller may not read', async () => {
+    const w = world();
+    const outsider = await invite(w, 'out@x.io', 'request');
+    const exchange = await privateExchange(w);
+    const other = await liveRun(w, w.app, 'other');
+    await exchange.send();
+    const path = `/api/runs/${exchange.run.runId}`;
+
+    const read = async (token: string) => {
+      const detail = await call(w, token, 'GET', path);
+      expect(detail.status).toBe(200);
+      return detail.json.entries as HeardEntry['entry'][];
+    };
+    // The teammate in the conversation, the deciding owner, and the run.
+    for (const token of [exchange.req.token, w.app, exchange.run.runToken]) {
+      const entries = (await read(token)).filter((e) => e.kind === 'message');
+      expect(entries.map((e) => secrets(e.text ?? ''))).toEqual([
+        ['PRIVATE-IN'],
+        ['PRIVATE-OUT'],
+      ]);
+    }
+    // A message messages.db does not hold reads as one only a decider reads.
+    w.handle.orchestrator.notifyRun(
+      exchange.run.runId,
+      'PRIVATE-LOST digest',
+      'm-01J00000000000000000000000'
+    );
+    expect(secrets(JSON.stringify(await read(w.app)))).toContain(
+      'PRIVATE-LOST'
+    );
+    // Everyone else: the entries keep their places, redacted.
+    const whole = await read(w.app);
+    for (const token of [outsider.token, w.agent, other.runToken]) {
+      const entries = await read(token);
+      expect(secrets(JSON.stringify(entries))).toEqual([]);
+      expect(entries).toHaveLength(whole.length);
+      expect(entries.map((e) => e.kind)).toEqual(whole.map((e) => e.kind));
+      expect(entries.filter((e) => e.redacted === true)).toHaveLength(3);
+    }
   });
 });

@@ -63,6 +63,22 @@ export interface NormalizedEntry {
   // was keyed by, so a client showing that text live drops it once the
   // entry lands.
   streamId?: string;
+  // A `message` entry its reader may not read: only `ts` and `messageId`
+  // are left (redactMessageEntry). Never stored; the daemon redacts a
+  // message entry for a socket outside its message's audience and for a
+  // GET /api/runs/:id caller who cannot read that message.
+  redacted?: true;
+}
+
+// A message entry as a reader who may not read its bus message gets it: when
+// and which message, nothing it said or who said it. It keeps the entry's
+// place, so every reader counts a transcript's entries (run.log's `index`)
+// the same way.
+export function redactMessageEntry(
+  entry: NormalizedEntry,
+  messageId: string
+): NormalizedEntry {
+  return { ts: entry.ts, kind: 'message', messageId, redacted: true };
 }
 
 // How much of a tool's result a transcript keeps: a run's tool result entry,

@@ -273,11 +273,12 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  redactMessageEntry,
   runMessageRefusal,
   runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
-import type { RunMeta } from './orchestrator/types.js';
+import type { NormalizedEntry, RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
@@ -1811,6 +1812,45 @@ function runMetaFor(ctx: ApiContext, runId: string): RunMeta | undefined {
     ctx.orchestrator.list().find((r) => r.id === runId) ??
     ctx.orchestrator.getRun(runId)?.meta
   );
+}
+
+// Who the caller is to the message bus's read rule (DeliveryEngine.canRead):
+// a run's own token reads as that run, the bare shared agent token as no one
+// (it takes part in no conversation), and any other credential as its human,
+// deciding when its tier allows.
+function busReader(ctx: ApiContext): Sender | null {
+  if (ctx.viaRun !== undefined)
+    return { address: `run:${ctx.viaRun}`, canDecide: false };
+  if (ctx.viaAgentToken === true) return null;
+  return {
+    address: humanActor(ctx),
+    canDecide: tierAllows(ctx.caller?.tier ?? 'request', 'decide'),
+  };
+}
+
+// A run's transcript entries as the caller may see them: a message entry whose
+// bus message the caller cannot read is redacted in place, so the entries
+// still line up with run.log's `index`. An entry with no messageId (the
+// agent's own work, the Session composer's turns, a daemon notice) is whole,
+// and so is every entry for a deciding human, who reads every message, even
+// one messages.db no longer holds.
+function readableEntries(
+  ctx: ApiContext,
+  entries: NormalizedEntry[]
+): NormalizedEntry[] {
+  const reader = busReader(ctx);
+  if (reader?.canDecide === true) return entries;
+  const readable = new Map<string, boolean>();
+  return entries.map((entry) => {
+    const id = entry.kind === 'message' ? entry.messageId : undefined;
+    if (id === undefined) return entry;
+    let ok = readable.get(id);
+    if (ok === undefined) {
+      ok = reader !== null && ctx.messaging.engine.canRead(id, reader);
+      readable.set(id, ok);
+    }
+    return ok ? entry : redactMessageEntry(entry, id);
+  });
 }
 
 /** Content hash used as the edit precondition — see readRunFile / applyRunEdit. */
@@ -5583,11 +5623,12 @@ export async function handleApi(
         }
         // The same landing fields the list carries, so run detail can say
         // where its work went, and the text a live run has streamed and not
-        // logged yet.
+        // logged yet. Message entries follow their message's read rule.
         const live = ctx.orchestrator.liveText(segments[1]);
         const view: RunDetailView = {
           ...result,
           meta: ctx.orchestrator.decorateRunsWithPushed([result.meta])[0],
+          entries: readableEntries(ctx, result.entries),
           ...(live !== undefined ? { live } : {}),
         };
         return jsonResponse(view);
