@@ -117,8 +117,9 @@ export function closeRunGates(
   return closed;
 }
 
-// Boot: runs the previous daemon left behind are gone, and so is every overseer
-// conversation (they live in memory), so their gates close.
+// Boot: runs the previous daemon left behind are gone, and so is what every
+// overseer gate waits on (parked tool calls and queued actions are held in
+// memory; only the conversation records persist), so their gates close.
 export function closeOrphanedGates(
   engine: DeliveryEngine,
   runs: {
