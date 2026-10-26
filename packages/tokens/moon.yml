@@ -1,9 +1,9 @@
 $schema: 'https://moonrepo.dev/schemas/project.json'
 
 # CSS only: tokens.css is consumed straight through the package exports map by
-# apps/desktop (src/main.tsx) and apps/site (src/layouts/Base.astro), both of
-# which inline it into their bundles. There is nothing here to build, typecheck
-# or test.
+# apps/site (src/layouts/Base.astro), which inlines it into its bundle (the
+# desktop app moved to @dispatch/ui's Gr8r tokens). There is nothing here to
+# build, typecheck or test.
 #
 # The language is left unset deliberately — declaring it as typescript would
 # inherit .moon/tasks/bun-common.yml's test and typecheck tasks, which have no
